@@ -162,7 +162,7 @@ The discord-gateway runs a proactively-warmed in-process autocomplete cache. The
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `AUTOCOMPLETE_WARM_ACTIVE_DAYS` | `7` | Players active within N days are warmed on startup; 0 = warm everyone |
-| `AUTOCOMPLETE_WARM_CONCURRENCY` | `4` | Max concurrent inventory/ships fetches during warm + refresh |
+| `AUTOCOMPLETE_WARM_CONCURRENCY` | `16` | Max concurrent inventory/ships fetches during warm + refresh |
 | `AUTOCOMPLETE_WARM_GUILD_STAGGER_MS` | `200` | Spacing between per-guild warm jobs at startup (ms) |
 | `AUTOCOMPLETE_PLAYER_REFRESH_MINUTES` | `10` | Interval for player_cache bulk re-warm |
 | `AUTOCOMPLETE_LOADOUT_REFRESH_MINUTES` | `5` | Interval for inventory/ships round-robin re-warm |

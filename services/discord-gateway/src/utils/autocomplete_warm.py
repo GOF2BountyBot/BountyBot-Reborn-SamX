@@ -32,7 +32,7 @@ def _get_semaphore() -> asyncio.Semaphore:
     """Return (creating if needed) the module-level semaphore for loadout warm concurrency."""
     global _warm_semaphore
     if _warm_semaphore is None:
-        concurrency = int(os.getenv("AUTOCOMPLETE_WARM_CONCURRENCY", "4"))
+        concurrency = int(os.getenv("AUTOCOMPLETE_WARM_CONCURRENCY", "16"))
         _warm_semaphore = asyncio.Semaphore(concurrency)
     return _warm_semaphore
 

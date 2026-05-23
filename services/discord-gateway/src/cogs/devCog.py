@@ -1,5 +1,7 @@
 import asyncio
+import contextlib
 import os
+import time
 
 import discord
 import httpx
@@ -201,6 +203,107 @@ class DevCog(commands.Cog):
         if failed:
             msg.append(f"⚠️ Failed: {', '.join(failed)}")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
+
+    @app_commands.command(
+        name="force_reload_caches",
+        description="[DEV] Force-clear and hot-reload ALL caches for ALL guilds/players from live DB state",
+    )
+    @app_commands.default_permissions(administrator=True)
+    async def force_reload_caches(self, interaction: discord.Interaction):
+        """Clear every cache then immediately re-warm from current DB state.
+
+        Unlike /reload_autocomplete (which clears and leaves caches empty for lazy-fill),
+        this command actively re-populates every cache before responding, so all data is
+        hot and current the moment the command completes.
+
+        Gated to DEVELOPERS env var only.
+        """
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_super_admin(interaction):
+            await interaction.followup.send(
+                "❌ This command requires super-admin (developer) privileges.", ephemeral=True
+            )
+            return
+
+        from utils.autocomplete_warm import (
+            refresh_jobs_cache,
+            warm_guild_bounty_cache,
+            warm_guild_duel_caches,
+            warm_guild_players,
+            warm_guild_shop_cache,
+        )
+
+        t_start = time.monotonic()
+        guilds = self.bot.guilds
+        guild_count = len(guilds)
+        flogger.info(f"/force_reload_caches: starting full cache reload across {guild_count} guild(s)")
+
+        # Step 1 — clear everything
+        try:
+            autocomplete_state.clear_all()
+        except Exception:  # pylint: disable=broad-exception-caught
+            flogger.warning("/force_reload_caches: clear_all() failed (non-fatal)")
+
+        for cog_name, attr in [
+            ("ShopCog", "_shop_cache"),
+            ("BountyCog", "_bounty_cache"),
+            ("DuelCog", "_pending_duel_cache"),
+            ("DuelCog", "_outgoing_duel_cache"),
+            ("SchedulerCog", "_job_cache"),
+        ]:
+            cog = self.bot.get_cog(cog_name)
+            if cog and hasattr(cog, attr):
+                with contextlib.suppress(Exception):
+                    getattr(cog, attr).clear()
+
+        # Step 2 — Wave 0: shop + bounty (all guilds in parallel)
+        wave0_results = await asyncio.gather(
+            *[warm_guild_shop_cache(self.bot, g.id) for g in guilds],
+            *[warm_guild_bounty_cache(self.bot, g.id) for g in guilds],
+            return_exceptions=True,
+        )
+        wave0_errors = sum(1 for r in wave0_results if isinstance(r, Exception))
+
+        # Step 3 — Wave 1: player cache + loadouts (all guilds in parallel)
+        # warm_guild_players already runs Stage 2 (loadout warm) internally
+        wave1_results = await asyncio.gather(
+            *[warm_guild_players(g.id) for g in guilds],
+            return_exceptions=True,
+        )
+        wave1_errors = sum(1 for r in wave1_results if isinstance(r, Exception))
+
+        # Step 4 — Wave 1b: duel caches (depends on player_cache being populated)
+        wave1b_results = await asyncio.gather(
+            *[warm_guild_duel_caches(self.bot, g.id) for g in guilds],
+            return_exceptions=True,
+        )
+        wave1b_errors = sum(1 for r in wave1b_results if isinstance(r, Exception))
+
+        # Step 5 — job cache
+        try:
+            await refresh_jobs_cache(self.bot)
+            jobs_ok = True
+        except Exception:  # pylint: disable=broad-exception-caught
+            jobs_ok = False
+
+        elapsed = time.monotonic() - t_start
+
+        lines = [
+            f"✅ Full cache reload complete in **{elapsed:.1f}s**",
+            f"Guilds: **{guild_count}**",
+            f"Shop + bounty warm: {'✅' if not wave0_errors else f'⚠️ {wave0_errors} error(s)'}",
+            f"Player + loadout warm: {'✅' if not wave1_errors else f'⚠️ {wave1_errors} error(s)'}",
+            f"Duel cache warm: {'✅' if not wave1b_errors else f'⚠️ {wave1b_errors} error(s)'}",
+            f"Job cache: {'✅' if jobs_ok else '⚠️ failed'}",
+        ]
+        flogger.info(f"/force_reload_caches: done in {elapsed:.1f}s — {guild_count} guild(s)")
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+    @force_reload_caches.error
+    async def force_reload_caches_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /force_reload_caches", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

@@ -1149,7 +1149,7 @@ class InventoryCog(commands.Cog):
     ):
         """Give credits, an item, or a ship to another player in the same guild."""
         flogger.info(f"/give: guild={interaction.guild_id} user={interaction.user.id} type={give_type}")
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        await interaction.response.defer(thinking=True)
 
         try:
             # Cannot give to self
@@ -1218,7 +1218,7 @@ class InventoryCog(commands.Cog):
                 embed.add_field(
                     name="Your Remaining Credits", value=f"{source_player['credits'] - amount:,}", inline=True
                 )
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send(content=target.mention, embed=embed)
 
             elif give_type == "item":
                 if not item:
@@ -1274,7 +1274,7 @@ class InventoryCog(commands.Cog):
                     color=discord.Color.green(),
                 )
                 embed.add_field(name="Item Type", value=item_type.replace("_", " ").title(), inline=True)
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send(content=target.mention, embed=embed)
 
                 # Invalidate inventory for both giver and recipient
                 try:
@@ -1331,7 +1331,7 @@ class InventoryCog(commands.Cog):
                         value=", ".join(items_returned[:10]) + ("..." if len(items_returned) > 10 else ""),
                         inline=False,
                     )
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send(content=target.mention, embed=embed)
 
                 # Invalidate ships, inventory, and player caches for both parties on ship transfer
                 try:

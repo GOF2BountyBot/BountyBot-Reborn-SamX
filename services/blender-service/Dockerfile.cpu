@@ -122,6 +122,11 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     # ── 3. requests (CVE-2024-47081 alert #760, CVE-2026-25645 alert #761) ── \
     # Same purge-then-reinstall pattern. Fix is in requests >=2.33.0. \
     rm -rf "${SITE_PKGS}"/requests "${SITE_PKGS}"/requests-*.dist-info && \
+    \
+    # ── 4. idna (CVE-2026-45409: bypass of CVE-2024-3651 fix) ─────────────── \
+    # Blender 4.5 bundles idna 3.10; fixed in 3.15.0. Same purge-then-reinstall \
+    # pattern: old dist-info must be removed before pip --target reinstalls cleanly. \
+    rm -rf "${SITE_PKGS}"/idna "${SITE_PKGS}"/idna-*.dist-info && \
     true \
     # Note: pip itself is NOT deleted here — we need it alive for the next RUN. \
     # It's deleted at the end of the next RUN once the reinstalls are complete.
@@ -135,19 +140,24 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     # Reinstall the runtime-relevant packages at safe versions \
     "${BLENDER_PY}" -m pip install --no-cache-dir --target="${SITE_PKGS}" \
         'urllib3>=2.6.3' \
-        'requests>=2.33.0' && \
+        'requests>=2.33.0' \
+        'idna>=3.15.0' && \
     \
     # ── Verification: every package must be at its fixed version ──────────── \
     URLLIB3_VER=$("${BLENDER_PY}" -c 'import urllib3; print(urllib3.__version__)') && \
     REQUESTS_VER=$("${BLENDER_PY}" -c 'import requests; print(requests.__version__)') && \
+    IDNA_VER=$("${BLENDER_PY}" -c 'import idna; print(idna.__version__)') && \
     echo "Blender bundled urllib3: ${URLLIB3_VER}" && \
     echo "Blender bundled requests: ${REQUESTS_VER}" && \
+    echo "Blender bundled idna: ${IDNA_VER}" && \
     case "${URLLIB3_VER}"  in 2.[6-9].*|2.[1-9][0-9].*|[3-9].*) ;; *) echo "urllib3 too old: ${URLLIB3_VER}";   exit 1 ;; esac && \
     case "${REQUESTS_VER}" in 2.33.*|2.3[4-9].*|2.[4-9][0-9].*|[3-9].*) ;; *) echo "requests too old: ${REQUESTS_VER}"; exit 1 ;; esac && \
+    case "${IDNA_VER}" in 3.1[5-9].*|3.[2-9][0-9].*|[4-9].*) ;; *) echo "idna too old: ${IDNA_VER}"; exit 1 ;; esac && \
     \
     # Hard-fail if any vulnerable dist-info survived from the previous Blender bundle \
     if ls "${SITE_PKGS}"/urllib3-2.4.*  >/dev/null 2>&1; then echo "ERROR: stale urllib3 2.4.x dist-info"; exit 1; fi && \
     if ls "${SITE_PKGS}"/requests-2.32.3* >/dev/null 2>&1; then echo "ERROR: stale requests 2.32.3 dist-info"; exit 1; fi && \
+    if ls "${SITE_PKGS}"/idna-3.1[0-4].* >/dev/null 2>&1; then echo "ERROR: stale idna <3.15 dist-info"; exit 1; fi && \
     \
     # ── Final purge: drop pip itself now that installs are complete ──────── \
     # Done last so the install step above could still use it. \

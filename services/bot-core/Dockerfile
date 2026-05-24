@@ -34,10 +34,36 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
 # Create a virtual environment
 RUN python -m venv /opt/venv
 
+# ── System-Python pip hardening (CVE-2026-3219 / CVE-2026-6357) ─────────────
+# python:3.13-slim-trixie ships pip 26.0.1 in the system Python at
+# /usr/local/lib/python3.13/site-packages/. We use /opt/venv/bin/pip for all
+# actual installs, so the system pip is dead weight. Purge the dist-info so
+# Trivy stops reporting it. The venv pip is upgraded to >=26.1 in the next
+# RUN step and is unaffected (it lives in a separate tree: /opt/venv/).
+#
+# IMPORTANT: Use the absolute path /usr/local/bin/python3 — the PATH already
+# prepends /opt/venv/bin/, so bare `python` resolves to the venv interpreter.
+# Asking the venv for its purelib would target /opt/venv, nuking the venv pip.
+RUN SYS_PY=/usr/local/bin/python3 && \
+    SYS_SITE_PURELIB=$("${SYS_PY}" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])') && \
+    DEB_SITE=/usr/lib/python3/dist-packages && \
+    echo "System interpreter:    ${SYS_PY}" && \
+    echo "System site-packages:  ${SYS_SITE_PURELIB}" && \
+    # Sanity guard — refuse to nuke the venv if path detection points there \
+    case "${SYS_SITE_PURELIB}" in /opt/venv/*) echo "ERROR: refusing to scrub venv site-packages"; exit 1 ;; esac && \
+    rm -rf "${SYS_SITE_PURELIB}"/pip "${SYS_SITE_PURELIB}"/pip-*.dist-info && \
+    rm -rf "${DEB_SITE}"/pip "${DEB_SITE}"/pip-*.dist-info && \
+    if ls "${SYS_SITE_PURELIB}"/pip-*.dist-info >/dev/null 2>&1 || \
+       ls "${DEB_SITE}"/pip-*.dist-info >/dev/null 2>&1; then \
+        echo "ERROR: system pip dist-info still present"; exit 1; \
+    fi && \
+    /opt/venv/bin/python -c 'import pip; print("venv pip OK:", pip.__version__)'
+
 WORKDIR /app
 
 # Upgrade pip toolchain
 # CVE-2026-6357: pip < 26.1 arbitrary code execution via malicious wheel.
+# CVE-2026-3219: pip < 26.1 incorrect file installation via improper archive handling.
 # Pin to >=26.1 explicitly so the fix is enforced regardless of base-image snapshot.
 RUN /opt/venv/bin/pip install --upgrade --no-cache-dir \
     "pip>=26.1" \

@@ -15,6 +15,7 @@ asyncpg
 alembic
 pydantic
 httpx
+idna>=3.15.0  # CVE-2026-45409: bypass of CVE-2024-3651 fix; transitive dep of httpx/requests
 # Scheduling library
 apscheduler
 python-dotenv

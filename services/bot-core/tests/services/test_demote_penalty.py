@@ -51,6 +51,7 @@ def _make_player(player_id=1, guild_id=999, tier="Silver", credits=1000):
 def _make_config():
     config = MagicMock()
     config.tier_change_cooldown = None
+    config.demotion_credit_penalty_pct = None  # NULL → falls back to GameConstants default (10%)
     return config
 
 

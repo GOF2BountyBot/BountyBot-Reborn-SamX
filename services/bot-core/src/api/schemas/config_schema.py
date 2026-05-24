@@ -47,6 +47,9 @@ class GameConstantsOverridesMixin(BaseModel):
     kaamo_max_capacity: int | None = Field(None, ge=0)
     classic_credits_per_check: int | None = Field(None, ge=0)
 
+    # Demotion
+    demotion_credit_penalty_pct: int | None = Field(None, ge=0, le=100)
+
     @field_validator("division_max_tl", mode="before")
     @classmethod
     def validate_division_max_tl(cls, v: Any) -> Any:

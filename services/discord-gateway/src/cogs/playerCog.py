@@ -822,11 +822,20 @@ class PlayerCog(commands.Cog):
 
             prev_tier = tier_names[cur_level - 1]
 
+            # Fetch guild config to get the configured penalty rate (falls back to 10 if unavailable).
+            penalty_pct = 10
+            try:
+                cfg_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=10)
+                cfg_resp.raise_for_status()
+                penalty_pct = cfg_resp.json().get("demotion_credit_penalty_pct") or 10
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass  # non-fatal: warning still shown with default rate
+
             current_credits = player_data.get("credits", 0)
-            estimated_penalty = int(current_credits * 0.10)
+            estimated_penalty = int(current_credits * penalty_pct / 100)
             penalty_line = (
                 f"• **Credit penalty: -{estimated_penalty:,} cr** "
-                f"(10% of your current {current_credits:,} cr balance).\n"
+                f"({penalty_pct}% of your current {current_credits:,} cr balance).\n"
             )
 
             warning_embed = discord.Embed(

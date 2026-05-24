@@ -1,14 +1,14 @@
 """Tests for B.49 game-constants config router endpoints.
 
 Covers:
-1. GET /config/guild/{guild_id}/game-constants — returns 25 fields, all null for a
+1. GET /config/guild/{guild_id}/game-constants — returns all override fields, all null for a
    fresh guild.
 2. Schema validator rejects bounty_pvc_armour_buff_factor < 1.0 (minimum field value).
 3. Schema validator rejects division_max_tl with missing required tier keys.
 4. Schema validator rejects bounty_delay_random_min > bounty_delay_random_max.
 5. POST /config/guild/{guild_id}/game-constants/reset with unknown field returns 400.
 6. GET /game-constants returns 200 when guild config has non-null overrides.
-7. POST /game-constants/reset (no fields) resets all 25 fields.
+7. POST /game-constants/reset (no fields) resets all override fields.
 8. POST /game-constants/reset with known fields resets only those fields.
 
 Matches the fixture pattern of test_config_router.py.
@@ -108,6 +108,7 @@ _OVERRIDE_FIELD_NAMES = [
     "kaamo_max_capacity",
     "classic_credits_per_check",
     "tier_change_cooldown",
+    "demotion_credit_penalty_pct",  # per-guild demotion penalty % (0–100; NULL → global default 10)
 ]
 
 
@@ -153,7 +154,7 @@ class TestGetGameConstants:
 
     @patch("api.routers.config.get_db_session")
     def test_returns_200_with_all_25_fields(self, mock_get_db, client, mock_config_service):
-        """Returns 200 with all 25 override fields present (null for fresh guild)."""
+        """Returns 200 with all override fields present (null for fresh guild)."""
         _configure_db_mock(mock_get_db)
 
         response = client.get("/api/v1/config/guild/67890/game-constants")
@@ -166,7 +167,7 @@ class TestGetGameConstants:
 
     @patch("api.routers.config.get_db_session")
     def test_all_fields_are_null_for_fresh_guild(self, mock_get_db, client, mock_config_service):
-        """All 25 fields are null for a guild that has never set overrides."""
+        """All override fields are null for a guild that has never set overrides."""
         _configure_db_mock(mock_get_db)
 
         response = client.get("/api/v1/config/guild/67890/game-constants")

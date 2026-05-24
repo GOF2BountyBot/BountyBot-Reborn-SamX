@@ -66,6 +66,7 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "turret_spawn_probability",
     "kaamo_max_capacity",
     "classic_credits_per_check",
+    "demotion_credit_penalty_pct",
 )
 
 

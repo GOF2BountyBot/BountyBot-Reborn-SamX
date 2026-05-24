@@ -230,8 +230,12 @@ class GameConstants:
     KAAMO_MAX_CAPACITY: int = 70
 
     # ------------------------------------------------------------------
+    # Demotion
+
+    # % of credits deducted on /demote. Per-guild override: demotion_credit_penalty_pct on GuildConfig.
+    DEMOTION_CREDIT_PENALTY_PCT: int = 10
+
     # Classic Mode
-    # ------------------------------------------------------------------
 
     CLASSIC_CREDITS_PER_CHECK: int = 1000
     # B.48: ``CLASSIC_DIVISION_NAME`` removed alongside DIVISION_NAMES.
@@ -369,6 +373,9 @@ class GameConstants:
         # Inventory
         cls.MAX_SHIP_NICKNAME_LENGTH = _track_int("MAX_SHIP_NICKNAME_LENGTH", 30)
         cls.KAAMO_MAX_CAPACITY = _track_int("KAAMO_MAX_CAPACITY", 70)
+
+        # Demotion
+        cls.DEMOTION_CREDIT_PENALTY_PCT = _track_int("DEMOTION_CREDIT_PENALTY_PCT", 10)
 
         # Classic mode
         cls.CLASSIC_CREDITS_PER_CHECK = _track_int("CLASSIC_CREDITS_PER_CHECK", 1000)

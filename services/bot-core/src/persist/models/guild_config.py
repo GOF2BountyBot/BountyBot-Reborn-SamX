@@ -124,6 +124,9 @@ class GuildConfig(Base):
     kaamo_max_capacity: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     classic_credits_per_check: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
+    # Demotion — NULL means "use GameConstants.DEMOTION_CREDIT_PENALTY_PCT (10)"
+    demotion_credit_penalty_pct: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(

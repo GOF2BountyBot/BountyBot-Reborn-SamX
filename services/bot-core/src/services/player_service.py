@@ -482,8 +482,13 @@ class PlayerService:
             player.tier = prev_tier
             self._apply_tier_change_cooldown(player, config)
 
-            # Apply 10% credit penalty on demotion — clamped to 0 so credits never go negative.
-            penalty = int(player.credits * 0.10)
+            # Apply configurable credit penalty on demotion — clamped to 0 so credits never go negative.
+            # Rate is per-guild (demotion_credit_penalty_pct on GuildConfig, 0-100).
+            # NULL → falls back to GameConstants.DEMOTION_CREDIT_PENALTY_PCT (default 10%).
+            penalty_pct = resolve_constant(
+                config, "demotion_credit_penalty_pct", GameConstants.DEMOTION_CREDIT_PENALTY_PCT
+            )
+            penalty = int(player.credits * penalty_pct / 100)
             player.credits = max(0, player.credits - penalty)
 
             scrubbed = await self._scrub_orphaned_checks_after_tier_change(

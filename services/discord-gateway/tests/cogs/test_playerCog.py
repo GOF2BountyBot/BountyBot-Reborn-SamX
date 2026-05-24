@@ -3549,21 +3549,37 @@ class TestDemoteCommand:
 
 
 class TestDemoteWarningPenalty:
-    """Verify the warning embed shows the estimated credit penalty before confirmation."""
+    """Verify the warning embed shows the estimated credit penalty before confirmation.
+
+    The penalty rate comes from GET /config/guild/{id} → demotion_credit_penalty_pct.
+    NULL / absent → defaults to 10 (global GameConstants default).
+    """
+
+    def _make_get_mock(self, penalty_pct=None):
+        """Return an http_client.get mock.
+
+        Promotion-status call returns {} (no on_cooldown → no cooldown).
+        Config call returns {demotion_credit_penalty_pct: penalty_pct} (or {} if None).
+        Both share one mock since the order doesn't affect correctness here.
+        """
+        cfg_payload = {}
+        if penalty_pct is not None:
+            cfg_payload["demotion_credit_penalty_pct"] = penalty_pct
+        return AsyncMock(
+            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": cfg_payload})
+        )
 
     def test_demote_warning_shows_penalty_line(self, mock_player_cog):
-        """Warning embed must include the 10% penalty estimate for the player's credits."""
+        """Warning embed uses default 10% when config returns no penalty_pct."""
         interaction = _create_mock_interaction()
 
-        # 500 credits → estimated penalty = int(500 * 0.10) = 50
+        # 500 credits → estimated penalty = int(500 * 10 / 100) = 50
         player_resp = MagicMock()
         player_resp.raise_for_status = MagicMock()
         player_resp.json.return_value = _make_player_data(tier="Silver")  # credits=500
 
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
-        )
+        mock_player_cog.http_client.get = self._make_get_mock(penalty_pct=None)  # → default 10%
 
         view_mock = MagicMock()
         view_mock.result = None  # time out — we only care about the warning embed
@@ -3599,9 +3615,7 @@ class TestDemoteWarningPenalty:
         player_resp.json.return_value = player_data
 
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
-        )
+        mock_player_cog.http_client.get = self._make_get_mock(penalty_pct=None)
 
         view_mock = MagicMock()
         view_mock.result = None
@@ -3622,6 +3636,42 @@ class TestDemoteWarningPenalty:
         assert sent_embed is not None
         desc = sent_embed.description
         assert "-0 cr" in desc, f"Expected '-0 cr' for zero-credit player, got:\n{desc}"
+
+    def test_demote_warning_uses_guild_penalty_rate(self, mock_player_cog):
+        """Warning embed uses the per-guild penalty rate when config provides one."""
+        interaction = _create_mock_interaction()
+
+        # 1000 credits, guild configured at 25% → estimated penalty = int(1000 * 25 / 100) = 250
+        player_data = _make_player_data(tier="Gold")
+        player_data["credits"] = 1000
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = player_data
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = self._make_get_mock(penalty_pct=25)
+
+        view_mock = MagicMock()
+        view_mock.result = None
+        view_mock.wait = AsyncMock(return_value=None)
+
+        sent_embed = None
+
+        async def _capture_send(*args, **kwargs):
+            nonlocal sent_embed
+            if "embed" in kwargs and sent_embed is None:
+                sent_embed = kwargs["embed"]
+
+        interaction.followup.send = AsyncMock(side_effect=_capture_send)
+
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
+
+        assert sent_embed is not None, "Warning embed was never sent"
+        desc = sent_embed.description
+        assert "-250 cr" in desc, f"Expected '-250 cr' for 25% rate, got:\n{desc}"
+        assert "25%" in desc, f"Expected '25%' rate in warning embed, got:\n{desc}"
 
 
 # ===========================================================================

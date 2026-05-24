@@ -559,6 +559,8 @@ From scraped `description` / `function` / `characteristics` / `notes` text — t
 
 User raised reliability concerns about Python+BeautifulSoup parsing. Dispatched developer agent with strict instructions to do **AI-driven semantic extraction** (one page at a time, agent reads, agent writes JSON — no programmatic parsing). Output at `/tmp/gof2_wiki_v2/`.
 
+**The v1 Python+BeautifulSoup scraper (`utils/wiki_scraper/scrape_gof2.py` from Entry 2) was deleted in this commit.** It was useful scaffolding that produced the initial DB-vs-wiki diff report, but it had three structural normalization bugs and was superseded by v2 AI extraction. Going forward `/tmp/gof2_wiki_v2/` is the single source of truth for wiki data.
+
 | Category | Captured | Notes |
 |---|---|---|
 | Primary weapons | 40/40 | All complete with infobox stats |

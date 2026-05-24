@@ -243,4 +243,314 @@ Per-guild override storage:
 
 ---
 
+## Entry 1 — Data Inventory & Design Constraints (2026-05-24)
+
+User direction: **tick-based simulation; accuracy is primary variance (hit/miss); weapon fire rates matter; shield recharge, hull repair (repair bot), thrusters, cloaks, boosters, auto-fire turrets, scanners, secondary weapons (dumb-fire vs heat-seeking)**.
+
+Audited the live DB and the seed JSON files to inventory what data we actually have to drive this. Findings:
+
+### Ships (65 rows)
+
+| Field | Range / values | Combat meaning |
+|---|---|---|
+| `armour` (int) | 95–2100, mean 385 | Currently the ship's only HP — will be **hull** in new model |
+| `handling` (int) | 10–162, mean 110 | Proxy for **evasion**; multiplied by `ThrusterModule.handlingMultiplier` |
+| `max_primaries` | 1–4 | Slot count |
+| `max_secondaries` | 0–3 | Slot count |
+| `max_turrets` | 0–1 | Slot count |
+| `max_modules` | 3–13 | Slot count |
+| `builtin_modules` | `varchar[]` | Pre-equipped modules baked into the hull |
+
+**Sample (low end):** Betty `armour=95 handling=120 1p/1s/0t/3m`. **High end:** large ships ~2100 armour.
+
+No shield, no hull, no accuracy stat. Handling is the only stat suggestive of combat behaviour.
+
+### Primary weapons (40 rows)
+
+| Field | Detail |
+|---|---|
+| `dps` | float, 7.5 – 92.3 |
+| `tech_level` | 1–10 |
+| `extra_atts.subtype` | one of: `auto_cannons`, `beam_lasers`, `blaster_lasers`, `blasters`, `emp_blasters`, `scatter_guns`, `thermal_fusion_cannons` |
+
+**Missing for tick combat:** fire-rate, damage-per-shot, accuracy modifier, damage type. **Subtype is the only flavour signal** — it's our hook for assigning sensible defaults.
+
+### Turret weapons (10 rows)
+
+| Field | Detail |
+|---|---|
+| `dps` | float, 0–90 |
+| `automatic` | bool |
+| `subtype` | `auto` (3, all automatic), `manual` (4, all non-automatic), `plasma_collectors` (3, dps=0 — non-combat) |
+
+Automatic turrets fire on their own; manual turrets are likely "pilot-aimed" (treat as fire-rate-bounded primary). Plasma collectors are non-combat (resource gather).
+
+### Secondary weapons (30 rows) — **MAJOR DATA HOLE**
+
+| Field | Detail |
+|---|---|
+| `damage` (int) | All zero in DB except Shesha (60) |
+| `loading_speed` (column) | NULL for all rows (the JSON has a `"loading speed"` key with mostly 0) |
+| `subtype` | `missiles`, `rockets`, `cluster_missiles`, `ionizing_missiles`, `emp_bombs`, `mines`, `nukes`, `sentry_guns`, `misc` |
+
+Damage and loading speed are essentially unpopulated. Either pull from wiki or assign per-subtype defaults.
+
+### Modules — type-by-type combat relevance
+
+| Module Type | Combat fields in JSON | Combat role in new model |
+|---|---|---|
+| `ArmourModule` | `armour` int (40 / 80 / 110 / 160 / 250) | Adds to ship's armour pool (intermediate damage layer above hull) |
+| `ShieldModule` | `shield` int (50 / 80 / 120 / 150 / 220 / 380) | Adds to shield pool (regenerates over time — see below) |
+| `ShieldInjectorModule` | `plasmaConsumption` (Phoenix SIS, 30) | Active shield refill at cost of "plasma" resource |
+| `GammaShieldModule` | `effect` (0.4 / 0.6) | Flat damage reduction multiplier (resistance) |
+| `BoosterModule` | `duration`, `effect` (1.6 / 1.8 / 2.6 / 3 / 4) | Temporary speed/evasion buff |
+| `ThrusterModule` | `handlingMultiplier` (1.3 / 1.4 / 1.5 / 1.7 / 1.8 / 2.0) | Passive evasion multiplier on `ship.handling` |
+| `CloakModule` | `duration` (10 / 20 / 40 s) | Untargetable window |
+| `ScannerModule` | `timeToLock` (4 / 3 / 1.8 / 1.8) | Accuracy boost; lock-on speed for missiles |
+| `RepairBotModule` | `HPps` (7 / 15) | Hull repair per second |
+| `RepairBeamModule` / `TransfusionBeamModule` | `count`, `effect` (e.g. count=3, effect=2) | Active heal beam — N pulses of `effect` HP |
+| `EmergencySystemModule` | `duration` (10s) | Likely an emergency invuln/burst when low HP |
+| `PrimaryWeaponModModule` | `dpsMultiplier` (1.1) | Passive: +N% primary DPS (already supported by current model) |
+| `MiningDrillModule` | `drillHandling`, `oreYield` | **Non-combat** (mining) |
+| `CabinModule` | `cabinSize` | **Non-combat** (passengers) |
+| `CompressorModule` | `cargoMultiplier` | **Non-combat** (cargo) |
+| `TractorBeamModule` | `timeToLock` | **Non-combat** (loot pickup) |
+| `SignatureModule` | `manufacturer` | Identity / disguise — could affect criminal recognition; not direct combat |
+| `SpectralFilterModule` | `showInfo`, `showOnRadar` | Scanning support |
+| `JumpDriveModule` | (none) | **Non-combat** (FTL) |
+| `TimeExtenderModule` | unknown | (Phoenix-like, not sampled — likely "more time on a job") |
+
+### Key gaps & how we'll close them
+
+| Gap | Resolution path |
+|---|---|
+| No fire-rate per weapon | New `combat_balance.py` with per-subtype defaults (e.g. `auto_cannons: 8 shots/sec, scatter_guns: 1 shot/sec`). `damage_per_shot = dps / fire_rate`. Per-weapon overrides via `extra_atts.fire_rate` if/when we backfill. |
+| No accuracy modifier per weapon | Per-subtype defaults (`railguns: 0.95, scatter_guns: 0.55`). Per-weapon overrides as above. |
+| No hull/armour/shield separation | Ship's `armour` column → renamed conceptually to **hull** in the combat model. `ArmourModule.armour` adds to a separate **armour buffer** layer. `ShieldModule.shield` is the **shield** layer (regens). |
+| Secondary damage / loading speed mostly 0 | Per-subtype defaults table (e.g. `nukes: damage=300 cooldown=20s ammo=1`, `missiles: damage=40 cooldown=3s ammo=8 homing=true`). Wiki backfill as a separate task. |
+| No base ship accuracy | Derive from a constant base (e.g. 0.75) modified by Scanner / Booster / Cloak. |
+| No damage types / resistances | Postpone. Subtype hints (EMP/ionizing) can be ignored in v1 or treated as flat damage. |
+
+### Proposed default lookup tables (initial values — to be tuned)
+
+These live in a new `services/combat_balance.py` module so they can be tuned without touching combat logic.
+
+```python
+# Fire rate (shots per second) and accuracy (0..1) by primary subtype
+PRIMARY_DEFAULTS = {
+    "auto_cannons":           {"fire_rate": 6.0,  "accuracy": 0.85},
+    "blasters":               {"fire_rate": 4.0,  "accuracy": 0.80},
+    "blaster_lasers":         {"fire_rate": 3.0,  "accuracy": 0.90},
+    "beam_lasers":            {"fire_rate": 10.0, "accuracy": 0.95},  # near-continuous
+    "emp_blasters":           {"fire_rate": 2.0,  "accuracy": 0.85},  # disable shields
+    "scatter_guns":           {"fire_rate": 1.5,  "accuracy": 0.55},  # spread, lower acc
+    "thermal_fusion_cannons": {"fire_rate": 2.5,  "accuracy": 0.85},
+}
+
+TURRET_DEFAULTS = {
+    "auto":   {"fire_rate": 4.0, "accuracy": 0.70, "autonomous": True},
+    "manual": {"fire_rate": 2.0, "accuracy": 0.90, "autonomous": False},
+}
+
+# Secondary weapon defaults — damage, cooldown (s), ammo, homing flag
+SECONDARY_DEFAULTS = {
+    "rockets":           {"damage":  40, "cooldown": 2.0, "ammo":  8, "homing": False},
+    "missiles":          {"damage":  35, "cooldown": 3.0, "ammo":  8, "homing": True,  "lock_time": 1.5},
+    "cluster_missiles":  {"damage":  60, "cooldown": 4.0, "ammo":  4, "homing": True,  "lock_time": 2.0, "burst": 3},
+    "ionizing_missiles": {"damage":  25, "cooldown": 3.0, "ammo":  6, "homing": True,  "lock_time": 1.5, "ion": True},
+    "emp_bombs":         {"damage":  10, "cooldown": 5.0, "ammo":  3, "homing": False, "shield_disable_s": 3.0},
+    "mines":             {"damage": 100, "cooldown": 0.5, "ammo":  5, "delay": 1.0, "trigger": "proximity"},
+    "nukes":             {"damage": 300, "cooldown":20.0, "ammo":  1, "homing": False},
+    "sentry_guns":       {"damage":   8, "cooldown": 0.4, "ammo":  3, "duration": 15.0, "deploy": True},
+    "misc":              {"damage":   0, "cooldown": 1.0, "ammo":  1},
+}
+
+# Base ship accuracy (before Scanner buff)
+BASE_ACCURACY = 0.75
+# Base evasion derivation: evasion = (ship.handling * thruster_mult) / EVASION_DIVISOR
+EVASION_DIVISOR = 300  # handling 120 → evasion 0.40 ; max handling ~160 * 2.0 mult / 300 = 1.07 → clamp 0.95
+EVASION_CLAMP = (0.0, 0.95)
+
+# Tick rate & fight cap
+TICK_HZ = 10               # 10 ticks/sec = 100ms granularity
+MAX_FIGHT_TICKS = 1200     # 120 seconds hard cap
+```
+
+### Proposed simulator architecture (sketch)
+
+Two new files. `combat_service.py` remains the public entry point; internally it now dispatches to a new tick resolver while keeping `SimpleTTKResolver` as a legacy fallback.
+
+```
+services/
+├── combat_models.py            ← extended with Combatant, CombatEvent, expanded FightResults
+├── combat_balance.py           ← NEW: subtype default tables, tuning constants
+├── combat_service.py           ← public API unchanged; default resolver swapped
+└── combat/                     ← NEW package
+    ├── __init__.py
+    ├── combatant.py            ← Combatant runtime state (HP layers, modules, weapons)
+    ├── tick_resolver.py        ← TickResolver — fixed-step simulation loop
+    ├── weapon_systems.py       ← WeaponSystem (cooldown, hit roll, damage)
+    ├── module_systems.py       ← Per-module-type runtime behaviours (cloak, scanner, repair, etc.)
+    └── event_log.py            ← Structured CombatEvent collector + embed renderer
+```
+
+### Damage layering
+
+```
+Incoming hit
+   ↓
+[Cloak active?] — yes → miss
+   ↓ no
+[Hit roll]  hit_chance = clamp((attacker.accuracy + scanner_buff + weapon.acc_mod) − defender.evasion, 0.05, 0.99)
+   ↓ hit
+[GammaShield reduction] — apply flat damage multiplier (1 − effect)
+   ↓
+[Shield layer] — absorb up to current_shield; remainder spills
+   ↓
+[Armour layer] — absorb up to current_armour; remainder spills
+   ↓
+[Hull layer] — apply remainder; if hull ≤ 0, ship is destroyed
+```
+
+Per-tick passives:
+- Shield regen (`+X / sec` while not hit in last `N` ticks)
+- RepairBot HPps applied to hull
+- Booster/Scanner/Cloak duration countdown
+- Weapon cooldowns advance; eligible weapons fire (one hit roll per shot)
+- Auto-turrets fire independently
+- Secondary weapons: lock-on tick for homing; cooldown for dumb-fire
+
+### Open design questions raised by the data
+
+1. **Hull definition**: use `ship.armour` directly as hull HP? (Existing data ranges 95–2100 work but criminals have widely varying values.)
+2. **Shield regen rate**: not in data. Constant (e.g. 5% max shield/sec, paused for 3s after a hit)? Or scale with shield-module TL?
+3. **Boost modules** (`effect` 1.6–4.0): these are speed multipliers in GoF2 lore. In combat — accuracy boost? evasion boost? both?
+4. **CloakModule** with `duration: 20s`: is there a cooldown / charges? Or one-shot per fight?
+5. **EmergencySystemModule** `duration: 10s`: emergency invuln when hull < 25%? One-shot per fight?
+6. **ShieldInjectorModule** (Phoenix SIS): how much shield does it restore? Currently only `plasmaConsumption: 30` is given. Lore says it fully refills.
+7. **GammaShieldModule** `effect`: is it absolute reduction (-effect) or multiplier (×(1−effect))? Two TL-8 modules have `effect=0.4` and `effect=0.6` — confusing if it's "reduction" because 0.6 reduction > 0.4.
+8. **Backfill secondary weapon data from wiki?** Worth doing as a separate task before tuning balance.
+9. **Per-fight ammo for secondaries**: full magazine each fight, or limited per-day? (Currently no ammo tracking in DB.)
+10. **Auto-turret targeting**: same target as primary, or any? Independent fire timing → multiplies damage output.
+11. **Manual turrets**: do they need pilot input (= acc penalty when also firing primary), or just be "second primary"?
+12. **`PrimaryWeaponModModule` stacking** (Nirai Overdrive/Overcharge): multiplicative? Cap at +20% (2 modules)?
+13. **Combat duration cap behaviour at MAX_FIGHT_TICKS**: stalemate? Winner = higher HP%?
+
+### Backwards-compat surface to preserve
+
+`FightResults` must still expose:
+- `winner_name`, `loser_name`, `is_stalemate`, `variance_percent`
+- `ship1_stats / ship2_stats` with `ship_name, raw_hp, raw_dps, varied_hp, varied_dps, ttk`
+
+Strategy: populate `raw_hp = hull+armour+shield`, `raw_dps = analytic_dps_estimate`, `varied_hp = final_remaining_hp`, `varied_dps = actual_dps_dealt`, `ttk = ticks_elapsed/TICK_HZ`. Plus add new fields: `combat_log: list[CombatEvent]`, `combatants: list[CombatantSnapshot]`.
+
+### Next steps (proposed)
+
+1. Answer the open design questions (especially 1, 3, 4, 7, 8, 12).
+2. Decide whether to backfill secondary-weapon data from the wiki now or ship v1 with the subtype defaults.
+3. Implement `combat_balance.py` first (pure data, no logic) so we can iterate on tuning.
+4. Sketch `Combatant` and `TickResolver` skeletons; write a few representative unit tests *before* fleshing out the body.
+5. Ship the tick resolver behind a feature flag with `SimpleTTKResolver` as fallback for at least one release.
+
+---
+
+## Entry 2 — Wiki Scrape & DB Drift Audit (2026-05-24)
+
+### What got built
+
+Developer agent produced a proper repeatable scraper at `/proj/utils/wiki_scraper/scrape_gof2.py` (1169 LOC) + `README.md`. Scrapes `https://galaxyonfire.wiki.gg/wiki/`, GoF2-family only (excludes GoF 3D, Alliances, GoF 3). User-Agent identified; 500–1000ms pacing.
+
+### Coverage
+
+| Category | Total | Fully Scraped | Partial (page found, no infobox) | Failed |
+|---|---|---|---|---|
+| Primary weapons | 40 | 40 | 0 | 0 |
+| Secondary weapons | 30 | 30 | 0 | 0 |
+| Turret weapons | 10 | 10 | 0 | 0 |
+| Modules | 66 | 62 | 4 | 0 |
+| Ships | 65 | 60 | 5 | 0 |
+| **TOTAL** | **211** | **202** | **9** | **0** |
+
+**Partial items (wiki-side data hole, not scraper failure):**
+- 4 Signature modules → single shared `/wiki/Signature` page; no per-variant infobox
+- 4 Freighters → single shared `/wiki/Freighter` page
+- Vossk Battlecruiser → page exists but has no infobox
+
+### Output artefacts (all in `/tmp/` — not committed to repo)
+
+- `/tmp/gof2_wiki_raw/{primary,secondary,turret,module,ship}/*.json` — 211 per-item files
+- `/tmp/gof2_wiki_combined.json` (350 KB) — consolidated rollup
+- `/tmp/gof2_wiki_diff.md` — DB-vs-wiki discrepancy report
+- `/tmp/gof2_wiki_scraper.log` — full scrape log
+
+### Data shape per item
+
+Each item file contains:
+- `raw_infobox`: verbatim key/value pairs from the wiki infobox (**authoritative source**)
+- Normalized typed fields: `tech_level`, `damage`, `dps`, `loading_speed_ms`, `range_m`, `projectile_speed_kmh`, `effect_pct`, `effect_multiplier`, `duration_ms`, `magnitude` (for nukes/mines), `armour`, `cargo`, `max_primaries/secondaries/turrets/modules`, `value`, `handling`, etc.
+- `description` — in-game flavour text
+- `notes` / `characteristics` / `function` — mechanics-heavy prose sections
+- `_wiki_categories` — useful sanity check for TL labels
+- `known_price_range` — `{raw, min_credits, max_credits}` parsed from the price-range string
+
+### KNOWN SCRAPER NORMALIZATION BUGS (raw_infobox is fine — bugs are in the normalized fields)
+
+These need a second pass before merging into seed JSON. The raw infobox data is correct, so no re-scrape needed.
+
+1. **Module items get spurious `range_m` and `projectile_speed_kmh`** populated from price strings and loading speeds. Example: `Linear Boost` ended up with `range_m: 4726` (that's actually the min credit price) and `projectile_speed_kmh: 8000` (that's actually the loading speed in ms). Fix: gate weapon-only normalization on `_category in ("primary","secondary","turret")`.
+2. **Cloak `Effect: 10000ms` parsed as `effect_multiplier: 10000.0`** — wrong type and wrong field. For Cloak modules `Effect` is a duration. Fix: when `item_type == "Cloak"`, treat `Effect: Nms` as `duration_ms`.
+3. **GoF2 HD-specific price-range rows are captured into raw_infobox but ignored** by the canonical normalizer. Example: `U'tool` has both `"Price Range"` (GoF2) and `"GoF2 HD (Android) Price Range"` rows. Fix: capture both into `known_price_range.gof2` and `known_price_range.gof2hd`.
+
+### Key DB-vs-wiki drift (top hits — full report in `/tmp/gof2_wiki_diff.md`)
+
+**Errors (significant balance drift):**
+
+| Item | Field | DB | Wiki | Notes |
+|---|---|---|---|---|
+| Fireworks | value | 0 | 21000 | DB has $0 — clearly a seed bug |
+| Vol Noor | armour | 165 | 380 | DB ≪ wiki |
+| Vol Noor | cargo | 75 | 5 | DB ≫ wiki |
+| H'Soc | armour | 210 | 360 | DB ≪ wiki |
+| H'Soc | cargo | 45 | 10 | DB ≫ wiki |
+| Gryphon | armour | 220 | 310 | DB ≪ wiki |
+| Gryphon | cargo | 90 | 40 | DB ≫ wiki |
+| Wraith | armour | 180 | 210 | DB ≪ wiki |
+| Wraith | cargo | 65 | 25 | DB ≫ wiki |
+| Phantom | armour | 200 | 220 | DB ≪ wiki |
+| Phantom | cargo | 52 | 15 | DB ≫ wiki |
+| Terran Battlecruiser | armour | 1800 | 7000 | DB ≪ wiki (likely GoF2 original vs GoF2 HD) |
+| Terran Battlecruiser | cargo | 300 | 10 | DB ≫ wiki |
+
+**Pattern:** every ship-armour drift shows DB-lower; every ship-cargo drift shows DB-higher. Suggests the original seed pulled from a different GoF2 build (possibly the pre-HD original where ships had less HP but more cargo, or possibly the legacy BountyBot codebase manually tuned them).
+
+**Warnings:**
+- `128MJ Railgun`: DB tech_level=5, wiki=6 (wiki *category* also says TL5 — infobox vs categories disagree; infobox is more trustworthy)
+- `H'Belam`: same pattern, DB=5, wiki=6
+- `Micro Gun MK I` DPS 9.09 vs 9.9 (likely rounding)
+- `Tyrfing Blaster` DPS 59.09 vs 59.9 (likely rounding)
+
+**Info-level drift (rounding only):** ~40 DPS fields match to 2 decimal places.
+
+### Mechanics clarifications captured from prose
+
+From scraped `description` / `function` / `characteristics` / `notes` text — these are direct quotes from the wiki that resolve the open design questions from Entry 1:
+
+- **Linear Boost** (and by extension all Boosters): `"Keith normally flies his ships around 450 km/h... With the Linear Boost installed, he can increase its top speed to 720 km/h for three seconds, but must then rest for eight before using it again."` → Effect = **speed multiplier** (not accuracy). Cooldown = `Loading speed` (8000ms here). Duration = `Boost duration` (3000ms).
+- **U'tool (Cloak)**: `"For one energy cell, a ship can turn invisible in two seconds and remain so for ten seconds. While invisible, no other pilots are able to track your ship, therefore stopping all fire towards you."` → Cloak takes 2s to activate (`Loading speed: 2000ms`), lasts 10s (`Effect: 10000ms`), consumes 1 energy cell. **Stops ALL incoming fire while active.** Repeatable with energy cells, not one-shot.
+- **Liberator (Nuke)**: `"This deadly missile can be remotely controlled after being fired... The missile can be detonated by pressing the secondary fire button on the right side of the screen at any time, after twenty seconds of continuous flight, or upon contact with any ship."` → Steerable nuke; 13.8 km range, 12.5 km blast magnitude.
+- **128MJ Railgun**: notes confirm `"It will not randomly explode, as there is no such mechanic in Galaxy on Fire 2"` — useful explicit confirmation that we are looking at GoF2 specifically.
+
+### Next steps
+
+1. **Fix the three normalization bugs in `scrape_gof2.py`** and re-run normalization (no re-fetch needed — raw_infobox is correct). Estimated 30–60 LOC.
+2. **Capture the rich data we have not yet looked at** — modules like shields/repair bots/thrusters/scanners — by reading the `/tmp/gof2_wiki_raw/module/*.json` files and surfacing the mechanics-text quotes for the design decisions.
+3. **Decide on per-ship armour/cargo drift** — pick a side (DB or wiki) per ship, or take wiki as source-of-truth and update seed JSON. Document the rationale.
+4. **Merge into seed JSON**: design a clean merge script that:
+   - Preserves all existing seed JSON fields not overridden by wiki
+   - Adds the new combat fields (fire rate, damage per shot, range, projectile speed, etc.) under a new key like `combat_stats` or as top-level fields
+   - Writes back to `/proj/services/bot-core/import_data/<category>/*.json` only after dry-run validation
+5. **Note for data model:** the `WeaponModModule` is mutually-exclusive (only one equip-able at a time), per user direction. To be enforced in `MODULE_EQUIP_LIMITS` or new "unique-equip" list in `game_constants.py` alongside Cloak / Booster / EmergencySystem / ShieldInjector / Khador.
+
+---
+
 *Last updated: 2026-05-24*

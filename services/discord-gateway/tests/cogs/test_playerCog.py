@@ -3565,9 +3565,7 @@ class TestDemoteWarningPenalty:
         cfg_payload = {}
         if penalty_pct is not None:
             cfg_payload["demotion_credit_penalty_pct"] = penalty_pct
-        return AsyncMock(
-            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": cfg_payload})
-        )
+        return AsyncMock(return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": cfg_payload}))
 
     def test_demote_warning_shows_penalty_line(self, mock_player_cog):
         """Warning embed uses default 10% when config returns no penalty_pct."""

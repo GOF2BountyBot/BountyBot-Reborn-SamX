@@ -10,6 +10,8 @@ Create Date: 2026-05-24
 
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -23,13 +25,26 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add demotion_credit_penalty_pct column to guild_configs."""
-    op.add_column(
-        "guild_configs",
-        sa.Column("demotion_credit_penalty_pct", sa.Integer(), nullable=True),
-    )
+    """Add demotion_credit_penalty_pct column to guild_configs.
+
+    Guards against fresh installs where migration 0001 already creates all
+    tables from current ORM metadata (including this column), which would
+    cause a ProgrammingError: column already exists on op.add_column().
+    """
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_columns = [col["name"] for col in inspector.get_columns("guild_configs")]
+    if "demotion_credit_penalty_pct" not in existing_columns:
+        op.add_column(
+            "guild_configs",
+            sa.Column("demotion_credit_penalty_pct", sa.Integer(), nullable=True),
+        )
 
 
 def downgrade() -> None:
     """Remove demotion_credit_penalty_pct column from guild_configs."""
-    op.drop_column("guild_configs", "demotion_credit_penalty_pct")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_columns = [col["name"] for col in inspector.get_columns("guild_configs")]
+    if "demotion_credit_penalty_pct" in existing_columns:
+        op.drop_column("guild_configs", "demotion_credit_penalty_pct")

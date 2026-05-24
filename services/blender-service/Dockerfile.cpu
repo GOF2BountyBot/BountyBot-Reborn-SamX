@@ -213,6 +213,14 @@ RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
 # Catalog installed packages (useful for debugging)
 RUN /opt/venv/bin/pip freeze
 
+# Purge build-only packages now that all C extensions have been compiled.
+# linux-libc-dev (kernel headers) is pulled in by build-essential and is not
+# needed at runtime; removing it eliminates Trivy kernel CVE alerts that have
+# no fixed version available in the Ubuntu 24.04 repos yet.
+RUN apt-get remove -y --purge build-essential linux-libc-dev \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy app code
 COPY services/blender-service/ .
 

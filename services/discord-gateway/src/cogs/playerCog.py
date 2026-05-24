@@ -472,13 +472,22 @@ class PlayerCog(commands.Cog):
                 roles_to_add: list[discord.Role] = []
 
                 old_tier_role_id = config.get(old_tier_key)
+                # Notification preference detection: if the old role is configured and
+                # exists in Discord but the user doesn't have it, they opted out via
+                # /notifications — don't assign the new tier role either.
+                # If the old role isn't configured or doesn't exist in the guild we
+                # cannot infer a preference, so default to assigning the new role.
+                notifications_enabled = True
                 if old_tier_role_id:
                     old_role = guild.get_role(old_tier_role_id)
-                    if old_role and old_role in interaction.user.roles:
-                        roles_to_remove.append(old_role)
+                    if old_role:
+                        if old_role in interaction.user.roles:
+                            roles_to_remove.append(old_role)
+                        else:
+                            notifications_enabled = False
 
                 new_tier_role_id = config.get(new_tier_key)
-                if new_tier_role_id:
+                if new_tier_role_id and notifications_enabled:
                     new_role = guild.get_role(new_tier_role_id)
                     if new_role and new_role not in interaction.user.roles:
                         roles_to_add.append(new_role)
@@ -698,13 +707,22 @@ class PlayerCog(commands.Cog):
                 roles_to_add: list[discord.Role] = []
 
                 old_tier_role_id = config.get(old_tier_key)
+                # Notification preference detection: if the old role is configured and
+                # exists in Discord but the user doesn't have it, they opted out via
+                # /notifications — don't assign the new tier role either.
+                # If the old role isn't configured or doesn't exist in the guild we
+                # cannot infer a preference, so default to assigning the new role.
+                notifications_enabled = True
                 if old_tier_role_id:
                     old_role = guild.get_role(old_tier_role_id)
-                    if old_role and old_role in interaction.user.roles:
-                        roles_to_remove.append(old_role)
+                    if old_role:
+                        if old_role in interaction.user.roles:
+                            roles_to_remove.append(old_role)
+                        else:
+                            notifications_enabled = False
 
                 new_tier_role_id = config.get(new_tier_key)
-                if new_tier_role_id:
+                if new_tier_role_id and notifications_enabled:
                     new_role = guild.get_role(new_tier_role_id)
                     if new_role and new_role not in interaction.user.roles:
                         roles_to_add.append(new_role)
@@ -876,14 +894,21 @@ class PlayerCog(commands.Cog):
                 new_role_id = config.get(f"{demote_data['new_tier'].lower()}_role_id")
                 roles_to_add: list[discord.Role] = []
                 roles_to_remove: list[discord.Role] = []
-                if new_role_id:
+                # Notification preference detection: if the old role is configured and
+                # exists in Discord but the user doesn't have it, they opted out via
+                # /notifications — don't assign the new tier role either.
+                notifications_enabled = True
+                if old_role_id:
+                    old_role = guild.get_role(old_role_id)
+                    if old_role:
+                        if old_role in interaction.user.roles:
+                            roles_to_remove.append(old_role)
+                        else:
+                            notifications_enabled = False
+                if new_role_id and notifications_enabled:
                     new_role = guild.get_role(new_role_id)
                     if new_role and new_role not in interaction.user.roles:
                         roles_to_add.append(new_role)
-                if old_role_id:
-                    old_role = guild.get_role(old_role_id)
-                    if old_role and old_role in interaction.user.roles:
-                        roles_to_remove.append(old_role)
                 if roles_to_add:
                     await interaction.user.add_roles(*roles_to_add, reason="BountyBot tier demotion")
                 if roles_to_remove:

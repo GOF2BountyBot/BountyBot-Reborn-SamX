@@ -890,6 +890,109 @@ class TestPrestigeConfirmFlow:
         interaction.user.add_roles.assert_not_awaited()
         interaction.user.remove_roles.assert_not_awaited()
 
+    def test_prestige_notifications_disabled_does_not_add_bronze_role(self, mock_player_cog):
+        """Notification opt-out: user does not hold the Platinum role (opted out via
+        /notifications) — Bronze role must NOT be added on prestige."""
+        platinum_role_id = 111222004
+        bronze_role_id = 111222001
+
+        mock_platinum_role = MagicMock()
+        mock_platinum_role.id = platinum_role_id
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+
+        # User does NOT have the Platinum role (notifications disabled)
+        interaction = _create_interaction_with_roles(existing_roles=[])
+
+        def _get_role(role_id):
+            return {platinum_role_id: mock_platinum_role, bronze_role_id: mock_bronze_role}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = player_data
+
+        prestige_data = {"player_id": 1, "prestige_count": 1, "tier_before": "Platinum", "xp_before": 50000}
+        prestige_resp = MagicMock()
+        prestige_resp.raise_for_status = MagicMock()
+        prestige_resp.json.return_value = prestige_data
+
+        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=None,
+            gold_role_id=None,
+            platinum_role_id=platinum_role_id,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
+
+        # Neither role should be touched — user opted out
+        interaction.user.add_roles.assert_not_awaited()
+        interaction.user.remove_roles.assert_not_awaited()
+
+    def test_prestige_notifications_enabled_swaps_roles(self, mock_player_cog):
+        """Notification opt-in: user holds Platinum role → Bronze added, Platinum removed."""
+        platinum_role_id = 111222004
+        bronze_role_id = 111222001
+
+        mock_platinum_role = MagicMock()
+        mock_platinum_role.id = platinum_role_id
+        mock_platinum_role.name = "Bounty Hunter Platinum"
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+        mock_bronze_role.name = "Bounty Hunter Bronze"
+
+        # User HAS the Platinum role (notifications enabled)
+        interaction = _create_interaction_with_roles(existing_roles=[mock_platinum_role])
+
+        def _get_role(role_id):
+            return {platinum_role_id: mock_platinum_role, bronze_role_id: mock_bronze_role}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = player_data
+
+        prestige_data = {"player_id": 1, "prestige_count": 1, "tier_before": "Platinum", "xp_before": 50000}
+        prestige_resp = MagicMock()
+        prestige_resp.raise_for_status = MagicMock()
+        prestige_resp.json.return_value = prestige_data
+
+        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=None,
+            gold_role_id=None,
+            platinum_role_id=platinum_role_id,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
+
+        # Bronze added, Platinum removed
+        interaction.user.add_roles.assert_awaited_once()
+        added_ids = {r.id for r in interaction.user.add_roles.call_args[0]}
+        assert bronze_role_id in added_ids
+        interaction.user.remove_roles.assert_awaited_once()
+        removed_ids = {r.id for r in interaction.user.remove_roles.call_args[0]}
+        assert platinum_role_id in removed_ids
+
 
 # ---------------------------------------------------------------------------
 # _get_tier_color helper
@@ -3048,6 +3151,88 @@ class TestPromoteTierRoleSwap:
             ),
         )
 
+    def test_promote_notifications_disabled_does_not_add_new_role(self, mock_player_cog):
+        """Notification opt-out: user has Bronze role configured but NOT assigned (opted out
+        via /notifications) — Silver role must NOT be added on promotion."""
+        bronze_role_id = 111222001
+        silver_role_id = 111222002
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+        mock_bronze_role.name = "Bounty Hunter Bronze"
+
+        mock_silver_role = MagicMock()
+        mock_silver_role.id = silver_role_id
+        mock_silver_role.name = "Bounty Hunter Silver"
+
+        # User does NOT have the Bronze role (notifications disabled via /notifications)
+        interaction = _create_interaction_with_roles(existing_roles=[])
+
+        def _get_role(role_id):
+            return {bronze_role_id: mock_bronze_role, silver_role_id: mock_silver_role}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=silver_role_id,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
+
+        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        # Neither role should be touched — user opted out
+        interaction.user.add_roles.assert_not_awaited()
+        interaction.user.remove_roles.assert_not_awaited()
+
+    def test_promote_notifications_enabled_adds_new_role(self, mock_player_cog):
+        """Notification opt-in: user has Bronze role (notifications on) → Silver is added
+        and Bronze is removed as normal."""
+        bronze_role_id = 111222001
+        silver_role_id = 111222002
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+        mock_bronze_role.name = "Bounty Hunter Bronze"
+
+        mock_silver_role = MagicMock()
+        mock_silver_role.id = silver_role_id
+        mock_silver_role.name = "Bounty Hunter Silver"
+
+        # User HAS the Bronze role (notifications enabled)
+        interaction = _create_interaction_with_roles(existing_roles=[mock_bronze_role])
+
+        def _get_role(role_id):
+            return {bronze_role_id: mock_bronze_role, silver_role_id: mock_silver_role}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=silver_role_id,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
+
+        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        # Silver added, Bronze removed
+        interaction.user.add_roles.assert_awaited_once()
+        added_ids = {r.id for r in interaction.user.add_roles.call_args[0]}
+        assert silver_role_id in added_ids
+        interaction.user.remove_roles.assert_awaited_once()
+        removed_ids = {r.id for r in interaction.user.remove_roles.call_args[0]}
+        assert bronze_role_id in removed_ids
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
@@ -3356,6 +3541,147 @@ class TestDemoteCommand:
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         patched_cv.assert_called_once()
+
+
+# ===========================================================================
+# Tests: /demote tier role swap + notification preference
+# ===========================================================================
+
+
+class TestDemoteTierRoleSwap:
+    """Tests for /demote tier role swap and notification preference preservation."""
+
+    def _make_confirm_view_mock(self, result):
+        view = MagicMock()
+        view.result = result
+        view.wait = AsyncMock(return_value=None)
+        return view
+
+    def _make_demote_setup(self, mock_player_cog, old_tier="Silver", new_tier="Bronze"):
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier=old_tier)
+
+        demote_data = {"player_id": 1, "old_tier": old_tier, "new_tier": new_tier, "xp": 500}
+        demote_resp = MagicMock()
+        demote_resp.raise_for_status = MagicMock()
+        demote_resp.json.return_value = demote_data
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.put = AsyncMock(return_value=demote_resp)
+        return demote_data
+
+    def test_demote_notifications_enabled_swaps_roles(self, mock_player_cog):
+        """User holds Silver role (notifications on) → Bronze added, Silver removed."""
+        silver_role_id = 111222002
+        bronze_role_id = 111222001
+
+        mock_silver_role = MagicMock()
+        mock_silver_role.id = silver_role_id
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+
+        # User HAS Silver role (notifications enabled)
+        interaction = _create_interaction_with_roles(existing_roles=[mock_silver_role])
+
+        def _get_role(role_id):
+            return {silver_role_id: mock_silver_role, bronze_role_id: mock_bronze_role}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        self._make_demote_setup(mock_player_cog, old_tier="Silver", new_tier="Bronze")
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=silver_role_id,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
+
+        # Bronze added, Silver removed
+        interaction.user.add_roles.assert_awaited_once()
+        added_ids = {r.id for r in interaction.user.add_roles.call_args[0]}
+        assert bronze_role_id in added_ids
+        interaction.user.remove_roles.assert_awaited_once()
+        removed_ids = {r.id for r in interaction.user.remove_roles.call_args[0]}
+        assert silver_role_id in removed_ids
+
+    def test_demote_notifications_disabled_does_not_add_new_role(self, mock_player_cog):
+        """User does NOT hold Silver role (opted out via /notifications) — Bronze must
+        NOT be added and Silver must NOT be removed on demotion."""
+        silver_role_id = 111222002
+        bronze_role_id = 111222001
+
+        mock_silver_role = MagicMock()
+        mock_silver_role.id = silver_role_id
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+
+        # User does NOT have Silver role (notifications disabled)
+        interaction = _create_interaction_with_roles(existing_roles=[])
+
+        def _get_role(role_id):
+            return {silver_role_id: mock_silver_role, bronze_role_id: mock_bronze_role}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        self._make_demote_setup(mock_player_cog, old_tier="Silver", new_tier="Bronze")
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=silver_role_id,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
+
+        # Neither role touched — notification preference preserved
+        interaction.user.add_roles.assert_not_awaited()
+        interaction.user.remove_roles.assert_not_awaited()
+
+    def test_demote_old_role_not_in_config_still_adds_new_role(self, mock_player_cog):
+        """If the old tier role isn't configured, we can't infer opt-out — new role
+        is still added (safe default)."""
+        bronze_role_id = 111222001
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+
+        # silver_role_id absent from config — can't detect preference
+        interaction = _create_interaction_with_roles(existing_roles=[])
+        interaction.guild.get_role = MagicMock(return_value=mock_bronze_role)
+
+        self._make_demote_setup(mock_player_cog, old_tier="Silver", new_tier="Bronze")
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=None,  # old role not configured
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
+
+        # Bronze added (can't determine preference — safe default)
+        interaction.user.add_roles.assert_awaited_once()
+        interaction.user.remove_roles.assert_not_awaited()
 
 
 # ===========================================================================

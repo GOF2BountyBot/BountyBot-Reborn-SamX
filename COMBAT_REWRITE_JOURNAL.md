@@ -553,4 +553,115 @@ From scraped `description` / `function` / `characteristics` / `notes` text — t
 
 ---
 
+## Entry 3 — Wiki Scrape v2 (AI-driven) + Phase-1 Combat Design Decisions (2026-05-24)
+
+### Wiki scrape v2 — final state
+
+User raised reliability concerns about Python+BeautifulSoup parsing. Dispatched developer agent with strict instructions to do **AI-driven semantic extraction** (one page at a time, agent reads, agent writes JSON — no programmatic parsing). Output at `/tmp/gof2_wiki_v2/`.
+
+| Category | Captured | Notes |
+|---|---|---|
+| Primary weapons | 40/40 | All complete with infobox stats |
+| Secondary weapons | 30/30 | All complete |
+| Turret weapons | 10/10 | All complete |
+| Modules | 66/66 | All complete |
+| Ships | 65/65 | Vossk Battlecruiser has empty infobox per wiki note: *"exact stats and drops are currently unknown for the GoF2 era"* |
+| **TOTAL** | **211/211** | 0 failures, 0 discovered non-catalog items |
+
+**Files:** `/tmp/gof2_wiki_v2/{category}/{slug}.json` (per item) + `_combined.json` + `_summary.md` + `_progress.json`
+
+### Mechanics clarifications surfaced by v2 (not present in v1)
+
+1. **Cloaks: `Effect: Xms` is DURATION, not multiplier.** v1 parser bug. Correct: U'tool 10s, Sight Suppressor II 20s, Shadow Ninja 40s. Each activation costs 1 energy cell, takes 2s to spool (loading speed), then invisible for full duration. **Repeatable per energy cell** (NOT one-shot).
+2. **Emergency System: same fix.** 10-second emergency shield, consumable (destroyed after use). Cannot use Khador Drive while active.
+3. **Rhoda Vortex (TimeExtender): time dilation.** `Effect: 15000ms` = perceived duration; only 7500ms real time elapses outside the AoE. 2× time-dilation factor.
+4. **Thermal Fusion projectiles are heat-seeking, but ONLY with a scanner lock.** Wiki: *"When the scanner is locked onto a target, the projectiles will aim towards it. Without scanner lock: They will fire everywhere."* This connects ScannerModule → primary-weapon accuracy in a way our previous model never captured.
+5. **H'Belam TL drift confirmed.** Wiki infobox says TL 6; wiki category page lists TL 5; our DB has TL 5. Infobox is authoritative — DB is wrong (matches the same drift on 128MJ Railgun).
+
+### GoF2 vs GoF2 HD value drift (captured in `gof2_hd_overrides`)
+
+Only price drift detected — no stat drift between versions:
+- U'tool: 2.6× more expensive on Android (GoF2 HD)
+- Sight Suppressor II: 2.2× more expensive
+- Phoenix SIS: 1.7× more expensive
+
+### Combat balance directives (FROM USER — 2026-05-24)
+
+These supersede / extend the Entry 1 design proposals where they conflict.
+
+#### Repair Bot rates (wiki data gap)
+
+Wiki has no `HPps` field for either Ketar Repair Bot. **Default per user direction:**
+
+| Module | Repair rate (of max hull + armour, per second, in combat) |
+|---|---|
+| Ketar Repair Bot | **2.5% / sec** |
+| Ketar Repair Bot II | **5.0% / sec** |
+
+Repair applies to **hull + armour combined** (NOT shield). Tick-based: per-tick heal = `(max_hull + max_armour) × rate × tick_seconds`. Healed HP is distributed to whichever layer (hull first to keep ship alive, then armour buffer back-fill).
+
+#### Phase-1 starting conditions
+
+Both combatants (player + opponent, whether PvP or PvC) start each combat at **full hull + armour + shield**. No prior-damage tracking in Phase-1.
+
+**Design hooks required for future "damaged opponent" mechanic (Phase-2):**
+- Combatant initialisation must accept optional `current_hull / current_armour / current_shield` overrides; default to max.
+- `CombatStats` and `Combatant` dataclasses to expose both `max_*` and `current_*` per layer.
+- `BountyService` / `DuelService` to pass current values from a future persistent-damage column on `Player` / `Criminal` / `Bounty`.
+
+#### Out-of-combat recovery (NEW SYSTEM — Phase-2-ready)
+
+Slow regen ticking outside combat. Applies to **hull + armour + shield**, recovers up to respective max each.
+
+| Subject | Default recovery rate (per hour) | Override |
+|---|---|---|
+| Players | **25% / hour** of max each layer | `BOUNTYBOT_PLAYER_OOC_RECOVERY_PCT_PER_HR` env + per-guild `player_ooc_recovery_pct_per_hr` |
+| Criminals | **12.5% / hour** of max each layer | `BOUNTYBOT_CRIMINAL_OOC_RECOVERY_PCT_PER_HR` env + per-guild `criminal_ooc_recovery_pct_per_hr` |
+
+Rule of thumb: players recover ~2× faster than criminals.
+
+**Dock mechanic (NEW):** A `/dock` (or equivalent) command instantly restores player to full hull + armour + shield for **2.5% of current credit balance**. Per-guild configurable: `dock_repair_cost_pct` (default `0.025`). Must clamp to a minimum (say 1 credit) and round up to nearest int.
+
+Both the OOC recovery and dock mechanic are Phase-2 features but the **damage-tracking columns** they require should be added in the Phase-1 migration so we don't churn the schema later.
+
+#### NPC ship stats — use seed data, not wiki
+
+Battlecruisers and other NPC-only ships often have made-up or missing wiki data (Vossk Battlecruiser is the canonical example — wiki says "stats currently unknown"). Per user direction: **for NPC ships, the existing seed JSON data in `import_data/ship/` is the source of truth**, not the wiki.
+
+**Practical implication for the data merge phase:**
+- The DB-vs-wiki ship drift report (Vol Noor, H'Soc, Gryphon, etc. — see Entry 2) is **NOT** automatically actionable in favour of the wiki. For NPC-only ships, keep the existing seed values.
+- For player-purchasable ships (those that appear in shops or are obtainable in the player progression path), prefer wiki values where they differ — these are the canonical GoF2 stats.
+- We need to classify each ship as **player-purchasable** vs **NPC-only** before the merge. The `shop_spawn_rate` field on Ship is a usable signal (if `> 0`, it can appear in shops → player-purchasable). The `criminal` JSON references in `import_data/criminal/` cross-reference which ships are NPC-only.
+
+### Updated open design questions for the tick simulator
+
+(Resolved/updated since Entry 1; remaining ones still need decisions before code.)
+
+| # | Question | Status |
+|---|---|---|
+| 1 | Hull = `ship.armour`? | **Decided — yes** (Entry 1 proposal stands). Hull = ship's intrinsic armour column. ArmourModule values add to a separate `armour_buffer` layer above hull. Shield is its own layer. |
+| 2 | Shield regen rate | **Open** — wiki only gives `recharge_speed_ms` for one shield (Targe = 20000ms full-refill). Need defaults. Proposed: full-refill time = `recharge_speed_ms` if present, else `15000ms` default. Recharge pauses for 3s after taking shield damage. |
+| 3 | What do Boosters boost? | **Decided** — wiki says **speed multiplier**. Per user's tick-design (accuracy = primary variance), translate booster effect → temporary **evasion bonus** (higher speed = harder to hit). `effect_multiplier=1.6` → `evasion += 0.20` for `duration_ms`, with `loading_speed_ms` cooldown. |
+| 4 | Cloak charges per fight | **Decided (refined)** — repeatable per energy cell. Energy cells are a resource; for combat purposes assume a starting pool (default: 3 cells per fight, guild-configurable). |
+| 5 | EmergencySystem trigger | **Decided** — auto-trigger at hull ≤ 25% (since wiki says "critical level"); 10s full invuln; module destroyed after use. Once per fight. |
+| 6 | GammaShield damage type | **Decided** — gamma/radiation damage only; **does NOT mitigate projectile/laser/EMP damage**. In Phase-1, since no item deals "radiation damage", GammaShield is **effectively inert in combat** and should NOT contribute to combat stats. Document this clearly so it isn't surprising. |
+| 7 | Backfill secondary data | **Done** — wiki has full secondary damage/loading-speed/magnitude data. |
+| 8 | PrimaryWeaponModModule stacking | **Decided per user (NEW Entry 3)** — `WeaponModModule` is **mutually-exclusive unique-equip**. Only one allowed. To be added to a new `UNIQUE_EQUIP_TYPES` list in `game_constants.py` alongside Cloak / Booster / EmergencySystem / ShieldInjector / Khador / Phoenix SIS. |
+| 9 | Fight cap behaviour | **Open** — recommend winner-by-remaining-HP% if both still alive at MAX_FIGHT_TICKS (with ≤ 5% HP delta = stalemate). |
+| 10 | Repair Bot rate | **Decided per user (Entry 3)** — 2.5%/sec (I), 5.0%/sec (II) of `max_hull + max_armour`. |
+| 11 | Starting HP | **Decided per user (Entry 3)** — full hull + armour + shield for both combatants in Phase-1. Hooks required for Phase-2 damaged-opponent mechanic. |
+| 12 | Out-of-combat recovery | **Decided per user (Entry 3)** — 25%/hr (players) / 12.5%/hr (criminals) / `dock` instant-repair = 2.5% of current credits. Schema columns added in Phase-1 migration even though feature ships in Phase-2. |
+| 13 | NPC ship stats source | **Decided per user (Entry 3)** — seed JSON wins for NPC-only ships; wiki wins for player-purchasable ships. |
+
+### Updated next-steps queue
+
+1. **Fix the v1 scraper normalization bugs** in `utils/wiki_scraper/scrape_gof2.py` — gate weapon-only fields (range_m / projectile_speed_kmh) on category; map cloak/emergency `Effect: Nms` to `duration_ms`; preserve gof2_hd_overrides. (Even though v2 is the authoritative source, keeping v1 working is useful as a repeatable cross-check tool.)
+2. **Classify each ship as player-purchasable vs NPC-only** to drive the seed-JSON merge policy.
+3. **Plan the seed-JSON merge**: which wiki fields go into `import_data/{primary,secondary,turret,module,ship}/*.json`, with what naming convention. Likely adding a `combat` sub-object to keep new fields visually separate from legacy fields.
+4. **Plan the Phase-1 DB migration** that adds damage-tracking columns to `Player` (current_hull, current_armour, current_shield, last_damage_at) and `Bounty` (criminal_current_hull, criminal_current_armour, criminal_current_shield) — these are Phase-2 features but ship in the Phase-1 schema to avoid churn.
+5. **Implement `combat_balance.py`** (per-subtype defaults for missing data — fire rate, accuracy, secondary cooldowns) so Phase-1 has tunable values without touching the simulator.
+6. **Implement the tick resolver** behind a feature flag, with the legacy `SimpleTTKResolver` as fallback for one release.
+
+---
+
 *Last updated: 2026-05-24*

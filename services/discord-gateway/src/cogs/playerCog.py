@@ -822,6 +822,13 @@ class PlayerCog(commands.Cog):
 
             prev_tier = tier_names[cur_level - 1]
 
+            current_credits = player_data.get("credits", 0)
+            estimated_penalty = int(current_credits * 0.10)
+            penalty_line = (
+                f"• **Credit penalty: -{estimated_penalty:,} cr** "
+                f"(10% of your current {current_credits:,} cr balance).\n"
+            )
+
             warning_embed = discord.Embed(
                 title=f"⬇️ Demote to {prev_tier}?",
                 description=(
@@ -832,7 +839,8 @@ class PlayerCog(commands.Cog):
                     "• Your in-progress check entries on bounties outside the new tier "
                     "forfeit their per-system payout (slots stay 'checked' but you no "
                     "longer get paid).\n"
-                    "• Promotion and demotion share a **cooldown** (24h default).\n\n"
+                    + penalty_line
+                    + "• Promotion and demotion share a **cooldown** (24h default).\n\n"
                     "Press **Confirm** to demote or **Cancel** to abort."
                 ),
                 color=discord.Color.orange(),

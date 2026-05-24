@@ -50,6 +50,137 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
+# ---------------------------------------------------------------------------
+# Phase-4 autocomplete_state cache helpers
+# These are used by the autocomplete tests to pre-populate the shared caches
+# that autocomplete_helpers.py now reads from instead of making HTTP calls.
+#
+# IMPORTANT: _evict_discord_modules() (called in the module-scoped fixture)
+# evicts all utils.* modules from sys.modules, which causes a fresh import of
+# autocomplete_state. We must always access autocomplete_state through
+# sys.modules["utils.autocomplete_state"] to get the current live reference
+# rather than a stale one from a pre-eviction import.
+# ---------------------------------------------------------------------------
+
+
+def _get_all_ac_states_from_cog(cog=None):
+    """Return ALL active autocomplete_state module objects.
+
+    CRITICAL: test_setup_adds_cog_to_bot calls _evict_discord_modules() mid-suite,
+    which creates a NEW utils.autocomplete_state module object. The OLD one is still
+    referenced by the module-scoped mock_ships_cog fixture (via the OLD
+    player_ships_autocomplete function's __globals__). We must update BOTH.
+
+    When `cog` is provided, we can find the OLD state via the cog's method:
+    cog.setactive_autocomplete is a method that calls player_ships_autocomplete
+    (imported into shipsCog's module-scope). The function's __globals__ holds
+    the OLD autocomplete_state.
+
+    All found modules are returned deduplicated by identity.
+    """
+    seen_ids: set[int] = set()
+    result = []
+
+    def _add(ac):
+        if ac is not None and id(ac) not in seen_ids:
+            seen_ids.add(id(ac))
+            result.append(ac)
+
+    # Strategy 1: Find via the cog instance (most reliable — reaches into OLD modules)
+    if cog is not None:
+        # setactive_autocomplete is a method of the OLD ShipsCog class.
+        # Its code calls player_ships_autocomplete via shipsCog's globals.
+        # To get those globals: cog.setactive_autocomplete.__func__.__globals__
+        # is the OLD shipsCog module __dict__, which has player_ships_autocomplete.
+        method = getattr(cog, "setactive_autocomplete", None)
+        if method is not None:
+            fn_globals = getattr(getattr(method, "__func__", None), "__globals__", None)
+            if fn_globals is not None:
+                # player_ships_autocomplete is in cog's module globals
+                psa_fn = fn_globals.get("player_ships_autocomplete")
+                if psa_fn is not None and hasattr(psa_fn, "__globals__"):
+                    _add(psa_fn.__globals__.get("autocomplete_state"))
+
+    # Strategy 2: Find via any autocomplete_helpers-like module in sys.modules
+    for mod_name, mod in list(sys.modules.items()):
+        if "autocomplete_helpers" in mod_name:
+            _add(getattr(mod, "autocomplete_state", None))
+
+    # Strategy 3: Direct sys.modules lookup
+    _add(sys.modules.get("utils.autocomplete_state"))
+
+    return result
+
+
+def _ac_init_caches_for_cog(cog=None):
+    """Initialize real (no-HTTP) autocomplete caches for ALL active state modules."""
+    from cogs._shared.autocomplete_cache import AutocompleteCache
+
+    ac_list = _get_all_ac_states_from_cog(cog)
+    if not ac_list:
+        return  # Can't initialize without the module
+
+    for ac in ac_list:
+        ac._initialized = False
+        ac._http_client = None
+        ac._api_base = None
+        ac.player_cache = AutocompleteCache(ttl_seconds=900, name="player")
+        ac.inventory_cache = AutocompleteCache(ttl_seconds=600, name="inventory")
+        ac.ships_cache = AutocompleteCache(ttl_seconds=600, name="ships")
+        ac._initialized = True
+
+
+def _ac_reset_caches_for_cog(cog=None):
+    """Reset ALL active autocomplete_state modules to uninitialized."""
+    for ac in _get_all_ac_states_from_cog(cog):
+        ac._initialized = False
+        ac._http_client = None
+        ac._api_base = None
+        ac.player_cache = None
+        ac.inventory_cache = None
+        ac.ships_cache = None
+
+
+# Keep backward-compat wrappers
+def _get_all_ac_states(cog=None):
+    return _get_all_ac_states_from_cog(cog)
+
+
+def _ac_init_caches(cog=None):
+    _ac_init_caches_for_cog(cog)
+
+
+def _ac_reset_caches(cog=None):
+    _ac_reset_caches_for_cog(cog)
+
+
+def _get_ac_state(cog=None):
+    """Return the first active autocomplete_state."""
+    states = _get_all_ac_states_from_cog(cog)
+    return states[0] if states else None
+
+
+def _ac_ship_nc(ship_id, ship_name, is_active=False, nickname="", weapons=None, modules=None, turrets=None):
+    """Build a NormalizedChoice for a ship dict (mirrors the raw dict format used by cogs)."""
+    from utils.autocomplete_state import NormalizedChoice as _NC
+    from utils.autocomplete_utils import normalize_for_search as _nfs
+
+    raw = {
+        "id": ship_id,
+        "ship_name": ship_name,
+        "is_active": is_active,
+        "nickname": nickname or None,
+        "weapons": weapons or [],
+        "modules": modules or [],
+        "turrets": turrets or [],
+        "secondary_weapons": [],
+    }
+    nick = nickname or ""
+    label = f"{ship_name} ({nick})" if nick else ship_name
+    if is_active:
+        label = f"🟢 {label}"
+    return _NC(label=label, value=str(ship_id), norm=_nfs(label), raw=raw)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -719,6 +850,7 @@ class TestSetActiveCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        assert call_kwargs.get("ephemeral", False), "/setactive success response must be ephemeral"
 
     def test_setactive_success_with_nickname(self, mock_ships_cog, make_mock_response):
         """setactive should include nickname in success message when ship has one."""
@@ -1247,44 +1379,50 @@ class TestShipsPermissionChecks:
 
 
 class TestSetactiveAutocomplete:
-    """Tests for the setactive_autocomplete method."""
+    """Tests for the setactive_autocomplete method.
+
+    Phase 4: autocomplete reads from autocomplete_state caches instead of HTTP.
+    Tests pre-populate the cache using _ac_init_caches() and the ship NormalizedChoice
+    helpers. user_id=111111111, guild_id=987654321, player_id=1 are used throughout
+    to match _create_mock_interaction().
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup_ac_caches(self, mock_ships_cog):
+        """Initialize autocomplete_state caches before each test (uses mock_ships_cog to find OLD state)."""
+        _ac_init_caches(mock_ships_cog)
+        for ac in _get_all_ac_states(mock_ships_cog):
+            ac.player_cache.set((987654321, 111111111), {"id": 1})
+        yield
+        _ac_reset_caches(mock_ships_cog)
 
     def test_setactive_autocomplete_returns_player_ships(self, mock_ships_cog, make_mock_response):
-        """setactive_autocomplete should list player's ships as choices."""
+        """setactive_autocomplete should list player's ships as choices (Phase 4: from cache)."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [
-                _make_ship(1, "Eagle", is_active=True),
-                _make_ship(2, "Mako", is_active=False),
-            ]
-        )
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+        ships = [
+            _ac_ship_nc(1, "Eagle", is_active=True),
+            _ac_ship_nc(2, "Mako"),
+        ]
+        for ac in _get_all_ac_states(mock_ships_cog):
+            ac.ships_cache.set((987654321, 1), ships)
 
         choices = asyncio.run(mock_ships_cog.setactive_autocomplete(interaction, ""))
 
         assert len(choices) == 2
-        # Active ship should have 🟢 prefix
         active_choice = next((c for c in choices if c.value == "1"), None)
         assert active_choice is not None
         assert "🟢" in active_choice.name
 
     def test_setactive_autocomplete_filters_by_current_input(self, mock_ships_cog, make_mock_response):
-        """setactive_autocomplete should filter ships by current input."""
+        """setactive_autocomplete should filter ships by current input (Phase 4: from cache)."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [
-                _make_ship(1, "Eagle", is_active=False),
-                _make_ship(2, "Mako", is_active=False),
-                _make_ship(3, "Viper", is_active=False),
-            ]
-        )
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+        ships = [
+            _ac_ship_nc(1, "Eagle"),
+            _ac_ship_nc(2, "Mako"),
+            _ac_ship_nc(3, "Viper"),
+        ]
+        for ac in _get_all_ac_states(mock_ships_cog):
+            ac.ships_cache.set((987654321, 1), ships)
 
         choices = asyncio.run(mock_ships_cog.setactive_autocomplete(interaction, "Ma"))
 
@@ -1294,14 +1432,11 @@ class TestSetactiveAutocomplete:
         assert not any("Viper" in n for n in names)
 
     def test_setactive_autocomplete_shows_nickname(self, mock_ships_cog, make_mock_response):
-        """setactive_autocomplete should show nickname in choice label."""
+        """setactive_autocomplete should show nickname in choice label (Phase 4: from cache)."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ship_with_nick = _make_ship(1, "Eagle", is_active=False, nickname="StarHunter")
-        ships_resp = make_mock_response([ship_with_nick])
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+        ships = [_ac_ship_nc(1, "Eagle", nickname="StarHunter")]
+        for ac in _get_all_ac_states(mock_ships_cog):
+            ac.ships_cache.set((987654321, 1), ships)
 
         choices = asyncio.run(mock_ships_cog.setactive_autocomplete(interaction, ""))
 
@@ -1309,12 +1444,10 @@ class TestSetactiveAutocomplete:
         assert "StarHunter" in choices[0].name
 
     def test_setactive_autocomplete_returns_empty_on_api_failure(self, mock_ships_cog):
-        """setactive_autocomplete should return [] on API failure."""
+        """setactive_autocomplete should return [] on cold cache miss (Phase 4)."""
+        # ships_cache was just initialized but NOT populated → cold miss returns []
         interaction = _create_mock_interaction()
-        mock_ships_cog.http_client.post = AsyncMock(side_effect=RuntimeError("fail"))
-
         choices = asyncio.run(mock_ships_cog.setactive_autocomplete(interaction, ""))
-
         assert choices == []
 
 
@@ -1366,25 +1499,33 @@ class TestSetactiveInvalidShipId:
 
 
 class TestShipAutocomplete:
-    """Tests for the new ship_autocomplete method (used by /ship and /nickname)."""
+    """Tests for the new ship_autocomplete method (used by /ship and /nickname).
+
+    Phase 4: autocomplete reads from autocomplete_state caches instead of HTTP.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup_ac_caches(self, mock_ships_cog):
+        """Initialize autocomplete_state caches before each test (uses mock_ships_cog to find OLD state)."""
+        _ac_init_caches(mock_ships_cog)
+        for ac in _get_all_ac_states(mock_ships_cog):
+            ac.player_cache.set((987654321, 111111111), {"id": 1})
+        yield
+        _ac_reset_caches(mock_ships_cog)
 
     def test_ship_autocomplete_returns_player_ships_without_active_prefix(self, mock_ships_cog, make_mock_response):
-        """A.34a: ship_autocomplete should NOT show 🟢 prefix (used by /ship, /nickname).
+        """A.34a: ship_autocomplete should NOT show 🟢 prefix (Phase 4: from cache).
 
         The active-ship indicator is suppressed for selection-only dropdowns to avoid
         cluttering the autocomplete list. /setactive still shows the indicator.
         """
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [
-                _make_ship(7, "Eagle", is_active=True),
-                _make_ship(8, "Mako", is_active=False),
-            ]
-        )
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+        ships = [
+            _ac_ship_nc(7, "Eagle", is_active=True),
+            _ac_ship_nc(8, "Mako"),
+        ]
+        for ac in _get_all_ac_states(mock_ships_cog):
+            ac.ships_cache.set((987654321, 1), ships)
 
         choices = asyncio.run(mock_ships_cog.ship_autocomplete(interaction, ""))
 
@@ -1401,12 +1542,10 @@ class TestShipAutocomplete:
         assert inactive_choice.name == "Mako"
 
     def test_ship_autocomplete_returns_empty_on_failure(self, mock_ships_cog):
-        """ship_autocomplete should return [] on API failure (no error surface)."""
+        """ship_autocomplete should return [] on cold cache miss (Phase 4)."""
+        # ships_cache was just initialized but NOT populated → cold miss returns []
         interaction = _create_mock_interaction()
-        mock_ships_cog.http_client.post = AsyncMock(side_effect=RuntimeError("boom"))
-
         choices = asyncio.run(mock_ships_cog.ship_autocomplete(interaction, ""))
-
         assert choices == []
 
 

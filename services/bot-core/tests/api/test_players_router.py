@@ -296,7 +296,9 @@ class TestGetPlayersByGuild:
 
         client.get("/api/v1/players/guild/67890")
 
-        mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(mock_session, 67890)
+        mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
+            mock_session, 67890, active_within_days=None
+        )
         mock_player_service.get_players_by_tier.assert_not_called()
 
     def test_get_players_by_guild_with_tier_filter(self, mock_db_session, client, mock_player_service):
@@ -306,7 +308,9 @@ class TestGetPlayersByGuild:
         response = client.get("/api/v1/players/guild/67890?tier=Gold")
 
         assert response.status_code == 200
-        mock_player_service.get_players_by_tier.assert_called_once_with(mock_session, 67890, "Gold")
+        mock_player_service.get_players_by_tier.assert_called_once_with(
+            mock_session, 67890, "Gold", active_within_days=None
+        )
         mock_player_service.player_repo.get_players_by_guild.assert_not_called()
 
     def test_get_players_by_guild_pagination(self, client, mock_player_service):
@@ -338,6 +342,47 @@ class TestGetPlayersByGuild:
 
         assert response.status_code == 500
         assert "Failed to get players" in response.json()["detail"]
+
+    def test_get_players_by_guild_active_within_days_returns_200(self, mock_db_session, client, mock_player_service):
+        """active_within_days=7: returns 200 and passes filter param to repo."""
+        mock_session, _ = mock_db_session
+
+        response = client.get("/api/v1/players/guild/67890?active_within_days=7")
+
+        assert response.status_code == 200
+        mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
+            mock_session, 67890, active_within_days=7
+        )
+
+    def test_get_players_by_guild_active_within_days_zero_passes_zero(
+        self, mock_db_session, client, mock_player_service
+    ):
+        """active_within_days=0: valid (ge=0), passes 0 to repo (no filter applied by repo)."""
+        mock_session, _ = mock_db_session
+
+        response = client.get("/api/v1/players/guild/67890?active_within_days=0")
+
+        assert response.status_code == 200
+        mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
+            mock_session, 67890, active_within_days=0
+        )
+
+    def test_get_players_by_guild_active_within_days_negative_returns_422(self, client, mock_player_service):
+        """active_within_days < 0: rejected by Pydantic ge=0 constraint -> 422."""
+        response = client.get("/api/v1/players/guild/67890?active_within_days=-1")
+
+        assert response.status_code == 422
+
+    def test_get_players_by_guild_active_within_days_with_tier(self, mock_db_session, client, mock_player_service):
+        """active_within_days + tier: both params passed through to service."""
+        mock_session, _ = mock_db_session
+
+        response = client.get("/api/v1/players/guild/67890?tier=Gold&active_within_days=7")
+
+        assert response.status_code == 200
+        mock_player_service.get_players_by_tier.assert_called_once_with(
+            mock_session, 67890, "Gold", active_within_days=7
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1970,7 +2015,7 @@ class TestCombatPreflightEndpoint:
 
         _, _ = mock_db_session
 
-        with patch("services.player_service.PlayerService") as mock_ps_cls:
+        with patch("api.routers.players.PlayerService") as mock_ps_cls:
             mock_ps = MagicMock()
             mock_ps.player_repo.get_by_id = AsyncMock(return_value=None)
             mock_ps_cls.return_value = mock_ps

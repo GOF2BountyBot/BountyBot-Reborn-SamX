@@ -87,6 +87,11 @@ class PlayerService:
                 # B.62: refresh display_name on every interaction when provided
                 if display_name is not None:
                     existing_player.display_name = display_name
+                # B.62: also keep the User.display_name fresh
+                if display_name is not None or discord_username is not None:
+                    await self.user_repo.get_or_create_user(
+                        db, discord_id, discord_username, display_name, commit=False
+                    )
                 return existing_player
 
             # New player path — guild must have a config row first.
@@ -96,7 +101,8 @@ class PlayerService:
                 raise GuildNotConfiguredError(guild_id)
 
             # Ensure user exists (commit=False — caller's transaction owns the commit).
-            user = await self.user_repo.get_or_create_user(db, discord_id, discord_username, commit=False)
+            # B.62: pass display_name so the User record is also kept up to date.
+            user = await self.user_repo.get_or_create_user(db, discord_id, discord_username, display_name, commit=False)
 
             # Create new player with default configuration
             player = await self._create_new_player(db, user, guild_id)
@@ -279,7 +285,14 @@ class PlayerService:
         return "Bronze"
 
     async def get_promotion_status(self, db: AsyncSession, player_id: int) -> dict:
-        """Get promotion eligibility status for a player."""
+        """Get promotion eligibility status for a player.
+
+        Includes an early cooldown advisory so callers can surface the cooldown
+        error *before* showing a confirmation dialog — avoids the UX anti-pattern
+        of "click Confirm, then get a 429".  ``on_cooldown`` and
+        ``cooldown_ends_at`` are informational only; the authoritative cooldown
+        enforcement still happens inside ``promote_player`` / ``demote_player``.
+        """
         try:
             player = await self.player_repo.get_by_id(db, player_id)
             if not player:
@@ -300,6 +313,16 @@ class PlayerService:
             xp_threshold = thresholds.get(next_tier) if next_tier else None
             xp_surplus = (player.xp - xp_threshold) if (can_promote and xp_threshold is not None) else None
 
+            # Cooldown advisory — non-raising check so the caller gets structured
+            # info rather than an exception at the status-check stage.
+            on_cooldown = False
+            cooldown_ends_at: str | None = None
+            try:
+                self._check_tier_change_cooldown(player)
+            except TierChangeCooldownError as e:
+                on_cooldown = True
+                cooldown_ends_at = e.cooldown_end.isoformat()
+
             return {
                 "player_id": player.id,
                 "current_tier": player.tier,
@@ -310,6 +333,8 @@ class PlayerService:
                 "xp": player.xp,
                 "xp_threshold_for_next": xp_threshold,
                 "xp_surplus_for_next": xp_surplus,
+                "on_cooldown": on_cooldown,
+                "cooldown_ends_at": cooldown_ends_at,
             }
 
         except Exception as e:
@@ -456,6 +481,11 @@ class PlayerService:
             old_tier = player.tier
             player.tier = prev_tier
             self._apply_tier_change_cooldown(player, config)
+
+            # Apply 10% credit penalty on demotion — clamped to 0 so credits never go negative.
+            penalty = int(player.credits * 0.10)
+            player.credits = max(0, player.credits - penalty)
+
             scrubbed = await self._scrub_orphaned_checks_after_tier_change(
                 db, player_id=player_id, guild_id=player.guild_id, new_tier=prev_tier
             )
@@ -463,7 +493,8 @@ class PlayerService:
             await db.refresh(player)
 
             flogger.info(
-                f"Player {player_id} demoted from {old_tier} to {prev_tier} (scrubbed {scrubbed} cross-tier bounties)"
+                f"Player {player_id} demoted from {old_tier} to {prev_tier} "
+                f"(scrubbed {scrubbed} cross-tier bounties, penalty={penalty})"
             )
 
             return {
@@ -471,6 +502,7 @@ class PlayerService:
                 "old_tier": old_tier,
                 "new_tier": prev_tier,
                 "xp": player.xp,
+                "penalty": penalty,
             }
 
         except Exception as e:
@@ -654,10 +686,25 @@ class PlayerService:
             flogger.error(f"Error getting statistics for player {player_id}: {e}")
             raise
 
-    async def get_players_by_tier(self, db: AsyncSession, guild_id: int, tier: str) -> list[Player]:
-        """Get all players in a guild with a specific tier."""
+    async def get_players_by_tier(
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        tier: str,
+        active_within_days: int | None = None,
+    ) -> list[Player]:
+        """Get all players in a guild with a specific tier.
+
+        Args:
+            db: Database session.
+            guild_id: Guild to filter by.
+            tier: Tier name to filter by (e.g. "Bronze", "Silver").
+            active_within_days: When set and > 0, restricts to players active
+                within this many days. Passed through to the repo. ``0`` means
+                no filter (same as ``None``).
+        """
         try:
-            players = await self.player_repo.get_players_by_guild(db, guild_id)
+            players = await self.player_repo.get_players_by_guild(db, guild_id, active_within_days=active_within_days)
             return [p for p in players if p.tier == tier]
         except Exception as e:
             flogger.error(f"Error getting players by tier {tier} in guild {guild_id}: {e}")

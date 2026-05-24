@@ -19,6 +19,7 @@ httpx
 apscheduler
 python-dotenv
 Pillow
+zstandard
 
 # Testing & QC
 pylint>=3.0.0

@@ -11,6 +11,8 @@ from discord.ext import commands
 from shared import bblogger
 from utils.timestamp_utils import iso_to_discord_ts
 
+from utils import autocomplete_state
+
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-PlayerCog")
 
@@ -23,6 +25,34 @@ _GUILD_NOT_CONFIGURED_MSG = (
     "⚠️ This server hasn't been set up yet. An admin must run `/admin_setup` "
     "to initialize BountyBot before you can use this command."
 )
+
+
+def _build_tier_cooldown_embed(cooldown_iso: str | None, *, action: str) -> discord.Embed:
+    """Build a tier-change cooldown embed directly from an ISO timestamp string.
+
+    Used for the *early* cooldown check (before ConfirmView is shown), where we
+    have the timestamp from the promotion-status response rather than an httpx
+    exception.
+    """
+    timestamp_str = "soon"
+    if cooldown_iso:
+        try:
+            import datetime as _dt
+
+            end = _dt.datetime.fromisoformat(cooldown_iso)
+            unix_ts = int(end.timestamp())
+            timestamp_str = f"<t:{unix_ts}:R>"
+        except Exception:  # pylint: disable=broad-exception-caught
+            timestamp_str = cooldown_iso
+
+    return discord.Embed(
+        title=f"⏱️ Cannot {action.capitalize()} Yet",
+        description=(
+            f"You're on the **tier-change cooldown**. You can {action} again {timestamp_str}.\n\n"
+            "Ask an admin to reset your cooldown if this is blocking you."
+        ),
+        color=discord.Color.orange(),
+    )
 
 
 def _format_tier_change_cooldown_message(exc: httpx.HTTPStatusError, *, action: str) -> discord.Embed:
@@ -187,6 +217,14 @@ class PlayerCog(commands.Cog):
 
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/profile success: guild={interaction.guild_id}, user={interaction.user.id}")
+
+            # Write-through: profile response contains fresh player data
+            try:
+                autocomplete_state.set_player(interaction.guild_id, interaction.user.id, player_data)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/profile: cache write-through failed for user={interaction.user.id}; command still succeeded"
+                )
 
             # Attempt to assign the Bounty Hunter role + tier role (non-fatal)
             try:
@@ -410,6 +448,16 @@ class PlayerCog(commands.Cog):
                 f"prestige_count={prestige_data['prestige_count']}"
             )
 
+            # Prestige wipes the entire loadout — invalidate player, inventory, and ships caches
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player_data["id"])
+                autocomplete_state.invalidate_ships(interaction.guild_id, player_data["id"])
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/prestige: cache invalidation failed for user={interaction.user.id}; transaction still succeeded"
+                )
+
             # Swap tier roles: remove old tier role, add Bronze role (non-fatal)
             try:
                 config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
@@ -512,6 +560,14 @@ class PlayerCog(commands.Cog):
             status_resp = await self.http_client.get(f"{api_base}/players/{player_id}/promotion-status", timeout=10)
             status_resp.raise_for_status()
             status_data = status_resp.json()
+
+            # Early cooldown check — show the countdown before the ConfirmView so the
+            # player never sees the dialog only to hit a 429 on Confirm.
+            if status_data.get("on_cooldown"):
+                cooldown_embed = _build_tier_cooldown_embed(status_data.get("cooldown_ends_at"), action="promote")
+                await interaction.followup.send(embed=cooldown_embed, ephemeral=True)
+                return
+
             if not status_data.get("can_promote"):
                 next_tier = status_data.get("next_tier")
                 if next_tier is None:
@@ -527,7 +583,9 @@ class PlayerCog(commands.Cog):
             target_tier = status_data["next_tier"]
 
             # Power-check: run a 20-sim Monte-Carlo against criminals in the target tier.
-            verdict_line = ""
+            # Default fallback — shown if anything goes wrong
+            verdict_line = "\n**Power Check** ⚠️ Unavailable — proceeding without verdict."
+
             try:
                 pre_resp = await self.http_client.get(
                     f"{api_base}/players/{player_id}/combat-preflight",
@@ -544,8 +602,14 @@ class PlayerCog(commands.Cog):
                         f"{pre['sims_run']} simulated fights against "
                         f"active {target_tier} criminals."
                     )
+                else:
+                    # NO_DATA: player has no active ship (should not occur in normal play)
+                    verdict_line = (
+                        "\n**Power Check** ⚪ Could not evaluate combat readiness — ensure you have a ship equipped."
+                    )
             except Exception as e:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"/promote: preflight failed (continuing without verdict): {e}")
+                # verdict_line already set to the ⚠️ fallback above
 
             warning_embed = discord.Embed(
                 title=f"⬆️ Promote to {target_tier}?",
@@ -586,7 +650,7 @@ class PlayerCog(commands.Cog):
 
             embed = discord.Embed(
                 title="⬆️ Tier Promoted!",
-                description=f"You have advanced from **{old_tier}** to **{new_tier}**!",
+                description=f"{interaction.user.mention} has advanced from **{old_tier}** to **{new_tier}**!",
                 color=self._get_tier_color(new_tier),
             )
             embed.add_field(name="New Tier", value=f"**{new_tier}**", inline=True)
@@ -611,6 +675,14 @@ class PlayerCog(commands.Cog):
             flogger.info(
                 f"/promote success: guild={interaction.guild_id}, user={interaction.user.id}, {old_tier} -> {new_tier}"
             )
+
+            # Tier changed — invalidate player cache so autocomplete reflects new tier
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/promote: cache invalidation failed for user={interaction.user.id}; transaction still succeeded"
+                )
 
             # Swap tier roles: remove old tier role, add new tier role (non-fatal)
             try:
@@ -719,6 +791,17 @@ class PlayerCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
+
+            # Early cooldown check — reuse promotion-status endpoint which now
+            # includes the cooldown advisory for both promote and demote paths.
+            status_resp = await self.http_client.get(f"{api_base}/players/{player_id}/promotion-status", timeout=10)
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+            if status_data.get("on_cooldown"):
+                cooldown_embed = _build_tier_cooldown_embed(status_data.get("cooldown_ends_at"), action="demote")
+                await interaction.followup.send(embed=cooldown_embed, ephemeral=True)
+                return
+
             prev_tier = tier_names[cur_level - 1]
 
             warning_embed = discord.Embed(
@@ -751,21 +834,37 @@ class PlayerCog(commands.Cog):
             demote_resp.raise_for_status()
             demote_data = demote_resp.json()
 
+            penalty = demote_data.get("penalty", 0)
             embed = discord.Embed(
                 title="⬇️ Tier Demoted",
                 description=(
-                    f"You have stepped down from **{demote_data['old_tier']}** to **{demote_data['new_tier']}**."
+                    f"{interaction.user.mention} has stepped down from "
+                    f"**{demote_data['old_tier']}** to **{demote_data['new_tier']}**."
                 ),
                 color=self._get_tier_color(demote_data["new_tier"]),
             )
             embed.add_field(name="New Tier", value=f"**{demote_data['new_tier']}**", inline=True)
             embed.add_field(name="XP", value=f"{demote_data['xp']:,}", inline=True)
+            if penalty > 0:
+                embed.add_field(
+                    name="Credit Penalty",
+                    value=f"-{penalty:,} cr",
+                    inline=True,
+                )
 
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/demote success: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"{demote_data['old_tier']} -> {demote_data['new_tier']}"
             )
+
+            # Tier changed — invalidate player cache so autocomplete reflects new tier
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/demote: cache invalidation failed for user={interaction.user.id}; transaction still succeeded"
+                )
 
             # Swap tier roles (best-effort, mirrors /promote)
             try:

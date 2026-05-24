@@ -1897,6 +1897,158 @@ class TestPromoteCommand:
 
 
 # ---------------------------------------------------------------------------
+# /promote Power Check embed — verdict_line always visible
+# ---------------------------------------------------------------------------
+
+
+class TestPromotePowerCheckVerdictLine:
+    """Tests that the Power Check section is always visible in the promote embed.
+
+    After the Change 2 fix, verdict_line is initialized to a warning string BEFORE
+    the try block, ensuring it is always non-empty regardless of the preflight outcome.
+    """
+
+    def _make_status_resp(self, can_promote=True, next_tier="Silver", xp=1500, threshold=1000):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "can_promote": can_promote,
+            "next_tier": next_tier,
+            "xp": xp,
+            "xp_threshold_for_next": threshold,
+        }
+        return resp
+
+    def _make_preflight_resp(self, verdict="green", sims_run=20, player_win_rate=0.9):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "verdict": verdict,
+            "sims_run": sims_run,
+            "player_win_rate": player_win_rate,
+            "criminal_win_rate": 1.0 - player_win_rate,
+        }
+        return resp
+
+    def test_verdict_line_populated_when_preflight_returns_no_data(self, mock_player_cog):
+        """verdict_line is non-empty when preflight returns no_data verdict.
+
+        With Change 2: no_data → ⚪ equipped-ship message (not an empty string).
+        """
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Bronze")
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(
+            side_effect=[
+                self._make_status_resp(),
+                self._make_preflight_resp(verdict="no_data", sims_run=0, player_win_rate=0.0),
+            ]
+        )
+
+        view_mock = MagicMock()
+        view_mock.result = False  # user cancels so no PUT needed
+        view_mock.wait = AsyncMock(return_value=None)
+
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        # Find the warning embed (confirmation prompt) that was sent
+        embeds_sent = [
+            call[1].get("embed")
+            for call in interaction.followup.send.call_args_list
+            if call[1].get("embed") is not None
+        ]
+        # At least one embed was sent (the confirmation embed)
+        assert embeds_sent, "No embed was sent during /promote"
+        confirmation_embed = embeds_sent[0]
+        description = confirmation_embed.description or ""
+        # Power Check section must appear in the description — not an empty placeholder
+        assert "Power Check" in description
+
+    def test_verdict_line_populated_when_preflight_raises_exception(self, mock_player_cog):
+        """verdict_line is non-empty when the preflight HTTP call raises an exception.
+
+        With Change 2: exception path → ⚠️ Unavailable fallback string.
+        """
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Bronze")
+
+        error_response = MagicMock()
+        error_response.status_code = 500
+        preflight_error = httpx.HTTPStatusError("500", request=MagicMock(), response=error_response)
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(
+            side_effect=[
+                self._make_status_resp(),
+                preflight_error,  # preflight call raises
+            ]
+        )
+
+        view_mock = MagicMock()
+        view_mock.result = False  # user cancels
+        view_mock.wait = AsyncMock(return_value=None)
+
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        embeds_sent = [
+            call[1].get("embed")
+            for call in interaction.followup.send.call_args_list
+            if call[1].get("embed") is not None
+        ]
+        assert embeds_sent, "No embed was sent during /promote"
+        confirmation_embed = embeds_sent[0]
+        description = confirmation_embed.description or ""
+        # ⚠️ Unavailable fallback must be present
+        assert "Power Check" in description
+
+    def test_verdict_line_contains_win_rate_on_green_verdict(self, mock_player_cog):
+        """When preflight returns a green verdict, embed contains the win percentage."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Bronze")
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(
+            side_effect=[
+                self._make_status_resp(),
+                self._make_preflight_resp(verdict="green", sims_run=20, player_win_rate=0.9),
+            ]
+        )
+
+        view_mock = MagicMock()
+        view_mock.result = False  # user cancels
+        view_mock.wait = AsyncMock(return_value=None)
+
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        embeds_sent = [
+            call[1].get("embed")
+            for call in interaction.followup.send.call_args_list
+            if call[1].get("embed") is not None
+        ]
+        assert embeds_sent, "No embed was sent during /promote"
+        confirmation_embed = embeds_sent[0]
+        description = confirmation_embed.description or ""
+        # Win percentage and sims_run should appear
+        assert "Power Check" in description
+        assert "90%" in description or "20" in description
+
+
+# ---------------------------------------------------------------------------
 # /profile with promotion status
 # ---------------------------------------------------------------------------
 

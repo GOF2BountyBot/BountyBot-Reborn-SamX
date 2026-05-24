@@ -905,7 +905,6 @@ def equip_check_test_app(
     app = FastAPI()
     from api.routers.ships import (
         get_equipment_service,
-        get_item_repository,
         get_player_repository,
         get_player_ship_repository,
         get_ship_repository,
@@ -918,7 +917,6 @@ def equip_check_test_app(
     app.dependency_overrides[get_player_ship_repository] = lambda: mock_ship_repo
     app.dependency_overrides[get_player_repository] = lambda: mock_player_repo
     app.dependency_overrides[get_equipment_service] = lambda: mock_equip_check_equipment_service
-    app.dependency_overrides[get_item_repository] = lambda: AsyncMock()
     yield app
     app.dependency_overrides.clear()
 

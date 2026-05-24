@@ -742,6 +742,66 @@ class TestRefreshShop:
 
 
 # ===========================================================================
+# Tests: refresh_shop returns 'items' key (Task 0002 Sub-task B fix)
+# ===========================================================================
+
+
+class TestRefreshShopReturnsItemsList:
+    """Task 0002 Sub-task B: refresh_shop result dict must include 'items' key.
+
+    Root cause of the empty-store announcement bug: the executor called
+    `tier_results[t].get("items") or []` but refresh_shop never set that key,
+    so the announcement always received an empty list.
+
+    Fix: refresh_shop now includes 'items': generated_items in its return dict.
+    """
+
+    @pytest.mark.asyncio
+    async def test_refresh_shop_result_contains_items_key(self, service, mock_db, mock_config_repo, mock_shop_repo):
+        """refresh_shop return dict must have 'items' key pointing to generated items.
+
+        # Uses existing service/mock_db/mock_config_repo/mock_shop_repo fixtures.
+        """
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+        service._get_random_item_by_tech_level = AsyncMock(return_value="LaserCannon")
+        service._get_item_base_price = AsyncMock(return_value=500)
+
+        generated_item = _make_shop_item(item_name="LaserCannon")
+        mock_shop_repo.create_or_update = AsyncMock(return_value=generated_item)
+
+        result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        # The fix: result dict must contain 'items' key
+        assert "items" in result, (
+            "refresh_shop result must contain 'items' key — this is the Sub-task B fix for "
+            "the empty-store announcement bug."
+        )
+        # The items list must not be None
+        assert result["items"] is not None, "result['items'] must not be None"
+        # items_generated must match the length of the items list
+        assert result["items_generated"] == len(result["items"]), (
+            f"items_generated={result['items_generated']} must equal len(items)={len(result['items'])}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_refresh_shop_empty_result_has_empty_items_list(
+        self, service, mock_db, mock_config_repo, mock_shop_repo
+    ):
+        """When no items are generated, 'items' key is an empty list (not missing/None)."""
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+        # Return None from item selection → no items generated
+        service._get_random_item_by_tech_level = AsyncMock(return_value=None)
+
+        result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=9)
+
+        assert "items" in result, "refresh_shop result must contain 'items' key even when 0 items generated"
+        assert result["items"] == [], f"Expected empty list when no items generated, got: {result['items']!r}"
+        assert result["items_generated"] == 0
+
+
+# ===========================================================================
 # Tests: _can_access_tier (synchronous helper)
 # ===========================================================================
 

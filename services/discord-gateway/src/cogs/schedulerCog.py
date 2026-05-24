@@ -4,6 +4,7 @@ from contextlib import suppress
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from cogs._shared.http_error_handler import report_api_error
 from cogs.adminCog import _check_is_super_admin
 from discord import app_commands
@@ -23,24 +24,64 @@ class SchedulerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        # Job cache: keyed by sentinel "all" string, TTL=600s (10 min dead-man switch)
+        # Healthy refresh cycle (every 2 min) resets TTL so this never fires.
+        self._job_cache: AutocompleteCache[str, list[dict]] = AutocompleteCache(
+            ttl_seconds=600.0,
+            refresh_fn=self._fetch_jobs,
+            name="schedulerCog-jobs",
+        )
         flogger.debug("SchedulerCog initialized")
 
     async def cog_unload(self):
         """Called when the cog is unloaded. Always close the HTTP client."""
         await self.http_client.aclose()
 
+    async def _fetch_jobs(self, key: str) -> list[dict]:
+        """Fetch all scheduled jobs from bot-core. Called by _job_cache on miss/expiry.
+
+        Args:
+            key: Sentinel key — always "all" for the full job list.
+
+        Returns:
+            List of job dicts from GET /api/v1/jobs.
+
+        Phase 7: Pre-computes ``_norm`` on each job dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per job.
+        """
+        _ = key  # only one key: "all"
+        try:
+            resp = await self.http_client.get(f"{api_base}/jobs", timeout=5)
+            if resp.status_code != 200:
+                return []
+            jobs = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for job in jobs:
+                job_id = job.get("id", "")
+                trigger = job.get("trigger", "")
+                label = f"{job_id[:32]} ({trigger[:40]})" if trigger else job_id[:72]
+                job["_norm"] = normalize_for_search(label)
+            return jobs
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
     # ------------------------------------------------------------------
-    # Autocomplete — live fetch from API on each keystroke
+    # Autocomplete — zero-HTTP from _job_cache (Phase 6)
     # ------------------------------------------------------------------
 
     async def job_id_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for job IDs — fetches the current job list on each keystroke."""
+        """Zero-HTTP autocomplete for job IDs.
+
+        Phase 6: Reads from _job_cache with peek() — no HTTP call per keystroke.
+        On cold miss, schedules a background refresh and returns [] immediately.
+        """
         try:
-            resp = await self.http_client.get(f"{api_base}/jobs", timeout=5)
-            resp.raise_for_status()
-            jobs = resp.json()
+            jobs = self._job_cache.peek("all")
+            if jobs is None:
+                self._job_cache.schedule_refresh("all")
+                return []
             norm_current = normalize_for_search(current)
             choices = []
             for job in jobs:
@@ -48,7 +89,9 @@ class SchedulerCog(commands.Cog):
                 trigger = job.get("trigger", "")
                 # Build a readable label: "<short_id> (<trigger>)"
                 label = f"{job_id[:32]} ({trigger[:40]})" if trigger else job_id[:72]
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for older cache entries.
+                norm_label = job.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=job_id))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -72,9 +115,16 @@ class SchedulerCog(commands.Cog):
         flogger.debug(f"/scheduler_list invoked: guild={interaction.guild_id} user={interaction.user.id}")
 
         try:
-            resp = await self.http_client.get(f"{api_base}/jobs", params={"guild_id": interaction.guild_id}, timeout=10)
-            resp.raise_for_status()
-            jobs = resp.json()
+            # Peek cache first — avoids HTTP on every invocation when cache is warm.
+            # Use truthiness (not `is None`) so an empty cache falls through to HTTP
+            # and doesn't silently show "no jobs" when real jobs may exist.
+            jobs = self._job_cache.peek("all")
+            if not jobs:
+                resp = await self.http_client.get(
+                    f"{api_base}/jobs", params={"guild_id": interaction.guild_id}, timeout=10
+                )
+                resp.raise_for_status()
+                jobs = resp.json()
 
             if not jobs:
                 embed = discord.Embed(
@@ -85,32 +135,41 @@ class SchedulerCog(commands.Cog):
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
-            embed = discord.Embed(
-                title="🗓️ Scheduled Jobs",
-                description=f"**{len(jobs)}** scheduled job(s)",
-                color=discord.Color.blue(),
-            )
+            # Discord caps embed fields at 25 — paginate across multiple embeds
+            _PAGE_SIZE = 25
+            pages = [jobs[i : i + _PAGE_SIZE] for i in range(0, len(jobs), _PAGE_SIZE)]
+            total_pages = len(pages)
 
-            for job in jobs:
-                job_id = job.get("id", "unknown")
-                trigger = job.get("trigger", "N/A")
-                next_run = job.get("next_run_time")
-                args = job.get("args", [])
-
-                next_run_str = next_run[:19] if next_run else "N/A (paused)"
-                # Extract job_type from args payload if available
-                job_type = "unknown"
-                if len(args) >= 2 and isinstance(args[1], dict):
-                    job_type = args[1].get("job_type", "unknown")
-
-                embed.add_field(
-                    name=f"📌 {job_id[:50]}",
-                    value=(f"**Type:** {job_type}\n**Trigger:** `{trigger}`\n**Next Run:** {next_run_str}"),
-                    inline=False,
+            for page_num, page_jobs in enumerate(pages, start=1):
+                title = "🗓️ Scheduled Jobs" if total_pages == 1 else f"🗓️ Scheduled Jobs (page {page_num}/{total_pages})"
+                embed = discord.Embed(
+                    title=title,
+                    description=f"**{len(jobs)}** scheduled job(s)",
+                    color=discord.Color.blue(),
                 )
 
-            embed.set_footer(text="Use /scheduler_view <job_id> for full details")
-            await interaction.followup.send(embed=embed, ephemeral=True)
+                for job in page_jobs:
+                    job_id = job.get("id", "unknown")
+                    trigger = job.get("trigger", "N/A")
+                    next_run = job.get("next_run_time")
+                    args = job.get("args", [])
+
+                    next_run_str = next_run[:19] if next_run else "N/A (paused)"
+                    # Extract job_type from args payload if available
+                    job_type = "unknown"
+                    if len(args) >= 2 and isinstance(args[1], dict):
+                        job_type = args[1].get("job_type", "unknown")
+
+                    embed.add_field(
+                        name=f"📌 {job_id[:50]}",
+                        value=(f"**Type:** {job_type}\n**Trigger:** `{trigger}`\n**Next Run:** {next_run_str}"),
+                        inline=False,
+                    )
+
+                if page_num == total_pages:
+                    embed.set_footer(text="Use /scheduler_view <job_id> for full details")
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"/scheduler_list success: guild={interaction.guild_id} user={interaction.user.id} count={len(jobs)}"
             )

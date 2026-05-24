@@ -173,12 +173,12 @@ class TestAboutCogInitialization:
         assert mock_about_cog.http_client is not None
 
     def test_initialization_sets_empty_categories(self, mock_about_cog):
-        """AboutCog should start with empty categories list."""
-        assert mock_about_cog._categories == []
+        """AboutCog should start with empty categories cache."""
+        assert mock_about_cog._categories_cache.size == 0
 
     def test_initialization_sets_empty_objects_by_category(self, mock_about_cog):
         """AboutCog should start with empty objects_by_category dict."""
-        assert mock_about_cog._objects_by_category == {}
+        assert mock_about_cog._objects_cache.size == 0
 
     def test_initialization_schedules_preload(self, mock_bot):
         """AboutCog __init__ should schedule _preload_data task."""
@@ -272,9 +272,9 @@ class TestPreloadData:
 
             asyncio.run(mock_about_cog._preload_data())
 
-        assert mock_about_cog._categories == ["ship", "module", "primary_weapon"]
-        assert "ship" in mock_about_cog._objects_by_category
-        assert len(mock_about_cog._objects_by_category["ship"]) == 2
+        assert mock_about_cog._categories_cache.peek("all") == ["ship", "module", "primary_weapon"]
+        assert mock_about_cog._objects_cache.peek("ship") is not None
+        assert len(mock_about_cog._objects_cache.peek("ship")) == 2
 
     def test_preload_data_api_failure_all_attempts(self, mock_about_cog, request):
         """_preload_data retries 5 times then degrades gracefully when all attempts fail.
@@ -299,8 +299,8 @@ class TestPreloadData:
             asyncio.run(mock_about_cog._preload_data())
 
         # After terminal failure, categories must be empty
-        assert mock_about_cog._categories == []
-        assert mock_about_cog._objects_by_category == {}
+        assert mock_about_cog._categories_cache.peek("all") == []
+        assert mock_about_cog._objects_cache.size == 0
 
     def test_preload_data_retry_succeeds_on_second_attempt(self, mock_about_cog, request):
         """_preload_data should succeed when the first attempt fails but the second succeeds.
@@ -332,8 +332,8 @@ class TestPreloadData:
             asyncio.run(mock_about_cog._preload_data())
 
         # Retry succeeded — data should be populated
-        assert mock_about_cog._categories == ["ship"]
-        assert len(mock_about_cog._objects_by_category["ship"]) == 1
+        assert mock_about_cog._categories_cache.peek("all") == ["ship"]
+        assert len(mock_about_cog._objects_cache.peek("ship") or []) == 1
         # asyncio.sleep was called once (between attempt 1 and 2)
         assert call_count == 2
 
@@ -361,11 +361,11 @@ class TestPreloadData:
             asyncio.run(mock_about_cog._preload_data())
 
         # Categories should be loaded
-        assert mock_about_cog._categories == ["ship", "module"]
+        assert mock_about_cog._categories_cache.peek("all") == ["ship", "module"]
         # Ship objects should be loaded
-        assert len(mock_about_cog._objects_by_category["ship"]) == 1
+        assert len(mock_about_cog._objects_cache.peek("ship") or []) == 1
         # Module objects should be empty list (fallback on HTTP error)
-        assert mock_about_cog._objects_by_category["module"] == []
+        assert (mock_about_cog._objects_cache.peek("module") or []) == []
 
     def test_preload_data_network_error_all_attempts(self, mock_about_cog, request):
         """_preload_data handles network-level ConnectError across all 5 attempts gracefully
@@ -390,8 +390,8 @@ class TestPreloadData:
             asyncio.run(mock_about_cog._preload_data())
 
         # On network error, categories should be reset to empty
-        assert mock_about_cog._categories == []
-        assert mock_about_cog._objects_by_category == {}
+        assert mock_about_cog._categories_cache.peek("all") == []
+        assert mock_about_cog._objects_cache.size == 0
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +404,7 @@ class TestCategoryAutocomplete:
 
     def test_category_autocomplete_empty_current(self, mock_about_cog):
         """category_autocomplete with empty current returns all categories."""
-        mock_about_cog._categories = ["ship", "module", "primary_weapon"]
+        mock_about_cog._categories_cache.set("all", ["ship", "module", "primary_weapon"])
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.category_autocomplete(interaction, ""))
@@ -416,7 +416,7 @@ class TestCategoryAutocomplete:
 
     def test_category_autocomplete_partial_match(self, mock_about_cog):
         """category_autocomplete should filter by partial match."""
-        mock_about_cog._categories = ["ship", "module", "primary_weapon"]
+        mock_about_cog._categories_cache.set("all", ["ship", "module", "primary_weapon"])
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.category_autocomplete(interaction, "mod"))
@@ -426,7 +426,7 @@ class TestCategoryAutocomplete:
 
     def test_category_autocomplete_empty_categories(self, mock_about_cog):
         """category_autocomplete with no data returns empty list."""
-        mock_about_cog._categories = []
+        mock_about_cog._categories_cache.set("all", [])
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.category_autocomplete(interaction, ""))
@@ -435,7 +435,7 @@ class TestCategoryAutocomplete:
 
     def test_category_autocomplete_limits_to_25(self, mock_about_cog):
         """category_autocomplete should return at most 25 results."""
-        mock_about_cog._categories = [f"cat{i}" for i in range(30)]
+        mock_about_cog._categories_cache.set("all", [f"cat{i}" for i in range(30)])
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.category_autocomplete(interaction, ""))
@@ -453,7 +453,7 @@ class TestObjectAutocomplete:
 
     def test_object_autocomplete_no_category(self, mock_about_cog):
         """object_autocomplete with no category in namespace returns empty."""
-        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle"}, {"name": "Hawk"}]}
+        mock_about_cog._objects_cache.set("ship", [{"name": "Eagle"}, {"name": "Hawk"}])
         interaction = _create_mock_interaction()
         # namespace has no category attribute
         interaction.namespace = MagicMock(spec=[])
@@ -464,7 +464,7 @@ class TestObjectAutocomplete:
 
     def test_object_autocomplete_valid_category(self, mock_about_cog):
         """object_autocomplete should return objects for selected category."""
-        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle"}, {"name": "Hawk"}, {"name": "Falcon"}]}
+        mock_about_cog._objects_cache.set("ship", [{"name": "Eagle"}, {"name": "Hawk"}, {"name": "Falcon"}])
         interaction = _create_mock_interaction()
         interaction.namespace = MagicMock()
         interaction.namespace.category = "ship"
@@ -475,7 +475,7 @@ class TestObjectAutocomplete:
 
     def test_object_autocomplete_partial_match(self, mock_about_cog):
         """object_autocomplete should filter by partial match."""
-        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle"}, {"name": "Hawk"}, {"name": "Falcon"}]}
+        mock_about_cog._objects_cache.set("ship", [{"name": "Eagle"}, {"name": "Hawk"}, {"name": "Falcon"}])
         interaction = _create_mock_interaction()
         interaction.namespace = MagicMock()
         interaction.namespace.category = "ship"
@@ -499,8 +499,8 @@ class TestAboutCommand:
         interaction = _create_mock_interaction()
 
         # Set up preloaded categories
-        mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle", "aliases": []}]}
+        mock_about_cog._categories_cache.set("all", ["ship"])
+        mock_about_cog._objects_cache.set("ship", [{"name": "Eagle", "aliases": []}])
 
         obj_resp = MagicMock()
         obj_resp.raise_for_status = MagicMock()
@@ -531,7 +531,7 @@ class TestAboutCommand:
 
             asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "Eagle"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
 
     def test_about_object_not_found_404(self, mock_about_cog):
@@ -540,8 +540,8 @@ class TestAboutCommand:
 
         interaction = _create_mock_interaction()
 
-        mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {"ship": []}
+        mock_about_cog._categories_cache.set("all", ["ship"])
+        mock_about_cog._objects_cache.set("ship", [])
 
         error_response = MagicMock()
         error_response.status_code = 404
@@ -561,8 +561,8 @@ class TestAboutCommand:
 
         interaction = _create_mock_interaction()
 
-        mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {"ship": []}
+        mock_about_cog._categories_cache.set("all", ["ship"])
+        mock_about_cog._objects_cache.set("ship", [])
 
         error_response = MagicMock()
         error_response.status_code = 500
@@ -584,8 +584,8 @@ class TestAboutCommand:
         """about should handle generic exceptions gracefully."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {"ship": []}
+        mock_about_cog._categories_cache.set("all", ["ship"])
+        mock_about_cog._objects_cache.set("ship", [])
 
         mock_about_cog.http_client.get = AsyncMock(side_effect=RuntimeError("network failure"))
 
@@ -599,8 +599,8 @@ class TestAboutCommand:
         """about should resolve an alias to the canonical name."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle", "aliases": ["Eagleship", "TheEagle"]}]}
+        mock_about_cog._categories_cache.set("all", ["ship"])
+        mock_about_cog._objects_cache.set("ship", [{"name": "Eagle", "aliases": ["Eagleship", "TheEagle"]}])
 
         obj_resp = MagicMock()
         obj_resp.raise_for_status = MagicMock()
@@ -633,13 +633,11 @@ class TestListCategoryCommand:
         """list_category should display embed with object list."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_by_category = {
-            "ship": [{"name": "Eagle", "emoji": "🚀"}, {"name": "Hawk", "emoji": None}]
-        }
+        mock_about_cog._objects_cache.set("ship", [{"name": "Eagle", "emoji": "🚀"}, {"name": "Hawk", "emoji": None}])
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -648,7 +646,7 @@ class TestListCategoryCommand:
         """list_category with unknown category should send error."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_by_category = {}
+        mock_about_cog._objects_cache.clear()
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "unknown_category"))
 
@@ -661,7 +659,7 @@ class TestListCategoryCommand:
         """list_category with empty category should send ephemeral message."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_by_category = {"ship": []}
+        mock_about_cog._objects_cache.set("ship", [])
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
@@ -1066,7 +1064,7 @@ class TestObjectAutocompleteExtraBranches:
 
     def test_object_autocomplete_invalid_category(self, mock_about_cog):
         """object_autocomplete with category not in cache returns empty."""
-        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle"}]}
+        mock_about_cog._objects_cache.set("ship", [{"name": "Eagle"}])
         interaction = _create_mock_interaction()
         interaction.namespace = MagicMock()
         interaction.namespace.category = "nonexistent"
@@ -1076,7 +1074,7 @@ class TestObjectAutocompleteExtraBranches:
 
     def test_object_autocomplete_limits_to_25(self, mock_about_cog):
         """object_autocomplete should return at most 25 results."""
-        mock_about_cog._objects_by_category = {"ship": [{"name": f"Ship_{i}"} for i in range(30)]}
+        mock_about_cog._objects_cache.set("ship", [{"name": f"Ship_{i}"} for i in range(30)])
         interaction = _create_mock_interaction()
         interaction.namespace = MagicMock()
         interaction.namespace.category = "ship"
@@ -1099,7 +1097,7 @@ class TestListCategoryExtraBranches:
 
         # Create objects with long names that will exceed the 1024-char limit
         objects = [{"name": f"VeryLongObjectName_{'x' * 80}_{i:03d}", "emoji": None} for i in range(20)]
-        mock_about_cog._objects_by_category = {"ship": objects}
+        mock_about_cog._objects_cache.set("ship", objects)
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
@@ -1113,7 +1111,7 @@ class TestListCategoryExtraBranches:
 
         # Create 101 objects
         objects = [{"name": f"Obj{i}", "emoji": None} for i in range(101)]
-        mock_about_cog._objects_by_category = {"ship": objects}
+        mock_about_cog._objects_cache.set("ship", objects)
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
@@ -1130,7 +1128,7 @@ class TestListCategoryExtraBranches:
             {"name": "Hawk", "emoji": "🦅"},
             {"name": "Plain", "emoji": ""},
         ]
-        mock_about_cog._objects_by_category = {"ship": objects}
+        mock_about_cog._objects_cache.set("ship", objects)
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
@@ -1140,11 +1138,11 @@ class TestListCategoryExtraBranches:
         """list_category should handle unexpected exceptions gracefully."""
         interaction = _create_mock_interaction()
 
-        # Make _objects_by_category raise when accessed via __contains__
-        mock_about_cog._objects_by_category = MagicMock()
-        mock_about_cog._objects_by_category.__contains__ = MagicMock(side_effect=RuntimeError("unexpected error"))
+        # Make _objects_cache.peek raise an unexpected exception
+        from unittest.mock import patch
 
-        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
+        with patch.object(mock_about_cog._objects_cache, "peek", side_effect=RuntimeError("unexpected error")):
+            asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1164,8 +1162,8 @@ class TestAboutCommandExtraBranches:
         """about with category not in _objects_by_category should still call API."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {}  # category not cached
+        mock_about_cog._categories_cache.set("all", ["ship"])
+        mock_about_cog._objects_cache.clear()  # category not cached
 
         obj_resp = MagicMock()
         obj_resp.raise_for_status = MagicMock()
@@ -1184,8 +1182,8 @@ class TestAboutCommandExtraBranches:
         """about should use exact name match before checking aliases."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle", "aliases": ["Hawk"]}]}
+        mock_about_cog._categories_cache.set("all", ["ship"])
+        mock_about_cog._objects_cache.set("ship", [{"name": "Eagle", "aliases": ["Hawk"]}])
 
         obj_resp = MagicMock()
         obj_resp.raise_for_status = MagicMock()
@@ -1212,13 +1210,14 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_returns_systems(self, mock_about_cog):
         """system_autocomplete should return system names from preloaded data."""
-        mock_about_cog._objects_by_category = {
-            "system": [
+        mock_about_cog._objects_cache.set(
+            "system",
+            [
                 {"name": "Sol"},
                 {"name": "Alpha Centauri"},
                 {"name": "Beta Cygni"},
-            ]
-        }
+            ],
+        )
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.system_autocomplete(interaction, ""))
@@ -1230,13 +1229,14 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_filters_by_current(self, mock_about_cog):
         """system_autocomplete should filter by partial match."""
-        mock_about_cog._objects_by_category = {
-            "system": [
+        mock_about_cog._objects_cache.set(
+            "system",
+            [
                 {"name": "Sol"},
                 {"name": "Alpha Centauri"},
                 {"name": "Beta Cygni"},
-            ]
-        }
+            ],
+        )
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.system_autocomplete(interaction, "al"))
@@ -1246,7 +1246,7 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_empty_when_no_systems(self, mock_about_cog):
         """system_autocomplete returns empty list when no systems are preloaded."""
-        mock_about_cog._objects_by_category = {}
+        mock_about_cog._objects_cache.clear()
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.system_autocomplete(interaction, ""))
@@ -1255,7 +1255,7 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_limits_to_25(self, mock_about_cog):
         """system_autocomplete returns at most 25 results."""
-        mock_about_cog._objects_by_category = {"system": [{"name": f"System_{i}"} for i in range(30)]}
+        mock_about_cog._objects_cache.set("system", [{"name": f"System_{i}"} for i in range(30)])
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.system_autocomplete(interaction, ""))
@@ -1285,7 +1285,7 @@ class TestMakeRouteCommand:
 
         asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Beta"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -1407,13 +1407,14 @@ class TestListCategoryFilters:
         """list_category with tech_level filter shows only matching objects."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_by_category = {
-            "ship": [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "tech_level": 1},
                 {"name": "Hawk", "emoji": None, "tech_level": 2},
                 {"name": "Falcon", "emoji": None, "tech_level": 1},
-            ]
-        }
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", tech_level=1))
 
@@ -1428,13 +1429,14 @@ class TestListCategoryFilters:
         """list_category with manufacturer filter shows only matching objects."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_by_category = {
-            "ship": [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "manufacturer": "AcmeCorp"},
                 {"name": "Hawk", "emoji": None, "manufacturer": "StarForge"},
                 {"name": "Falcon", "emoji": None, "manufacturer": "AcmeCorp"},
-            ]
-        }
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", manufacturer="AcmeCorp"))
 
@@ -1448,13 +1450,14 @@ class TestListCategoryFilters:
         """list_category with both tech_level and manufacturer filters combined."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_by_category = {
-            "ship": [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "tech_level": 1, "manufacturer": "AcmeCorp"},
                 {"name": "Hawk", "emoji": None, "tech_level": 2, "manufacturer": "AcmeCorp"},
                 {"name": "Falcon", "emoji": None, "tech_level": 1, "manufacturer": "StarForge"},
-            ]
-        }
+            ],
+        )
 
         asyncio.run(
             mock_about_cog.list_category.callback(
@@ -1472,12 +1475,13 @@ class TestListCategoryFilters:
         """list_category without filters shows all objects (existing behavior)."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_by_category = {
-            "ship": [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None},
                 {"name": "Hawk", "emoji": None},
-            ]
-        }
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
@@ -1489,11 +1493,12 @@ class TestListCategoryFilters:
         """list_category should send ephemeral message when filters produce no matches."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_by_category = {
-            "ship": [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "tech_level": 1},
-            ]
-        }
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", tech_level=5))
 
@@ -1505,12 +1510,13 @@ class TestListCategoryFilters:
         """list_category manufacturer filter should be case-insensitive."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_by_category = {
-            "ship": [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "manufacturer": "AcmeCorp"},
                 {"name": "Hawk", "emoji": None, "manufacturer": "StarForge"},
-            ]
-        }
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", manufacturer="acmecorp"))
 
@@ -1540,7 +1546,7 @@ class TestListCategoryBugBundleRegressions:
         interaction = _create_mock_interaction()
         # Names long enough to force a 1024-char split into ≥2 fields.
         objects = [{"name": f"VeryLongObjectName_{'x' * 80}_{i:03d}", "emoji": None} for i in range(20)]
-        mock_about_cog._objects_by_category = {"ship": objects}
+        mock_about_cog._objects_cache.set("ship", objects)
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
@@ -1558,7 +1564,7 @@ class TestListCategoryBugBundleRegressions:
         """A.27: passing 101 items must render 100 and set a truncation footer."""
         interaction = _create_mock_interaction()
         objects = [{"name": f"Obj{i:03d}", "emoji": None} for i in range(101)]
-        mock_about_cog._objects_by_category = {"ship": objects}
+        mock_about_cog._objects_cache.set("ship", objects)
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
@@ -1576,7 +1582,7 @@ class TestListCategoryBugBundleRegressions:
         """A.27: exactly-100 items are NOT truncated → no footer spam."""
         interaction = _create_mock_interaction()
         objects = [{"name": f"Obj{i:03d}", "emoji": None} for i in range(100)]
-        mock_about_cog._objects_by_category = {"ship": objects}
+        mock_about_cog._objects_cache.set("ship", objects)
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
@@ -1592,7 +1598,7 @@ class TestListCategoryBugBundleRegressions:
         """A.27: current max real-world category (modules, 66 items) is below cap."""
         interaction = _create_mock_interaction()
         objects = [{"name": f"Module{i:02d}", "emoji": None} for i in range(66)]
-        mock_about_cog._objects_by_category = {"module": objects}
+        mock_about_cog._objects_cache.set("module", objects)
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "module"))
 

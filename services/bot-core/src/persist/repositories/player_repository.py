@@ -5,6 +5,8 @@ Handles database operations for Player entities including guild-isolated
 player management, progression tracking, and statistics.
 """
 
+from datetime import UTC, datetime, timedelta
+
 from shared import bblogger
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -151,10 +153,27 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error getting player for user {user_id} in guild {guild_id}: {e}")
             raise
 
-    async def get_players_by_guild(self, db: AsyncSession, guild_id: int) -> list[Player]:
-        """Get all players in a specific guild."""
+    async def get_players_by_guild(
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        active_within_days: int | None = None,
+    ) -> list[Player]:
+        """Get all players in a specific guild.
+
+        Args:
+            db: Database session.
+            guild_id: Guild to query players for.
+            active_within_days: When set and > 0, restricts results to players
+                whose ``updated_at`` is within this many days of the current UTC time.
+                ``0`` means "warm everyone" — same as ``None`` (no filter applied).
+        """
         try:
-            result = await db.execute(select(Player).where(Player.guild_id == guild_id))
+            query = select(Player).where(Player.guild_id == guild_id)
+            if active_within_days is not None and active_within_days > 0:
+                cutoff = datetime.now(UTC) - timedelta(days=active_within_days)
+                query = query.where(Player.updated_at >= cutoff)
+            result = await db.execute(query)
             return list(result.scalars().all())
         except Exception as e:
             flogger.error(f"Error getting players for guild {guild_id}: {e}")

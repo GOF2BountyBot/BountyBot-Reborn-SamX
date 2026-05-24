@@ -8,7 +8,7 @@ with simplified URIs and consolidated operations.
 import io
 
 import discord
-from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, File, Header, HTTPException, Query, Request, UploadFile, status
 from shared import bblogger
 from utils.discord_converters import ChannelConverter, MessageConverter, PermissionConverter
 from utils.discord_helpers import (
@@ -31,6 +31,8 @@ from api.schemas.channel_schemas import (
     ThreadResponse,
 )
 from api.schemas.message_schemas import (
+    BatchFileUploadData,
+    BatchFileUploadResponse,
     FileUploadResponse,
     MessageCreateRequest,
     MessageListResponse,
@@ -650,3 +652,89 @@ async def upload_file_to_channel(
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in upload_file_to_channel for channel {channel_id}: {exc}")
         await handle_discord_exception("upload file to channel", exc)
+
+
+# Discord allows up to 10 attachments per message.
+_MAX_FILES_PER_BATCH = 10
+
+
+@router.post(
+    "/channels/{channel_id}/upload-batch",
+    response_model=BatchFileUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload Multiple Files to Channel (single message)",
+    description=(
+        "Upload up to 10 files to a channel as attachments on a SINGLE Discord "
+        "message. Returns per-file CDN URLs keyed by filename. Far more efficient "
+        "than N sequential /upload calls because Discord rate-limits message "
+        "creation per channel (~5/5s); 10 files in one message = 1 rate-limit slot."
+    ),
+)
+async def upload_files_to_channel_batch(
+    request: Request,
+    channel_id: int,
+    files: list[UploadFile] = File(..., description="Up to 10 files to attach to a single message"),
+) -> BatchFileUploadResponse:
+    """Upload multiple files to a channel as attachments on a single message."""
+    flogger.info(f"upload_files_to_channel_batch called for channel_id={channel_id} files={len(files)}")
+    try:
+        if not files:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one file is required",
+            )
+        if len(files) > _MAX_FILES_PER_BATCH:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Maximum {_MAX_FILES_PER_BATCH} files per batch (Discord limit)",
+            )
+
+        bot = await resolve_bot(request)
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
+
+        if not hasattr(channel, "send"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Channel {channel_id} cannot receive messages",
+            )
+
+        # Read all bodies and build discord.File list
+        discord_files: list[discord.File] = []
+        for upload in files:
+            body = await upload.read()
+            if not body:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"File {upload.filename!r} has empty body",
+                )
+            discord_files.append(discord.File(io.BytesIO(body), filename=upload.filename or "upload.bin"))
+
+        # Send all files as attachments on ONE message — one rate-limit slot
+        message = await channel.send(files=discord_files)
+
+        if not message.attachments or len(message.attachments) != len(discord_files):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"Message sent but attachment count mismatch: "
+                    f"sent={len(discord_files)} returned={len(message.attachments)}"
+                ),
+            )
+
+        data = [
+            BatchFileUploadData(
+                attachment_url=att.url,
+                filename=att.filename,
+                size=att.size,
+            )
+            for att in message.attachments
+        ]
+
+        flogger.info(f"Batch-uploaded {len(data)} files to channel {channel_id}: message_id={message.id}")
+        return BatchFileUploadResponse(status="created", message_id=message.id, data=data)
+
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.error(f"Unexpected error in upload_files_to_channel_batch for channel {channel_id}: {exc}")
+        await handle_discord_exception("batch upload files to channel", exc)

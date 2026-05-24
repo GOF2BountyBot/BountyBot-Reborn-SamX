@@ -657,11 +657,23 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     shop_item = await self.shop_repo.create_or_update(db, shop_item_data)
                     generated_items.append(shop_item)
 
+            # Deduplicate: the generation loop draws items with replacement, so the same
+            # item_name may be drawn multiple times. create_or_update() upserts to a single
+            # DB row each time, leaving the DB clean — but every draw unconditionally
+            # appends to generated_items, causing duplicates in the announcement embed
+            # and the autocomplete cache push. Keep only the final (most-recently-upserted)
+            # state for each item_name.
+            seen: dict[str, object] = {}
+            for si in generated_items:
+                seen[si.item_name] = si
+            generated_items = list(seen.values())
+
             refresh_details = {
                 "guild_id": guild_id,
                 "tier": tier,
                 "tech_level": shop_tech_level,
                 "items_generated": len(generated_items),
+                "items": generated_items,  # include items so executor can announce without re-fetch
                 "refresh_time": datetime.now(UTC).isoformat(),
             }
 

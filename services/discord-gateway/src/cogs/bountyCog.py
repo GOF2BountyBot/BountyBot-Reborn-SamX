@@ -3,6 +3,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from cogs._shared.http_error_handler import report_api_error
 from cogs._shared.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from discord import app_commands
@@ -10,6 +11,8 @@ from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import fuzzy_filter, normalize_for_search, resolve_system_name
 from utils.timestamp_utils import iso_to_discord_ts
+
+from utils import autocomplete_state
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-BountyCog")
@@ -19,6 +22,14 @@ api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"bountyCog loading with API_BASE_URL: {api_base}")
 
 _VALID_DIVISIONS = ["bronze", "silver", "gold", "platinum"]
+
+# Canonical tier color palette (matches OPEN_ITEMS.md Appendix A ENH-02)
+TIER_COLORS: dict[str, int] = {
+    "bronze": 0xCD7F32,  # 13467442
+    "silver": 0xC0C0C0,  # 12632256
+    "gold": 0xFFD700,  # 16766720
+    "platinum": 0xE5E4E2,  # 15066082
+}
 
 # Message shown when the guild hasn't been set up via /admin_setup
 _GUILD_NOT_CONFIGURED_MSG = (
@@ -42,7 +53,18 @@ class BountyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        self._systems: list[str] = []
+        # Static catalog: star system names — TTL=None (never expires; only reloaded on /reload_autocomplete)
+        self._systems_cache: AutocompleteCache[str, list[str]] = AutocompleteCache(
+            ttl_seconds=None,
+            name="bounty-systems",
+        )
+        # Bounty cache: keyed by guild_id (int), stores list of bounty dicts, TTL=1200s (20 min)
+        # Dead-man switch only — periodic bounty_cache_refresh job resets TTL every 10 min
+        self._bounty_cache: AutocompleteCache[int, list[dict]] = AutocompleteCache(
+            ttl_seconds=1200.0,
+            refresh_fn=self._fetch_bounties,
+            name="bountyCog-bounties",
+        )
 
         # Preload system data at startup
         bot.loop.create_task(self._preload_data())
@@ -61,8 +83,9 @@ class BountyCog(commands.Cog):
                 resp = await self.http_client.get(f"{api_base}/about/categories/system/objects", timeout=10)
                 resp.raise_for_status()
                 systems = resp.json()
-                self._systems = [s.get("name", "") for s in systems if s.get("name")]
-                flogger.info("BountyCog: Preloaded %d system names", len(self._systems))
+                system_names = [s.get("name", "") for s in systems if s.get("name")]
+                self._systems_cache.set("all", system_names)
+                flogger.info("BountyCog: Preloaded %d system names", len(system_names))
                 return  # Success — exit
             except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
                 flogger.warning(
@@ -73,7 +96,40 @@ class BountyCog(commands.Cog):
                 flogger.warning("BountyCog: Unexpected error on preload attempt %d/%d: %s", attempt, len(delays), e)
                 await asyncio.sleep(delay)
         flogger.error("BountyCog: All preload attempts exhausted. System autocomplete will be empty.")
-        self._systems = []
+        self._systems_cache.set("all", [])
+
+    async def _fetch_bounties(self, key: int) -> list[dict]:
+        """Fetch all active bounties for a guild from bot-core. Called by _bounty_cache on miss/expiry.
+
+        Args:
+            key: guild_id (int).
+
+        Returns:
+            List of bounty dicts from GET /api/v1/bounties/?guild_id=<guild_id>.
+
+        Phase 7: Pre-computes ``_norm`` on each bounty dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per bounty.
+        """
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/bounties/",
+                params={"guild_id": key},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return []
+            bounties = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for b in bounties:
+                label = (
+                    f"{b.get('criminal_name', '')} "
+                    f"({b.get('division', '').title()}, T{b.get('tech_level', '?')}) "
+                    f"— {b.get('reward', 0):,}cr"
+                )
+                b["_norm"] = normalize_for_search(label)
+            return bounties
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
 
     async def _get_player_id(self, user_id: int, guild_id: int, display_name: str | None = None) -> int | None:
         """Resolve a Discord user ID to a game player ID via the upsert endpoint.
@@ -102,44 +158,60 @@ class BountyCog(commands.Cog):
     # Autocomplete
     # ------------------------------------------------------------------
 
-    async def division_autocomplete(
-        self,
-        _interaction: discord.Interaction,
-        current: str,
-    ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for division selection."""
-        norm_current = normalize_for_search(current)
-        return [
-            app_commands.Choice(name=div.title(), value=div)
-            for div in _VALID_DIVISIONS
-            if norm_current in normalize_for_search(div)
-        ]
-
     async def system_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for star system names — includes ALL systems (game balance)."""
-        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, self._systems)]
+        systems = self._systems_cache.peek("all") or []
+        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, systems)]
 
     async def bounty_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for active bounties — fetches current bounties."""
+        """Zero-HTTP autocomplete for active bounties.
+
+        Phase 6: Reads from _bounty_cache with peek() — no HTTP call per keystroke.
+        On cold miss, schedules a background refresh and returns [] immediately.
+
+        Player tier for filtering is read from autocomplete_state.player_cache (peek).
+        If player cache misses, falls back to showing ALL bounties (graceful degradation
+        matching existing behaviour).
+
+        When bounty_spawn_executor pushes to the gateway, _bounty_cache.set(guild_id, bounties)
+        is called so the next keystroke is served from cache.
+        """
         try:
-            resp = await self.http_client.get(
-                f"{api_base}/bounties/",
-                params={"guild_id": interaction.guild_id},
-                timeout=5,
-            )
-            resp.raise_for_status()
-            bounties = resp.json()
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: peek bounty cache — no HTTP
+            bounties = self._bounty_cache.peek(guild_id)
+            if bounties is None:
+                self._bounty_cache.schedule_refresh(guild_id)
+                return []
+
+            # Attempt tier filtering from player cache — graceful degradation on miss
+            player_tier: str | None = None
+            if autocomplete_state.player_cache is not None:
+                player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+                if player_entry is not None:
+                    tier = player_entry.get("tier", "")
+                    if tier:
+                        player_tier = tier.lower()
+
             norm_current = normalize_for_search(current)
             choices = []
             for b in bounties:
+                # Filter by player's tier if we know it (graceful degradation if we don't)
+                if player_tier and b.get("division", "").lower() != player_tier:
+                    continue
                 label = (
                     f"{b['criminal_name']} ({b['division'].title()}, T{b.get('tech_level', '?')}) — {b['reward']:,}cr"
                 )
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for bounties
+                # pushed via internal endpoint before this phase (old shape).
+                norm_label = b.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=str(b["id"])))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -159,8 +231,9 @@ class BountyCog(commands.Cog):
 
         # Only resolve if we have systems loaded — if preload failed, pass through
         # and let bot-core return 404 for invalid names
-        if self._systems:
-            resolved = resolve_system_name(system, self._systems)
+        _systems_list = self._systems_cache.peek("all") or []
+        if _systems_list:
+            resolved = resolve_system_name(system, _systems_list)
             if resolved is None:
                 await interaction.followup.send(
                     f"❌ Unknown system `{system}`. Use autocomplete or check the spelling.",
@@ -169,7 +242,7 @@ class BountyCog(commands.Cog):
                 return
             system = resolved
         else:
-            flogger.debug("/check: _systems not loaded, passing typed value through to bot-core: %s", system)
+            flogger.debug("/check: systems cache empty, passing typed value through to bot-core: %s", system)
 
         try:
             player_id = await self._get_player_id(
@@ -222,15 +295,17 @@ class BountyCog(commands.Cog):
             #     bounty's per-bounty result (B.12 multi-bounty fix).
             if len(outcomes) > 1:
                 embed = self._build_multi_check_embed(system, outcomes)
+                await interaction.followup.send(embed=embed)
             else:
                 # Single-outcome path: prefer outcomes[0] (new shape) but fall
                 # back to top-level fields for legacy bot-core responses.
                 outcome_data = outcomes[0] if outcomes else data
                 outcome_data = dict(outcome_data)
                 outcome_data["system_name"] = system
+                # Inject winner name so the capture embed can show "Claimed by".
+                outcome_data["winner_name"] = interaction.user.display_name or str(interaction.user)
                 embed = self._build_check_embed(outcome_data)
-
-            await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/check success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" system={system} result={result} result_count={len(outcomes)}"
@@ -374,17 +449,35 @@ class BountyCog(commands.Cog):
                 inline=False,
             )
 
-        # Combat summaries: append once per outcome that had combat.
+        # Combat summaries and payout breakdowns: append once per outcome that had combat/capture.
         for outcome in outcomes:
+            criminal_name = outcome.get("criminal_name") or f"Bounty #{outcome.get('bounty_id')}"
             combat = outcome.get("combat_result")
             if combat:
-                criminal_name = outcome.get("criminal_name") or f"Bounty #{outcome.get('bounty_id')}"
                 summary = self._format_combat_summary(combat)
                 embed.add_field(
                     name=f"⚔️ Combat — {criminal_name}",
                     value=summary[:1024],
                     inline=False,
                 )
+
+            # Payout breakdown for capture outcomes (result=correct, not a combat loss).
+            if outcome.get("result") == "correct" and outcome.get("combat_won") is not False:
+                breakdown = outcome.get("payout_breakdown") or []
+                if breakdown:
+                    breakdown_sorted = sorted(breakdown, key=lambda x: x.get("amount", 0), reverse=True)
+                    lines = []
+                    for entry in breakdown_sorted:
+                        icon = "🏆" if entry.get("role") == "capture claim" else "🔍"
+                        name = entry.get("player_display_name", "Unknown")
+                        role = entry.get("role", "")
+                        amount = entry.get("amount", 0)
+                        lines.append(f"{icon} {name} — {role} — {amount:,} cr")
+                    embed.add_field(
+                        name=f"💰 Payout — {criminal_name}",
+                        value="\n".join(lines)[:1024],
+                        inline=False,
+                    )
 
         return embed
 
@@ -415,11 +508,24 @@ class BountyCog(commands.Cog):
 
         return "\n".join(lines)
 
+    def _get_tier_color(self, tier: str | None) -> discord.Color:
+        """Return a discord.Color for the given tier string (case-insensitive).
+
+        Falls back to discord.Color.blue() when tier is None or unknown so that
+        no embed is ever left without a color.
+        """
+        if tier:
+            color_int = TIER_COLORS.get(tier.lower())
+            if color_int is not None:
+                return discord.Color(color_int)
+        return discord.Color.blue()
+
     def _build_check_embed(self, data: dict) -> discord.Embed:
         """Build an embed for the /check command based on the full response data dict."""
         result = data.get("result", "")
         system = data.get("system_name", "")
         message = data.get("message", "")
+        tier = data.get("division")  # bounty tier for color-coding
 
         if result == "correct":
             combat_won = data.get("combat_won")
@@ -445,78 +551,15 @@ class BountyCog(commands.Cog):
                         inline=False,
                     )
             else:
-                # Successful capture (bronze with/without bonus, or silver/gold/platinum win)
-                embed = discord.Embed(
-                    title="🎯 Bounty Captured!",
-                    description=f"**{criminal_name}** has been captured!",
-                    color=discord.Color.green(),
-                )
-                reward = data.get("reward", 0)
-                total_reward = data.get("total_reward", reward)
-                bonus_won = data.get("bonus_won", False)
-
-                if bonus_won:
-                    embed.add_field(
-                        name="💰 Reward",
-                        value=f"**{total_reward:,}** credits (2× combat bonus!)",
-                        inline=False,
-                    )
-                else:
-                    embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
-
-                # Show combat stats if available
-                combat = data.get("combat_result")
-                if combat:
-                    embed.add_field(
-                        name="⚔️ Combat Summary",
-                        value=self._format_combat_summary(combat),
-                        inline=False,
-                    )
-                if message:
-                    embed.add_field(name="Result", value=message, inline=False)
+                # Successful capture — render the full payout embed so this
+                # single /check response is the only message the channel sees.
+                embed = self._build_capture_embed(data)
         elif result == "captured":
             # Backward-compatible handler: treated same as correct+combat_won=True (Bronze capture)
-            embed = discord.Embed(
-                title="🎯 Bounty Captured!",
-                description=f"**{data.get('criminal_name', 'Unknown')}** has been captured!",
-                color=discord.Color.green(),
-            )
-            reward = data.get("reward", 0)
-            total_reward = data.get("total_reward", reward)
-            bonus_won = data.get("bonus_won", False)
-
-            if bonus_won:
-                embed.add_field(
-                    name="💰 Reward",
-                    value=f"**{total_reward:,}** credits (2× combat bonus!)",
-                    inline=False,
-                )
-            else:
-                embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
-
-            combat = data.get("combat_result")
-            if combat:
-                embed.add_field(
-                    name="⚔️ Combat Summary",
-                    value=self._format_combat_summary(combat),
-                    inline=False,
-                )
+            embed = self._build_capture_embed(data)
         elif result == "combat_win":
             # Backward-compatible handler: treated same as correct+combat_won=True (Silver+ capture)
-            embed = discord.Embed(
-                title="⚔️ Combat Victory!",
-                description=f"You defeated **{data.get('criminal_name', 'Unknown')}** in combat!",
-                color=discord.Color.green(),
-            )
-            reward = data.get("reward", 0)
-            embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
-            combat = data.get("combat_result")
-            if combat:
-                embed.add_field(
-                    name="⚔️ Combat Summary",
-                    value=self._format_combat_summary(combat),
-                    inline=False,
-                )
+            embed = self._build_capture_embed(data)
         elif result == "combat_loss":
             # Kept for backward compatibility (not returned by current bot-core but may exist in future)
             embed = discord.Embed(
@@ -540,13 +583,13 @@ class BountyCog(commands.Cog):
                 embed = discord.Embed(
                     title="👀 Recently Spotted!",
                     description=f"**{system}** — The target was recently here. They're close!",
-                    color=discord.Color.orange(),
+                    color=self._get_tier_color(tier),
                 )
             else:
                 embed = discord.Embed(
                     title="❌ System Checked",
                     description=f"**{system}** — System checked, bounty not here.",
-                    color=discord.Color.red(),
+                    color=self._get_tier_color(tier),
                 )
             if message:
                 embed.add_field(name="Intel", value=message, inline=False)
@@ -554,7 +597,7 @@ class BountyCog(commands.Cog):
             embed = discord.Embed(
                 title="🔁 Already Checked",
                 description=f"**{system}** — This system has already been checked.",
-                color=discord.Color.yellow(),
+                color=self._get_tier_color(tier),
             )
             if message:
                 embed.add_field(name="Note", value=message, inline=False)
@@ -566,6 +609,61 @@ class BountyCog(commands.Cog):
             )
             if message:
                 embed.add_field(name="Note", value=message, inline=False)
+        return embed
+
+    def _build_capture_embed(self, data: dict) -> discord.Embed:
+        """Build the full capture payout embed for a successful /check capture.
+
+        Consolidates the combat summary and payout breakdown into a single embed
+        so that the /check response IS the only capture message in the channel.
+        """
+        criminal_name = data.get("criminal_name", "Unknown")
+        tier = data.get("division")
+        reward = data.get("reward", 0)
+        total_reward = data.get("total_reward") or reward
+        bonus_won = data.get("bonus_won", False)
+        winner_name = data.get("winner_name") or "A bounty hunter"
+
+        embed = discord.Embed(
+            title="🎯 Bounty Captured!",
+            description=f"**{criminal_name}** has been brought in.",
+            color=self._get_tier_color(tier),
+        )
+
+        # Combat summary
+        combat = data.get("combat_result")
+        if combat:
+            embed.add_field(
+                name="⚔️ Combat Summary",
+                value=self._format_combat_summary(combat),
+                inline=False,
+            )
+
+        # "Captured by" — single inline label:value (no Division field)
+        embed.add_field(name="", value=f"Captured by: **{winner_name}**", inline=True)
+
+        # Payout breakdown — per-player if available, else fall back to total
+        breakdown = data.get("payout_breakdown") or []
+        if breakdown:
+            # Sort descending by amount (winner first)
+            breakdown = sorted(breakdown, key=lambda x: x.get("amount", 0), reverse=True)
+            lines = []
+            for entry in breakdown:
+                icon = "🏆" if entry.get("role") == "capture claim" else "🔍"
+                name = entry.get("player_display_name", "Unknown")
+                role = entry.get("role", "")
+                amount = entry.get("amount", 0)
+                lines.append(f"{icon} {name} — {role} — {amount:,} cr")
+            embed.add_field(name="💰 Payout Breakdown", value="\n".join(lines), inline=False)
+        elif bonus_won:
+            embed.add_field(
+                name="💰 Total Payout",
+                value=f"**{total_reward:,} cr** (2× combat bonus!)",
+                inline=False,
+            )
+        else:
+            embed.add_field(name="💰 Total Payout", value=f"**{total_reward:,} cr**", inline=False)
+
         return embed
 
     @check.error
@@ -580,38 +678,84 @@ class BountyCog(commands.Cog):
             pass  # Interaction fully expired, nothing we can do
 
     # ------------------------------------------------------------------
-    # /bounties [division]
+    # /bounties [show_all]
     # ------------------------------------------------------------------
 
     @app_commands.command(name="bounties", description="List active bounties in this guild")
-    @app_commands.describe(division="Filter by division (bronze, silver, gold)")
-    @app_commands.autocomplete(division=division_autocomplete)
+    @app_commands.describe(show_all="Show bounties across all tiers (default: your tier only)")
     async def bounties(
         self,
         interaction: discord.Interaction,
-        division: str | None = None,
+        show_all: bool = False,
     ):
-        """List active bounties."""
+        """List active bounties.
+
+        By default shows only bounties in the invoking player's current tier.
+        Pass show_all=True to see every active bounty across all tiers.
+        """
         await interaction.response.defer(thinking=True)
-        flogger.info(f"/bounties invoked: guild={interaction.guild_id} user={interaction.user.id} division={division}")
+        flogger.info(f"/bounties invoked: guild={interaction.guild_id} user={interaction.user.id} show_all={show_all}")
 
         try:
-            params: dict = {"guild_id": interaction.guild_id}
-            if division:
-                params["division"] = division
+            title_suffix = ""
 
-            resp = await self.http_client.get(
-                f"{api_base}/bounties/",
-                params=params,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            bounty_list = resp.json()
+            if not show_all:
+                # Resolve player tier — try cache first (graceful degradation on miss)
+                player_tier: str | None = None
+                if autocomplete_state.player_cache is not None:
+                    player_entry = autocomplete_state.player_cache.peek((interaction.guild_id, interaction.user.id))
+                    if player_entry is not None:
+                        player_tier = player_entry.get("tier") or None
+
+                if player_tier is None:
+                    # Cache miss — fall back to HTTP to get the player's tier
+                    player_resp = await self.http_client.post(
+                        f"{api_base}/players/",
+                        json={
+                            "discord_id": interaction.user.id,
+                            "guild_id": interaction.guild_id,
+                            "discord_username": None,
+                            "display_name": getattr(interaction.user, "display_name", None),
+                        },
+                        timeout=10,
+                    )
+                    player_resp.raise_for_status()
+                    player_data = player_resp.json()
+                    player_tier = player_data.get("tier") or "Bronze"
+
+                division = player_tier.lower()
+                title_suffix = f" — {player_tier} Tier"
+            else:
+                division = None
+                title_suffix = " — All Tiers"
+
+            # Try cache first for bounty list — fall back to HTTP on miss or empty cache.
+            # Use truthiness check (not `is not None`) so a stale empty list doesn't
+            # suppress an HTTP fetch that would return real bounties.
+            guild_id = interaction.guild_id
+            cached_bounties = self._bounty_cache.peek(guild_id)
+            if cached_bounties:
+                # Filter by division if needed
+                if division is not None:
+                    bounty_list = [b for b in cached_bounties if b.get("division", "").lower() == division]
+                else:
+                    bounty_list = list(cached_bounties)
+            else:
+                # Cache miss — fetch from HTTP
+                params: dict = {"guild_id": guild_id}
+                if division is not None:
+                    params["division"] = division
+                resp = await self.http_client.get(
+                    f"{api_base}/bounties/",
+                    params=params,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                bounty_list = resp.json()
+
+            title = f"📋 Active Bounties{title_suffix}"
 
             if not bounty_list:
-                title = "📋 Active Bounties"
-                if division:
-                    title += f" — {division.title()}"
                 embed = discord.Embed(
                     title=title,
                     description="No active bounties at this time.",
@@ -619,10 +763,6 @@ class BountyCog(commands.Cog):
                 )
                 await interaction.followup.send(embed=embed)
                 return
-
-            title = "📋 Active Bounties"
-            if division:
-                title += f" — {division.title()}"
 
             embed = discord.Embed(
                 title=title,

@@ -215,3 +215,46 @@ class TestGetOrCreateUser:
             await repo.get_or_create_user(mock_db, discord_id=123456789, username="NewUser")
 
         mock_db.rollback.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_user_creates_with_display_name(self, repo, mock_db):
+        """When user doesn't exist, creates with display_name if provided (C.1)."""
+        mock_db.get = AsyncMock(return_value=None)
+
+        captured_user = None
+
+        def _capture_add(obj):
+            nonlocal captured_user
+            captured_user = obj
+
+        mock_db.add = MagicMock(side_effect=_capture_add)
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        await repo.get_or_create_user(mock_db, discord_id=111, username="SamX", display_name="SamAccountX")
+
+        assert captured_user is not None
+        assert captured_user.display_name == "SamAccountX"
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_user_updates_display_name_on_existing(self, repo, mock_db):
+        """When user exists, updates display_name if provided and different (C.1)."""
+        existing = _make_user(id=111, discord_username="SamX", display_name="OldName")
+        mock_db.get = AsyncMock(return_value=existing)
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        await repo.get_or_create_user(mock_db, discord_id=111, display_name="SamAccountX")
+
+        assert existing.display_name == "SamAccountX"
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_user_does_not_overwrite_display_name_when_none(self, repo, mock_db):
+        """When display_name=None, does not overwrite existing display_name (C.1)."""
+        existing = _make_user(id=111, discord_username="SamX", display_name="ExistingName")
+        mock_db.get = AsyncMock(return_value=existing)
+
+        await repo.get_or_create_user(mock_db, discord_id=111, display_name=None)
+
+        # display_name should remain unchanged
+        assert existing.display_name == "ExistingName"

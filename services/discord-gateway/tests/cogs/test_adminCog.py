@@ -60,6 +60,51 @@ def _close_coro(coro):
     return MagicMock()
 
 
+# ---------------------------------------------------------------------------
+# Phase-4 autocomplete_state cache helpers for adminCog tests.
+#
+# adminCog imports resolve_player_id LAZILY (inside each function):
+#   from utils.autocomplete_helpers import resolve_player_id
+# This means the import uses whatever utils.autocomplete_helpers is in
+# sys.modules at the time of the call (NOT a module-level binding).
+# Therefore we only need to populate sys.modules["utils.autocomplete_state"]
+# — the NEW version — which is what the lazy import will use.
+# ---------------------------------------------------------------------------
+
+
+def _ac_get_state_for_admin():
+    """Return the autocomplete_state that adminCog's lazy import will use."""
+    return sys.modules.get("utils.autocomplete_state")
+
+
+def _ac_init_player_cache_for_admin():
+    """Create a real (no-HTTP) player_cache on the current autocomplete_state.
+
+    If the module is not yet in sys.modules (was evicted), import it first so
+    it's available for the lazy import inside resolve_player_id.
+    """
+    from cogs._shared.autocomplete_cache import AutocompleteCache
+
+    ac = _ac_get_state_for_admin()
+    if ac is None:
+        # Module was evicted — import it so the lazy import inside resolve_player_id
+        # finds the same object we're about to populate.
+        import utils.autocomplete_state as _ac_mod
+
+        ac = _ac_mod
+    if ac.player_cache is None:
+        ac.player_cache = AutocompleteCache(ttl_seconds=900, name="player")
+        ac._initialized = True
+    return ac
+
+
+def _ac_reset_admin_player_cache():
+    """Invalidate all player_cache entries without destroying the cache object."""
+    ac = _ac_get_state_for_admin()
+    if ac is not None and ac.player_cache is not None:
+        ac.player_cache.clear()
+
+
 @pytest.fixture(scope="module")
 def mock_bot():
     """Create a mock Discord bot for adminCog testing."""
@@ -2396,17 +2441,20 @@ class TestPlayerShipAutocomplete:
         return user
 
     def test_filters_to_player_ships_when_user_param_available(self, mock_admin_cog):
-        """When namespace.user is set and player resolves, only that player's ships are shown."""
+        """When namespace.user is set and player resolves, only that player's ships are shown.
+
+        Phase 4: resolve_player_id reads from cache. Pre-populate player_cache so
+        the admin function gets player_id=7 and then makes its own HTTP call for ships.
+        """
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
 
-        # resolve_player_id → POST /players/ returns player_id=7
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value={"id": 7})
+        # Phase 4: Pre-populate player_cache so resolve_player_id returns player_id=7
+        ac = _ac_init_player_cache_for_admin()
+        if ac is not None:
+            ac.player_cache.set((99, 42), {"id": 7})
 
-        # GET /ships/player/7 returns two ships owned by the player
+        # GET /ships/player/7 returns two ships owned by the player (still HTTP in adminCog)
         ships_resp = MagicMock()
         ships_resp.status_code = 200
         ships_resp.json = MagicMock(
@@ -2416,7 +2464,6 @@ class TestPlayerShipAutocomplete:
             ]
         )
 
-        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
@@ -2428,6 +2475,9 @@ class TestPlayerShipAutocomplete:
         get_calls = [call[0][0] for call in mock_admin_cog.http_client.get.call_args_list]
         assert any("ships/player/7" in url for url in get_calls)
         assert not any("about/ships" in url for url in get_calls)
+
+        # Cleanup
+        _ac_reset_admin_player_cache()
 
     def test_falls_back_to_all_ships_when_user_param_is_none(self, mock_admin_cog):
         """When namespace.user is None (not yet selected), all ships from _ship_catalog are shown.
@@ -2477,14 +2527,14 @@ class TestPlayerShipAutocomplete:
         mock_admin_cog.http_client.get.assert_not_called()
 
     def test_filters_ships_by_current_input(self, mock_admin_cog):
-        """Autocomplete filters results by the current typed prefix (case/accent-insensitive)."""
+        """Autocomplete filters results by the current typed prefix (Phase 4: cache-based player)."""
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
 
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value={"id": 7})
+        # Phase 4: Pre-populate player_cache
+        ac = _ac_init_player_cache_for_admin()
+        if ac is not None:
+            ac.player_cache.set((99, 42), {"id": 7})
 
         ships_resp = MagicMock()
         ships_resp.status_code = 200
@@ -2495,7 +2545,6 @@ class TestPlayerShipAutocomplete:
                 {"ship_name": "Bloodstar", "ship_id": 3},
             ]
         )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, "Ni"))
@@ -2504,6 +2553,9 @@ class TestPlayerShipAutocomplete:
         assert "Niode" in names
         assert "Groza" not in names
         assert "Bloodstar" not in names
+
+        # Cleanup
+        _ac_reset_admin_player_cache()
 
     def test_returns_empty_on_unexpected_exception(self, mock_admin_cog):
         """Empty catalog (cold cache) returns [] without raising (silent degradation)."""
@@ -2844,7 +2896,12 @@ class TestAdminRoleAccessGranted:
     """
 
     def test_check_is_admin_returns_true_for_admin_role_holder(self, mock_admin_cog):
-        """B.40: _check_is_admin returns True for a user who holds the configured admin role."""
+        """B.40: _check_is_admin returns True for a user who holds the configured admin role.
+
+        Bug fix (interaction.member → interaction.user): interaction.user IS a discord.Member
+        for guild slash commands and carries .roles. The fixed code uses guild.get_role(id)
+        and checks admin_role in interaction.user.roles.
+        """
         from cogs.adminCog import _check_is_admin
 
         admin_role_id = 555666777
@@ -2852,15 +2909,14 @@ class TestAdminRoleAccessGranted:
         admin_role.id = admin_role_id
 
         interaction = _create_mock_interaction()
-        # B.40 fix: production code reads interaction.member.roles (not user.roles).
-        # interaction.member is a discord.Member; interaction.user is a discord.User.
-        # In guild slash commands, interaction.member holds the guild-scoped object
-        # (with roles); interaction.user is the base User (no guild context).
-        interaction.member.roles = [admin_role]
-        interaction.member = interaction.member  # ensure member is set
+        # Fixed: production code now checks interaction.user.roles via guild.get_role().
+        # interaction.user IS a discord.Member in guild slash commands and carries .roles.
+        interaction.user.roles = [admin_role]
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
         interaction.guild_id = 987654321
+        # guild.get_role(admin_role_id) must return the role object so the "in" check works
+        interaction.guild.get_role = MagicMock(return_value=admin_role)
 
         # Config API returns the matching admin_role_id
         api_resp = MagicMock()
@@ -2878,29 +2934,87 @@ class TestAdminRoleAccessGranted:
 
         assert result is True, (
             "User holding the configured admin role must be granted admin access. "
-            "Bug B.40: @app_commands.default_permissions(administrator=True) was hiding commands "
-            "from admin-role holders who lack the built-in Discord Administrator permission."
+            "Bug fix: production code now uses interaction.user.roles (interaction.user "
+            "IS a discord.Member for guild slash commands and carries guild role info)."
+        )
+
+    def test_check_is_admin_admin_role_holder_not_developer_returns_true(self, mock_admin_cog):
+        """Specific path: user has the configured admin role but is NOT in DEVELOPERS env var.
+
+        This is the exact bug scenario: Check 0 (DEVELOPERS) fails, Check 1 (Discord admin)
+        fails, but Check 2 (Bot Admin role) must succeed. The old code's interaction.member
+        AttributeError silently swallowed the role check and always returned False here.
+        The fix ensures this path now correctly returns True.
+        """
+        from cogs.adminCog import _check_is_admin
+
+        admin_role_id = 123456789
+        admin_role = MagicMock()
+        admin_role.id = admin_role_id
+
+        interaction = _create_mock_interaction()
+        interaction.user.id = 999000111  # NOT in DEVELOPERS
+        # User has the bot admin role
+        interaction.user.roles = [admin_role]
+        # NOT a Discord Administrator
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.guild_id = 111222333
+        # guild.get_role returns the admin role object
+        interaction.guild.get_role = MagicMock(return_value=admin_role)
+
+        api_resp = MagicMock()
+        api_resp.raise_for_status = MagicMock()
+        api_resp.json.return_value = {"admin_role_id": admin_role_id}
+
+        # NOT a developer — DEVELOPERS env var does not contain this user
+        with (
+            patch.dict(os.environ, {"DEVELOPERS": "111111111,222222222"}),
+            patch("cogs.adminCog.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=api_resp)
+            mock_client_cls.return_value = mock_client
+
+            result = asyncio.run(_check_is_admin(interaction))
+
+        assert result is True, (
+            "A user who holds the Bot Admin role but is NOT in DEVELOPERS and does NOT "
+            "have Discord Administrator must still get True from _check_is_admin. "
+            "This is the exact bug that was fixed: the old interaction.member AttributeError "
+            "silently swallowed Check 2, always returning False for admin-role holders."
         )
 
     def test_check_is_admin_returns_false_for_non_admin_role_holder(self, mock_admin_cog):
-        """B.40: _check_is_admin returns False for a user without admin role or Discord admin."""
+        """B.40: _check_is_admin returns False for a user without admin role or Discord admin.
+
+        The user has a non-admin role; guild.get_role returns the admin role object but it
+        is NOT in interaction.user.roles → access denied.
+        """
         from cogs.adminCog import _check_is_admin
+
+        admin_role_id = 999888777
+        admin_role = MagicMock()
+        admin_role.id = admin_role_id
 
         other_role = MagicMock()
         other_role.id = 111111111  # Some random non-admin role
 
         interaction = _create_mock_interaction()
-        # B.40 fix: set roles on member (not user) to match production code.
-        # The user does NOT have the admin role — member.roles has only a non-admin role.
-        interaction.member.roles = [other_role]
+        # User does NOT have the admin role — user.roles has only a non-admin role.
+        interaction.user.roles = [other_role]
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
         interaction.guild_id = 987654321
+        # guild.get_role returns the admin role object, but user doesn't have it
+        interaction.guild.get_role = MagicMock(return_value=admin_role)
 
-        # Config API returns a different admin_role_id (user doesn't have it)
+        # Config API returns the admin_role_id (user doesn't hold it)
         api_resp = MagicMock()
         api_resp.raise_for_status = MagicMock()
-        api_resp.json.return_value = {"admin_role_id": 999888777}
+        api_resp.json.return_value = {"admin_role_id": admin_role_id}
 
         with patch("cogs.adminCog.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
@@ -3019,18 +3133,18 @@ class TestAdminRoleAccessAdversarial:
     when interaction.member is used for the role check.
     """
 
-    def test_check_is_admin_member_none_falls_back_to_false(self, mock_admin_cog):
-        """B.40 edge case: interaction.member is None → role check skipped → returns False.
+    def test_check_is_admin_guild_none_falls_back_to_false(self, mock_admin_cog):
+        """Edge case: interaction.guild is None (DM context) → role check skipped → returns False.
 
-        In certain Discord contexts (DMs, uncached guilds) interaction.member may be
-        None.  The production code guards with `interaction.member and …`; this test
-        ensures that guard prevents an AttributeError and correctly returns False.
+        The fixed production code guards with `if guild and admin_role_id`; when
+        interaction.guild is None (DM or uncached guild), the role check is skipped
+        and _check_is_admin returns False rather than raising AttributeError.
         """
         from cogs.adminCog import _check_is_admin
 
         admin_role_id = 555666777
         interaction = _create_mock_interaction()
-        interaction.member = None  # Simulate DM or uncached guild
+        interaction.guild = None  # Simulate DM or uncached guild
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
         interaction.guild_id = 987654321
@@ -3049,19 +3163,16 @@ class TestAdminRoleAccessAdversarial:
             result = asyncio.run(_check_is_admin(interaction))
 
         assert result is False, (
-            "When interaction.member is None (DM context), the role check must be skipped "
+            "When interaction.guild is None (DM context), the role check must be skipped "
             "and _check_is_admin must return False rather than raising AttributeError."
         )
 
-    def test_check_is_admin_user_roles_not_sufficient(self, mock_admin_cog):
-        """B.40 regression guard: setting roles on interaction.user (NOT member) does NOT grant access.
+    def test_check_is_admin_guild_get_role_returns_none_denies_access(self, mock_admin_cog):
+        """Adversarial: guild.get_role() returning None (role deleted/not found) must deny access.
 
-        This is the root-cause scenario that was broken before the fix.
-        interaction.user.roles is a discord.User attribute that does NOT carry guild
-        role assignments in real discord.py.  Only interaction.member.roles is valid.
-        The fix ensures we check member.roles; this test asserts that user.roles
-        alone is NOT checked (i.e., leaving member.roles empty does NOT grant access
-        even when user.roles has the admin role).
+        Even if the config API returns an admin_role_id, if that role no longer exists
+        in the guild (guild.get_role returns None), access must be denied rather than
+        raising AttributeError or granting access.
         """
         from cogs.adminCog import _check_is_admin
 
@@ -3070,13 +3181,13 @@ class TestAdminRoleAccessAdversarial:
         admin_role.id = admin_role_id
 
         interaction = _create_mock_interaction()
-        # Only set on user — NOT member (simulates the pre-fix state)
+        # User has some roles, but guild.get_role returns None (role was deleted)
         interaction.user.roles = [admin_role]
-        # member.roles must be empty (different from user)
-        interaction.member.roles = []
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
         interaction.guild_id = 987654321
+        # guild.get_role returns None — role was deleted from the guild
+        interaction.guild.get_role = MagicMock(return_value=None)
 
         api_resp = MagicMock()
         api_resp.raise_for_status = MagicMock()
@@ -3092,8 +3203,8 @@ class TestAdminRoleAccessAdversarial:
             result = asyncio.run(_check_is_admin(interaction))
 
         assert result is False, (
-            "interaction.user.roles must NOT be checked — only interaction.member.roles is authoritative. "
-            "Setting the admin role on user.roles with an empty member.roles must NOT grant access."
+            "When guild.get_role() returns None (role deleted from guild), access must be denied. "
+            "The guard `if admin_role and admin_role in interaction.user.roles` handles this."
         )
 
     def test_check_is_admin_api_failure_returns_false(self, mock_admin_cog):
@@ -3105,7 +3216,7 @@ class TestAdminRoleAccessAdversarial:
         from cogs.adminCog import _check_is_admin
 
         interaction = _create_mock_interaction()
-        interaction.member.roles = []
+        interaction.user.roles = []
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
         interaction.guild_id = 987654321
@@ -5258,7 +5369,14 @@ class TestRemoveItemAutocomplete:
         assert choices[0].value == "__select_user_first__"
 
     def test_autocomplete_with_user_shows_inventory(self, mock_admin_cog):
-        """remove_item_autocomplete shows player inventory when user selected."""
+        """remove_item_autocomplete shows player inventory when user selected.
+
+        Phase 6: Both player_cache and inventory_cache are pre-populated.
+        The admin function reads from cache — zero HTTP calls on hot path.
+        """
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search as nfs
+
         target_user = MagicMock()
         target_user.id = 42
 
@@ -5267,30 +5385,35 @@ class TestRemoveItemAutocomplete:
         interaction.namespace = MagicMock()
         interaction.namespace.user = target_user
 
-        # resolve_player_id → player_id=7
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value={"id": 7})
+        # Phase 6: Pre-populate player_cache and inventory_cache
+        ac = _ac_init_player_cache_for_admin()
+        if ac is not None:
+            from cogs._shared.autocomplete_cache import AutocompleteCache
 
-        # GET /inventory/player/7
-        inv_resp = MagicMock()
-        inv_resp.status_code = 200
-        inv_resp.json = MagicMock(
-            return_value=[
+            ac.player_cache.set((987654321, 42), {"id": 7})
+            if ac.inventory_cache is None:
+                ac.inventory_cache = AutocompleteCache(ttl_seconds=600, name="inventory")
+            raw_items = [
                 {"item_name": "Laser Cannon", "item_type": "primary_weapon", "quantity": 2},
                 {"item_name": "Engine Core", "item_type": "module", "quantity": 1},
             ]
-        )
+            inv_choices = []
+            for item in raw_items:
+                label = f"{item['item_name']} ({item['item_type'].replace('_', ' ').title()})"
+                inv_choices.append(NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item))
+            ac.inventory_cache.set((987654321, 7), inv_choices)
 
-        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
+        # HTTP must not be called — all from cache
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
         assert any("Laser Cannon" in n for n in names)
         assert any("Engine Core" in n for n in names)
+
+        # Cleanup
+        _ac_reset_admin_player_cache()
 
     def test_autocomplete_falls_back_to_catalog_on_player_resolution_failure(self, mock_admin_cog):
         """remove_item_autocomplete falls back to catalog when player resolution fails."""

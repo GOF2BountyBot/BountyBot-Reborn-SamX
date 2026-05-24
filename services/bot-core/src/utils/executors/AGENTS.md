@@ -21,8 +21,10 @@ async def execute_<job_type>_job(job_id: str, payload: dict) -> dict:
 ```python
 async def execute(self, job_id: str, payload: dict):
     job_type = payload.get("job_type")
-    if job_type == "bounty_spawn":
-        return await execute_bounty_spawn_job(job_id, payload)
+    if job_type == "bounty_spawn_orchestrate":
+        return await execute_bounty_spawn_orchestrate_job(job_id, payload)
+    elif job_type == "bounty_spawn_one":
+        return await execute_bounty_spawn_one_job(job_id, payload)
     elif job_type == "shop_refresh":
         return await execute_shop_refresh_job(job_id, payload)
     # ... etc.
@@ -37,7 +39,7 @@ async def execute(self, job_id: str, payload: dict):
 **All executors use deferred imports** — ORM-related imports (`db_manager`, repositories, services) are placed inside the function body, not at module level:
 
 ```python
-async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
+async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
     # Deferred — avoids transitive ORM dependencies at module load time
     from persist.database.manager import db_manager
     from persist.repositories.bounty_repository import BountyRepository
@@ -92,29 +94,50 @@ resp.raise_for_status()
 
 ---
 
-## All 7 Executors
+## Gateway Push Contract
+
+`shop_refresh_executor`, `bounty_spawn_executor`, and `bounty_expire_executor` all POST
+cache-update payloads to the gateway after each relevant mutation:
+
+- `POST /api/v1/internal/autocomplete/shop-cache/{guild_id}/{tier}` — after shop refresh
+- `POST /api/v1/internal/autocomplete/bounty-cache/{guild_id}` — after spawn/expire
+
+All pushes are non-fatal (try/except + warning). The gateway's 6-minute periodic refresh
+covers any missed pushes. Requires `INTERNAL_AUTH_TOKEN` env var in both services.
+
+---
+
+## All 8 Executors
 
 ### bounty_spawn_executor.py
 
-**Function**: `execute_bounty_spawn_job(job_id, payload)`  
-**Triggered by**: `bounty_spawn_default` (every N minutes, default 5) or on-demand  
+Two entry points (both dispatched from `job_executor.py`):
+
+**`execute_bounty_spawn_orchestrate_job(job_id, payload)`** — Orchestrator  
+**Triggered by**: `bounty_spawn_default` cron (every N minutes, default 5)  
+**Payload fields**: none required  
+**Flow**:
+1. For each guild config × division: count active bounties + queued spawn jobs
+2. If slot available: schedule a randomised one-time `bounty_spawn_one` job with ±25% window
+3. Returns job counts queued per guild
+
+**`execute_bounty_spawn_one_job(job_id, payload)`** — One-shot spawner  
+**Triggered by**: one-time APScheduler job created by the orchestrator  
 **Payload fields**:
-- `guild_id` (optional) — process only this guild; omit for bulk (all guilds)
-- `division` (optional) — process only this division; omit for all three
-- `temperature` (optional, default 5.0) — activity temperature to compute max_bounties
+- `guild_id` — guild to spawn for
+- `division` — tier division (`bronze`, `silver`, `gold`, `platinum`)
+- `expiry_minutes` — bounty lifetime in minutes
 
 **Flow**:
-1. Compute `max_bounties = TemperatureService.get_max_bounties(temperature)`
-2. For each guild config (or just `guild_id` if provided):
-3. For each division (`Bronze`, `Silver`, `Gold`):
-4. Count active bounties via `BountyRepository.get_active_by_guild_and_division()`
-5. If slot available: call `BountyService.spawn_bounty(db, guild_id, division)`
-6. Schedule expiry job via `POST /api/v1/jobs` (one-time at `bounty.end_time`)
-7. Announce via `POST {GATEWAY_BASE_URL}/announcements/bounty/channel/{cid}` (non-fatal if fails)
+1. Re-checks capacity (handles benign race with concurrent orchestrator ticks)
+2. Calls `BountyService.spawn_bounty(db, guild_id, division, expiry_minutes)`
+3. Schedules expiry job via `POST /api/v1/jobs` (one-time at `bounty.end_time`)
+4. Pushes bounty cache to gateway (`POST /internal/autocomplete/bounty-cache/{guild_id}`)
+5. Announces via `POST {GATEWAY_BASE_URL}/announcements/bounty/channel/{cid}` (non-fatal)
 
-**Returns**: `{"status": "success", "guilds_processed": N, "total_spawned": M, "results": {...}}`
+**Returns**: `{"status": "success", "bounty_id": N, ...}`
 
-**A.48 announcement payload (post-2026-04-27)**: `_announce_bounty()` builds the request via `utils.bounty_announcement_payload.build_bounty_announcement_request(db, bounty, criminal_icon=..., route_map_url=..., bounty_hunter_role_id=..., captured=False)`. The body is a structured dict (`text_content` + `loadout_response` + `metadata`); the gateway renders the final embed using `cogs/_shared/loadout_embed.build_loadout_embed`. The old per-channel `/channels/{cid}/messages` POST and the pre-rendered `BountyAnnouncementBuilder` were removed. Edit-on-capture still flows through `BountyService._edit_bounty_announcement` and posts to the gateway's PUT counterpart at `/announcements/bounty/channel/{cid}/message/{mid}`.
+**A.48 announcement payload**: `_announce_bounty()` builds the request via `utils.bounty_announcement_payload.build_bounty_announcement_request(db, bounty, criminal_icon=..., route_map_url=..., bounty_hunter_role_id=..., captured=False)`. The body is a structured dict (`text_content` + `loadout_response` + `metadata`); the gateway renders the final embed using `cogs/_shared/loadout_embed.build_loadout_embed`. Edit-on-capture flows through `BountyService._edit_bounty_announcement` → gateway PUT at `/announcements/bounty/channel/{cid}/message/{mid}`.
 
 ---
 
@@ -232,6 +255,51 @@ The primary cleanup path (`bounty_expire_executor`) fires a one-time job at `bou
 
 ---
 
+### db_retention_executor.py
+
+**Function**: `execute_db_retention_job(job_id, payload)`
+**Triggered by**: `db_retention_default` (daily at 03:45 UTC — well clear of all hourly / 3-hourly jobs)
+**Payload fields**: none required (reserved for future per-call overrides)
+
+**Purpose**: Bounded growth of high-churn tables whose terminal-state rows have
+no game-relevant value once per-player aggregate stats have been written to the
+`players` table.
+
+**Three independent passes** (each in its own DB session — one failure does not
+abort the others):
+
+1. `bounty` — delete rows where `status IN ('completed','expired','cleared')`
+   AND `updated_at < now() - BOUNTY_RETENTION_HOURS` (default 24h).
+   *Uses `updated_at` so freshly-transitioned rows are not insta-purged.*
+   *'escaped' status is intentionally excluded — escaped bounties may respawn.*
+2. `duel_requests` — delete rows where
+   `status IN ('completed','expired','cancelled','rejected','declined')`
+   AND `created_at < now() - DUEL_RETENTION_HOURS` (default 24h).
+3. `admin_audit_logs` — delete rows where
+   `timestamp < now() - AUDIT_RETENTION_DAYS` (default 30d).
+   *Audit history is preserved out-of-band by `pg_backup_default`.*
+
+**Per-player aggregates kept intact**: `players.bounty_wins`,
+`players.systems_checked`, `players.lifetime_credits`, `players.duel_wins`,
+`players.duel_losses`, `players.duel_credits_won`, `players.duel_credits_lost`.
+
+**Overrides**: `BOUNTYBOT_BOUNTY_RETENTION_HOURS`, `BOUNTYBOT_DUEL_RETENTION_HOURS`,
+`BOUNTYBOT_AUDIT_RETENTION_DAYS` (all integers; processed in `GameConstants.load()`).
+
+**Non-fatal design**: each pass is wrapped in `try/except`; failures are logged
+at WARNING with `type(e).__name__` for diagnosability and added to
+`result["errors"]`. The executor always returns `{"status": "success", ...}` so
+APScheduler does not retry.
+
+**Returns**: `{"status": "success", "bounties_deleted": N, "duels_deleted": M, "audit_logs_deleted": K, "errors": [...]}`
+
+**Repositories used**: `BountyRepository.delete_terminal_older_than`,
+`DuelRepository.delete_terminal_older_than`, `AdminAuditLogRepository.delete_older_than`.
+The audit log repository was added in this work as a minimal stub (count +
+delete-older-than only); writes still go through `AuditService.log_action`.
+
+---
+
 ## How to Add a New Executor
 
 1. **Create the file** `utils/executors/<job_type>_executor.py`:
@@ -292,4 +360,4 @@ The deferred import pattern means patches must target the executor module's name
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-05-16*

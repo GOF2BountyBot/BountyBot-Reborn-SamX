@@ -24,7 +24,7 @@ When secondary weapons ship: update BOTH this constant AND bot-core's
 
 ## Overview
 
-This directory contains **7 utility modules** shared across cogs and REST routers. They provide:
+This directory contains **9 utility modules** shared across cogs and REST routers. They provide:
 - Bidirectional conversion between Discord objects and JSON/API payloads
 - Discord exception → HTTP exception mapping
 - Permission evaluation and flag registry
@@ -41,7 +41,9 @@ These modules contain **no business logic** — they are pure conversion and val
 | File | Key Classes/Functions | Consumer |
 |------|-----------------------|----------|
 | `autocomplete_utils.py` | `normalize_for_search()` | Cogs — accent/apostrophe/hyphen-insensitive string normalization for autocomplete filters |
-| `autocomplete_helpers.py` | `resolve_player_id()`, `player_ships_autocomplete()`, `player_inventory_autocomplete()` | Cogs — shared autocomplete logic for player-scoped ships and inventory items |
+| `autocomplete_helpers.py` | `resolve_player_id()`, `player_ships_autocomplete()`, `player_inventory_autocomplete()`, `player_equippable_autocomplete()`, `player_equipped_autocomplete()` | Cogs — shared autocomplete logic for player-scoped ships and inventory items |
+| `autocomplete_state.py` | `init()`, `player_cache`, `inventory_cache`, `ships_cache`, `get_player()`, `get_player_id()`, `set_player()`, `set_inventory()`, `set_ships()`, `invalidate_player()`, `invalidate_inventory()`, `invalidate_ships()`, `clear_all()`, `NormalizedChoice` | All cogs — shared module-level cache state; must be initialized once from `bot.py` lifespan |
+| `autocomplete_warm.py` | `warm_autocomplete_caches()`, APScheduler job registration | `bot.py` — startup warm + recurring APScheduler re-warm jobs for `player_cache`, `inventory_cache`, `ships_cache` |
 | `command_utils.py` | `CommandValidator`, `CommandHandler`, `get_command_handler()` | `bot.py`, prefix commands |
 | `discord_converters.py` | `GuildConverter`, `ChannelConverter`, `RoleConverter`, `UserConverter`, `MessageConverter`, `PermissionConverter` | REST routers |
 | `discord_helpers.py` | `resolve_bot()`, `get_entity_or_404()`, `handle_discord_exception()`, `normalize_emoji()`, `tag_to_dict()`, `tags_to_edit_payload()` | REST routers |
@@ -576,4 +578,4 @@ For `embed_converter.py`, use `EmbedConverter.test_round_trip_consistency()` to 
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-05-16*

@@ -21,6 +21,10 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         # vim and sudo for debugging — comment out once stable
         # vim \
         # sudo \
+    # CVE-2026-27135: libnghttp2-14 DoS via malformed HTTP/2 frames after session
+    # termination. Fixed in 1.64.0-1.1+deb13u1 (trixie security). Upgrade the
+    # package explicitly so the fix is pulled regardless of base-image snapshot date.
+    && apt-get install -y --only-upgrade libnghttp2-14 \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
@@ -31,8 +35,10 @@ RUN python -m venv /opt/venv
 WORKDIR /app
 
 # Upgrade pip toolchain
+# CVE-2026-6357: pip < 26.1 arbitrary code execution via malicious wheel.
+# Pin to >=26.1 explicitly so the fix is enforced regardless of base-image snapshot.
 RUN /opt/venv/bin/pip install --upgrade --no-cache-dir \
-    pip \
+    "pip>=26.1" \
     setuptools \
     wheel
 

@@ -29,6 +29,9 @@ class BountyAnnouncementMetadata(BaseModel):
         default_factory=list,
         description="Fields rendered after the loadout sections (Route, Checked Systems, etc.)",
     )
+    reward: int | None = Field(None, description="Total bounty reward pool in credits")
+    reward_per_sys: int | None = Field(None, description="Consolation credits per correctly-checked system")
+    route_length: int | None = Field(None, description="Number of systems in the bounty route")
 
 
 class BountyAnnouncementRequest(BaseModel):

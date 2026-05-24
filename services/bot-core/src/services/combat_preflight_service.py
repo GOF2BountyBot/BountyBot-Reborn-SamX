@@ -12,10 +12,11 @@ Design notes
 - 20 simulations per call by default — enough to distinguish a clear edge from
   a coin-flip without burning compute. The result is not deterministic; that's
   fine for advisory UI.
-- The criminal sample is built from real active bounties in the target tier
-  for the guild. If none exist (rare, e.g. fresh guild), the service returns
-  the ``NO_DATA`` verdict and the cog should suppress the panel rather than
-  showing misleading 0% / 100% numbers.
+- The criminal sample is first built from real active bounties in the target tier
+  for the guild. If none exist (e.g. fresh guild), the service synthesizes a
+  small pool of criminals using BountyService.generate_loadout() so that the
+  verdict is always actionable. The NO_DATA fallback is reserved only for
+  genuine failures (e.g. synthesis itself errors out).
 
 Verdict thresholds (per /promote design spec):
 - 🟢 GREEN: player_win_rate >= 0.75
@@ -28,12 +29,15 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from enum import StrEnum
+from types import SimpleNamespace
 
 from persist.repositories.bounty_repository import BountyRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.bounty_service import BountyService
 from services.combat_service import CombatService
+from services.game_constants import GameConstants
 from services.loadout_builder import LoadoutBuilder
 
 flogger = bblogger.get_logger("combat-preflight-service")
@@ -63,12 +67,53 @@ class CombatPreflightService:
     ----------
     ``estimate(db, player_id, guild_id, target_tier, num_sims=20)`` — runs N
     simulated fights against criminals drawn from active bounties at
-    ``target_tier`` and returns a ``PreflightResult``.
+    ``target_tier`` (or synthesized from BountyService when none exist) and
+    returns a ``PreflightResult``.
     """
 
     def __init__(self):
         self.bounty_repo = BountyRepository()
         self.combat_service = CombatService()
+
+    async def _synthesize_criminals(
+        self,
+        db: AsyncSession,
+        division: str,
+        count: int = 5,
+    ) -> list[object]:
+        """Synthesize fake criminal bounty-like objects for a given division.
+
+        Used when no active bounties exist at the target tier. Generates
+        ``count`` loadouts via ``BountyService.generate_loadout()`` at random
+        tech levels appropriate for the division.
+
+        Args:
+            db:       Async database session.
+            division: Division name (e.g. "silver").
+            count:    Number of synthetic criminals to generate.
+
+        Returns:
+            List of SimpleNamespace objects with a ``criminal_ship`` attribute
+            (duck-typed like a ``Bounty`` record). Empty list if synthesis fails.
+        """
+        max_tl = GameConstants.DIVISION_MAX_TL.get(division, GameConstants.MAX_TECH_LEVEL)
+        min_tl = GameConstants.MIN_TECH_LEVEL
+
+        bounty_svc = BountyService()
+        synthetics: list[object] = []
+        for _ in range(count):
+            tl = random.randint(min_tl, max_tl)
+            try:
+                loadout = await bounty_svc.generate_loadout(db, tl)
+                synthetics.append(SimpleNamespace(criminal_ship=loadout))
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"preflight: synthesis failed at tl={tl} division={division}: {exc}")
+
+        flogger.info(
+            f"preflight: synthesized {len(synthetics)}/{count} criminals for division={division} "
+            f"(tl range {min_tl}-{max_tl})"
+        )
+        return synthetics
 
     async def estimate(
         self,
@@ -83,20 +128,34 @@ class CombatPreflightService:
         division = (target_tier or "").lower()
         active = await self.bounty_repo.get_active_by_guild_and_division(db, guild_id, division)
         criminals = [b for b in active if b.criminal_ship]
+
         if not criminals:
-            return PreflightResult(
-                verdict=PreflightVerdict.NO_DATA,
-                player_win_rate=0.0,
-                criminal_win_rate=0.0,
-                sims_run=0,
-                target_tier=target_tier,
-                sample_size=0,
+            flogger.info(
+                f"preflight: no active bounties with criminal_ship for guild={guild_id} "
+                f"division={division} — synthesizing criminals"
             )
+            criminals = await self._synthesize_criminals(db, division)
+            if not criminals:
+                flogger.warning(
+                    f"preflight: synthesis returned empty for guild={guild_id} division={division} — NO_DATA"
+                )
+                return PreflightResult(
+                    verdict=PreflightVerdict.NO_DATA,
+                    player_win_rate=0.0,
+                    criminal_win_rate=0.0,
+                    sims_run=0,
+                    target_tier=target_tier,
+                    sample_size=0,
+                )
 
         try:
             player_loadout = await LoadoutBuilder.from_player(db, player_id)
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            flogger.warning(f"preflight: could not build player loadout for player_id={player_id}: {exc}")
+            # This should not occur in production — active ship sale is blocked at service layer.
+            flogger.error(
+                f"preflight: could not build player loadout for player_id={player_id}: {exc} "
+                f"(This should not occur in production — active ship sale is blocked at service layer.)"
+            )
             return PreflightResult(
                 verdict=PreflightVerdict.NO_DATA,
                 player_win_rate=0.0,

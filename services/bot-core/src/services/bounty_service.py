@@ -11,8 +11,9 @@ Handles business logic for bounty generation including:
 
 import enum
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 
 from persist.models.bounty import Bounty
 from persist.models.criminal import Criminal
@@ -123,6 +124,12 @@ class CheckResponse:  # pylint: disable=too-many-instance-attributes
     bonus_won: bool = False  # True if bronze player won the optional combat bonus
     total_reward: int | None = None  # Final reward earned (may be 2x for bronze win)
     criminal_ship: dict | None = None  # Criminal ship data; returned for bronze so cog can offer bonus
+    # Payout breakdown (populated on CORRECT/capture outcomes so the cog can render the full embed)
+    reward_per_sys: int | None = None
+    route_length: int | None = None
+    # Per-player payout breakdown: list of dicts with player_display_name, role, amount
+    # Populated on CORRECT/capture outcomes so the cog can render the full per-player breakdown.
+    payout_breakdown: list[dict] = field(default_factory=list)
     # Recently spotted: criminal was at this system 1-2 stops ago
     recently_spotted: bool = False
     # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
@@ -961,8 +968,8 @@ class BountyService:
 
         # Step 2: Determine tech level
         if tech_level is None:
-            # Division TL centers: bronze=1, silver=5, gold=8, platinum=9
-            division_tl_map = {"bronze": 1, "silver": 5, "gold": 8, "platinum": 9}
+            # Division TL centers: bronze=1, silver=3, gold=6, platinum=8
+            division_tl_map = {"bronze": 1, "silver": 3, "gold": 6, "platinum": 8}
             center_tl = division_tl_map.get(division, 5)
             tech_level = pick_random_item_tl(center_tl)
             # Enforce per-division TL cap so new players are never overwhelmed
@@ -1144,7 +1151,7 @@ class BountyService:
         # We process all bounties in-memory first (mutating state), commit ONCE
         # at the end, and then run announcement edits per outcome.
         outcomes: list[CheckResponse] = []
-        bounties_to_announce: list[tuple[Bounty, bool]] = []  # (bounty, captured)
+        bounties_to_announce: list[tuple[Bounty, bool, CheckResponse]] = []  # (bounty, captured, outcome)
         cooldown_applied = False
         cfg = await self.config_repo.get_by_guild_id(db, guild_id)
         cooldown_seconds = resolve_constant(cfg, "check_cooldown", GameConstants.CHECK_COOLDOWN)
@@ -1163,7 +1170,8 @@ class BountyService:
             )
             outcomes.append(outcome)
             if announce_info is not None:
-                bounties_to_announce.append(announce_info)
+                announce_bounty, announce_captured = announce_info
+                bounties_to_announce.append((announce_bounty, announce_captured, outcome))
 
             # Apply cooldown ONCE per /check call, only after a real (non-already-checked) state change.
             if not cooldown_applied and outcome.result in (CheckResult.CORRECT, CheckResult.INCORRECT):
@@ -1186,7 +1194,7 @@ class BountyService:
 
         # Per-bounty announcement edits. Each is best-effort & non-fatal —
         # _edit_bounty_announcement already swallows its own exceptions.
-        for bounty, captured in bounties_to_announce:
+        for bounty, captured, _outcome in bounties_to_announce:
             try:
                 await self._edit_bounty_announcement(db, bounty, captured=captured)
             except Exception as e:  # pylint: disable=broad-exception-caught
@@ -1194,6 +1202,14 @@ class BountyService:
                     f"Per-bounty announcement edit failed (bounty {bounty.id}, "
                     f"player {player_id}, system {system_name!r}): {e}"
                 )
+            # Capture payout embed is rendered by the cog from the check response fields.
+
+        # If any bounty was captured, push the updated active bounty list to the gateway
+        # autocomplete cache so the captured bounty is immediately removed from the /route
+        # and /bounties dropdowns.  Non-fatal — a push failure never blocks the check response.
+        any_captured = any(outcome.result == CheckResult.CORRECT for outcome in outcomes)
+        if any_captured:
+            await self._push_bounty_cache_after_capture(db, guild_id)
 
         # Per-bounty structured logging for observability (B.12)
         for outcome in outcomes:
@@ -1247,6 +1263,7 @@ class BountyService:
                     bounty_id=bounty.id,
                     criminal_name=bounty.criminal_name,
                     message=f"System {system_name} already checked",
+                    division=division,
                 ),
                 None,
             )
@@ -1291,6 +1308,7 @@ class BountyService:
                 # BRONZE: Auto-capture always succeeds. Optional combat bonus.
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)
                 await self.distribute_rewards(db, bounty, rewards)
+                payout_breakdown = await self._build_payout_breakdown(db, rewards)
 
                 winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
 
@@ -1324,6 +1342,9 @@ class BountyService:
                         bonus_won=bonus_won,
                         total_reward=total_reward,
                         criminal_ship=bounty.criminal_ship,
+                        reward_per_sys=getattr(bounty, "reward_per_sys", None),
+                        route_length=len(list(getattr(bounty, "route", None) or [])),
+                        payout_breakdown=payout_breakdown,
                     ),
                     (bounty, True),
                 )
@@ -1341,6 +1362,7 @@ class BountyService:
             if duel_won:
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)
                 await self.distribute_rewards(db, bounty, rewards)
+                payout_breakdown = await self._build_payout_breakdown(db, rewards)
                 winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
                 return (
                     CheckResponse(
@@ -1351,9 +1373,13 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
+                        total_reward=winner_reward,
                         combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
                         if fight_results
                         else None,
+                        reward_per_sys=getattr(bounty, "reward_per_sys", None),
+                        route_length=len(list(getattr(bounty, "route", None) or [])),
+                        payout_breakdown=payout_breakdown,
                     ),
                     (bounty, True),
                 )
@@ -1406,6 +1432,7 @@ class BountyService:
                 bounty_id=bounty.id,
                 criminal_name=bounty.criminal_name,
                 message=inc_message,
+                division=division,
                 proximity_hint=proximity_hint,
                 distance_to_answer=distance,
                 recently_spotted=recently_spotted,
@@ -1498,6 +1525,64 @@ class BountyService:
         except Exception as e:
             flogger.warning(f"Failed to edit bounty announcement for bounty {bounty.id}: {e}")
 
+    async def _push_bounty_cache_after_capture(self, db: AsyncSession, guild_id: int) -> None:
+        """Push the updated active bounty list to the gateway autocomplete cache after a capture.
+
+        Called from check_bounty when at least one bounty was captured so that the
+        captured bounty is immediately removed from the /route and /bounties autocomplete
+        dropdowns without waiting for the next spawn/expire push or TTL expiry.
+
+        Non-fatal — logs a warning on failure and never blocks the check response.
+
+        Args:
+            db:       Async database session (within an active session block).
+            guild_id: The Discord guild ID to push bounties for.
+        """
+        try:
+            import os
+
+            import httpx
+
+            bounties_raw = await self.bounty_repo.get_active_by_guild(db, guild_id)
+
+            # Serialise ORM objects to plain dicts (exclude SQLAlchemy internal keys).
+            bounty_dicts: list[dict] = []
+            for b in bounties_raw:
+                if isinstance(b, dict):
+                    bounty_dicts.append(b)
+                else:
+                    d = {k: v for k, v in b.__dict__.items() if not k.startswith("_")}
+                    # Convert ALL datetime fields to ISO strings for JSON serialisation.
+                    for key, val in list(d.items()):
+                        if hasattr(val, "isoformat"):
+                            d[key] = val.isoformat()
+                    bounty_dicts.append(d)
+
+            gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+            gateway_port = os.getenv("GATEWAY_PORT", "7999")
+            gateway_url = f"http://{gateway_host}:{gateway_port}/api/v1"
+            token = os.getenv("INTERNAL_AUTH_TOKEN", "")
+            headers = {"X-Internal-Auth": token} if token else {}
+
+            # SSRF guard: coerce to int — non-numeric values raise ValueError,
+            # caught by the surrounding try/except as a warning.
+            safe_guild = int(guild_id)
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{gateway_url}/internal/autocomplete/bounty-cache/{quote(str(safe_guild), safe='')}",
+                    json={"bounties": bounty_dicts},
+                    headers=headers,
+                    timeout=5.0,
+                )
+            resp.raise_for_status()
+            flogger.debug(
+                f"check_bounty: pushed bounty cache after capture for guild={guild_id} remaining={len(bounty_dicts)}"
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(
+                f"check_bounty: failed to push bounty cache to gateway after capture for guild={guild_id}: {e}"
+            )
+
     async def _delete_bounty_announcement(self, db: AsyncSession, bounty: Bounty) -> None:
         """Delete the bounty announcement from Discord and clean up the DB record.
 
@@ -1551,6 +1636,86 @@ class BountyService:
 
         except Exception as e:
             flogger.warning(f"Failed to delete announcement for bounty {bounty.id}: {e}")
+
+    async def _post_capture_payout(self, db: AsyncSession, guild_id: int, bounty, outcome) -> None:
+        """Non-fatal: POST a payout embed to hunting_channel_id after a capture.
+
+        Resolves the winner's display name from their user record, builds a short
+        "💰 Payout" embed, and POSTs it to the guild's configured hunting_channel_id.
+
+        Args:
+            db:       Async database session.
+            guild_id: Discord guild ID.
+            bounty:   The captured Bounty ORM instance.
+            outcome:  The CheckResponse for this capture (carries reward info).
+        """
+        import os
+
+        import httpx as _httpx
+        from persist.repositories.config_repository import ConfigRepository
+        from persist.repositories.user_repository import UserRepository
+        from utils.bounty_announcement_payload import build_capture_payout_embed
+
+        try:
+            config_repo = ConfigRepository()
+            config = await config_repo.get_by_guild_id(db, guild_id)
+            if not config:
+                return
+            hunting_channel_id = getattr(config, "hunting_channel_id", None)
+            if not hunting_channel_id:
+                return
+
+            # Resolve winner display name: prefer display_name, fall back to discord_username
+            winner_name = "A bounty hunter"
+            win_user_id = getattr(bounty, "win_user_id", None)
+            if win_user_id:
+                user_repo = UserRepository()
+                user = await user_repo.get_by_discord_id(db, win_user_id)
+                if user:
+                    winner_name = (
+                        getattr(user, "display_name", None)
+                        or getattr(user, "discord_username", None)
+                        or "A bounty hunter"
+                    )
+
+            reward = getattr(outcome, "reward", None) or getattr(bounty, "reward", 0)
+            total_reward = getattr(outcome, "total_reward", None)
+            bonus_won = getattr(outcome, "bonus_won", False)
+
+            # Pass reward_per_sys and route_length from the bounty if available
+            reward_per_sys = getattr(bounty, "reward_per_sys", None)
+            route = getattr(bounty, "route", None)
+            route_length = len(list(route)) if route is not None else None
+
+            embed_dict = build_capture_payout_embed(
+                criminal_name=bounty.criminal_name,
+                division=getattr(bounty, "division", ""),
+                reward=reward,
+                winner_name=winner_name,
+                total_reward=total_reward,
+                bonus_won=bonus_won,
+                reward_per_sys=reward_per_sys,
+                route_length=route_length,
+                combat_result=getattr(outcome, "combat_result", None),
+            )
+
+            gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+            gateway_port = os.getenv("GATEWAY_PORT", "7999")
+            gateway_url = f"http://{gateway_host}:{gateway_port}/api/v1"
+
+            async with _httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{gateway_url}/channels/{hunting_channel_id}/messages",
+                    json={"content": embed_dict, "text_content": None},
+                    timeout=5.0,
+                )
+            resp.raise_for_status()
+            flogger.debug(
+                f"_post_capture_payout: posted payout embed for bounty={bounty.id} "
+                f"guild={guild_id} channel={hunting_channel_id}"
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"_post_capture_payout: failed for bounty={bounty.id}: {e}")
 
     # ------------------------------------------------------------------
     # Reward Calculation & Distribution
@@ -1702,7 +1867,14 @@ class BountyService:
         # of its loop, so this commit is the inner cross-table flush; the outer
         # check_bounty commit is a no-op when no further changes are pending.)
         bounty.status = "completed"
-        bounty.win_user_id = next((r.player_id for r in rewards if r.is_winner), None)
+        # Store the Discord user ID (User.id = snowflake), NOT the player table PK.
+        # modified_players already holds the fetched Player objects; the winning
+        # player's .user_id FK is the Discord snowflake we need.
+        _winning_player = next(
+            (p for p in modified_players if any(r.player_id == p.id and r.is_winner for r in rewards)),
+            None,
+        )
+        bounty.win_user_id = _winning_player.user_id if _winning_player else None
         await self.bounty_repo.update(db, bounty, commit=False)
         await db.commit()
 
@@ -1711,6 +1883,43 @@ class BountyService:
             await db.refresh(player)
 
         return rewards
+
+    async def _build_payout_breakdown(
+        self,
+        db: AsyncSession,
+        rewards: list[RewardInfo],
+    ) -> list[dict]:
+        """Build a per-player payout breakdown list for embed rendering.
+
+        Fetches each player by ID to get their display_name, then assembles
+        one dict per player with player_display_name, role, and amount.
+
+        Args:
+            db:      Async database session.
+            rewards: Reward list from :meth:`calc_rewards` (post-distribution).
+
+        Returns:
+            List of dicts with keys: player_display_name, role, amount.
+            role is 'capture claim' for the winner, 'system check' for others.
+        """
+        payout_breakdown: list[dict] = []
+        for reward in rewards:
+            player = await self.player_repo.get_by_id(db, reward.player_id)
+            if player is None:
+                continue
+            # Use display_name if available and non-empty, else fall back to str(user_id)
+            display_name = getattr(player, "display_name", None)
+            if not display_name:
+                display_name = str(getattr(player, "user_id", reward.player_id))
+            role = "capture claim" if reward.is_winner else "system check"
+            payout_breakdown.append(
+                {
+                    "player_display_name": display_name,
+                    "role": role,
+                    "amount": reward.credits_earned,
+                }
+            )
+        return payout_breakdown
 
     # ------------------------------------------------------------------
     # Bounty Expiry

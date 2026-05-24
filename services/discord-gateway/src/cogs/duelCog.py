@@ -2,12 +2,15 @@ import os
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
 from utils.timestamp_utils import iso_to_discord_ts
+
+from utils import autocomplete_state
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-DuelCog")
@@ -38,10 +41,94 @@ class DuelCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        self._pending_duel_cache: AutocompleteCache[tuple[int, int], list] = AutocompleteCache(
+            ttl_seconds=1800.0,  # 30 min dead-man switch; refresh job runs every 5 min
+            refresh_fn=self._fetch_pending_duels,
+            name="duelCog-pending-duels",
+        )
+        self._outgoing_duel_cache: AutocompleteCache[tuple[int, int], list] = AutocompleteCache(
+            ttl_seconds=1800.0,  # 30 min dead-man switch; refresh job runs every 5 min
+            refresh_fn=self._fetch_outgoing_duels,
+            name="duelCog-outgoing-duels",
+        )
         flogger.debug("DuelCog initialized")
 
     async def cog_unload(self):
         await self.http_client.aclose()
+
+    async def _fetch_pending_duels(self, key: tuple[int, int]) -> list:
+        """Refresh pending duels (where the player is the target) from bot-core.
+
+        Args:
+            key: ``(guild_id, player_id)`` tuple.
+
+        Returns:
+            List of pending duel dicts.
+
+        Phase 7: Pre-computes ``_norm`` on each duel dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per duel.
+        """
+        guild_id, player_id = key
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/duels/pending",
+                params={"user_id": player_id, "guild_id": guild_id},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return []
+            duels = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for d in duels:
+                duel_id = d.get("id", "")
+                stakes = d.get("stakes", 0)
+                challenger_name = d.get("challenger_name")
+                if challenger_name:
+                    label = (
+                        f"{challenger_name} — {stakes:,}cr stakes" if stakes else f"{challenger_name} — friendly duel"
+                    )
+                else:
+                    label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
+                d["_norm"] = normalize_for_search(label)
+            return duels
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def _fetch_outgoing_duels(self, key: tuple[int, int]) -> list:
+        """Refresh outgoing duels (where the player is the challenger) from bot-core.
+
+        Args:
+            key: ``(guild_id, player_id)`` tuple.
+
+        Returns:
+            List of outgoing duel dicts.
+
+        Phase 7: Pre-computes ``_norm`` on each duel dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per duel.
+        """
+        guild_id, player_id = key
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/duels/outgoing",
+                params={"user_id": player_id, "guild_id": guild_id},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return []
+            duels = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for d in duels:
+                duel_id = d.get("id", "")
+                stakes = d.get("stakes", 0)
+                target_name = d.get("target_name")
+                if target_name:
+                    label = f"{target_name} — {stakes:,}cr stakes" if stakes else f"{target_name} — friendly duel"
+                else:
+                    label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
+                d["_norm"] = normalize_for_search(label)
+            return duels
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
 
     async def _get_player_id(self, user_id: int, guild_id: int, display_name: str | None = None) -> int | None:
         """Resolve a Discord user ID to a game player ID via the upsert endpoint.
@@ -73,18 +160,33 @@ class DuelCog(commands.Cog):
     async def pending_duel_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for pending duels where the user is the target."""
+        """Zero-HTTP autocomplete for pending duels where the user is the target.
+
+        Phase 6: Reads player_id from autocomplete_state.player_cache (peek), then
+        reads pending duels from _pending_duel_cache (peek). On any cold miss,
+        schedules a background refresh and returns [].
+        """
         try:
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
-            if player_id is None:
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            if autocomplete_state.player_cache is None:
                 return []
-            resp = await self.http_client.get(
-                f"{api_base}/duels/pending",
-                params={"user_id": player_id, "guild_id": interaction.guild_id},
-                timeout=5,
-            )
-            resp.raise_for_status()
-            duels = resp.json()
+            player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+            if player_entry is None:
+                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                return []
+            player_id = player_entry.get("id")
+            if not player_id:
+                return []
+
+            # HOT PATH: peek pending duel cache — no HTTP
+            duels = self._pending_duel_cache.peek((guild_id, player_id))
+            if duels is None:
+                self._pending_duel_cache.schedule_refresh((guild_id, player_id))
+                return []
+
             norm_current = normalize_for_search(current)
             choices = []
             for d in duels:
@@ -97,7 +199,9 @@ class DuelCog(commands.Cog):
                     )
                 else:
                     label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for older cache entries.
+                norm_label = d.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=str(duel_id)))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -106,18 +210,33 @@ class DuelCog(commands.Cog):
     async def outgoing_duel_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for pending duels where the user is the challenger (for /duel-cancel)."""
+        """Zero-HTTP autocomplete for outgoing duels where the user is the challenger (for /duel-cancel).
+
+        Phase 6: Reads player_id from autocomplete_state.player_cache (peek), then
+        reads outgoing duels from _outgoing_duel_cache (peek). On any cold miss,
+        schedules a background refresh and returns [].
+        """
         try:
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
-            if player_id is None:
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            if autocomplete_state.player_cache is None:
                 return []
-            resp = await self.http_client.get(
-                f"{api_base}/duels/outgoing",
-                params={"user_id": player_id, "guild_id": interaction.guild_id},
-                timeout=5,
-            )
-            resp.raise_for_status()
-            duels = resp.json()
+            player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+            if player_entry is None:
+                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                return []
+            player_id = player_entry.get("id")
+            if not player_id:
+                return []
+
+            # HOT PATH: peek outgoing duel cache — no HTTP
+            duels = self._outgoing_duel_cache.peek((guild_id, player_id))
+            if duels is None:
+                self._outgoing_duel_cache.schedule_refresh((guild_id, player_id))
+                return []
+
             norm_current = normalize_for_search(current)
             choices = []
             for d in duels:
@@ -128,7 +247,9 @@ class DuelCog(commands.Cog):
                     label = f"{target_name} — {stakes:,}cr stakes" if stakes else f"{target_name} — friendly duel"
                 else:
                     label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for older cache entries.
+                norm_label = d.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=str(duel_id)))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -206,6 +327,16 @@ class DuelCog(commands.Cog):
                 f"/duel-challenge success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" target={target.id} stakes={stakes} duel_id={duel_id}"
             )
+
+            # Invalidate duel caches: challenger's outgoing, target's pending
+            try:
+                self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+                self._pending_duel_cache.invalidate((interaction.guild_id, target_player_id))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/duel-challenge: duel cache invalidation failed for duel_id={duel_id}; "
+                    "transaction still succeeded"
+                )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
@@ -318,6 +449,17 @@ class DuelCog(commands.Cog):
                 f"/duel-accept success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" duel_id={duel_id} stalemate={is_stalemate}"
             )
+
+            # Invalidate duel caches: accepter's pending, challenger's outgoing
+            try:
+                self._pending_duel_cache.invalidate((interaction.guild_id, player_id))
+                challenger_player_id = data.get("challenger_id")
+                if challenger_player_id is not None:
+                    self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/duel-accept: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
+                )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -484,6 +626,17 @@ class DuelCog(commands.Cog):
                 f"/duel-reject success: guild={interaction.guild_id} user={interaction.user.id} duel_id={duel_id}"
             )
 
+            # Invalidate duel caches: rejecter's pending, challenger's outgoing
+            try:
+                self._pending_duel_cache.invalidate((interaction.guild_id, player_id))
+                challenger_player_id = data.get("challenger_id")
+                if challenger_player_id is not None:
+                    self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/duel-reject: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
+                )
+
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Duel not found.", ephemeral=True)
@@ -572,6 +725,17 @@ class DuelCog(commands.Cog):
             flogger.info(
                 f"/duel-cancel success: guild={interaction.guild_id} user={interaction.user.id} duel_id={duel_id}"
             )
+
+            # Invalidate duel caches: canceller's outgoing, target's pending
+            try:
+                self._outgoing_duel_cache.invalidate((interaction.guild_id, player_id))
+                target_player_id = data.get("target_id")
+                if target_player_id is not None:
+                    self._pending_duel_cache.invalidate((interaction.guild_id, target_player_id))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/duel-cancel: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
+                )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:

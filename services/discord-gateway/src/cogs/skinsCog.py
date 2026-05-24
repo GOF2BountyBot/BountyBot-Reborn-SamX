@@ -5,6 +5,7 @@ from io import BytesIO
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from discord import app_commands
 from discord.ext import commands
 from httpx import HTTPStatusError as HttpxHTTPStatusError
@@ -248,8 +249,12 @@ class SkinsCog(commands.Cog):
             base_url=BLENDER_API_BASE_URL,
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
+        # Static catalog caches — TTL=None (never expires; only reloaded on /reload_autocomplete)
         # map ship name → list of skin names
-        self._ship_skins: dict[str, list[str]] = {}
+        self._ship_skins: AutocompleteCache[str, list[str]] = AutocompleteCache(
+            ttl_seconds=None,
+            name="skins-render-info",
+        )
         # map ship name → render-info dict (for skinnable ships)
         self._ship_render_info: dict[str, dict] = {}
         bot.loop.create_task(self._preload_ship_skins())
@@ -277,20 +282,20 @@ class SkinsCog(commands.Cog):
                         full.raise_for_status()
                         data = full.json()
                         skins = data.get("compatible_skins") or {}
-                        self._ship_skins[name] = list(skins.keys())
+                        self._ship_skins.set(name, list(skins.keys()))
                     except HttpxTimeoutException as e:
                         flogger.warning(f"Timeout loading skins for {name}: {e}")
-                        self._ship_skins[name] = []
+                        self._ship_skins.set(name, [])
                     except HttpxHTTPStatusError as e:
                         flogger.warning(f"HTTP error loading skins for {name}: {e.response.status_code}")
-                        self._ship_skins[name] = []
+                        self._ship_skins.set(name, [])
                     except HttpxRequestError as e:
                         flogger.warning(f"Request error loading skins for {name}: {e}")
-                        self._ship_skins[name] = []
+                        self._ship_skins.set(name, [])
                     except Exception as e:  # pylint: disable=broad-exception-caught
                         flogger.warning(f"Unexpected error loading skins for {name}: {e}")
-                        self._ship_skins[name] = []
-                flogger.info("SkinsCog: Preloaded skins for %d ships", len(self._ship_skins))
+                        self._ship_skins.set(name, [])
+                flogger.info("SkinsCog: Preloaded skins for %d ships", self._ship_skins.size)
                 return
             except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
                 flogger.warning(
@@ -301,7 +306,7 @@ class SkinsCog(commands.Cog):
                 flogger.warning("SkinsCog: Unexpected error on preload attempt %d/%d: %s", attempt, len(delays), e)
                 await asyncio.sleep(delay)
         flogger.error("SkinsCog: All preload attempts exhausted. Ship skin autocomplete will be empty.")
-        self._ship_skins = {}
+        self._ship_skins.clear()
 
     # ------------------------------------------------------------------
     # Autocomplete helpers
@@ -310,9 +315,7 @@ class SkinsCog(commands.Cog):
     async def ship_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        return [
-            app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, list(self._ship_skins.keys()))
-        ]
+        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, self._ship_skins.keys())]
 
     async def skin_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         # read the already-selected ship from namespace
@@ -320,7 +323,7 @@ class SkinsCog(commands.Cog):
         if not ship:
             return []
         flogger.debug(f"skin_autocomplete: ship={ship!r}, filter={current!r}")
-        skins = self._ship_skins.get(ship)
+        skins = self._ship_skins.peek(ship)
         if skins is None:
             return []
         if not skins:
@@ -342,7 +345,9 @@ class SkinsCog(commands.Cog):
         artificially truncated to only previously-rendered ships.
         """
         skinnable_names = [
-            name for name in self._ship_skins if self._ship_render_info.get(name, {}).get("skinnable", True)
+            name
+            for name in self._ship_skins.keys()  # noqa: SIM118 — AutocompleteCache has no __iter__
+            if self._ship_render_info.get(name, {}).get("skinnable", True)
         ]
         return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, skinnable_names)]
 

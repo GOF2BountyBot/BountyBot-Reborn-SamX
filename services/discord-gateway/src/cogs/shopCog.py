@@ -9,6 +9,8 @@ from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
 
+from utils import autocomplete_state
+
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-ShopCog")
 
@@ -34,6 +36,46 @@ def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
         return False
 
 
+def _format_shop_item_stats(item: dict) -> str:
+    """Return a stat suffix string for a shop item, matching /loadout display style.
+
+    Format examples:
+      Primary/Secondary/Turret Weapon → " | DPS: 92.3"
+      Shield Module                   → " | Shield: 380"
+      Armour Module                   → " | Armour: 250"
+      Ship                            → " | Hull: 1200"
+      Items with no relevant stat     → ""  (empty — no trailing pipe)
+
+    The pipe separator is only included when a stat is present.
+    DPS is rounded to 1 decimal place.
+    Shield and Armour are mutually exclusive per item line (first found wins).
+    """
+    item_type = item.get("item_type", "")
+
+    if item_type in ("primary_weapon", "secondary_weapon", "turret_weapon"):
+        dps = item.get("dps")
+        if dps is not None and float(dps) != 0.0:
+            return f" | DPS: {float(dps):.1f}"
+        return ""
+
+    if item_type == "module":
+        shield = item.get("shield")
+        if shield is not None and int(shield) != 0:
+            return f" | Shield: {int(shield)}"
+        armour = item.get("armour")
+        if armour is not None and int(armour) != 0:
+            return f" | Armour: {int(armour)}"
+        return ""
+
+    if item_type == "ship":
+        hull_hp = item.get("hull_hp")
+        if hull_hp is not None and int(hull_hp) != 0:
+            return f" | Hull: {int(hull_hp)}"
+        return ""
+
+    return ""
+
+
 class ShopCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -41,7 +83,7 @@ class ShopCog(commands.Cog):
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
         self._valid_item_types = ["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
         self._shop_cache: AutocompleteCache[tuple, list] = AutocompleteCache(
-            ttl_seconds=300.0,
+            ttl_seconds=3600.0,  # 60 min dead-man switch; refresh job runs every 6 min
             refresh_fn=self._fetch_tier_shop,
             name="shopCog-shop-cache",
         )
@@ -75,13 +117,22 @@ class ShopCog(commands.Cog):
             return None
 
     async def _fetch_tier_shop(self, key: tuple) -> list:
-        """Fetch shop items for a (guild_id, tier) key.  Called by _shop_cache on miss/expiry."""
+        """Fetch shop items for a (guild_id, tier) key.  Called by _shop_cache on miss/expiry.
+
+        Phase 7: Pre-computes ``_norm`` on each item dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per item.
+        """
         guild_id, tier = key
         try:
             resp = await self.http_client.get(f"{api_base}/shops/guild/{guild_id}/tier/{tier}", timeout=5)
             if resp.status_code != 200:
                 return []
-            return resp.json()
+            items = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for item in items:
+                label = f"{item.get('item_name', '')} ({item.get('price', 0):,}cr)"
+                item["_norm"] = normalize_for_search(label)
+            return items
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -141,16 +192,26 @@ class ShopCog(commands.Cog):
                 raw_player_tier = "Bronze"
             tier = raw_player_tier
 
-            # Get shop items
-            params = {}
-            if item_type:
-                params["item_type"] = item_type
-
-            resp = await self.http_client.get(
-                f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}", params=params, timeout=10
-            )
-            resp.raise_for_status()
-            items = resp.json()
+            # Get shop items — peek cache first for unfiltered view.
+            # Use truthiness (not `is None`) so a stale empty list doesn't suppress
+            # an HTTP fetch that would return real items after a shop refresh.
+            if not item_type:
+                items = self._shop_cache.peek((interaction.guild_id, tier))
+                if not items:
+                    resp = await self.http_client.get(
+                        f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}", timeout=10
+                    )
+                    resp.raise_for_status()
+                    items = resp.json()
+            else:
+                # item_type filter requires HTTP (cache stores full unfiltered list)
+                resp = await self.http_client.get(
+                    f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}",
+                    params={"item_type": item_type},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                items = resp.json()
 
             if not items:
                 type_filter = f" ({item_type.replace('_', ' ').title()}s)" if item_type else ""
@@ -204,13 +265,15 @@ class ShopCog(commands.Cog):
                     tech_level = f"T{item['tech_level']}" if item.get("tech_level") else ""
                     quantity = f"x{item['quantity']}" if item["quantity"] > 1 else ""
                     emoji = item.get("emoji") or ""
+                    stat_suffix = _format_shop_item_stats(item)
 
                     price_text = f"{item['price']:,} credits"
                     if player["credits"] < item["price"]:
                         price_text = f"~~{price_text}~~ 💸"
 
                     name_display = f"{emoji} **{item['item_name']}**" if emoji else f"**{item['item_name']}**"
-                    items_text += f"{name_display} {tech_level} {quantity}\n    {price_text} | ID: {item['id']}\n"
+                    item_line = f"{name_display}{stat_suffix} {tech_level} {quantity}"
+                    items_text += f"{item_line}\n    {price_text} | ID: {item['id']}\n"
 
                 if len(type_items) > 10:
                     items_text += f"... and {len(type_items) - 10} more items\n"
@@ -239,41 +302,56 @@ class ShopCog(commands.Cog):
     async def buy_item_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[int]]:
-        """Cached autocomplete for shop items the player can buy.
+        """Zero-HTTP autocomplete for shop items the player can buy.
 
-        Still makes one live call to resolve player tier (per-user state).
-        Shop inventory per (guild_id, tier) is served from _shop_cache with a
-        5-minute TTL — zero shop-API calls per keystroke under steady state.
+        Phase 6: Both player tier and shop inventory are served from caches with
+        peek() — zero HTTP calls on the hot path. On a cold miss, schedules a
+        background refresh and returns [] immediately.
+
+        Player tier comes from autocomplete_state.player_cache (keyed by
+        (guild_id, discord_user_id)). Shop inventory comes from _shop_cache
+        (keyed by (guild_id, tier)).
         """
         try:
-            # Player tier must always be resolved live (per-user, can change on prestige/tier-up).
-            player = await self._get_player_data(
-                interaction.user.id,
-                interaction.guild_id,
-                display_name=getattr(interaction.user, "display_name", None),
-            )
-            if not player:
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player tier from shared player cache — no HTTP
+            pc = autocomplete_state.player_cache
+            player = pc.peek((guild_id, user_id)) if pc else None
+            if player is None and pc is not None:
+                player = await pc.get_with_timeout((guild_id, user_id), timeout=1.0)
+            if player is None:
                 return []
+
             # E.2: Guard against unrecognized tier values before indexing the list.
-            # If tier resolution returns an unexpected value (e.g. a new tier added to the
-            # API not yet reflected in _valid_tiers), log a warning so operators can
-            # diagnose the issue rather than silently returning an empty dropdown.
             if player.get("tier") not in self._valid_tiers:
                 flogger.warning(
                     f"buy_item_autocomplete: unrecognized player tier={player.get('tier')!r} "
-                    f"guild={interaction.guild_id} user={interaction.user.id}; "
+                    f"guild={guild_id} user={user_id}; "
                     "returning empty autocomplete"
                 )
                 return []
+
             # Strict same-tier: autocomplete only surfaces items at the player's
             # current tier. No buy-down to lower-tier shops.
             tier = player["tier"]
+
+            # HOT PATH: peek shop cache — no HTTP
+            items = self._shop_cache.peek((guild_id, tier))
+            if items is None:
+                items = await self._shop_cache.get_with_timeout((guild_id, tier), timeout=1.0)
+            if items is None:
+                return []
+
             norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[int]] = []
-            items = await self._shop_cache.get((interaction.guild_id, tier)) or []
             for item in items:
                 label = f"{item['item_name']} ({item['price']:,}cr)"
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for items pushed
+                # before this phase (e.g. via the internal push endpoint with old shape).
+                norm_label = item.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=item["id"]))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -284,7 +362,7 @@ class ShopCog(commands.Cog):
     @app_commands.autocomplete(item_id=buy_item_autocomplete)
     async def buy(self, interaction: discord.Interaction, item_id: int, quantity: int = 1):
         """Purchase item from shop."""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             if quantity <= 0:
@@ -358,6 +436,17 @@ class ShopCog(commands.Cog):
                     f"tier={shop_item.get('tier')}; transaction still succeeded"
                 )
 
+            # Invalidate player and inventory caches — credits changed; inventory grew
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player["id"])
+                if is_ship:
+                    autocomplete_state.invalidate_ships(interaction.guild_id, player["id"])
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/buy: shared cache invalidation failed for player_id={player['id']}; transaction still succeeded"
+                )
+
             # Success message
             embed = discord.Embed(
                 title="✅ Purchase Successful!",
@@ -373,7 +462,7 @@ class ShopCog(commands.Cog):
             footer_text = "Ship added to your hangar!" if is_ship else "Items added to your inventory!"
             embed.set_footer(text=footer_text)
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"Player {player['id']} bought {quantity}x {transaction['item_name']} "
                 f"for {transaction['total_cost']} credits"
@@ -409,35 +498,109 @@ class ShopCog(commands.Cog):
     async def sell_item_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for inventory items the player can sell.
+        """Zero-HTTP autocomplete for inventory items and inactive ships the player can sell.
 
-        Fetches player's full inventory and returns matching items.
-        Display format: "Item Name (Type)" — value is the item_name.
-        item_type is resolved server-side; no type filter exposed in autocomplete.
+        Phase 6: Player identity, inventory, and ships are served from caches with
+        peek() — zero HTTP calls on the hot path. On a cold miss, schedules a
+        background refresh and returns [] immediately.
+
+        Player record comes from autocomplete_state.player_cache to get the
+        bot-core player_id. Inventory comes from autocomplete_state.inventory_cache
+        (keyed by (guild_id, player_id)). Inactive ships come from
+        autocomplete_state.ships_cache (keyed by (guild_id, player_id)).
+
+        Ship choices are prefixed with "ship:" so the sell command can route
+        them to the /shops/sell-ship endpoint instead of /shops/sell.
         """
         try:
-            player = await self._get_player_data(
-                interaction.user.id,
-                interaction.guild_id,
-                display_name=getattr(interaction.user, "display_name", None),
-            )
-            if not player:
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player from shared player cache — no HTTP
+            pc = autocomplete_state.player_cache
+            player = pc.peek((guild_id, user_id)) if pc else None
+            if player is None and pc is not None:
+                player = await pc.get_with_timeout((guild_id, user_id), timeout=1.0)
+            if player is None:
                 return []
-            resp = await self.http_client.get(f"{api_base}/inventory/player/{player['id']}", timeout=5)
-            if resp.status_code != 200:
+
+            player_id = player.get("id")
+            if not player_id:
                 return []
-            items = resp.json()
+
+            # HOT PATH: peek inventory cache — no HTTP
+            ic = autocomplete_state.inventory_cache
+            items = ic.peek((guild_id, player_id)) if ic else None
+            if items is None and ic is not None:
+                items = await ic.get_with_timeout((guild_id, player_id), timeout=1.0)
+            if items is None:
+                return []
 
             norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[str]] = []
             for inv_item in items:
-                name = inv_item.get("item_name", "")
-                raw_type = inv_item.get("item_type", "")
+                # inventory_cache stores NormalizedChoice objects with .label, .value, .norm, .raw
+                raw = inv_item.raw if hasattr(inv_item, "raw") else inv_item
+                name = raw.get("item_name", "") if isinstance(raw, dict) else getattr(inv_item, "label", "")
+                if hasattr(inv_item, "label"):
+                    label = inv_item.label
+                    norm_label = inv_item.norm
+                else:
+                    raw_type = raw.get("item_type", "")
+                    type_label = self._ITEM_TYPE_LABELS.get(raw_type, raw_type.replace("_", " ").title())
+                    label = f"{name} ({type_label})"
+                    norm_label = normalize_for_search(label)
 
-                type_label = self._ITEM_TYPE_LABELS.get(raw_type, raw_type.replace("_", " ").title())
-                label = f"{name} ({type_label})"
-                if norm_current in normalize_for_search(label):
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=name))
+
+            # HOT PATH: peek ships cache for inactive ships — no HTTP
+            sc = autocomplete_state.ships_cache
+            ships = sc.peek((guild_id, player_id)) if sc else None
+            if ships is None and sc is not None:
+                ships = await sc.get_with_timeout((guild_id, player_id), timeout=1.0)
+            if ships is not None:
+                for ship_choice in ships:
+                    raw = ship_choice.raw if hasattr(ship_choice, "raw") else {}
+                    if isinstance(raw, dict):
+                        is_active = raw.get("is_active", False)
+                    else:
+                        is_active = getattr(raw, "is_active", False)
+                    # Skip active ship — cannot sell active ship
+                    if is_active:
+                        continue
+
+                    # Build "Name (inactive ship)" label from raw data — never reuse
+                    # pre-computed label which may contain empty parens like "Betty ()"
+                    # from a blank nickname (GROUP-A cosmetic fix).
+                    if isinstance(raw, dict):
+                        nickname = (raw.get("nickname") or "").strip()
+                        ship_name = raw.get("name") or raw.get("ship_name") or "Unknown"
+                        ship_display = nickname if nickname else ship_name
+                    else:
+                        nickname = getattr(raw, "nickname", None)
+                        ship_display = (nickname.strip() if nickname else None) or getattr(raw, "name", "Unknown")
+
+                    # Extract the player_ship_id for routing the sell request
+                    if isinstance(raw, dict):
+                        ship_id = raw.get("player_ship_id") or raw.get("id")
+                    else:
+                        ship_id = getattr(raw, "player_ship_id", None) or getattr(raw, "id", None)
+
+                    if ship_id is None:
+                        # Fall back to the choice value
+                        ship_id = ship_choice.value if hasattr(ship_choice, "value") else None
+
+                    if ship_id is None:
+                        continue
+
+                    label = f"{ship_display} (inactive ship)"[:100]
+                    norm_label = normalize_for_search(label)
+                    if norm_current in norm_label:
+                        # Encode as "ship:<player_ship_id>" so sell handler can route correctly
+                        value = f"ship:{ship_id}"
+                        choices.append(app_commands.Choice(name=label, value=value))
+
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
@@ -460,7 +623,7 @@ class ShopCog(commands.Cog):
         The item is always routed to the player's current tier shop (consistent
         with /buy tier-gating — A.42b/A.42c).
         """
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             if quantity <= 0:
@@ -477,7 +640,64 @@ class ShopCog(commands.Cog):
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
-            # Make sell request — no item_type or target_tier; server resolves both
+            # Check if this is an inactive ship sale (value encoded as "ship:<player_ship_id>")
+            is_ship_sale = item.startswith("ship:")
+
+            if is_ship_sale:
+                # Route to sell-ship endpoint
+                try:
+                    ship_id = int(item[len("ship:") :])
+                except ValueError:
+                    await interaction.followup.send("❌ Invalid ship selection.", ephemeral=True)
+                    return
+
+                sell_data = {
+                    "player_id": player["id"],
+                    "ship_id": ship_id,
+                    "clear_equipment": True,  # return equipped items to inventory
+                    "target_tier": player.get("tier", "Bronze"),
+                }
+                resp = await self.http_client.post(f"{api_base}/shops/sell-ship", json=sell_data, timeout=10)
+                resp.raise_for_status()
+                transaction = resp.json()
+
+                # Invalidate player, inventory, and ships caches
+                try:
+                    self._shop_cache.invalidate((interaction.guild_id, player["tier"]))
+                    autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, player["id"])
+                    autocomplete_state.invalidate_ships(interaction.guild_id, player["id"])
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/sell ship: cache invalidation failed for player_id={player['id']}; "
+                        "transaction still succeeded"
+                    )
+
+                ship_name = transaction.get("item_name", "Ship")
+                embed = discord.Embed(
+                    title="✅ Ship Sold!",
+                    description=f"You sold your **{ship_name}**",
+                    color=discord.Color.green(),
+                )
+                embed.add_field(name="Item Type", value="Ship", inline=True)
+                embed.add_field(name="Sale Value", value=f"{transaction.get('total_value', 0):,} credits", inline=True)
+                embed.add_field(name="New Credits", value=f"{transaction.get('remaining_credits', 0):,}", inline=True)
+                unequipped = transaction.get("items_unequipped_to_inventory", 0)
+                if unequipped:
+                    embed.add_field(
+                        name="Items Returned",
+                        value=f"{unequipped} item(s) returned to inventory",
+                        inline=False,
+                    )
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                flogger.info(
+                    f"Player {player['id']} sold ship id={ship_id} ({ship_name}) "
+                    f"for {transaction.get('total_value', 0)} credits"
+                )
+                return
+
+            # Regular item sell — no item_type or target_tier; server resolves both
             sell_data = {
                 "player_id": player["id"],
                 "item_name": item,
@@ -497,6 +717,15 @@ class ShopCog(commands.Cog):
                     f"tier={player.get('tier')}; transaction still succeeded"
                 )
 
+            # Invalidate player and inventory caches — credits changed; inventory shrank
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player["id"])
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/sell: shared cache invalidation failed for player_id={player['id']}; transaction still succeeded"
+                )
+
             # Success message
             embed = discord.Embed(
                 title="✅ Sale Successful!",
@@ -512,7 +741,7 @@ class ShopCog(commands.Cog):
             embed.add_field(name="Total Value", value=f"{transaction['total_value']:,} credits", inline=True)
             embed.add_field(name="New Credits", value=f"{transaction['remaining_credits']:,}", inline=True)
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(f"Player {player['id']} sold {quantity}x {item} for {transaction['total_value']} credits")
 
         except httpx.HTTPStatusError as e:

@@ -187,6 +187,16 @@ class TestShopCogInitialization:
             "module",
         ]
 
+    def test_shop_cache_ttl_is_3600(self, mock_shop_cog):
+        """_shop_cache must be initialized with ttl_seconds=3600.0 (Item A: 300→3600)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(mock_shop_cog, "_shop_cache")
+        assert isinstance(mock_shop_cog._shop_cache, AutocompleteCache)
+        assert mock_shop_cog._shop_cache._ttl == 3600.0, (
+            f"Expected _shop_cache TTL=3600s (1 hr), got {mock_shop_cog._shop_cache._ttl}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # cog_unload lifecycle
@@ -567,7 +577,7 @@ class TestBuyCommand:
 
         asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -797,7 +807,7 @@ class TestBuyCommandRespx:
 
             asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
 
 
@@ -1367,7 +1377,7 @@ class TestSellCommand:
 
         asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "Micro Gun MK I", 1))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
@@ -1529,117 +1539,260 @@ class TestSellCommand:
 
 
 class TestSellItemAutocomplete:
-    """Tests for the updated sell_item_autocomplete (A.42b — no item_type filter, '(Type)' labels).
+    """Tests for the updated sell_item_autocomplete (Phase 6 — zero-HTTP, cache-backed).
 
-    The autocomplete no longer accepts an item_type filter parameter — server-side resolution
-    handles type detection. Display format is still 'Name (Type)'.
+    Phase 6: sell_item_autocomplete uses peek() on player_cache and inventory_cache.
+    Tests pre-populate these shared caches instead of mocking HTTP responses.
     """
+
+    def _make_normalized_choices(self, items):
+        """Build NormalizedChoice objects from raw inventory item dicts (as inventory_cache stores them)."""
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search
+
+        choices = []
+        for item in items:
+            item_name = item.get("item_name") or ""
+            item_type = item.get("item_type") or ""
+            quantity = item.get("quantity") or 0
+            if not item_name:
+                continue
+            qty_suffix = f" [x{quantity}]" if quantity and quantity > 1 else ""
+            label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
+            value = str(item.get("id", item_name))
+            norm = normalize_for_search(label)
+            choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=item))
+        return choices
+
+    def _init_ac_state(self, player, inventory_items, guild_id=987654321, user_id=111111111):
+        """Initialize autocomplete_state caches with test data."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        player_id = player.get("id", 1)
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        if ac_state.inventory_cache is None:
+            ac_state.inventory_cache = AutocompleteCache(name="inventory-test")
+
+        ac_state.player_cache.set((guild_id, user_id), player)
+        normalized = self._make_normalized_choices(inventory_items)
+        ac_state.inventory_cache.set((guild_id, player_id), normalized)
 
     def _make_inventory_items(self):
         """Return a sample inventory list."""
         return [
-            {"item_name": "LaserCannon", "item_type": "primary_weapon", "quantity": 2},
-            {"item_name": "ShieldModule", "item_type": "module", "quantity": 1},
-            {"item_name": "Betty", "item_type": "ship", "quantity": 1},
-            {"item_name": "Raptor Turret", "item_type": "turret_weapon", "quantity": 3},
+            {"id": 1, "item_name": "LaserCannon", "item_type": "primary_weapon", "quantity": 2},
+            {"id": 2, "item_name": "ShieldModule", "item_type": "module", "quantity": 1},
+            {"id": 3, "item_name": "Betty", "item_type": "ship", "quantity": 1},
+            {"id": 4, "item_name": "Raptor Turret", "item_type": "turret_weapon", "quantity": 3},
         ]
 
-    def test_sell_autocomplete_returns_all(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete returns all inventory items (no type filter)."""
+    def test_sell_autocomplete_returns_all(self, mock_shop_cog):
+        """sell_item_autocomplete returns all inventory items (no type filter), zero HTTP."""
         interaction = _create_mock_interaction()
+        player = _make_player_data()
+        self._init_ac_state(player, self._make_inventory_items())
 
-        player_resp = make_mock_response(_make_player_data())
-        inventory_resp = make_mock_response(self._make_inventory_items())
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
+        # Assert HTTP client is never called
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
         assert len(result) == 4
 
-    def test_sell_autocomplete_display_format_includes_type(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete should display 'Name (Type)' format."""
+    def test_sell_autocomplete_display_format_includes_type(self, mock_shop_cog):
+        """sell_item_autocomplete should display 'Name (Type)' format, zero HTTP."""
         interaction = _create_mock_interaction()
+        player = _make_player_data()
+        self._init_ac_state(player, [{"id": 3, "item_name": "Betty", "item_type": "ship", "quantity": 1}])
 
-        player_resp = make_mock_response(_make_player_data())
-        inventory_resp = make_mock_response(
-            [
-                {"item_name": "Betty", "item_type": "ship", "quantity": 1},
-            ]
-        )
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
         assert len(result) == 1
         assert result[0].name == "Betty (Ship)"
         assert result[0].value == "Betty"
 
-    def test_sell_autocomplete_primary_weapon_label(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete should show 'Primary Weapon' for primary_weapon type."""
+    def test_sell_autocomplete_primary_weapon_label(self, mock_shop_cog):
+        """sell_item_autocomplete should show 'Primary Weapon' for primary_weapon type, zero HTTP."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response(_make_player_data())
-        inventory_resp = make_mock_response(
-            [
-                {"item_name": "Nirai Impulse EX 1", "item_type": "primary_weapon", "quantity": 1},
-            ]
+        player = _make_player_data()
+        self._init_ac_state(
+            player, [{"id": 10, "item_name": "Nirai Impulse EX 1", "item_type": "primary_weapon", "quantity": 1}]
         )
 
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
         assert len(result) == 1
         assert result[0].name == "Nirai Impulse EX 1 (Primary Weapon)"
         assert result[0].value == "Nirai Impulse EX 1"
 
-    def test_sell_autocomplete_player_not_found_returns_empty(self, mock_shop_cog):
-        """sell_item_autocomplete should return [] when player lookup fails."""
-        interaction = _create_mock_interaction()
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=RuntimeError("error"))
+    def test_sell_autocomplete_player_cache_miss_returns_empty(self, mock_shop_cog):
+        """sell_item_autocomplete returns [] on player cache cold miss (schedules refresh)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        interaction = _create_mock_interaction(user_id=999999, guild_id=888888)
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        # Ensure no entry for this guild/user
+        ac_state.player_cache.invalidate((888888, 999999))
+
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
         assert result == []
 
-    def test_sell_autocomplete_inventory_error_returns_empty(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete should return [] when inventory fetch fails."""
-        interaction = _create_mock_interaction()
+    def test_sell_autocomplete_inventory_cache_miss_returns_empty(self, mock_shop_cog):
+        """sell_item_autocomplete returns [] on inventory cache cold miss."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
 
-        player_resp = make_mock_response(_make_player_data())
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=RuntimeError("error"))
+        interaction = _create_mock_interaction(user_id=111111, guild_id=987654321)
+        player = _make_player_data(player_id=42)
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        if ac_state.inventory_cache is None:
+            ac_state.inventory_cache = AutocompleteCache(name="inventory-test")
+
+        ac_state.player_cache.set((987654321, 111111), player)
+        # Ensure no inventory entry for this player
+        ac_state.inventory_cache.invalidate((987654321, 42))
+
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
         assert result == []
 
-    def test_sell_autocomplete_inventory_non_200_returns_empty(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete should return [] when inventory returns non-200."""
+    def test_sell_autocomplete_filters_by_current_text(self, mock_shop_cog):
+        """sell_item_autocomplete should filter results by current text, zero HTTP."""
         interaction = _create_mock_interaction()
+        player = _make_player_data()
+        self._init_ac_state(player, self._make_inventory_items())
 
-        player_resp = make_mock_response(_make_player_data())
-        error_inv_resp = make_mock_response([], status_code=500)
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=error_inv_resp)
-
-        result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
-        assert result == []
-
-    def test_sell_autocomplete_filters_by_current_text(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete should filter results by current text."""
-        interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response(_make_player_data())
-        inventory_resp = make_mock_response(self._make_inventory_items())
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, "Betty"))
         assert len(result) == 1
         assert result[0].value == "Betty"
+
+    def test_inactive_ship_empty_nickname_no_extra_brackets(self, mock_shop_cog):
+        """GROUP-A fix: inactive ship with empty nickname should show 'Betty (inactive ship)',
+        NOT 'Betty () (inactive ship)'.
+
+        The pre-computed NormalizedChoice.label may have empty parens when the nickname
+        is blank (e.g. 'Betty ()').  The fix builds ship_display from raw data directly
+        so the parens only appear when there's an actual nickname.
+        """
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search
+
+        interaction = _create_mock_interaction()
+        player = _make_player_data()
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        if ac_state.inventory_cache is None:
+            ac_state.inventory_cache = AutocompleteCache(name="inventory-test")
+        if ac_state.ships_cache is None:
+            ac_state.ships_cache = AutocompleteCache(name="ships-test")
+
+        ac_state.player_cache.set((987654321, 111111111), player)
+        # Empty inventory so only ships appear
+        ac_state.inventory_cache.set((987654321, 1), [])
+
+        # Build a ship NormalizedChoice with an empty nickname — this mimics the
+        # pre-computed label that produces "Betty ()" without the fix.
+        ship_raw = {
+            "name": "Betty",
+            "ship_name": "Betty",
+            "nickname": "",  # blank nickname → pre-computed label would be "Betty ()"
+            "is_active": False,
+            "player_ship_id": 42,
+        }
+        # Pre-computed label has empty parens (the bug scenario)
+        label_with_empty_parens = "Betty ()"
+        ship_nc = NormalizedChoice(
+            label=label_with_empty_parens,
+            value="42",
+            norm=normalize_for_search(label_with_empty_parens),
+            raw=ship_raw,
+        )
+        ac_state.ships_cache.set((987654321, 1), [ship_nc])
+
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+
+        result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
+
+        # Exactly one inactive ship choice
+        ship_choices = [c for c in result if "inactive ship" in c.name.lower()]
+        assert len(ship_choices) == 1, f"Expected 1 inactive ship choice, got: {[c.name for c in result]}"
+
+        # Must be "Betty (inactive ship)", NOT "Betty () (inactive ship)"
+        assert ship_choices[0].name == "Betty (inactive ship)", (
+            f"Expected 'Betty (inactive ship)' but got '{ship_choices[0].name}' — "
+            "empty nickname must not produce extra brackets"
+        )
+        assert "()" not in ship_choices[0].name, f"Label should not contain '()': '{ship_choices[0].name}'"
+        assert ship_choices[0].value == "ship:42"
+
+    def test_inactive_ship_with_nickname_shows_nickname(self, mock_shop_cog):
+        """Inactive ship WITH a real nickname shows nickname in label (not ship name)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search
+
+        interaction = _create_mock_interaction()
+        player = _make_player_data()
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        if ac_state.inventory_cache is None:
+            ac_state.inventory_cache = AutocompleteCache(name="inventory-test")
+        if ac_state.ships_cache is None:
+            ac_state.ships_cache = AutocompleteCache(name="ships-test")
+
+        ac_state.player_cache.set((987654321, 111111111), player)
+        ac_state.inventory_cache.set((987654321, 1), [])
+
+        ship_raw = {
+            "name": "Niode",
+            "ship_name": "Niode",
+            "nickname": "Speedy",  # real nickname
+            "is_active": False,
+            "player_ship_id": 99,
+        }
+        ship_nc = NormalizedChoice(
+            label="Speedy (Niode)",
+            value="99",
+            norm=normalize_for_search("Speedy (Niode)"),
+            raw=ship_raw,
+        )
+        ac_state.ships_cache.set((987654321, 1), [ship_nc])
+
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+
+        result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
+        ship_choices = [c for c in result if "inactive ship" in c.name.lower()]
+        assert len(ship_choices) == 1
+        # Nickname should be used as display
+        assert ship_choices[0].name == "Speedy (inactive ship)"
+        assert ship_choices[0].value == "ship:99"
 
 
 # ---------------------------------------------------------------------------
@@ -1905,85 +2058,68 @@ def _make_shop_items_for_tier(tier: str, count: int = 3) -> list[dict]:
 
 
 class TestBuyItemAutocompleteWithCache:
-    """Tests for buy_item_autocomplete serving from _shop_cache (spec tests #21–22)."""
+    """Tests for buy_item_autocomplete serving from caches (spec tests #21–22).
+
+    Phase 6: buy_item_autocomplete uses peek() on player_cache (for tier) and _shop_cache
+    (for items). Tests pre-populate both caches and assert zero HTTP calls.
+    """
 
     def _make_interaction(self, user_id=111111, guild_id=987654321):
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
         return interaction
 
+    def _init_player_cache(self, player, guild_id=987654321, user_id=111111):
+        """Pre-populate the shared player cache."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        ac_state.player_cache.set((guild_id, user_id), player)
+
     # ------------------------------------------------------------------
-    # Test #21 — cold cache fetches once; second invocation uses cache (zero new HTTP)
+    # Test #21 — warm caches serve from memory; second invocation also zero-HTTP
     # ------------------------------------------------------------------
 
-    def test_cold_cache_fetches_once_second_hit_uses_cache(self, mock_shop_cog):
-        """Cold cache fetches tier shop once; second autocomplete uses cached data (no new HTTP)."""
+    def test_warm_caches_serve_from_memory_no_http(self, mock_shop_cog):
+        """Warm player_cache + warm shop_cache → zero HTTP on both invocations."""
         player = _make_player_data(tier="Bronze")
         bronze_items = _make_shop_items_for_tier("Bronze", 3)
-
-        # Player resolution response
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value=player)
-
-        # Shop items response
-        shop_resp = MagicMock()
-        shop_resp.status_code = 200
-        shop_resp.json = MagicMock(return_value=bronze_items)
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=shop_resp)
-
         interaction = self._make_interaction()
 
-        # First autocomplete — should call GET /shops/... once (cold cache)
+        self._init_player_cache(player)
+        # Pre-populate shop cache directly
+        mock_shop_cog._shop_cache.set((interaction.guild_id, "Bronze"), bronze_items)
+
+        # Both calls must NOT touch HTTP
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+
         result1 = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
         assert len(result1) == 3
-        get_call_count_after_first = mock_shop_cog.http_client.get.call_count
 
-        # Second autocomplete — should NOT call GET /shops/... again (cache hit)
         result2 = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
         assert len(result2) == 3
-        assert mock_shop_cog.http_client.get.call_count == get_call_count_after_first
 
     # ------------------------------------------------------------------
-    # Test #22 — after TTL expiry, refetches
+    # Test #22 — shop cache cold miss returns [] and schedules refresh
     # ------------------------------------------------------------------
 
-    def test_after_ttl_expiry_refetches(self, mock_shop_cog):
-        """After TTL expiry, buy_item_autocomplete triggers a new shop fetch."""
+    def test_shop_cache_cold_miss_returns_empty_no_http(self, mock_shop_cog):
+        """On shop cache cold miss, buy_item_autocomplete returns [] without HTTP."""
         player = _make_player_data(tier="Bronze")
-        bronze_items = _make_shop_items_for_tier("Bronze", 2)
+        interaction = self._make_interaction(user_id=111111, guild_id=987654321)
 
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value=player)
+        self._init_player_cache(player)
+        # Ensure shop cache is empty for this guild/tier
+        mock_shop_cog._shop_cache.invalidate((987654321, "Bronze"))
 
-        shop_resp = MagicMock()
-        shop_resp.status_code = 200
-        shop_resp.json = MagicMock(return_value=bronze_items)
+        # HTTP must not be called
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=shop_resp)
-
-        interaction = self._make_interaction()
-
-        # First call — primes cache
-        asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
-        get_calls_after_prime = mock_shop_cog.http_client.get.call_count
-
-        # Manually expire the cache entry by replacing it with an expired one
-        guild_id = interaction.guild_id
-        clock = [0.0]
-        mock_shop_cog._shop_cache._monotonic = lambda: clock[0]
-        # Re-set with t=0 then advance past TTL
-        mock_shop_cog._shop_cache.set((guild_id, "Bronze"), bronze_items)
-        clock[0] = 400.0  # past 300s TTL
-
-        # Second call — cache expired, should fetch again
-        asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
-        assert mock_shop_cog.http_client.get.call_count > get_calls_after_prime
+        result = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
+        assert result == []
 
 
 class TestBuyInvalidatesCache:
@@ -2078,56 +2214,66 @@ class TestSellInvalidatesCache:
 
 
 class TestBuyItemAutocompleteEdgeCases:
-    """Tests for buy_item_autocomplete edge cases (spec tests #25, #26)."""
+    """Tests for buy_item_autocomplete edge cases (Phase 6 — zero-HTTP cache-backed)."""
 
     def _make_interaction(self, user_id=111111, guild_id=987654321):
         return _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
+    def _init_player_cache(self, player, guild_id=987654321, user_id=111111):
+        """Pre-populate the shared player cache."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        ac_state.player_cache.set((guild_id, user_id), player)
+
     # ------------------------------------------------------------------
-    # Test #25 — returns empty list when player resolution fails
+    # Test #25 — player cache cold miss → returns []
     # ------------------------------------------------------------------
 
-    def test_returns_empty_when_player_resolution_fails(self, mock_shop_cog):
-        """buy_item_autocomplete returns empty list when player resolution fails."""
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=Exception("connection error"))
+    def test_returns_empty_when_player_cache_cold_miss(self, mock_shop_cog):
+        """buy_item_autocomplete returns [] on player cache cold miss (no HTTP)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
 
-        interaction = self._make_interaction()
+        interaction = self._make_interaction(user_id=777777, guild_id=111111)
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        # Ensure no entry for this user/guild
+        ac_state.player_cache.invalidate((111111, 777777))
+
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+
         result = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
-
         assert result == []
 
     # ------------------------------------------------------------------
-    # Test #26 — Silver player sees Bronze + Silver items
+    # Test #26 — Silver player sees only Silver items (strict same-tier)
     # ------------------------------------------------------------------
 
     def test_silver_player_sees_only_silver_items(self, mock_shop_cog):
-        """Strict same-tier: Silver player's autocomplete includes only Silver items.
-
-        The buy_item_autocomplete previously showed items from all accessible tiers
-        (Bronze + Silver for a Silver player). With strict same-tier enforcement,
-        only the player's own tier is shown in autocomplete.
-        """
+        """Strict same-tier: Silver player's autocomplete includes only Silver items, zero HTTP."""
         player = _make_player_data(tier="Silver")
         bronze_items = _make_shop_items_for_tier("Bronze", 2)
         silver_items = _make_shop_items_for_tier("Silver", 2)
 
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value=player)
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        interaction = self._make_interaction()
+        self._init_player_cache(player)
 
         # Pre-populate cache for both tiers
         mock_shop_cog._shop_cache.set((987654321, "Bronze"), bronze_items)
         mock_shop_cog._shop_cache.set((987654321, "Silver"), silver_items)
 
-        interaction = self._make_interaction()
+        # HTTP must not be called
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+
         result = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
 
         # Strict same-tier: only the 2 Silver items are shown (not Bronze+Silver=4)
         assert len(result) == 2
-        # Autocomplete format is "ItemName (price cr)" — no tier label embedded
         names = [c.name for c in result]
         assert all("Item" in n for n in names)
 
@@ -2138,18 +2284,12 @@ class TestBuyItemAutocompleteEdgeCases:
     def test_unknown_player_tier_returns_empty_and_logs_warning(self, mock_shop_cog):
         """E.2: buy_item_autocomplete returns [] and logs WARNING when player tier is unrecognized.
 
-        If the API returns a tier value not present in _valid_tiers (e.g. a new
-        prestige state or a new tier added server-side before the cog is updated),
-        the autocomplete must not silently fail — it must log a WARNING so operators
-        can investigate.
+        Tier is read from player_cache — if a player has an unrecognized tier,
+        the autocomplete must log a WARNING so operators can investigate.
         """
-        # Return a player with an unrecognized tier
+        # Put a player with an unrecognized tier in the player cache
         player = _make_player_data(tier="Legendary")  # not in ["Bronze","Silver","Gold","Platinum"]
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value=player)
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        self._init_player_cache(player)
 
         # Inject a trackable logger into the cog
         mock_logger = MagicMock()
@@ -2161,6 +2301,8 @@ class TestBuyItemAutocompleteEdgeCases:
 
         try:
             interaction = self._make_interaction()
+            mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+            mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
             result = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
         finally:
             shop_module.flogger = original_flogger
@@ -2173,6 +2315,423 @@ class TestBuyItemAutocompleteEdgeCases:
         assert "Legendary" in warning_msg
         assert str(interaction.guild_id) in warning_msg
         assert str(interaction.user.id) in warning_msg
+
+
+# ---------------------------------------------------------------------------
+# _format_shop_item_stats helper — Sub-task A (Task 0002)
+# ---------------------------------------------------------------------------
+
+
+class TestFormatShopItemStats:
+    """Tests for the _format_shop_item_stats module-level helper function.
+
+    Acceptance criteria (Task 0002 Sub-task A):
+    - Primary/Secondary/Turret Weapons: " | DPS: {dps:.1f}" when dps non-zero
+    - Modules: " | Shield: {n}" or " | Armour: {n}" when stat non-zero
+    - Ships: " | Hull: {n}" when hull_hp non-zero
+    - Items with no relevant stat: "" (empty, no trailing pipe)
+    - DPS rounds to 1 decimal place
+    """
+
+    def _get_format_fn(self):
+        """Import the helper from the module under test."""
+        _evict_discord_modules()
+        from cogs.shopCog import _format_shop_item_stats
+
+        return _format_shop_item_stats
+
+    # ── Weapon types ─────────────────────────────────────────────────────────
+
+    def test_primary_weapon_with_dps(self):
+        """Primary weapon with non-zero dps → '| DPS: x.x' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 92.3}
+        assert fn(item) == " | DPS: 92.3"
+
+    def test_primary_weapon_dps_rounded(self):
+        """DPS rounds to exactly 1 decimal place."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 45.678}
+        assert fn(item) == " | DPS: 45.7"
+
+    def test_secondary_weapon_with_dps(self):
+        """Secondary weapon with non-zero dps → '| DPS: x.x' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "secondary_weapon", "dps": 60.0}
+        assert fn(item) == " | DPS: 60.0"
+
+    def test_turret_weapon_with_dps(self):
+        """Turret weapon with non-zero dps → '| DPS: x.x' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "turret_weapon", "dps": 120.5}
+        assert fn(item) == " | DPS: 120.5"
+
+    def test_weapon_dps_zero_returns_empty(self):
+        """Weapon with dps == 0 returns empty string (no trailing pipe)."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 0.0}
+        assert fn(item) == ""
+
+    def test_weapon_dps_none_returns_empty(self):
+        """Weapon with dps == None returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": None}
+        assert fn(item) == ""
+
+    def test_weapon_no_dps_key_returns_empty(self):
+        """Weapon dict with no 'dps' key returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon"}
+        assert fn(item) == ""
+
+    # ── Module types ─────────────────────────────────────────────────────────
+
+    def test_module_with_shield(self):
+        """Module with non-zero shield → '| Shield: n' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": 380}
+        assert fn(item) == " | Shield: 380"
+
+    def test_module_with_armour(self):
+        """Module with non-zero armour → '| Armour: n' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "armour": 250}
+        assert fn(item) == " | Armour: 250"
+
+    def test_module_shield_takes_priority_over_armour(self):
+        """When both shield and armour are present, shield is shown (first found)."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": 100, "armour": 200}
+        result = fn(item)
+        # Shield takes priority — both should not appear on the same line
+        assert result == " | Shield: 100"
+
+    def test_module_no_stats_returns_empty(self):
+        """Module with no relevant stats (utility module) returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module"}
+        assert fn(item) == ""
+
+    def test_module_zero_shield_returns_empty(self):
+        """Module with shield == 0 returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": 0}
+        assert fn(item) == ""
+
+    def test_module_none_stats_returns_empty(self):
+        """Module with None stats returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": None, "armour": None}
+        assert fn(item) == ""
+
+    # ── Ship type ─────────────────────────────────────────────────────────────
+
+    def test_ship_with_hull_hp(self):
+        """Ship with non-zero hull_hp → '| Hull: n' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "ship", "hull_hp": 1200}
+        assert fn(item) == " | Hull: 1200"
+
+    def test_ship_no_hull_hp_returns_empty(self):
+        """Ship with hull_hp == None returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "ship", "hull_hp": None}
+        assert fn(item) == ""
+
+    def test_ship_zero_hull_hp_returns_empty(self):
+        """Ship with hull_hp == 0 returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "ship", "hull_hp": 0}
+        assert fn(item) == ""
+
+    # ── Unknown / no type ─────────────────────────────────────────────────────
+
+    def test_unknown_item_type_returns_empty(self):
+        """Unknown item type returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "unknown_type", "dps": 100}
+        assert fn(item) == ""
+
+    def test_no_item_type_key_returns_empty(self):
+        """Item dict with no 'item_type' key returns empty string."""
+        fn = self._get_format_fn()
+        item = {"dps": 100}
+        assert fn(item) == ""
+
+    # ── Formatting correctness ─────────────────────────────────────────────────
+
+    def test_stat_suffix_no_trailing_pipe_when_present(self):
+        """Stat suffix starts with ' | ' (pipe with spaces) — not a trailing pipe."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 50.0}
+        result = fn(item)
+        assert result.startswith(" | "), f"Suffix must start with ' | ', got: {result!r}"
+        assert not result.endswith(" |"), f"Suffix must not end with ' |', got: {result!r}"
+
+    def test_stat_suffix_empty_is_truly_empty_string(self):
+        """When no stat, return value is exactly '' (not ' ' or '|')."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module"}
+        assert fn(item) == ""
+
+
+class TestShopCommandWithStats:
+    """Integration-style tests: /shop embed shows stats for items that have them."""
+
+    def test_shop_weapon_with_dps_in_embed(self, mock_shop_cog, make_mock_response):
+        """Weapon item with dps field shows '| DPS: x.x' in the shop embed text."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        # Item has dps field (new schema field)
+        weapon_item = _make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500, 5, 1)
+        weapon_item["dps"] = 92.3
+        items_resp = make_mock_response([weapon_item])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+        embed = send_kwargs["embed"]
+        # Check that at least one field value contains the DPS stat
+        all_text = " ".join(f.value for f in embed.fields if f.value)
+        assert "DPS: 92.3" in all_text, f"Expected 'DPS: 92.3' in embed fields, got:\n{all_text}"
+
+    def test_shop_module_with_shield_in_embed(self, mock_shop_cog, make_mock_response):
+        """Shield module shows '| Shield: n' in the shop embed text."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        shield_item = _make_shop_item(2, "ParticleShield", "module", "Bronze", 300, 3, 2)
+        shield_item["shield"] = 380
+        items_resp = make_mock_response([shield_item])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs["embed"]
+        all_text = " ".join(f.value for f in embed.fields if f.value)
+        assert "Shield: 380" in all_text, f"Expected 'Shield: 380' in embed fields, got:\n{all_text}"
+
+    def test_shop_ship_with_hull_in_embed(self, mock_shop_cog, make_mock_response):
+        """Ship item shows '| Hull: n' in the shop embed text."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=10000))
+        ship_item = _make_shop_item(3, "Eagle", "ship", "Bronze", 2000, 1, 1)
+        ship_item["hull_hp"] = 1200
+        items_resp = make_mock_response([ship_item])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs["embed"]
+        all_text = " ".join(f.value for f in embed.fields if f.value)
+        assert "Hull: 1200" in all_text, f"Expected 'Hull: 1200' in embed fields, got:\n{all_text}"
+
+    def test_shop_item_without_stats_shows_no_pipe(self, mock_shop_cog, make_mock_response):
+        """Item with no relevant stat (utility module) shows no ' | Stat' suffix."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        utility_item = _make_shop_item(4, "CabinModule", "module", "Bronze", 200, 2, 1)
+        # No shield or armour keys — utility module
+        items_resp = make_mock_response([utility_item])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs["embed"]
+        all_text = " ".join(f.value for f in embed.fields if f.value)
+        # No orphan pipe should appear from empty stat suffix
+        assert " |  " not in all_text, f"Unexpected orphan ' | ' found in embed:\n{all_text}"
+
+
+class TestFormatShopItemStatsAdversarial:
+    """Adversarial edge-case tests for _format_shop_item_stats (Task 0002 review).
+
+    Covers scenarios not exercised by the developer's TestFormatShopItemStats class:
+    - shield=0 paired with armour=250 → armour shown (not empty)
+    - dps as integer (not float) → formatted correctly
+    - Very large DPS value → no overflow / crash
+    - Empty item dict → returns "" (no KeyError)
+    - dps as string representation → coerced correctly
+    """
+
+    def _get_format_fn(self):
+        """Import the helper from the module under test."""
+        _evict_discord_modules()
+        from cogs.shopCog import _format_shop_item_stats
+
+        return _format_shop_item_stats
+
+    def test_module_zero_shield_nonzero_armour_shows_armour(self):
+        """Module with shield=0 but armour=250 should show armour, not empty string.
+
+        This is the critical two-field adversarial case: shield=0 is skipped,
+        falling through to the armour check which should succeed.
+        """
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": 0, "armour": 250}
+        result = fn(item)
+        assert result == " | Armour: 250", f"Expected ' | Armour: 250' when shield=0 and armour=250, got {result!r}"
+
+    def test_weapon_dps_as_integer_shows_one_decimal(self):
+        """DPS provided as an integer (e.g. 50) formats to '50.0' with 1 decimal place."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 50}
+        result = fn(item)
+        assert result == " | DPS: 50.0", f"Expected ' | DPS: 50.0' for integer dps=50, got {result!r}"
+
+    def test_weapon_very_large_dps_no_crash(self):
+        """Very large DPS value does not crash or produce truncated output."""
+        fn = self._get_format_fn()
+        item = {"item_type": "turret_weapon", "dps": 9999.9}
+        result = fn(item)
+        assert result == " | DPS: 9999.9", f"Expected ' | DPS: 9999.9' for large dps, got {result!r}"
+
+    def test_empty_item_dict_returns_empty_no_crash(self):
+        """Completely empty item dict returns empty string without KeyError."""
+        fn = self._get_format_fn()
+        item: dict = {}
+        result = fn(item)
+        assert result == "", f"Expected '' for empty item dict, got {result!r}"
+
+    def test_module_none_shield_nonzero_armour_shows_armour(self):
+        """Module with shield=None and armour=300 → falls through to armour display."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": None, "armour": 300}
+        result = fn(item)
+        assert result == " | Armour: 300", f"Expected ' | Armour: 300' when shield=None and armour=300, got {result!r}"
+
+    def test_ship_hull_hp_as_integer_one(self):
+        """Ship with hull_hp=1 (minimum non-zero) should show stat (not treated as falsy)."""
+        fn = self._get_format_fn()
+        item = {"item_type": "ship", "hull_hp": 1}
+        result = fn(item)
+        assert result == " | Hull: 1", f"Expected ' | Hull: 1' for hull_hp=1, got {result!r}"
+
+    def test_secondary_weapon_dps_zero_int_returns_empty(self):
+        """Secondary weapon dps=0 (int) returns empty string, not '| DPS: 0.0'."""
+        fn = self._get_format_fn()
+        item = {"item_type": "secondary_weapon", "dps": 0}
+        result = fn(item)
+        assert result == "", f"Expected '' for dps=0 (int), got {result!r}"
+
+
+class TestShopCommandCachePeekFirst:
+    """/shop command reads from _shop_cache.peek() when cache is warm (Item A).
+
+    The Item A overhaul adds _shop_cache.peek((guild_id, tier)) as the primary read
+    path for /shop when no item_type filter is specified, before falling back to HTTP.
+    """
+
+    def _init_player_cache_for_shop(self, guild_id, user_id, tier="Bronze"):
+        """Pre-populate the shared player cache for shop tests."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test-shop")
+        ac_state.player_cache.set((guild_id, user_id), {"id": 1, "tier": tier, "credits": 5000})
+
+    def test_shop_reads_from_shop_cache_no_http_get(self, mock_shop_cog, make_mock_response):
+        """/shop with no item_type uses _shop_cache.peek() when warm — no GET to bot-core.
+
+        Player data still requires HTTP POST (player upsert), but the shop item fetch
+        must come from the cache, not from bot-core GET.
+        """
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        # Set up player POST response (needed to resolve tier)
+        player_data = _make_player_data(tier="Bronze", credits=5000)
+        player_resp = make_mock_response(player_data)
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+
+        # Pre-populate shop cache
+        items = [_make_shop_item(1, "CachedItem", "module", "Bronze", 100)]
+        mock_shop_cog._shop_cache.set((guild_id, "Bronze"), items)
+
+        # GET must NOT be called when cache is warm
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP GET must not be called"))
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs.get("embed")
+        assert embed is not None, "Expected embed in cache-hit path for /shop"
+
+    def test_shop_falls_back_to_http_when_cache_cold(self, mock_shop_cog, make_mock_response):
+        """/shop falls back to HTTP GET when _shop_cache is cold (miss → None)."""
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        player_data = _make_player_data(tier="Bronze", credits=5000)
+        player_resp = make_mock_response(player_data)
+        items = [_make_shop_item(1, "FallbackItem", "module", "Bronze", 100)]
+        items_resp = make_mock_response(items)
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        # Ensure cache is cold
+        mock_shop_cog._shop_cache.invalidate((guild_id, "Bronze"))
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
+
+        # HTTP GET must have been called for the fallback
+        mock_shop_cog.http_client.get.assert_awaited_once()
+        interaction.followup.send.assert_awaited_once()
+
+    def test_shop_with_item_type_always_uses_http(self, mock_shop_cog, make_mock_response):
+        """/shop with item_type filter always makes HTTP GET (cache stores unfiltered list).
+
+        Even if the cache is warm for the tier, the item_type filter requires an HTTP
+        call because the cache stores the unfiltered list (not per-type).
+        """
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        player_data = _make_player_data(tier="Bronze", credits=5000)
+        player_resp = make_mock_response(player_data)
+        filtered_items = [_make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500)]
+        items_resp = make_mock_response(filtered_items)
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        # Pre-populate cache (but item_type filter should bypass it)
+        all_items = [
+            _make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500),
+            _make_shop_item(2, "ArmourMod", "module", "Bronze", 300),
+        ]
+        mock_shop_cog._shop_cache.set((guild_id, "Bronze"), all_items)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="primary_weapon"))
+
+        # HTTP GET is ALWAYS called when item_type is specified
+        mock_shop_cog.http_client.get.assert_awaited_once()
 
 
 if __name__ == "__main__":

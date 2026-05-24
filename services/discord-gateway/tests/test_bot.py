@@ -131,6 +131,7 @@ def mock_gateway_bot():
     bot.guilds = []
     bot.flogger = MagicMock()
     bot.startup_complete = False
+    bot._warm_jobs_registered = False
     # Attach real async methods from GatewayBot
     bot.on_ready = GatewayBot.on_ready.__get__(bot, GatewayBot)
     bot.sync_commands = GatewayBot.sync_commands.__get__(bot, GatewayBot)

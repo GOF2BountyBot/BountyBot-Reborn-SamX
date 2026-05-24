@@ -1,9 +1,12 @@
-discord.py
+discord.py>=2.4.0
+audioop-lts  # audioop removed in Python 3.13; discord.py voice depends on it
 httpx
 aiohttp[speedups]
 fastapi
+python-multipart  # required by FastAPI for UploadFile / multipart form parsing (used by /channels/{id}/upload-batch)
 uvicorn[standard]
 rapidfuzz
+apscheduler>=3.10.4
 
 # Testing & QC
 pylint>=3.0.0

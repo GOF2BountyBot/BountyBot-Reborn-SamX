@@ -160,7 +160,7 @@ class TestGiveCredits:
             )
         )
 
-        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -520,59 +520,123 @@ class TestGiveAutocomplete:
     """Tests for /give autocomplete helpers."""
 
     def test_give_item_autocomplete_success(self, inventory_cog):
-        """give_item_autocomplete returns choices from player inventory."""
-        interaction = _create_mock_interaction(user_id=111111111)
+        """give_item_autocomplete returns choices from player inventory (Phase 6: zero HTTP)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search as nfs
 
-        player_resp = _make_http_resp(200, {"id": 10})
-        inv_resp = _make_http_resp(
-            200,
-            [
-                {"item_name": "Pulse Laser", "item_type": "weapon", "quantity": 1},
-                {"item_name": "Shield Gen", "item_type": "module", "quantity": 2},
-            ],
-        )
-        inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        inventory_cog.http_client.get = AsyncMock(return_value=inv_resp)
+        interaction = _create_mock_interaction(user_id=111111111, guild_id=987654321)
+        guild_id = interaction.guild_id
+        user_id = interaction.user.id
+        player_id = 10
+
+        # Pre-populate caches
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-give-test")
+        if ac_state.inventory_cache is None:
+            ac_state.inventory_cache = AutocompleteCache(name="inventory-give-test")
+
+        ac_state.player_cache.set((guild_id, user_id), {"id": player_id})
+        raw_items = [
+            {"item_name": "Pulse Laser", "item_type": "weapon", "quantity": 1},
+            {"item_name": "Shield Gen", "item_type": "module", "quantity": 2},
+        ]
+        inv_choices = []
+        for item in raw_items:
+            label = f"{item['item_name']} [{item['item_type']}]"
+            inv_choices.append(
+                NormalizedChoice(
+                    label=label,
+                    value=f"{item['item_name']}::{item['item_type']}",
+                    norm=nfs(item["item_name"]),
+                    raw=item,
+                )
+            )
+        ac_state.inventory_cache.set((guild_id, player_id), inv_choices)
+
+        inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(inventory_cog.give_item_autocomplete(interaction, "pulse"))
         assert isinstance(result, list)
-        # Should find "Pulse Laser"
         names = [c.name for c in result]
         assert any("Pulse Laser" in n for n in names)
 
     def test_give_item_autocomplete_handles_error(self, inventory_cog):
-        """give_item_autocomplete returns [] on error."""
-        interaction = _create_mock_interaction(user_id=111111111)
-        inventory_cog.http_client.post = AsyncMock(side_effect=Exception("Error"))
+        """give_item_autocomplete returns [] on player cache cold miss (no HTTP)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        interaction = _create_mock_interaction(user_id=998877, guild_id=554433)
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        ac_state.player_cache.invalidate((554433, 998877))
+
+        inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(inventory_cog.give_item_autocomplete(interaction, ""))
         assert result == []
 
     def test_give_ship_autocomplete_success(self, inventory_cog):
-        """give_ship_autocomplete returns non-active ships."""
-        interaction = _create_mock_interaction(user_id=111111111)
+        """give_ship_autocomplete returns non-active ships (Phase 6: zero HTTP)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search as nfs
 
-        player_resp = _make_http_resp(200, {"id": 10})
-        ships_resp = _make_http_resp(
-            200,
-            [
-                {"id": 42, "ship_name": "Sidewinder", "is_active": False, "nickname": None},
-                {"id": 43, "ship_name": "VenomStrike", "is_active": True, "nickname": None},  # active — excluded
-            ],
-        )
-        inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+        interaction = _create_mock_interaction(user_id=111111111, guild_id=987654321)
+        guild_id = interaction.guild_id
+        user_id = interaction.user.id
+        player_id = 10
+
+        # Pre-populate caches
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-give-test")
+        if ac_state.ships_cache is None:
+            ac_state.ships_cache = AutocompleteCache(name="ships-give-test")
+
+        ac_state.player_cache.set((guild_id, user_id), {"id": player_id})
+        raw_ships = [
+            {"id": 42, "ship_name": "Sidewinder", "is_active": False, "nickname": None, "player_ship_id": 42},
+            {"id": 43, "ship_name": "VenomStrike", "is_active": True, "nickname": None, "player_ship_id": 43},
+        ]
+        ship_choices = []
+        for ship in raw_ships:
+            name = ship.get("ship_name", "")
+            label = f"{name} ({'⚡ ' if ship['is_active'] else ''})"
+            ship_choices.append(
+                NormalizedChoice(
+                    label=label,
+                    value=str(ship["player_ship_id"]),
+                    norm=nfs(name),
+                    raw=ship,
+                )
+            )
+        ac_state.ships_cache.set((guild_id, player_id), ship_choices)
+
+        inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(inventory_cog.give_ship_autocomplete(interaction, ""))
-        # Active ship should be excluded
+        # Active ship should be excluded (exclude_active=True)
         values = [c.value for c in result]
         assert "43" not in values
         assert "42" in values
 
     def test_give_ship_autocomplete_handles_error(self, inventory_cog):
-        """give_ship_autocomplete returns [] on error."""
-        interaction = _create_mock_interaction(user_id=111111111)
-        inventory_cog.http_client.post = AsyncMock(side_effect=Exception("Error"))
+        """give_ship_autocomplete returns [] on player cache cold miss (no HTTP)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        interaction = _create_mock_interaction(user_id=776655, guild_id=332211)
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        ac_state.player_cache.invalidate((332211, 776655))
+
+        inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(inventory_cog.give_ship_autocomplete(interaction, ""))
         assert result == []

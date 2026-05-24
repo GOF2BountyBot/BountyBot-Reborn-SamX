@@ -70,7 +70,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 @pytest.fixture(scope="session")
-def mock_shared_bblogger() -> Generator[None, None, None]:
+def mock_shared_bblogger() -> Generator[None]:
     """Yield and clean up mock shared.bblogger module."""
     try:
         yield
@@ -83,7 +83,7 @@ def mock_shared_bblogger() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session")
-def mock_discord_module() -> Generator[None, None, None]:
+def mock_discord_module() -> Generator[None]:
     """Yield and clean up mock discord module."""
     with patch("discord") as mock_discord:
         # Set up common Discord types
@@ -104,14 +104,14 @@ def mock_discord_module() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session")
-def mock_httpx_module() -> Generator[None, None, None]:
+def mock_httpx_module() -> Generator[None]:
     """Yield and clean up mock httpx module."""
     with patch("httpx") as mock_httpx:
         yield mock_httpx
 
 
 @pytest.fixture(scope="module")
-def mock_discord_bot() -> Generator[MagicMock, None, None]:
+def mock_discord_bot() -> Generator[MagicMock]:
     """Mock Discord bot instance with comprehensive methods."""
     bot = MagicMock()
     bot.user = MagicMock()
@@ -134,7 +134,7 @@ def mock_discord_bot() -> Generator[MagicMock, None, None]:
 
 
 @pytest.fixture(scope="module")
-def test_app() -> Generator[FastAPI, None, None]:
+def test_app() -> Generator[FastAPI]:
     """Create a test FastAPI app for discord-gateway with all routers."""
     app = FastAPI(title="Discord Gateway API Test")
 
@@ -168,7 +168,7 @@ def test_app() -> Generator[FastAPI, None, None]:
 
 
 @pytest.fixture(scope="module")
-def client(test_app: FastAPI) -> Generator[TestClient, None, None]:
+def client(test_app: FastAPI) -> Generator[TestClient]:
     """Create a test client for the discord-gateway API."""
     client = TestClient(test_app)
 
@@ -291,7 +291,7 @@ def mock_discord_intents() -> MagicMock:
 
 
 @pytest.fixture(scope="module")
-def mock_async_discord_method() -> Generator[AsyncMock, None, None]:
+def mock_async_discord_method() -> Generator[AsyncMock]:
     """Fixture for mocking async Discord methods."""
     mock_method = AsyncMock()
 
@@ -302,7 +302,7 @@ def mock_async_discord_method() -> Generator[AsyncMock, None, None]:
 
 
 @pytest.fixture(scope="module")
-def mock_sync_discord_method() -> Generator[MagicMock, None, None]:
+def mock_sync_discord_method() -> Generator[MagicMock]:
     """Fixture for mocking sync Discord methods."""
     mock_method = MagicMock()
 
@@ -334,7 +334,7 @@ def _make_mock_http_response() -> MagicMock:
 
 
 @pytest.fixture(scope="module")
-def mock_httpx_client() -> Generator[MagicMock, None, None]:
+def mock_httpx_client() -> Generator[MagicMock]:
     """Mock httpx client with common methods."""
     client = MagicMock()
     client.get = MagicMock(return_value=_make_mock_http_response())
@@ -350,7 +350,7 @@ def mock_httpx_client() -> Generator[MagicMock, None, None]:
 
 
 @pytest.fixture(scope="module")
-def mock_database_session() -> Generator[MagicMock, None, None]:
+def mock_database_session() -> Generator[MagicMock]:
     """Mock database session for testing."""
     session = MagicMock()
     session.add = MagicMock()

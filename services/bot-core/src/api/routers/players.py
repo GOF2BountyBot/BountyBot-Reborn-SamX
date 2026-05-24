@@ -6,7 +6,7 @@ This router follows the requirement that all major subsystem interactions
 must be done via REST API.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from persist.database.manager import get_db_session
 from services.combat_preflight_service import CombatPreflightService
 from services.exceptions import GuildNotConfiguredError
@@ -157,17 +157,35 @@ async def get_players_by_guild(
     skip: int = 0,
     limit: int = 100,
     tier: str | None = None,
+    active_within_days: int | None = Query(None, ge=0),
     player_service: PlayerService = Depends(get_player_service),
 ):
-    """Get all players in a guild, optionally filtered by tier."""
-    flogger.debug(f"Getting players for guild {guild_id}, tier filter: {tier}")
+    """Get all players in a guild, optionally filtered by tier and recency.
+
+    Args:
+        guild_id: The guild to list players for.
+        skip: Number of records to skip (pagination offset).
+        limit: Maximum number of records to return.
+        tier: When provided, only returns players at this tier level.
+        active_within_days: When provided and > 0, only returns players whose
+            ``updated_at`` is within this many days of the current UTC time.
+            ``0`` means no filter (all players). Used by the autocomplete warm
+            strategy (Phase 3) to avoid fetching stale/inactive players.
+    """
+    flogger.debug(
+        f"Getting players for guild {guild_id}, tier filter: {tier}, active_within_days: {active_within_days}"
+    )
 
     try:
         async with get_db_session() as db:
             if tier:
-                players = await player_service.get_players_by_tier(db, guild_id, tier)
+                players = await player_service.get_players_by_tier(
+                    db, guild_id, tier, active_within_days=active_within_days
+                )
             else:
-                players = await player_service.player_repo.get_players_by_guild(db, guild_id)
+                players = await player_service.player_repo.get_players_by_guild(
+                    db, guild_id, active_within_days=active_within_days
+                )
 
             # Apply pagination
             paginated_players = players[skip : skip + limit]
@@ -366,9 +384,7 @@ async def combat_preflight(player_id: int, target_tier: str, num_sims: int = 20)
     try:
         async with get_db_session() as db:
             # Resolve player → guild
-            from services.player_service import PlayerService as _PS
-
-            player = await _PS().player_repo.get_by_id(db, player_id)
+            player = await PlayerService().player_repo.get_by_id(db, player_id)
             if not player:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {player_id} not found")
             result = await CombatPreflightService().estimate(
@@ -491,7 +507,6 @@ async def reset_player_cooldown(
     guild_id: int,
     user_id: int,
     cooldown_type: str = "bounty",
-    player_service: PlayerService = Depends(get_player_service),
 ):
     """Reset a player's cooldown timer.
 

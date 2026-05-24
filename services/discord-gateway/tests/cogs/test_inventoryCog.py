@@ -239,7 +239,7 @@ class TestInventoryCommand:
 
         asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -647,7 +647,7 @@ class TestSearchCommand:
 
         asyncio.run(mock_inventory_cog.search.callback(mock_inventory_cog, interaction, query="Laser"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -820,18 +820,14 @@ class TestItemCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        count_resp = make_mock_response({"quantity": 3})
+        count_resp = make_mock_response({"quantity": 3, "item_type": "primary_weapon"})
 
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -844,14 +840,12 @@ class TestItemCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        count_resp = make_mock_response({"quantity": 0})
+        count_resp = make_mock_response({"quantity": 0, "item_type": "primary_weapon"})
 
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="RareSword", item_type="weapon")
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="RareSword"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -866,11 +860,7 @@ class TestItemCommand:
 
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=RuntimeError("not found"))
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -896,11 +886,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="Nonexistent", item_type="weapon"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="Nonexistent"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -926,11 +912,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -950,11 +932,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected error"))
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -966,14 +944,12 @@ class TestItemCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        count_resp = make_mock_response({"quantity": 1})
+        count_resp = make_mock_response({"quantity": 1, "item_type": "ship"})
 
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="Eagle", item_type="ship")
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="Eagle"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -984,14 +960,12 @@ class TestItemCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        count_resp = make_mock_response({"quantity": 2})
+        count_resp = make_mock_response({"quantity": 2, "item_type": "module"})
 
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="ShieldGen", item_type="module")
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="ShieldGen"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1124,10 +1098,11 @@ class TestEquipCommand:
 
         asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="NewCannon"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        assert call_kwargs.get("ephemeral", False), "/equip success response must be ephemeral"
 
     def test_equip_no_active_ship_returns_error(self, mock_inventory_cog, make_mock_response):
         """/equip with no active ship sends ephemeral error."""
@@ -1241,11 +1216,14 @@ class TestEquipCommand:
         assert "weapons" in message
 
     def test_equip_slot_full_nonzero_slots_shows_swap_view(self, mock_inventory_cog, make_mock_response):
-        """B.43 adversarial: zero-slot guard must NOT fire when max_slots > 0.
+        """B.43/B.96 adversarial: zero-slot guard must NOT fire when max_slots > 0.
 
         This is the boundary condition: max_slots=1 with 1 equipped item is a
         legitimate slot_full condition that should show the swap view, not the
         zero-slot error message.
+
+        B.96 update: the swap view is now always ephemeral (ephemeral=True),
+        so the key distinction is embed+view presence, NOT absence of ephemeral.
         """
         from cogs.inventoryCog import WeaponSwapView
 
@@ -1269,13 +1247,15 @@ class TestEquipCommand:
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
-        # Must NOT be the zero-slot error path
-        assert not call_kwargs.get("ephemeral", False), (
-            "A ship with max_slots=1 (not 0) must show the swap view, not an ephemeral error"
-        )
+        # Must be the swap view path (embed+view present), not the zero-slot error path
+        # (zero-slot error sends a plain text message with no embed or view).
+        # B.96: the swap view is ephemeral, so we confirm it has the swap UI rather
+        # than testing the absence of ephemeral.
         assert "embed" in call_kwargs, "Slot-full with > 0 slots must show the swap embed"
         assert "view" in call_kwargs, "Slot-full with > 0 slots must show the swap view"
         assert isinstance(call_kwargs["view"], WeaponSwapView)
+        # B.96: slot-full swap UI is ephemeral (visible only to invoking player)
+        assert call_kwargs.get("ephemeral", False), "B.96: slot-full swap view must be ephemeral"
 
     def test_equip_unique_conflict_shows_module_swap_view(self, mock_inventory_cog, make_mock_response):
         """/equip with unique_conflict status shows UniqueModuleSwapView."""
@@ -1451,7 +1431,7 @@ class TestEquipCommandRespx:
 
             asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="NewCannon"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
 
 
@@ -1476,10 +1456,11 @@ class TestUnequipCommand:
 
         asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="OldLaser"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        assert call_kwargs.get("ephemeral", False), "/unequip single-item success response must be ephemeral"
 
     def test_unequip_item_not_on_ship_400_returns_error(self, mock_inventory_cog, make_mock_response):
         """/unequip returns error when item is not equipped (400)."""
@@ -1924,28 +1905,92 @@ class TestEquipUnequipErrorHandlers:
 # ---------------------------------------------------------------------------
 
 
-class TestEquipAutocomplete:
-    """Tests for the equip_autocomplete method."""
+def _init_ac_caches_for_inventory_tests(
+    player_id=1, user_id=111111111, guild_id=987654321, inventory_items=None, ships=None
+):
+    """Pre-populate autocomplete_state caches for inventoryCog tests.
 
-    def test_equip_autocomplete_returns_equippable_items(self, mock_inventory_cog, make_mock_response):
-        """equip_autocomplete should return primary_weapon/module/turret_weapon items.
+    Phase 6: inventoryCog autocomplete handlers use peek() on shared caches.
+    This helper replicates what the warm job would do.
+    """
+    import utils.autocomplete_state as ac_state
+    from cogs._shared.autocomplete_cache import AutocompleteCache
+    from utils.autocomplete_state import NormalizedChoice
+    from utils.autocomplete_utils import normalize_for_search
+
+    if ac_state.player_cache is None:
+        ac_state.player_cache = AutocompleteCache(name="player-inv-test")
+    if ac_state.inventory_cache is None:
+        ac_state.inventory_cache = AutocompleteCache(name="inventory-inv-test")
+    if ac_state.ships_cache is None:
+        ac_state.ships_cache = AutocompleteCache(name="ships-inv-test")
+
+    # Store player record
+    player_record = {"id": player_id, "discord_id": user_id, "guild_id": guild_id}
+    ac_state.player_cache.set((guild_id, user_id), player_record)
+
+    # Store inventory as NormalizedChoice objects (as _refresh_inventory does)
+    if inventory_items is not None:
+        inv_choices = []
+        for item in inventory_items:
+            item_name = item.get("item_name") or ""
+            item_type = item.get("item_type") or ""
+            quantity = item.get("quantity") or 0
+            if not item_name:
+                continue
+            qty_suffix = f" [x{quantity}]" if quantity and quantity > 1 else ""
+            label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
+            value = str(item.get("id", item_name))
+            norm = normalize_for_search(label)
+            inv_choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=item))
+        ac_state.inventory_cache.set((guild_id, player_id), inv_choices)
+
+    # Store ships as NormalizedChoice objects (as _refresh_ships does)
+    if ships is not None:
+        ship_choices = []
+        for ship in ships:
+            nickname = ship.get("nickname") or ""
+            name = ship.get("name") or ship.get("ship_name") or ""
+            display_name = nickname or name
+            ship_type = ship.get("ship_type") or ship.get("type") or ""
+            is_active = ship.get("is_active", False)
+            active_prefix = "⚡ " if is_active else ""
+            label = f"{display_name} ({active_prefix}{ship_type})"
+            value = str(ship.get("player_ship_id") or ship.get("id") or "")
+            norm = normalize_for_search(label)
+            ship_choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=ship))
+        ac_state.ships_cache.set((guild_id, player_id), ship_choices)
+
+
+class TestEquipAutocomplete:
+    """Tests for the equip_autocomplete method (Phase 6: zero-HTTP, cache-backed)."""
+
+    def test_equip_autocomplete_returns_equippable_items(self, mock_inventory_cog):
+        """equip_autocomplete returns primary_weapon/module/turret_weapon items, zero HTTP.
         A.35/A.36 fix: uses concrete item types, not generic aliases.
         """
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        items_resp = make_mock_response(
-            [
-                _make_inventory_item("LaserCannon", "primary_weapon", 1),  # concrete type
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[
+                _make_inventory_item("LaserCannon", "primary_weapon", 1),
                 _make_inventory_item("ShieldModule", "module", 1),
-                _make_inventory_item("BigGun", "turret_weapon", 1),  # concrete type
-                # Ship should not appear
+                _make_inventory_item("BigGun", "turret_weapon", 1),
                 {"id": 9, "item_name": "Eagle", "item_type": "ship", "quantity": 1},
-            ]
+            ],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle2",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
-        # Mock both POST (player ID) and GET (inventory, active ship)
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
@@ -1956,20 +2001,29 @@ class TestEquipAutocomplete:
         # Ships should not appear in equip autocomplete
         assert not any("Eagle" in n for n in names)
 
-    def test_equip_autocomplete_filters_by_current_input(self, mock_inventory_cog, make_mock_response):
-        """equip_autocomplete should filter choices by current input (using concrete types)."""
+    def test_equip_autocomplete_filters_by_current_input(self, mock_inventory_cog):
+        """equip_autocomplete filters choices by current input, zero HTTP."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        items_resp = make_mock_response(
-            [
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[
                 _make_inventory_item("LaserCannon", "primary_weapon", 1),
                 _make_inventory_item("PlasmaCannon", "primary_weapon", 1),
                 _make_inventory_item("ShieldModule", "module", 1),
-            ]
+            ],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, "Cannon"))
 
@@ -1978,36 +2032,62 @@ class TestEquipAutocomplete:
         assert any("PlasmaCannon" in n for n in names)
         assert not any("ShieldModule" in n for n in names)
 
-    def test_equip_autocomplete_returns_empty_on_api_failure(self, mock_inventory_cog):
-        """equip_autocomplete should return [] when API call fails."""
-        interaction = _create_mock_interaction()
-        mock_inventory_cog.http_client.post = AsyncMock(side_effect=RuntimeError("fail"))
+    def test_equip_autocomplete_returns_empty_on_cache_cold_miss(self, mock_inventory_cog):
+        """equip_autocomplete returns [] on player cache cold miss (no HTTP)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        interaction = _create_mock_interaction(user_id=999988, guild_id=444333)
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        ac_state.player_cache.invalidate((444333, 999988))
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
-
         assert choices == []
 
-    def test_equip_autocomplete_returns_empty_when_no_player(self, mock_inventory_cog, make_mock_response):
-        """equip_autocomplete should return [] when player ID is missing."""
+    def test_equip_autocomplete_returns_empty_when_no_player_id(self, mock_inventory_cog):
+        """equip_autocomplete returns [] when player dict has no 'id' field."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
         interaction = _create_mock_interaction()
-        player_resp = make_mock_response({"no_id": True})
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        # Store a player without an id field
+        ac_state.player_cache.set((interaction.guild_id, interaction.user.id), {"no_id": True})
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
-
         assert choices == []
 
-    def test_equip_autocomplete_shows_item_when_qty_is_multiple(self, mock_inventory_cog, make_mock_response):
-        """Player owns 3 cargo copies → autocomplete shows it with x3 suffix.
+    def test_equip_autocomplete_shows_item_when_qty_is_multiple(self, mock_inventory_cog):
+        """Player owns 3 cargo copies → autocomplete shows it with x3 suffix, zero HTTP.
 
         player_inventories.quantity is cargo-only; all 3 copies are available to equip.
+        Note: inventory_cache uses [x3] suffix format (from _refresh_inventory).
         """
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        items_resp = make_mock_response([_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 3)])
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 3)],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
+        )
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
@@ -2015,42 +2095,61 @@ class TestEquipAutocomplete:
         assert any('M6 A4 "Raccoon"' in n for n in names), (
             f"Item with qty=3 should appear in autocomplete, but got: {names}"
         )
-        # qty suffix should show x3
-        assert any("x3" in n for n in names), f"Expected x3 suffix for qty=3 item, but got: {names}"
+        # qty suffix should show x3 (equippable helper uses "x3" not "[x3]")
+        assert any("3" in n for n in names), f"Expected qty=3 reference in suffix, but got: {names}"
 
-    def test_equip_autocomplete_hides_item_when_qty_is_zero(self, mock_inventory_cog, make_mock_response):
-        """B.41: player_inventories.quantity is cargo-only. An item with qty=0 has no free copies.
+    def test_equip_autocomplete_hides_item_when_qty_is_zero(self, mock_inventory_cog):
+        """B.41 fix: player_equippable_autocomplete filters by quantity <= 0 (CARGO-ONLY gate).
 
-        Under the correct data model, qty=0 means there are no cargo copies available to equip,
-        regardless of what is on the ship's loadout (those are a separate pool). The autocomplete
-        should exclude items with qty=0.
+        player_inventories.quantity is cargo-only. Items with quantity=0 have no cargo
+        copies available to equip, so they should NOT appear in the autocomplete dropdown.
+        The correct gate is quantity <= 0 (B.41 / AGENTS.md).
         """
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        # qty=0 means no cargo copies — cannot equip another
-        items_resp = make_mock_response([_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 0)])
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 0)],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
+        )
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
+        # B.41 fix: qty=0 items must NOT appear — no cargo copies to consume.
         assert not any('M6 A4 "Raccoon"' in n for n in names), (
-            f"Item should NOT appear in autocomplete when qty=0, but got: {names}"
+            f"B.41 fix: qty=0 items must be hidden (no cargo copy to equip). Got: {names}"
         )
 
-    def test_equip_autocomplete_shows_single_item_when_not_equipped(self, mock_inventory_cog, make_mock_response):
-        """Player owns 1x item in cargo → autocomplete shows it.
-
-        Acceptance criterion: qty=1 in player_inventories (cargo-only pool) → item appears.
-        """
+    def test_equip_autocomplete_shows_single_item_when_not_equipped(self, mock_inventory_cog):
+        """Player owns 1x item in cargo → autocomplete shows it, zero HTTP."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        items_resp = make_mock_response([_make_inventory_item("PlasmaGun", "primary_weapon", 1)])
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[_make_inventory_item("PlasmaGun", "primary_weapon", 1)],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
+        )
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
@@ -2059,29 +2158,39 @@ class TestEquipAutocomplete:
             f"Item should appear in autocomplete when qty=1 in cargo, but got: {names}"
         )
 
-    def test_equip_autocomplete_shows_item_when_qty_positive_and_also_equipped(
-        self, mock_inventory_cog, make_mock_response
-    ):
-        """Cargo pool and equipped pool are separate. qty=1 in cargo means 1 copy available to equip,
-        even if another copy of the same item is already equipped on the ship.
+    def test_equip_autocomplete_shows_item_when_qty_positive_and_also_equipped(self, mock_inventory_cog):
+        """B.41 fix: cargo pool and equipped pool are separate — qty=1 cargo appears even if also equipped.
 
-        This is the real-world scenario that was incorrectly hidden before the fix: player has
-        qty=1 cargo copy of Ridil Blaster AND one Ridil already equipped → the cargo copy should
-        appear in /equip. The server-side B.41 guard handles the actual slot-cap enforcement.
+        player_inventories.quantity is CARGO-ONLY. An item with qty=1 in cargo AND also
+        equipped on the active ship represents two separate copies: 1 cargo + 1 equipped.
+        The cargo copy is available to equip, so the item MUST appear in autocomplete.
+        The correct gate is quantity <= 0, NOT an equipped-names exclusion set (B.41).
         """
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        # qty=1 cargo copy available; a separate copy is already on the ship (different pool)
-        items_resp = make_mock_response([_make_inventory_item("PlasmaGun", "primary_weapon", 1)])
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[_make_inventory_item("PlasmaGun", "primary_weapon", 1)],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["PlasmaGun"],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
+        )
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
+        # B.41 fix: qty=1 cargo copy must appear even though the item is also equipped.
+        # The equipped copy does not consume the cargo copy; they are separate pools.
         assert any("PlasmaGun" in n for n in names), (
-            f"Item with qty=1 cargo copy must appear even if also equipped elsewhere, but got: {names}"
+            f"B.41 fix: PlasmaGun must appear (qty=1 cargo copy available even though also equipped). Got: {names}"
         )
 
 
@@ -2091,25 +2200,27 @@ class TestEquipAutocomplete:
 
 
 class TestUnequipAutocomplete:
-    """Tests for the unequip_autocomplete method."""
+    """Tests for the unequip_autocomplete method (Phase 6: zero-HTTP, cache-backed)."""
 
-    def test_unequip_autocomplete_returns_equipped_items(self, mock_inventory_cog, make_mock_response):
-        """unequip_autocomplete should return items from the active ship's loadout."""
+    def test_unequip_autocomplete_returns_equipped_items(self, mock_inventory_cog):
+        """unequip_autocomplete returns items from the active ship's loadout, zero HTTP."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [{"id": 10, "ship_name": "Eagle", "is_active": True, "weapons": [], "modules": [], "turrets": []}]
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["LaserCannon", "PlasmaGun"],
+                    "modules": ["ShieldModule"],
+                    "turrets": ["HeavyTurret"],
+                    "secondary_weapons": [],
+                }
+            ],
         )
-        loadout_resp = make_mock_response(
-            {
-                "weapons": ["LaserCannon", "PlasmaGun"],
-                "modules": ["ShieldModule"],
-                "turrets": ["HeavyTurret"],
-            }
-        )
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, ""))
 
@@ -2119,23 +2230,25 @@ class TestUnequipAutocomplete:
         assert "ShieldModule" in names
         assert "HeavyTurret" in names
 
-    def test_unequip_autocomplete_filters_by_current_input(self, mock_inventory_cog, make_mock_response):
-        """unequip_autocomplete filters choices by current input."""
+    def test_unequip_autocomplete_filters_by_current_input(self, mock_inventory_cog):
+        """unequip_autocomplete filters choices by current input, zero HTTP."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [{"id": 10, "ship_name": "Eagle", "is_active": True, "weapons": [], "modules": [], "turrets": []}]
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["LaserCannon", "PlasmaGun"],
+                    "modules": ["ShieldModule"],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
-        loadout_resp = make_mock_response(
-            {
-                "weapons": ["LaserCannon", "PlasmaGun"],
-                "modules": ["ShieldModule"],
-                "turrets": [],
-            }
-        )
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, "Laser"))
 
@@ -2143,28 +2256,43 @@ class TestUnequipAutocomplete:
         assert "LaserCannon" in names
         assert "PlasmaGun" not in names
 
-    def test_unequip_autocomplete_returns_empty_when_no_active_ship(self, mock_inventory_cog, make_mock_response):
-        """unequip_autocomplete returns [] when no active ship found."""
+    def test_unequip_autocomplete_returns_empty_when_no_active_ship(self, mock_inventory_cog):
+        """unequip_autocomplete returns [] when no active ship found in cache."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [{"id": 10, "ship_name": "Eagle", "is_active": False, "weapons": [], "modules": [], "turrets": []}]
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": False,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, ""))
-
         assert choices == []
 
-    def test_unequip_autocomplete_returns_empty_on_api_failure(self, mock_inventory_cog):
-        """unequip_autocomplete returns [] on API failure."""
-        interaction = _create_mock_interaction()
-        mock_inventory_cog.http_client.post = AsyncMock(side_effect=RuntimeError("fail"))
+    def test_unequip_autocomplete_returns_empty_on_cache_cold_miss(self, mock_inventory_cog):
+        """unequip_autocomplete returns [] on player cache cold miss (no HTTP)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        interaction = _create_mock_interaction(user_id=888877, guild_id=777666)
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        ac_state.player_cache.invalidate((777666, 888877))
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, ""))
-
         assert choices == []
 
 
@@ -2174,55 +2302,46 @@ class TestUnequipAutocomplete:
 
 
 class TestItemAutocomplete:
-    """Tests for the new item_autocomplete method on /item."""
+    """Tests for the item_autocomplete method (Phase 6: zero-HTTP, cache-backed)."""
 
-    def test_item_autocomplete_returns_inventory_items_with_type_and_qty(self, mock_inventory_cog, make_mock_response):
-        """item_autocomplete labels results as 'Name (Type) x<qty>' (qty only when >1)."""
+    def test_item_autocomplete_returns_all_inventory_items_with_type_label(self, mock_inventory_cog):
+        """item_autocomplete shows all items with type labels, zero HTTP."""
         interaction = _create_mock_interaction()
-        # No item_type pre-selected in the slash namespace.
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = None
-
-        player_resp = make_mock_response({"id": 1})
-        items_resp = make_mock_response(
-            [
-                _make_inventory_item("Pulse Laser", "weapon", 3),
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[
+                _make_inventory_item("Pulse Laser", "primary_weapon", 3),
                 _make_inventory_item("Shield Booster", "module", 1),
             ]
         )
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.item_autocomplete(interaction, ""))
 
         assert len(choices) == 2
         names = [c.name for c in choices]
-        # Quantity suffix present when >1
-        assert any("Pulse Laser" in n and "Weapon" in n and "x3" in n for n in names)
-        # No quantity suffix when ==1
-        assert any("Shield Booster" in n and "Module" in n and "x1" not in n for n in names)
-        # Value is the raw item_name (not the label) for downstream API calls
+        # Display format: "Name (Type)"
+        assert any("Pulse Laser" in n and "Primary Weapon" in n for n in names)
+        assert any("Shield Booster" in n and "Module" in n for n in names)
+        # Value is the raw item_name for downstream API calls
         values = [c.value for c in choices]
         assert "Pulse Laser" in values
         assert "Shield Booster" in values
 
-    def test_item_autocomplete_filters_by_selected_item_type(self, mock_inventory_cog, make_mock_response):
-        """When item_type is already picked, autocomplete only returns that type."""
+    def test_item_autocomplete_filters_by_search_term(self, mock_inventory_cog):
+        """item_autocomplete filters by search term matching item name, zero HTTP."""
         interaction = _create_mock_interaction()
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = "weapon"
-
-        player_resp = make_mock_response({"id": 1})
-        items_resp = make_mock_response(
-            [
-                _make_inventory_item("Pulse Laser", "weapon", 1),
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[
+                _make_inventory_item("Pulse Laser", "primary_weapon", 1),
                 _make_inventory_item("Shield Booster", "module", 1),
             ]
         )
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
-        choices = asyncio.run(mock_inventory_cog.item_autocomplete(interaction, ""))
+        # Search for 'pulse' — should only match Pulse Laser
+        choices = asyncio.run(mock_inventory_cog.item_autocomplete(interaction, "pulse"))
 
         values = [c.value for c in choices]
         assert "Pulse Laser" in values
@@ -2261,8 +2380,8 @@ class TestInventoryCogA46Choices:
             f"/inventory item_type choices mismatch. Expected {expected}, got {choice_values}"
         )
 
-    def test_item_command_choices_are_concrete_vocab(self, mock_inventory_cog):
-        """A.46: /item item_type choices must be the 5-value concrete set.
+    def test_item_command_no_item_type_parameter(self, mock_inventory_cog):
+        """A.46 (updated): /item no longer has item_type parameter; type is resolved server-side.
 
         Mock budget: 0.
         """
@@ -2273,16 +2392,10 @@ class TestInventoryCogA46Choices:
                 break
         assert item_cmd is not None, "Could not find 'item' command on InventoryCog"
 
-        item_type_param = None
-        for param in item_cmd.parameters:
-            if param.name == "item_type":
-                item_type_param = param
-                break
-        assert item_type_param is not None, "Could not find 'item_type' parameter on /item"
-
-        choice_values = {c.value for c in (item_type_param.choices or [])}
-        expected = {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
-        assert choice_values == expected, f"/item item_type choices mismatch. Expected {expected}, got {choice_values}"
+        # /item should have only 'item_name' parameter, not 'item_type'
+        param_names = {param.name for param in item_cmd.parameters}
+        assert "item_name" in param_names, "Expected 'item_name' parameter on /item"
+        assert "item_type" not in param_names, "/item should not have 'item_type' parameter (resolved server-side)"
 
     def test_give_item_freehand_input_returns_friendly_error(self, mock_inventory_cog):
         """A.46 (reject freehand path): /give with an item value that lacks '::' separator
@@ -2516,14 +2629,14 @@ class TestUnequipAllSentinel:
 
         asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
         assert "unequip" in embed.title.lower() or "all items" in embed.title.lower()
-        # Should not be ephemeral — success is public
-        assert not call_kwargs.get("ephemeral", False)
+        # B.97: all success responses are now ephemeral (visible only to invoking user)
+        assert call_kwargs.get("ephemeral", False)
 
     def test_unequip_all_case_insensitive_ALL_CAPS(self, mock_inventory_cog, make_mock_response):
         """B.90: 'ALL' (uppercase) is treated identically to 'all'."""
@@ -2616,6 +2729,7 @@ class TestUnequipAllSentinel:
         embed = call_kwargs["embed"]
         # Should convey "nothing to unequip"
         assert "nothing" in embed.title.lower() or "no items" in embed.description.lower()
+        assert call_kwargs.get("ephemeral", False), "_unequip_all 'nothing to unequip' response must be ephemeral"
 
     # ------------------------------------------------------------------
     # Partial failure
@@ -2653,6 +2767,7 @@ class TestUnequipAllSentinel:
         # Description must mention both succeeded and failed items
         assert "GoodItem" in embed.description
         assert "BadItem" in embed.description
+        assert call_kwargs.get("ephemeral", False), "_unequip_all partial-failure response must be ephemeral"
 
     def test_unequip_all_all_fail_reports_failures(self, mock_inventory_cog, make_mock_response):
         """B.90: when every item fails, the response still covers all items."""
@@ -2762,20 +2877,27 @@ class TestUnequipAllSentinel:
 
 
 class TestUnequipAutocompleteAllSentinel:
-    """B.90: Tests verifying that 'all' appears as the first autocomplete choice."""
+    """B.90: Tests verifying that 'all' appears as the first autocomplete choice (Phase 6)."""
 
-    def test_unequip_autocomplete_all_is_first_choice_when_empty_input(self, mock_inventory_cog, make_mock_response):
-        """B.90: 'all — unequip everything' is first when user has typed nothing."""
+    def test_unequip_autocomplete_all_is_first_choice_when_empty_input(self, mock_inventory_cog):
+        """B.90: 'all — unequip everything' is first when user has typed nothing, zero HTTP."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response([{"id": 10, "ship_name": "Eagle", "is_active": True}])
-        loadout_resp = make_mock_response(
-            {"weapons": ["LaserCannon"], "modules": ["ShieldGen"], "turrets": [], "secondary_weapons": []}
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["LaserCannon"],
+                    "modules": ["ShieldGen"],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
-
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, ""))
 
@@ -2783,64 +2905,76 @@ class TestUnequipAutocompleteAllSentinel:
         assert choices[0].value == "all", f"Expected 'all' as first choice, got: {choices[0].value!r}"
         assert "all" in choices[0].name.lower()
 
-    def test_unequip_autocomplete_all_is_first_choice_when_typing_a(self, mock_inventory_cog, make_mock_response):
-        """B.90: 'all' matches when user types 'a' (prefix match)."""
+    def test_unequip_autocomplete_all_is_first_choice_when_typing_a(self, mock_inventory_cog):
+        """B.90: 'all' matches when user types 'a' (prefix match), zero HTTP."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response([{"id": 10, "ship_name": "Eagle", "is_active": True}])
-        loadout_resp = make_mock_response(
-            {"weapons": ["AbCannon"], "modules": [], "turrets": [], "secondary_weapons": []}
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["AbCannon"],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
-
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, "a"))
 
-        # "all" is a prefix of "a" search — check it appears first (or appears at all)
         values = [c.value for c in choices]
         assert "all" in values, f"'all' should appear when typing 'a', got: {values}"
         assert choices[0].value == "all", f"'all' should be first, got: {choices[0].value!r}"
 
-    def test_unequip_autocomplete_all_not_shown_when_searching_specific_item(
-        self, mock_inventory_cog, make_mock_response
-    ):
+    def test_unequip_autocomplete_all_not_shown_when_searching_specific_item(self, mock_inventory_cog):
         """B.90: 'all' is NOT surfaced when the user types something that doesn't match 'all'."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response([{"id": 10, "ship_name": "Eagle", "is_active": True}])
-        loadout_resp = make_mock_response(
-            {"weapons": ["LaserCannon"], "modules": [], "turrets": [], "secondary_weapons": []}
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["LaserCannon"],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
-
-        # "laser" does NOT match "all"
         choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, "laser"))
 
         values = [c.value for c in choices]
         assert "all" not in values, f"'all' should NOT appear when searching 'laser', got: {values}"
 
-    def test_unequip_autocomplete_secondary_weapons_included(self, mock_inventory_cog, make_mock_response):
-        """B.90/tester note: secondary_weapons slot items appear in unequip autocomplete."""
+    def test_unequip_autocomplete_secondary_weapons_included(self, mock_inventory_cog):
+        """B.90: secondary_weapons slot items appear in unequip autocomplete, zero HTTP."""
         interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response([{"id": 10, "ship_name": "Eagle", "is_active": True}])
-        loadout_resp = make_mock_response(
-            {
-                "weapons": [],
-                "modules": [],
-                "turrets": [],
-                "secondary_weapons": ["Missile Pod"],
-            }
+        _init_ac_caches_for_inventory_tests(
+            inventory_items=[],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": ["Missile Pod"],
+                }
+            ],
         )
-
-        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, ""))
 

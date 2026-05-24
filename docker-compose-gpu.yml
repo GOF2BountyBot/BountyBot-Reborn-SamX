@@ -117,8 +117,8 @@ services:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
     volumes:
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
+      #- /etc/localtime:/etc/localtime:ro   # commented out: runc/overlay2 bug on /mnt/ssd-data prevents file bind-mounts into merged layers
+      #- /etc/timezone:/etc/timezone:ro     # timezone is baked into the image via tzdata at build time (UTC)
       - ./mappings/blender-renderer:/app/data
     healthcheck:
       test: curl -s -o /dev/null -f http://localhost:8001/api/v1/health/ || exit 1

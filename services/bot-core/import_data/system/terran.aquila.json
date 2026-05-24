@@ -8,7 +8,6 @@
     "name": "Aquila",
     "neighbours": [
         "Wolf-Reiser",
-        "Loma",
         "Union"
     ],
     "security": 2,

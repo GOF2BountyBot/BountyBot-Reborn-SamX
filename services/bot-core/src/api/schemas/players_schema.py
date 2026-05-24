@@ -109,6 +109,10 @@ class PromotionStatusResponse(BaseModel):
     xp: int
     xp_threshold_for_next: int | None = None
     xp_surplus_for_next: int | None = None
+    # Cooldown advisory — populated when the player's tier-change cooldown is active.
+    # The cog uses these to surface the error before showing the ConfirmView.
+    on_cooldown: bool = False
+    cooldown_ends_at: str | None = None
 
 
 class PromoteResponse(BaseModel):
@@ -129,6 +133,7 @@ class DemoteResponse(BaseModel):
     old_tier: str
     new_tier: str
     xp: int
+    penalty: int = 0
 
 
 class TierChangeCooldownResponse(BaseModel):

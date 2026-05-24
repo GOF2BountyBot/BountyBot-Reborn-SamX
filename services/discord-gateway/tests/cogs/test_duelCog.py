@@ -188,6 +188,26 @@ class TestDuelCogInitialization:
         assert mock_duel_cog.bot is mock_bot
         assert mock_duel_cog.http_client is not None
 
+    def test_pending_duel_cache_ttl_is_1800(self, mock_duel_cog):
+        """_pending_duel_cache must use ttl_seconds=1800.0 (Item A: 30→1800)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(mock_duel_cog, "_pending_duel_cache")
+        assert isinstance(mock_duel_cog._pending_duel_cache, AutocompleteCache)
+        assert mock_duel_cog._pending_duel_cache._ttl == 1800.0, (
+            f"Expected _pending_duel_cache TTL=1800s (30 min), got {mock_duel_cog._pending_duel_cache._ttl}"
+        )
+
+    def test_outgoing_duel_cache_ttl_is_1800(self, mock_duel_cog):
+        """_outgoing_duel_cache must use ttl_seconds=1800.0 (Item A: 30→1800)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(mock_duel_cog, "_outgoing_duel_cache")
+        assert isinstance(mock_duel_cog._outgoing_duel_cache, AutocompleteCache)
+        assert mock_duel_cog._outgoing_duel_cache._ttl == 1800.0, (
+            f"Expected _outgoing_duel_cache TTL=1800s (30 min), got {mock_duel_cog._outgoing_duel_cache._ttl}"
+        )
+
     def test_cog_unload_closes_http_client(self, mock_duel_cog):
         """cog_unload should close the http client."""
         asyncio.run(mock_duel_cog.cog_unload())
@@ -652,21 +672,36 @@ class TestDuelRejectCommand:
 # ---------------------------------------------------------------------------
 
 
-class TestPendingDuelAutocomplete:
-    """Tests for pending_duel_autocomplete method."""
+def _init_duel_caches(player_id=200, user_id=200, guild_id=987654321, pending_duels=None, outgoing_duels=None):
+    """Pre-populate autocomplete_state and duel cog caches for duel tests (Phase 6)."""
+    import utils.autocomplete_state as ac_state
+    from cogs._shared.autocomplete_cache import AutocompleteCache
 
-    def test_autocomplete_returns_formatted_choices(self, mock_duel_cog, make_mock_response):
-        """pending_duel_autocomplete should return formatted duel choices."""
+    if ac_state.player_cache is None:
+        ac_state.player_cache = AutocompleteCache(name="player-duel-test")
+
+    ac_state.player_cache.set((guild_id, user_id), {"id": player_id, "discord_id": user_id})
+    return {"player_id": player_id}
+
+
+class TestPendingDuelAutocomplete:
+    """Tests for pending_duel_autocomplete method (Phase 6: zero-HTTP, cache-backed)."""
+
+    def test_autocomplete_returns_formatted_choices(self, mock_duel_cog):
+        """pending_duel_autocomplete returns formatted duel choices from cache, zero HTTP."""
+        player_id = 200
+        user_id = 200
+        guild_id = 987654321
         duels = [
-            _make_mock_duel(duel_id=1, challenger_id=100, target_id=200, stakes=500),
-            _make_mock_duel(duel_id=2, challenger_id=300, target_id=200, stakes=0),
+            _make_mock_duel(duel_id=1, challenger_id=100, target_id=player_id, stakes=500),
+            _make_mock_duel(duel_id=2, challenger_id=300, target_id=player_id, stakes=0),
         ]
-        # POST call: resolve player ID; GET call: fetch pending duels
-        player_resp = make_mock_response({"id": 200})
-        duels_resp = make_mock_response(duels)
-        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
-        interaction = _create_mock_interaction(user_id=200)
+        _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
+        mock_duel_cog._pending_duel_cache.set((guild_id, player_id), duels)
+
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
 
@@ -679,16 +714,20 @@ class TestPendingDuelAutocomplete:
         assert result[1].value == "2"
         assert "friendly" in result[1].name.lower()
 
-    def test_autocomplete_api_failure_returns_empty_list(self, mock_duel_cog, make_mock_response):
-        """pending_duel_autocomplete should return empty list on API failure during duels fetch."""
-        # Player resolution succeeds; duel list fetch fails
-        player_resp = make_mock_response({"id": 200})
-        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_duel_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
-        interaction = _create_mock_interaction(user_id=200)
+    def test_autocomplete_cache_cold_miss_returns_empty(self, mock_duel_cog):
+        """pending_duel_autocomplete returns [] on duel cache cold miss, zero HTTP."""
+        player_id = 200
+        user_id = 200
+        guild_id = 987654321
+        _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
+        # Ensure no pending duel cache entry
+        mock_duel_cog._pending_duel_cache.invalidate((guild_id, player_id))
+
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
-
         assert result == []
 
 
@@ -1100,41 +1139,44 @@ class TestDuelRejectPlayerResolution:
 
 
 class TestAutocompletePlayerResolution:
-    """Tests verifying player-ID resolution in pending_duel_autocomplete (B.51)."""
+    """Tests verifying player-ID resolution in pending_duel_autocomplete (B.51 / Phase 6)."""
 
-    def test_autocomplete_uses_player_pk_not_discord_id(self, mock_duel_cog, make_mock_response):
-        """pending_duel_autocomplete should look up pending duels by player PK, not Discord ID."""
-        interaction = _create_mock_interaction(user_id=402296276617527306)
+    def test_autocomplete_uses_player_pk_from_cache_not_discord_id(self, mock_duel_cog):
+        """Phase 6: pending_duel_autocomplete uses player PK from player_cache (not Discord ID), zero HTTP."""
+        discord_user_id = 402296276617527306
+        player_pk = 2
+        guild_id = 987654321
+        interaction = _create_mock_interaction(user_id=discord_user_id, guild_id=guild_id)
 
-        # _get_player_id resolves the Discord snowflake to player PK 2
-        player_resp = make_mock_response({"id": 2})
-        duels_resp = make_mock_response([_make_mock_duel(duel_id=1, challenger_id=1, target_id=2, stakes=500)])
+        # Pre-populate player cache mapping Discord snowflake → player PK 2
+        _init_duel_caches(player_id=player_pk, user_id=discord_user_id, guild_id=guild_id)
+        duels = [_make_mock_duel(duel_id=1, challenger_id=1, target_id=player_pk, stakes=500)]
+        mock_duel_cog._pending_duel_cache.set((guild_id, player_pk), duels)
 
-        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
+        # HTTP must not be called — all resolution is from cache
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
 
-        # Verify GET used player PK (2), not Discord snowflake
-        get_call = mock_duel_cog.http_client.get.call_args
-        params = get_call.kwargs.get("params", {})
-        assert params["user_id"] == 2, "Must use player PK for autocomplete lookup"
-        assert params["user_id"] != 402296276617527306
+        # Should use player PK 2 to key the duel cache, not Discord snowflake
         assert len(result) == 1
+        assert result[0].value == "1"
 
-    def test_autocomplete_returns_empty_when_player_not_found(self, mock_duel_cog):
-        """pending_duel_autocomplete should return [] when player resolution fails."""
-        import httpx
+    def test_autocomplete_returns_empty_when_player_cache_cold_miss(self, mock_duel_cog):
+        """Phase 6: pending_duel_autocomplete returns [] when player cache has no entry (no HTTP)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
 
-        interaction = _create_mock_interaction(user_id=200)
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {"detail": "Not found"}
-        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
+        interaction = _create_mock_interaction(user_id=999555, guild_id=123123)
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        ac_state.player_cache.invalidate((123123, 999555))
+
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
-
         assert result == []
 
 
@@ -1544,128 +1586,125 @@ class TestDuelCancelErrorHandler:
 
 
 class TestOutgoingDuelAutocomplete:
-    """Tests for outgoing_duel_autocomplete (for /duel-cancel)."""
+    """Tests for outgoing_duel_autocomplete (Phase 6: zero-HTTP, cache-backed)."""
 
-    def test_outgoing_autocomplete_returns_formatted_choices(self, mock_duel_cog, make_mock_response):
-        """outgoing_duel_autocomplete returns formatted choices for challenger's duels."""
-        from datetime import datetime
+    def test_outgoing_autocomplete_returns_formatted_choices(self, mock_duel_cog):
+        """outgoing_duel_autocomplete returns formatted choices for challenger's duels, zero HTTP."""
 
+        player_id = 100
+        user_id = 100
+        guild_id = 987654321
         outgoing_duels = [
             {
                 "id": 5,
-                "challenger_id": 100,
+                "challenger_id": player_id,
                 "target_id": 200,
                 "stakes": 1000,
                 "status": "pending",
                 "target_name": "TargetPlayer",
-                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
             },
             {
                 "id": 6,
-                "challenger_id": 100,
+                "challenger_id": player_id,
                 "target_id": 300,
                 "stakes": 0,
                 "status": "pending",
                 "target_name": "FriendlyTarget",
-                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
             },
         ]
-        player_resp = make_mock_response({"id": 100})
-        duels_resp = make_mock_response(outgoing_duels)
-        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
-        interaction = _create_mock_interaction(user_id=100)
+        _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
+        mock_duel_cog._outgoing_duel_cache.set((guild_id, player_id), outgoing_duels)
+
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, ""))
 
         assert len(result) == 2
-        # First duel has stakes
         assert result[0].value == "5"
         assert "1,000" in result[0].name or "TargetPlayer" in result[0].name
-        # Second duel is friendly
         assert result[1].value == "6"
         assert "friendly" in result[1].name.lower() or "FriendlyTarget" in result[1].name
 
-    def test_outgoing_autocomplete_without_target_name(self, mock_duel_cog, make_mock_response):
-        """outgoing_duel_autocomplete falls back to 'Duel #{id}' when target_name absent."""
-        from datetime import datetime
+    def test_outgoing_autocomplete_without_target_name(self, mock_duel_cog):
+        """outgoing_duel_autocomplete falls back to 'Duel #{id}' when target_name absent, zero HTTP."""
+        player_id = 100
+        user_id = 100
+        guild_id = 987654321
+        outgoing_duels = [{"id": 7, "challenger_id": player_id, "target_id": 999, "stakes": 500, "status": "pending"}]
+        _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
+        mock_duel_cog._outgoing_duel_cache.set((guild_id, player_id), outgoing_duels)
 
-        outgoing_duels = [
-            {
-                "id": 7,
-                "challenger_id": 100,
-                "target_id": 999,
-                "stakes": 500,
-                "status": "pending",
-                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
-            },
-        ]
-        player_resp = make_mock_response({"id": 100})
-        duels_resp = make_mock_response(outgoing_duels)
-        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
-        interaction = _create_mock_interaction(user_id=100)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, ""))
 
         assert len(result) == 1
         assert "7" in result[0].name or "Duel" in result[0].name
 
-    def test_outgoing_autocomplete_player_not_found_returns_empty(self, mock_duel_cog):
-        """outgoing_duel_autocomplete returns [] when player resolution returns None."""
-        import httpx
+    def test_outgoing_autocomplete_player_cache_miss_returns_empty(self, mock_duel_cog):
+        """outgoing_duel_autocomplete returns [] when player cache has no entry (no HTTP)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
 
-        interaction = _create_mock_interaction(user_id=100)
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {"detail": "Not found"}
-        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
+        interaction = _create_mock_interaction(user_id=998877, guild_id=112233)
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        ac_state.player_cache.invalidate((112233, 998877))
 
-        result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, ""))
-
-        assert result == []
-
-    def test_outgoing_autocomplete_api_failure_returns_empty(self, mock_duel_cog, make_mock_response):
-        """outgoing_duel_autocomplete returns [] on API failure fetching duels."""
-        player_resp = make_mock_response({"id": 100})
-        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_duel_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
-        interaction = _create_mock_interaction(user_id=100)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, ""))
-
         assert result == []
 
-    def test_outgoing_autocomplete_filters_by_current_input(self, mock_duel_cog, make_mock_response):
-        """outgoing_duel_autocomplete filters by current input."""
-        from datetime import datetime
+    def test_outgoing_autocomplete_duel_cache_miss_returns_empty(self, mock_duel_cog):
+        """outgoing_duel_autocomplete returns [] when duel cache cold miss (no HTTP)."""
+        player_id = 100
+        user_id = 100
+        guild_id = 987654321
+        _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
+        mock_duel_cog._outgoing_duel_cache.invalidate((guild_id, player_id))
 
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, ""))
+        assert result == []
+
+    def test_outgoing_autocomplete_filters_by_current_input(self, mock_duel_cog):
+        """outgoing_duel_autocomplete filters by current input, zero HTTP."""
+        player_id = 100
+        user_id = 100
+        guild_id = 987654321
         outgoing_duels = [
             {
                 "id": 8,
-                "challenger_id": 100,
+                "challenger_id": player_id,
                 "target_id": 200,
                 "stakes": 500,
                 "status": "pending",
                 "target_name": "AlphaTarget",
-                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
             },
             {
                 "id": 9,
-                "challenger_id": 100,
+                "challenger_id": player_id,
                 "target_id": 300,
                 "stakes": 500,
                 "status": "pending",
                 "target_name": "BetaTarget",
-                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
             },
         ]
-        player_resp = make_mock_response({"id": 100})
-        duels_resp = make_mock_response(outgoing_duels)
-        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
-        interaction = _create_mock_interaction(user_id=100)
+        _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
+        mock_duel_cog._outgoing_duel_cache.set((guild_id, player_id), outgoing_duels)
+
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, "alpha"))
 
@@ -1760,54 +1799,56 @@ class TestDuelCogSetup:
 
 
 class TestPendingDuelAutocompleteLabels:
-    """Tests for pending_duel_autocomplete label formatting edge cases."""
+    """Tests for pending_duel_autocomplete label formatting edge cases (Phase 6)."""
 
-    def test_autocomplete_with_challenger_name_in_label(self, mock_duel_cog, make_mock_response):
-        """pending_duel_autocomplete uses challenger_name in label when present."""
-        from datetime import datetime
-
+    def test_autocomplete_with_challenger_name_in_label(self, mock_duel_cog):
+        """pending_duel_autocomplete uses challenger_name in label when present, zero HTTP."""
+        player_id = 200
+        user_id = 200
+        guild_id = 987654321
         duels = [
             {
                 "id": 3,
                 "challenger_id": 100,
-                "target_id": 200,
+                "target_id": player_id,
                 "stakes": 250,
                 "status": "pending",
                 "challenger_name": "TheChallengerPerson",
-                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
-            },
+            }
         ]
-        player_resp = make_mock_response({"id": 200})
-        duels_resp = make_mock_response(duels)
-        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
-        interaction = _create_mock_interaction(user_id=200)
+        _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
+        mock_duel_cog._pending_duel_cache.set((guild_id, player_id), duels)
+
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
 
         assert len(result) == 1
         assert "TheChallengerPerson" in result[0].name
 
-    def test_autocomplete_with_challenger_name_friendly_label(self, mock_duel_cog, make_mock_response):
-        """pending_duel_autocomplete uses 'friendly duel' label when stakes=0 and challenger_name present."""
-        from datetime import datetime
-
+    def test_autocomplete_with_challenger_name_friendly_label(self, mock_duel_cog):
+        """pending_duel_autocomplete uses 'friendly duel' label when stakes=0 and challenger_name present, zero HTTP."""
+        player_id = 200
+        user_id = 200
+        guild_id = 987654321
         duels = [
             {
                 "id": 4,
                 "challenger_id": 100,
-                "target_id": 200,
+                "target_id": player_id,
                 "stakes": 0,
                 "status": "pending",
                 "challenger_name": "FriendlyChallenger",
-                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
-            },
+            }
         ]
-        player_resp = make_mock_response({"id": 200})
-        duels_resp = make_mock_response(duels)
-        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
-        interaction = _create_mock_interaction(user_id=200)
+        _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
+        mock_duel_cog._pending_duel_cache.set((guild_id, player_id), duels)
+
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
 
@@ -1977,27 +2018,27 @@ class TestDuelCommandRespx:
         assert "Cancelled" in embed.title or "✅" in embed.title
 
     # ------------------------------------------------------------------
-    # 5. Autocomplete → GET /api/v1/duels/pending with user_id param
+    # 5. Autocomplete → Phase 6: served from cache, no HTTP
     # ------------------------------------------------------------------
 
-    def test_pending_duel_autocomplete_calls_correct_url(self, mock_duel_cog, request):
-        """pending_duel_autocomplete must POST /players/ and GET /duels/pending?user_id=<pk>."""
-        import httpx
-        import respx
-
-        self._with_real_client(mock_duel_cog, request)
-        interaction = _create_mock_interaction(user_id=111111111)
+    def test_pending_duel_autocomplete_zero_http_from_cache(self, mock_duel_cog, request):
+        """Phase 6: pending_duel_autocomplete serves from cache — zero HTTP calls."""
+        player_id = 2
+        user_id = 111111111
+        guild_id = 987654321
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         pending_duels = [
-            _make_mock_duel(duel_id=10, challenger_id=99, target_id=2, stakes=750),
+            _make_mock_duel(duel_id=10, challenger_id=99, target_id=player_id, stakes=750),
         ]
+        _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
+        mock_duel_cog._pending_duel_cache.set((guild_id, player_id), pending_duels)
 
-        with respx.mock(assert_all_called=True) as mock_router:
-            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
-            # Exact URL match — must include correct path segment
-            mock_router.get(f"{self._BOT_API}/duels/pending").mock(return_value=httpx.Response(200, json=pending_duels))
+        # Verify HTTP is NOT called — all data from cache
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
-            result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
+        result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
 
         assert len(result) == 1
         assert result[0].value == "10"

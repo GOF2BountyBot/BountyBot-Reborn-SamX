@@ -765,12 +765,29 @@ async def refresh_shop(
                 channel_id=shop_channel_id,
                 bounty_hunter_role_id=bounty_hunter_role_id,
                 tier=request.tier,
+                items=refresh_details.get("items") or [],
+                tech_level=refresh_details.get("tech_level"),
             )
         except Exception as ann_exc:  # pylint: disable=broad-exception-caught
             # Should not reach here (announce_shop_refresh swallows its own errors),
             # but guard defensively so the admin response is always returned.
             flogger.error(f"Admin shop refresh announcement failed for guild={request.guild_id}: {ann_exc}")
             announcement_warning = "Announcement to #shop failed — shop was still refreshed successfully."
+
+        # Push refreshed shop stock to gateway autocomplete cache (best-effort, non-fatal).
+        try:
+            from utils.executors.shop_refresh_executor import _push_shop_cache
+
+            await _push_shop_cache(
+                f"AdminRefresh[guild={request.guild_id}]",
+                request.guild_id,
+                request.tier,
+                refresh_details.get("items") or [],
+            )
+        except Exception as push_exc:  # pylint: disable=broad-exception-caught
+            flogger.warning(
+                f"Admin shop refresh: non-fatal failure pushing shop cache for guild={request.guild_id}: {push_exc}"
+            )
 
         response: dict = {
             **refresh_details,

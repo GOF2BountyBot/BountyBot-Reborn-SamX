@@ -61,7 +61,7 @@ CATEGORY_RESPONSE_MODELS = {
 }
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
     async with db_manager.get_session() as session:
         yield session
 

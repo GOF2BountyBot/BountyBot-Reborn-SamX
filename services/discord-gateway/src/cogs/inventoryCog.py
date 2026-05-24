@@ -6,8 +6,9 @@ from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
-from utils.autocomplete_helpers import player_inventory_autocomplete
 from utils.autocomplete_utils import normalize_for_search
+
+from utils import autocomplete_state
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-InventoryCog")
@@ -55,12 +56,14 @@ class WeaponSwapView(discord.ui.View):
         equipment_type: str,
         equipped_items: list[dict],
         *,
+        guild_id: int | None = None,
         timeout: float = 60.0,
     ) -> None:
         super().__init__(timeout=timeout)
         self.http_client = http_client
         self.ship_id = ship_id
         self.player_id = player_id
+        self.guild_id = guild_id
         self.new_item_name = new_item_name
         self.equipment_type = equipment_type
         self.equipped_items = equipped_items
@@ -105,7 +108,7 @@ class WeaponSwapView(discord.ui.View):
         # Value format: "{slot_index}|{item_name}" — extract the name portion.
         raw_value = interaction.data["values"][0]
         _, _, old_item_name = raw_value.partition("|")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Unequip old item
@@ -142,7 +145,18 @@ class WeaponSwapView(discord.ui.View):
 
             self.result = "swapped"
             self.stop()
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+            # Invalidate inventory and ships caches after successful swap
+            if self.guild_id is not None:
+                try:
+                    autocomplete_state.invalidate_inventory(self.guild_id, self.player_id)
+                    autocomplete_state.invalidate_ships(self.guild_id, self.player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"WeaponSwapView: cache invalidation failed for player_id={self.player_id}; "
+                        "swap still succeeded"
+                    )
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.error(f"WeaponSwapView swap error: {exc}")
@@ -176,12 +190,14 @@ class UniqueModuleSwapView(discord.ui.View):
         old_item_name: str,
         equipment_type: str = "modules",
         *,
+        guild_id: int | None = None,
         timeout: float = 60.0,
     ) -> None:
         super().__init__(timeout=timeout)
         self.http_client = http_client
         self.ship_id = ship_id
         self.player_id = player_id
+        self.guild_id = guild_id
         self.new_item_name = new_item_name
         self.old_item_name = old_item_name
         self.equipment_type = equipment_type
@@ -191,7 +207,7 @@ class UniqueModuleSwapView(discord.ui.View):
     async def swap_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         """Perform the swap on confirmation."""
         _ = button
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Unequip old module
@@ -228,7 +244,18 @@ class UniqueModuleSwapView(discord.ui.View):
 
             self.result = "swapped"
             self.stop()
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+            # Invalidate inventory and ships caches after successful module swap
+            if self.guild_id is not None:
+                try:
+                    autocomplete_state.invalidate_inventory(self.guild_id, self.player_id)
+                    autocomplete_state.invalidate_ships(self.guild_id, self.player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"UniqueModuleSwapView: cache invalidation failed for player_id={self.player_id}; "
+                        "swap still succeeded"
+                    )
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.error(f"UniqueModuleSwapView swap error: {exc}")
@@ -306,7 +333,7 @@ class InventoryCog(commands.Cog):
         """Display player inventory."""
         flogger.info(f"/inventory: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/inventory params: item_type={item_type}, user={user.id if user else None}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Determine target user
@@ -418,7 +445,7 @@ class InventoryCog(commands.Cog):
         """Search player inventory for items."""
         flogger.info(f"/search: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/search params: query={query}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             player_id = await self._get_player_id(
@@ -480,49 +507,24 @@ class InventoryCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while searching inventory.", ephemeral=True)
 
     async def item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /item — shows items in the invoking player's inventory.
+        """Autocomplete for /item — shows all items in the invoking player's inventory with type labels.
 
-        If the user has already chosen an ``item_type`` value, we scope results
-        to that type; otherwise all inventory items are returned.
+        Phase 6: Zero-HTTP. Reads from autocomplete_state caches via player_inventory_autocomplete helper.
+        Display format: "Item Name (Type)" — value is the item_name.
+        item_type is resolved server-side; no type filter exposed in autocomplete.
         """
-        # Scope to the already-chosen item_type (if any) so the dropdown is relevant.
-        item_type_filter: str | None = None
-        try:
-            namespace = getattr(interaction, "namespace", None)
-            if namespace is not None:
-                selected_type = getattr(namespace, "item_type", None)
-                if selected_type:
-                    item_type_filter = selected_type
-        except Exception:  # pylint: disable=broad-exception-caught
-            item_type_filter = None
+        from utils.autocomplete_helpers import player_inventory_autocomplete
 
-        return await player_inventory_autocomplete(
-            self.http_client,
-            api_base,
-            interaction,
-            current,
-            item_type_filter=item_type_filter,
-        )
+        return await player_inventory_autocomplete(self.http_client, api_base, interaction, current)
 
     @app_commands.command(name="item", description="Get detailed information about a specific item")
-    @app_commands.describe(
-        item_name="Name of the item to check", item_type="Type of the item (ship, weapon, module, turret)"
-    )
+    @app_commands.describe(item_name="Name of the item to check")
     @app_commands.autocomplete(item_name=item_autocomplete)
-    @app_commands.choices(
-        item_type=[
-            app_commands.Choice(name="Ship", value="ship"),
-            app_commands.Choice(name="Primary Weapon", value="primary_weapon"),
-            app_commands.Choice(name="Secondary Weapon", value="secondary_weapon"),
-            app_commands.Choice(name="Turret", value="turret_weapon"),
-            app_commands.Choice(name="Module", value="module"),
-        ]
-    )
-    async def item(self, interaction: discord.Interaction, item_name: str, item_type: str):
+    async def item(self, interaction: discord.Interaction, item_name: str):
         """Get detailed item information including inventory count."""
         flogger.info(f"/item: guild={interaction.guild_id}, user={interaction.user.id}")
-        flogger.debug(f"/item params: item_name={item_name}, item_type={item_type}")
-        await interaction.response.defer(thinking=True)
+        flogger.debug(f"/item params: item_name={item_name}")
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             player_id = await self._get_player_id(
@@ -534,16 +536,16 @@ class InventoryCog(commands.Cog):
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
-            # Get item count
+            # Get item count — server resolves item_type from item_name
             resp = await self.http_client.get(
                 f"{api_base}/inventory/player/{player_id}/item/{item_name}/count",
-                params={"item_type": item_type},
                 timeout=10,
             )
             resp.raise_for_status()
             count_data = resp.json()
 
             # Create item info embed
+            item_type = count_data.get("item_type", "")
             embed = discord.Embed(title=f"📦 {item_name}", color=self._get_item_type_color(item_type))
 
             embed.add_field(name="Type", value=item_type.replace("_", " ").title(), inline=True)
@@ -585,115 +587,65 @@ class InventoryCog(commands.Cog):
     async def equip_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /equip — shows equippable items from the player's cargo/inventory."""
-        try:
-            # Resolve player ID
-            user_data = {
-                "discord_id": interaction.user.id,
-                "guild_id": interaction.guild_id,
-                "discord_username": None,
-                "display_name": getattr(interaction.user, "display_name", None),
-            }
-            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
-            player_resp.raise_for_status()
-            player_id = player_resp.json().get("id")
-            if not player_id:
-                return []
+        """Autocomplete for /equip — shows equippable items from the player's cargo/inventory.
 
-            # Fetch player inventory (cargo items — weapons, modules, turrets)
-            inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
-            inv_resp.raise_for_status()
-            items = inv_resp.json()
+        Phase 6: Zero-HTTP. Reads from autocomplete_state caches via player_equippable_autocomplete helper.
+        Filters to _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES; excludes already-equipped items.
+        """
+        from utils.autocomplete_helpers import player_equippable_autocomplete
 
-            # Filter to equippable item types using concrete types that match
-            # _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES (mirrors bot-core CURRENTLY_ENABLED_TYPES
-            # minus "ship").  See utils/autocomplete_helpers.py for the constant.
-            # Legacy-alias compat: rows written before A.36 may store "weapon" or "turret"
-            # instead of "primary_weapon" / "turret_weapon".  Accept both forms here;
-            # the server resolves by item_name regardless of item_type on write paths.
-            from utils.autocomplete_helpers import _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
-
-            _LEGACY_ALIAS_MAP: dict[str, str] = {
-                "weapon": "primary_weapon",
-                "turret": "turret_weapon",
-            }
-            _EQUIPPABLE_WITH_LEGACY = _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES | frozenset(_LEGACY_ALIAS_MAP)
-
-            # NOTE: player_inventories.quantity is CARGO-ONLY — it does NOT include copies that
-            # are already equipped on any ship.  Equipped items live solely in the player_ships
-            # JSON slot arrays and are a completely separate pool.  Therefore the correct
-            # visibility check is simply qty > 0 (has any unequipped cargo copies available).
-            # The server-side B.41 guard in LoadoutConsistencyService.equip_one() enforces
-            # the hard constraint; the autocomplete just needs to avoid hiding valid items.
-
-            norm_current = normalize_for_search(current)
-            choices = []
-            seen: set[str] = set()
-
-            for item in items:
-                item_type = item.get("item_type", "")
-                # Normalise legacy aliases to concrete type for display; filter still passes both.
-                display_type = _LEGACY_ALIAS_MAP.get(item_type, item_type)
-                item_name = item.get("item_name", "")
-                qty = item.get("quantity") or 0
-                if (
-                    item_type in _EQUIPPABLE_WITH_LEGACY
-                    and item_name
-                    and item_name not in seen
-                    and qty > 0
-                    and norm_current in normalize_for_search(item_name)
-                ):
-                    seen.add(item_name)
-                    qty_suffix = f" x{qty}" if qty > 1 else ""
-                    label = f"{item_name} ({display_type.replace('_', ' ').title()}){qty_suffix}"
-                    choices.append(app_commands.Choice(name=label[:100], value=item_name))
-            return choices[:25]
-        except Exception:  # pylint: disable=broad-exception-caught
-            return []
+        return await player_equippable_autocomplete(self.http_client, api_base, interaction, current)
 
     async def unequip_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for /unequip — shows items currently equipped on the player's active ship.
 
+        Phase 6: Zero-HTTP. Reads from autocomplete_state caches (player_cache + ships_cache).
+
         B.90: The sentinel value ``all`` (case-insensitive) is always surfaced as the **first**
         choice so users can bulk-unequip every item with a single selection.
         """
         try:
-            # Resolve player ID
-            user_data = {
-                "discord_id": interaction.user.id,
-                "guild_id": interaction.guild_id,
-                "discord_username": None,
-                "display_name": getattr(interaction.user, "display_name", None),
-            }
-            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
-            player_resp.raise_for_status()
-            player_id = player_resp.json().get("id")
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            if autocomplete_state.player_cache is None:
+                return []
+            player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+            if player_entry is None:
+                player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+            if player_entry is None:
+                return []
+            player_id = player_entry.get("id")
             if not player_id:
                 return []
 
-            # Fetch the player's active ship
-            ships_resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=3)
-            ships_resp.raise_for_status()
-            ships = ships_resp.json()
-            active_ship = next((s for s in ships if s.get("is_active")), None)
-            if not active_ship:
+            # HOT PATH: peek ships_cache for active ship loadout — no HTTP
+            if autocomplete_state.ships_cache is None:
+                return []
+            ships = autocomplete_state.ships_cache.peek((guild_id, player_id))
+            if ships is None:
+                ships = await autocomplete_state.ships_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+            if ships is None:
                 return []
 
-            ship_id = active_ship["id"]
+            # Find active ship and collect equipped items
+            active_ship_raw: dict | None = None
+            for nc in ships:
+                if nc.raw.get("is_active"):
+                    active_ship_raw = nc.raw
+                    break
 
-            # Fetch the ship's full loadout
-            loadout_resp = await self.http_client.get(f"{api_base}/ships/{ship_id}/loadout", timeout=3)
-            loadout_resp.raise_for_status()
-            loadout = loadout_resp.json()
+            if not active_ship_raw:
+                return []
 
-            # Collect all equipped items (weapons + modules + turrets + secondary_weapons)
             equipped: list[str] = []
-            equipped.extend(loadout.get("weapons") or [])
-            equipped.extend(loadout.get("modules") or [])
-            equipped.extend(loadout.get("turrets") or [])
-            equipped.extend(loadout.get("secondary_weapons") or [])
+            equipped.extend(active_ship_raw.get("weapons") or [])
+            equipped.extend(active_ship_raw.get("modules") or [])
+            equipped.extend(active_ship_raw.get("turrets") or [])
+            equipped.extend(active_ship_raw.get("secondary_weapons") or [])
 
             norm_current = normalize_for_search(current)
 
@@ -727,7 +679,7 @@ class InventoryCog(commands.Cog):
         """
         flogger.info(f"/equip: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/equip params: item_name={item_name}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             player_id = await self._get_player_id(
@@ -794,7 +746,16 @@ class InventoryCog(commands.Cog):
                     f"Turrets: {', '.join(turrets) or 'None'}"
                 )
                 embed.add_field(name="Current Loadout", value=loadout_text, inline=False)
-                await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # Invalidate inventory and ships caches — loadout changed
+                try:
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, player_id)
+                    autocomplete_state.invalidate_ships(interaction.guild_id, player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/equip: cache invalidation failed for player_id={player_id}; transaction still succeeded"
+                    )
 
             elif status == "slot_full":
                 # Step 2b: Slots are full — show swap select menu
@@ -824,8 +785,9 @@ class InventoryCog(commands.Cog):
                     new_item_name=item_name,
                     equipment_type=equipment_type,
                     equipped_items=equipped_items,
+                    guild_id=interaction.guild_id,
                 )
-                await interaction.followup.send(embed=embed, view=view)
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
             elif status == "unique_conflict":
                 # Step 2c: Unique module conflict — show Swap/Cancel buttons
@@ -849,8 +811,9 @@ class InventoryCog(commands.Cog):
                     new_item_name=item_name,
                     old_item_name=old_name,
                     equipment_type=equipment_type or "modules",
+                    guild_id=interaction.guild_id,
                 )
-                await interaction.followup.send(embed=embed, view=view)
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
             else:
                 await interaction.followup.send(f"❌ Unexpected equip-check status: {status!r}", ephemeral=True)
@@ -898,7 +861,7 @@ class InventoryCog(commands.Cog):
         """
         flogger.info(f"/unequip: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/unequip params: item_name={item_name}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             player_id = await self._get_player_id(
@@ -950,8 +913,17 @@ class InventoryCog(commands.Cog):
                 name="Ship", value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"), inline=True
             )
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.debug(f"/unequip {item_name} by {interaction.user} in guild {interaction.guild_id}")
+
+            # Invalidate inventory and ships caches — loadout changed
+            try:
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player_id)
+                autocomplete_state.invalidate_ships(interaction.guild_id, player_id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/unequip: cache invalidation failed for player_id={player_id}; transaction still succeeded"
+                )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
@@ -1008,7 +980,7 @@ class InventoryCog(commands.Cog):
                 description=f"**{ship_display}** has no items equipped.",
                 color=discord.Color.light_grey(),
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.debug(f"/unequip all no-op: guild={interaction.guild_id} user={interaction.user.id} ship={ship_id}")
             return
 
@@ -1056,11 +1028,21 @@ class InventoryCog(commands.Cog):
         if failed:
             embed.add_field(name="Failed", value=str(len(failed)), inline=True)
 
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         flogger.info(
             f"/unequip all: guild={interaction.guild_id} user={interaction.user.id} "
             f"ship={ship_id} succeeded={len(succeeded)} failed={len(failed)}"
         )
+
+        # Invalidate inventory and ships caches once at end — loadout changed
+        if succeeded:
+            try:
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player_id)
+                autocomplete_state.invalidate_ships(interaction.guild_id, player_id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/unequip all: cache invalidation failed for player_id={player_id}; transaction still succeeded"
+                )
 
     def _get_item_type_color(self, item_type: str) -> discord.Color:
         """Get Discord color based on item type (concrete vocab, A.46)."""
@@ -1080,30 +1062,41 @@ class InventoryCog(commands.Cog):
     async def give_item_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /give item — shows player's inventory items with type labels."""
+        """Autocomplete for /give item — shows player's inventory items with type labels.
+
+        Phase 6: Zero-HTTP. Reads from autocomplete_state caches (player_cache + inventory_cache).
+        Value encodes "item_name::item_type" for parsing by the /give command.
+        """
         try:
-            user_data = {
-                "discord_id": interaction.user.id,
-                "guild_id": interaction.guild_id,
-                "discord_username": None,
-                "display_name": getattr(interaction.user, "display_name", None),
-            }
-            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
-            player_resp.raise_for_status()
-            player_id = player_resp.json().get("id")
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            if autocomplete_state.player_cache is None:
+                return []
+            player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+            if player_entry is None:
+                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                return []
+            player_id = player_entry.get("id")
             if not player_id:
                 return []
 
-            inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
-            inv_resp.raise_for_status()
-            items = inv_resp.json()
+            # HOT PATH: peek inventory_cache — no HTTP
+            if autocomplete_state.inventory_cache is None:
+                return []
+            items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
+            if items is None:
+                autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
+                return []
 
             norm_current = normalize_for_search(current)
             choices = []
             seen: set[str] = set()
-            for item in items:
-                item_name = item.get("item_name", "")
-                item_type = item.get("item_type", "")
+            for nc in items:
+                raw = nc.raw
+                item_name = raw.get("item_name", "")
+                item_type = raw.get("item_type", "")
                 key = f"{item_name}|{item_type}"
                 if item_name and key not in seen and norm_current in normalize_for_search(item_name):
                     seen.add(key)
@@ -1117,37 +1110,16 @@ class InventoryCog(commands.Cog):
     async def give_ship_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /give ship — shows player's non-active ships."""
-        try:
-            user_data = {
-                "discord_id": interaction.user.id,
-                "guild_id": interaction.guild_id,
-                "discord_username": None,
-                "display_name": getattr(interaction.user, "display_name", None),
-            }
-            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
-            player_resp.raise_for_status()
-            player_id = player_resp.json().get("id")
-            if not player_id:
-                return []
+        """Autocomplete for /give ship — shows player's non-active ships.
 
-            ships_resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=3)
-            ships_resp.raise_for_status()
-            ships = ships_resp.json()
+        Phase 6: Zero-HTTP. Delegates to player_ships_autocomplete helper which reads
+        from autocomplete_state caches (player_cache + ships_cache).
+        """
+        from utils.autocomplete_helpers import player_ships_autocomplete
 
-            norm_current = normalize_for_search(current)
-            choices = []
-            for ship in ships:
-                if ship.get("is_active"):
-                    continue  # cannot give away active ship
-                ship_name = ship.get("ship_name", "")
-                ship_id = ship.get("id")
-                if ship_name and norm_current in normalize_for_search(ship_name):
-                    label = ship.get("nickname") or ship_name
-                    choices.append(app_commands.Choice(name=label[:100], value=str(ship_id)))
-            return choices[:25]
-        except Exception:  # pylint: disable=broad-exception-caught
-            return []
+        return await player_ships_autocomplete(
+            self.http_client, api_base, interaction, current, exclude_active=True, show_active_indicator=False
+        )
 
     @app_commands.command(name="give", description="Give credits, an item, or a ship to another player")
     @app_commands.describe(
@@ -1177,7 +1149,7 @@ class InventoryCog(commands.Cog):
     ):
         """Give credits, an item, or a ship to another player in the same guild."""
         flogger.info(f"/give: guild={interaction.guild_id} user={interaction.user.id} type={give_type}")
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        await interaction.response.defer(thinking=True)
 
         try:
             # Cannot give to self
@@ -1246,7 +1218,7 @@ class InventoryCog(commands.Cog):
                 embed.add_field(
                     name="Your Remaining Credits", value=f"{source_player['credits'] - amount:,}", inline=True
                 )
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send(content=target.mention, embed=embed)
 
             elif give_type == "item":
                 if not item:
@@ -1302,7 +1274,18 @@ class InventoryCog(commands.Cog):
                     color=discord.Color.green(),
                 )
                 embed.add_field(name="Item Type", value=item_type.replace("_", " ").title(), inline=True)
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send(content=target.mention, embed=embed)
+
+                # Invalidate inventory for both giver and recipient
+                try:
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, source_player["id"])
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player["id"])
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/give item: cache invalidation failed for "
+                        f"source_player_id={source_player['id']}, target_player_id={target_player['id']}; "
+                        "transaction still succeeded"
+                    )
 
             elif give_type == "ship":
                 if not ship:
@@ -1348,7 +1331,22 @@ class InventoryCog(commands.Cog):
                         value=", ".join(items_returned[:10]) + ("..." if len(items_returned) > 10 else ""),
                         inline=False,
                     )
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send(content=target.mention, embed=embed)
+
+                # Invalidate ships, inventory, and player caches for both parties on ship transfer
+                try:
+                    autocomplete_state.invalidate_ships(interaction.guild_id, source_player["id"])
+                    autocomplete_state.invalidate_ships(interaction.guild_id, target_player["id"])
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, source_player["id"])
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player["id"])
+                    autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                    autocomplete_state.invalidate_player(interaction.guild_id, target.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/give ship: cache invalidation failed for "
+                        f"source_player_id={source_player['id']}, target_player_id={target_player['id']}; "
+                        "transaction still succeeded"
+                    )
 
             else:
                 await interaction.followup.send(f"❌ Unknown give type: {give_type}", ephemeral=True)

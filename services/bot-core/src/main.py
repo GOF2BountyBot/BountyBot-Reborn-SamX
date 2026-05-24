@@ -62,6 +62,16 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
         "cron": "30 * * * *",  # :30 past every hour (offset from temperature_decay at :00)
         "payload": {"job_type": "bounty_failsafe_cleanup"},
     },
+    {
+        "job_id": "pg_backup_default",
+        "cron": "15 */3 * * *",  # :15 past every 3rd hour; offset from shop_refresh (:00) and temperature_decay (:30)
+        "payload": {"job_type": "pg_backup"},
+    },
+    {
+        "job_id": "db_retention_default",
+        "cron": "45 3 * * *",  # daily at 03:45 UTC — well clear of all hourly/3-hourly jobs
+        "payload": {"job_type": "db_retention"},
+    },
 ]
 
 
@@ -501,5 +511,9 @@ if __name__ == "__main__":
         host=os.getenv("BOT_HOST", "0.0.0.0"),
         port=int(os.getenv("BOT_PORT", os.getenv("PORT", "8000"))),
         access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
-        reload=True,
+        workers=4,
+        # Explicit: uvloop + httptools are bundled with uvicorn[standard];
+        # "auto" picks them up but pinning makes the dependency obvious.
+        loop="uvloop",
+        http="httptools",
     )

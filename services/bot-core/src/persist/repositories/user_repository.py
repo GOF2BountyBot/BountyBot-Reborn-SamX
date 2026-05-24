@@ -109,6 +109,8 @@ class UserRepository(IRepository[User]):
                 # Update existing user
                 if "discord_username" in raw:
                     user.discord_username = raw["discord_username"]
+                if "display_name" in raw and raw["display_name"] is not None:
+                    user.display_name = raw["display_name"]
                 if commit:
                     await db.commit()
                 else:
@@ -117,7 +119,11 @@ class UserRepository(IRepository[User]):
                 flogger.debug(f"Updated user: {user_id}")
             else:
                 # Create new user
-                user = User(id=user_id, discord_username=raw.get("discord_username"))
+                user = User(
+                    id=user_id,
+                    discord_username=raw.get("discord_username"),
+                    display_name=raw.get("display_name"),
+                )
                 user = await self.add(db, user, commit=commit)
                 flogger.info(f"Created new user: {user_id}")
 
@@ -150,30 +156,43 @@ class UserRepository(IRepository[User]):
         db: AsyncSession,
         discord_id: int,
         username: str | None = None,
+        display_name: str | None = None,
         *,
         commit: bool = True,
     ) -> User:
         """Get existing user or create new one.
 
         Args:
+            username: Discord username to set/update.
+            display_name: Discord display name (server nickname or global display name).
+                When provided, updates the stored value. When None, does not overwrite
+                an existing value.
             commit: When False, any new-user creation or username update flushes
                 without committing (caller owns transaction).
         """
         try:
             user = await self.get_by_id(db, discord_id)
             if not user:
-                user = User(id=discord_id, discord_username=username)
+                user = User(id=discord_id, discord_username=username, display_name=display_name)
                 user = await self.add(db, user, commit=commit)
                 flogger.info(f"Auto-created user for Discord ID: {discord_id}")
-            elif username and user.discord_username != username:
-                # Update username if provided and different
-                user.discord_username = username
-                if commit:
-                    await db.commit()
-                else:
-                    await db.flush()
-                await db.refresh(user)
-                flogger.debug(f"Updated username for user {discord_id}")
+            else:
+                changed = False
+                if username and user.discord_username != username:
+                    # Update username if provided and different
+                    user.discord_username = username
+                    changed = True
+                if display_name is not None and user.display_name != display_name:
+                    # Update display_name if provided and different
+                    user.display_name = display_name
+                    changed = True
+                if changed:
+                    if commit:
+                        await db.commit()
+                    else:
+                        await db.flush()
+                    await db.refresh(user)
+                    flogger.debug(f"Updated user info for user {discord_id}")
 
             return user
         except Exception as e:

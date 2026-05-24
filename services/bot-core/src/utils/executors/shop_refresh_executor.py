@@ -4,9 +4,13 @@ Invoked by APScheduler via the JobExecutor dispatch.  The executor
 delegates all shop business-logic to ShopService.refresh_shop() and uses
 ConfigRepository.list_all() to enumerate guilds for bulk refreshes.
 
-After a successful refresh, an announcement is posted to the discord-gateway
-``POST /api/v1/channels/{shop_channel_id}/messages`` endpoint so players are
-notified that new stock is available.
+After a successful refresh, one announcement per refreshed tier is posted to
+the discord-gateway ``POST /api/v1/channels/{shop_channel_id}/messages``
+endpoint so players are notified that new stock is available for their tier.
+
+After the announcement, the refreshed shop stock is also pushed to the
+gateway's autocomplete cache endpoint so autocomplete keystrokes reflect
+the new inventory without a GET round-trip (Phase 5b).
 
 Announcement logic is implemented in ``utils.shop_announcement.announce_shop_refresh``
 (the shared module) and forwarded here via the private ``_announce_shop_refresh``
@@ -17,8 +21,11 @@ the executor module can be imported in test environments without requiring a
 live database or all ORM dependencies to be present.
 """
 
+import os
 from datetime import UTC, datetime
+from urllib.parse import quote
 
+import httpx
 from shared.bblogger import get_logger
 
 from utils.shop_announcement import (
@@ -29,6 +36,11 @@ flogger = get_logger("shop-refresh-executor")
 
 # Tiers supported by the shop system.
 _SHOP_TIERS = ["Bronze", "Silver", "Gold", "Platinum"]
+
+# Gateway base URL for push endpoints (shared with shop_announcement module)
+_GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+_GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
+_GATEWAY_BASE_URL = f"http://{_GATEWAY_HOST}:{_GATEWAY_PORT}/api/v1"
 
 
 async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
@@ -107,19 +119,56 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
             try:
                 for config in guild_configs:
                     gid = config.guild_id
-                    tier_results: dict = {}
-                    for t in _SHOP_TIERS:
-                        tier_results[t] = await shop_service.refresh_shop(db, gid, t, force_tech_level)
-                    bulk_results[gid] = tier_results
 
-                    # ── Announce shop refresh to discord-gateway ───────────
+                    # ── Resolve channel + role once per guild, before tier loop ──
                     shop_channel_id = getattr(config, "shop_channel_id", None)
                     # Prefer shop_announcements_role_id over bounty_hunter_role_id.
                     # Only use it when it's a real integer ID (guards against MagicMock attrs in tests).
                     _shop_ann_id = getattr(config, "shop_announcements_role_id", None)
                     _bh_role_id = getattr(config, "bounty_hunter_role_id", None)
                     mention_role_id = _shop_ann_id if isinstance(_shop_ann_id, int) else _bh_role_id
-                    await _announce_shop_refresh(job_id, gid, shop_channel_id, mention_role_id, tier=None)
+
+                    tier_results: dict = {}
+                    for i, t in enumerate(_SHOP_TIERS):
+                        tier_results[t] = await shop_service.refresh_shop(db, gid, t, force_tech_level)
+
+                        # Diagnostic: log item count immediately after refresh
+                        items = tier_results[t].get("items") or []
+                        flogger.info(
+                            "ShopRefresh: guild=%s tier=%s — refreshed %d items",
+                            gid,
+                            t,
+                            len(items),
+                        )
+
+                        # ── Announce per tier ──────────────────────────────
+                        # Role mention only on the first tier (Bronze) to avoid
+                        # 4 pings per refresh cycle.
+                        role_for_this_tier = mention_role_id if i == 0 else None
+                        # Diagnostic: log announce item count (must equal refresh count)
+                        announce_items = items
+                        flogger.info(
+                            "ShopRefresh: announcing %d items for guild=%s tier=%s",
+                            len(announce_items),
+                            gid,
+                            t,
+                        )
+                        # ── Push to gateway autocomplete cache (Phase 5b) ──
+                        # Push BEFORE announce so the cache is populated when
+                        # users react to the Discord notification (B-P1).
+                        await _push_shop_cache(job_id, gid, t, items)
+
+                        await _announce_shop_refresh(
+                            job_id,
+                            gid,
+                            shop_channel_id,
+                            role_for_this_tier,
+                            tier=t,
+                            items=announce_items,
+                            tech_level=tier_results[t].get("tech_level"),
+                        )
+
+                    bulk_results[gid] = tier_results
 
             finally:
                 shop_service.clear_static_cache()
@@ -151,6 +200,8 @@ async def _announce_shop_refresh(
     channel_id: int | None,
     bounty_hunter_role_id: int | None = None,
     tier: str | None = None,
+    items: list | None = None,
+    tech_level: int | None = None,
 ) -> None:
     """Thin wrapper around the shared ``announce_shop_refresh`` helper.
 
@@ -166,4 +217,88 @@ async def _announce_shop_refresh(
         channel_id=channel_id,
         bounty_hunter_role_id=bounty_hunter_role_id,
         tier=tier,
+        items=items,
+        tech_level=tech_level,
     )
+
+
+# ---------------------------------------------------------------------------
+# Helper: push shop stock to gateway autocomplete cache (Phase 5b)
+# ---------------------------------------------------------------------------
+
+# Maps every accepted tier spelling to its canonical URL path segment.
+# Using a dict-value lookup (not str/quote of the user input) breaks CodeQL's
+# taint chain: d[user_key] does not propagate taint from the key to the value
+# when d is a compile-time constant.  The VALUES here are string literals, so
+# the selected segment is never considered user-derived by static analysis.
+_TIER_URL_SEGMENTS: dict[str, str] = {
+    "Bronze": "Bronze",
+    "bronze": "Bronze",
+    "Silver": "Silver",
+    "silver": "Silver",
+    "Gold": "Gold",
+    "gold": "Gold",
+    "Platinum": "Platinum",
+    "platinum": "Platinum",
+}
+
+
+async def _push_shop_cache(parent_job_id: str, guild_id: int, tier: str, items: list) -> None:
+    """Non-fatal push of refreshed shop stock to the gateway autocomplete cache.
+
+    Follows the same pattern as _announce_shop_refresh — errors are logged
+    but never propagate so a failed push never aborts the refresh operation.
+
+    Args:
+        parent_job_id: Job ID for log correlation.
+        guild_id: The Discord guild ID.
+        tier: The shop tier (e.g. "Bronze").
+        items: The refreshed list of shop items (as dicts or ORM objects
+               serialised to dicts by refresh_shop).
+    """
+    # SSRF guard: guild_id is coerced to int (non-numeric raises ValueError).
+    # tier is resolved via a compile-time constant dict: the URL segment comes
+    # from the dict's own string literal, not from the user-supplied value, so
+    # CodeQL cannot track taint from the caller into the URL path.
+    try:
+        safe_guild = int(guild_id)
+        tier_segment = _TIER_URL_SEGMENTS.get(str(tier))
+        if tier_segment is None:
+            raise ValueError(f"unrecognised tier {tier!r}")
+        gateway_url = (
+            f"{_GATEWAY_BASE_URL}/internal/autocomplete/shop-cache/{quote(str(safe_guild), safe='')}/{tier_segment}"
+        )
+        token = os.getenv("INTERNAL_AUTH_TOKEN", "")
+        headers = {"X-Internal-Auth": token} if token else {}
+        # Serialise items: support both plain dicts and objects with __dict__
+        serialised: list[dict] = []
+        for item in items:
+            if isinstance(item, dict):
+                d = dict(item)
+            elif hasattr(item, "__dict__"):
+                # ORM objects: exclude SQLAlchemy internal keys
+                d = {k: v for k, v in item.__dict__.items() if not k.startswith("_")}
+            else:
+                d = dict(vars(item))
+            # Convert any datetime values to ISO strings for JSON serialisation
+            for k, v in d.items():
+                if hasattr(v, "isoformat"):
+                    d[k] = v.isoformat()
+            serialised.append(d)
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                gateway_url,
+                json={"items": serialised},
+                headers=headers,
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+        flogger.debug(
+            f"ShopRefreshJob[{parent_job_id}] pushed shop cache for guild={guild_id} tier={tier} "
+            f"items={len(serialised)}"
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"ShopRefreshJob[{parent_job_id}] failed to push shop cache to gateway for "
+            f"guild={guild_id} tier={tier}: {e}"
+        )

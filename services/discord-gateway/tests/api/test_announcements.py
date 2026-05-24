@@ -422,3 +422,200 @@ class TestEditBountyAnnouncement:
         # image_url should remain None — no existing image to preserve
         actual_image_url = mock_build.call_args.kwargs.get("image_url")
         assert actual_image_url is None, f"Expected image_url=None (no existing image), got {actual_image_url!r}"
+
+
+# ===========================================================================
+# Payout embed tests (Task B)
+# ===========================================================================
+
+
+def _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4):
+    """Request payload that includes all three payout fields."""
+    payload = _make_request_payload()
+    payload["metadata"]["reward"] = reward
+    payload["metadata"]["reward_per_sys"] = reward_per_sys
+    payload["metadata"]["route_length"] = route_length
+    return payload
+
+
+class TestPayoutEmbed:
+    """Tests verifying the bounty board always sends a single embed (Item B).
+
+    The payout breakdown embed has been removed from the bounty board path entirely.
+    All POST and PUT operations must send a single embed regardless of whether
+    payout metadata fields (reward, reward_per_sys, route_length) are present.
+    """
+
+    def test_create_with_payout_fields_sends_single_embed(self, announcements_client, mock_bot):
+        """POST with payout fields present sends a single embed (payout embed removed, Item B)."""
+        import discord
+
+        payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)
+
+        channel = mock_bot.get_channel(1234567890)
+        channel.send = AsyncMock()
+        sent_message = MagicMock()
+        sent_message.id = 4444444444
+        sent_message.author = MagicMock()
+        sent_message.author.id = 123456789
+        channel.send.return_value = sent_message
+
+        with patch("api.routers.announcements.build_loadout_embed") as mock_build:
+            mock_build.return_value = discord.Embed(title="Main Embed")
+            response = announcements_client.post(
+                "/api/v1/announcements/bounty/channel/1234567890",
+                json=payload,
+            )
+
+        assert response.status_code == 201
+        assert channel.send.called
+        call_kwargs = channel.send.call_args.kwargs
+        # Item B: always single embed regardless of payout fields
+        assert "embed" in call_kwargs, "Expected 'embed' kwarg (single-embed path)"
+        assert "embeds" not in call_kwargs, "Should NOT have 'embeds' kwarg after Item B"
+
+    def test_create_without_payout_fields_sends_single_embed(self, announcements_client, mock_bot):
+        """POST without payout fields sends a single embed."""
+        import discord
+
+        payload = _make_request_payload()  # no payout fields → all None
+
+        channel = mock_bot.get_channel(1234567890)
+        channel.send = AsyncMock()
+        sent_message = MagicMock()
+        sent_message.id = 4444444444
+        sent_message.author = MagicMock()
+        sent_message.author.id = 123456789
+        channel.send.return_value = sent_message
+
+        with patch("api.routers.announcements.build_loadout_embed") as mock_build:
+            mock_build.return_value = discord.Embed(title="Main Embed")
+            response = announcements_client.post(
+                "/api/v1/announcements/bounty/channel/1234567890",
+                json=payload,
+            )
+
+        assert response.status_code == 201
+        assert channel.send.called
+        call_kwargs = channel.send.call_args.kwargs
+        assert "embed" in call_kwargs, "Expected 'embed' kwarg (single-embed path)"
+        assert "embeds" not in call_kwargs, "Should NOT have 'embeds' kwarg"
+
+    def test_edit_with_payout_fields_sends_single_embed(self, announcements_client, mock_bot):
+        """PUT with payout fields present sends a single embed to message.edit (Item B)."""
+        import discord
+
+        payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)
+
+        fetched_message = MagicMock()
+        fetched_message.id = 5555555555
+        fetched_message.author = MagicMock()
+        fetched_message.author.id = 123456789
+        fetched_message.embeds = []
+        fetched_message.edit = AsyncMock()
+        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+
+        with patch("api.routers.announcements.build_loadout_embed") as mock_build:
+            mock_build.return_value = discord.Embed(title="Main Embed")
+            response = announcements_client.put(
+                "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
+                json=payload,
+            )
+
+        assert response.status_code == 200
+        assert fetched_message.edit.called
+        call_kwargs = fetched_message.edit.call_args.kwargs
+        # Item B: always single embed regardless of payout fields
+        assert "embed" in call_kwargs, "Expected 'embed' kwarg (single-embed path)"
+        assert "embeds" not in call_kwargs, "Should NOT have 'embeds' kwarg after Item B"
+
+
+# ===========================================================================
+# Additional single-embed enforcement tests (Item B)
+# ===========================================================================
+
+
+class TestPayoutEmbedAdversarial:
+    """Verifies the bounty board always uses single-embed after Item B removal."""
+
+    def test_edit_captured_state_sends_single_embed(self, announcements_client, mock_bot):
+        """PUT with captured=True sends a single embed (no payout embed after Item B).
+
+        The payout embed was removed from the bounty board path in Item B.
+        The captured flag only affects the main embed layout (suppresses loadout sections).
+        """
+        import discord
+
+        payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)
+        payload["metadata"]["captured"] = True
+        payload["metadata"]["image_url"] = ""  # empty-string sentinel = clear image
+
+        fetched_message = MagicMock()
+        fetched_message.id = 5555555555
+        fetched_message.author = MagicMock()
+        fetched_message.author.id = 123456789
+        fetched_message.embeds = []
+        fetched_message.edit = AsyncMock()
+        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+
+        with patch("api.routers.announcements.build_loadout_embed") as mock_build:
+            mock_build.return_value = discord.Embed(title="✅ Captured")
+            response = announcements_client.put(
+                "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
+                json=payload,
+            )
+
+        assert response.status_code == 200
+        assert fetched_message.edit.called
+        call_kwargs = fetched_message.edit.call_args.kwargs
+        # Item B: always single embed — no payout embed on bounty board
+        assert "embed" in call_kwargs, "Expected 'embed' kwarg (single-embed path)"
+        assert "embeds" not in call_kwargs, "Should NOT have 'embeds' kwarg after Item B"
+
+    def test_edit_image_preservation_reads_from_first_embed(self, announcements_client, mock_bot):
+        """Image preservation reads from existing_embeds[0].
+
+        When the existing message has multiple embeds (e.g. from a previous state
+        before Item B), the image URL (route map) must be read from the first embed
+        (embeds[0]). This verifies the image-preservation logic correctly targets embeds[0].
+        """
+        import discord
+
+        existing_image_url = "https://cdn.example.com/route_map.png"
+
+        mock_image = MagicMock()
+        mock_image.url = existing_image_url
+
+        # Simulate an existing message with a two-embed layout (main + prior payout)
+        mock_main_embed = MagicMock()
+        mock_main_embed.image = mock_image
+
+        mock_payout_embed = MagicMock()
+        mock_payout_embed.image = MagicMock()
+        mock_payout_embed.image.url = None  # payout embed never has image
+
+        fetched_message = MagicMock()
+        fetched_message.id = 5555555555
+        fetched_message.author = MagicMock()
+        fetched_message.author.id = 123456789
+        fetched_message.embeds = [mock_main_embed, mock_payout_embed]
+        fetched_message.edit = AsyncMock()
+        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+
+        # image_url=None in payload → preservation logic runs, reads from embeds[0]
+        payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)
+        payload["metadata"]["image_url"] = None
+
+        with patch("api.routers.announcements.build_loadout_embed") as mock_build:
+            mock_build.return_value = discord.Embed(title="Main")
+            response = announcements_client.put(
+                "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
+                json=payload,
+            )
+
+        assert response.status_code == 200
+        # The builder must receive the preserved image URL (from embeds[0])
+        actual_image_url = mock_build.call_args.kwargs.get("image_url")
+        assert actual_image_url == existing_image_url, (
+            f"Image preservation must read from embeds[0], got {actual_image_url!r}"
+        )

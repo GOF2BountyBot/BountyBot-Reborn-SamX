@@ -9,6 +9,8 @@ from shared import bblogger
 from utils.autocomplete_helpers import player_ships_autocomplete
 from utils.timestamp_utils import iso_to_discord_ts
 
+from utils import autocomplete_state
+
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-ShipsCog")
 
@@ -356,11 +358,20 @@ class ShipsCog(commands.Cog):
             embed.add_field(name="Ship ID", value=str(ship["id"]), inline=True)
             embed.add_field(name="Status", value="🟢 Active", inline=True)
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"/setactive success: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"ship_id={ship_id_int}, ship_name={ship.get('ship_name')}"
             )
+
+            # Invalidate ships and player caches — active_ship_id changed
+            try:
+                autocomplete_state.invalidate_ships(interaction.guild_id, player_id)
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/setactive: cache invalidation failed for player_id={player_id}; transaction still succeeded"
+                )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
@@ -455,6 +466,14 @@ class ShipsCog(commands.Cog):
                 f"/nickname success: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"ship_id={ship_id_int}, new_nickname={nickname}"
             )
+
+            # Invalidate ships cache — nickname changed in the cached label
+            try:
+                autocomplete_state.invalidate_ships(interaction.guild_id, player_id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/nickname: cache invalidation failed for player_id={player_id}; transaction still succeeded"
+                )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:

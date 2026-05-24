@@ -14,6 +14,8 @@ from utils.autocomplete_utils import fuzzy_filter, normalize_for_search
 from utils.guild_setup import ensure_bountybot_infrastructure
 from utils.timestamp_utils import iso_to_discord_ts
 
+from utils import autocomplete_state
+
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-AdminCog")
 
@@ -47,18 +49,18 @@ async def _check_is_admin(interaction: discord.Interaction) -> bool:
         resp.raise_for_status()
         config_data = resp.json()
         admin_role_id = config_data.get("admin_role_id")
-        # B.40: use interaction.member (guild-scoped Member with roles) rather than
-        # interaction.guild.get_member() which may return None in slash-command contexts.
-        # interaction.user is a discord.User (no guild role info); interaction.member
-        # is the discord.Member with .roles populated for guild interactions.
-        member = interaction.member or (
-            interaction.guild.get_member(interaction.user.id) if interaction.guild else None
+        # Use interaction.user.roles (interaction.user IS a discord.Member for guild
+        # slash commands and carries .roles). Mirror the pattern used in playerCog.py
+        # /promote: guild.get_role(id) then check if role in interaction.user.roles.
+        guild = interaction.guild
+        if guild and admin_role_id:
+            admin_role = guild.get_role(admin_role_id)
+            if admin_role and admin_role in interaction.user.roles:
+                return True
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(
+            f"_check_is_admin: unexpected error for user={interaction.user.id} guild={interaction.guild_id}: {e}"
         )
-        role_ids = [r.id for r in member.roles] if member and hasattr(member, "roles") else []
-        if admin_role_id and admin_role_id in role_ids:
-            return True
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
 
     return False
 
@@ -467,6 +469,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 embed.add_field(name="New Credits", value=f"{result['new_credits']:,}", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
+                # Invalidate player cache — credits changed
+                try:
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_player set_credits: cache invalidation failed for user={user.id}; "
+                        "transaction still succeeded"
+                    )
+
             # Add credits
             elif action == "add_credits":
                 if credit_amount is None:
@@ -489,6 +500,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 embed.add_field(name="Amount Added", value=f"{credit_amount:,}", inline=True)
                 embed.add_field(name="New Total", value=f"{result['new_credits']:,}", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # Invalidate player cache — credits changed
+                try:
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_player add_credits: cache invalidation failed for user={user.id}; "
+                        "transaction still succeeded"
+                    )
 
             # Set XP
             elif action == "set_xp":
@@ -515,6 +535,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 if result.get("tier_changed"):
                     embed.add_field(name="Tier Change", value="✅ Tier Updated!", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # Invalidate player cache — xp (and possibly tier) changed
+                try:
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_player set_xp: cache invalidation failed for user={user.id}; "
+                        "transaction still succeeded"
+                    )
 
             # Reset cooldown (tier_change or bounty) via cooldown reset endpoint
             elif action in ("reset_tier_cooldown", "reset_bounty_cooldown"):
@@ -561,6 +590,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 embed.add_field(name="Duel Losses", value=str(result["duel_losses"]), inline=True)
                 embed.add_field(name="Prestige Count", value=str(result["prestige_count"]), inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # Invalidate player cache — full player reset
+                try:
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_player reset: cache invalidation failed for user={user.id}; "
+                        "transaction still succeeded"
+                    )
 
             flogger.info(
                 f"Admin {interaction.user} performed {action} on player {user} in guild {interaction.guild_id}"
@@ -1566,7 +1604,10 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while managing XP thresholds.", ephemeral=True)
 
     @app_commands.command(name="admin_spawn_bounty", description="[ADMIN] Manually trigger a bounty spawn")
-    @app_commands.describe(tier="Tier to spawn for (omit for all tiers)")
+    @app_commands.describe(
+        tier="Tier to spawn for (omit for all tiers)",
+        quantity="Number of bounties to spawn per tier (1-10, default 1)",
+    )
     @app_commands.choices(
         tier=[
             app_commands.Choice(name="Bronze", value="bronze"),
@@ -1575,15 +1616,19 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             app_commands.Choice(name="Platinum", value="platinum"),
         ]
     )
-    async def admin_spawn_bounty(self, interaction: discord.Interaction, tier: str | None = None):
+    async def admin_spawn_bounty(self, interaction: discord.Interaction, tier: str | None = None, quantity: int = 1):
         """Manually trigger a bounty spawn for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         if not await _check_is_admin(interaction):
             await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
             return
 
+        if not 1 <= quantity <= 10:
+            await interaction.followup.send("❌ Quantity must be between 1 and 10.", ephemeral=True)
+            return
+
         try:
-            params: dict = {"user_id": interaction.user.id}
+            params: dict = {"user_id": interaction.user.id, "quantity": quantity}
             if tier:
                 params["tier"] = tier
 
@@ -1720,6 +1765,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         in the command, but item_type is not a parameter on /admin_give_item so it is
         always None there (all categories shown).
         """
+        # TODO: Phase 7/8 — preload the game catalog at bot startup instead of fetching per keystroke.
+        # Admin commands are infrequent so this is low priority.
         try:
             # Determine the item type category from the already-filled item_type parameter.
             item_type = getattr(interaction.namespace, "item_type", None)
@@ -1749,20 +1796,24 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for /admin_remove_item item_name — shows the target user's inventory.
 
+        Phase 6: Zero-HTTP on the hot path. Uses peek() on autocomplete_state caches.
+
         When ``interaction.namespace.user`` is already selected:
-        1. Resolve the target user → player_id via POST /api/v1/players/ (upsert pattern).
-        2. Fetch their inventory via GET /api/v1/inventory/player/{player_id}.
+        1. Peek player_cache for target user → player_id (no HTTP).
+        2. Peek inventory_cache for (guild_id, player_id) → items (no HTTP).
         3. Return choices filtered by ``current`` text, labelled "ItemName (Type) xN".
 
         Falls back to showing all equippable game-catalog items when:
         - No user is selected yet (namespace.user is None)
-        - Player resolution fails (guild not configured, network error, etc.)
-        - Inventory fetch fails
+        - Player resolution cache misses (guild not configured, not yet warmed, etc.)
+        - Inventory cache misses
 
         Degrades silently on any error (returns [] or catalog fallback) — autocomplete
         must never raise.
         """
         try:
+            from utils import autocomplete_state
+
             norm_current = normalize_for_search(current)
             target_user = getattr(interaction.namespace, "user", None)
 
@@ -1770,34 +1821,45 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 # No user selected yet — prompt the user to pick a user first
                 return [app_commands.Choice(name="— Select a user first —", value="__select_user_first__")]
 
-            from utils.autocomplete_helpers import resolve_player_id
+            guild_id = interaction.guild_id
+            target_user_id = target_user.id
 
-            player_id = await resolve_player_id(
-                self.http_client, api_base, target_user.id, interaction.guild_id, timeout=3.0
-            )
-            if player_id is not None:
-                try:
-                    inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
-                    if inv_resp.status_code == 200:
-                        items = inv_resp.json()
-                        choices: list[app_commands.Choice[str]] = []
-                        seen: set[str] = set()
-                        for item in items:
-                            item_name = item.get("item_name") or ""
-                            item_type = item.get("item_type") or ""
-                            quantity = item.get("quantity") or 0
-                            if not item_name or item_name in seen:
-                                continue
-                            qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
-                            label = f"{item_name} ({item_type.replace('_', ' ').title() or 'Item'}){qty_suffix}"
-                            if norm_current in normalize_for_search(label) or norm_current in normalize_for_search(
-                                item_name
-                            ):
-                                seen.add(item_name)
-                                choices.append(app_commands.Choice(name=label[:100], value=item_name))
-                        return choices[:25]
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass  # Fall through to catalog fallback
+            # HOT PATH: peek player_cache for target user — no HTTP
+            if autocomplete_state.player_cache is not None:
+                player_entry = autocomplete_state.player_cache.peek((guild_id, target_user_id))
+                if player_entry is not None:
+                    player_id = player_entry.get("id")
+                    if player_id is not None:
+                        # HOT PATH: peek inventory_cache for target player — no HTTP
+                        if autocomplete_state.inventory_cache is not None:
+                            items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
+                            if items is not None:
+                                choices: list[app_commands.Choice[str]] = []
+                                seen: set[str] = set()
+                                for nc in items:
+                                    raw = nc.raw if hasattr(nc, "raw") else nc
+                                    item_name = raw.get("item_name") or ""
+                                    item_type = raw.get("item_type") or ""
+                                    quantity = raw.get("quantity") or 0
+                                    if not item_name or item_name in seen:
+                                        continue
+                                    qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
+                                    type_label = item_type.replace("_", " ").title() or "Item"
+                                    label = f"{item_name} ({type_label}){qty_suffix}"
+                                    norm_label = normalize_for_search(label)
+                                    norm_name = normalize_for_search(item_name)
+                                    if norm_current in norm_label or norm_current in norm_name:
+                                        seen.add(item_name)
+                                        choices.append(app_commands.Choice(name=label[:100], value=item_name))
+                                return choices[:25]
+                            # Inventory cache cold miss — schedule refresh
+                            autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
+                    else:
+                        # Player has no id field — schedule refresh
+                        autocomplete_state.player_cache.schedule_refresh((guild_id, target_user_id))
+                else:
+                    # Player cache cold miss — schedule refresh
+                    autocomplete_state.player_cache.schedule_refresh((guild_id, target_user_id))
 
             flogger.warning(
                 f"remove_item_autocomplete: could not resolve inventory for "
@@ -1896,6 +1958,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 f"Admin {interaction.user} gave {quantity}x {item_name} to {user} in guild {interaction.guild_id}"
             )
 
+            # Invalidate target player's inventory cache — item was added
+            target_player_id = result.get("player_id")
+            if target_player_id is not None:
+                try:
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_give_item: cache invalidation failed for player_id={target_player_id}; "
+                        "transaction still succeeded"
+                    )
+
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -1978,6 +2051,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 f"Admin {interaction.user} removed {quantity}x {item_name} from {user} in guild {interaction.guild_id}"
             )
 
+            # Invalidate target player's inventory cache — item was removed
+            target_player_id = result.get("player_id")
+            if target_player_id is not None:
+                try:
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_remove_item: cache invalidation failed for player_id={target_player_id}; "
+                        "transaction still succeeded"
+                    )
+
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -2041,6 +2125,18 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             embed.add_field(name="Status", value="Inactive (empty loadout)", inline=True)
             await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(f"Admin {interaction.user} gave ship {ship_name} to {user} in guild {interaction.guild_id}")
+
+            # Invalidate target player's ships and player caches — new ship acquired
+            target_player_id = result.get("player_id")
+            if target_player_id is not None:
+                try:
+                    autocomplete_state.invalidate_ships(interaction.guild_id, target_player_id)
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_give_ship: cache invalidation failed for player_id={target_player_id}; "
+                        "transaction still succeeded"
+                    )
 
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)
@@ -2170,6 +2266,19 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 f"Admin {interaction.user} removed ship {ship_name} from {user} in guild {interaction.guild_id}"
             )
 
+            # Invalidate ships + inventory caches — ship removed, items returned to cargo
+            target_player_id = result.get("player_id")
+            if target_player_id is not None:
+                try:
+                    autocomplete_state.invalidate_ships(interaction.guild_id, target_player_id)
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player_id)
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_remove_ship: cache invalidation failed for player_id={target_player_id}; "
+                        "transaction still succeeded"
+                    )
+
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -2204,6 +2313,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "bounty_spawn_jitter",
         "check_cooldown",
         "duel_request_expiry",
+        "tier_change_cooldown",
         "guild_activity_decay_rate",
         "min_guild_activity",
         "activity_temp_per_player",

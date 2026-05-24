@@ -32,6 +32,14 @@ FACTION_COLORS: dict[str, int] = {
 _DEFAULT_COLOR: int = 10181046  # #9B59B6
 _CAPTURED_COLOR: int = 3066993  # #2ECC71 (green)
 
+# Canonical tier color palette (ENH-02 — also used by bountyCog.py)
+TIER_COLORS: dict[str, int] = {
+    "bronze": 0xCD7F32,  # 13467442
+    "silver": 0xC0C0C0,  # 12632256
+    "gold": 0xFFD700,  # 16766720
+    "platinum": 0xE5E4E2,  # 15066082
+}
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -97,14 +105,20 @@ async def build_bounty_announcement_request(
     # handler clears the route map instead of preserving it.
     effective_image_url = "" if captured else route_map_url
 
+    prefix_fields = _build_prefix_fields(bounty, captured)
+    prefix_fields.extend(_build_suffix_fields(bounty))  # Route + Checked now before Active Ship
+
     metadata = {
         "title": title,
         "color": color,
         "footer_text": bounty.criminal_faction or None,
         "image_url": effective_image_url,
         "captured": captured,
-        "prefix_fields": _build_prefix_fields(bounty, captured),
-        "suffix_fields": _build_suffix_fields(bounty),
+        "prefix_fields": prefix_fields,
+        "suffix_fields": [],  # moved to prefix
+        "reward": bounty.reward,
+        "reward_per_sys": bounty.reward_per_sys,
+        "route_length": len(list(bounty.route or [])),
     }
 
     text_content = f"<@&{bounty_hunter_role_id}>" if bounty_hunter_role_id is not None else None
@@ -113,6 +127,212 @@ async def build_bounty_announcement_request(
         "text_content": text_content,
         "loadout_response": loadout_dict,
         "metadata": metadata,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Capture payout embed — posted to #bounty-hunting after a successful capture
+# ---------------------------------------------------------------------------
+
+
+def build_capture_payout_embed(
+    criminal_name: str,
+    division: str,
+    reward: int,
+    winner_name: str = "A bounty hunter",
+    total_reward: int | None = None,
+    bonus_won: bool = False,
+    reward_per_sys: int | None = None,
+    route_length: int | None = None,
+    combat_result: dict | None = None,
+) -> dict[str, Any]:
+    """Build a rich "💰 Bounty Captured!" embed for posting to the hunting channel.
+
+    Produces a gold embed with an optional combat summary section (when
+    ``combat_result`` is provided) followed by the payout breakdown fields.
+
+    Args:
+        criminal_name: Name of the captured criminal.
+        division: Division tier (bronze / silver / gold / platinum) — used for color.
+        reward: Base reward for the bounty.
+        winner_name: Display name (already resolved) of the player who captured.
+        total_reward: Final reward including capture bonus + system checks.
+            When None, computed from reward alone.
+        bonus_won: Kept for backwards compatibility; not used in the new embed layout.
+        reward_per_sys: Per-system-check payout amount. When provided alongside
+            ``route_length``, a 📍 System Checks field is included.
+        route_length: Number of systems in the bounty route. Used with
+            ``reward_per_sys`` to compute the max system check payout.
+        combat_result: Optional serialized ``FightResults`` dict.  When provided,
+            combat summary fields are prepended above the payout fields.  When
+            ``None`` the embed is produced without a combat summary (graceful
+            degradation).
+
+    Returns:
+        A Discord embed payload dict compatible with the gateway message builder.
+    """
+    capture_bonus = int(reward * 0.25)
+
+    # Compute system checks payout
+    max_sys_payout: int | None = None
+    if reward_per_sys is not None and route_length is not None:
+        max_sys_payout = reward_per_sys * route_length
+
+    # Compute total payout
+    if total_reward is not None:
+        effective_total = total_reward
+    else:
+        effective_total = capture_bonus + (max_sys_payout if max_sys_payout is not None else 0)
+
+    fields: list[dict[str, Any]] = []
+
+    # ------------------------------------------------------------------
+    # Combat summary section (prepended when combat_result is provided)
+    # ------------------------------------------------------------------
+    if combat_result is not None:
+        s1 = combat_result.get("ship1_stats") or {}
+        s2 = combat_result.get("ship2_stats") or {}
+        metadata = combat_result.get("metadata") or {}
+
+        def _ttk_str(ttk: float | None) -> str:
+            return f"{ttk:.1f}s" if ttk is not None else "∞"
+
+        fields.append(
+            {
+                "name": "⚔️ Your Ship",
+                "value": (
+                    f"{s1.get('ship_name', '?')} — "
+                    f"HP: {s1.get('varied_hp', 0)} | "
+                    f"DPS: {s1.get('varied_dps', 0.0):.1f} | "
+                    f"TTK: {_ttk_str(s1.get('ttk'))}"
+                ),
+                "inline": True,
+            }
+        )
+        fields.append(
+            {
+                "name": "🤖 Criminal Ship",
+                "value": (
+                    f"{s2.get('ship_name', '?')} — "
+                    f"HP: {s2.get('varied_hp', 0)} | "
+                    f"DPS: {s2.get('varied_dps', 0.0):.1f} | "
+                    f"TTK: {_ttk_str(s2.get('ttk'))}"
+                ),
+                "inline": True,
+            }
+        )
+
+        # Keith T Maxwell armour buff (only when explicitly applied)
+        if metadata.get("pvc_armour_buff_applied"):
+            buff_factor = metadata.get("pvc_armour_buff_factor", 1.5)
+            fields.append(
+                {
+                    "name": "🛡️ Keith T Maxwell Buff",
+                    "value": f"Armour buff active (×{buff_factor:.1f} HP)",
+                    "inline": False,
+                }
+            )
+
+        is_stalemate = combat_result.get("is_stalemate", False)
+        fields.append(
+            {
+                "name": "✅ Result",
+                "value": "Stalemate" if is_stalemate else "Combat victory!",
+                "inline": False,
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Payout fields
+    # ------------------------------------------------------------------
+    fields.extend(
+        [
+            {"name": "🏆 Division", "value": (division or "Unknown").capitalize(), "inline": True},
+            {"name": "⚔️ Claimed by", "value": winner_name, "inline": True},
+            {"name": "💵 Base Reward", "value": f"{reward:,} cr", "inline": False},
+            {"name": "🎯 Capture Bonus", "value": f"{capture_bonus:,} cr", "inline": True},
+        ]
+    )
+
+    if max_sys_payout is not None:
+        fields.append(
+            {
+                "name": "📍 System Checks",
+                "value": f"{reward_per_sys:,} cr × {route_length} = {max_sys_payout:,} cr",
+                "inline": True,
+            }
+        )
+
+    fields.append({"name": "🏆 Total Payout", "value": f"**{effective_total:,} cr**", "inline": True})
+
+    return {
+        "title": "💰 Bounty Captured!",
+        "description": f"{criminal_name} has been brought in.",
+        "color": 0xFFD700,  # Gold
+        "fields": fields,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bounty cap payout embed (Sub-task B)
+# ---------------------------------------------------------------------------
+
+
+def build_bounty_cap_payout_embed(active_bounties: list, capped_tier: str) -> dict[str, Any]:
+    """Build a second embed dict summarizing active bounty payouts when a tier cap is hit.
+
+    Groups active bounties by tier and shows count + payout range per tier.
+    Only includes tiers that have active bounties.
+
+    Args:
+        active_bounties: List of Bounty ORM objects (or dicts with 'division' and 'reward' keys).
+        capped_tier: The tier that just hit its cap (used for the embed color).
+
+    Returns:
+        A Discord embed payload dict compatible with the gateway message builder.
+    """
+    # Group bounties by tier
+    tiers_data: dict[str, list[int]] = {}
+    for bounty in active_bounties:
+        if isinstance(bounty, dict):
+            division = (bounty.get("division") or "").lower()
+            reward = bounty.get("reward", 0)
+        else:
+            division = (getattr(bounty, "division", None) or "").lower()
+            reward = getattr(bounty, "reward", 0)
+        if not division:
+            continue
+        tiers_data.setdefault(division, []).append(reward)
+
+    # Build fields — show in canonical tier order
+    tier_order = ["bronze", "silver", "gold", "platinum"]
+    fields: list[dict] = []
+    for tier in tier_order:
+        rewards = tiers_data.get(tier)
+        if not rewards:
+            continue
+        count = len(rewards)
+        min_reward = min(rewards)
+        max_reward = max(rewards)
+        if min_reward == max_reward:
+            payout_range = f"{min_reward:,} cr each"
+        else:
+            payout_range = f"{min_reward:,}–{max_reward:,} cr each"
+        fields.append(
+            {
+                "name": tier.title(),
+                "value": f"{count} active · {payout_range}",
+                "inline": True,
+            }
+        )
+
+    color = TIER_COLORS.get(capped_tier.lower(), _DEFAULT_COLOR)
+
+    return {
+        "title": "💰 Active Bounty Payouts",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "Capture a bounty with /check"},
     }
 
 

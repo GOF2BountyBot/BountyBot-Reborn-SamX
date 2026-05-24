@@ -9,6 +9,11 @@ Typical uses:
   - Lazy TTL cache (TTL=300, refresh_fn=async_loader): get(...) returns
     a fresh value on miss/expiry by awaiting refresh_fn(key); subsequent
     hits within the TTL window are O(1) with no HTTP.
+
+Phase-1 additions (purely additive, no behaviour changes to existing API):
+  - ``peek(key)``: synchronous non-blocking read; never triggers a refresh.
+  - ``schedule_refresh(key)``: fire-and-forget background refresh task.
+  - ``max_entries`` constructor param: LRU-style eviction by oldest stored_at.
 """
 
 from __future__ import annotations
@@ -39,8 +44,19 @@ class AutocompleteCache[K, V]:
             or expiry.  When ``None``, a miss simply returns ``None``.
         name: Identifier used in log messages.
             Logger name: ``discord-gateway-AutocompleteCache.<name>``.
+        max_entries: Maximum number of entries to store. When set, adding a new
+            entry that pushes the count over this limit evicts the entry with the
+            oldest ``stored_at`` timestamp. ``None`` disables eviction.
         _monotonic: Monotonic clock callable. Override in tests to control
             time without sleeping or external dependencies.
+
+    Phase-1 additions:
+        peek(key): Synchronous non-blocking read; never triggers a refresh and
+            never acquires the lock. Safe to call from autocomplete hot paths.
+        schedule_refresh(key): Fire-and-forget background refresh via
+            ``asyncio.create_task``; no-op when ``refresh_fn`` is ``None``.
+        max_entries: LRU-style eviction; oldest-inserted entry is dropped on
+            overflow.
     """
 
     def __init__(
@@ -49,11 +65,13 @@ class AutocompleteCache[K, V]:
         ttl_seconds: float | None = None,
         refresh_fn: Callable[[K], Awaitable[V]] | None = None,
         name: str = "autocomplete-cache",
+        max_entries: int | None = None,
         _monotonic: Callable[[], float] = monotonic,
     ) -> None:
         self._ttl = ttl_seconds
         self._refresh_fn = refresh_fn
         self._name = name
+        self._max_entries = max_entries
         self._monotonic = _monotonic
         self._store: dict[K, _Entry[V]] = {}
         self._lock = asyncio.Lock()
@@ -131,8 +149,81 @@ class AutocompleteCache[K, V]:
 
         Used by startup preloads and by post-transaction refresh paths.
         Synchronous because it performs no I/O.
+
+        If ``max_entries`` is set and the store exceeds that limit after writing,
+        the entry with the smallest ``stored_at`` timestamp is evicted.
         """
         self._store[key] = _Entry(value=value, stored_at=self._monotonic())
+        if self._max_entries is not None and len(self._store) > self._max_entries:
+            oldest_key = min(self._store, key=lambda k: self._store[k].stored_at)
+            del self._store[oldest_key]
+
+    def peek(self, key: K) -> V | None:
+        """Return cached value without triggering a refresh. Synchronous.
+
+        Returns None if key is absent or the entry has expired (TTL check).
+        Never acquires the lock; safe to call from autocomplete hot paths.
+        """
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        if self._ttl is not None and (self._monotonic() - entry.stored_at) > self._ttl:
+            return None
+        return entry.value
+
+    def schedule_refresh(self, key: K) -> None:
+        """Schedule a background refresh for key without blocking.
+
+        No-op if refresh_fn is None. The existing lock in get() coalesces
+        duplicate concurrent refresh tasks (AC-ROB-2).
+        """
+        if self._refresh_fn is None:
+            return
+        asyncio.create_task(self.get(key), name=f"warm-{self._name}-{key}")  # noqa: RUF006
+
+    async def get_with_timeout(self, key: K, *, timeout: float) -> V | None:
+        """Return cached value, with a time-bounded cold-path wait.
+
+        Fast path: if ``peek(key)`` returns a value, return it immediately
+        (zero I/O, no lock acquired).
+
+        Cold path: ``await asyncio.shield(self.get(key))`` with a
+        ``timeout`` deadline.  ``asyncio.shield`` ensures the inner
+        ``get()`` call — which may trigger ``refresh_fn`` — continues
+        running even if this coroutine times out.  The next keystroke will
+        therefore find the cache already populated.
+
+        On ``asyncio.TimeoutError``: log WARNING and return ``None``.
+        The exception is NOT re-raised so autocomplete callers receive
+        an empty list instead of a crash.
+
+        On any other exception: log WARNING and return ``None``.
+
+        Args:
+            key: Cache key.
+            timeout: Maximum seconds to wait for the cold-path ``get()``.
+
+        Returns:
+            Cached value, or ``None`` on miss / timeout / error.
+        """
+        # Fast path — synchronous peek, no I/O.
+        value = self.peek(key)
+        if value is not None:
+            return value
+
+        # Cold path — shield so the inner get() survives a timeout cancel.
+        try:
+            return await asyncio.wait_for(asyncio.shield(self.get(key)), timeout=timeout)
+        except TimeoutError:
+            self._log.warning(
+                f"get_with_timeout: timed out after {timeout}s waiting for key={key!r} in cache {self._name!r}"
+            )
+            return None
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._log.warning(
+                f"get_with_timeout: exception for key={key!r} in cache {self._name!r}: {type(exc).__name__}: {exc}"
+            )
+            return None
 
     def invalidate(self, key: K) -> None:
         """Drop a single key.  Idempotent.

@@ -251,8 +251,8 @@ class TestDefaultSchedulerJobsConstant:
     """Validate the structure of DEFAULT_SCHEDULER_JOBS."""
 
     def test_three_jobs_defined(self):
-        """DEFAULT_SCHEDULER_JOBS contains exactly four job definitions (B.49 added bounty_failsafe_cleanup_default)."""
-        assert len(DEFAULT_SCHEDULER_JOBS) == 4
+        """DEFAULT_SCHEDULER_JOBS contains exactly six job definitions (db_retention_default added)."""
+        assert len(DEFAULT_SCHEDULER_JOBS) == 6
 
     def test_job_ids_are_unique(self):
         """Each job definition has a unique job_id."""
@@ -260,11 +260,14 @@ class TestDefaultSchedulerJobsConstant:
         assert len(ids) == len(set(ids))
 
     def test_expected_job_ids_present(self):
-        """The three expected default jobs are defined."""
+        """The expected default jobs are defined."""
         ids = {j["job_id"] for j in DEFAULT_SCHEDULER_JOBS}
         assert "bounty_spawn_default" in ids
         assert "shop_refresh_default" in ids
         assert "temperature_decay_default" in ids
+        assert "bounty_failsafe_cleanup_default" in ids
+        assert "pg_backup_default" in ids
+        assert "db_retention_default" in ids
 
     def test_each_job_has_required_keys(self):
         """Every job definition has job_id, cron, and payload keys."""
@@ -339,6 +342,36 @@ class TestDefaultSchedulerJobsConstant:
         job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "temperature_decay_default")
         assert "jitter" not in job
 
+    def test_pg_backup_payload(self):
+        """pg_backup_default payload has job_type='pg_backup'."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "pg_backup_default")
+        assert job["payload"]["job_type"] == "pg_backup"
+
+    def test_pg_backup_cron(self):
+        """pg_backup_default cron is '15 */3 * * *' (every 3 hours at :15)."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "pg_backup_default")
+        assert job["cron"] == "15 */3 * * *"
+
+    def test_pg_backup_has_no_jitter(self):
+        """pg_backup_default does not define a jitter (deterministic schedule)."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "pg_backup_default")
+        assert "jitter" not in job
+
+    def test_db_retention_payload(self):
+        """db_retention_default payload has job_type='db_retention'."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "db_retention_default")
+        assert job["payload"]["job_type"] == "db_retention"
+
+    def test_db_retention_cron(self):
+        """db_retention_default cron is '45 3 * * *' (daily at 03:45 UTC)."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "db_retention_default")
+        assert job["cron"] == "45 3 * * *"
+
+    def test_db_retention_has_no_jitter(self):
+        """db_retention_default does not define a jitter (deterministic schedule)."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "db_retention_default")
+        assert "jitter" not in job
+
 
 # ===========================================================================
 # Tests for register_default_jobs()
@@ -353,12 +386,12 @@ class TestRegisterDefaultJobs:
     # ------------------------------------------------------------------
 
     def test_three_jobs_added_on_clean_scheduler(self):
-        """All four default jobs are added when the scheduler has no prior jobs."""
+        """All six default jobs are added when the scheduler has no prior jobs."""
         scheduler = _make_mock_scheduler()
 
         register_default_jobs(scheduler)
 
-        assert scheduler.add_job.call_count == 4
+        assert scheduler.add_job.call_count == 6
 
     def test_bounty_spawn_job_added(self):
         """bounty_spawn_default is added with correct id and payload (orchestrate job type)."""
@@ -407,13 +440,15 @@ class TestRegisterDefaultJobs:
     # ------------------------------------------------------------------
 
     def test_no_jobs_added_when_all_already_exist(self):
-        """add_job is never called when all four default jobs already exist."""
+        """add_job is never called when all six default jobs already exist."""
         scheduler = _make_mock_scheduler(
             existing_job_ids=[
                 "bounty_spawn_default",
                 "shop_refresh_default",
                 "temperature_decay_default",
                 "bounty_failsafe_cleanup_default",
+                "pg_backup_default",
+                "db_retention_default",
             ]
         )
 
@@ -422,25 +457,29 @@ class TestRegisterDefaultJobs:
         scheduler.add_job.assert_not_called()
 
     def test_only_missing_jobs_are_added_partial_existing(self):
-        """Only the three missing jobs are added when one already exists."""
+        """Only the five missing jobs are added when one already exists."""
         scheduler = _make_mock_scheduler(existing_job_ids=["bounty_spawn_default"])
 
         register_default_jobs(scheduler)
 
-        assert scheduler.add_job.call_count == 3
+        assert scheduler.add_job.call_count == 5
         registered_ids = {call.kwargs["id"] for call in scheduler.add_job.call_args_list}
         assert "shop_refresh_default" in registered_ids
         assert "temperature_decay_default" in registered_ids
         assert "bounty_failsafe_cleanup_default" in registered_ids
+        assert "pg_backup_default" in registered_ids
+        assert "db_retention_default" in registered_ids
         assert "bounty_spawn_default" not in registered_ids
 
     def test_single_missing_job_added(self):
-        """Only the one missing job is added when three already exist."""
+        """Only the one missing job is added when five already exist."""
         scheduler = _make_mock_scheduler(
             existing_job_ids=[
                 "bounty_spawn_default",
                 "shop_refresh_default",
                 "bounty_failsafe_cleanup_default",
+                "pg_backup_default",
+                "db_retention_default",
             ]
         )
 

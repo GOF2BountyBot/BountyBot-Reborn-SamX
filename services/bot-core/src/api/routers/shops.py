@@ -5,11 +5,17 @@ Handles REST API endpoints for shop management including browsing,
 purchasing, selling, and shop refresh operations.
 """
 
+import contextlib
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from persist.database.manager import get_db_session
 from persist.models.item import Item
+from persist.models.module import Module
+from persist.models.primary_weapon import PrimaryWeapon
+from persist.models.secondary_weapon import SecondaryWeapon
+from persist.models.ship import Ship
+from persist.models.turret_weapon import TurretWeapon
 from services.exceptions import GuildNotConfiguredError, InvalidItemTypeError
 from services.shop_service import ShopService
 from shared import bblogger
@@ -27,6 +33,62 @@ from api.schemas.shops_schema import (
 )
 
 flogger = bblogger.get_logger("shops-api-router")
+
+
+async def _build_item_stat_map(db: Any, item_names: set[str]) -> dict[str, dict]:
+    """Build a map of item_name → stat fields from underlying item tables.
+
+    Looks up DPS for weapons, shield/armour from module extra_atts,
+    and hull_hp (armour) for ships.  Returns a dict keyed by item name
+    containing only the fields that are relevant for that item type.
+
+    Uses the STI model's inherited ``name`` attribute (from Item) to filter.
+    Each weapon/module subclass inherits ``name`` through the joined-table
+    inheritance chain so querying ``Model.name`` works without explicit joins.
+    """
+    stat_map: dict[str, dict] = {}
+    if not item_names:
+        return stat_map
+
+    # Primary weapons — dps column.
+    # PrimaryWeapon inherits name from Item via joined-table STI.
+    pw_result = await db.execute(select(PrimaryWeapon).where(PrimaryWeapon.name.in_(item_names)))
+    for pw in pw_result.scalars():
+        stat_map[pw.name] = {"dps": pw.dps}
+
+    # Secondary weapons — dps column
+    sw_result = await db.execute(select(SecondaryWeapon).where(SecondaryWeapon.name.in_(item_names)))
+    for sw in sw_result.scalars():
+        stat_map[sw.name] = {"dps": sw.dps}
+
+    # Turret weapons — dps column
+    tw_result = await db.execute(select(TurretWeapon).where(TurretWeapon.name.in_(item_names)))
+    for tw in tw_result.scalars():
+        stat_map[tw.name] = {"dps": tw.dps}
+
+    # Modules — shield/armour from extra_atts JSON blob.
+    # extra_atts stores variant stat keys; try both lowercase and capitalised.
+    mod_result = await db.execute(select(Module).where(Module.name.in_(item_names)))
+    for mod in mod_result.scalars():
+        extra = mod.extra_atts or {}
+        shield_val = extra.get("shield") or extra.get("Shield")
+        armour_val = extra.get("armour") or extra.get("Armour")
+        stats: dict = {}
+        if shield_val is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                stats["shield"] = int(shield_val)
+        if armour_val is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                stats["armour"] = int(armour_val)
+        stat_map[mod.name] = stats
+
+    # Ships — hull_hp mapped from armour column (armour = hull HP for ships)
+    ship_result = await db.execute(select(Ship.name, Ship.armour).where(Ship.name.in_(item_names)))
+    for row in ship_result:
+        stat_map[row.name] = {"hull_hp": row.armour}
+
+    return stat_map
+
 
 router = APIRouter(
     prefix="/shops",
@@ -51,12 +113,14 @@ async def get_shop_items(
         async with get_db_session() as db:
             items = await shop_service.get_shop_items(db, guild_id, tier, item_type)
 
-            # Look up emojis from Item table by item name
+            # Look up emojis and stat fields from underlying item tables
             item_names = {item.item_name for item in items}
             emoji_map: dict[str, str | None] = {}
             if item_names:
                 emoji_result = await db.execute(select(Item.name, Item.emoji).where(Item.name.in_(item_names)))
                 emoji_map = {row.name: row.emoji for row in emoji_result}
+
+            stat_map = await _build_item_stat_map(db, item_names)
 
             return [
                 ShopItemResponse(
@@ -71,6 +135,10 @@ async def get_shop_items(
                     last_restocked=item.last_restocked.isoformat(),
                     refresh_interval_hours=item.refresh_interval_hours,
                     emoji=emoji_map.get(item.item_name),
+                    dps=stat_map.get(item.item_name, {}).get("dps"),
+                    shield=stat_map.get(item.item_name, {}).get("shield"),
+                    armour=stat_map.get(item.item_name, {}).get("armour"),
+                    hull_hp=stat_map.get(item.item_name, {}).get("hull_hp"),
                 )
                 for item in items
             ]
@@ -288,12 +356,14 @@ async def get_items_by_tech_level(
         async with get_db_session() as db:
             items = await shop_service.shop_repo.get_items_by_tech_level(db, guild_id, tier, tech_level)
 
-            # Look up emojis from Item table by item name
+            # Look up emojis and stat fields from underlying item tables
             item_names = {item.item_name for item in items}
             emoji_map: dict[str, str | None] = {}
             if item_names:
                 emoji_result = await db.execute(select(Item.name, Item.emoji).where(Item.name.in_(item_names)))
                 emoji_map = {row.name: row.emoji for row in emoji_result}
+
+            stat_map = await _build_item_stat_map(db, item_names)
 
             return [
                 ShopItemResponse(
@@ -308,6 +378,10 @@ async def get_items_by_tech_level(
                     last_restocked=item.last_restocked.isoformat(),
                     refresh_interval_hours=item.refresh_interval_hours,
                     emoji=emoji_map.get(item.item_name),
+                    dps=stat_map.get(item.item_name, {}).get("dps"),
+                    shield=stat_map.get(item.item_name, {}).get("shield"),
+                    armour=stat_map.get(item.item_name, {}).get("armour"),
+                    hull_hp=stat_map.get(item.item_name, {}).get("hull_hp"),
                 )
                 for item in items
             ]
@@ -362,10 +436,14 @@ async def get_shop_item(shop_item_id: int, shop_service: ShopService = Depends(g
             if not item:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Shop item {shop_item_id} not found")
 
-            # Look up emoji from Item table by item name
+            # Look up emoji and stat fields from underlying item tables
+            item_name_set = {item.item_name}
             emoji_result = await db.execute(select(Item.name, Item.emoji).where(Item.name == item.item_name))
             emoji_map = {row.name: row.emoji for row in emoji_result}
             item_emoji = emoji_map.get(item.item_name)
+
+            stat_map = await _build_item_stat_map(db, item_name_set)
+            item_stats = stat_map.get(item.item_name, {})
 
             return ShopItemResponse(
                 id=item.id,
@@ -379,6 +457,10 @@ async def get_shop_item(shop_item_id: int, shop_service: ShopService = Depends(g
                 last_restocked=item.last_restocked.isoformat(),
                 refresh_interval_hours=item.refresh_interval_hours,
                 emoji=item_emoji,
+                dps=item_stats.get("dps"),
+                shield=item_stats.get("shield"),
+                armour=item_stats.get("armour"),
+                hull_hp=item_stats.get("hull_hp"),
             )
 
     except HTTPException:

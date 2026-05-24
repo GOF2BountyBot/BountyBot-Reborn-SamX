@@ -5,8 +5,10 @@ Handles database operations for Bounty entities including guild-scoped
 queries, CRUD operations, and division-level filtering.
 """
 
+from datetime import datetime
+
 from shared import bblogger
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -169,6 +171,68 @@ class BountyRepository(IRepository[Bounty]):
     async def delete(self, db: AsyncSession, bounty: Bounty, *, commit: bool = True) -> None:
         """Delete a bounty — alias for remove()."""
         await self.remove(db, bounty, commit=commit)
+
+    async def delete_terminal_older_than(
+        self,
+        db: AsyncSession,
+        cutoff: datetime,
+        *,
+        terminal_statuses: tuple[str, ...] = ("completed", "expired", "cleared"),
+        commit: bool = True,
+    ) -> int:
+        """Delete bounty rows in a terminal status whose ``updated_at`` is older than ``cutoff``.
+
+        Per-player aggregate stats (``bounty_wins``, ``systems_checked``,
+        ``lifetime_credits``) are kept on the ``players`` table, so historical
+        bounty rows have no game-relevant value once they reach a terminal
+        state. This method is the data-retention worker.
+
+        DOCUMENTED EXCEPTION to the ORM-mutation rule (see
+        ``persist/repositories/AGENTS.md``): bulk DELETE that returns only the
+        row count, never returns Bounty model objects. Uses Core DELETE with
+        ``synchronize_session="fetch"`` so any identity-mapped Bounty rows in
+        the session are correctly expired.
+
+        Filters on ``updated_at`` (NOT ``created_at``) so a freshly-transitioned
+        bounty is not immediately purged in the same retention window.
+
+        Args:
+            db: Async database session.
+            cutoff: Rows with ``updated_at < cutoff`` are eligible for deletion.
+            terminal_statuses: Statuses considered terminal (default:
+                completed, expired, cleared). 'escaped' is intentionally
+                excluded — escaped bounties may still respawn.
+            commit: When False, flush without committing (caller owns transaction).
+
+        Returns:
+            Count of deleted rows.
+        """
+        try:
+            result = await db.execute(
+                delete(Bounty)
+                .where(
+                    and_(
+                        Bounty.status.in_(terminal_statuses),
+                        Bounty.updated_at < cutoff,
+                    )
+                )
+                .execution_options(synchronize_session="fetch")
+            )
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            count = result.rowcount or 0
+            flogger.info(
+                f"Deleted {count} terminal bounty row(s) older than {cutoff.isoformat()} "
+                f"(statuses={list(terminal_statuses)})"
+            )
+            return count
+        except Exception as e:
+            flogger.error(f"Error deleting terminal bounties older than {cutoff.isoformat()}: {e}")
+            if commit:
+                await db.rollback()
+            raise
 
     async def count(self, db: AsyncSession) -> int:
         """Return total number of bounties."""

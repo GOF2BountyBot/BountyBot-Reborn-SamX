@@ -25,7 +25,7 @@ _map_renderer = MapRenderer()
 _route_map_cache: dict[tuple[str, str], bytes] = {}
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
     async with db_manager.get_session() as session:
         yield session
 

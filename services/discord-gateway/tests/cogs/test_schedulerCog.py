@@ -220,6 +220,49 @@ class TestSchedulerList:
         msg = str(interaction.followup.send.call_args)
         assert "⚠️" in msg or "error" in msg.lower()
 
+    def test_scheduler_list_reads_from_cache_when_warm(self, cog):
+        """/scheduler_list reads from _job_cache.peek('all') when cache is warm — no HTTP.
+
+        Item A: /scheduler_list now has a cache-peek-first path (Phase 6 pattern).
+        When the cache is warm, no GET to bot-core should be made.
+        """
+        # Pre-populate the job cache
+        cog._job_cache.set("all", _SAMPLE_JOBS)
+
+        # HTTP must NOT be called when cache is warm
+        cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called when cache is warm"))
+
+        interaction = _make_interaction()
+        asyncio.run(cog.scheduler_list.callback(cog, interaction))
+
+        # Embed with job info must be sent
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs.get("embed")
+        assert embed is not None, "Expected embed in followup.send"
+        assert len(embed.fields) > 0, "Expected at least one job field in embed"
+
+    def test_scheduler_list_falls_back_to_http_when_cache_cold(self, cog):
+        """/scheduler_list falls back to HTTP GET when cache is cold (miss → None).
+
+        After a cache miss, the command fetches from bot-core and returns the result.
+        """
+        # Ensure cache is cold
+        cog._job_cache.invalidate("all")
+
+        # HTTP returns jobs
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_SAMPLE_JOBS))
+
+        interaction = _make_interaction()
+        asyncio.run(cog.scheduler_list.callback(cog, interaction))
+
+        # HTTP was called
+        cog.http_client.get.assert_awaited_once()
+        # And embed was sent
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+
 
 # ===========================================================================
 # TestAdminResetScheduler — /admin_reset_scheduler
@@ -612,6 +655,14 @@ class TestCogSetupAndUnload:
         asyncio.run(cog.cog_unload())
         cog.http_client.aclose.assert_awaited_once()
 
+    def test_job_cache_ttl_is_600(self, cog):
+        """_job_cache must use ttl_seconds=600.0 (Item A: 120→600)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(cog, "_job_cache")
+        assert isinstance(cog._job_cache, AutocompleteCache)
+        assert cog._job_cache._ttl == 600.0, f"Expected _job_cache TTL=600s (10 min), got {cog._job_cache._ttl}"
+
 
 # ===========================================================================
 # TestJobIdAutocomplete
@@ -619,11 +670,15 @@ class TestCogSetupAndUnload:
 
 
 class TestJobIdAutocomplete:
-    """Tests for the job_id autocomplete helper."""
+    """Tests for the job_id autocomplete helper (Phase 6: zero-HTTP, cache-backed)."""
 
     def test_autocomplete_returns_matching_choices(self, cog):
-        """Returns choices that contain the current text."""
-        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_SAMPLE_JOBS))
+        """Returns choices from cache without HTTP when cache is warm."""
+        # Pre-populate the job cache directly
+        cog._job_cache.set("all", _SAMPLE_JOBS)
+
+        # HTTP must not be called — data comes from cache
+        cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         interaction = _make_interaction()
 
         choices = asyncio.run(cog.job_id_autocomplete(interaction, current="bounty"))
@@ -631,13 +686,26 @@ class TestJobIdAutocomplete:
         assert len(choices) > 0
         assert all("bounty" in c.name.lower() or "bounty" in c.value.lower() for c in choices)
 
+    def test_autocomplete_cold_miss_returns_empty(self, cog):
+        """Returns [] on cache cold miss (schedules background refresh, no HTTP per call)."""
+        # Ensure cache is empty
+        cog._job_cache.invalidate("all")
+
+        # HTTP is not called synchronously on cold miss
+        cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _make_interaction()
+
+        choices = asyncio.run(cog.job_id_autocomplete(interaction, current=""))
+        assert choices == []
+
     def test_autocomplete_returns_empty_on_api_error(self, cog):
-        """Returns empty list when API call fails."""
+        """Returns empty list when cache is cold (no HTTP per key stroke)."""
+        # Ensure cache is cold — returns [] immediately
+        cog._job_cache.invalidate("all")
         cog.http_client.get = AsyncMock(side_effect=Exception("network error"))
         interaction = _make_interaction()
 
         choices = asyncio.run(cog.job_id_autocomplete(interaction, current=""))
-
         assert choices == []
 
 

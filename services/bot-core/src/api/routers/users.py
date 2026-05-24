@@ -53,6 +53,7 @@ async def create_user(request: CreateUserRequest, user_repo: UserRepository = De
             return UserResponse(
                 id=user.id,
                 discord_username=user.discord_username,
+                display_name=user.display_name,
                 created_at=user.created_at.isoformat(),
                 updated_at=user.updated_at.isoformat(),
             )
@@ -80,6 +81,7 @@ async def get_user(user_id: int, user_repo: UserRepository = Depends(get_user_re
             return UserResponse(
                 id=user.id,
                 discord_username=user.discord_username,
+                display_name=user.display_name,
                 created_at=user.created_at.isoformat(),
                 updated_at=user.updated_at.isoformat(),
             )
@@ -116,6 +118,7 @@ async def update_user(
             return UserResponse(
                 id=user.id,
                 discord_username=user.discord_username,
+                display_name=user.display_name,
                 created_at=user.created_at.isoformat(),
                 updated_at=user.updated_at.isoformat(),
             )
@@ -145,6 +148,7 @@ async def list_users(skip: int = 0, limit: int = 100, user_repo: UserRepository 
                 UserResponse(
                     id=user.id,
                     discord_username=user.discord_username,
+                    display_name=user.display_name,
                     created_at=user.created_at.isoformat(),
                     updated_at=user.updated_at.isoformat(),
                 )
@@ -158,7 +162,10 @@ async def list_users(skip: int = 0, limit: int = 100, user_repo: UserRepository 
 
 @router.post("/{user_id}/get-or-create", response_model=UserResponse)
 async def get_or_create_user(
-    user_id: int, discord_username: str | None = None, user_repo: UserRepository = Depends(get_user_repository)
+    user_id: int,
+    discord_username: str | None = None,
+    display_name: str | None = None,
+    user_repo: UserRepository = Depends(get_user_repository),
 ):
     """
     Get existing user or create new one if doesn't exist.
@@ -169,11 +176,12 @@ async def get_or_create_user(
 
     try:
         async with get_db_session() as db:
-            user = await user_repo.get_or_create_user(db, user_id, discord_username)
+            user = await user_repo.get_or_create_user(db, user_id, discord_username, display_name)
 
             return UserResponse(
                 id=user.id,
                 discord_username=user.discord_username,
+                display_name=user.display_name,
                 created_at=user.created_at.isoformat(),
                 updated_at=user.updated_at.isoformat(),
             )

@@ -4,6 +4,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from cogs._shared.embed_pagination import DEFAULT_LIST_CAP, add_continuation_fields
 from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
@@ -29,8 +30,15 @@ def is_developer():
 class AboutCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._categories: list[str] = []
-        self._objects_by_category: dict[str, list[dict]] = {}
+        # Static catalog caches — TTL=None (never expires; only reloaded on /reload_autocomplete)
+        self._categories_cache: AutocompleteCache[str, list[str]] = AutocompleteCache(
+            ttl_seconds=None,
+            name="about-categories",
+        )
+        self._objects_cache: AutocompleteCache[str, list[dict]] = AutocompleteCache(
+            ttl_seconds=None,
+            name="about-objects",
+        )
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
 
         # Schedule preload once bot is ready
@@ -70,46 +78,44 @@ class AboutCog(commands.Cog):
             flogger.error(
                 "_preload_data: terminal failure fetching categories after 5 attempts; autocomplete will be empty"
             )
-            self._categories = []
-            self._objects_by_category = {}
+            self._categories_cache.set("all", [])
             return
 
-        self._categories = categories
+        self._categories_cache.set("all", categories)
 
         # --- Step 2: fetch objects per category (each independently, no retry needed here) ---
-        for category in self._categories:
+        for category in categories:
             try:
                 resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
                 resp.raise_for_status()
                 objects = resp.json()
-                self._objects_by_category[category] = objects
+                self._objects_cache.set(category, objects)
                 flogger.debug(f"Preloaded {len(objects)} objects for category {category}")
             except httpx.TimeoutException as e:
                 flogger.warning(f"Timeout preloading objects for category {category}: {e}")
-                self._objects_by_category[category] = []
+                self._objects_cache.set(category, [])
             except httpx.HTTPStatusError as e:
                 flogger.warning(f"HTTP error preloading objects for category {category}: {e.response.status_code}")
-                self._objects_by_category[category] = []
+                self._objects_cache.set(category, [])
             except httpx.RequestError as e:
                 flogger.warning(f"Request error preloading objects for category {category}: {e}")
-                self._objects_by_category[category] = []
+                self._objects_cache.set(category, [])
             except Exception as e:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"Failed to preload objects for category {category}: {e}")
-                self._objects_by_category[category] = []
+                self._objects_cache.set(category, [])
 
-        flogger.info(
-            f"Preload complete: {len(self._categories)} categories, "
-            f"{sum(len(objs) for objs in self._objects_by_category.values())} total objects"
-        )
+        total_objects = sum(len(self._objects_cache.peek(cat) or []) for cat in categories)
+        flogger.info(f"Preload complete: {len(categories)} categories, {total_objects} total objects")
 
     async def category_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for category selection"""
         norm_current = normalize_for_search(current)
+        categories = self._categories_cache.peek("all") or []
         choices = [
             app_commands.Choice(name=cat.replace("_", " ").title(), value=cat)
-            for cat in self._categories
+            for cat in categories
             if norm_current in normalize_for_search(cat)
         ]
         return choices[:25]
@@ -118,7 +124,7 @@ class AboutCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for system name selection using preloaded data."""
-        systems = self._objects_by_category.get("system", [])
+        systems = self._objects_cache.peek("system") or []
         names = [obj["name"] for obj in systems if obj.get("name")]
         return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, names)]
 
@@ -127,10 +133,11 @@ class AboutCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for object selection based on selected category"""
         category = getattr(interaction.namespace, "category", None)
-        if not category or category not in self._objects_by_category:
+        if not category:
             return []
-
-        objects = self._objects_by_category[category]
+        objects = self._objects_cache.peek(category)
+        if objects is None:
+            return []
         names = [obj["name"] for obj in objects if obj.get("name")]
         return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, names)]
 
@@ -141,18 +148,18 @@ class AboutCog(commands.Cog):
     @app_commands.autocomplete(category=category_autocomplete, name=object_autocomplete)
     async def about(self, interaction: discord.Interaction, category: str, name: str):
         """Main about command that displays detailed object information"""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         flogger.debug(
             f"/about invoked: guild={interaction.guild_id} user={interaction.user.id} category={category} name={name}"
         )
 
         # ── Resolve alias to canonical name if needed ──────────────────────────────
         resolved_name = name
-        if category in self._objects_by_category:
-            for obj in self._objects_by_category[category]:
-                if name == obj.get("name") or name in obj.get("aliases", []):
-                    resolved_name = obj["name"]
-                    break
+        _cat_objects = self._objects_cache.peek(category) or []
+        for obj in _cat_objects:
+            if name == obj.get("name") or name in obj.get("aliases", []):
+                resolved_name = obj["name"]
+                break
         try:
             # Get object by name from the API
             resp = await self.http_client.get(f"{api_base}/about/object/name/{resolved_name}", timeout=10)
@@ -161,7 +168,7 @@ class AboutCog(commands.Cog):
 
             # Create rich embed with object information
             embed = await self._create_object_embed(obj_data)
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"/about success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" category={category} name={resolved_name}"
@@ -346,18 +353,17 @@ class AboutCog(commands.Cog):
         manufacturer: str | None = None,
     ):
         """List all objects in a specific category, with optional filters"""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         flogger.debug(
             f"/list_category invoked: guild={interaction.guild_id} user={interaction.user.id}"
             f" category={category} tech_level={tech_level} manufacturer={manufacturer}"
         )
 
         try:
-            if category not in self._objects_by_category:
+            objects = self._objects_cache.peek(category)
+            if objects is None:
                 await interaction.followup.send(f"❌ Category '{category}' not found.", ephemeral=True)
                 return
-
-            objects = self._objects_by_category[category]
             if not objects:
                 await interaction.followup.send(f"📭 No objects found in category '{category}'.", ephemeral=True)
                 return
@@ -422,7 +428,7 @@ class AboutCog(commands.Cog):
             if total_count > DEFAULT_LIST_CAP:
                 embed.set_footer(text=f"Showing first {DEFAULT_LIST_CAP} of {total_count} objects")
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"/list_category success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" category={category} count={len(filtered)}"
@@ -443,7 +449,7 @@ class AboutCog(commands.Cog):
     @app_commands.autocomplete(start=system_autocomplete, end=system_autocomplete)
     async def make_route(self, interaction: discord.Interaction, start: str, end: str):
         """Display the shortest hop-by-hop route between two star systems."""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         flogger.debug(
             f"/make-route invoked: guild={interaction.guild_id} user={interaction.user.id} start={start} end={end}"
         )
@@ -494,9 +500,9 @@ class AboutCog(commands.Cog):
                 )
 
             if map_file is not None:
-                await interaction.followup.send(embed=embed, file=map_file)
+                await interaction.followup.send(embed=embed, file=map_file, ephemeral=True)
             else:
-                await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed, ephemeral=True)
 
             flogger.info(
                 f"/make-route success: guild={interaction.guild_id} user={interaction.user.id}"

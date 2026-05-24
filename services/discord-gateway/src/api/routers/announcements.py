@@ -59,7 +59,6 @@ async def create_bounty_announcement(
             )
 
         embed = _build_bounty_embed(payload, captured=payload.metadata.captured)
-
         message = await channel.send(content=payload.text_content, embed=embed)
 
         message_obj = MessageConverter.message_to_payload(message)

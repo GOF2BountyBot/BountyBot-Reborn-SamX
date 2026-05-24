@@ -263,16 +263,17 @@ Base (DeclarativeBase)
 
 ---
 
-## All 19 Repositories
+## All 20 Repositories
 
 | File | Class | Purpose |
 |---|---|---|
 | `generic_repository.py` | `GenericRepository[T]` | Base implementation of `IRepository[T]`: add, get_by_id, get_by_name, get_by_alias, list_all, remove |
 | `bounty_repository.py` | `BountyRepository` | Bounty CRUD + get_active_by_guild, get_active_by_guild_and_division, count_active_by_guild_and_division |
 | `config_repository.py` | `ConfigRepository` | GuildConfig CRUD + get_by_guild_id |
+| `admin_audit_log_repository.py` | `AdminAuditLogRepository` | Minimal stub: `count`, `delete_older_than` (used by db_retention executor). Writes still go through `AuditService.log_action`. |
 | `criminal_repository.py` | `CriminalRepository` | Criminal CRUD + faction/tech-level filtering |
 | `discord_message_repository.py` | `DiscordMessageRepository` | DiscordMessage CRUD + lookup by guild/channel/type |
-| `duel_repository.py` | `DuelRepository` | DuelRequest CRUD + get_pending_by_guild, get_by_challenger_and_target |
+| `duel_repository.py` | `DuelRepository` | DuelRequest CRUD + get_pending_by_guild, get_by_challenger_and_target, `delete_terminal_older_than` (data retention) |
 | `inventory_repository.py` | `InventoryRepository` | PlayerInventory CRUD + get_by_player, get_by_player_and_item, get_equipped_items |
 | `item_repository.py` | `ItemRepository` | Item base queries + get_by_type |
 | `module_repository.py` | `ModuleRepository` | Module CRUD + filter by tech_level (subtype queries use `Item.type` STI discriminator, not a `module_type` column) |
@@ -296,7 +297,7 @@ Base (DeclarativeBase)
 | File | Key Class(es) | Purpose |
 |---|---|---|
 | `audit_service.py` | `AuditService` | Static methods only; records admin mutations to AdminAuditLog; failures are swallowed (never block primary operation) |
-| `bounty_service.py` | `BountyService` | spawn_bounty, check_system, expire_bounty, resolve_bounty; uses CriminalRepository, SystemRepository, PathfindingService |
+| `bounty_service.py` | `BountyService` | spawn_bounty, check_system, expire_bounty, resolve_bounty; uses CriminalRepository, SystemRepository, PathfindingService. Repo: `BountyRepository.delete_terminal_older_than` added for data retention. |
 | `combat_models.py` | `WeaponStats`, `ModuleStats`, `ShipLoadout`, `CombatStats`, `FightResults`, `CombatResolver` (protocol) | Pure dataclasses + protocol; NOT a service class; imported by CombatService |
 | `combat_service.py` | `CombatService` | Duel combat resolution using SimpleTTKResolver; assembles loadouts, runs combat simulation |
 | `config_service.py` | `ConfigService` | GuildConfig CRUD with defaults; provides starting_credits, channel IDs |
@@ -487,6 +488,25 @@ JSON files in `import_data/` are the source of truth for game assets. They are l
 - Runner: `pytest` with `asyncio_mode = auto` (root `pyproject.toml`)
 - Coverage target: ≥ 80%
 
+### Running Tests
+
+**IMPORTANT — always log to file.** Without capturing output, any failure detail is lost and requires a full re-run to recover.
+
+```bash
+# Full suite (from /proj):
+cd /proj/services/bot-core && timeout 300 python -m pytest tests/ -q --tb=short 2>&1 | tee /tmp/test-botcore.log | tail -20
+
+# Targeted subset (faster iteration):
+cd /proj/services/bot-core && timeout 120 python -m pytest tests/services/ -q --tb=short 2>&1 | tee /tmp/test-botcore-services.log | tail -20
+cd /proj/services/bot-core && timeout 120 python -m pytest tests/api/ -q --tb=short 2>&1 | tee /tmp/test-botcore-api.log | tail -20
+
+# Single file:
+cd /proj/services/bot-core && timeout 60 python -m pytest tests/services/test_combat_preflight_service.py -q --tb=short 2>&1 | tee /tmp/test-single.log | tail -20
+
+# Grep failures without re-running:
+grep -A 20 "FAILED\|ERROR" /tmp/test-botcore.log
+```
+
 ### Test Organization
 
 ```
@@ -606,6 +626,9 @@ python -m persist.database.run_migration upgrade
 | `EXECUTOR_HOST` | `bot-core` | Self-referencing hostname for scheduler API calls |
 | `EXECUTOR_PORT` | `8000` | Self-referencing port for scheduler API calls |
 | `BOUNTYBOT_*` | (varies) | Override any operational `GameConstants` (e.g. `BOUNTYBOT_MAX_BOUNTIES_PER_DIVISION=10`) |
+| `BOUNTYBOT_BOUNTY_RETENTION_HOURS` | `24` | Terminal-state bounty rows older than this are deleted by `db_retention_default` |
+| `BOUNTYBOT_DUEL_RETENTION_HOURS` | `24` | Terminal-state duel_requests rows older than this are deleted by `db_retention_default` |
+| `BOUNTYBOT_AUDIT_RETENTION_DAYS` | `30` | admin_audit_logs rows older than this are deleted by `db_retention_default`; long-term audit history is preserved via pg_backup |
 
 ---
 

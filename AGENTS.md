@@ -18,7 +18,7 @@ This file provides guidance for AI agents working on this codebase. Each service
 |---------|------------|------|---------|
 | `db` | PostgreSQL 18 | 5432 | Central database |
 | `bot-core` | FastAPI + SQLAlchemy + Alembic | 8000 | Core game logic, API, scheduled jobs |
-| `discord-gateway` | FastAPI + Discord.py | 7999 | Discord bot + REST API |
+| `discord-gateway` | FastAPI + Discord.py | 7999 | Discord bot + REST API; includes proactively-warmed in-process autocomplete cache |
 | `blender-service` | FastAPI + Blender + PIL + CUDA | 8001 | GPU rendering, texture compositing, AEI conversion |
 
 ### Data Flow
@@ -155,6 +155,23 @@ BountyBot-Reborn-SamX/
 3. Initialize submodules: `git submodule update --init --recursive`
 4. Build and run: `docker compose up --build`
 
+### Autocomplete Cache Environment Variables (discord-gateway)
+
+The discord-gateway runs a proactively-warmed in-process autocomplete cache. The following env vars control its behavior (all optional — defaults shown):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AUTOCOMPLETE_WARM_ACTIVE_DAYS` | `7` | Players active within N days are warmed on startup; 0 = warm everyone |
+| `AUTOCOMPLETE_WARM_CONCURRENCY` | `16` | Max concurrent inventory/ships fetches during warm + refresh |
+| `AUTOCOMPLETE_WARM_GUILD_STAGGER_MS` | `200` | Spacing between per-guild warm jobs at startup (ms) |
+| `AUTOCOMPLETE_PLAYER_REFRESH_MINUTES` | `10` | Interval for player_cache bulk re-warm |
+| `AUTOCOMPLETE_LOADOUT_REFRESH_MINUTES` | `5` | Interval for inventory/ships round-robin re-warm |
+| `AUTOCOMPLETE_INVENTORY_MAX_ENTRIES` | *(unset)* | LRU cap on inventory_cache; unset = no cap |
+| `AUTOCOMPLETE_SHIPS_MAX_ENTRIES` | *(unset)* | LRU cap on ships_cache; unset = no cap |
+| `INTERNAL_AUTH_TOKEN` | *(unset)* | Shared secret for bot-core → gateway internal push endpoints; both services must match |
+
+See `services/discord-gateway/AGENTS.md` → *Autocomplete Cache Architecture* for the full design.
+
 ### Game Asset Data
 
 Located in `services/bot-core/import_data/`:
@@ -266,12 +283,21 @@ APScheduler runs in-process within bot-core. Jobs and their default schedules:
 | `bounty_spawn_default` | bounty_spawn_executor | Every N minutes (env-configurable) |
 | `shop_refresh_default` | shop_refresh_executor | Every 6 hours |
 | `temperature_decay_default` | temperature_decay_executor | Every 1 hour |
+| `bounty_failsafe_cleanup_default` | bounty_failsafe_cleanup_executor | Every hour at :30 |
+| `pg_backup_default` | pg_backup_executor | Every 3 hours at :15 |
+| `db_retention_default` | db_retention_executor | Daily at 03:45 UTC |
 
 Additional executors (triggered on demand or by other jobs):
 - `bounty_expire_executor` — expires old bounties
 - `bounty_respawn_executor` — respawns criminals after bounty cleared
 - `duel_expire_executor` — expires pending duel challenges
 - `time_announcement_executor` — posts time-based announcements
+
+`db_retention_default` deletes terminal-state rows older than configurable
+windows: bounties/duels at 24h, audit logs at 30 days. Override via
+`BOUNTYBOT_BOUNTY_RETENTION_HOURS`, `BOUNTYBOT_DUEL_RETENTION_HOURS`,
+`BOUNTYBOT_AUDIT_RETENTION_DAYS`. Per-player aggregate stats (bounty_wins,
+duel_wins, etc.) live on the `players` table and are unaffected.
 
 ---
 
@@ -389,6 +415,15 @@ Additional executors (triggered on demand or by other jobs):
 - **Pydantic schemas**: Use `model_config = ConfigDict(from_attributes=True)` (NOT deprecated `class Config`). Use `.model_dump()` (NOT deprecated `.dict()`).
 - **Tests**: Max 2 mocks per test. Prefer real objects with deterministic inputs. See `test_combat_service.py` as the reference pattern.
 - **Test runner**: `pytest` with `asyncio_mode = auto` (configured in `pyproject.toml`)
+- **Test command pattern**: ALWAYS pipe to `tee` so output is captured for later `grep` without re-running. Full suite runs take 5–15 minutes; lost output = wasted time:
+  ```bash
+  # bot-core
+  cd /proj/services/bot-core && timeout 300 python -m pytest tests/ -q --tb=short 2>&1 | tee /tmp/test-botcore.log | tail -20
+  # discord-gateway (cogs only — fastest useful subset)
+  cd /proj/services/discord-gateway && timeout 300 python -m pytest tests/cogs/ -q --tb=short 2>&1 | tee /tmp/test-gateway-cogs.log | tail -20
+  # Grep failures from captured log without re-running:
+  grep -A 20 "FAILED\|ERROR" /tmp/test-botcore.log
+  ```
 - **Error handling**: All repositories use `try/except/rollback`. All cog HTTP clients use a 10-second timeout with retry logic.
 - **Logging**: All services use `bblogger.py`. Log at INFO for normal operations, ERROR for failures, DEBUG for diagnostic detail. Always include entity IDs in log messages.
 - **Admin mutations**: Must call `audit_service.log()` to produce an `AdminAuditLog` record.

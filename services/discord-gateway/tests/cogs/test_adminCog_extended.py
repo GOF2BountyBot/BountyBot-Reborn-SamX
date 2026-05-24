@@ -1118,8 +1118,9 @@ class TestIsAdminPredicateDirect:
     def test_predicate_returns_true_for_api_admin_role(self, mock_httpx_cls):
         """Predicate returns True when user has the configured admin role (lines 33-42).
 
-        B.40: The check uses interaction.member.roles (not interaction.user.roles).
-        interaction.member is the guild-scoped discord.Member object with role assignments.
+        Bug fix: The check now uses guild.get_role(admin_role_id) + interaction.user.roles.
+        interaction.user IS a discord.Member for guild slash commands and carries .roles.
+        The old code used interaction.member which raised AttributeError (silently swallowed).
         """
         predicate = _extract_is_admin_predicate()
 
@@ -1141,10 +1142,12 @@ class TestIsAdminPredicateDirect:
         interaction.user.id = 123999
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
-        # B.40: set role on interaction.member (guild Member), NOT interaction.user
-        interaction.member = MagicMock()
-        interaction.member.roles = [role]
+        # Bug fix: production code now checks interaction.user.roles via guild.get_role()
+        interaction.user.roles = [role]
         interaction.guild_id = 987654321
+        # guild.get_role must return the role object for the "in" check to work
+        interaction.guild = MagicMock()
+        interaction.guild.get_role = MagicMock(return_value=role)
 
         with patch.dict(os.environ, {"DEVELOPERS": ""}):
             result = asyncio.run(predicate(interaction))

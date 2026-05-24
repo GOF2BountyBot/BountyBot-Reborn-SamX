@@ -14,6 +14,11 @@ class ShopItemResponse(BaseModel):
     last_restocked: str
     refresh_interval_hours: int
     emoji: str | None = None
+    # Item stat fields (populated from the underlying item definition)
+    dps: float | None = None  # weapons: DPS value
+    shield: int | None = None  # modules: shield HP from extra_atts
+    armour: int | None = None  # modules: armour HP from extra_atts
+    hull_hp: int | None = None  # ships: hull/armour HP
 
 
 class ShopSummaryResponse(BaseModel):

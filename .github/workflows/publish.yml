@@ -616,6 +616,7 @@ jobs:
     name: bot-core scan & promote
     runs-on: ubuntu-latest
     needs: build-bot-core
+    if: github.event_name != 'pull_request'
     permissions:
       contents: read
       packages: write
@@ -729,6 +730,7 @@ jobs:
     name: discord-gateway scan & promote
     runs-on: ubuntu-latest
     needs: build-discord-gateway
+    if: github.event_name != 'pull_request'
     permissions:
       contents: read
       packages: write
@@ -837,6 +839,7 @@ jobs:
     name: blender-service (CPU) scan & promote
     runs-on: ubuntu-latest
     needs: build-blender-cpu
+    if: github.event_name != 'pull_request'
     permissions:
       contents: read
       packages: write
@@ -945,6 +948,7 @@ jobs:
     name: blender-service (GPU) scan & promote
     runs-on: ubuntu-latest
     needs: build-blender-gpu
+    if: github.event_name != 'pull_request'
     permissions:
       contents: read
       packages: write

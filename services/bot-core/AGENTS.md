@@ -33,7 +33,7 @@ Authoritative reference for AI agents doing maintenance, troubleshooting, or fea
 | **httpx** | Async HTTP client used by executors to call discord-gateway and scheduler APIs |
 | **bblogger** | Custom logging utility from `services/shared/bblogger.py`; provides TRACE level |
 | **pytest** | Test runner; `asyncio_mode = auto` (configured in root `pyproject.toml`) |
-| **Ruff** | Linter/formatter; `target-version = "py312"`, `line-length = 120` |
+| **Ruff** | Linter/formatter; `target-version = "py313"`, `line-length = 120` |
 
 ---
 
@@ -41,7 +41,7 @@ Authoritative reference for AI agents doing maintenance, troubleshooting, or fea
 
 ```
 services/bot-core/
-├── Dockerfile                          # Container build (Python 3.12, copies shared/bblogger)
+├── Dockerfile                          # Container build (Python 3.13, copies shared/bblogger)
 ├── requirements.txt                    # Python dependencies
 ├── import_data/                        # Seed JSON files for game assets
 │   ├── ship/                           # Ship definitions (one JSON per ship)
@@ -70,20 +70,21 @@ services/bot-core/
     │   │   ├── shops.py                # /shops — guild shop management
     │   │   ├── systems.py              # /systems — star system graph
     │   │   └── users.py                # /users — Discord user accounts
-    │   └── schemas/                    # 13 Pydantic v2 schema modules
-    │       ├── about_schema.py
-    │       ├── admin_schema.py
-    │       ├── bounty_schema.py
-    │       ├── config_schema.py
-    │       ├── discord_message_schema.py
-    │       ├── duel_schema.py
-    │       ├── health_schema.py
-    │       ├── inventory_schema.py
-    │       ├── players_schema.py
-    │       ├── scheduler_schema.py
-    │       ├── ships_schema.py
-    │       ├── shops_schema.py
-    │       └── users_schema.py
+│   └── schemas/                    # 14 Pydantic v2 schema modules
+│       ├── about_schema.py
+│       ├── admin_schema.py
+│       ├── bounty_schema.py
+│       ├── config_schema.py
+│       ├── discord_message_schema.py
+│       ├── duel_schema.py
+│       ├── health_schema.py
+│       ├── inventory_schema.py
+│       ├── loadout_schema.py
+│       ├── players_schema.py
+│       ├── scheduler_schema.py
+│       ├── ships_schema.py
+│       ├── shops_schema.py
+│       └── users_schema.py
     ├── persist/
     │   ├── database/                   # DB engine, sessions, migrations, circuit breaker
     │   │   ├── manager.py              # DatabaseManager singleton (db_manager)
@@ -97,19 +98,27 @@ services/bot-core/
     │   ├── interfaces/
     │   │   └── repository_interface.py # IRepository[T] abstract base class
     │   ├── models/                     # 21 SQLAlchemy ORM models (auto-imported)
-    │   ├── repositories/               # 19 data-access repositories
+    │   ├── repositories/               # 20 data-access repositories
     │   └── schemas/                    # schema_manager.py (legacy location)
-    ├── services/                       # 16 business-logic modules (B.48: division_service removed)
+    ├── services/                       # 24 business-logic modules
+    │   ├── _item_type_normalizer.py    # Private helper: item type normalization
+    │   ├── _transaction_guards.py      # Private helper: transaction guard utilities
     │   ├── audit_service.py
     │   ├── bounty_service.py
     │   ├── combat_models.py            # Dataclasses only (NOT a service)
+    │   ├── combat_preflight_service.py # Pre-flight checks before combat resolution
     │   ├── combat_service.py
     │   ├── config_service.py
     │   ├── duel_service.py
     │   ├── equipment_service.py
+    │   ├── exceptions.py               # Service-layer exception definitions
     │   ├── game_constants.py           # GameConstants class (env-overridable)
     │   ├── game_maths.py               # Pure math helpers (TL/reward formulas)
     │   ├── inventory_service.py
+    │   ├── loadout_builder.py          # Constructs player ship loadouts
+    │   ├── loadout_consistency_service.py  # Validates loadout consistency
+    │   ├── loadout_effect_service.py   # Calculates loadout stat effects
+    │   ├── loadout_response_service.py # Builds loadout API responses
     │   ├── map_renderer.py             # Pillow-based star map rendering
     │   ├── pathfinding_service.py      # A* pathfinding across system graph
     │   ├── player_service.py
@@ -126,11 +135,14 @@ services/bot-core/
         ├── data_loader.py              # JSON-file loader for game assets
         ├── emoji_service.py            # Emoji lookup helper
         ├── job_executor.py             # JobExecutor dispatcher + run_job() entry point
-        └── executors/                  # 7 async job executor modules
+        └── executors/                  # 10 async job executor modules
             ├── bounty_expire_executor.py
+            ├── bounty_failsafe_cleanup_executor.py
             ├── bounty_respawn_executor.py
             ├── bounty_spawn_executor.py
+            ├── db_retention_executor.py
             ├── duel_expire_executor.py
+            ├── pg_backup_executor.py
             ├── shop_refresh_executor.py
             ├── temperature_decay_executor.py
             └── time_announcement_executor.py
@@ -166,10 +178,13 @@ services/bot-core/
    └── Creates sync SQLAlchemy engine (postgresql:// not postgresql+asyncpg://)
    └── SQLAlchemyJobStore persists jobs to apscheduler_jobs table
    └── scheduler.start()
-   └── register_default_jobs() — idempotent, skips already-registered jobs:
-       - bounty_spawn_default  (every N minutes, default 5)
-       - shop_refresh_default  (every 6 hours)
-       - temperature_decay_default (every 1 hour)
+    └── register_default_jobs() — idempotent, skips already-registered jobs:
+        - bounty_spawn_default              (every N minutes, default 5)
+        - shop_refresh_default              (every 6 hours)
+        - temperature_decay_default         (every 1 hour)
+        - bounty_failsafe_cleanup_default   (every hour at :30)
+        - pg_backup_default                 (every 3 hours at :15)
+        - db_retention_default              (daily at 03:45 UTC)
 
 6. include_routers()
    └── pkgutil.iter_modules() scans api/routers/
@@ -192,7 +207,7 @@ services/bot-core/
 | `bounties.py` | `/bounties` | bounties | GET /guild/{guild_id}, POST / (spawn), PUT /{id}/check, PUT /{id}/expire |
 | `config.py` | `/config` | config | GET /{guild_id}, POST /, PUT /{guild_id} — guild-specific bot configuration |
 | `data.py` | `/data` | data | GET /{category} — bulk game data by category enum |
-| `discord_message.py` | `/discord-messages` | discord-messages | GET, POST, DELETE — persistent Discord message reference management |
+| `discord_message.py` | `/discord-message` | discord-message | GET, POST, DELETE — persistent Discord message reference management |
 | `duels.py` | `/duels` | duels | POST /challenge, POST /{id}/accept, POST /{id}/decline, POST /{id}/resolve |
 | `health.py` | `/health` | health | GET / (comprehensive), GET /simple — DB connectivity + schema version |
 | `inventory.py` | `/inventory` | inventory | GET /player/{id}, POST /equip, POST /unequip, POST /sell, POST /transfer |
@@ -292,21 +307,28 @@ Base (DeclarativeBase)
 
 ---
 
-## All 16 Services
+## All 24 Services
 
 | File | Key Class(es) | Purpose |
 |---|---|---|
+| `_item_type_normalizer.py` | *(private helper)* | Internal item type normalization utilities |
+| `_transaction_guards.py` | *(private helper)* | Transaction guard utilities for safe DB operations |
 | `audit_service.py` | `AuditService` | Static methods only; records admin mutations to AdminAuditLog; failures are swallowed (never block primary operation) |
 | `bounty_service.py` | `BountyService` | spawn_bounty, check_system, expire_bounty, resolve_bounty; uses CriminalRepository, SystemRepository, PathfindingService. Repo: `BountyRepository.delete_terminal_older_than` added for data retention. |
 | `combat_models.py` | `WeaponStats`, `ModuleStats`, `ShipLoadout`, `CombatStats`, `FightResults`, `CombatResolver` (protocol) | Pure dataclasses + protocol; NOT a service class; imported by CombatService |
+| `combat_preflight_service.py` | `CombatPreflightService` | Pre-flight validation checks before combat resolution |
 | `combat_service.py` | `CombatService` | Duel combat resolution using SimpleTTKResolver; assembles loadouts, runs combat simulation |
 | `config_service.py` | `ConfigService` | GuildConfig CRUD with defaults; provides starting_credits, channel IDs |
-| `division_service.py` | *(REMOVED in B.48)* | Level/division progression system was deleted; tier progression is now driven by `xp_thresholds` JSON in GuildConfig |
 | `duel_service.py` | `DuelService` | create_challenge, accept_duel, decline_duel, resolve_duel, expire_duels; calls CombatService |
 | `equipment_service.py` | `EquipmentService` | Equip/unequip weapons and modules to PlayerShip; enforces per-type equip limits from GameConstants |
+| `exceptions.py` | *(exception classes)* | Service-layer exception definitions |
 | `game_constants.py` | `GameConstants` | Centralized constants class; operational constants overridable via `BOUNTYBOT_{KEY}` env vars; call `GameConstants.load()` at startup |
-| `game_maths.py` | `pick_random_item_tl()`, `reward_per_sys_check()`, `ship_tech_level_for_value()` | Pure math helpers (TL selection, bounty reward formula). B.48: `calculate_user_level()` was removed. |
+| `game_maths.py` | `pick_random_item_tl()`, `reward_per_sys_check()`, `ship_tech_level_for_value()` | Pure math helpers (TL selection, bounty reward formula) |
 | `inventory_service.py` | `InventoryService` | buy_item, sell_item, transfer_item, equip/unequip wrappers; calls ShopRepository, PlayerRepository |
+| `loadout_builder.py` | `LoadoutBuilder` | Constructs player ship loadouts from equipped items |
+| `loadout_consistency_service.py` | `LoadoutConsistencyService` | Validates loadout consistency and constraint enforcement |
+| `loadout_effect_service.py` | `LoadoutEffectService` | Calculates stat effects of a ship loadout |
+| `loadout_response_service.py` | `LoadoutResponseService` | Builds loadout-related API response payloads |
 | `map_renderer.py` | `MapRenderer` | Pillow-based star map image generation; renders SystemGraph as PNG |
 | `pathfinding_service.py` | `PathfindingService` | A* pathfinding over the star system graph; MAX_ROUTE_LENGTH from GameConstants |
 | `player_service.py` | `PlayerService` | get_or_create_player, update_credits, update_xp (auto-tier), prestige_player, transfer_credits, get_player_statistics |
@@ -318,7 +340,7 @@ Base (DeclarativeBase)
 
 ---
 
-## All 13 Schema Modules
+## All 14 Schema Modules
 
 | File | Key Classes | Purpose |
 |---|---|---|
@@ -330,6 +352,7 @@ Base (DeclarativeBase)
 | `duel_schema.py` | `DuelChallengeRequest`, `DuelResponse`, `DuelResultResponse` | Duel challenge lifecycle |
 | `health_schema.py` | `HealthResponse`, `SimpleHealthResponse` | Health check payloads |
 | `inventory_schema.py` | `InventoryResponse`, `EquipRequest`, `SellRequest` | Inventory management |
+| `loadout_schema.py` | *(loadout request/response models)* | Ship loadout request/response |
 | `players_schema.py` | `PlayerResponse`, `CreatePlayerRequest`, `UpdateCreditsRequest`, `UpdateXPRequest`, `TransferCreditsRequest`, `PrestigeResponse` | Player management |
 | `scheduler_schema.py` | `JobInfo`, `OneTimeJob`, `RecurringJob`, `UpdateJob` | APScheduler job management |
 | `ships_schema.py` | `ShipResponse`, `ShipListResponse` | Ship definition responses |
@@ -438,10 +461,13 @@ Provides emoji lookup helpers for game entities. Used by routers when building r
 
 | File | job_type | Trigger | Purpose |
 |---|---|---|---|
-| `bounty_spawn_executor.py` | `bounty_spawn` | Every N min (default 5) | Check each guild×division for open slots; call BountyService.spawn_bounty(); schedule expiry job; announce to discord-gateway |
+| `bounty_spawn_executor.py` | `bounty_spawn_orchestrate` | Every N min (default 5) | Check each guild×division for open slots; call BountyService.spawn_bounty(); schedule expiry job; announce to discord-gateway |
 | `bounty_expire_executor.py` | `bounty_expire` | One-time at bounty.end_time | Mark bounty expired; optionally schedule respawn |
+| `bounty_failsafe_cleanup_executor.py` | `bounty_failsafe_cleanup` | Every hour at :30 | Clean up stale/orphaned bounty state that missed normal expiry |
 | `bounty_respawn_executor.py` | `bounty_respawn` | One-time after expiry | Trigger a new bounty spawn for the same division/guild |
+| `db_retention_executor.py` | `db_retention` | Daily at 03:45 UTC | Delete terminal-state rows older than retention windows (bounties, duels, audit logs) |
 | `duel_expire_executor.py` | `duel_expire` | Periodic or one-time | Find pending duels past `expires_at`; mark as expired |
+| `pg_backup_executor.py` | `pg_backup` | Every 3 hours at :15 | Compressed PostgreSQL dump to bot-core data volume; retains 7 days |
 | `shop_refresh_executor.py` | `shop_refresh` | Every 6 hours | Call ShopService.refresh_shop() for all guild configs |
 | `temperature_decay_executor.py` | `temperature_decay` | Every 1 hour | Apply GuildActivity temperature decay via TemperatureService |
 | `time_announcement_executor.py` | `time_announcement` | On-demand | Build and POST a time-based announcement to discord-gateway |
@@ -484,7 +510,7 @@ JSON files in `import_data/` are the source of truth for game assets. They are l
 
 ## Testing
 
-- **85 test files**
+- **124 test files**
 - Runner: `pytest` with `asyncio_mode = auto` (root `pyproject.toml`)
 - Coverage target: ≥ 80%
 
@@ -593,8 +619,8 @@ python -m persist.database.run_migration upgrade
 
 ## Code Standards
 
-- **Python**: 3.12+
-- **Linter**: Ruff (`target-version = "py312"`, `line-length = 120`) — configured in `/proj/pyproject.toml`
+- **Python**: 3.13+
+- **Linter**: Ruff (`target-version = "py313"`, `line-length = 120`) — configured in `/proj/pyproject.toml`
 - **Pydantic**: v2 only — `ConfigDict(from_attributes=True)`, `.model_dump()`, never `.dict()` or `class Config`
 - **Tests**: Max 2 mocks per test; prefer real objects; reference `test_combat_service.py`
 - **Logging**: Use `bblogger.get_logger("component-name")`; INFO for normal ops, ERROR for failures, DEBUG for diagnostics; always include entity IDs
@@ -642,4 +668,4 @@ python -m persist.database.run_migration upgrade
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-05-24*

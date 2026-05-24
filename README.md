@@ -2,7 +2,7 @@
 
 A containerized, GPU-ready micro-service stack powering a Discord bot for a space combat and trading game. The bot supports bounty hunting, ship customization, PvP duels, and a full in-game economy — backed by a PostgreSQL database and optional GPU-accelerated 3D rendering via Blender.
 
-**Scale:** 185 source files · 162 test files · 3,717+ tests across all services.
+**Scale:** 228 source files · 235 test files · 3,717+ tests across all services.
 
 ---
 
@@ -18,6 +18,7 @@ A containerized, GPU-ready micro-service stack powering a Discord bot for a spac
 - [API Reference](#api-reference)
 - [Discord Commands](#discord-commands)
 - [GPU Rendering](#gpu-rendering)
+- [Admin Guide](#admin-guide)
 - [Contributing and AI Agent Guidance](#contributing-and-ai-agent-guidance)
 - [License](#license)
 
@@ -63,7 +64,7 @@ The bot implements the following game systems:
 
 - **Docker + Docker Compose** — required for all services
 - **NVIDIA drivers + nvidia-docker runtime** — optional, required for GPU-accelerated rendering
-- **Python 3.12+** — for local development and running tests outside Docker
+- **Python 3.13+** — for local development and running tests outside Docker
 - **PostgreSQL client tools** — optional, for direct database inspection
 
 ---
@@ -107,7 +108,7 @@ Copy `.env.example` to `.env` and configure the following categories:
 | **Connection pool** | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE` | Tunable for production load. |
 | **Service endpoints** | `BOT_API_BASE_URL`, `GATEWAY_HOST`, `GATEWAY_PORT`, `BLENDER_HOST`, `BLENDER_PORT` | Internal routing between containers. |
 | **Blender** | `DO_WARMUP`, `GAME_OBJS_FILEID` | `DO_WARMUP=true` pre-compiles CUDA shaders on first boot (~3-5 min, one-time). |
-| **Logging** | `LOG_LEVEL`, `LOG_FILE`, `ENABLE_FILE_LOGGING` | Uses `bblogger` with TRACE/DEBUG/INFO/ERROR levels. |
+| **Logging** | `LOG_LEVEL`, `LOG_FILE`, `LOG_TO_FILE` | Uses `bblogger` with TRACE/DEBUG/INFO/ERROR levels. |
 | **Admin** | `ADMIN_USER_IDS` | Comma-separated Discord user IDs with admin access. Leave empty to allow all (dev only). |
 | **Server** | `HOST`, `PORT`, `RELOAD`, `ACCESS_LOG` | `RELOAD=true` enables hot-reload for development. |
 
@@ -131,7 +132,7 @@ python -m pytest services/blender-service/tests/ --tb=short -q   # ~3s, 104 test
 
 ### Linting
 
-The project uses [Ruff](https://docs.astral.sh/ruff/) (`target-version = "py312"`, `line-length = 120`), configured in `pyproject.toml`.
+The project uses [Ruff](https://docs.astral.sh/ruff/) (`target-version = "py313"`, `line-length = 120`), configured in `pyproject.toml`.
 
 ```bash
 python -m ruff check              # Check for issues
@@ -261,20 +262,20 @@ All services expose REST endpoints under `/api/v1/`. Full interactive documentat
 | `/bounties` | Bounty CRUD and lifecycle |
 | `/config` | Guild configuration |
 | `/data` | Game data lookups |
-| `/discord-messages` | Persistent Discord message references |
+| `/discord-message` | Persistent Discord message references |
 | `/duels` | Duel challenge lifecycle |
 | `/health` | Health check |
 | `/inventory` | Player inventory management |
 | `/players` | Player game state |
-| `/scheduler` | APScheduler job management |
+| `/jobs` | APScheduler job management |
 | `/ships` | Ship definitions |
 | `/shops` | Guild shop management |
 | `/systems` | Star system graph and routing |
 | `/users` | Discord user accounts |
 
-### discord-gateway (port 7999) — 10 routers
+### discord-gateway (port 7999) — 12 routers
 
-Internal REST routers for programmatic Discord access: `categories`, `channels`, `guilds`, `health`, `messages`, `permissions`, `roles`, `tags`, `threads`, `users`.
+Internal REST routers for programmatic Discord access: `categories`, `channels`, `guilds`, `health`, `messages`, `permissions`, `roles`, `tags`, `threads`, `users`, `announcements`, `internal_autocomplete`.
 
 ### blender-service (port 8001) — 6 routers
 
@@ -329,6 +330,12 @@ old-refs/items/ships/  →  /app/data/game-objects/items/ships/
 
 ---
 
+## Admin Guide
+
+For server admins: per-guild configuration, shop/bounty tunables, player management commands, and emergency reset procedures are documented in [`ADMIN.md`](./ADMIN.md).
+
+---
+
 ## Contributing and AI Agent Guidance
 
 The primary reference for contributors (human or AI) is [`AGENTS.md`](./AGENTS.md), which documents:
@@ -349,8 +356,8 @@ Each service also has its own `AGENTS.md` with service-specific conventions:
 
 **Key code standards:**
 
-- Python 3.12+, type hints throughout
-- Ruff linting: `line-length = 120`, `target-version = "py312"`
+- Python 3.13+, type hints throughout
+- Ruff linting: `line-length = 120`, `target-version = "py313"`
 - Pydantic v2: use `ConfigDict(from_attributes=True)` and `.model_dump()` (not deprecated `class Config` or `.dict()`)
 - Tests: maximum 2 mocks per test; prefer real objects with deterministic inputs
 - All admin mutations must call `audit_service.log()` to produce an `AdminAuditLog` record

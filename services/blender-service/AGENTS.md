@@ -68,7 +68,7 @@ services/blender-service/
 │   └── utils/
 │       └── __init__.py
 └── tests/
-    └── ...                         # 14 test files, 104 tests
+    └── ...                         # 19 test files
 ```
 
 ---
@@ -409,9 +409,9 @@ Server-side:
 ## Testing
 
 - **Location**: `services/blender-service/tests/`
-- **Count**: 14 test files, 104 tests
+- **Count**: 19 test files
 - **Runner**: `pytest` with `asyncio_mode=auto`
-- **Linter**: Ruff (`target-version = "py312"`, `line-length = 120`)
+- **Linter**: Ruff (`target-version = "py313"`, `line-length = 120`)
 - **Max mocks per test**: 2 (project-wide standard)
 - **Pydantic**: Use `model_config = ConfigDict(from_attributes=True)` and `.model_dump()` (not deprecated `.dict()`)
 
@@ -456,8 +456,8 @@ pytest tests/ -v
 
 ## Code Standards
 
-- **Python**: 3.12+
-- **Linter/formatter**: Ruff (`target-version = "py312"`, `line-length = 120`) — configured in `/proj/pyproject.toml`
+- **Python**: 3.13+
+- **Linter/formatter**: Ruff (`target-version = "py313"`, `line-length = 120`) — configured in `/proj/pyproject.toml`
 - **Pydantic schemas**: `ConfigDict(from_attributes=True)`, `.model_dump()` (not `.dict()`)
 - **Max mocks per test**: 2
 - **Logging**: Use `bblogger.get_logger("blender-<component>")`. Log INFO for normal ops, ERROR for failures, DEBUG for diagnostic detail. Always include render/job IDs.
@@ -466,4 +466,4 @@ pytest tests/ -v
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-05-24*

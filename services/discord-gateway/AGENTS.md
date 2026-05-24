@@ -26,7 +26,7 @@ It acts as the bridge between Discord users ↔ bot-core (game logic) ↔ blende
 | **Pydantic v2** | Request/response schema validation (`model_config = ConfigDict(from_attributes=True)`) |
 | **bblogger** | Shared logging utility (copied from `services/shared/bblogger.py`) |
 | **pytest** | Test runner (`asyncio_mode = auto`) |
-| **Ruff** | Linter/formatter (`target-version = "py312"`, `line-length = 120`) |
+| **Ruff** | Linter/formatter (`target-version = "py313"`, `line-length = 120`) |
 
 ---
 
@@ -44,36 +44,48 @@ services/discord-gateway/
 │   ├── api-test.py             # Integration test harness (standalone runner)
 │   ├── api/
 │   │   ├── server.py           # Alternative standalone FastAPI entry point
-│   │   ├── routers/            # 10 REST API router modules (auto-discovered)
+│   │   ├── routers/            # 12 REST API router modules (auto-discovered)
 │   │   │   ├── __init__.py
-│   │   │   ├── categories.py   # Category channel CRUD
-│   │   │   ├── channels.py     # Text/voice channel CRUD
-│   │   │   ├── guilds.py       # Guild info + role management
-│   │   │   ├── health.py       # Health check endpoints
-│   │   │   ├── messages.py     # Message send/edit/delete
-│   │   │   ├── permissions.py  # Permission overwrite management
-│   │   │   ├── roles.py        # Role CRUD
-│   │   │   ├── tags.py         # Forum channel tag management
-│   │   │   ├── threads.py      # Thread management
-│   │   │   └── users.py        # User/member lookups
-│   │   └── schemas/            # 7 Pydantic v2 schema modules
+│   │   │   ├── announcements.py        # Bounty announcement rendering (unified channel/message push)
+│   │   │   ├── categories.py           # Category channel CRUD
+│   │   │   ├── channels.py             # Text/voice channel CRUD
+│   │   │   ├── guilds.py               # Guild info + role management
+│   │   │   ├── health.py               # Health check endpoints
+│   │   │   ├── internal_autocomplete.py # Push endpoints for in-process autocomplete cache
+│   │   │   ├── messages.py             # Message send/edit/delete
+│   │   │   ├── permissions.py          # Permission overwrite management
+│   │   │   ├── roles.py                # Role CRUD
+│   │   │   ├── tags.py                 # Forum channel tag management
+│   │   │   ├── threads.py              # Thread management
+│   │   │   └── users.py                # User/member lookups
+│   │   └── schemas/            # 9 Pydantic v2 schema modules
 │   │       ├── __init__.py
-│   │       ├── base_schemas.py       # BaseResponse, pagination helpers
-│   │       ├── channel_schemas.py    # Channel, Category, Thread models
-│   │       ├── guild_schemas.py      # Guild model
-│   │       ├── message_schemas.py    # Message, EmbedPayload, EmbedField models
-│   │       ├── permission_schemas.py # PermissionOverwrite model
-│   │       ├── role_schemas.py       # Role model
-│   │       └── user_schemas.py       # User, Member models
-│   ├── cogs/                   # 14 Discord bot cogs (auto-loaded)
+│   │       ├── announcement_schemas.py # BountyAnnouncementRequest and related schemas
+│   │       ├── base_schemas.py         # BaseResponse, pagination helpers
+│   │       ├── channel_schemas.py      # Channel, Category, Thread models
+│   │       ├── guild_schemas.py        # Guild model
+│   │       ├── internal_schemas.py     # Internal autocomplete push schemas
+│   │       ├── message_schemas.py      # Message, EmbedPayload, EmbedField models
+│   │       ├── permission_schemas.py   # PermissionOverwrite model
+│   │       ├── role_schemas.py         # Role model
+│   │       └── user_schemas.py         # User, Member models
+│   ├── cogs/                   # 16 Discord bot cog files (14 loaded; templateCog + testCog skipped)
+│   │   ├── _shared/            # Shared cog utilities sub-package
+│   │   │   ├── autocomplete_cache.py  # AutocompleteCache base class (peek/schedule_refresh/max_entries)
+│   │   │   ├── confirm_view.py        # Confirmation UI view
+│   │   │   ├── embed_pagination.py    # Paginated embed view
+│   │   │   ├── http_error_handler.py  # Shared HTTP error handling
+│   │   │   └── loadout_embed.py       # Loadout embed builder
 │   │   ├── aboutCog.py         # /about, /list_category, /make-route
 │   │   ├── adminCog.py         # All /admin_* and /render_* commands
 │   │   ├── bountyCog.py        # /check, /bounties, /route, /criminal-loadout
 │   │   ├── devCog.py           # /load_data, /reload_autocomplete
 │   │   ├── duelCog.py          # /duel-challenge, /duel-accept, /duel-reject
 │   │   ├── healthCog.py        # /ping, /health
+│   │   ├── helpCog.py          # /help, /admin_help
 │   │   ├── inventoryCog.py     # /inventory, /search, /item, /equip, /unequip
 │   │   ├── playerCog.py        # /profile, /leaderboard, /prestige
+│   │   ├── schedulerCog.py     # Scheduler management slash commands
 │   │   ├── setupCog.py         # Listener: on_guild_join, on_guild_remove
 │   │   ├── shipsCog.py         # /ships, /ship, /setactive, /nickname
 │   │   ├── shopCog.py          # /shop, /buy, /sell, /shops
@@ -160,8 +172,10 @@ The bot auto-discovers cogs via `setup_hook()` — any `*.py` file in `src/cogs/
 | `devCog.py` | `DevCog` | `/load_data`, `/reload_autocomplete` | Admin-only; triggers JSON→DB loads and cache reloads |
 | `duelCog.py` | `DuelCog` | `/duel-challenge`, `/duel-accept`, `/duel-reject` | Live autocomplete for pending duels |
 | `healthCog.py` | `HealthCog` | `/ping`, `/health` | Admin-only; `/health` calls bot-core health endpoint |
+| `helpCog.py` | `HelpCog` | `/help`, `/admin_help` | Help command listing for users and admins |
 | `inventoryCog.py` | `InventoryCog` | `/inventory`, `/search`, `/item`, `/equip`, `/unequip` | Equip/unequip modifies active ship loadout |
 | `playerCog.py` | `PlayerCog` | `/profile`, `/leaderboard`, `/prestige` | `/prestige` requires Platinum tier + confirmation |
+| `schedulerCog.py` | `SchedulerCog` | *(scheduler management commands)* | Scheduler job management slash commands |
 | `setupCog.py` | `SetupCog` | *(no slash commands)* | Listener: `on_guild_join` → API init + create channels; `on_guild_remove` → cleanup |
 | `shipsCog.py` | `ShipsCog` | `/ships`, `/ship`, `/setactive`, `/nickname` | Ship management; respects ownership |
 | `shopCog.py` | `ShopCog` | `/shop`, `/buy`, `/sell`, `/shops` | Tier-gated shop access |
@@ -189,22 +203,24 @@ async def my_cmd(self, interaction: discord.Interaction):
 
 ## REST API Routers
 
-All 10 routers are auto-discovered from `api/routers/*.py` (any module with a `router` attribute) and mounted at `/api/v1`. Routers use `resolve_bot()` + `get_entity_or_404()` to access live Discord state.
+All 12 routers are auto-discovered from `api/routers/*.py` (any module with a `router` attribute) and mounted at `/api/v1`. Routers use `resolve_bot()` + `get_entity_or_404()` to access live Discord state.
 
 ### Router Reference Table
 
 | File | Prefix | Purpose |
 |------|--------|---------|
-| `health.py` | `/health` | Health check: `GET /health`, `GET /health/simple`, `GET /health/liveness` |
-| `guilds.py` | `/guilds` | Guild info, role list, role create/update/delete |
-| `channels.py` | `/channels` | Text/voice channel CRUD, message send/edit/delete within channel |
+| `announcements.py` | `/announcements` | Bounty announcement rendering — unified channel/message push from bot-core |
 | `categories.py` | `/categories` | Category channel CRUD |
+| `channels.py` | `/channels` | Text/voice channel CRUD, message send/edit/delete within channel |
+| `guilds.py` | `/guilds` | Guild info, role list, role create/update/delete |
+| `health.py` | `/health` | Health check: `GET /health`, `GET /health/simple`, `GET /health/liveness` |
+| `internal_autocomplete.py` | `/internal/autocomplete` | Push endpoints for in-process autocomplete cache (shop, bounty, health) |
 | `messages.py` | `/messages` | Global message send, edit, delete, fetch by ID |
-| `roles.py` | `/roles` | Role CRUD at guild level |
-| `users.py` | `/users` | User/member lookup by ID, guild membership check |
 | `permissions.py` | `/permissions` | Permission overwrite get/set/delete for channels |
+| `roles.py` | `/roles` | Role CRUD at guild level |
 | `tags.py` | `/tags` | Forum channel tag CRUD |
 | `threads.py` | `/threads` | Thread create/archive/unarchive/list |
+| `users.py` | `/users` | User/member lookup by ID, guild membership check |
 
 ---
 
@@ -214,9 +230,11 @@ All schemas use **Pydantic v2** conventions: `model_config = ConfigDict(from_att
 
 | File | Key Models | Purpose |
 |------|-----------|---------|
+| `announcement_schemas.py` | `BountyAnnouncementRequest` | Schemas for bounty announcement push requests |
 | `base_schemas.py` | `BaseResponse` | Common `status`, `timestamp` fields; base for all responses |
 | `channel_schemas.py` | `Channel`, `Category`, `Thread` | Channel/thread representations |
 | `guild_schemas.py` | `Guild` | Guild metadata |
+| `internal_schemas.py` | *(internal autocomplete schemas)* | Schemas for internal autocomplete push endpoints |
 | `message_schemas.py` | `Message`, `MessageSummary`, `EmbedPayload`, `EmbedField` | Message and embed structures |
 | `permission_schemas.py` | `PermissionOverwrite` | Permission overwrite target/allow/deny |
 | `role_schemas.py` | `Role` | Role with permissions bitfield |
@@ -309,7 +327,7 @@ Discord user → discord.py → Cog command handler
 
 | Scope | Count |
 |-------|-------|
-| Test files | 63 |
+| Test files | 92 |
 
 ### Test Structure
 
@@ -414,12 +432,12 @@ See `src/api/routers/AGENTS.md` for the full router development guide.
 ## Code Standards
 
 ### Python Version
-- Python 3.12+
+- Python 3.13+
 - Type hints everywhere (including `str | None`, `int | None` union syntax)
 
 ### Linting/Formatting
 - **Ruff** — configured in `/proj/pyproject.toml`
-  - `target-version = "py312"`
+  - `target-version = "py313"`
   - `line-length = 120`
 - Run: `ruff check src/` and `ruff format src/`
 
@@ -528,7 +546,7 @@ except Exception:
 
 - **Port**: `7999` (host) → `8000` (container, GATEWAY_PORT)
 - **Volume**: Gateway data mapped via `mappings/discord-gateway/`
-- **Image**: Python 3.12, copies `shared/bblogger.py` into `/app/shared/`
+- **Image**: Python 3.13, copies `shared/bblogger.py` into `/app/shared/`
 - **Entry point**: `python bot.py` from within `src/`
 
 ---
@@ -541,4 +559,4 @@ except Exception:
 
 ---
 
-*Last updated: 2026-05-16*
+*Last updated: 2026-05-24*

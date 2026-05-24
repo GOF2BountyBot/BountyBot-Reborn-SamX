@@ -6,7 +6,7 @@ This file provides guidance for AI agents working on this codebase. Each service
 
 ## Project Overview
 
-**BountyBot-Reborn-SamX** is a containerized, GPU-ready micro-service stack powering a game-related Discord bot. The project uses FastAPI, PostgreSQL, Discord.py, CUDA, Blender, Alembic, PIL, and Docker-Compose. The stack has 185 source files and 162 test files across all services.
+**BountyBot-Reborn-SamX** is a containerized, GPU-ready micro-service stack powering a game-related Discord bot. The project uses FastAPI, PostgreSQL, Discord.py, CUDA, Blender, Alembic, PIL, and Docker-Compose. The stack has 228 source files and 235 test files across all services.
 
 ---
 
@@ -31,10 +31,10 @@ discord-gateway → blender-service → bot-core → db
 
 | Service | Source files | Test files | Routers | Models | Repos | Services | Cogs | Schemas |
 |---------|-------------|------------|---------|--------|-------|----------|------|---------|
-| bot-core | 124 | 84 | 15 | 21 | 19 | 16 | — | 13 |
-| discord-gateway | 43 | 63 | 10 | — | — | — | 14 | 7 |
-| blender-service | 17 | 14 | 6 | — | — | 6 | — | — |
-| **TOTAL** | **184** | **161** | **31** | **21** | **19** | **22** | **14** | **20** |
+| bot-core | 148 | 124 | 15 | 21 | 20 | 24 | — | 14 |
+| discord-gateway | 61 | 92 | 12 | — | — | — | 16 | 9 |
+| blender-service | 19 | 19 | 6 | — | — | 6 | — | — |
+| **TOTAL** | **228** | **235** | **33** | **21** | **20** | **30** | **16** | **23** |
 
 ---
 
@@ -69,8 +69,8 @@ BountyBot-Reborn-SamX/
     │   ├── src/
     │   │   ├── main.py             # App entrypoint, lifespan, router registration
     │   │   ├── api/
-    │   │   │   ├── routers/        # 15 FastAPI routers (auto-discovered)
-    │   │   │   └── schemas/        # 13 Pydantic schema modules
+│   │   │   ├── routers/        # 15 FastAPI routers (auto-discovered)
+│   │   │   └── schemas/        # 14 Pydantic schema modules
     │   │   ├── persist/
     │   │   │   ├── database/       # DB engine, MigrationManager, Alembic config
     │   │   │   │   ├── manager.py
@@ -80,15 +80,15 @@ BountyBot-Reborn-SamX/
     │   │   │   │   └── revisions/  # Alembic env + version scripts
     │   │   │   ├── interfaces/     # Abstract repository protocols
     │   │   │   ├── models/         # 21 SQLAlchemy ORM models
-    │   │   │   └── repositories/   # 19 CRUD repositories
-    │   │   ├── services/           # 16 business-logic service modules (B.48: division_service removed)
+│   │   │   └── repositories/   # 20 CRUD repositories
+│   │   ├── services/           # 24 business-logic service modules
     │   │   ├── message_builders/   # Discord embed builder framework
     │   │   └── utils/
     │   │       ├── auto_seeder.py
     │   │       ├── data_loader.py
     │   │       ├── emoji_service.py
     │   │       ├── job_executor.py
-    │   │       └── executors/      # 7 APScheduler job executors
+    │   │       └── executors/      # 10 APScheduler job executors
     │   └── tests/
     ├── discord-gateway/            # Discord bot + internal REST API
     │   ├── Dockerfile
@@ -96,10 +96,10 @@ BountyBot-Reborn-SamX/
     │   ├── src/
     │   │   ├── bot.py              # Discord.py bot setup
     │   │   ├── api/
-    │   │   │   ├── routers/        # 10 internal REST routers
-    │   │   │   ├── schemas/        # 7 Pydantic schema modules
-    │   │   │   └── server.py       # FastAPI app factory
-    │   │   ├── cogs/               # 14 Discord slash-command cogs
+│   │   │   ├── routers/        # 12 internal REST routers
+│   │   │   ├── schemas/        # 9 Pydantic schema modules
+│   │   │   └── server.py       # FastAPI app factory
+│   │   ├── cogs/               # 16 Discord slash-command cog files (14 loaded; templateCog + testCog skipped)
     │   │   └── utils/              # Helpers: embeds, converters, permissions
     │   └── tests/
     ├── blender-service/            # Blender render + texture pipeline
@@ -133,7 +133,7 @@ BountyBot-Reborn-SamX/
 - **Blender** — 3D rendering, GPU-accelerated via CUDA
 - **PIL / Pillow** — Texture compositing pipeline
 - **AEPi** (submodule) — AEI image format conversion library
-- **Ruff** — Linter/formatter (target-version `py312`, line-length 120)
+- **Ruff** — Linter/formatter (target-version `py313`, line-length 120)
 - **pytest** — Test runner (`asyncio_mode=auto`)
 - **Docker-Compose** — Container orchestration (standard + GPU variants)
 
@@ -325,15 +325,28 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 
 ### discord-gateway routers (all under `/api/v1/`)
 
-10 internal REST routers mirror the cog commands for inter-service communication.
+| Router | Path prefix | Purpose |
+|--------|-------------|---------|
+| categories | `/categories` | List guild categories |
+| channels | `/channels` | Guild channel operations |
+| guilds | `/guilds` | Guild info and member listing |
+| health | `/health` | Health check |
+| messages | `/messages` | Channel message retrieval |
+| permissions | `/permissions` | Role/permission queries |
+| roles | `/roles` | Guild role listing |
+| tags | `/tags` | Forum tag management |
+| threads | `/threads` | Thread management |
+| users | `/users` | User info |
+| announcements | `/announcements` | Bounty announcement rendering (unified channel/message push) |
+| internal_autocomplete | `/internal/autocomplete` | Push endpoints for the in-process autocomplete cache |
 
 ### blender-service routers (all under `/api/v1/`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/textures/composite` | PIL texture compositing |
-| POST | `/textures/convert-aei` | PNG → AEI format conversion |
-| GET | `/textures/formats` | List supported AEI formats |
+| POST | `/textures/convert` | PNG → AEI format conversion |
+| GET | `/textures/health` | Texture service health check |
 | POST | `/render/` | Synchronous Blender render |
 | POST | `/render/async` | Async render (returns job ID) |
 | GET | `/jobs/{job_id}` | Poll async job status |
@@ -359,14 +372,16 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 | devCog | Developer/debug utilities |
 | duelCog | Duel challenge and resolution |
 | healthCog | Health check slash command |
+| helpCog | `/help` and `/admin_help` slash commands |
 | inventoryCog | Player inventory interactions |
 | playerCog | Player profile and stats |
+| schedulerCog | Scheduler management slash commands |
 | setupCog | Guild setup and configuration |
 | shipsCog | Ship browsing and management |
 | shopCog | Guild shop interactions |
 | skinsCog | Ship skin management (blender-service integration) |
-| templateCog | Template/scaffold for new cogs |
-| testCog | Test harness cog |
+| templateCog | Template/scaffold for new cogs (not loaded) |
+| testCog | Test harness cog (not loaded) |
 
 ---
 
@@ -410,8 +425,8 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 
 ## Code Standards
 
-- **Python version**: 3.12+
-- **Linter/formatter**: Ruff (`target-version = "py312"`, `line-length = 120`) — configured in `/proj/pyproject.toml`
+- **Python version**: 3.13+
+- **Linter/formatter**: Ruff (`target-version = "py313"`, `line-length = 120`) — configured in `/proj/pyproject.toml`
 - **Pydantic schemas**: Use `model_config = ConfigDict(from_attributes=True)` (NOT deprecated `class Config`). Use `.model_dump()` (NOT deprecated `.dict()`).
 - **Tests**: Max 2 mocks per test. Prefer real objects with deterministic inputs. See `test_combat_service.py` as the reference pattern.
 - **Test runner**: `pytest` with `asyncio_mode = auto` (configured in `pyproject.toml`)
@@ -489,4 +504,4 @@ GET  /api/v1/health                                    — Health check
 
 ---
 
-*Last updated: 2026-04-10*
+*Last updated: 2026-05-24*

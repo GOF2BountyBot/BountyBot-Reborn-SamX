@@ -7,11 +7,11 @@
 #   Prefer LTS releases for stability: https://www.blender.org/download/lts/
 # NOTE: If you bump to a new minor or major version (e.g. 4.5 → 5.0), also update
 #   the URL folder name in the tarball install RUN step below (e.g. Blender4.5 → Blender5.0).
-ARG BLENDER_VERSION=4.5.7
+ARG BLENDER_VERSION=4.5.10
 
 FROM python:3.13-slim-trixie AS base
 
-ARG BLENDER_VERSION=4.5.7
+ARG BLENDER_VERSION=4.5.10
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -152,7 +152,7 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     echo "Blender bundled idna: ${IDNA_VER}" && \
     case "${URLLIB3_VER}"  in 2.[6-9].*|2.[1-9][0-9].*|[3-9].*) ;; *) echo "urllib3 too old: ${URLLIB3_VER}";   exit 1 ;; esac && \
     case "${REQUESTS_VER}" in 2.33.*|2.3[4-9].*|2.[4-9][0-9].*|[3-9].*) ;; *) echo "requests too old: ${REQUESTS_VER}"; exit 1 ;; esac && \
-    case "${IDNA_VER}" in 3.1[5-9].*|3.[2-9][0-9].*|[4-9].*) ;; *) echo "idna too old: ${IDNA_VER}"; exit 1 ;; esac && \
+    case "${IDNA_VER}" in 3.1[5-9]|3.1[5-9].*|3.[2-9][0-9]|3.[2-9][0-9].*|[4-9]*) ;; *) echo "idna too old: ${IDNA_VER}"; exit 1 ;; esac && \
     \
     # Hard-fail if any vulnerable dist-info survived from the previous Blender bundle \
     if ls "${SITE_PKGS}"/urllib3-2.4.*  >/dev/null 2>&1; then echo "ERROR: stale urllib3 2.4.x dist-info"; exit 1; fi && \

@@ -11,11 +11,11 @@
 #   the URL folder name in the tarball install RUN step below (e.g. Blender4.5 → Blender5.0).
 ARG UBUNTU_RELEASE=24.04
 ARG CUDA_VERSION=13.0.0
-ARG BLENDER_VERSION=4.5.7
+ARG BLENDER_VERSION=4.5.10
 
 FROM nvidia/cuda:${CUDA_VERSION}-cudnn-runtime-ubuntu${UBUNTU_RELEASE} AS base
 
-ARG BLENDER_VERSION=4.5.7
+ARG BLENDER_VERSION=4.5.10
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -144,7 +144,7 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     echo "Blender bundled idna: ${IDNA_VER}" && \
     case "${URLLIB3_VER}"  in 2.[6-9].*|2.[1-9][0-9].*|[3-9].*) ;; *) echo "urllib3 too old: ${URLLIB3_VER}";   exit 1 ;; esac && \
     case "${REQUESTS_VER}" in 2.33.*|2.3[4-9].*|2.[4-9][0-9].*|[3-9].*) ;; *) echo "requests too old: ${REQUESTS_VER}"; exit 1 ;; esac && \
-    case "${IDNA_VER}" in 3.1[5-9].*|3.[2-9][0-9].*|[4-9].*) ;; *) echo "idna too old: ${IDNA_VER}"; exit 1 ;; esac && \
+    case "${IDNA_VER}" in 3.1[5-9]|3.1[5-9].*|3.[2-9][0-9]|3.[2-9][0-9].*|[4-9]*) ;; *) echo "idna too old: ${IDNA_VER}"; exit 1 ;; esac && \
     \
     if ls "${SITE_PKGS}"/urllib3-2.4.*  >/dev/null 2>&1; then echo "ERROR: stale urllib3 2.4.x dist-info"; exit 1; fi && \
     if ls "${SITE_PKGS}"/requests-2.32.3* >/dev/null 2>&1; then echo "ERROR: stale requests 2.32.3 dist-info"; exit 1; fi && \

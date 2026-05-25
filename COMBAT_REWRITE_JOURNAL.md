@@ -846,6 +846,30 @@ Confirmed by reading wiki JSONs directly (not asking user):
 - Formula candidate: `damage = base_damage * (1 - min(1, miss_distance / magnitude_m))²` (inverse-square inside the AoE, zero outside).
 - OR true inverse-square: `damage = base_damage * (magnitude_m / max(magnitude_m, magnitude_m + miss_distance))²` — needs design discussion later.
 
+### Entry 5d — Distance mechanic + Phase-1 scope tightening (2026-05-24)
+
+**LOCKED**:
+- **Mines and Sentry-guns**: deferred to Phase-2. Phase-1 secondary types = rocket / missile / nuke only.
+- **Distance between combatants is a live state variable** in the tick sim, derived from primary weapon ranges.
+- **Range-gating**: a weapon firing event is only computed if `distance <= weapon.range_m`. Out-of-range = no shot, no accuracy roll, no damage.
+
+**Design implications now in scope**:
+- The sim needs a `current_distance_m` state value between the two combatants, updated each tick.
+- Primary weapon `range_m` from wiki (typically 1800–3000m) is the close-combat band.
+- Missile `range_m` is much longer (10000–11800m for wiki samples), so missiles can fire while primaries cannot — this is real, intended asymmetry.
+- Nukes have shorter `range_m` (Fireworks=6600m) but enormous `magnitude_m` AoE (10000m) — even a partial hit catches the opponent.
+
+**OPEN design questions for distance mechanic**:
+1. **Starting distance**: average of both players' max primary range? Max of the two? A fixed engagement distance (e.g. always start at 5000m)?
+2. **What changes distance over time**:
+   - Passive closure rate (combatants always closing toward optimal weapons range)?
+   - Driven by ship `speed` stat differential?
+   - Driven by booster activations (push distance back out to disengage)?
+   - Static (set at fight start, never changes) — simplest but flattens tactical depth?
+3. **Distance floor**: minimum engagement distance (e.g. ships can't fly through each other)?
+
+Will surface to user after Phase-1 design lock-in.
+
 ### Carries forward unchanged
 - Seed-JSON merge structure (#3) is still the next implementation step.
 - All Entry 4 locked decisions stand.

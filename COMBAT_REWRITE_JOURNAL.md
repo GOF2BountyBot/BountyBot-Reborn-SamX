@@ -971,7 +971,13 @@ A ship with a built-in cloak CAN still equip a separate cloak module; the equipp
 
 **Generalised rule (applies to all unique-equip types)**: the equip-priority pattern should generalise — if any ship gets a built-in `<TYPE>` in future, the same rule applies for that type (equipped wins over builtin). Implementation should be `for type in UNIQUE_EQUIP_TYPES: effective[type] = equipped[type] or builtin[type]`.
 
-**Open question for user**: does the built-in cloak occupy one of the ship's module slots (counts against `max_modules`), or is it free / off-slot? Need clarification — this affects whether an equipped cloak is still bound by the slot count.
+**LOCKED per user**: built-in cloak is **free / off-slot** (does NOT count against `max_modules`). Scimitar/Specter still get full 15/16 equippable slots, plus the U'tool runs underneath. An equipped cloak takes priority by the equip-priority rule.
+
+**`builtIn` attribute audit (researcher, 2026-05-24)**: confirmed DEAD.
+- 270 seed JSON files: 0 set `builtIn: true`, 218 set false, 52 omit.
+- Defined on `Item.built_in` (item.py:14), `Ship.built_in` (ship.py:16), `Criminal.built_in` (criminal.py:14).
+- Read sites: ZERO business-logic gates. Only cosmetic passthrough in `about.py` router + `aboutCog.py` embed display ("Built-in: Yes" branch that never fires).
+- Safe to ignore going forward — keep column in DB (deployed), stop populating in any new code, optionally strip the cosmetic API exposure later. Combat rewrite will NOT touch it.
 
 ### Carries forward unchanged (post-5h)
 - Seed-JSON merge structure (#3) is still the next implementation step.

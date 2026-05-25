@@ -815,11 +815,36 @@ User clarified several open questions and corrected my mis-derivations.
 
 ### New open questions
 
-- **Base accuracy source**: per-weapon (in wiki?), per-ship, or per-pilot (player skill / criminal tech-level)?
-- **Scanner → accuracy mapping**: linear bonus per tech-level, or per-scanner-named-bonus?
-- **Secondary classification source**: do our seed JSONs already categorize rocket / missile / nuke, or does this come from wiki only?
-- **Nuke miss-distance model**: what drives it?
+- ~~Base accuracy source~~ — **DEFERRED per user**. Will revisit later.
+- ~~Scanner → accuracy mapping~~ — **DEFERRED per user**.
+- ~~Weapon-type accuracy modifiers~~ — **DEFERRED per user; may be skipped entirely for simplicity**.
+- **Secondary classification source**: wiki already gives `weapon_subtype` for every secondary — see Entry 5c.
+- **Nuke miss-distance model**: what drives `miss_distance` for the inverse-square damage falloff?
 - **Booster accuracy-debuff magnitude** still open (carries from Entry 5).
+
+### Entry 5c — Wiki data inventory for accuracy / secondary system (2026-05-24)
+
+Confirmed by reading wiki JSONs directly (not asking user):
+
+**Scanner data available** (`module/telta_*`, `module/hiroto_*`):
+- All 4 scanners expose `time_to_lock_s`: Telta Quickscan=4.0, Telta Ecoscan=3.0, Hiroto ProScan=1.8, Hiroto UltraScan=1.8.
+- No direct "accuracy bonus" stat — accuracy effect must be derived from `time_to_lock_s` (lower = better lock).
+
+**Secondary subtypes available** (`secondary/*` — wiki `weapon_subtype` field):
+- `rocket` — `steerable: false`, has `range_m` + `projectile_speed_kmh`. Dumb-fire.
+- `missile` — `steerable: true`, has `range_m` + `projectile_speed_kmh`. Tracking.
+- `nuke` — has `magnitude_m` (AoE radius — Fireworks=10000m!), `damage` = direct-hit base.
+- `mine` — has `magnitude_m` (trigger radius) + `duration_s` (lifetime). Static deployment.
+- `sentry-gun` — has `dps` + `range_m`. Deployed auto-fire turret (Supernova DLC).
+
+**Implication**: user mentioned only rocket/missile/nuke. Mines and sentry-guns also exist as "secondaries" in the catalog. **Need user direction on whether Phase-1 supports mines and sentry-guns or skips them.** Likely skip for v1 (they have unique deployment semantics — mines wait for proximity, sentries deploy and persist), but flag.
+
+**Primary weapon data** — confirmed has `damage_per_shot`, `loading_speed_ms` (= fire rate), `dps`, `range_m`, `projectile_speed_kmh`, `weapon_subtype` (auto-cannon / laser / plasma / etc.). **No accuracy field** in wiki — must be derived or assigned by us.
+
+**Key insight for nuke inverse-square formula**:
+- `magnitude_m` (AoE radius) is already in the data — this is the falloff distance scale.
+- Formula candidate: `damage = base_damage * (1 - min(1, miss_distance / magnitude_m))²` (inverse-square inside the AoE, zero outside).
+- OR true inverse-square: `damage = base_damage * (magnitude_m / max(magnitude_m, magnitude_m + miss_distance))²` — needs design discussion later.
 
 ### Carries forward unchanged
 - Seed-JSON merge structure (#3) is still the next implementation step.

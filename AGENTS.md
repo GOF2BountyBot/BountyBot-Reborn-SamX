@@ -461,7 +461,7 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 
 ### Docker Access
 
-All commands require `sudo docker`. Containers:
+All commands require `sudo docker`. Containers (default `STACK_PREFIX=bountybot`):
 
 | Container | Port | Exec curl base |
 |-----------|------|----------------|
@@ -471,6 +471,8 @@ All commands require `sudo docker`. Containers:
 | `bountybot-db` | 5432 | `sudo docker exec bountybot-db psql -U <user> -d <db>` |
 
 Logs: `sudo docker logs bountybot-<service> --tail N 2>&1`
+
+> **Multi-instance**: container + network names are parameterized via `STACK_PREFIX` (default `bountybot`) and host ports via `HOST_DB_PORT` / `HOST_BOTCORE_PORT` / `HOST_GATEWAY_PORT` / `HOST_BLENDER_PORT`. To run a second stack side-by-side, set `COMPOSE_PROJECT_NAME=bountybot-dev`, `STACK_PREFIX=bountydev`, `BRIDGE_NAME=bountydev-br`, and shifted host ports in that checkout's `.env`. See `/proj/.env.example` for full guidance.
 
 ### Dev Discord Server
 

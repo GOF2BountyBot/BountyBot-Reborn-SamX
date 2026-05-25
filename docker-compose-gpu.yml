@@ -5,11 +5,11 @@
 # For CPU-only dev: use docker-compose.yml
 # For production (pre-built GHCR images): use docker-compose.prod-gpu.yml
 
-name: bountybot-stack
+name: ${COMPOSE_PROJECT_NAME:-bountybot-stack}
 services:
   db:
     image: postgres:18
-    container_name: bountybot-db
+    container_name: ${STACK_PREFIX:-bountybot}-db
     restart: unless-stopped
     networks:
       - botnetv2
@@ -30,17 +30,17 @@ services:
       retries: 20
       start_period: 30s
     ports:
-      - "5432:5432"
+      - "${HOST_DB_PORT:-5432}:5432"
 
   bot-core:
     build:
       context: ./
       dockerfile: ./services/bot-core/Dockerfile
-    container_name: bountybot-bot-core
+    container_name: ${STACK_PREFIX:-bountybot}-bot-core
     networks:
       - botnetv2
     ports:
-      - 8000:8000
+      - "${HOST_BOTCORE_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -64,11 +64,11 @@ services:
     build:
       context: ./
       dockerfile: ./services/discord-gateway/Dockerfile
-    container_name: bountybot-discord-gateway
+    container_name: ${STACK_PREFIX:-bountybot}-discord-gateway
     networks:
       - botnetv2
     ports:
-      - 7999:7999
+      - "${HOST_GATEWAY_PORT:-7999}:7999"
     depends_on:
       db:
         condition: service_healthy
@@ -90,7 +90,7 @@ services:
     build:
       context: ./
       dockerfile: ./services/blender-service/Dockerfile.gpu
-    container_name: bountybot-blender-service
+    container_name: ${STACK_PREFIX:-bountybot}-blender-service
     depends_on:
       db:
         condition: service_healthy
@@ -109,7 +109,7 @@ services:
     networks:
       - botnetv2
     ports:
-      - 8001:8001
+      - "${HOST_BLENDER_PORT:-8001}:8001"
     env_file:
       - path: ./.env
         required: false 
@@ -130,7 +130,7 @@ services:
 
 networks:
   botnetv2:
-    name: bountybot-net
+    name: ${STACK_PREFIX:-bountybot}-net
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: bountybot-br
+      com.docker.network.bridge.name: ${BRIDGE_NAME:-bountybot-br}

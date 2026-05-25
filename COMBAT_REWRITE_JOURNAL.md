@@ -903,7 +903,12 @@ Confirmed by reading wiki JSONs directly (not asking user):
 
 Wiki notes: "Thruster effect % is handling increase. handling_multiplier = 1 + effect_pct/100."
 
-**Mapping into combat (still open)**: thrusters change "handling" / "maneuverability". Candidates for the sim: incoming-primary-accuracy debuff for the defender, OR a tick-frequency dodge chance, OR a modifier to rocket-hit probability against the defender. **Will surface when user is ready.**
+**Mapping into combat (RESOLVED Entry 5g)**: thrusters boost the **equipping ship's outgoing primary-weapon accuracy when current_distance < 750m** (close-quarters). Above 750m, thrusters have no combat effect. Tighter turn radius = better tracking in dogfights.
+
+**Open sub-questions on thruster mapping**:
+- Bonus shape: binary (full bonus < 750m, none above) or scaled (more bonus the closer to 0m)?
+- effect_pct → accuracy-bonus mapping: direct (130% effect = +130% accuracy = capped at 1.0)? Curved? Capped?
+- Scope: applies to primaries only, or also turrets and rockets? (Rockets already have their own distance curve from Entry 5f — likely thrusters should not double-dip on rockets.)
 
 **LOCKED in this entry**:
 

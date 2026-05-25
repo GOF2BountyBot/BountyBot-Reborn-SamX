@@ -1,0 +1,43 @@
+{
+  "_name": "Dephase EMP",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Dephase_EMP",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Missile",
+    "Tech Level": "8",
+    "Damage": "120",
+    "EMP Damage": "100",
+    "Loading speed": "3000ms",
+    "Range": "11800m",
+    "Speed": "4250km/h",
+    "Price Range": "$238 -> $281"
+  },
+
+  "stats": {
+    "tech_level": 8,
+    "damage": 120,
+    "emp_damage": 100,
+    "loading_speed_ms": 3000,
+    "range_m": 11800,
+    "projectile_speed_kmh": 4250,
+    "weapon_subtype": "missile",
+    "steerable": true,
+    "price_range_min_credits": 238,
+    "price_range_max_credits": 281
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Homing missile with high both physical and EMP damage. Very long range."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Missile", "Tech level 8", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Stats from category table. Longest-range missile."
+}

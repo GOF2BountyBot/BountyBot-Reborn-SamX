@@ -1,0 +1,14 @@
+{
+  "_name": "Furious",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Furious",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "176", "Cargo hold": "108", "Primary weapons": "1", "Secondary weapons": "2", "Turrets": "1", "Equipment": "6", "Handling": "112", "Price": "$75,800", "Price (Android)": "$60,033"},
+  "stats": {"faction": "Terran", "armour": 176, "cargo": 108, "max_primaries": 1, "max_secondaries": 2, "max_turrets": 1, "max_modules": 6, "handling": 112, "price_credits": 75800, "price_credits_android": 60033},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Terran Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 60033},
+  "version_notes": "Stats from category table."
+}

@@ -1,0 +1,14 @@
+{
+  "_name": "Nemesis",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Nemesis_(ship)",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "235", "Cargo hold": "105", "Primary weapons": "4", "Secondary weapons": "1", "Turrets": "0", "Equipment": "14", "Handling": "95", "Price": "$6,800,000", "Price (Android)": "$3,400,000"},
+  "stats": {"faction": "Deep Science", "armour": 235, "cargo": 105, "max_primaries": 4, "max_secondaries": 1, "max_turrets": 0, "max_modules": 14, "handling": 95, "price_credits": 6800000, "price_credits_android": 3400000, "dlc": "Valkyrie", "integrated_khador_drive": true},
+  "in_game_description": "",
+  "mechanics_text": ["Deep Science top-tier ship. Valkyrie DLC. 14 equipment slots. Integrated Khador Drive."],
+  "wiki_categories": ["Ships", "Deep Science Ships", "GOF2", "Valkyrie"],
+  "gof2_hd_overrides": {"price_credits": 3400000},
+  "version_notes": "KNOWN SLUG QUIRK: URL is /wiki/Nemesis_(ship) because /wiki/Nemesis is a GoF1 weapon. Valkyrie DLC."
+}

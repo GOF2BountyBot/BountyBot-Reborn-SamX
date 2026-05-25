@@ -1,0 +1,44 @@
+{
+  "_name": "Sol EMP Mk II",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Sol_EMP_Mk_II",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "EMP Blaster",
+    "Tech Level": "5",
+    "EMP Damage": "5",
+    "Loading speed": "450ms",
+    "EMP Damage per second": "11.11",
+    "Range": "2000m",
+    "Speed": "3750km/h",
+    "Known Price Range": "$10,247 -> $12,517"
+  },
+
+  "stats": {
+    "tech_level": 5,
+    "damage_per_shot": 5,
+    "loading_speed_ms": 450,
+    "dps": 11.11,
+    "range_m": 2000,
+    "projectile_speed_kmh": 3750,
+    "weapon_subtype": "emp-blaster",
+    "emp_damage": true,
+    "price_range_min_credits": 10247,
+    "price_range_max_credits": 12517
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "EMP blasters do not damage shields or armor, and therefore cannot destroy a ship, but deal EMP damage to disable a ship momentarily.",
+    "Successor to Luna EMP Mk I, predecessor to Dia EMP Mk III."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "EMP Blaster", "Tech level 5", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "EMP damage only."
+}

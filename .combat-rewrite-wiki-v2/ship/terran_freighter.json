@@ -1,0 +1,35 @@
+{
+  "_name": "Terran Freighter",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Freighter",
+  "_shared_page": "Freighter",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Faction": "Terran",
+    "Type": "NPC-only Freighter"
+  },
+
+  "stats": {
+    "faction": "Terran",
+    "npc_only": true,
+    "ship_class": "freighter"
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Freighters are responsible for transporting goods between systems.",
+    "They are defenseless and require fighter escorts to defend against raiders and Pirates.",
+    "Terran freighters have designs similar to their ships with 4 engines on the sides and multiple antennas.",
+    "Terran freighters will only appear in Terran, Mido and Nivelian Systems.",
+    "The Terran Freighter features the word 'Cargo' on either side of the rear engine panels."
+  ],
+
+  "wiki_categories": ["Ships", "Terran Ships", "Freighters", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "NPC ship — not purchasable by player. Shares /wiki/Freighter page with other faction freighters. No infobox stats (not player ship)."
+}

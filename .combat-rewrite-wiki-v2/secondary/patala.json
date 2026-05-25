@@ -1,0 +1,41 @@
+{
+  "_name": "Patala",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Patala",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Cluster Missile",
+    "Tech Level": "9",
+    "Damage": "90",
+    "Loading speed": "3000ms",
+    "Range": "6900m",
+    "Speed": "2500km/h",
+    "Price Range": "$1,583 -> $1,623"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "damage": 90,
+    "loading_speed_ms": 3000,
+    "range_m": 6900,
+    "projectile_speed_kmh": 2500,
+    "weapon_subtype": "cluster-missile",
+    "kaamo_only": true,
+    "price_range_min_credits": 1583,
+    "price_range_max_credits": 1623
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Kaamo Club exclusive cluster missile. Highest damage cluster missile."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Cluster Missile", "Tech level 9", "GOF2", "Kaamo Club"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Kaamo Club exclusive. Stats from category table."
+}

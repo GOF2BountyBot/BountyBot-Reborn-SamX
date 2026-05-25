@@ -1,0 +1,14 @@
+{
+  "_name": "Kinzer RS",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Kinzer_RS",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "420", "Cargo hold": "65", "Primary weapons": "4", "Secondary weapons": "4", "Turrets": "0", "Equipment": "15", "Handling": "125", "Price": "$8,930,000", "Price (Android)": "$4,465,000", "Faction": "Nivelian"},
+  "stats": {"faction": "Nivelian", "armour": 420, "cargo": 65, "max_primaries": 4, "max_secondaries": 4, "max_turrets": 0, "max_modules": 15, "handling": 125, "price_credits": 8930000, "price_credits_android": 4465000, "kaamo_only": true},
+  "in_game_description": "",
+  "mechanics_text": ["Kaamo Club exclusive. Most expensive Kaamo ship. 4+4 weapons, 15 equipment slots."],
+  "wiki_categories": ["Ships", "Nivelian Ships", "Kaamo Club Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 4465000},
+  "version_notes": "Kaamo Club exclusive. Most expensive Kaamo club ship."
+}

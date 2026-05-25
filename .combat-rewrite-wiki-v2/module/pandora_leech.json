@@ -1,0 +1,14 @@
+{
+  "_name": "Pandora Leech",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Pandora_Leech",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Transfusion Beam", "Tech Level": "8", "Range": "1000m", "Effect": "100%", "Count": "3", "Known Price Range": "$77,439 -> $80,537"},
+  "stats": {"tech_level": 8, "range_m": 1000, "heal_per_pulse": 100.0, "pulse_count": 3, "dlc": "Supernova", "price_range_min_credits": 77439, "price_range_max_credits": 80537},
+  "in_game_description": "",
+  "mechanics_text": ["Higher-tier transfusion beam — 100% drain, 3 pulses, but shorter range (1000m). Supernova DLC."],
+  "wiki_categories": ["Equipment", "Transfusion Beams", "Tech level 8", "GOF2", "Supernova"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Supernova DLC. Shorter range but more powerful drain. Stats from category table."
+}

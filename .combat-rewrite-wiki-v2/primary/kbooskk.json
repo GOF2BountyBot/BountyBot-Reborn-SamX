@@ -1,0 +1,41 @@
+{
+  "_name": "K'booskk",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/K%27booskk",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Blaster",
+    "Tech Level": "2",
+    "Damage": "8",
+    "Loading speed": "530ms",
+    "Damage per second": "15.90",
+    "Range": "1400m",
+    "Speed": "3500km/h",
+    "Known Price Range": "$13,862 -> $16,743"
+  },
+
+  "stats": {
+    "tech_level": 2,
+    "damage_per_shot": 8,
+    "loading_speed_ms": 530,
+    "dps": 15.9,
+    "range_m": 1400,
+    "projectile_speed_kmh": 3500,
+    "weapon_subtype": "blaster",
+    "faction": "Vossk",
+    "price_range_min_credits": 13862,
+    "price_range_max_credits": 16743
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [],
+
+  "wiki_categories": ["Primary Weapons", "Blaster", "Tech level 2", "GOF2", "Vossk Weapons"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Stats from category table. Predecessor to Sh'gaal."
+}

@@ -1,0 +1,14 @@
+{
+  "_name": "K'yuul",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/K%27yuul",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Mining Drill", "Tech Level": "5", "Handling": "80%", "Yield": "40%", "Known Price Range": "$29,993 -> $37,743"},
+  "stats": {"tech_level": 5, "drill_handling_pct": 80, "drill_yield_pct": 40, "price_range_min_credits": 29993, "price_range_max_credits": 37743, "faction": "Vossk"},
+  "in_game_description": "",
+  "mechanics_text": ["Vossk mining drill — high handling (80%) but lower yield (40%)."],
+  "wiki_categories": ["Equipment", "Mining Drills", "Tech level 5", "GOF2", "Vossk"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Stats from category table."
+}

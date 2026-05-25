@@ -1,0 +1,41 @@
+{
+  "_name": "Berger Converge IV",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Berger_Converge_IV",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Laser",
+    "Tech Level": "8",
+    "Damage": "28",
+    "Loading speed": "850ms",
+    "Damage per second": "32.94",
+    "Range": "3000m",
+    "Speed": "5500km/h",
+    "Known Price Range": "$78,134 -> $88,969"
+  },
+
+  "stats": {
+    "tech_level": 8,
+    "damage_per_shot": 28,
+    "loading_speed_ms": 850,
+    "dps": 32.94,
+    "range_m": 3000,
+    "projectile_speed_kmh": 5500,
+    "weapon_subtype": "laser",
+    "faction": "Terran",
+    "price_range_min_credits": 78134,
+    "price_range_max_credits": 88969
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [],
+
+  "wiki_categories": ["Primary Weapons", "Laser", "Tech level 8", "GOF2", "Terran Weapons"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Stats from category table."
+}

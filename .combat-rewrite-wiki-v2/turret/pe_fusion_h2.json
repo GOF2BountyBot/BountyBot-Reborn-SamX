@@ -1,0 +1,44 @@
+{
+  "_name": "PE Fusion H2",
+  "_category": "turret",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/PE_Fusion_H2",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Plasma Collector",
+    "Tech Level": "9",
+    "Handling": "200",
+    "Speed": "1500km/h",
+    "Magnitude": "100%",
+    "Range": "6000m",
+    "Known Price Range": "$607,889 -> $631,720"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "handling": 200,
+    "projectile_speed_kmh": 1500,
+    "effect_pct": 100.0,
+    "range_m": 6000,
+    "turret_autonomous": false,
+    "weapon_subtype": "plasma-collector",
+    "dlc": "Supernova",
+    "kaamo_only": true,
+    "price_range_min_credits": 607889,
+    "price_range_max_credits": 631720
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Best plasma collector — 100% efficiency, longest range. Kaamo Club exclusive.",
+    "Supernova DLC."
+  ],
+
+  "wiki_categories": ["Turrets", "Plasma Collector", "Tech level 9", "GOF2", "Supernova", "Kaamo Club"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Supernova DLC and Kaamo Club exclusive. 100% plasma collection. Stats from category table."
+}

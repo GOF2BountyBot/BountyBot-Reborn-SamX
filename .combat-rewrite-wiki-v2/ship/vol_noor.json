@@ -1,0 +1,14 @@
+{
+  "_name": "Vol Noor",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Vol_Noor",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "165", "Cargo hold": "75", "Primary weapons": "2", "Secondary weapons": "2", "Turrets": "0", "Equipment": "7", "Handling": "110", "Price": "$105,000", "Price (Android)": "$84,000"},
+  "stats": {"faction": "Grey", "armour": 165, "cargo": 75, "max_primaries": 2, "max_secondaries": 2, "max_turrets": 0, "max_modules": 7, "handling": 110, "price_credits": 105000, "price_credits_android": 84000},
+  "in_game_description": "",
+  "mechanics_text": ["Grey faction ship. Only Grey ship in the game."],
+  "wiki_categories": ["Ships", "Grey Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 84000},
+  "version_notes": "Only Grey faction ship. Stats from category table."
+}

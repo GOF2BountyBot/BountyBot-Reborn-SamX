@@ -1,0 +1,14 @@
+{
+  "_name": "Scimitar",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Scimitar",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "400", "Cargo hold": "40", "Primary weapons": "3", "Secondary weapons": "2", "Turrets": "0", "Equipment": "15", "Handling": "104", "Price": "$5,800,000", "Price (Android)": "$3,314,286"},
+  "stats": {"faction": "Nivelian", "armour": 400, "cargo": 40, "max_primaries": 3, "max_secondaries": 2, "max_turrets": 0, "max_modules": 15, "handling": 104, "price_credits": 5800000, "price_credits_android": 3314286, "dlc": "Supernova"},
+  "in_game_description": "",
+  "mechanics_text": ["Supernova DLC. Pre-installed with U'tool cloak."],
+  "wiki_categories": ["Ships", "Nivelian Ships", "GOF2", "Supernova"],
+  "gof2_hd_overrides": {"price_credits": 3314286},
+  "version_notes": "Supernova DLC."
+}

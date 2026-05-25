@@ -1,0 +1,48 @@
+{
+  "_name": "Nirai Impulse EX 1",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Nirai_Impulse_EX_1",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Laser",
+    "Tech level": "1",
+    "Damage": "3",
+    "Loading speed": "400ms",
+    "Damage per second": "7.50",
+    "Range": "2700m",
+    "Speed": "5000km/h",
+    "Known Price Range": "1,907$ (Buntta) -> 2,500$ (Wolf-Reiser)",
+    "Loma Price": "2,500$"
+  },
+
+  "stats": {
+    "tech_level": 1,
+    "damage_per_shot": 3,
+    "loading_speed_ms": 400,
+    "dps": 7.5,
+    "range_m": 2700,
+    "projectile_speed_kmh": 5000,
+    "weapon_subtype": "laser",
+    "price_range_min_credits": 1907,
+    "price_range_max_credits": 2500,
+    "price_range_min_station": "Buntta",
+    "price_range_max_station": "Wolf-Reiser",
+    "loma_price_credits": 2500
+  },
+
+  "in_game_description": "The Nirai company once specialized in low cost, mass-market productions. Unfortunately, there was an incident in which an entire batch of Laser FX series exploded simultaneously in various locations around the galaxy, due to a date error in the on-board computer software. After the hasty closure of all the Nirai factories in Festus and Dima, no new weapons were manufactured. The lasers of the EX series are a living relic.",
+
+  "mechanics_text": [
+    "The date error referred to in the description is a reference to the Y2K bug.",
+    "This is the only weapon Terrans use.",
+    "You start with this when you first go into Var Hastra's hanger, along with a Micro Gun MK I."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Laser", "Tech level 1", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Starting weapon in the game. Price listed at wiki as Known Price Range."
+}

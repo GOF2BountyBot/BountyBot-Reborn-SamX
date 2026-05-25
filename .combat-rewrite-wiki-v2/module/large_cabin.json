@@ -1,0 +1,14 @@
+{
+  "_name": "Large Cabin",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Large_Cabin",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Cabin", "Tech Level": "7", "Cabin Size": "10", "Known Price Range": "$12,347 -> $14,190"},
+  "stats": {"tech_level": 7, "cabin_size": 10, "price_range_min_credits": 12347, "price_range_max_credits": 14190},
+  "in_game_description": "",
+  "mechanics_text": ["Largest cabin — capacity 10 passengers. For passenger missions."],
+  "wiki_categories": ["Equipment", "Cabins", "Tech level 7", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Stats from category table."
+}

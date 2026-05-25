@@ -1,0 +1,14 @@
+{
+  "_name": "Dark Angel",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Dark_Angel",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "350", "Cargo hold": "85", "Primary weapons": "4", "Secondary weapons": "2", "Turrets": "1", "Equipment": "14", "Handling": "125", "Price": "$7,227,000", "Price (Android)": "$3,613,500"},
+  "stats": {"faction": "Terran", "armour": 350, "cargo": 85, "max_primaries": 4, "max_secondaries": 2, "max_turrets": 1, "max_modules": 14, "handling": 125, "price_credits": 7227000, "price_credits_android": 3613500},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Terran Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 3613500},
+  "version_notes": "Stats from category table. Top-tier Terran ship."
+}

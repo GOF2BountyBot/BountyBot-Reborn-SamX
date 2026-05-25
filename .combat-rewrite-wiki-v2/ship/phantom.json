@@ -1,0 +1,14 @@
+{
+  "_name": "Phantom",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Phantom",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "200", "Cargo hold": "52", "Primary weapons": "2", "Secondary weapons": "1", "Turrets": "0", "Equipment": "9", "Handling": "150", "Price": "$1,450,000", "Price (Android)": "$966,667"},
+  "stats": {"faction": "Terran", "armour": 200, "cargo": 52, "max_primaries": 2, "max_secondaries": 1, "max_turrets": 0, "max_modules": 9, "handling": 150, "price_credits": 1450000, "price_credits_android": 966667},
+  "in_game_description": "",
+  "mechanics_text": ["Built by Terrans but only used by Pirates.", "High handling (150) and 9 equipment slots."],
+  "wiki_categories": ["Ships", "Terran Ships", "Pirate Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 966667},
+  "version_notes": "Terran-built but Pirate-used ship. Stats from category table."
+}

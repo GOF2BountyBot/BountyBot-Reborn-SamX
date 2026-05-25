@@ -1,0 +1,43 @@
+{
+  "_name": "EMP Rocket Mk I",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/EMP_Rocket_Mk_I",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Rocket",
+    "Tech Level": "6",
+    "Damage": "10",
+    "EMP Damage": "45",
+    "Loading speed": "1000ms",
+    "Range": "1300m",
+    "Speed": "4500km/h",
+    "Price Range": "$48 -> $59"
+  },
+
+  "stats": {
+    "tech_level": 6,
+    "damage": 10,
+    "emp_damage": 45,
+    "loading_speed_ms": 1000,
+    "range_m": 1300,
+    "projectile_speed_kmh": 4500,
+    "weapon_subtype": "rocket",
+    "steerable": false,
+    "price_range_min_credits": 48,
+    "price_range_max_credits": 59
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "EMP-focused rocket — low physical damage but significant EMP damage to disable ships."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Rocket", "Tech level 6", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Primarily EMP damage. Stats from category table."
+}

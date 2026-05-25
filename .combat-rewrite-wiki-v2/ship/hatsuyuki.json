@@ -1,0 +1,14 @@
+{
+  "_name": "Hatsuyuki",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Hatsuyuki",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "115", "Cargo hold": "28", "Primary weapons": "2", "Secondary weapons": "2", "Turrets": "0", "Equipment": "8", "Handling": "145", "Price": "$171,900", "Price (Android)": "$137,520"},
+  "stats": {"faction": "Nivelian", "armour": 115, "cargo": 28, "max_primaries": 2, "max_secondaries": 2, "max_turrets": 0, "max_modules": 8, "handling": 145, "price_credits": 171900, "price_credits_android": 137520},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Nivelian Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 137520},
+  "version_notes": "Stats from category table."
+}

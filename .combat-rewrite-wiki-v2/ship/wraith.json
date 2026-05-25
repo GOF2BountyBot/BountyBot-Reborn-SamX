@@ -1,0 +1,14 @@
+{
+  "_name": "Wraith",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Wraith",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "180", "Cargo hold": "65", "Primary weapons": "4", "Secondary weapons": "2", "Turrets": "0", "Equipment": "9", "Handling": "140", "Price": "$1,750,000", "Price (Android)": "$1,166,667"},
+  "stats": {"faction": "Nivelian", "armour": 180, "cargo": 65, "max_primaries": 4, "max_secondaries": 2, "max_turrets": 0, "max_modules": 9, "handling": 140, "price_credits": 1750000, "price_credits_android": 1166667},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Nivelian Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 1166667},
+  "version_notes": "Stats from category table."
+}

@@ -1,0 +1,41 @@
+{
+  "_name": "Disruptor Laser",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Disruptor_Laser",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Laser",
+    "Tech Level": "9",
+    "Damage": "18",
+    "Loading speed": "300ms",
+    "Damage per second": "60.00",
+    "Range": "3800m",
+    "Speed": "7000km/h",
+    "Known Price Range": "$313,257 -> $387,090"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "damage_per_shot": 18,
+    "loading_speed_ms": 300,
+    "dps": 60.0,
+    "range_m": 3800,
+    "projectile_speed_kmh": 7000,
+    "weapon_subtype": "laser",
+    "dlc": "Valkyrie",
+    "price_range_min_credits": 313257,
+    "price_range_max_credits": 387090
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [],
+
+  "wiki_categories": ["Primary Weapons", "Laser", "Tech level 9", "GOF2", "Valkyrie"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Valkyrie DLC weapon. Stats from category table."
+}

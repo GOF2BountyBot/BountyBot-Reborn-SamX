@@ -1,0 +1,43 @@
+{
+  "_name": "Micro Gun MK I",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Micro_Gun_MK_I",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Auto-cannon",
+    "Tech Level": "1",
+    "Damage": "2",
+    "Loading speed": "220ms",
+    "Damage per second": "9.09",
+    "Range": "1300m",
+    "Speed": "4500km/h",
+    "Known Price Range": "$2,168 -> $2,577"
+  },
+
+  "stats": {
+    "tech_level": 1,
+    "damage_per_shot": 2,
+    "loading_speed_ms": 220,
+    "dps": 9.09,
+    "range_m": 1300,
+    "projectile_speed_kmh": 4500,
+    "weapon_subtype": "auto-cannon",
+    "price_range_min_credits": 2168,
+    "price_range_max_credits": 2577
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Auto-cannons are similar to machine guns, with high rates of fire but low projectile damage. Their recoil can cause a bit of projectile spread.",
+    "Starting weapon available in Var Hastra, along with Nirai Impulse EX 1."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Auto-Cannon", "Tech level 1", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "DPS listed as 9.09 on wiki category page. DB had 9.09 (rounded from 9.090...). Wiki is consistent."
+}

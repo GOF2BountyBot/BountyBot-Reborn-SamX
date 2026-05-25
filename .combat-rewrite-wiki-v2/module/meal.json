@@ -1,0 +1,38 @@
+{
+  "_name": "Me'al",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Me%27al",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Booster",
+    "Tech Level": "7",
+    "Effect": "200%",
+    "Loading speed": "16000ms",
+    "Boost duration": "6000ms",
+    "Known Price Range": "$37,527 -> $46,897"
+  },
+
+  "stats": {
+    "tech_level": 7,
+    "effect_pct": 200.0,
+    "effect_multiplier": 3.0,
+    "loading_speed_ms": 16000,
+    "duration_ms": 6000,
+    "price_range_min_credits": 37527,
+    "price_range_max_credits": 46897
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "200% speed boost for 6000ms. Recharge 16000ms. Vossk booster."
+  ],
+
+  "wiki_categories": ["Equipment", "Boosters", "Tech level 7", "GOF2", "Vossk"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Stats from category table."
+}

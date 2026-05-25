@@ -1,0 +1,14 @@
+{
+  "_name": "Teneta R.E.D.",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Teneta_R.E.D.",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "545", "Cargo hold": "70", "Primary weapons": "4", "Secondary weapons": "2", "Turrets": "1", "Equipment": "13", "Handling": "117", "Price": "$7,610,000", "Price (Android)": "$3,805,000", "Faction": "Terran"},
+  "stats": {"faction": "Terran", "armour": 545, "cargo": 70, "max_primaries": 4, "max_secondaries": 2, "max_turrets": 1, "max_modules": 13, "handling": 117, "price_credits": 7610000, "price_credits_android": 3805000, "kaamo_only": true},
+  "in_game_description": "",
+  "mechanics_text": ["Kaamo Club exclusive upgraded Teneta. Highest armor among standard Kaamo ships (545)."],
+  "wiki_categories": ["Ships", "Terran Ships", "Kaamo Club Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 3805000},
+  "version_notes": "Kaamo Club exclusive."
+}

@@ -1,0 +1,15 @@
+{
+  "_name": "Nivelian Freighter",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Freighter",
+  "_shared_page": "Freighter",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Faction": "Nivelian", "Type": "NPC-only Freighter"},
+  "stats": {"faction": "Nivelian", "npc_only": true, "ship_class": "freighter"},
+  "in_game_description": "",
+  "mechanics_text": ["Nivelian freighters have unique bridge placement at the back instead of front.", "Engines in the back instead of the sides. Resembles real-life cargo ships."],
+  "wiki_categories": ["Ships", "Nivelian Ships", "Freighters", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "NPC-only. Shares /wiki/Freighter page."
+}

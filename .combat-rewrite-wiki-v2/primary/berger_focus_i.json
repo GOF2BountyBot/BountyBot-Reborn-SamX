@@ -1,0 +1,45 @@
+{
+  "_name": "Berger Focus I",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Berger_Focus_I",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Laser",
+    "Tech Level": "5",
+    "Damage": "16",
+    "Loading speed": "900ms",
+    "Damage per second": "17.77",
+    "Range": "3300m",
+    "Speed": "5500km/h",
+    "Known Price Range": "$18,233 (Buntta) -> $22,816 (Wolf-Reiser)",
+    "Loma Price": "$22,994"
+  },
+
+  "stats": {
+    "tech_level": 5,
+    "damage_per_shot": 16,
+    "loading_speed_ms": 900,
+    "dps": 17.77,
+    "range_m": 3300,
+    "projectile_speed_kmh": 5500,
+    "weapon_subtype": "laser",
+    "faction": "Terran",
+    "price_range_min_credits": 18233,
+    "price_range_max_credits": 22816,
+    "price_range_min_station": "Buntta",
+    "price_range_max_station": "Wolf-Reiser",
+    "loma_price_credits": 22994
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [],
+
+  "wiki_categories": ["Primary Weapons", "Laser", "Tech level 5", "GOF2", "Terran Weapons"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Loma Price listed separately in infobox ($22,994). Stats confirmed from individual page."
+}

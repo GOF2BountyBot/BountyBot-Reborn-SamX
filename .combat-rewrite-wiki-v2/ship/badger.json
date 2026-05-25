@@ -1,0 +1,14 @@
+{
+  "_name": "Badger",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Badger",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "135", "Cargo hold": "55", "Primary weapons": "2", "Secondary weapons": "2", "Turrets": "0", "Equipment": "5", "Handling": "112", "Price": "$38,709", "Price (Android)": "$38,709"},
+  "stats": {"faction": "Midorian", "armour": 135, "cargo": 55, "max_primaries": 2, "max_secondaries": 2, "max_turrets": 0, "max_modules": 5, "handling": 112, "price_credits": 38709, "price_credits_android": 38709},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Midorian Ships", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Same price iOS/Android."
+}

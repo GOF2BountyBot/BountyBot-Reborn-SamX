@@ -1,0 +1,41 @@
+{
+  "_name": "Garuda-IV",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Garuda-IV",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Cluster Missile",
+    "Tech Level": "9",
+    "Damage": "75",
+    "Loading speed": "3000ms",
+    "Range": "6300m",
+    "Speed": "2250km/h",
+    "Price Range": "$765 -> $795"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "damage": 75,
+    "loading_speed_ms": 3000,
+    "range_m": 6300,
+    "projectile_speed_kmh": 2250,
+    "weapon_subtype": "cluster-missile",
+    "dlc": "Supernova",
+    "price_range_min_credits": 765,
+    "price_range_max_credits": 795
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Cluster missile — spiraling tracking. Supernova DLC."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Cluster Missile", "Tech level 9", "GOF2", "Supernova"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Supernova DLC. Stats from category table."
+}

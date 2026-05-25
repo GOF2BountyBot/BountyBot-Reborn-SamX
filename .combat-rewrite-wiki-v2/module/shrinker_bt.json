@@ -1,0 +1,14 @@
+{
+  "_name": "Shrinker BT",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Shrinker_BT",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Cargo Compressor", "Tech Level": "7", "Effect": "75%", "Known Price Range": "$23,689 -> $28,571"},
+  "stats": {"tech_level": 7, "effect_pct": 75.0, "price_range_min_credits": 23689, "price_range_max_credits": 28571},
+  "in_game_description": "",
+  "mechanics_text": ["Increases cargo hold by 75%."],
+  "wiki_categories": ["Equipment", "Compressors", "Tech level 7", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Stats from category table."
+}

@@ -1,0 +1,14 @@
+{
+  "_name": "S'Kanarr",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/S%27Kanarr",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "315", "Cargo hold": "150", "Primary weapons": "4", "Secondary weapons": "2", "Turrets": "1", "Equipment": "11", "Handling": "70", "Price": "$7,250,000", "Price (Android)": "$7,250,000"},
+  "stats": {"faction": "Vossk", "armour": 315, "cargo": 150, "max_primaries": 4, "max_secondaries": 2, "max_turrets": 1, "max_modules": 11, "handling": 70, "price_credits": 7250000, "price_credits_android": 7250000, "dlc": "Valkyrie"},
+  "in_game_description": "",
+  "mechanics_text": ["Valkyrie DLC top-tier Vossk ship. Same price iOS and Android ($7,250,000)."],
+  "wiki_categories": ["Ships", "Vossk Ships", "GOF2", "Valkyrie"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Valkyrie DLC. Same price on both platforms."
+}

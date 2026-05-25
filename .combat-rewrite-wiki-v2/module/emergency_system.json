@@ -1,0 +1,41 @@
+{
+  "_name": "Emergency System",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Emergency_System",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Emergency System",
+    "Tech Level": "6",
+    "Effect": "10000ms",
+    "Known Price Range": "6,860$ (Suteo) -> 8,160$ (Wolf-Reiser)"
+  },
+
+  "stats": {
+    "tech_level": 6,
+    "duration_ms": 10000,
+    "dlc": "Valkyrie",
+    "price_range_min_credits": 6860,
+    "price_range_max_credits": 8160,
+    "price_range_min_station": "Suteo",
+    "price_range_max_station": "Wolf-Reiser",
+    "consumable": true
+  },
+
+  "in_game_description": "This Emergency system creates a temporary impenetrable shield around the ship as soon as it reaches a critical level of damage. After the activation, the module becomes unusable and has to be bought again. The Galactic Tourist Agency is considering the introduction of a law that obligates all cruise ship companies to install these on their vessels.",
+
+  "mechanics_text": [
+    "Creates a temporary impenetrable shield for 10000ms (10 seconds) when ship reaches critical damage.",
+    "After activation, the module is consumed and must be repurchased.",
+    "Cannot use the Khador Drive when Emergency System is active, but can still cloak.",
+    "Only available with the Valkyrie add-on.",
+    "Required for the Grave Riser orange medal (get 5 kills while Emergency System is active)."
+  ],
+
+  "wiki_categories": ["Equipment", "Emergency Systems", "Tech level 6", "GOF2", "Valkyrie"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "CRITICAL: Effect 10000ms is the DURATION of the emergency shield in milliseconds (10 seconds). This is NOT a multiplier or percentage. Previous parser bug interpreted this as effect_multiplier: 10000.0 — INCORRECT. Consumable module."
+}

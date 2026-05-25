@@ -1,0 +1,45 @@
+{
+  "_name": "V'skorr",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/V%27skorr",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Laser",
+    "Tech Level": "6",
+    "Damage": "7",
+    "Loading speed": "500ms",
+    "Damage per second": "14.0",
+    "Range": "2700m",
+    "Speed": "5000km/h",
+    "Known Price Range": "8,104$ (Pescal Inartu) -> 9,528$ (Eanya)"
+  },
+
+  "stats": {
+    "tech_level": 6,
+    "damage_per_shot": 7,
+    "loading_speed_ms": 500,
+    "dps": 14.0,
+    "range_m": 2700,
+    "projectile_speed_kmh": 5000,
+    "weapon_subtype": "laser",
+    "faction": "Vossk",
+    "price_range_min_credits": 8104,
+    "price_range_max_credits": 9528,
+    "price_range_min_station": "Pescal Inartu",
+    "price_range_max_station": "Eanya"
+  },
+
+  "in_game_description": "The V'skorr is the standard laser weapon of the Vossk Empire. It is manufactured in huge numbers and exported everywhere. A cheap but effective weapon.",
+
+  "mechanics_text": [
+    "The V'skorr laser is the predecessor of the Sh'koom laser."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Laser", "Tech level 6", "GOF2", "Vossk Weapons"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "NEW item — not in the original catalog of 40 primary weapons. Vossk faction weapon, predecessor to Sh'koom."
+}

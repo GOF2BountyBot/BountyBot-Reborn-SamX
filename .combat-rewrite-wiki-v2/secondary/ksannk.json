@@ -1,0 +1,44 @@
+{
+  "_name": "Ksann'k",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Ksann%27k",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Mine",
+    "Tech Level": "3",
+    "Damage": "700",
+    "EMP Damage": "0",
+    "Loading speed": "4000ms",
+    "Effect": "60 s",
+    "Magnitude": "2500m",
+    "Price Range": "$1,427 -> $1,574"
+  },
+
+  "stats": {
+    "tech_level": 3,
+    "damage": 700,
+    "emp_damage": 0,
+    "loading_speed_ms": 4000,
+    "duration_s": 60,
+    "magnitude_m": 2500,
+    "weapon_subtype": "mine",
+    "dlc": "Valkyrie",
+    "price_range_min_credits": 1427,
+    "price_range_max_credits": 1574
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Mine with large proximity radius (2500m) and high damage. 60 second lifetime.",
+    "Valkyrie DLC."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Mine", "Tech level 3", "GOF2", "Valkyrie"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Valkyrie DLC mine. High damage mine with 2500m trigger radius."
+}

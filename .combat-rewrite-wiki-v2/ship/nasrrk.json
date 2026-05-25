@@ -1,0 +1,14 @@
+{
+  "_name": "Na'Srrk",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Na%27srrk",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "280", "Cargo hold": "70", "Primary weapons": "4", "Secondary weapons": "4", "Turrets": "0", "Equipment": "12", "Handling": "145", "Price": "$5,400,000", "Price (Android)": "$3,085,714"},
+  "stats": {"faction": "Vossk", "armour": 280, "cargo": 70, "max_primaries": 4, "max_secondaries": 4, "max_turrets": 0, "max_modules": 12, "handling": 145, "price_credits": 5400000, "price_credits_android": 3085714, "dlc": "Supernova"},
+  "in_game_description": "",
+  "mechanics_text": ["Supernova DLC Vossk ship. High handling (145) and 4+4 weapons."],
+  "wiki_categories": ["Ships", "Vossk Ships", "GOF2", "Supernova"],
+  "gof2_hd_overrides": {"price_credits": 3085714},
+  "version_notes": "Supernova DLC."
+}

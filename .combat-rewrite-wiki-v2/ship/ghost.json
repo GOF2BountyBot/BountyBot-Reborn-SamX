@@ -1,0 +1,14 @@
+{
+  "_name": "Ghost",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Ghost",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "530", "Cargo hold": "50", "Primary weapons": "4", "Secondary weapons": "2", "Turrets": "0", "Equipment": "14", "Handling": "135", "Price": "$6,000,000", "Price (Android)": "$3,333,333"},
+  "stats": {"faction": "Nivelian", "armour": 530, "cargo": 50, "max_primaries": 4, "max_secondaries": 2, "max_turrets": 0, "max_modules": 14, "handling": 135, "price_credits": 6000000, "price_credits_android": 3333333},
+  "in_game_description": "",
+  "mechanics_text": ["Very high armor (530) for a non-DLC ship."],
+  "wiki_categories": ["Ships", "Nivelian Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 3333333},
+  "version_notes": "Stats from category table. High armor Nivelian ship."
+}

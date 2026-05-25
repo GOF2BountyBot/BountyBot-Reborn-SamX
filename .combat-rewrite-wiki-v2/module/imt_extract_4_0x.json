@@ -1,0 +1,14 @@
+{
+  "_name": "IMT Extract 4.0X",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/IMT_Extract\ufeff_4.0X",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Mining Drill", "Tech Level": "7", "Handling": "70%", "Yield": "80%", "Known Price Range": "$63,931 -> $73,093"},
+  "stats": {"tech_level": 7, "drill_handling_pct": 70, "drill_yield_pct": 80, "price_range_min_credits": 63931, "price_range_max_credits": 73093},
+  "in_game_description": "",
+  "mechanics_text": ["High-yield mining drill (80%) with good handling (70%)."],
+  "wiki_categories": ["Equipment", "Mining Drills", "Tech level 7", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "URL contains BOM character (\\uFEFF) before '4.0X': 'IMT_Extract\\uFEFF_4.0X'. Wiki slug quirk — URL is 'IMT_Extract﻿_4.0X'. Known issue from task description."
+}

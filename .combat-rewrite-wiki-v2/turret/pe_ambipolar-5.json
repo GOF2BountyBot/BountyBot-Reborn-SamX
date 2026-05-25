@@ -1,0 +1,43 @@
+{
+  "_name": "PE Ambipolar-5",
+  "_category": "turret",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/PE_Ambipolar-5",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Plasma Collector",
+    "Tech Level": "9",
+    "Handling": "150",
+    "Speed": "1400km/h",
+    "Magnitude": "80%",
+    "Range": "5000m",
+    "Known Price Range": "$110,954 -> $115,169"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "handling": 150,
+    "projectile_speed_kmh": 1400,
+    "effect_pct": 80.0,
+    "range_m": 5000,
+    "turret_autonomous": false,
+    "weapon_subtype": "plasma-collector",
+    "dlc": "Supernova",
+    "price_range_min_credits": 110954,
+    "price_range_max_credits": 115169
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Upgraded plasma collector with longer range (5000m) and better handling.",
+    "Supernova DLC."
+  ],
+
+  "wiki_categories": ["Turrets", "Plasma Collector", "Tech level 9", "GOF2", "Supernova"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Supernova DLC. Stats from category table."
+}

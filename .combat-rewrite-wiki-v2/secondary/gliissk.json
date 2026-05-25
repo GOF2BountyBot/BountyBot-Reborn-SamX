@@ -1,0 +1,44 @@
+{
+  "_name": "G'liissk",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/G%27liissk",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Rocket",
+    "Tech Level": "1",
+    "Damage": "60",
+    "EMP Damage": "0",
+    "Loading speed": "1200ms",
+    "Range": "1000m",
+    "Speed": "3000km/h",
+    "Price Range": "$19 -> $23"
+  },
+
+  "stats": {
+    "tech_level": 1,
+    "damage": 60,
+    "emp_damage": 0,
+    "loading_speed_ms": 1200,
+    "range_m": 1000,
+    "projectile_speed_kmh": 3000,
+    "weapon_subtype": "rocket",
+    "steerable": false,
+    "price_range_min_credits": 19,
+    "price_range_max_credits": 23
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Rockets are fast and cheap, but do not have much range and cannot be guided.",
+    "All rockets look the same after fired."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Rocket", "Tech level 1", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Price per unit (secondary weapons are consumables). Cheapest secondary weapon."
+}

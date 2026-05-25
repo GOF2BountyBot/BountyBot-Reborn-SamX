@@ -1,0 +1,14 @@
+{
+  "_name": "Gator Custom",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Gator_Custom",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "335", "Cargo hold": "320", "Primary weapons": "4", "Secondary weapons": "2", "Turrets": "0", "Equipment": "12", "Handling": "95", "Price": "$5,148,000", "Price (Android)": "$2,941,714"},
+  "stats": {"faction": "Vossk", "armour": 335, "cargo": 320, "max_primaries": 4, "max_secondaries": 2, "max_turrets": 0, "max_modules": 12, "handling": 95, "price_credits": 5148000, "price_credits_android": 2941714, "dlc": "Supernova"},
+  "in_game_description": "",
+  "mechanics_text": ["Most Wanted ship. Supernova DLC. Massive cargo (320)."],
+  "wiki_categories": ["Ships", "Vossk Ships", "Most Wanted Ships", "GOF2", "Supernova"],
+  "gof2_hd_overrides": {"price_credits": 2941714},
+  "version_notes": "Supernova DLC Most Wanted ship."
+}

@@ -1,0 +1,44 @@
+{
+  "_name": "Edo",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Edo",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Missile",
+    "Tech Level": "1",
+    "Damage": "70",
+    "EMP Damage": "0",
+    "Loading speed": "2000ms",
+    "Range": "3300m",
+    "Speed": "2000km/h",
+    "Price Range": "$86 -> $99"
+  },
+
+  "stats": {
+    "tech_level": 1,
+    "damage": 70,
+    "emp_damage": 0,
+    "loading_speed_ms": 2000,
+    "range_m": 3300,
+    "projectile_speed_kmh": 2000,
+    "weapon_subtype": "missile",
+    "steerable": true,
+    "price_range_min_credits": 86,
+    "price_range_max_credits": 99
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Missiles are more expensive, but they can home in on targets and have much more range than rockets.",
+    "All missiles look the same after fired."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Missile", "Tech level 1", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Homing missile. Stats from category table."
+}

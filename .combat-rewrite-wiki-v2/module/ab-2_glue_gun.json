@@ -1,0 +1,14 @@
+{
+  "_name": "AB-2 \"Glue Gun\"",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/AB-2_%22Glue_Gun%22",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Tractor Beam", "Tech Level": "5", "Automatic?": "No", "Time to lock": "1800ms", "Known Price Range": "$23,811 -> $27,464"},
+  "stats": {"tech_level": 5, "time_to_lock_s": 1.8, "automatic": false, "price_range_min_credits": 23811, "price_range_max_credits": 27464},
+  "in_game_description": "",
+  "mechanics_text": ["Faster manual tractor beam — 1.8 second lock time."],
+  "wiki_categories": ["Equipment", "Tractor Beams", "Tech level 5", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Stats from category table."
+}

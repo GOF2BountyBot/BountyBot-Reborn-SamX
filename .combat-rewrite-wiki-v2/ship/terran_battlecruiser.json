@@ -1,0 +1,40 @@
+{
+  "_name": "Terran Battlecruiser",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Terran_Battlecruiser",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Armor": "7000-7700",
+    "Cargo Hold": "10-100+t, sometimes none",
+    "Turrets": "7 Hammerhead D2A2's"
+  },
+
+  "stats": {
+    "faction": "Terran",
+    "npc_only": true,
+    "ship_class": "battlecruiser",
+    "armour_min": 7000,
+    "armour_max": 7700,
+    "max_turrets": 7
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "NPC capital ship. Not player-purchasable.",
+    "Serves as primary starship of Terran fleet.",
+    "Armed with 7 Hammerhead D2A2 turrets.",
+    "Cargo hold: 10-100+ tons, sometimes none.",
+    "Can take massive amounts of damage even from M6 A4 Raccoon beams and multiple nukes.",
+    "Pre-1.0.5 update: formidable but defenseless alone.",
+    "Post-1.0.5 update: gained turrets for active defense."
+  ],
+
+  "wiki_categories": ["Ships", "Terran Ships", "Battlecruisers", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "NPC capital ship. Infobox shows variable stats (armor 7000-7700 range). 7 D2A2 turrets. Not player-purchasable."
+}

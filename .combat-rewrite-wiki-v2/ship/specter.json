@@ -1,0 +1,14 @@
+{
+  "_name": "Specter",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Specter",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "800", "Cargo hold": "65", "Primary weapons": "4", "Secondary weapons": "2", "Turrets": "0", "Equipment": "16", "Handling": "138", "Price": "$30,000,000", "Price (Android)": "$12,000,000"},
+  "stats": {"faction": "Nivelian", "armour": 800, "cargo": 65, "max_primaries": 4, "max_secondaries": 2, "max_turrets": 0, "max_modules": 16, "handling": 138, "price_credits": 30000000, "price_credits_android": 12000000, "dlc": "Supernova"},
+  "in_game_description": "",
+  "mechanics_text": ["Supernova DLC. Most expensive purchasable ship ($30M). Highest armor among fighter class (800). Pre-installed with U'tool cloak."],
+  "wiki_categories": ["Ships", "Nivelian Ships", "GOF2", "Supernova"],
+  "gof2_hd_overrides": {"price_credits": 12000000},
+  "version_notes": "Supernova DLC. Most expensive purchasable ship."
+}

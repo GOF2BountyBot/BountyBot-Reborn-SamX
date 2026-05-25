@@ -1,0 +1,48 @@
+{
+  "_name": "Berger SG-100",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Berger_SG-100",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Sentry Gun",
+    "Tech Level": "9",
+    "Damage": "9",
+    "Loading speed": "430ms",
+    "Damage per second": "20.93",
+    "Range": "1500m",
+    "Speed": "5500km/h",
+    "Price Range": "$735 -> $765"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "damage": 9,
+    "loading_speed_ms": 430,
+    "dps": 20.93,
+    "range_m": 1500,
+    "projectile_speed_kmh": 5500,
+    "weapon_subtype": "sentry-gun",
+    "dlc": "Supernova",
+    "price_range_min_credits": 735,
+    "price_range_max_credits": 765
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "A sentry gun, when launched, stays in its place and automatically fires upon any hostile targets in range until it or they are destroyed.",
+    "There can only be a maximum of 3 operational sentry guns in an area at any given time.",
+    "They can cause friendly fire, and are able to be healed by repair beams.",
+    "Players are also able to destroy them in order to place new ones at different locations.",
+    "Sentry guns despawn if you travel to another station's orbit or enter a station.",
+    "Supernova DLC."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Sentry Gun", "Tech level 9", "GOF2", "Supernova"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Supernova DLC autonomous sentry gun (deploys in space, auto-fires on hostiles). Max 3 active at once. Supernova DLC."
+}

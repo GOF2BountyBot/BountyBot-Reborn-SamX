@@ -1,0 +1,14 @@
+{
+  "_name": "Ketar Repair Bot II",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Ketar_Repair_Bot_II",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Repair Bot", "Tech Level": "7", "Known Price Range": "$115,706 -> $141,949"},
+  "stats": {"tech_level": 7, "dlc": "Valkyrie", "price_range_min_credits": 115706, "price_range_max_credits": 141949},
+  "in_game_description": "",
+  "mechanics_text": ["Upgraded repair bot — faster repair rate than Ketar Repair Bot. Valkyrie DLC."],
+  "wiki_categories": ["Equipment", "Repair Bots", "Tech level 7", "GOF2", "Valkyrie"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Valkyrie DLC. HP/s not listed in category table — needs individual page for exact rate."
+}

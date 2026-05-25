@@ -1,0 +1,14 @@
+{
+  "_name": "Ward",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Ward",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "145", "Cargo hold": "65", "Primary weapons": "4", "Secondary weapons": "2", "Turrets": "0", "Equipment": "10", "Handling": "95", "Price": "$1,654,800", "Price (Android)": "$1,103,200"},
+  "stats": {"faction": "Terran", "armour": 145, "cargo": 65, "max_primaries": 4, "max_secondaries": 2, "max_turrets": 0, "max_modules": 10, "handling": 95, "price_credits": 1654800, "price_credits_android": 1103200},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Terran Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 1103200},
+  "version_notes": "Stats from category table. Max 4 primary weapons."
+}

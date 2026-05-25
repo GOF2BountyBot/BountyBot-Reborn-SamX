@@ -1,0 +1,40 @@
+{
+  "_name": "Mass Driver MD 10",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Mass_Driver_MD_10",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Auto-cannon",
+    "Tech Level": "8",
+    "Damage": "4",
+    "Loading speed": "90ms",
+    "Damage per second": "44.44",
+    "Range": "2900m",
+    "Speed": "7500km/h",
+    "Known Price Range": "$87,630 -> $114,314"
+  },
+
+  "stats": {
+    "tech_level": 8,
+    "damage_per_shot": 4,
+    "loading_speed_ms": 90,
+    "dps": 44.44,
+    "range_m": 2900,
+    "projectile_speed_kmh": 7500,
+    "weapon_subtype": "auto-cannon",
+    "price_range_min_credits": 87630,
+    "price_range_max_credits": 114314
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [],
+
+  "wiki_categories": ["Primary Weapons", "Auto-Cannon", "Tech level 8", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Stats from category table. Fastest projectile speed in the auto-cannon class."
+}

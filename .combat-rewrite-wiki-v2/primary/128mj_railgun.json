@@ -1,0 +1,50 @@
+{
+  "_name": "128MJ Railgun",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/128MJ_Railgun",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Auto-cannon",
+    "Tech Level": "6",
+    "Damage": "3",
+    "Loading speed": "120ms",
+    "Damage per second": "25.0",
+    "Range": "2500m",
+    "Speed": "6500km/h",
+    "Known Price Range": "$22,676 (Wolf-Reiser) -> $24,675 (S'kolptorr)"
+  },
+
+  "stats": {
+    "tech_level": 6,
+    "damage_per_shot": 3,
+    "loading_speed_ms": 120,
+    "dps": 25.0,
+    "range_m": 2500,
+    "projectile_speed_kmh": 6500,
+    "weapon_subtype": "auto-cannon",
+    "price_range_min_credits": 22676,
+    "price_range_max_credits": 24675,
+    "price_range_min_station": "Wolf-Reiser",
+    "price_range_max_station": "S'kolptorr"
+  },
+
+  "in_game_description": "The 128MJ Multirail was the first weapon in nearly 200 years to be withdrawn from the market and have its production ceased by the manufacturer. The recall was instigated due to the high instability of the weapon, which was prone to causing unpredictable, devastating explosions. Clever inventors have succeeded in recreating the weapon from materials that are relatively easy to procure.",
+
+  "mechanics_text": [
+    "It is a good alternative for the Mass Driver MD 10.",
+    "This is the successor of the 64MJ Railgun.",
+    "Despite what the description says, it will not randomly explode, as there is no such mechanic in Galaxy on Fire 2.",
+    "The Velasco's Primary weapon slots look like this weapon but in a different color and a longer barrel.",
+    "The 128MJ multirail resembles a GAU-3 Gatling gun."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Auto-Cannon", "Tech level 5", "Blueprints", "GOF2", "GOF2HD", "Terran Weapons", "Terrans", "Terran Technology", "Weapons"],
+
+  "gof2_hd_overrides": {
+    "_note": "GoF2 HD Android has a different blueprint cost: requires 1t 64MJ Railgun + 4t Mechanical Supplies + 2t Nanotech + 10t Energy Cells + 5t Plastics + 5t Microchips (~21,121 credits to produce)."
+  },
+
+  "version_notes": "Wiki category page lists Tech level 5, but the infobox on the item page shows Tech Level 6. Infobox is authoritative — captured as tech_level: 6. GoF2 HD Android has a modified blueprint recipe."
+}

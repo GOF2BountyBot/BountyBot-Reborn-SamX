@@ -1,0 +1,14 @@
+{
+  "_name": "Typhon",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Typhon",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "175", "Cargo hold": "40", "Primary weapons": "4", "Secondary weapons": "0", "Turrets": "0", "Equipment": "12", "Handling": "145", "Price": "$2,500,000", "Price (Android)": "$1,666,667"},
+  "stats": {"faction": "Deep Science", "armour": 175, "cargo": 40, "max_primaries": 4, "max_secondaries": 0, "max_turrets": 0, "max_modules": 12, "handling": 145, "price_credits": 2500000, "price_credits_android": 1666667, "dlc": "Valkyrie", "integrated_khador_drive": true},
+  "in_game_description": "",
+  "mechanics_text": ["Deep Science ship with 0 secondary weapons — pure primary/equipment focus.", "Valkyrie DLC. Integrated Khador Drive."],
+  "wiki_categories": ["Ships", "Deep Science Ships", "GOF2", "Valkyrie"],
+  "gof2_hd_overrides": {"price_credits": 1666667},
+  "version_notes": "Valkyrie DLC. 0 secondary weapons — unique configuration."
+}

@@ -1,0 +1,47 @@
+{
+  "_name": "64MJ Railgun",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/64MJ_Railgun",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Auto-cannon",
+    "Tech Level": "3",
+    "Damage": "2",
+    "Loading speed": "140ms",
+    "Damage per second": "14.28",
+    "Range": "1800m",
+    "Speed": "5500km/h",
+    "Known Price Range": "$11,823 (Prospero) -> $15,343 (Pan)",
+    "Loma Price": "$15,749"
+  },
+
+  "stats": {
+    "tech_level": 3,
+    "damage_per_shot": 2,
+    "loading_speed_ms": 140,
+    "dps": 14.28,
+    "range_m": 1800,
+    "projectile_speed_kmh": 5500,
+    "weapon_subtype": "auto-cannon",
+    "price_range_min_credits": 11823,
+    "price_range_max_credits": 15343,
+    "price_range_min_station": "Prospero",
+    "price_range_max_station": "Pan",
+    "loma_price_credits": 15749
+  },
+
+  "in_game_description": "This weapon uses a 64MJ reactor to generate lightning clouds so fast that they still contain most of their energy when they connect with their target.",
+
+  "mechanics_text": [
+    "The 64MJ Railgun is the predecessor of the 128MJ Railgun Auto Cannon.",
+    "It looks like a M134 Minigun or M61 Vulcan."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Auto-Cannon", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Has a special 'Loma Price' row listed separately in infobox ($15,749). Captured as loma_price_credits."
+}

@@ -1,0 +1,14 @@
+{
+  "_name": "Static Thrust",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Static_Thrust",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Thruster", "Tech Level": "1", "Effect": "20%", "Known Price Range": "$1,142 -> $1,398"},
+  "stats": {"tech_level": 1, "effect_pct": 20.0, "handling_multiplier": 1.2, "price_range_min_credits": 1142, "price_range_max_credits": 1398},
+  "in_game_description": "",
+  "mechanics_text": ["Thrusters (also known as Steering Nozzles) increase ship handling and overall maneuverability.", "Effect 20% = 20% increase to ship handling stat."],
+  "wiki_categories": ["Equipment", "Thrusters", "Tech level 1", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Thruster effect % is handling increase. handling_multiplier = 1 + effect_pct/100."
+}

@@ -1,0 +1,44 @@
+{
+  "_name": "L'ksaar",
+  "_category": "turret",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/L%27ksaar",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Manual Turret",
+    "Tech Level": "6",
+    "Damage": "12",
+    "Loading speed": "250ms",
+    "Damage per second": "48.00",
+    "Range": "6600m",
+    "Speed": "8000km/h",
+    "Handling": "100",
+    "Known Price Range": "$134,604 -> $149,317"
+  },
+
+  "stats": {
+    "tech_level": 6,
+    "damage_per_shot": 12,
+    "loading_speed_ms": 250,
+    "dps": 48.0,
+    "range_m": 6600,
+    "projectile_speed_kmh": 8000,
+    "handling": 100,
+    "turret_autonomous": false,
+    "price_range_min_credits": 134604,
+    "price_range_max_credits": 149317
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Manual turret with excellent handling (100) and long range."
+  ],
+
+  "wiki_categories": ["Turrets", "Manual Turret", "Tech level 6", "GOF2", "Vossk Weapons"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Vossk weapon. Stats from category table."
+}

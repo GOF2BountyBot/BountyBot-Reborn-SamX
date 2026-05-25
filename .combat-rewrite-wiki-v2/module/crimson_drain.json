@@ -1,0 +1,14 @@
+{
+  "_name": "Crimson Drain",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Crimson_Drain",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Transfusion Beam", "Tech Level": "8", "Range": "2000m", "Effect": "50%", "Count": "1", "Known Price Range": "$8,397 -> $8,735"},
+  "stats": {"tech_level": 8, "range_m": 2000, "heal_per_pulse": 50.0, "pulse_count": 1, "dlc": "Supernova", "price_range_min_credits": 8397, "price_range_max_credits": 8735},
+  "in_game_description": "",
+  "mechanics_text": ["Transfusion Beams take energy from enemy ships and heal one's own ship.", "Drain 50% of enemy ship's energy. 1 pulse. Supernova DLC.", "Drains from enemy, heals self — good for regenerating shields mid-combat."],
+  "wiki_categories": ["Equipment", "Transfusion Beams", "Tech level 8", "GOF2", "Supernova"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Supernova DLC. Energy drain on enemy, healing on self. Stats from category table."
+}

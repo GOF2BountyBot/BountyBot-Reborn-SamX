@@ -1,0 +1,14 @@
+{
+  "_name": "Salvéhn",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Salv%C3%A9hn",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "156", "Cargo hold": "110", "Primary weapons": "2", "Secondary weapons": "1", "Turrets": "1", "Equipment": "6", "Handling": "102", "Price": "$94,500", "Price (Android)": "$75,600"},
+  "stats": {"faction": "Nivelian", "armour": 156, "cargo": 110, "max_primaries": 2, "max_secondaries": 1, "max_turrets": 1, "max_modules": 6, "handling": 102, "price_credits": 94500, "price_credits_android": 75600},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Nivelian Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 75600},
+  "version_notes": "Accented character in name (é). URL: Salv%C3%A9hn."
+}

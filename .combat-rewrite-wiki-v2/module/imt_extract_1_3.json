@@ -1,0 +1,14 @@
+{
+  "_name": "IMT Extract 1.3",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/IMT_Extract_1.3",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Mining Drill", "Tech Level": "2", "Handling": "30%", "Yield": "60%", "Known Price Range": "$3,523 -> $4,437"},
+  "stats": {"tech_level": 2, "handling_multiplier": 1.3, "effect_pct": 60.0, "price_range_min_credits": 3523, "price_range_max_credits": 4437, "drill_handling_pct": 30, "drill_yield_pct": 60},
+  "in_game_description": "",
+  "mechanics_text": ["Mining drills extract ores from asteroids.", "Handling = drill maneuverability when drilling.", "Yield = percentage of ore extracted per drill."],
+  "wiki_categories": ["Equipment", "Mining Drills", "Tech level 2", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Stats from category table. 'Handling' for mining drills is drill rotation speed, not ship handling. 'Yield' is ore extraction efficiency."
+}

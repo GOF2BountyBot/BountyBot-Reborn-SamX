@@ -1,0 +1,48 @@
+{
+  "_name": "Nirai Impulse EX 2",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Nirai_Impulse_EX_2",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Laser",
+    "Tech level": "2",
+    "Damage": "5",
+    "Loading speed": "400ms",
+    "Damage per second": "12.50",
+    "Range": "3000m",
+    "Speed": "5500km/h",
+    "Price Range": "6,004$ (Buntta) -> 6,727$ (Aquila)",
+    "Loma Price": "6,805$"
+  },
+
+  "stats": {
+    "tech_level": 2,
+    "damage_per_shot": 5,
+    "loading_speed_ms": 400,
+    "dps": 12.5,
+    "range_m": 3000,
+    "projectile_speed_kmh": 5500,
+    "weapon_subtype": "laser",
+    "price_range_min_credits": 6004,
+    "price_range_max_credits": 6727,
+    "price_range_min_station": "Buntta",
+    "price_range_max_station": "Aquila",
+    "loma_price_credits": 6805
+  },
+
+  "in_game_description": "The Nirai company once specialized in low cost mass-market productions. Unfortunately there was an incident in which an entire batch of Laser FX series exploded simultaneously in various locations around the galaxy, due to a date error in the on-board computer software. After the hasty closure of all the Nirai factories in Festus and Dima, no new weapons were manufactured. The lasers of the EX series are a living relic.",
+
+  "mechanics_text": [
+    "The date error referred to in the description is a reference to the Y2K bug.",
+    "This is the only weapon Midorians use in the SD version.",
+    "Successor to the Nirai Impulse EX 1; predecessor to the Nirai Charged Pulse."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Laser", "Tech level 2", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Price field labelled 'Price Range' (not 'Known Price Range'). Loma Price listed separately."
+}

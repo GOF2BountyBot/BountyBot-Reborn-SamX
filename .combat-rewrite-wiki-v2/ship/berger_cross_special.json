@@ -1,0 +1,14 @@
+{
+  "_name": "Berger Cross Special",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Berger_Cross_Special",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "410", "Cargo hold": "55", "Primary weapons": "4", "Secondary weapons": "4", "Turrets": "0", "Equipment": "14", "Handling": "130", "Price": "$7,335,900", "Price (Android)": "$3,705,000", "Faction": "Midorian"},
+  "stats": {"faction": "Midorian", "armour": 410, "cargo": 55, "max_primaries": 4, "max_secondaries": 4, "max_turrets": 0, "max_modules": 14, "handling": 130, "price_credits": 7335900, "price_credits_android": 3705000, "kaamo_only": true},
+  "in_game_description": "",
+  "mechanics_text": ["Kaamo Club exclusive Midorian ship. 4+4 weapons."],
+  "wiki_categories": ["Ships", "Midorian Ships", "Kaamo Club Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 3705000},
+  "version_notes": "Kaamo Club exclusive."
+}

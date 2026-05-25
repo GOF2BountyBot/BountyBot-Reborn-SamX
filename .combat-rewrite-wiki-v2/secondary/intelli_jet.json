@@ -1,0 +1,43 @@
+{
+  "_name": "Intelli Jet",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Intelli_Jet",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Missile",
+    "Tech Level": "5",
+    "Damage": "100",
+    "EMP Damage": "50",
+    "Loading speed": "3000ms",
+    "Range": "10000m",
+    "Speed": "4500km/h",
+    "Price Range": "$135 -> $156"
+  },
+
+  "stats": {
+    "tech_level": 5,
+    "damage": 100,
+    "emp_damage": 50,
+    "loading_speed_ms": 3000,
+    "range_m": 10000,
+    "projectile_speed_kmh": 4500,
+    "weapon_subtype": "missile",
+    "steerable": true,
+    "price_range_min_credits": 135,
+    "price_range_max_credits": 156
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Homing missile with both physical and EMP damage. Very long range."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Missile", "Tech level 5", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Stats from category table."
+}

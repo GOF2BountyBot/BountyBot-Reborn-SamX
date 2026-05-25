@@ -1,0 +1,14 @@
+{
+  "_name": "Anaan",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Anaan",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "220", "Cargo hold": "240", "Primary weapons": "2", "Secondary weapons": "1", "Turrets": "1", "Equipment": "7", "Handling": "65", "Price": "$176,900", "Price (Android)": "$141,520"},
+  "stats": {"faction": "Terran", "armour": 220, "cargo": 240, "max_primaries": 2, "max_secondaries": 1, "max_turrets": 1, "max_modules": 7, "handling": 65, "price_credits": 176900, "price_credits_android": 141520},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Terran Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 141520},
+  "version_notes": "Large cargo freighter/hybrid. Stats from category table."
+}

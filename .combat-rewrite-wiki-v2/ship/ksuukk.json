@@ -1,0 +1,14 @@
+{
+  "_name": "K'Suukk",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/K%27Suukk",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "255", "Cargo hold": "55", "Primary weapons": "3", "Secondary weapons": "2", "Turrets": "0", "Equipment": "12", "Handling": "125", "Price": "$1,950,000", "Price (Android)": "$1,300,000"},
+  "stats": {"faction": "Vossk", "armour": 255, "cargo": 55, "max_primaries": 3, "max_secondaries": 2, "max_turrets": 0, "max_modules": 12, "handling": 125, "price_credits": 1950000, "price_credits_android": 1300000, "dlc": "Valkyrie"},
+  "in_game_description": "",
+  "mechanics_text": ["Valkyrie DLC Vossk ship. 12 equipment slots."],
+  "wiki_categories": ["Ships", "Vossk Ships", "GOF2", "Valkyrie"],
+  "gof2_hd_overrides": {"price_credits": 1300000},
+  "version_notes": "Valkyrie DLC. Stats from category table."
+}

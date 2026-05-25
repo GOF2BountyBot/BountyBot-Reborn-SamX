@@ -1,0 +1,45 @@
+{
+  "_name": "Skuld AT XR",
+  "_category": "turret",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Skuld_AT_XR",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Automatic Turret",
+    "Tech Level": "6",
+    "Damage": "9",
+    "Loading speed": "190ms",
+    "Damage per second": "47.36",
+    "Range": "5500m",
+    "Speed": "8000km/h",
+    "Handling": "125",
+    "Known Price Range": "$331,577 -> $407,793"
+  },
+
+  "stats": {
+    "tech_level": 6,
+    "damage_per_shot": 9,
+    "loading_speed_ms": 190,
+    "dps": 47.36,
+    "range_m": 5500,
+    "projectile_speed_kmh": 8000,
+    "handling": 125,
+    "turret_autonomous": true,
+    "dlc": "Valkyrie",
+    "price_range_min_credits": 331577,
+    "price_range_max_credits": 407793
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Automatic turret. Valkyrie DLC."
+  ],
+
+  "wiki_categories": ["Turrets", "Automatic Turret", "Tech level 6", "GOF2", "Valkyrie"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Valkyrie DLC auto turret. Stats from category table."
+}

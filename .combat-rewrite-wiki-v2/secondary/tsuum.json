@@ -1,0 +1,44 @@
+{
+  "_name": "T'Suum",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/T%27Suum",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Sentry Gun",
+    "Tech Level": "9",
+    "Damage": "14",
+    "Loading speed": "250ms",
+    "Damage per second": "56.00",
+    "Range": "1900m",
+    "Speed": "7000km/h",
+    "Price Range": "$5,217 -> $5,405"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "damage": 14,
+    "loading_speed_ms": 250,
+    "dps": 56.0,
+    "range_m": 1900,
+    "projectile_speed_kmh": 7000,
+    "weapon_subtype": "sentry-gun",
+    "kaamo_only": true,
+    "price_range_min_credits": 5217,
+    "price_range_max_credits": 5405
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Kaamo Club exclusive sentry gun — highest DPS sentry gun.",
+    "Comes pre-installed with a Sh'gaal blaster weapon."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Sentry Gun", "Tech level 9", "GOF2", "Kaamo Club"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Kaamo Club exclusive. Stats from category table. Pre-installed with Sh'gaal as weapon."
+}

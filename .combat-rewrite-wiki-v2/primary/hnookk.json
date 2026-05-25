@@ -1,0 +1,41 @@
+{
+  "_name": "H'nookk",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/H%27nookk",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Blaster",
+    "Tech Level": "5",
+    "Damage": "9",
+    "Loading speed": "330ms",
+    "Damage per second": "27.27",
+    "Range": "1600m",
+    "Speed": "4000km/h",
+    "Known Price Range": "$42,613 -> $47,478"
+  },
+
+  "stats": {
+    "tech_level": 5,
+    "damage_per_shot": 9,
+    "loading_speed_ms": 330,
+    "dps": 27.27,
+    "range_m": 1600,
+    "projectile_speed_kmh": 4000,
+    "weapon_subtype": "blaster",
+    "faction": "Vossk",
+    "price_range_min_credits": 42613,
+    "price_range_max_credits": 47478
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [],
+
+  "wiki_categories": ["Primary Weapons", "Blaster", "Tech level 5", "GOF2", "Vossk Weapons"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Stats from category table. Successor to Sh'gaal."
+}

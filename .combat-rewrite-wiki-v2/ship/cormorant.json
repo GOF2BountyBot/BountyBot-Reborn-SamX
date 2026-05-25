@@ -1,0 +1,14 @@
+{
+  "_name": "Cormorant",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Cormorant",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "200", "Cargo hold": "350", "Primary weapons": "0", "Secondary weapons": "4", "Turrets": "1", "Equipment": "8", "Handling": "45", "Price": "$168,900", "Price (Android)": "$135,120"},
+  "stats": {"faction": "Terran", "armour": 200, "cargo": 350, "max_primaries": 0, "max_secondaries": 4, "max_turrets": 1, "max_modules": 8, "handling": 45, "price_credits": 168900, "price_credits_android": 135120},
+  "in_game_description": "",
+  "mechanics_text": ["No primary weapons — pure freighter/transport. Massive cargo hold (350). Secondary weapons 4 for defense."],
+  "wiki_categories": ["Ships", "Terran Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 135120},
+  "version_notes": "0 primary weapons — cargo/transport focused."
+}

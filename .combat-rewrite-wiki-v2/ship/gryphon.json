@@ -1,0 +1,14 @@
+{
+  "_name": "Gryphon",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Gryphon",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "220", "Cargo hold": "90", "Primary weapons": "4", "Secondary weapons": "2", "Turrets": "0", "Equipment": "10", "Handling": "130", "Price": "$2,100,000", "Price (Android)": "$1,400,000"},
+  "stats": {"faction": "Terran", "armour": 220, "cargo": 90, "max_primaries": 4, "max_secondaries": 2, "max_turrets": 0, "max_modules": 10, "handling": 130, "price_credits": 2100000, "price_credits_android": 1400000},
+  "in_game_description": "",
+  "mechanics_text": ["The Gryphon is not available for the PC version."],
+  "wiki_categories": ["Ships", "Terran Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 1400000},
+  "version_notes": "NOT available on PC version. Mobile/HD only."
+}

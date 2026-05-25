@@ -1,0 +1,14 @@
+{
+  "_name": "IMT Extract 2.7",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/IMT_Extract_2.7",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Mining Drill", "Tech Level": "4", "Handling": "50%", "Yield": "50%", "Known Price Range": "$14,987 -> $17,297"},
+  "stats": {"tech_level": 4, "drill_handling_pct": 50, "drill_yield_pct": 50, "price_range_min_credits": 14987, "price_range_max_credits": 17297},
+  "in_game_description": "",
+  "mechanics_text": ["Mining drill with balanced handling/yield ratio."],
+  "wiki_categories": ["Equipment", "Mining Drills", "Tech level 4", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Stats from category table."
+}

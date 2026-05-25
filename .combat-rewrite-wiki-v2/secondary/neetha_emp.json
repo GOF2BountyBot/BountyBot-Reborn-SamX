@@ -1,0 +1,45 @@
+{
+  "_name": "Neétha EMP",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Ne%C3%A9tha_EMP",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Mine",
+    "Tech Level": "3",
+    "Damage": "0",
+    "EMP Damage": "500",
+    "Loading speed": "3000ms",
+    "Effect": "50 s",
+    "Magnitude": "1100m",
+    "Price Range": "$490 -> $510"
+  },
+
+  "stats": {
+    "tech_level": 3,
+    "damage": 0,
+    "emp_damage": 500,
+    "loading_speed_ms": 3000,
+    "duration_s": 50,
+    "magnitude_m": 1100,
+    "weapon_subtype": "mine",
+    "emp_only": true,
+    "dlc": "Valkyrie",
+    "price_range_min_credits": 490,
+    "price_range_max_credits": 510
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "EMP mine — no physical damage, but massive EMP damage (500) to disable ships. 50 second lifetime.",
+    "Valkyrie DLC."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Mine", "Tech level 3", "GOF2", "Valkyrie"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Valkyrie DLC EMP mine. Name contains accented character: 'Neétha'. URL: Ne%C3%A9tha_EMP."
+}

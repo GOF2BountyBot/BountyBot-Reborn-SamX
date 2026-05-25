@@ -1,0 +1,48 @@
+{
+  "_name": "Sh'koom",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Sh%27koom",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Laser",
+    "Tech Level": "6",
+    "Damage": "10",
+    "Loading speed": "600ms",
+    "Damage per second": "16.66",
+    "Range": "2700m",
+    "Speed": "5000km/h",
+    "Known Price Range": "12,743$ (Magnetar) -> 14,195$ (K'ontrr)",
+    "Loma Price": "14,434$"
+  },
+
+  "stats": {
+    "tech_level": 6,
+    "damage_per_shot": 10,
+    "loading_speed_ms": 600,
+    "dps": 16.66,
+    "range_m": 2700,
+    "projectile_speed_kmh": 5000,
+    "weapon_subtype": "laser",
+    "faction": "Vossk",
+    "price_range_min_credits": 12743,
+    "price_range_max_credits": 14195,
+    "price_range_min_station": "Magnetar",
+    "price_range_max_station": "K'ontrr",
+    "loma_price_credits": 14434
+  },
+
+  "in_game_description": "The overhauled successor to the V'skorr can deliver more damage even though it also has an increased speed and only a minimally decreased rate of fire.",
+
+  "mechanics_text": [
+    "The Sh'koom is a Vossk laser weapon, and is mounted on all Vossk ships in GOF2.",
+    "The V'skorr's description says that it is the standard laser weapon of the Vossk Empire, but all H'Soc fighters use the Sh'koom, indicated by its sound when firing, so it is technically not the standard weapon."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Laser", "Tech level 6", "GOF2", "Vossk Weapons"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "NEW item — not in the original catalog of 40 primary weapons. Vossk faction weapon, successor to V'skorr. Mounted on all Vossk ships in GoF2."
+}

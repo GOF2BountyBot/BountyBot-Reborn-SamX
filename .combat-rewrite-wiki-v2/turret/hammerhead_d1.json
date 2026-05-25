@@ -1,0 +1,47 @@
+{
+  "_name": "Hammerhead D1",
+  "_category": "turret",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Hammerhead_D1",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Manual Turret",
+    "Tech Level": "5",
+    "Damage": "6",
+    "Loading speed": "300ms",
+    "Damage per second": "20.00",
+    "Range": "3800m",
+    "Speed": "7000km/h",
+    "Handling": "40",
+    "Known Price Range": "$19,603 -> $24,174"
+  },
+
+  "stats": {
+    "tech_level": 5,
+    "damage_per_shot": 6,
+    "loading_speed_ms": 300,
+    "dps": 20.0,
+    "range_m": 3800,
+    "projectile_speed_kmh": 7000,
+    "handling": 40,
+    "turret_autonomous": false,
+    "price_range_min_credits": 19603,
+    "price_range_max_credits": 24174
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Manual turrets have to be controlled manually by pressing the switch view button.",
+    "While controlling the turret, the ship cannot be steered and proceeds on its current heading.",
+    "Manual turrets can provide a long-range, high-damage method of attack while retreating from battle.",
+    "Handling 40 — slowest rotating turret."
+  ],
+
+  "wiki_categories": ["Turrets", "Manual Turret", "Tech level 5", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Manual turret. Handling = rotation speed. Confirmed 'Handling: 40' from category table (not to be confused with Speed)."
+}

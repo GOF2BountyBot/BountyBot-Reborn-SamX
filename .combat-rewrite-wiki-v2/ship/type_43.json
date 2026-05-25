@@ -1,0 +1,14 @@
+{
+  "_name": "Type 43",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Type_43",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "175", "Cargo hold": "30", "Primary weapons": "2", "Secondary weapons": "3", "Turrets": "0", "Equipment": "6", "Handling": "132", "Price": "$72,500", "Price (Android)": "$58,000"},
+  "stats": {"faction": "Nivelian", "armour": 175, "cargo": 30, "max_primaries": 2, "max_secondaries": 3, "max_turrets": 0, "max_modules": 6, "handling": 132, "price_credits": 72500, "price_credits_android": 58000},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Nivelian Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 58000},
+  "version_notes": "Stats from category table."
+}

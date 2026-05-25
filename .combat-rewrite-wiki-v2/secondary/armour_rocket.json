@@ -1,0 +1,43 @@
+{
+  "_name": "Armour Rocket",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Amour_Rocket",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Rocket",
+    "Tech Level": "5",
+    "Damage": "72",
+    "EMP Damage": "24",
+    "Loading speed": "2000ms",
+    "Range": "1100m",
+    "Speed": "4000km/h",
+    "Price Range": "$48 -> $59"
+  },
+
+  "stats": {
+    "tech_level": 5,
+    "damage": 72,
+    "emp_damage": 24,
+    "loading_speed_ms": 2000,
+    "range_m": 1100,
+    "projectile_speed_kmh": 4000,
+    "weapon_subtype": "rocket",
+    "steerable": false,
+    "price_range_min_credits": 48,
+    "price_range_max_credits": 59
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Rocket with both physical and EMP damage. Cannot be guided."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Rocket", "Tech level 5", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Wiki page URL is 'Amour_Rocket' (missing 'r' — spelling error on wiki). Item name is 'Armour Rocket'. Has both physical (72) and EMP (24) damage."
+}

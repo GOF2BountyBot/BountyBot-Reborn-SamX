@@ -1,0 +1,41 @@
+{
+  "_name": "Mimung Blaster",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Mimung_Blaster",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Blaster",
+    "Tech Level": "9",
+    "Damage": "16",
+    "Loading speed": "230ms",
+    "Damage per second": "69.56",
+    "Range": "1300m",
+    "Speed": "5000km/h",
+    "Known Price Range": "$353,966 -> $369,763"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "damage_per_shot": 16,
+    "loading_speed_ms": 230,
+    "dps": 69.56,
+    "range_m": 1300,
+    "projectile_speed_kmh": 5000,
+    "weapon_subtype": "blaster",
+    "kaamo_only": true,
+    "price_range_min_credits": 353966,
+    "price_range_max_credits": 369763
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [],
+
+  "wiki_categories": ["Primary Weapons", "Blaster", "Tech level 9", "GOF2", "Kaamo Club"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Kaamo Club exclusive. Stats from category table."
+}

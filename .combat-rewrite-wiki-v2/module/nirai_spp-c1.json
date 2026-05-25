@@ -1,0 +1,14 @@
+{
+  "_name": "Nirai SPP-C1",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Nirai_SPP-C1",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Repair Beam", "Tech Level": "8", "Range": "1500m", "Effect": "60%", "Count": "1", "Known Price Range": "$65,680 -> $68,336"},
+  "stats": {"tech_level": 8, "range_m": 1500, "heal_per_pulse": 60.0, "pulse_count": 1, "price_range_min_credits": 65680, "price_range_max_credits": 68336},
+  "in_game_description": "",
+  "mechanics_text": ["Repair Beams automatically aim at friendly ships and sentry guns in range.", "Provides energy to fill shields and repair armor on friendly ships.", "SPP-C1: 1500m range, 60% repair effect, 1 pulse per activation."],
+  "wiki_categories": ["Equipment", "Repair Beams", "Tech level 8", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Repair beam heals friendly ships/sentry guns. 'Effect' = repair amount per pulse. 'Count' = number of pulses. Stats from category table."
+}

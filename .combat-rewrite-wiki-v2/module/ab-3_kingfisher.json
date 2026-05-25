@@ -1,0 +1,14 @@
+{
+  "_name": "AB-3 \"Kingfisher\"",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/AB-3_%22Kingfisher%22",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Tractor Beam", "Tech Level": "7", "Automatic?": "Forward 180°", "Time to lock": "0ms", "Known Price Range": "$51,307 -> $61,448"},
+  "stats": {"tech_level": 7, "time_to_lock_s": 0.0, "automatic": true, "auto_coverage": "Forward 180°", "price_range_min_credits": 51307, "price_range_max_credits": 61448},
+  "in_game_description": "",
+  "mechanics_text": ["Semi-automatic tractor beam — covers forward 180 degrees, instant lock (0ms). Automatically grabs loot in front arc."],
+  "wiki_categories": ["Equipment", "Tractor Beams", "Tech level 7", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Semi-auto (forward 180°). Instant lock. Stats from category table."
+}

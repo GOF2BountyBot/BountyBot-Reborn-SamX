@@ -1,0 +1,14 @@
+{
+  "_name": "AB-1 \"Retractor\"",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/AB-1_%22Retractor%22",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Tractor Beam", "Tech Level": "4", "Automatic?": "No", "Time to lock": "4000ms", "Known Price Range": "$8,071 -> $8,962"},
+  "stats": {"tech_level": 4, "time_to_lock_s": 4.0, "automatic": false, "price_range_min_credits": 8071, "price_range_max_credits": 8962},
+  "in_game_description": "",
+  "mechanics_text": ["Tractor beams bring loot into cargo hold from destroyed or EMPed ships or asteroids.", "Manual — must be aimed at target. 4 second lock time."],
+  "wiki_categories": ["Equipment", "Tractor Beams", "Tech level 4", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Manual tractor beam. Stats from category table."
+}

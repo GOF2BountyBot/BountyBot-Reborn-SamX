@@ -1,0 +1,45 @@
+{
+  "_name": "Nirai Charged Pulse",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Nirai_Charged_Pulse",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Laser",
+    "Tech level": "3",
+    "Damage": "6",
+    "Loading speed": "380ms",
+    "Damage per second": "15.78",
+    "Range": "2700m",
+    "Speed": "5000km/h",
+    "Known Price Range": "9,114$ (Buntta) -> 11,465$ (Ni'mrrod)"
+  },
+
+  "stats": {
+    "tech_level": 3,
+    "damage_per_shot": 6,
+    "loading_speed_ms": 380,
+    "dps": 15.78,
+    "range_m": 2700,
+    "projectile_speed_kmh": 5000,
+    "weapon_subtype": "laser",
+    "price_range_min_credits": 9114,
+    "price_range_max_credits": 11465,
+    "price_range_min_station": "Buntta",
+    "price_range_max_station": "Ni'mrrod"
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Successor to the Nirai Impulse EX 2; predecessor to higher-tier Nirai lasers.",
+    "Part of the Nirai EX laser family."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Laser", "Tech level 3", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Individual page not fully extracted; stats confirmed from category table. Description not found."
+}

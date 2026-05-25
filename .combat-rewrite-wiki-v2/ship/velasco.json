@@ -1,0 +1,14 @@
+{
+  "_name": "Velasco",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Velasco",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "170", "Cargo hold": "95", "Primary weapons": "3", "Secondary weapons": "2", "Turrets": "1", "Equipment": "8", "Handling": "125", "Price": "$684,300", "Price (Android)": "$456,200"},
+  "stats": {"faction": "Pirate", "armour": 170, "cargo": 95, "max_primaries": 3, "max_secondaries": 2, "max_turrets": 1, "max_modules": 8, "handling": 125, "price_credits": 684300, "price_credits_android": 456200},
+  "in_game_description": "",
+  "mechanics_text": ["Primary weapon slots look like the 128MJ Railgun but in different color with longer barrel."],
+  "wiki_categories": ["Ships", "Pirate Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 456200},
+  "version_notes": "Stats from category table."
+}

@@ -1,0 +1,46 @@
+{
+  "_name": "AMR Tormentor",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/AMR_Tormentor",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Nuke",
+    "Tech Level": "4",
+    "Damage": "150",
+    "Loading speed": "6000ms",
+    "Range": "2500m",
+    "Speed": "1500km/h",
+    "Magnitude": "10000m",
+    "Steer": "No",
+    "Price Range": "$479 -> $581"
+  },
+
+  "stats": {
+    "tech_level": 4,
+    "damage": 150,
+    "loading_speed_ms": 6000,
+    "range_m": 2500,
+    "projectile_speed_kmh": 1500,
+    "magnitude_m": 10000,
+    "weapon_subtype": "nuke",
+    "steerable": false,
+    "price_range_min_credits": 479,
+    "price_range_max_credits": 581
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Nukes deal massive amounts of damage at high magnitudes.",
+    "Be careful when detonating nukes, because opposing factions in a firefight may team up temporarily and attack you instead.",
+    "If a nuke is detonated too close to your ship on Extreme difficulty, your ship will take damage."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Nuke", "Tech level 4", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Not steerable. Stats from category table."
+}

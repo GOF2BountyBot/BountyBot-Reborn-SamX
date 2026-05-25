@@ -1,0 +1,44 @@
+{
+  "_name": "Mamba EMP",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Mamba_EMP",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Missile",
+    "Tech Level": "7",
+    "Damage": "0",
+    "EMP Damage": "100",
+    "Loading speed": "3000ms",
+    "Range": "10400m",
+    "Speed": "3750km/h",
+    "Price Range": "$88 -> $102"
+  },
+
+  "stats": {
+    "tech_level": 7,
+    "damage": 0,
+    "emp_damage": 100,
+    "loading_speed_ms": 3000,
+    "range_m": 10400,
+    "projectile_speed_kmh": 3750,
+    "weapon_subtype": "missile",
+    "steerable": true,
+    "emp_only": true,
+    "price_range_min_credits": 88,
+    "price_range_max_credits": 102
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "EMP-only homing missile. No physical damage. Very long range."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Missile", "Tech level 7", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "EMP damage only (0 physical). Stats from category table."
+}

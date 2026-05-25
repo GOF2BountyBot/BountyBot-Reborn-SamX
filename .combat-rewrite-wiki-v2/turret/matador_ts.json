@@ -1,0 +1,45 @@
+{
+  "_name": "Matador TS",
+  "_category": "turret",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Matador_TS",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Manual Turret",
+    "Tech Level": "9",
+    "Damage": "18",
+    "Loading speed": "200ms",
+    "Damage per second": "90.00",
+    "Range": "6600m",
+    "Speed": "8000km/h",
+    "Handling": "130",
+    "Known Price Range": "$466,548 -> $485,350"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "damage_per_shot": 18,
+    "loading_speed_ms": 200,
+    "dps": 90.0,
+    "range_m": 6600,
+    "projectile_speed_kmh": 8000,
+    "handling": 130,
+    "turret_autonomous": false,
+    "dlc": "Supernova",
+    "price_range_min_credits": 466548,
+    "price_range_max_credits": 485350
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Supernova DLC manual turret with highest DPS of all turrets."
+  ],
+
+  "wiki_categories": ["Turrets", "Manual Turret", "Tech level 9", "GOF2", "Supernova"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Supernova DLC. Note: wiki category page shows low price as '466.548' (using period as thousands separator), should be $466,548. Confirmed from context."
+}

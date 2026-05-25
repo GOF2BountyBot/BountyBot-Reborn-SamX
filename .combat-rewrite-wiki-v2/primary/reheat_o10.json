@@ -1,0 +1,42 @@
+{
+  "_name": "ReHeat o10",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/ReHeat_o10",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Thermal Fusion",
+    "Tech Level": "8",
+    "Damage": "4",
+    "Loading speed": "170ms",
+    "Damage per second": "23.52",
+    "Range": "1900m",
+    "Speed": "3500km/h",
+    "Known Price Range": "$32,506 -> $35,724"
+  },
+
+  "stats": {
+    "tech_level": 8,
+    "damage_per_shot": 4,
+    "loading_speed_ms": 170,
+    "dps": 23.52,
+    "range_m": 1900,
+    "projectile_speed_kmh": 3500,
+    "weapon_subtype": "thermal-fusion",
+    "price_range_min_credits": 32506,
+    "price_range_max_credits": 35724
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Thermal Fusion weapon — heat-seeking when scanner locked on target."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Thermal Fusion", "Tech level 8", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Stats from category table."
+}

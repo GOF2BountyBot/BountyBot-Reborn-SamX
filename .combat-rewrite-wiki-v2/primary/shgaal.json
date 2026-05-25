@@ -1,0 +1,47 @@
+{
+  "_name": "Sh'gaal",
+  "_category": "primary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Sh%27gaal",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Blaster",
+    "Tech Level": "4",
+    "Damage": "9",
+    "Loading speed": "430ms",
+    "Damage per second": "20.93",
+    "Range": "1100m",
+    "Speed": "4250km/h",
+    "Known Price Range": "21,847$ (K'ontrr) -> 24,527$ (Weymire)"
+  },
+
+  "stats": {
+    "tech_level": 4,
+    "damage_per_shot": 9,
+    "loading_speed_ms": 430,
+    "dps": 20.93,
+    "range_m": 1100,
+    "projectile_speed_kmh": 4250,
+    "weapon_subtype": "blaster",
+    "faction": "Vossk",
+    "price_range_min_credits": 21847,
+    "price_range_max_credits": 24527,
+    "price_range_min_station": "K'ontrr",
+    "price_range_max_station": "Weymire"
+  },
+
+  "in_game_description": "Sh'gaal means 'scar' and refers to something every true Vossk is born with. The weapon's name is thanks to the famous warrior Zrrot Grykk who was exiled on Narsaxa. He managed to regain the favor of the leader, which he had previously lost after making inappropriate advances.",
+
+  "mechanics_text": [
+    "One is preinstalled in a T'Suum.",
+    "This is the successor of the K'booskk and the predecessor to the H'nookk.",
+    "Not to be confused with Sh'Gaal (Galaxy on Fire 3)."
+  ],
+
+  "wiki_categories": ["Primary Weapons", "Blaster", "Tech level 4", "GOF2", "Vossk Weapons"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "NEW item — not in the original catalog of 40 primary weapons. Vossk blaster, successor to K'booskk and predecessor to H'nookk. Pre-installed in a T'Suum sentry gun."
+}

@@ -1,0 +1,14 @@
+{
+  "_name": "Particle Shield",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Particle_Shield",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Shield", "Tech Level": "10", "Capacity": "380", "Loading speed": "55000ms", "Known Price Range": "$151,751 -> $189,194"},
+  "stats": {"tech_level": 10, "shield_capacity": 380, "shield_recharge_ms": 55000, "dlc": "Supernova", "price_range_min_credits": 151751, "price_range_max_credits": 189194},
+  "in_game_description": "",
+  "mechanics_text": ["Supernova DLC shield with highest capacity (380) and relatively fast recharge (55s). Best shield in game."],
+  "wiki_categories": ["Equipment", "Shields", "Tech level 10", "GOF2", "Supernova"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Supernova DLC. Highest capacity shield. Stats from category table."
+}

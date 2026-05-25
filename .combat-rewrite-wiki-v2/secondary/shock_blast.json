@@ -1,0 +1,44 @@
+{
+  "_name": "Shock Blast",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Shock_Blast",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Shock Blast",
+    "Tech Level": "9",
+    "Damage": "140",
+    "EMP Damage": "80",
+    "Loading speed": "6000ms",
+    "Magnitude": "40000m",
+    "Range": "0m",
+    "Speed": "0km/h"
+  },
+
+  "stats": {
+    "tech_level": 9,
+    "damage": 140,
+    "emp_damage": 80,
+    "loading_speed_ms": 6000,
+    "magnitude_m": 40000,
+    "range_m": 0,
+    "projectile_speed_kmh": 0,
+    "weapon_subtype": "shock-blast",
+    "dlc": "Supernova"
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Detonates like a mine when used, punches like a nuke, and stings like an EMP bomb.",
+    "Supernova DLC. Deploys at ship location and immediately detonates in a 40000m sphere.",
+    "Range 0 and Speed 0 — deploys at user position, no projectile."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Shock Blast", "Tech level 9", "GOF2", "Supernova"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Supernova DLC. Unique weapon — deploys at ship position (range 0, speed 0). Both physical (140) and EMP (80) damage in 40000m AoE."
+}

@@ -1,0 +1,14 @@
+{
+  "_name": "Nirai Overdrive",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Nirai_Overdrive",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Weapon Mod", "Tech Level": "5", "Fire Rate": "+20%", "Damage": "-10%", "Known Price Range": "$23,772 -> $30,143"},
+  "stats": {"tech_level": 5, "fire_rate_pct": 20.0, "damage_pct": -10.0, "dlc": "Valkyrie", "price_range_min_credits": 23772, "price_range_max_credits": 30143},
+  "in_game_description": "",
+  "mechanics_text": ["Weapon Mod: sacrifice 10% damage per shot for +20% fire rate.", "Valkyrie DLC."],
+  "wiki_categories": ["Equipment", "Weapon Mod", "Tech level 5", "GOF2", "Valkyrie"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Valkyrie DLC. Stats from category table."
+}

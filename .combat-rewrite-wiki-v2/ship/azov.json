@@ -1,0 +1,14 @@
+{
+  "_name": "Azov",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Azov",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "150", "Cargo hold": "55", "Primary weapons": "2", "Secondary weapons": "2", "Turrets": "1", "Equipment": "5", "Handling": "128", "Price": "$61,900", "Price (Android)": "$49,520"},
+  "stats": {"faction": "Pirate", "armour": 150, "cargo": 55, "max_primaries": 2, "max_secondaries": 2, "max_turrets": 1, "max_modules": 5, "handling": 128, "price_credits": 61900, "price_credits_android": 49520},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Pirate Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 49520},
+  "version_notes": "Stats from category table."
+}

@@ -1,0 +1,14 @@
+{
+  "_name": "Gunant's Drill",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Gunant%27s_Drill",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Mining Drill", "Tech Level": "10", "Handling": "100%", "Yield": "100%", "Known Price Range": "$160,032 -> $209,353"},
+  "stats": {"tech_level": 10, "drill_handling_pct": 100, "drill_yield_pct": 100, "price_range_min_credits": 160032, "price_range_max_credits": 209353},
+  "in_game_description": "",
+  "mechanics_text": ["Best mining drill — 100% handling and 100% yield. Maximum efficiency."],
+  "wiki_categories": ["Equipment", "Mining Drills", "Tech level 10", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Highest-tier mining drill. Stats from category table."
+}

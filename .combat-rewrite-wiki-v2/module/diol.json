@@ -1,0 +1,27 @@
+{
+  "_name": "D'iol",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/D%27iol",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Armor",
+    "Tech Level": "7",
+    "Armor": "160",
+    "Known Price Range": "$41,530 -> $51,449"
+  },
+
+  "stats": {
+    "tech_level": 7,
+    "armour": 160,
+    "price_range_min_credits": 41530,
+    "price_range_max_credits": 51449
+  },
+
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Equipment", "Armor", "Tech level 7", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Stats from category table."
+}

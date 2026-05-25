@@ -1,0 +1,43 @@
+{
+  "_name": "Jet Rocket",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Jet_Rocket",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Rocket",
+    "Tech Level": "3",
+    "Damage": "70",
+    "EMP Damage": "0",
+    "Loading speed": "900ms",
+    "Range": "1100m",
+    "Speed": "3500km/h",
+    "Price Range": "$29 -> $33"
+  },
+
+  "stats": {
+    "tech_level": 3,
+    "damage": 70,
+    "emp_damage": 0,
+    "loading_speed_ms": 900,
+    "range_m": 1100,
+    "projectile_speed_kmh": 3500,
+    "weapon_subtype": "rocket",
+    "steerable": false,
+    "price_range_min_credits": 29,
+    "price_range_max_credits": 33
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Rocket — fast, cheap, short range, cannot be guided."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Rocket", "Tech level 3", "GOF2"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Stats from category table."
+}

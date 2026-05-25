@@ -1,0 +1,40 @@
+{
+  "_name": "H'Belam",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/H%27Belam",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Shield",
+    "Tech Level": "6",
+    "Capacity": "120",
+    "Loading speed": "58000ms",
+    "Known Price Range": "31,509$ (V'ikka) -> 32,473$ (S'kolptorr)"
+  },
+
+  "stats": {
+    "tech_level": 6,
+    "shield_capacity": 120,
+    "shield_recharge_ms": 58000,
+    "faction": "Vossk",
+    "price_range_min_credits": 31509,
+    "price_range_max_credits": 32473,
+    "price_range_min_station": "V'ikka",
+    "price_range_max_station": "S'kolptorr"
+  },
+
+  "in_game_description": "H'Belam means 'father' and describes a powerful Vossk shield that was released for sale to all races. The Vossk themselves tend to prefer stronger armor than the H'Belam, however, which cannot compete with the top models on the market.",
+
+  "mechanics_text": [
+    "Only Vossk shield in the game.",
+    "Slow recharge time (58 seconds).",
+    "Vossk prefer armor over shields, so H'Belam was made available to all races."
+  ],
+
+  "wiki_categories": ["Equipment", "Shields", "Tech level 6", "GOF2", "Vossk Technology"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "DISCREPANCY: DB has tech_level=5, wiki infobox shows tech_level=6. Wiki infobox authoritative — capturing tech_level=6. Category table also shows tech level 5 in the Equipment category page. This is the known H'Belam discrepancy. Price: '32.473$' on wiki uses period as European thousands separator — parsed as $32,473."
+}

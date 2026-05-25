@@ -1,0 +1,14 @@
+{
+  "_name": "Spectral Filter ST-X",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Spectral_Filter_ST-X",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Spectral Filter", "Tech Level": "9", "Show info?": "Yes", "Show on radar?": "No", "Known Price Range": "$149,067 -> $154,662"},
+  "stats": {"tech_level": 9, "shows_plasma_cloud_info": true, "shows_plasma_on_radar": false, "dlc": "Supernova", "price_range_min_credits": 149067, "price_range_max_credits": 154662},
+  "in_game_description": "",
+  "mechanics_text": ["Shows plasma cloud information (yield, composition), but not on radar."],
+  "wiki_categories": ["Equipment", "Spectral Filter", "Tech level 9", "GOF2", "Supernova"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Supernova DLC. Stats from category table."
+}

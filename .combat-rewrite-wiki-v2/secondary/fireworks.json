@@ -1,0 +1,47 @@
+{
+  "_name": "Fireworks",
+  "_category": "secondary",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Fireworks",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+
+  "raw_infobox": {
+    "Type": "Nuke",
+    "Tech Level": "10",
+    "Damage": "1",
+    "Loading speed": "8000ms",
+    "Range": "6600m",
+    "Speed": "30000km/h",
+    "Magnitude": "10000m",
+    "Steer": "No",
+    "Price Range": "$21,000 -> $22,840"
+  },
+
+  "stats": {
+    "tech_level": 10,
+    "damage": 1,
+    "loading_speed_ms": 8000,
+    "range_m": 6600,
+    "projectile_speed_kmh": 30000,
+    "magnitude_m": 10000,
+    "weapon_subtype": "nuke",
+    "steerable": false,
+    "dlc": "Supernova",
+    "price_range_min_credits": 21000,
+    "price_range_max_credits": 22840
+  },
+
+  "in_game_description": "",
+
+  "mechanics_text": [
+    "Supernova DLC. Technically a nuke but deals only 1 damage.",
+    "Extremely fast projectile speed (30000 km/h). Used for display or mischief.",
+    "Tech level 10 — highest in the game."
+  ],
+
+  "wiki_categories": ["Secondary Weapons", "Nuke", "Tech level 10", "GOF2", "Supernova"],
+
+  "gof2_hd_overrides": {},
+
+  "version_notes": "Unusual weapon — deals only 1 damage despite nuke classification. Has fastest projectile speed of any weapon at 30000 km/h. Supernova DLC."
+}

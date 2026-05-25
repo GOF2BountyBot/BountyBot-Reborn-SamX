@@ -1,0 +1,14 @@
+{
+  "_name": "Nirai Overcharge",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Nirai_Overcharge",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Valkyrie"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Weapon Mod", "Tech Level": "5", "Fire Rate": "-10%", "Damage": "+20%", "Known Price Range": "$24,874 -> $29,224"},
+  "stats": {"tech_level": 5, "fire_rate_pct": -10.0, "damage_pct": 20.0, "dlc": "Valkyrie", "price_range_min_credits": 24874, "price_range_max_credits": 29224},
+  "in_game_description": "",
+  "mechanics_text": ["Weapon Mods modify primary weapon performance.", "Overcharge: sacrifice 10% fire rate for +20% damage per shot.", "Mounted in equipment slot. Valkyrie DLC."],
+  "wiki_categories": ["Equipment", "Weapon Mod", "Tech level 5", "GOF2", "Valkyrie"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Valkyrie DLC weapon mod. Stats from category table."
+}

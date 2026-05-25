@@ -1,0 +1,14 @@
+{
+  "_name": "Aegir",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Aegir",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "190", "Cargo hold": "70", "Primary weapons": "4", "Secondary weapons": "4", "Turrets": "0", "Equipment": "11", "Handling": "100", "Price": "$2,712,900", "Price (Android)": "$1,808,600"},
+  "stats": {"faction": "Nivelian", "armour": 190, "cargo": 70, "max_primaries": 4, "max_secondaries": 4, "max_turrets": 0, "max_modules": 11, "handling": 100, "price_credits": 2712900, "price_credits_android": 1808600},
+  "in_game_description": "",
+  "mechanics_text": [],
+  "wiki_categories": ["Ships", "Nivelian Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 1808600},
+  "version_notes": "Max 4+4 weapons. Stats from category table."
+}

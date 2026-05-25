@@ -1,0 +1,14 @@
+{
+  "_name": "Dace",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Dace",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "170", "Cargo hold": "38", "Primary weapons": "4", "Secondary weapons": "1", "Turrets": "0", "Equipment": "5", "Handling": "162", "Price": "$235,600", "Price (Android)": "$188,480"},
+  "stats": {"faction": "Nivelian", "armour": 170, "cargo": 38, "max_primaries": 4, "max_secondaries": 1, "max_turrets": 0, "max_modules": 5, "handling": 162, "price_credits": 235600, "price_credits_android": 188480},
+  "in_game_description": "",
+  "mechanics_text": ["Highest handling in non-DLC ships (162). 4 primary weapons."],
+  "wiki_categories": ["Ships", "Nivelian Ships", "GOF2"],
+  "gof2_hd_overrides": {"price_credits": 188480},
+  "version_notes": "Stats from category table."
+}

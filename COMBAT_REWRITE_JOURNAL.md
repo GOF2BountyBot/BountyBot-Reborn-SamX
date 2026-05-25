@@ -667,3 +667,94 @@ Battlecruisers and other NPC-only ships often have made-up or missing wiki data 
 ---
 
 *Last updated: 2026-05-24*
+
+---
+
+## Entry 4 — Compaction Handoff (2026-05-24)
+
+> **READ FIRST ON RESUME.** Everything you need to pick up sits here; older entries are reference material.
+
+### Git state
+- Branch: `dev` (5 commits ahead of `origin/dev`, **not pushed**)
+- Recent commits:
+  - `3fee038` — ship classification verdict (no NPC-only ships)
+  - `9882200` — deleted v1 wiki scraper
+  - `cdfca0c` — journal Entry 3 (wiki v2 results + Phase-1 design)
+  - `81ac884` — wiki scraper + journal Entry 2
+  - `138a095` — merged ADMIN.md audit fixes
+- Working tree: clean.
+
+### Where to resume
+**Next action**: Step #3 — design the seed-JSON merge structure (wiki → `import_data/`). No code written yet; this is still a design phase.
+
+Proposal to put to user:
+- Add a `combat` sub-object inside each seed JSON to keep new fields visually separate from legacy (e.g. `"combat": {"fire_rate_hz": 2.5, "accuracy": 0.85, ...}`).
+- New columns on existing models OR a single JSON column? (open question for the user)
+- Migration strategy: backfill from wiki v2 JSONs at seed time vs at migration time.
+
+### Authoritative artifacts (survive compaction)
+| Artifact | Location | Notes |
+|----------|----------|-------|
+| This journal | `/proj/COMBAT_REWRITE_JOURNAL.md` | 669+ lines; Entry 3 = full design; Entry 4 = this handoff. |
+| Wiki v2 data | `/tmp/gof2_wiki_v2/` | 211 item JSONs across `primary/ secondary/ turret/ module/ ship/` + `_combined.json` + `_summary.md`. **/tmp** — copy to `/proj` if persistence needed. |
+| Combat code (current) | `/proj/services/bot-core/src/services/combat_service.py` (527 LOC) | The file being replaced. |
+| Combat models | `services/bot-core/src/services/combat_models.py` | `FightResults`, `CombatResolver` Protocol — public contract to preserve. |
+
+### Locked decisions (full list)
+1. **Tick-based combat**; accuracy = primary RNG axis; weapon fire rates matter.
+2. **Mechanics in scope (Phase-1)**: shields, hull, armour, repair bot, thrusters, cloaks, boosters, auto-fire turrets, scanners, secondary weapons (dumb-fire vs heat-seeking).
+3. **Repair Bot**: 2.5%/sec (I), 5.0%/sec (II) of `max_hull + max_armour`.
+4. **Starting HP (Phase-1)**: both combatants full hull/armour/shield. Hooks (`current_*` cols) shipped in Phase-1 schema for Phase-2.
+5. **OOC recovery (Phase-2 feature, Phase-1 schema)**: 25%/hr players, 12.5%/hr criminals; guild-configurable.
+6. **Dock mechanic (Phase-2)**: full repair for 2.5% of current credits; guild-configurable.
+7. **No NPC-only ships**; existing `max_primaries > 0` filter is the gate. Terran Battlecruiser eligible — left as-is.
+8. **WeaponModModule** is unique-equip / mutually-exclusive → add to `UNIQUE_EQUIP_TYPES` alongside Cloak / Booster / EmergencySystem / ShieldInjector / Khador / Phoenix SIS.
+9. **Scope**: GoF2 family only (GoF2, GoF2 HD, Valkyrie, Supernova). Exclude GoF 3D / Alliances / GoF3.
+10. **Source-of-truth**: wiki v2 canonical for every item with data; seed JSON wins only for Vossk Battlecruiser.
+11. **v1 wiki scraper deleted**; v2 AI semantic extraction is the only scrape going forward.
+12. **GammaShield** inert in Phase-1 (no radiation damage source in scope).
+13. **Hull** = `ship.armour` column. ArmourModule = separate armour buffer. ShieldModule = regenerating shield layer.
+14. **User wants pointers, not guesses** — ask before assuming code locations.
+
+### Open questions to put to the user when resuming
+- Seed-JSON merge: `combat` sub-object vs flat? New columns vs JSON blob?
+- Shield regen default (wiki only documents Targe's 20s full-refill).
+- Fight cap behaviour: winner-by-remaining-HP% vs stalemate at `MAX_FIGHT_TICKS` (recommendation: HP%-winner with ≤5% delta = stalemate).
+- Booster effect mapping (lore = speed mult; my derivation = temp evasion bonus) — confirm.
+- Cloak repeatable-per-energy-cell, default 3 cells per fight — confirm.
+
+### Public contract to preserve from `CombatService`
+```
+fight_ships(loadout1, loadout2, variance_percent=None,
+            player_armour_buff=1.0, guild_config=None) -> FightResults
+# + statics: collect_stats / get_dps / get_armour / get_shield
+# + CombatResolver Protocol
+```
+`FightResults` wire fields downstream consumers depend on:
+`winner_name, loser_name, is_stalemate, variance_percent,
+ship{1,2}_stats(ship_name, raw_hp, raw_dps, varied_hp, varied_dps, ttk)`.
+
+### Combat callsites (5)
+- `services/bot-core/src/services/duel_service.py:233`
+- `services/bot-core/src/services/bounty_service.py:1318` (Bronze bonus)
+- `services/bot-core/src/services/bounty_service.py:1357` (Silver/Gold/Platinum gate)
+- `services/bot-core/src/api/routers/bounties.py:227` (cleanup target — fresh `CombatService` per request)
+- `services/bot-core/src/services/combat_preflight_service.py:173` (Monte-Carlo estimator)
+
+### Files to touch when work resumes
+- `services/bot-core/src/services/game_constants.py` (constants: `UNIQUE_EQUIP_TYPES`, OOC recovery rates, dock cost)
+- `services/bot-core/src/services/loadout_consistency_service.py` (enforce `UNIQUE_EQUIP_TYPES`)
+- `services/bot-core/src/services/loadout_builder.py` (consume new combat fields)
+- `services/bot-core/src/persist/models/{player,bounty}.py` (Phase-1 schema columns)
+- `services/bot-core/src/persist/database/revisions/versions/` (new Alembic migration)
+- `services/bot-core/import_data/{primary_weapon,secondary_weapon,turret_weapon,module,ship}/*.json` (merge destination)
+- `services/bot-core/src/services/combat_balance.py` (NEW — per-subtype defaults)
+- `services/bot-core/src/services/combat_service.py` (REPLACE — keep `SimpleTTKResolver` as flag fallback)
+
+### Wiki v2 known gaps (not blocking)
+- Vossk Battlecruiser: no stats anywhere (wiki says "stats unknown").
+- 48 items have empty `mechanics_text` (Disruptor Laser, Berger Focus I, Mass Driver MD 12, etc.) — stats complete, only editorial flavor missing.
+- DB vs wiki TL drift: `128MJ Railgun` and `H'Belam` DB=5 vs wiki infobox=6 (infobox is authoritative).
+- DB vs wiki ship drift cluster (DB-lower-armour / DB-higher-cargo): Vol Noor, H'Soc, Gryphon, Wraith, Phantom, Terran Battlecruiser — seed pulled from a different GoF2 build at some point.
+
+*Compaction handoff ends here.*

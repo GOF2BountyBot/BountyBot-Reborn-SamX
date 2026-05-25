@@ -1,0 +1,14 @@
+{
+  "_name": "Blue Fyre",
+  "_category": "ship",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Blue_Fyre",
+  "_game_versions_present": ["GoF2", "GoF2HD", "Supernova"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Armor": "270", "Cargo hold": "125", "Primary weapons": "3", "Secondary weapons": "3", "Turrets": "0", "Equipment": "13", "Handling": "116", "Price": "$4,455,000", "Price (Android)": "$2,545,714"},
+  "stats": {"faction": "Pirate", "armour": 270, "cargo": 125, "max_primaries": 3, "max_secondaries": 3, "max_turrets": 0, "max_modules": 13, "handling": 116, "price_credits": 4455000, "price_credits_android": 2545714, "dlc": "Supernova"},
+  "in_game_description": "",
+  "mechanics_text": ["Most Wanted ship. Supernova DLC. Purchasable at Quineros in Loma system after defeating last Pirate criminal."],
+  "wiki_categories": ["Ships", "Pirate Ships", "Most Wanted Ships", "GOF2", "Supernova"],
+  "gof2_hd_overrides": {"price_credits": 2545714},
+  "version_notes": "Supernova DLC Most Wanted ship."
+}

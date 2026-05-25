@@ -1,0 +1,14 @@
+{
+  "_name": "Ketar Repair Bot",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Ketar_Repair_Bot",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Repair Bot", "Tech Level": "4", "Known Price Range": "$13,775 -> $15,285"},
+  "stats": {"tech_level": 4, "price_range_min_credits": 13775, "price_range_max_credits": 15285},
+  "in_game_description": "",
+  "mechanics_text": ["Repair Bots automatically make in-flight repairs to a ship's armor and hull.", "Continuous passive repair while equipped."],
+  "wiki_categories": ["Equipment", "Repair Bots", "Tech level 4", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Stats from category table. HP/s not listed in category table — individual page needs fetching for exact repair rate."
+}

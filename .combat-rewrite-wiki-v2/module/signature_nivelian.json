@@ -1,0 +1,15 @@
+{
+  "_name": "Signature Nivelian",
+  "_category": "module",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Signature",
+  "_shared_page": "Signature",
+  "_game_versions_present": ["GoF2", "GoF2HD"],
+  "_extracted_at": "2026-05-24T00:00:00Z",
+  "raw_infobox": {"Type": "Signature", "Faction": "Nivelian", "Purchase price": "~500,000 credits (Loma system)", "Sell price": "~7,500 credits"},
+  "stats": {"faction": "Nivelian", "purchase_price_credits": 500000, "sell_price_credits": 7500, "consumable": true},
+  "in_game_description": "Signatures are unique identification codes that store biometric data, political slants and the Spacenet surfing behaviour of the respective pilot.",
+  "mechanics_text": ["Same mechanics as Signature Terran but for Nivelian faction identity."],
+  "wiki_categories": ["Equipment", "Signatures", "GOF2"],
+  "gof2_hd_overrides": {},
+  "version_notes": "Shares /wiki/Signature page with other faction signatures."
+}

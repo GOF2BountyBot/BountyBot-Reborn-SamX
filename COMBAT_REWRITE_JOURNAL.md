@@ -983,4 +983,29 @@ A ship with a built-in cloak CAN still equip a separate cloak module; the equipp
 - Seed-JSON merge structure (#3) is still the next implementation step.
 - All Entry 4 + 5a–5g locked decisions stand.
 
+### Entry 5i — Pricing + stats normalisation policy (2026-05-24)
+
+User direction following architect schema-mapping report:
+
+**LOCKED**:
+1. **In-game `value` for every item**: use **median of wiki `price_range_min_credits` and `price_range_max_credits`** = `(min + max) / 2`, rounded to nearest integer credit. Applies universally — primaries, secondaries, turrets, modules, ships. Overwrites current `value` field (the secondary-weapon `value: 0` bug is fixed by this rule, not by special-casing).
+2. **Stat rounding allowed**: where it makes a combat formula cleaner (e.g. fractional DPS, awkward `loading_speed_ms` like 4287ms), round to a reasonable value. Document any rounding in the enriched JSON's notes or comments.
+3. **Tech-level corrections**: fix all TL drift to match wiki infobox. Confirmed cases from architect report:
+   - `128MJ Railgun`: 5 → 6
+   - `H'Belam`: 5 → 6
+   - Any others discovered during enrichment: also bump to wiki value.
+4. **Builtin module population**: Scimitar + Specter get `"builtinModules": ["U'tool"]` populated in their seed JSONs as part of Stage A.
+
+### Implementation plan (now unblocked)
+
+Following architect's recommended sequencing:
+- **PR-1**: Alembic migration — `ship.extra_atts` + Phase-2 damage-tracking columns on `Player` and `Bounty`.
+- **PR-2**: Loader patches — fix `"loading speed"` (with space) → `loading_speed_ms` mapping; normalize subtype handling; respect `extra_atts` in seed JSONs.
+- **PR-3**: Seed JSON enrichment — Stage A merge script, commits enriched JSONs. Updates `value` to wiki-median, fixes TL drift, populates `builtinModules` for Scimitar/Specter, drops wiki combat fields into `extra_atts`.
+- **PR-4**: New tick resolver behind feature flag, `SimpleTTKResolver` retained as fallback for one release.
+
+### Carries forward unchanged (post-5i)
+- All Entry 4, 5a–5h locked decisions stand.
+- Architect report `/proj/COMBAT_SCHEMA_MAPPING.md` is the authoritative implementation reference.
+
 *Last updated: 2026-05-24*

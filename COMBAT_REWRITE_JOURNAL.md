@@ -876,8 +876,8 @@ Confirmed by reading wiki JSONs directly (not asking user):
 - **Range-gating**: weapons only fire when `current_distance_m <= weapon.range_m`.
 
 **Open follow-ups on distance**:
-- **Ship maneuverability + thruster effect** still needs a mapping. Wiki has thruster modules (`dozzt_thrust`, `linear_boost`, `mpzzzm_thrust`, etc.) — need to check their stats and decide what they modify. Candidate: thrusters reduce incoming primary accuracy (harder to hit a more maneuverable ship), or reduce per-tick distance-change tax.
-- Rocket accuracy curve as f(distance) — proposal: linear from low% at 5000m to high% at 300m, with explicit min/max per server config.
+- ~~Ship maneuverability + thruster effect mapping~~ — wiki data inventoried, see Entry 5f. Mechanic mapping still TBD.
+- ~~Rocket accuracy curve~~ — **RESOLVED Entry 5f**: linear 5% at max-range → 60% at close-quarters.
 
 **Damage-stacking order (LOCKED)**:
 1. **Shield HP** absorbs first (recharges per per-shield `loading_speed_ms`)
@@ -887,7 +887,41 @@ Confirmed by reading wiki JSONs directly (not asking user):
 **Recharge implications**:
 - Shield: existing wiki data per item (`shield_recharge_ms`). Phase-1 question: does shield recharge from any partial state continuously (e.g. `+capacity/recharge_ms per tick`), or only after a full break? Default proposal: **continuous** — every tick adds `capacity * (tick_ms / recharge_ms)` until full.
 - **Repair Bot rates (already locked Entry 3)**: 2.5%/sec (I), 5.0%/sec (II) of `max_hull + max_armour`. **YES — values are specified.**
-- **Open Phase-1 question**: does Repair Bot fill armour first (mirror damage order) then hull, or split proportionally? Recommendation: **fill armour first, then hull** (mirrors the damage-stacking order — the most-recently-lost layer is rebuilt first).
+- ~~Repair Bot fill order~~ — **RESOLVED Entry 5f**: hull first, then armour (inverse of damage order). User noted these are practically equivalent in effect, but specified inverse for clarity.
+
+### Entry 5f — Thrusters catalog + final formulas (2026-05-24)
+
+**Thrusters (wiki data inventoried, 5 modules)** — `effect_pct` = handling increase:
+
+| Module | Tech | effect_pct | handling_multiplier |
+|--------|------|-----------|---------------------|
+| Static Thrust | 1 | 20% | 1.2 |
+| Pendular Thrust | 3 | 40% | 1.4 |
+| Dozzt Thrust | 5 | 70% | 1.7 |
+| MPZZZM Thrust | 7 | 100% | 2.0 |
+| Pulsed Plasma Thrust | 8 | 130% | 2.3 |
+
+Wiki notes: "Thruster effect % is handling increase. handling_multiplier = 1 + effect_pct/100."
+
+**Mapping into combat (still open)**: thrusters change "handling" / "maneuverability". Candidates for the sim: incoming-primary-accuracy debuff for the defender, OR a tick-frequency dodge chance, OR a modifier to rocket-hit probability against the defender. **Will surface when user is ready.**
+
+**LOCKED in this entry**:
+
+1. **Repair Bot fill order**: hull FIRST, then armour (inverse of damage order). Practically equivalent in effect; specified inverse for clarity.
+2. **Shield + Repair Bot recharge**: **continuous, applied per tick**. Per-tick contribution = `total_recharge_per_sec * (tick_ms / 1000)`. Any HP recovery that can be applied this tick is applied this tick.
+3. **Rocket accuracy as f(distance)**:
+   - Linear from **5%** at max range (= weapon's `range_m`) to **60%** at close-quarters (= configured min distance, default 300m).
+   - Formula: `accuracy = 0.05 + (0.60 - 0.05) * ((range_m - current_distance) / (range_m - min_distance))`, clamped to `[0.05, 0.60]`.
+4. **Booster distance formula**: while booster active, user moves AWAY at `base_speed * (1 + effect_pct/100)`, opponent follows at `base_speed`.
+   - Net outward velocity = `base_speed * (effect_pct / 100)`
+   - Total distance gained over booster duration = `base_speed * (effect_pct/100) * (duration_ms/1000)`
+   - **Worked examples** (base_speed = 150 m/s):
+     - Linear Boost (60%, 3s): +270m
+     - Cyclotron (80%, 4.4s): +528m
+     - Synchrotron (160%, 5.6s): +1344m
+     - Polytron (300%, 6s): +2700m (re-opens primary range bracket → tactically meaningful)
+   - During booster active window, passive 300 m/s closure is **suspended**; the booster's outward velocity dominates. After duration ends, normal closure resumes.
+5. **Booster-user can still fire during boost**: accepted simplification (acknowledged as logically inconsistent with "boosting away"). Mirrors GoF2 base behaviour.
 
 ### Carries forward unchanged
 - Seed-JSON merge structure (#3) is still the next implementation step.

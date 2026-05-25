@@ -952,4 +952,29 @@ Wiki notes: "Thruster effect % is handling increase. handling_multiplier = 1 + e
 - Seed-JSON merge structure (#3) is still the next implementation step.
 - All Entry 4 locked decisions stand.
 
+### Entry 5h — Built-in cloaks on Scimitar + Specter (2026-05-24)
+
+**Wiki finding**: two ships ship with a **pre-installed U'tool cloak**:
+- **Scimitar** (Supernova DLC, Nivelian faction, $5.8M)
+- **Specter** (Supernova DLC, Nivelian faction, $30M)
+
+**U'tool spec** (from `module/utool.json`):
+- Type: Cloak | TL 6 | duration_ms 10000 (10s) | loading_speed_ms 2000 (2s) | energy_per_use 1
+
+**Equip-priority rule (LOCKED per user)**:
+```
+effective_cloak_module = equipped_cloak if has_cloak_equipped else builtin_cloak
+```
+A ship with a built-in cloak CAN still equip a separate cloak module; the equipped one takes precedence in combat.
+
+**Seed-JSON status**: the `Ship` model already has a `builtin_modules: ARRAY(String)` column, but no Scimitar / Specter JSON currently populates it. Wiki enrichment (Stage A) must add `"builtinModules": ["U'tool"]` to both ship seed JSONs.
+
+**Generalised rule (applies to all unique-equip types)**: the equip-priority pattern should generalise — if any ship gets a built-in `<TYPE>` in future, the same rule applies for that type (equipped wins over builtin). Implementation should be `for type in UNIQUE_EQUIP_TYPES: effective[type] = equipped[type] or builtin[type]`.
+
+**Open question for user**: does the built-in cloak occupy one of the ship's module slots (counts against `max_modules`), or is it free / off-slot? Need clarification — this affects whether an equipped cloak is still bound by the slot count.
+
+### Carries forward unchanged (post-5h)
+- Seed-JSON merge structure (#3) is still the next implementation step.
+- All Entry 4 + 5a–5g locked decisions stand.
+
 *Last updated: 2026-05-24*

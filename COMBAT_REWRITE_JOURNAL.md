@@ -758,3 +758,42 @@ ship{1,2}_stats(ship_name, raw_hp, raw_dps, varied_hp, varied_dps, ttk)`.
 - DB vs wiki ship drift cluster (DB-lower-armour / DB-higher-cargo): Vol Noor, H'Soc, Gryphon, Wraith, Phantom, Terran Battlecruiser — seed pulled from a different GoF2 build at some point.
 
 *Compaction handoff ends here.*
+
+---
+
+## Entry 5 — Post-compaction mechanic clarifications (2026-05-24)
+
+User clarified several open questions and corrected my mis-derivations.
+
+### Locked mechanics
+
+- **GammaShield**: keep in `UNIQUE_EQUIP_TYPES` (faithful to game), but **inert in combat** — never has a practical purpose in this bot.
+- **Boosters in combat**: act as an **enemy-accuracy debuff** over their `duration_ms` active window — same shape as cloaks, just applied to the opponent's hit-roll. NOT a speed multiplier in the sim. (My earlier "evasion" derivation was directionally right but mis-attributed; correct framing is enemy-accuracy reduction.)
+- **Energy pool**: **unlimited** for both player and criminal. Do NOT track energy cells. Simplification accepted.
+- **Activation limits**: cloak / booster / etc. activations are capped per combat session via **HP thresholds** (mechanism TBD — e.g., one use per HP-band crossed). Open question: exact threshold scheme.
+- **Combat duration cap**: **3 simulated minutes**, hard cap. Derived from "longest cloak ≈ 1 min" so 3 min gives ~3 cloak windows worth of fight.
+- **Tick value**: **dynamically computed per fight** = fire-rate (ms) of the **fastest-firing weapon across both combatants** (primary + secondary + turret). All other weapon firings discretize to integer multiples of this tick. Max ticks per fight = `180_000ms / tick_ms`.
+- **Stalemate (no winner at max ticks)**:
+  - **PvP duel**: declared draw, both players keep their credits, no rewards.
+  - **PvE / PvC (bounty)**: declared draw, BUT the criminal **escapes**:
+    - A new system is selected along the criminal's route (existing route mechanic).
+    - The bounty's hunt-checks are reset (i.e. the player loses their progress on this criminal, same as a player-loss outcome).
+
+### Implications for the simulator
+
+- Tick length is a **fight-local constant**, not a global. Resolver computes it from the loadouts at fight start.
+- Every weapon has an `interval_ticks` = round(`fire_rate_ms / tick_ms`); fires when its cooldown counter hits zero.
+- Boosters/cloaks have an `active_ticks` window during which they modify the opponent's hit-roll; after the window closes they re-enter cooldown.
+- HP-threshold gating for activations means the resolver tracks "bands crossed" per combatant per device-type.
+
+### Still open (real design questions, refined)
+
+1. **HP-threshold activation scheme**: e.g. "1 activation per device-type per 25% HP-band crossed" (= 4 max per fight), or some other rule. Need user input.
+2. **Stalemate route mechanic for PvC**: need to grep `bounty_service.py` to confirm "checks reset + new system chosen along route" is already an existing flow we can re-use, or whether new code is needed.
+3. **Booster accuracy-debuff magnitude**: wiki gives `effect_pct` (60%/80%/160%/300%) — clearly a speed multiplier in lore. For combat, what mapping? Linear (60% boost → 60% accuracy debuff)? Capped? Need user input.
+
+### Carries forward unchanged
+- Seed-JSON merge structure (#3) is still the next implementation step.
+- All Entry 4 locked decisions stand.
+
+*Last updated: 2026-05-24*

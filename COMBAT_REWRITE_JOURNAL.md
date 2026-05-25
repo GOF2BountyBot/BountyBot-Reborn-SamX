@@ -788,9 +788,38 @@ User clarified several open questions and corrected my mis-derivations.
 
 ### Still open (real design questions, refined)
 
-1. **HP-threshold activation scheme**: e.g. "1 activation per device-type per 25% HP-band crossed" (= 4 max per fight), or some other rule. Need user input.
+1. ~~HP-threshold activation scheme~~ — **RESOLVED Entry 5b**. See below.
 2. **Stalemate route mechanic for PvC**: need to grep `bounty_service.py` to confirm "checks reset + new system chosen along route" is already an existing flow we can re-use, or whether new code is needed.
 3. **Booster accuracy-debuff magnitude**: wiki gives `effect_pct` (60%/80%/160%/300%) — clearly a speed multiplier in lore. For combat, what mapping? Linear (60% boost → 60% accuracy debuff)? Capped? Need user input.
+
+### Entry 5b — Activation gating + accuracy system framing (2026-05-24)
+
+**Activation gating (LOCKED)**:
+- Devices trigger automatically when defender's HP crosses a threshold, **conditional on the device not being on cooldown** from a prior activation.
+- **Boosters** trigger at 80%, 60%, 40%, 20% HP (up to 4 activations per fight if cooldown permits).
+- **Cloaks** trigger at 30% HP (1 activation, if cooldown permits).
+- Cooldown = wiki's `loading_speed_ms` per device.
+
+**Accuracy system (FRAMING — design open)**:
+- Every weapon has a **base accuracy** (need source / default scheme — wiki doesn't expose this directly).
+- **Scanners** modify accuracy. Modules of interest: `telta_ecoscan`, `telta_quickscan`, `hiroto_proscan`, `hiroto_ultrascan`. Need to read wiki specs.
+- **Secondary weapons** have their own accuracy, derived from:
+  - Equipped scanner (better scanner → better secondary accuracy)
+  - Secondary type:
+    - **Rocket** (dumb-fire) — lowest baseline accuracy, no tracking
+    - **Missile** (tracking) — higher accuracy via target lock
+    - **Nuke** (AoE) — accuracy is irrelevant for the primary hit, but damage falls off with distance
+- **Nuke damage falloff**: use an **inverse-square / diffusion-style formula** (same shape as light intensity at distance: `I = I₀ / d²`).
+  - Implication: we need a notion of "distance" in our abstract tick-sim. Likely a per-shot RNG-derived "miss distance" from the target, then `damage = base_damage / max(1, miss_distance²)`.
+  - Need to define: what determines `miss_distance`? (Scanner level? Defender speed/agility? Fixed RNG band?)
+
+### New open questions
+
+- **Base accuracy source**: per-weapon (in wiki?), per-ship, or per-pilot (player skill / criminal tech-level)?
+- **Scanner → accuracy mapping**: linear bonus per tech-level, or per-scanner-named-bonus?
+- **Secondary classification source**: do our seed JSONs already categorize rocket / missile / nuke, or does this come from wiki only?
+- **Nuke miss-distance model**: what drives it?
+- **Booster accuracy-debuff magnitude** still open (carries from Entry 5).
 
 ### Carries forward unchanged
 - Seed-JSON merge structure (#3) is still the next implementation step.

@@ -657,12 +657,12 @@ Battlecruisers and other NPC-only ships often have made-up or missing wiki data 
 
 ### Updated next-steps queue
 
-1. **Fix the v1 scraper normalization bugs** in `utils/wiki_scraper/scrape_gof2.py` — gate weapon-only fields (range_m / projectile_speed_kmh) on category; map cloak/emergency `Effect: Nms` to `duration_ms`; preserve gof2_hd_overrides. (Even though v2 is the authoritative source, keeping v1 working is useful as a repeatable cross-check tool.)
-2. **Classify each ship as player-purchasable vs NPC-only** to drive the seed-JSON merge policy.
-3. **Plan the seed-JSON merge**: which wiki fields go into `import_data/{primary,secondary,turret,module,ship}/*.json`, with what naming convention. Likely adding a `combat` sub-object to keep new fields visually separate from legacy fields.
-4. **Plan the Phase-1 DB migration** that adds damage-tracking columns to `Player` (current_hull, current_armour, current_shield, last_damage_at) and `Bounty` (criminal_current_hull, criminal_current_armour, criminal_current_shield) — these are Phase-2 features but ship in the Phase-1 schema to avoid churn.
-5. **Implement `combat_balance.py`** (per-subtype defaults for missing data — fire rate, accuracy, secondary cooldowns) so Phase-1 has tunable values without touching the simulator.
-6. **Implement the tick resolver** behind a feature flag, with the legacy `SimpleTTKResolver` as fallback for one release.
+1. ~~**Fix the v1 scraper normalization bugs**~~ — **OBSOLETE**. v1 deleted; v2 AI extraction is the canonical source.
+2. ~~**Classify each ship as player-purchasable vs NPC-only**~~ — **RESOLVED 2026-05-24 per user**: there are NO NPC-only ships. All 65 ships remain player-purchasable. Criminal ship selection is already correctly gated by `Ship.max_primaries > 0` (`bounty_service.py:395`), which auto-excludes: Vossk Battlecruiser (max_primaries=0), all 4 freighters, Rhino, Cormorant. **Note**: Terran Battlecruiser has `max_primaries=2` and IS therefore eligible for criminal selection — user accepted "whatever is current should remain in that aspect", so this is not changed.
+3. **Seed-JSON merge policy** (next): wiki stats are canonical for all ships/weapons/modules where wiki has data; seed JSON wins where wiki has none (Vossk Battlecruiser is the only ship in that category). Naming convention TBD — likely a `combat` sub-object to keep new fields visually separate from legacy fields.
+4. **Phase-1 DB migration**: add damage-tracking columns to `Player` (current_hull, current_armour, current_shield, last_damage_at) and `Bounty` (criminal_current_hull, criminal_current_armour, criminal_current_shield) — Phase-2 features but ship in the Phase-1 schema to avoid churn.
+5. **`combat_balance.py`**: per-subtype defaults for missing data — fire rate, accuracy, secondary cooldowns — so Phase-1 has tunable values without touching the simulator.
+6. **Tick resolver** behind a feature flag, with the legacy `SimpleTTKResolver` as fallback for one release.
 
 ---
 

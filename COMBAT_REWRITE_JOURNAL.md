@@ -860,15 +860,34 @@ Confirmed by reading wiki JSONs directly (not asking user):
 - Nukes have shorter `range_m` (Fireworks=6600m) but enormous `magnitude_m` AoE (10000m) — even a partial hit catches the opponent.
 
 **OPEN design questions for distance mechanic**:
-1. **Starting distance**: average of both players' max primary range? Max of the two? A fixed engagement distance (e.g. always start at 5000m)?
-2. **What changes distance over time**:
-   - Passive closure rate (combatants always closing toward optimal weapons range)?
-   - Driven by ship `speed` stat differential?
-   - Driven by booster activations (push distance back out to disengage)?
-   - Static (set at fight start, never changes) — simplest but flattens tactical depth?
-3. **Distance floor**: minimum engagement distance (e.g. ships can't fly through each other)?
+1. ~~Starting distance~~ — **RESOLVED Entry 5e**: 5000m, configurable.
+2. ~~What changes distance over time~~ — **RESOLVED Entry 5e**: passive closure at 300 m/s, boosters push back out, min 300m floor.
+3. ~~Distance floor~~ — **RESOLVED Entry 5e**: 300m, configurable.
 
-Will surface to user after Phase-1 design lock-in.
+### Entry 5e — Distance + damage-stacking lock-in (2026-05-24)
+
+**Distance mechanic (LOCKED, all configurable per guild)**:
+- **Starting distance**: 5000m
+- **Base ship speed**: 150 m/s (pinned; same value for both combatants for simplicity)
+- **Passive closure rate**: 300 m/s (= both ships approaching at 150 m/s each → 300 m/s relative)
+- **Minimum distance floor**: 300m
+- **Booster effect**: pushes distance back out based on booster `effect_pct` × `duration_ms`. Exact formula TBD (likely `distance_gained_m = base_speed * (effect_pct/100) * (duration_s)` — e.g. 60% booster for 3s adds ~270m).
+- **Rocket accuracy**: scales inversely with distance (closer = more accurate). Exact curve TBD.
+- **Range-gating**: weapons only fire when `current_distance_m <= weapon.range_m`.
+
+**Open follow-ups on distance**:
+- **Ship maneuverability + thruster effect** still needs a mapping. Wiki has thruster modules (`dozzt_thrust`, `linear_boost`, `mpzzzm_thrust`, etc.) — need to check their stats and decide what they modify. Candidate: thrusters reduce incoming primary accuracy (harder to hit a more maneuverable ship), or reduce per-tick distance-change tax.
+- Rocket accuracy curve as f(distance) — proposal: linear from low% at 5000m to high% at 300m, with explicit min/max per server config.
+
+**Damage-stacking order (LOCKED)**:
+1. **Shield HP** absorbs first (recharges per per-shield `loading_speed_ms`)
+2. **Armour module HP** second (recharged by Repair Bot)
+3. **Ship hull HP** last (recharged by Repair Bot)
+
+**Recharge implications**:
+- Shield: existing wiki data per item (`shield_recharge_ms`). Phase-1 question: does shield recharge from any partial state continuously (e.g. `+capacity/recharge_ms per tick`), or only after a full break? Default proposal: **continuous** — every tick adds `capacity * (tick_ms / recharge_ms)` until full.
+- **Repair Bot rates (already locked Entry 3)**: 2.5%/sec (I), 5.0%/sec (II) of `max_hull + max_armour`. **YES — values are specified.**
+- **Open Phase-1 question**: does Repair Bot fill armour first (mirror damage order) then hull, or split proportionally? Recommendation: **fill armour first, then hull** (mirrors the damage-stacking order — the most-recently-lost layer is rebuilt first).
 
 ### Carries forward unchanged
 - Seed-JSON merge structure (#3) is still the next implementation step.

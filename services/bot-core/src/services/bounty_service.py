@@ -201,36 +201,65 @@ class BountyService:
     # ------------------------------------------------------------------
 
     async def select_criminal(self, db: AsyncSession, guild_id: int, division: str) -> Criminal | None:
-        """Select a random criminal not already active in this division.
+        """Select a random criminal for a new bounty in (guild, division).
 
-        Loads all non-player criminals, filters out those already active
-        in the given guild+division, then picks a random faction and a
-        random criminal from that faction — matching legacy behaviour.
+        Algorithm:
+            1. Load all non-player criminals.
+            2. Filter out criminals already active in *this division* of the guild.
+            3. If any remain → pick uniformly across factions, then uniformly within
+               the chosen faction (matches legacy faction-uniform behaviour).
+            4. If the filter empties the pool ("pool exhausted" — every criminal
+               already has an active bounty in this division), log a WARNING and
+               fall back to the FULL non-player pool, permitting same-division
+               reuse. This supports large/active guilds with high
+               ``bounty_max_per_tier`` values that exceed the criminal pool.
+            5. Only return ``None`` when the criminal table itself is empty
+               (configuration/seeding failure).
+
+        Concurrency note: select_criminal is NOT itself race-safe across
+        concurrent transactions. Race-safety for the spawn pipeline is provided
+        by the orchestrator's gap-aware fire-time scheduling combined with the
+        early-commit pattern in ``execute_bounty_spawn_one_job``. Two concurrent
+        spawn jobs for the same (guild, division) firing within milliseconds
+        could still pick the same criminal here; the gap-aware scheduling in the
+        orchestrator (≥10s spacing) ensures the prior bounty has committed
+        before the next read happens.
 
         Args:
             db:        Async database session.
             guild_id:  Discord guild ID.
-            division:  Division name (e.g. "bronze", "silver", "gold").
+            division:  Division name (e.g. "bronze", "silver", "gold", "platinum").
 
         Returns:
-            A Criminal object, or None if no available criminals exist.
+            A Criminal object, or None if no non-player criminals exist at all.
         """
-        # Load all non-player criminals
+        # Load all non-player criminals (the full eligible pool).
         all_criminals: list[Criminal] = await self.criminal_repo.list_all(db)
-        available = [c for c in all_criminals if not c.is_player]
+        full_pool = [c for c in all_criminals if not c.is_player]
 
-        # Get active bounties for this guild+division
-        active_bounties = await self.bounty_repo.get_active_by_guild_and_division(db, guild_id, division)
-        active_names = {b.criminal_name for b in active_bounties}
-
-        # Filter out criminals already active in this division
-        available = [c for c in available if c.name not in active_names]
-
-        if not available:
-            flogger.info(f"No available criminals for guild {guild_id} division {division}")
+        if not full_pool:
+            flogger.error(
+                f"select_criminal: criminal table contains no non-player criminals "
+                f"(guild={guild_id} division={division}) — check seed data"
+            )
             return None
 
-        # Pick a random faction, then a random criminal from that faction
+        # Filter out criminals already active in THIS division of this guild.
+        active_bounties = await self.bounty_repo.get_active_by_guild_and_division(db, guild_id, division)
+        active_names = {b.criminal_name for b in active_bounties}
+        available = [c for c in full_pool if c.name not in active_names]
+
+        if not available:
+            # Pool exhausted: every non-player criminal already has an active
+            # bounty in this division. Allow same-division reuse.
+            flogger.warning(
+                f"select_criminal: criminal pool exhausted for guild={guild_id} "
+                f"division={division} ({len(active_names)} active, "
+                f"{len(full_pool)} non-player criminals) — allowing same-division reuse"
+            )
+            available = full_pool
+
+        # Pick a random faction, then a random criminal from that faction.
         factions = list({c.faction for c in available})
         chosen_faction = random.choice(factions)
         faction_criminals = [c for c in available if c.faction == chosen_faction]

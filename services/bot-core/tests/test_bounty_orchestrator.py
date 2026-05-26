@@ -275,19 +275,39 @@ def _configure_config_repo(guild_configs: list, get_by_guild_id_return=None) -> 
 
 
 def _configure_bounty_repo(active_count_map: dict | None = None, count_return: int = 0) -> AsyncMock:
-    """Configure BountyRepository.count_active_by_guild_and_division."""
+    """Configure BountyRepository for both the legacy count API and the
+    post-Fix-C ``get_active_by_guild_and_division`` API.
+
+    The orchestrator now reads the active list directly (to extract
+    ``issue_time`` anchors for gap-aware scheduling). The list length still
+    serves as the capacity-gate active count, so we synthesize a list of
+    SimpleNamespace mock bounties with past ``issue_time`` values whose
+    LENGTH matches the requested count.
+    """
+    from types import SimpleNamespace as _SN
+
     mock_repo = AsyncMock()
+
+    def _make_mock_active_list(n: int):
+        # Past issue_times that won't conflict with future fire-time computation.
+        return [_SN(issue_time=datetime.now(UTC) - timedelta(minutes=10 + i * 5)) for i in range(n)]
 
     if active_count_map is not None:
 
         async def _count(db, guild_id, division):
             return active_count_map.get((guild_id, division), 0)
 
+        async def _get_active(db, guild_id, division):
+            return _make_mock_active_list(active_count_map.get((guild_id, division), 0))
+
         mock_repo.count_active_by_guild_and_division = _count
+        mock_repo.get_active_by_guild_and_division = _get_active
     else:
         mock_repo.count_active_by_guild_and_division = AsyncMock(return_value=count_return)
+        mock_repo.get_active_by_guild_and_division = AsyncMock(
+            return_value=_make_mock_active_list(count_return)
+        )
 
-    mock_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
     sys.modules["persist.repositories.bounty_repository"].BountyRepository = MagicMock(return_value=mock_repo)
     return mock_repo
 
@@ -307,9 +327,27 @@ def _make_sql_scalar_result(value: int) -> MagicMock:
 
 
 def _make_db_with_sql_count(queued_count: int) -> AsyncMock:
-    """Build a mock DB session where execute() returns a scalar result for COUNT queries."""
+    """Build a mock DB session where execute() returns a SQLAlchemy-like result.
+
+    Supports BOTH the legacy ``.scalar_one()`` path (returning ``queued_count``)
+    AND the post-Fix-C ``.all()`` path (returning ``queued_count`` rows of
+    ``(next_run_time_epoch,)`` tuples). This keeps the legacy tests passing
+    after the orchestrator was changed to read individual fire times for
+    gap-aware scheduling.
+    """
+    from datetime import datetime as _dt
+
     mock_db = AsyncMock()
-    mock_db.execute = AsyncMock(return_value=_make_sql_scalar_result(queued_count))
+    result = MagicMock()
+    result.scalar_one = MagicMock(return_value=queued_count)
+    # Each row is a one-element tuple (next_run_time_epoch,).
+    # Spread the queued fires over ~10min steps in the future so they are
+    # not collision candidates with any new fire time computed by the
+    # orchestrator's gap-aware logic.
+    now_epoch = _dt.now(UTC).timestamp()
+    rows = [(now_epoch + 600.0 + i * 600.0,) for i in range(queued_count)]
+    result.all = MagicMock(return_value=rows)
+    mock_db.execute = AsyncMock(return_value=result)
     return mock_db
 
 
@@ -423,8 +461,20 @@ async def test_orchestrator_queues_exactly_one_job_per_eligible_tier():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("interval_minutes", [5, 60, 120, 240])
 async def test_orchestrator_fire_time_within_window(interval_minutes: int):
-    """Test 3: Fire time falls within the expected window for various interval values."""
-    from utils.executors.bounty_spawn_executor import execute_bounty_spawn_orchestrate_job
+    """Fix C: Fire time falls within the gap-aware target window.
+
+    Cold-start branch (no active bounties, no queued jobs):
+      target = now + interval_minutes / 2
+      jitter window = min(15, 0.25 * interval_minutes)
+      fire_time ∈ [target - window, target + window]
+
+    Plus an additional ``MIN_LEAD_SECONDS`` lower clamp to prevent past-time
+    scheduling.
+    """
+    from utils.executors.bounty_spawn_executor import (
+        _MIN_LEAD_SECONDS,
+        execute_bounty_spawn_orchestrate_job,
+    )
 
     mock_db = _make_db_with_sql_count(0)
     _configure_db_manager(mock_db)
@@ -457,20 +507,30 @@ async def test_orchestrator_fire_time_within_window(interval_minutes: int):
             f"orch-window-{interval_minutes}", {"job_type": "bounty_spawn_orchestrate"}
         )
 
-    # Compute expected window
+    # Gap-aware (Fix C) cold-start window:
+    # target = now + interval/2; fire_time ∈ [target - window, target + window].
+    half_interval = interval_minutes / 2.0
     window_minutes = min(15.0, 0.25 * interval_minutes)
-    lower_bound = now_before + timedelta(minutes=max(0.0, interval_minutes - window_minutes))
-    upper_bound = now_before + timedelta(minutes=interval_minutes + window_minutes, seconds=1)  # +1s tolerance
+    lower_bound = now_before + timedelta(minutes=max(0.0, half_interval - window_minutes))
+    # +1s tolerance for time elapsed between `now_before` and orchestrator call.
+    upper_bound = now_before + timedelta(minutes=half_interval + window_minutes, seconds=2)
+    # The MIN_LEAD_SECONDS clamp can pull lower_bound forward if the
+    # cold-start target lands too close to now (small intervals).
+    min_lead = now_before + timedelta(seconds=_MIN_LEAD_SECONDS)
+    if lower_bound < min_lead:
+        lower_bound = min_lead
 
     assert len(fire_times_recorded) > 0, "No fire times recorded — no jobs were queued"
 
     for fire_time_str in fire_times_recorded:
         fire_time = datetime.fromisoformat(fire_time_str)
         assert fire_time >= lower_bound, (
-            f"Fire time {fire_time} is before lower bound {lower_bound} (interval={interval_minutes}min)"
+            f"Fire time {fire_time} is before lower bound {lower_bound} "
+            f"(interval={interval_minutes}min, gap-aware cold-start target)"
         )
         assert fire_time <= upper_bound, (
-            f"Fire time {fire_time} is after upper bound {upper_bound} (interval={interval_minutes}min)"
+            f"Fire time {fire_time} is after upper bound {upper_bound} "
+            f"(interval={interval_minutes}min, gap-aware cold-start target)"
         )
 
 
@@ -908,8 +968,16 @@ async def test_one_happy_path():
     spawned = _make_bounty(bounty_id=42, guild_id=100, division="bronze")
     _configure_bounty_service(spawned)
 
-    mock_expiry = AsyncMock()
-    mock_announce = AsyncMock()
+    mock_expiry = AsyncMock(return_value="exp-42")
+    # Fix B: announce now returns a structured dict; tests must provide it.
+    mock_announce = AsyncMock(
+        return_value={
+            "success": True,
+            "failure_phase": None,
+            "discord_message_id": 8001,
+            "channel_id": 111,
+        }
+    )
 
     with (
         patch("utils.executors.bounty_spawn_executor._is_guild_fully_configured", return_value=True),
@@ -917,6 +985,7 @@ async def test_one_happy_path():
         patch("utils.executors.bounty_spawn_executor._get_division_role_id", return_value=555),
         patch("utils.executors.bounty_spawn_executor._schedule_expiry_job", new=mock_expiry),
         patch("utils.executors.bounty_spawn_executor._announce_bounty", new=mock_announce),
+        patch("utils.executors.bounty_spawn_executor._push_bounty_cache", new=AsyncMock()),
     ):
         result = await execute_bounty_spawn_one_job(
             "one-16", {"job_type": "bounty_spawn_one", "guild_id": 100, "tier": "bronze"}
@@ -980,7 +1049,14 @@ async def test_one_expiry_raises_does_not_prevent_announcement():
     spawned = _make_bounty(bounty_id=99, guild_id=100, division="bronze")
     _configure_bounty_service(spawned)
 
-    mock_announce = AsyncMock()
+    mock_announce = AsyncMock(
+        return_value={
+            "success": True,
+            "failure_phase": None,
+            "discord_message_id": 8002,
+            "channel_id": 111,
+        }
+    )
 
     async def _expiry_raises(job_id, bounty):
         raise RuntimeError("scheduler down")
@@ -991,6 +1067,7 @@ async def test_one_expiry_raises_does_not_prevent_announcement():
         patch("utils.executors.bounty_spawn_executor._get_division_role_id", return_value=555),
         patch("utils.executors.bounty_spawn_executor._schedule_expiry_job", new=_expiry_raises),
         patch("utils.executors.bounty_spawn_executor._announce_bounty", new=mock_announce),
+        patch("utils.executors.bounty_spawn_executor._push_bounty_cache", new=AsyncMock()),
         patch("utils.executors.bounty_spawn_executor.flogger") as mock_logger,
     ):
         result = await execute_bounty_spawn_one_job(
@@ -1011,8 +1088,15 @@ async def test_one_expiry_raises_does_not_prevent_announcement():
 
 
 @pytest.mark.asyncio
-async def test_one_announce_raises_does_not_prevent_success():
-    """Test 19: _announce_bounty raises → ERROR log but return success=True."""
+async def test_one_announce_raises_triggers_compensating_rollback():
+    """Fix B (revised): when ``_announce_bounty`` raises, the executor now
+    runs the compensating rollback (delete post if any, cancel expiry,
+    delete bounty row) and returns ``success=False`` with the rollback
+    summary. The old non-fatal contract is replaced.
+
+    Comprehensive integration coverage of the new rollback (with cross-session
+    reload) lives in ``test_bounty_spawn_executor.py``.
+    """
     from utils.executors.bounty_spawn_executor import execute_bounty_spawn_one_job
 
     mock_db = AsyncMock()
@@ -1027,12 +1111,27 @@ async def test_one_announce_raises_does_not_prevent_success():
     async def _announce_raises(job_id, bounty, config, db):
         raise RuntimeError("gateway unreachable")
 
+    # Compensator helper is fully mocked here — its real behavior is covered
+    # by the integration tests in test_bounty_spawn_executor.py.
+    compensate_calls: list[tuple] = []
+
+    async def _capture_compensate(**kwargs):
+        compensate_calls.append(kwargs)
+        return {
+            "post_deleted": False,
+            "expiry_cancelled": True,
+            "bounty_deleted": True,
+            "cache_repushed": True,
+        }
+
     with (
         patch("utils.executors.bounty_spawn_executor._is_guild_fully_configured", return_value=True),
         patch("utils.executors.bounty_spawn_executor._get_division_channel_id", return_value=111),
         patch("utils.executors.bounty_spawn_executor._get_division_role_id", return_value=555),
-        patch("utils.executors.bounty_spawn_executor._schedule_expiry_job", new=AsyncMock()),
+        patch("utils.executors.bounty_spawn_executor._schedule_expiry_job", new=AsyncMock(return_value="exp-77")),
+        patch("utils.executors.bounty_spawn_executor._push_bounty_cache", new=AsyncMock()),
         patch("utils.executors.bounty_spawn_executor._announce_bounty", new=_announce_raises),
+        patch("utils.executors.bounty_spawn_executor._compensate_failed_spawn", side_effect=_capture_compensate),
         patch("utils.executors.bounty_spawn_executor.flogger") as mock_logger,
     ):
         result = await execute_bounty_spawn_one_job(
@@ -1040,8 +1139,16 @@ async def test_one_announce_raises_does_not_prevent_success():
         )
 
     mock_logger.error.assert_called()
-    assert result["success"] is True
+    assert result["success"] is False
+    assert result["reason"] == "announce_failed_rolled_back"
+    assert result["failure_phase"] == "announce"
     assert result["bounty_id"] == 77
+    # Compensating rollback was invoked exactly once with the captured IDs.
+    assert len(compensate_calls) == 1
+    call_kwargs = compensate_calls[0]
+    assert call_kwargs["bounty_id"] == 77
+    assert call_kwargs["guild_id"] == 100
+    assert call_kwargs["expiry_job_id"] == "exp-77"
 
 
 # ===========================================================================

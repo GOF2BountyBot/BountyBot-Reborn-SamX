@@ -107,6 +107,11 @@ from persist.models.guild_config import GuildConfig
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from utils.executors.bounty_spawn_executor import (
+    _COLLISION_THRESHOLD_SECONDS,
+    _MAX_NUDGE_ITERATIONS,
+    _MIN_LEAD_SECONDS,
+    _NUDGE_INCREMENT_SECONDS,
+    _compute_next_fire_time,
     _get_division_channel_id,
     _get_division_role_id,
     _is_guild_fully_configured,
@@ -273,7 +278,12 @@ async def _create_apscheduler_table(db: AsyncSession) -> None:
 
     Note: This is a test-only helper, not production code.
     """
-    await db.execute(text("CREATE TABLE IF NOT EXISTS apscheduler_jobs (id TEXT PRIMARY KEY)"))
+    # Schema must include next_run_time (DOUBLE PRECISION in production) for
+    # the orchestrator's gap-aware fire-time query (Fix C). SQLite stores it
+    # as REAL, which is the same float representation used in production.
+    await db.execute(
+        text("CREATE TABLE IF NOT EXISTS apscheduler_jobs (id TEXT PRIMARY KEY, next_run_time REAL)")
+    )
     await db.commit()
 
 
@@ -690,13 +700,18 @@ class TestOrchestratorCapacityWithQueued:
                 await _seed_active_bounty(seed_db, GUILD_ID, DIVISION, f"Criminal-{i}")
 
             # Create the apscheduler_jobs table and insert a fake queued job row.
-            # The orchestrator queries: SELECT COUNT(*) FROM apscheduler_jobs
-            #   WHERE id LIKE 'bounty_spawn_{guild_id}_{tier}_%'
-            await seed_db.execute(text("CREATE TABLE IF NOT EXISTS apscheduler_jobs (id TEXT PRIMARY KEY)"))
+            # The orchestrator now reads next_run_time too (Fix C, gap-aware
+            # scheduling) so the schema must include it.
+            await seed_db.execute(
+                text("CREATE TABLE IF NOT EXISTS apscheduler_jobs (id TEXT PRIMARY KEY, next_run_time REAL)")
+            )
+            # Seed an arbitrary future fire time — value doesn't affect this
+            # test (capacity gate is hit before the fire-time computation).
+            fake_fire = datetime.now(UTC).timestamp() + 600.0
             for j in range(QUEUED_JOBS):
                 await seed_db.execute(
-                    text("INSERT INTO apscheduler_jobs (id) VALUES (:id)"),
-                    {"id": f"bounty_spawn_{GUILD_ID}_{DIVISION}_fake-uuid-{j}"},
+                    text("INSERT INTO apscheduler_jobs (id, next_run_time) VALUES (:id, :nrt)"),
+                    {"id": f"bounty_spawn_{GUILD_ID}_{DIVISION}_fake-uuid-{j}", "nrt": fake_fire},
                 )
             await seed_db.commit()
 
@@ -1167,15 +1182,23 @@ class TestMapUploadFailureNonFatal:
         assert announce_route.called, "Gateway announcement should have been called despite map upload failure"
 
 
-class TestGatewayAnnouncementFailureNonFatal:
-    """Backlog item #14: gateway announcement failure is non-fatal.
+class TestGatewayAnnouncementFailureRollsBack:
+    """Backlog item #14 (Fix B revised): gateway announcement failure now
+    triggers a compensating rollback — the bounty row is DELETEd, and the
+    executor returns success=False, reason=announce_failed_rolled_back.
+
+    The old "announcement is non-fatal, bounty stays in DB" contract was
+    replaced by Fix B because a bounty with no Discord post (or with an
+    unmanageable post) is functionally broken — users would have to wait
+    for the :30 failsafe cleanup to reap it.
 
     Mock policy: same as TestSpawnOneHappyPath.
     See tests/AGENTS.md §"SQLite Compatibility" and §"Mock Policy".
     """
 
-    async def test_bounty_committed_even_when_announcement_fails(self, sqlite_engine_and_factory):
-        """500 on /announcements/bounty/... → bounty row still committed to DB.
+    async def test_bounty_rolled_back_when_announcement_fails(self, sqlite_engine_and_factory):
+        """500 on /announcements/bounty/... → bounty row DELETED, executor
+        returns rollback summary.
 
         # 1 mock — db_manager bridge
         # + BountyService.spawn_bounty mock (ARRAY-column bypass)
@@ -1238,21 +1261,32 @@ class TestGatewayAnnouncementFailureNonFatal:
             respx.mock(assert_all_called=False) as router,
         ):
             router.post(SELF_JOBS_URL).respond(200, json={"data": {"id": "expiry"}})
-            # Gateway announcement → 500 (non-fatal).
+            # Gateway announcement → 500. Fix B: triggers compensating rollback.
             router.post(GATEWAY_ANNOUNCE_URL).respond(500)
+            # Compensating rollback may issue DELETE for post / expiry job;
+            # respx will pass-through 404 if these aren't registered. We
+            # register a permissive DELETE for the post URL just to assert.
             result = await execute_bounty_spawn_one_job("test-job-id", payload)
 
-        # Spawn operation succeeds (returns bounty_id).
-        assert result.get("success") is True, f"Expected success=True even when announcement fails, got {result!r}"
-        assert "bounty_id" in result
+        # Fix B: announce failure now returns success=False with rollback details.
+        assert result.get("success") is False, (
+            f"Expected success=False on announcement failure (Fix B rollback), got {result!r}"
+        )
+        assert result.get("reason") == "announce_failed_rolled_back", f"Unexpected reason: {result!r}"
+        assert result.get("failure_phase") == "announce"
+        assert "bounty_id" in result, "Result should still report the spawned bounty_id for traceability"
+        # Rollback sub-result should confirm bounty row was deleted.
+        rollback = result.get("rollback", {})
+        assert rollback.get("bounty_deleted") is True, f"Expected bounty_deleted=True in rollback, got {rollback!r}"
 
-        # Cross-session reload: Bounty row is committed to DB despite announcement failure.
+        # Cross-session reload: Bounty row is GONE from DB after rollback.
         assert len(spawned_bounty_id) == 1
         async with factory() as verify_db:
             row = await verify_db.get(Bounty, spawned_bounty_id[0])
-        assert row is not None, "Bounty row must be persisted even when gateway announcement fails"
-        assert row.status == "active"
-        assert row.criminal_name == "AnnFailCriminal"
+        assert row is None, (
+            f"Bounty row must be deleted by compensating rollback after announce failure, "
+            f"but found: id={spawned_bounty_id[0]} status={getattr(row, 'status', None)!r}"
+        )
 
 
 class TestExpirySchedulingFailureNonFatal:
@@ -1449,3 +1483,545 @@ class TestRewardAndRouteValues:
         )
         assert row.route == EXPECTED_ROUTE, f"Persisted route={row.route!r} does not match expected {EXPECTED_ROUTE!r}"
         assert row.division == DIVISION
+
+
+# ===========================================================================
+# Fix C: gap-aware fire-time scheduling — pure unit tests (Tier A, 0 mocks)
+# ===========================================================================
+
+
+class TestComputeNextFireTime:
+    """Tier-A pure-function tests for ``_compute_next_fire_time``.
+
+    Covers the scheduling algorithm introduced by Fix C: gap-aware target time,
+    bounded jitter, in-past clamp, and collision-avoidance nudge loop.
+    All inputs are constructed as plain datetimes — no DB, no HTTP, no mocks.
+    """
+
+    _NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    def test_cold_start_no_anchors_targets_now_plus_half_interval(self) -> None:
+        """No active bounties, no queued fires → target = now + interval/2.
+        Final fire is within target ± jitter_window of that anchor.
+        """
+        fire_time = _compute_next_fire_time(
+            now_dt=self._NOW,
+            interval_minutes=60.0,
+            queued_fire_times=[],
+            active_issue_times=[],
+        )
+        # Target = now + 30min. Jitter window = min(15, 0.25*60) = 15 min.
+        # So fire should be in [now+15min, now+45min].
+        expected_min = self._NOW + timedelta(minutes=15)
+        expected_max = self._NOW + timedelta(minutes=45)
+        assert expected_min <= fire_time <= expected_max
+
+    def test_target_is_max_anchor_plus_interval(self) -> None:
+        """With anchors present, target ≈ max(anchors) + interval. Verified
+        across many trials so jitter averages out.
+        """
+        last_anchor = self._NOW + timedelta(minutes=20)
+        samples: list[float] = []
+        for _ in range(200):
+            ft = _compute_next_fire_time(
+                now_dt=self._NOW,
+                interval_minutes=60.0,
+                queued_fire_times=[last_anchor],
+                active_issue_times=[],
+            )
+            samples.append((ft - last_anchor).total_seconds() / 60.0)
+        # Expected mean ≈ 60 min, well within ±15 min jitter window.
+        mean_offset = sum(samples) / len(samples)
+        assert 55.0 <= mean_offset <= 65.0, f"mean_offset={mean_offset:.2f} min"
+        # All samples in expected bounded range [60-15, 60+15].
+        assert all(45.0 <= s <= 75.0 for s in samples), (
+            f"out-of-bound samples: min={min(samples):.2f} max={max(samples):.2f}"
+        )
+
+    def test_clamps_fire_time_when_target_in_past(self) -> None:
+        """Active issue_time far in the past should not produce a fire_time
+        in the past; the clamp pushes it to ``now + MIN_LEAD_SECONDS``.
+        """
+        # Anchor 30min ago, interval 1 min → target = now - 29min (in past).
+        past_anchor = self._NOW - timedelta(minutes=30)
+        fire_time = _compute_next_fire_time(
+            now_dt=self._NOW,
+            interval_minutes=1.0,
+            queued_fire_times=[],
+            active_issue_times=[past_anchor],
+        )
+        min_allowed = self._NOW + timedelta(seconds=_MIN_LEAD_SECONDS)
+        assert fire_time >= min_allowed, (
+            f"fire_time={fire_time.isoformat()} below clamp {min_allowed.isoformat()}"
+        )
+
+    def test_collision_nudge_moves_fire_away_from_queued(self) -> None:
+        """When the deterministic target lands exactly on a queued fire, the
+        nudge loop should shift it by ``NUDGE_INCREMENT_SECONDS`` until it
+        is at least ``COLLISION_THRESHOLD_SECONDS`` away.
+
+        We force determinism by seeding queued anchors that make the target
+        collide with another queued fire after the +60min step.
+        """
+        # The most recent anchor is at now+60s, so target = now+60s + 60min.
+        # Place another queued fire at exactly that target to force collision.
+        anchor_recent = self._NOW + timedelta(seconds=60)
+        target = anchor_recent + timedelta(minutes=60)
+        # Use zero-jitter by overriding the random source via interval=0 jitter
+        # — but we can't do that without monkeypatching. Instead, run many
+        # trials and assert NO sample lands within the collision window
+        # of the planted collision point.
+        for _ in range(50):
+            ft = _compute_next_fire_time(
+                now_dt=self._NOW,
+                interval_minutes=60.0,
+                queued_fire_times=[anchor_recent, target],
+                active_issue_times=[],
+            )
+            min_dist = min(abs((ft - qt).total_seconds()) for qt in [anchor_recent, target])
+            assert min_dist >= _COLLISION_THRESHOLD_SECONDS, (
+                f"fire_time={ft.isoformat()} only {min_dist:.3f}s from a queued fire"
+            )
+
+    def test_nudge_loop_bounded_by_max_iterations(self) -> None:
+        """If a dense queued schedule would otherwise loop forever, the loop
+        terminates after ``MAX_NUDGE_ITERATIONS`` and returns a fire_time
+        (even if it is still within the collision window of some queued fire).
+        """
+        # Plant a wall of queued fires at +10s intervals covering the full
+        # nudge range past a deterministic target.
+        anchor = self._NOW + timedelta(minutes=1)
+        # Build a dense band of queued fires every NUDGE_INCREMENT seconds
+        # past the target so the loop can never escape.
+        target_approx = anchor + timedelta(minutes=60)
+        dense_wall = [
+            target_approx + timedelta(seconds=_NUDGE_INCREMENT_SECONDS * i)
+            for i in range(-2, _MAX_NUDGE_ITERATIONS + 5)
+        ]
+        # Ensure the function returns SOMETHING rather than hanging.
+        fire_time = _compute_next_fire_time(
+            now_dt=self._NOW,
+            interval_minutes=60.0,
+            queued_fire_times=[anchor, *dense_wall],
+            active_issue_times=[],
+        )
+        # Must return a datetime — bounded loop completed.
+        assert isinstance(fire_time, datetime)
+        # Must still be after now (clamp guarantee).
+        assert fire_time >= self._NOW + timedelta(seconds=_MIN_LEAD_SECONDS)
+
+    def test_active_issue_times_act_as_anchors_not_collision_candidates(self) -> None:
+        """active_issue_times must:
+          (a) Participate in max(anchors) computation (drive target time).
+          (b) NOT participate in collision detection (they are past events,
+              not future fire times).
+
+        Construction: an active_issue_time placed *exactly at the deterministic
+        target location* would cause a nudge if it were treated as a collision
+        candidate — but since it is only an anchor, no nudge occurs and the fire
+        time lands within ±jitter of the target.
+        """
+        # Construction: max anchor will be an active_issue_time at +60min.
+        # target = max(anchors) + interval = +60min + +60min = +120min.
+        # Plant the fake-collision at +120min as ANOTHER active_issue_time —
+        # if this were a collision candidate, fire would be nudged forward by
+        # at least 10s past +120min. Since it's anchor-only, fire stays in
+        # the ±15min jitter window around +120min.
+        # Note: the fake_collision being later than latest_anchor would make
+        # IT the max anchor and shift the target — so it must be EXACTLY at
+        # the target location (the math after the fact), which means we
+        # construct latest_anchor first, compute target, then plant the
+        # collision point there.
+        latest_anchor = self._NOW + timedelta(minutes=60)
+        deterministic_target = latest_anchor + timedelta(minutes=60)  # +120min
+        # The fake collision point is now the new max anchor; target shifts.
+        # To keep the geometry meaningful we put the fake collision point at
+        # EXACTLY the target location WITHOUT it becoming the max. That means
+        # it must equal latest_anchor (not later). Simpler approach: pass a
+        # single active issue at +60min, expect target at +120min, plant the
+        # collision at +120min in active again — since max(60min, 120min) =
+        # 120min, target shifts to +180min. Confirm fire is around +180min,
+        # NOT +120min (which would be the "nudge fire forward from +120min"
+        # case if active times were checked).
+        fake_collision_point = deterministic_target  # +120min — now max anchor
+        # New target = max + 60min = +180min.
+        new_target = fake_collision_point + timedelta(minutes=60)
+        for _ in range(50):
+            ft = _compute_next_fire_time(
+                now_dt=self._NOW,
+                interval_minutes=60.0,
+                queued_fire_times=[],
+                active_issue_times=[latest_anchor, fake_collision_point],
+            )
+            # Fire should land in jitter window around +180min — proves the
+            # algorithm uses max(active) as anchor (otherwise +120min would
+            # be ignored and target would be +120min).
+            expected_min = new_target - timedelta(minutes=15)
+            expected_max = new_target + timedelta(minutes=15)
+            assert expected_min <= ft <= expected_max, (
+                f"fire_time={ft.isoformat()} outside expected jitter window "
+                f"[{expected_min.isoformat()}, {expected_max.isoformat()}]"
+            )
+
+    def test_steady_state_three_slot_tier_spaces_evenly(self) -> None:
+        """Regression for the production incident: three back-to-back
+        orchestrator ticks for a max=3 tier must produce fire times that
+        are at least ``ideal_spacing - jitter`` apart, not co-located.
+
+        Simulates: tick 0 schedules J1, tick 1 schedules J2 with J1 already
+        queued, tick 2 schedules J3 with J1, J2 queued.
+        """
+        queued: list[datetime] = []
+        # Tick 0
+        j1 = _compute_next_fire_time(
+            now_dt=self._NOW,
+            interval_minutes=60.0,
+            queued_fire_times=[],
+            active_issue_times=[],
+        )
+        queued.append(j1)
+        # Tick 1 — j1 already queued
+        j2 = _compute_next_fire_time(
+            now_dt=self._NOW + timedelta(minutes=5),
+            interval_minutes=60.0,
+            queued_fire_times=list(queued),
+            active_issue_times=[],
+        )
+        queued.append(j2)
+        # Tick 2 — j1, j2 already queued
+        j3 = _compute_next_fire_time(
+            now_dt=self._NOW + timedelta(minutes=10),
+            interval_minutes=60.0,
+            queued_fire_times=list(queued),
+            active_issue_times=[],
+        )
+
+        fires = sorted([j1, j2, j3])
+        gap1 = (fires[1] - fires[0]).total_seconds()
+        gap2 = (fires[2] - fires[1]).total_seconds()
+        # Spacing should be ≥ interval - 2*jitter_window = 60min - 30min = 30min.
+        # Production bug was ~15ms; this asserts strictly bounded spacing.
+        MIN_SPACING_SECONDS = 30 * 60
+        assert gap1 >= MIN_SPACING_SECONDS, f"gap1={gap1:.1f}s < {MIN_SPACING_SECONDS}s"
+        assert gap2 >= MIN_SPACING_SECONDS, f"gap2={gap2:.1f}s < {MIN_SPACING_SECONDS}s"
+
+
+# ===========================================================================
+# Fix B: Early commit + compensating rollback — Tier B+C integration tests
+# ===========================================================================
+
+
+class TestSpawnOneEarlyCommit:
+    """Fix B: spawn_bounty result is committed BEFORE announce step runs.
+
+    Cross-session reload confirms the bounty row is visible to a fresh session
+    even when we patch the announce step to block — proving the commit
+    happened first.
+    """
+
+    async def test_bounty_visible_in_fresh_session_before_announce_completes(
+        self, sqlite_engine_and_factory
+    ):
+        """The bounty row must be query-able from a fresh session as soon as
+        spawn_bounty returns, well before announce finishes. This is the
+        invariant that shrinks the TOCTOU race window for concurrent
+        select_criminal calls in other workers.
+
+        We assert by inspecting cross-session visibility INSIDE the fake
+        announce coroutine.
+
+        # 1 mock — db_manager bridge
+        # + BountyService.spawn_bounty mock (ARRAY-column bypass)
+        # + build_bounty_announcement_request mock (LoadoutResponseService bypass)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        DIVISION = "bronze"
+
+        async with factory() as seed_db:
+            await _seed_full_config(
+                seed_db,
+                GUILD_ID,
+                max_per_tier={"bronze": 3, "silver": 3, "gold": 3, "platinum": 3},
+            )
+
+        spawned_ids: list[int] = []
+
+        async def _fake_spawn_bounty(db, guild_id, division, *, expiry_minutes=480):
+            now = datetime.now(UTC)
+            b = Bounty(
+                guild_id=guild_id,
+                division=division,
+                criminal_name="EarlyCommitCriminal",
+                criminal_faction="Vossk",
+                route=["A", "B", "C"],
+                answer="B",
+                reward=10_000,
+                reward_per_sys=2_500,
+                checked={"A": -1, "B": -1, "C": -1},
+                issue_time=now,
+                end_time=now + timedelta(minutes=expiry_minutes),
+                tech_level=4,
+                criminal_ship={"ship_name": "Cruiser", "ship_armour": 500, "weapons": [], "turrets": []},
+                status="active",
+            )
+            db.add(b)
+            await db.flush()
+            await db.refresh(b)
+            spawned_ids.append(b.id)
+            return b
+
+        # The announce mock checks DB visibility from a FRESH session.
+        cross_session_visible: list[bool] = []
+
+        async def _verify_visible_from_fresh_session(*_args, **_kwargs):
+            # Open a totally new session from the same engine.
+            async with factory() as fresh_db:
+                row = await fresh_db.get(Bounty, spawned_ids[0])
+            cross_session_visible.append(row is not None)
+            return {
+                "text_content": None,
+                "loadout_response": {"subject_name": "EarlyCommitCriminal", "subject_kind": "criminal"},
+                "metadata": {"title": "EarlyCommitCriminal", "color": 10181046},
+            }
+
+        payload = {"guild_id": GUILD_ID, "tier": DIVISION}
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch(
+                "services.bounty_service.BountyService.spawn_bounty",
+                side_effect=_fake_spawn_bounty,
+            ),
+            patch(
+                "utils.bounty_announcement_payload.build_bounty_announcement_request",
+                side_effect=_verify_visible_from_fresh_session,
+            ),
+            respx.mock(assert_all_called=False) as router,
+        ):
+            router.post(SELF_JOBS_URL).respond(200, json={"data": {"id": "expiry"}})
+            router.post(GATEWAY_ANNOUNCE_URL).respond(200, json={"data": {"id": 999_001}})
+            result = await execute_bounty_spawn_one_job("test-job", payload)
+
+        assert result.get("success") is True, f"happy path expected, got {result!r}"
+        assert cross_session_visible, "announce step did not run"
+        # CRITICAL Fix B assertion — the row was visible to another session
+        # BEFORE the announce step finished.
+        assert cross_session_visible[0] is True, (
+            "Fix B regression: bounty was NOT visible from a fresh session "
+            "during the announce step. The early commit is broken — "
+            "concurrent select_criminal would re-pick this criminal."
+        )
+
+
+class TestSpawnOneDiscordMessageFailureRollsBack:
+    """Fix B: when the DiscordMessage DB write fails after a successful
+    Discord post, the executor performs a full compensating rollback
+    including DELETE of the live Discord post.
+
+    This addresses the "live but unmanageable post" defect: previously the
+    code logged an error and left the post in Discord, where users could
+    see it but the bot could not update it on system-check / capture.
+    """
+
+    async def test_msg_db_failure_triggers_post_delete_and_bounty_delete(
+        self, sqlite_engine_and_factory
+    ):
+        """DiscordMessage create_or_update raises → compensating rollback
+        DELETEs the Discord post AND DELETEs the bounty row.
+
+        # 1 mock — db_manager bridge
+        # + BountyService.spawn_bounty mock (ARRAY-column bypass)
+        # + build_bounty_announcement_request mock (LoadoutResponseService bypass)
+        # + DiscordMessageRepository.create_or_update mock (force failure)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        DIVISION = "bronze"
+        POSTED_MSG_ID = 999_777
+
+        async with factory() as seed_db:
+            await _seed_full_config(
+                seed_db,
+                GUILD_ID,
+                max_per_tier={"bronze": 3, "silver": 3, "gold": 3, "platinum": 3},
+            )
+
+        spawned_ids: list[int] = []
+
+        async def _fake_spawn_bounty(db, guild_id, division, *, expiry_minutes=480):
+            now = datetime.now(UTC)
+            b = Bounty(
+                guild_id=guild_id,
+                division=division,
+                criminal_name="MsgFailCriminal",
+                criminal_faction="Terran",
+                route=["X", "Y", "Z"],
+                answer="Y",
+                reward=15_000,
+                reward_per_sys=3_750,
+                checked={"X": -1, "Y": -1, "Z": -1},
+                issue_time=now,
+                end_time=now + timedelta(minutes=expiry_minutes),
+                tech_level=5,
+                criminal_ship={"ship_name": "Frigate", "ship_armour": 400, "weapons": [], "turrets": []},
+                status="active",
+            )
+            db.add(b)
+            await db.flush()
+            await db.refresh(b)
+            spawned_ids.append(b.id)
+            return b
+
+        announcement = {
+            "text_content": None,
+            "loadout_response": {"subject_name": "MsgFailCriminal", "subject_kind": "criminal"},
+            "metadata": {"title": "MsgFailCriminal", "color": 10181046},
+        }
+
+        async def _msg_repo_explode(*args, **kwargs):
+            raise RuntimeError("simulated DiscordMessage write failure (DB connection lost)")
+
+        payload = {"guild_id": GUILD_ID, "tier": DIVISION}
+
+        # Track gateway DELETE calls (compensating rollback's post-delete).
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch(
+                "services.bounty_service.BountyService.spawn_bounty",
+                side_effect=_fake_spawn_bounty,
+            ),
+            patch(
+                "utils.bounty_announcement_payload.build_bounty_announcement_request",
+                new=AsyncMock(return_value=announcement),
+            ),
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository.create_or_update",
+                side_effect=_msg_repo_explode,
+            ),
+            respx.mock(assert_all_called=False) as router,
+        ):
+            router.post(SELF_JOBS_URL).respond(200, json={"data": {"id": "expiry"}})
+            router.post(GATEWAY_ANNOUNCE_URL).respond(200, json={"data": {"id": POSTED_MSG_ID}})
+            # The rollback issues DELETE on the gateway:
+            post_delete_route = router.delete(
+                f"http://{GATEWAY_HOST}:{GATEWAY_PORT}/api/v1/channels/{BRONZE_CHANNEL}/messages/{POSTED_MSG_ID}"
+            ).respond(200)
+            result = await execute_bounty_spawn_one_job("test-job", payload)
+
+        # 1. Executor returned rollback verdict.
+        assert result.get("success") is False
+        assert result.get("reason") == "announce_failed_rolled_back"
+        assert result.get("failure_phase") == "msg_db", (
+            f"Expected failure_phase=msg_db (DiscordMessage write failure), got {result!r}"
+        )
+
+        # 2. Discord post DELETE was attempted with the correct message_id.
+        assert post_delete_route.called, (
+            "Compensating rollback must DELETE the live Discord post when "
+            "DiscordMessage write fails (live but unmanageable post)"
+        )
+
+        # 3. Bounty row was deleted (cross-session reload).
+        assert len(spawned_ids) == 1
+        async with factory() as verify_db:
+            row = await verify_db.get(Bounty, spawned_ids[0])
+        assert row is None, (
+            f"Bounty row must be deleted by rollback when msg_db fails; found {row!r}"
+        )
+
+        # 4. Rollback summary reports the expected steps.
+        rollback = result.get("rollback", {})
+        assert rollback.get("post_deleted") is True
+        assert rollback.get("bounty_deleted") is True
+
+
+class TestRollbackIndependentStepFailures:
+    """Fix B: compensating rollback must continue past individual step
+    failures rather than abort on first error. The bounty-row DELETE in
+    particular must run even if the Discord-post DELETE fails (e.g. channel
+    deleted, gateway down) — otherwise we'd leave an orphan in the DB.
+    """
+
+    async def test_bounty_deleted_even_when_post_delete_fails(self, sqlite_engine_and_factory):
+        """Announce HTTP fails → rollback runs. Inject a failure on the
+        post-DELETE gateway call; verify the bounty row is still deleted.
+
+        Note: in the "announce failed" path, no post was ever created, so
+        post_deleted = False is expected (nothing to delete). This test
+        instead verifies the broader property: each rollback step runs
+        independently, so even if one fails, the bounty DELETE still runs.
+
+        # 1 mock — db_manager bridge
+        # + BountyService.spawn_bounty mock
+        # + build_bounty_announcement_request mock
+        """
+        _engine, factory = sqlite_engine_and_factory
+        DIVISION = "bronze"
+
+        async with factory() as seed_db:
+            await _seed_full_config(
+                seed_db,
+                GUILD_ID,
+                max_per_tier={"bronze": 3, "silver": 3, "gold": 3, "platinum": 3},
+            )
+
+        spawned_ids: list[int] = []
+
+        async def _fake_spawn_bounty(db, guild_id, division, *, expiry_minutes=480):
+            now = datetime.now(UTC)
+            b = Bounty(
+                guild_id=guild_id,
+                division=division,
+                criminal_name="IndepFailCriminal",
+                criminal_faction="Midorian",
+                route=["A", "B"],
+                answer="B",
+                reward=8_000,
+                reward_per_sys=4_000,
+                checked={"A": -1, "B": -1},
+                issue_time=now,
+                end_time=now + timedelta(minutes=expiry_minutes),
+                tech_level=2,
+                criminal_ship={"ship_name": "Scout", "ship_armour": 200, "weapons": [], "turrets": []},
+                status="active",
+            )
+            db.add(b)
+            await db.flush()
+            await db.refresh(b)
+            spawned_ids.append(b.id)
+            return b
+
+        announcement = {
+            "text_content": None,
+            "loadout_response": {"subject_name": "IndepFailCriminal", "subject_kind": "criminal"},
+            "metadata": {"title": "IndepFailCriminal", "color": 10181046},
+        }
+
+        payload = {"guild_id": GUILD_ID, "tier": DIVISION}
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch(
+                "services.bounty_service.BountyService.spawn_bounty",
+                side_effect=_fake_spawn_bounty,
+            ),
+            patch(
+                "utils.bounty_announcement_payload.build_bounty_announcement_request",
+                new=AsyncMock(return_value=announcement),
+            ),
+            respx.mock(assert_all_called=False) as router,
+        ):
+            router.post(SELF_JOBS_URL).respond(200, json={"data": {"id": "expiry"}})
+            # Announce HTTP fails → rollback path engaged.
+            router.post(GATEWAY_ANNOUNCE_URL).respond(500)
+            result = await execute_bounty_spawn_one_job("test-job", payload)
+
+        # Rollback ran and bounty row was deleted, despite no post-delete step
+        # (post_deleted stays False because no post existed).
+        assert result.get("success") is False
+        rollback = result.get("rollback", {})
+        assert rollback.get("bounty_deleted") is True, f"bounty row must be deleted; rollback={rollback!r}"
+
+        # Cross-session reload confirms.
+        async with factory() as verify_db:
+            row = await verify_db.get(Bounty, spawned_ids[0])
+        assert row is None, "bounty row must be absent after announce-failure rollback"

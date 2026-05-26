@@ -203,8 +203,12 @@ async def test_select_criminal_excludes_active(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_select_criminal_no_available(service, mock_db):
-    """Returns None when all criminals are already active in the division."""
+async def test_select_criminal_falls_back_to_reuse_when_pool_exhausted(service, mock_db):
+    """A5: when every non-player criminal is already active in this division,
+    fall back to the full pool (allowing same-division reuse) instead of None.
+
+    Use case: large/active guild with bounty_max_per_tier > criminal pool size.
+    """
     criminals = [_make_criminal("Alice", "terran")]
     active_bounties = [_make_bounty("Alice")]
 
@@ -213,7 +217,65 @@ async def test_select_criminal_no_available(service, mock_db):
 
     result = await service.select_criminal(mock_db, guild_id=1, division="bronze")
 
+    # Pool exhausted → fall back to reuse, must return Alice (the only NPC).
+    assert result is not None
+    assert result.name == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_select_criminal_returns_none_when_no_non_player_criminals(service, mock_db):
+    """Returns None only when the criminal table has no non-player criminals
+    at all (seed-data/config error). This is the ONLY case that yields None
+    post-A5.
+    """
+    # Only player criminals seeded — no NPCs at all.
+    criminals = [_make_criminal("Hero", "terran", is_player=True)]
+
+    service.criminal_repo.list_all = AsyncMock(return_value=criminals)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+
+    result = await service.select_criminal(mock_db, guild_id=1, division="bronze")
+
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_select_criminal_returns_none_when_criminal_table_empty(service, mock_db):
+    """Returns None when criminal table is completely empty (seed failure)."""
+    service.criminal_repo.list_all = AsyncMock(return_value=[])
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+
+    result = await service.select_criminal(mock_db, guild_id=1, division="bronze")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_select_criminal_reuse_fallback_uses_full_pool(service, mock_db):
+    """A5: when pool is exhausted, fallback considers ALL non-player criminals,
+    not just the ones in active bounties. Picks should be distributed across
+    the full pool (we observe at least one of each criminal across many trials).
+    """
+    criminals = [
+        _make_criminal("Alice", "terran"),
+        _make_criminal("Bob", "terran"),
+        _make_criminal("Charlie", "nivelian"),
+    ]
+    # All three are active → pool exhausted, reuse permitted.
+    active_bounties = [_make_bounty("Alice"), _make_bounty("Bob"), _make_bounty("Charlie")]
+
+    service.criminal_repo.list_all = AsyncMock(return_value=criminals)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=active_bounties)
+
+    seen_names: set[str] = set()
+    for _ in range(200):
+        result = await service.select_criminal(mock_db, guild_id=1, division="bronze")
+        assert result is not None
+        seen_names.add(result.name)
+
+    # Probability of NOT seeing a given criminal across 200 trials with
+    # faction-uniform sampling is vanishingly small. Should see all 3 names.
+    assert seen_names == {"Alice", "Bob", "Charlie"}
 
 
 @pytest.mark.asyncio

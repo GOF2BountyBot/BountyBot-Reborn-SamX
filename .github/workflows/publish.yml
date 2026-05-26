@@ -650,7 +650,7 @@ jobs:
 
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-${{ env.IMAGE_NAME }}.sarif
           category: trivy-${{ env.IMAGE_NAME }}
@@ -764,7 +764,7 @@ jobs:
 
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-${{ env.IMAGE_NAME }}.sarif
           category: trivy-${{ env.IMAGE_NAME }}
@@ -873,7 +873,7 @@ jobs:
 
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-blender-cpu.sarif
           category: trivy-blender-cpu
@@ -982,7 +982,7 @@ jobs:
 
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-blender-gpu.sarif
           category: trivy-blender-gpu

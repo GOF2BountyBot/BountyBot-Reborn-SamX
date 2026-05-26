@@ -189,8 +189,15 @@ class TestShipRepositoryCreateOrUpdate:
         assert captured_kwargs["max_modules"] == 4
 
     @pytest.mark.asyncio
-    async def test_unmapped_keys_lowercased_on_new_ship(self, repo, mock_db):
-        """Unmapped keys must be lowercased when creating a new Ship."""
+    async def test_unknown_keys_routed_to_extra_atts_on_new_ship(self, repo, mock_db):
+        """PR-2 L1: unknown JSON keys must land in ``extra_atts`` (not as kwargs).
+
+        Previously the loader did ``setattr(obj, lower(key), value)`` for every
+        JSON key — which crashed on insert when the key did not map to a
+        column. Combat-rewrite seed enrichment (PR-3) introduces new wiki-sourced
+        keys like ``mechanics_text``, ``wiki_status``, ``dlc``, etc.; these
+        must be tolerated automatically without per-field code changes.
+        """
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
 
         captured_kwargs = {}
@@ -203,10 +210,64 @@ class TestShipRepositoryCreateOrUpdate:
                     object.__setattr__(self, k, v)
 
         with patch("persist.repositories.ship_repository.Ship", MockShip):
-            await repo.create_or_update(mock_db, {"name": "Raven", "speed": 100})
+            await repo.create_or_update(
+                mock_db,
+                {"name": "Raven", "speed": 100, "mechanics_text": "lore"},
+            )
 
-        assert "speed" in captured_kwargs
-        assert captured_kwargs["speed"] == 100
+        # Unknown keys (not Ship columns) must NOT be passed as top-level kwargs:
+        assert "speed" not in captured_kwargs
+        assert "mechanics_text" not in captured_kwargs
+        # They must be in extra_atts under their ORIGINAL JSON key name:
+        assert "extra_atts" in captured_kwargs
+        assert captured_kwargs["extra_atts"]["speed"] == 100
+        assert captured_kwargs["extra_atts"]["mechanics_text"] == "lore"
+
+    @pytest.mark.asyncio
+    async def test_explicit_extra_atts_in_json_is_honored(self, repo, mock_db):
+        """PR-2 L1: if seed JSON carries an explicit ``extra_atts`` blob, its
+        contents win on conflict; otherwise it merges with discovered unknowns.
+        """
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        captured_kwargs = {}
+
+        class MockShip:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+
+        raw = {
+            "name": "Wraith",
+            "speed": 999,  # unknown key → discovered extras
+            "extra_atts": {"wiki_status": "missing", "speed": 42},  # explicit wins on 'speed'
+        }
+        with patch("persist.repositories.ship_repository.Ship", MockShip):
+            await repo.create_or_update(mock_db, raw)
+
+        ea = captured_kwargs["extra_atts"]
+        assert ea["wiki_status"] == "missing"
+        # Explicit wins:
+        assert ea["speed"] == 42
+
+    @pytest.mark.asyncio
+    async def test_extra_atts_omitted_when_only_known_keys_present(self, repo, mock_db):
+        """When every JSON key is a Ship column, no ``extra_atts`` kwarg should
+        be emitted (avoid spurious empty-dict writes)."""
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        captured_kwargs = {}
+
+        class MockShip:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+
+        with patch("persist.repositories.ship_repository.Ship", MockShip):
+            await repo.create_or_update(mock_db, {"name": "Eagle", "builtIn": True})
+
+        assert "extra_atts" not in captured_kwargs
+        assert captured_kwargs.get("built_in") is True
 
     @pytest.mark.asyncio
     async def test_update_applies_mapped_attrs_on_existing(self, repo, mock_db):

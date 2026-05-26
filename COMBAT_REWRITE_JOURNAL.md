@@ -1077,4 +1077,42 @@ PR sequencing unchanged; both blocking analyses are now closed.
 - Wiki v2 capture at `/proj/.combat-rewrite-wiki-v2/` is the authoritative
   game-data source.
 
+### Entry 5k — Secondary-weapon `damage=0` attribution correction (2026-05-26)
+
+User flagged the JSON-update step as a missing prerequisite for PR-2.
+While inspecting the secondary-weapon loader, the architect's compound
+finding ("the `loading speed` bug causes `damage=0` and `value=0` across
+29/30 secondaries") was decomposed into two separate facts. **The
+original framing in Entry 5i/architect report conflated two independent
+issues**:
+
+**Fact 1 — Loader bug (real, fixed in PR-2 L2)**:
+- `secondary_weapon_repository.py:68` reads `raw.get("loadingSpeed")`.
+- All 30 seed JSONs use `"loading speed"` (lowercase, with space). Zero
+  use `"loadingSpeed"`.
+- Consequence: `loading_speed` column = NULL for every secondary that
+  has a populated `"loading speed"` value (e.g. shesha: JSON has
+  `"loading speed": 3000`, DB has `loading_speed: NULL`).
+- Fix: accept both keys, primary = `"loading speed"`, fallback =
+  `"loadingSpeed"` for forward-compat.
+
+**Fact 2 — Bad seed data (real, fixed in PR-3)**:
+- 28/30 secondary JSONs have `damage: 0` and `value: 0` literally in
+  the file. This is **not** caused by the loader bug — it's placeholder
+  data that was never populated.
+- Wiki v2 capture has real values for all 30 (e.g. Garuda-IV
+  damage=300, Patala damage=250, etc.). PR-3 enrichment populates them.
+
+Practical impact on PR sequencing: unchanged. PR-2 still fixes the
+loader so that PR-3's real values land correctly. The earlier
+"shesha is the only secondary with real damage" turns out to be:
+shesha + 1 other have real damage; even shesha has NULL loading_speed
+in the DB because of the loader bug.
+
+The Entry 5i claim "29/30 secondaries have `damage=0` and `value=0`
+because loader reads `loadingSpeed` instead of `"loading speed"`" is
+hereby corrected: those zeros are baked into the JSONs themselves. The
+loader bug is real but its symptom is NULL `loading_speed` on the
+populated rows, not zero damage on the placeholder rows.
+
 *Last updated: 2026-05-26*

@@ -62,10 +62,15 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
             weapon_fields = {
                 "tech_level": raw.get("techLevel"),
             }
-            # secondary-weapon specific fields
+            # secondary-weapon specific fields.
+            # Accept both ``"loading speed"`` (wiki infobox style, with space —
+            # used by every current seed JSON) and ``"loadingSpeed"``
+            # (camelCase, kept as a fallback for forward-compat). PR-2 L2:
+            # prior to this fix only the camelCase key was read, leaving
+            # ``loading_speed`` NULL on every populated secondary.
             secondary_fields = {
                 "damage": raw["damage"],
-                "loading_speed": raw.get("loadingSpeed"),
+                "loading_speed": raw.get("loading speed") or raw.get("loadingSpeed"),
             }
 
             # anything else → JSON blob

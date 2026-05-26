@@ -304,9 +304,7 @@ def _configure_bounty_repo(active_count_map: dict | None = None, count_return: i
         mock_repo.get_active_by_guild_and_division = _get_active
     else:
         mock_repo.count_active_by_guild_and_division = AsyncMock(return_value=count_return)
-        mock_repo.get_active_by_guild_and_division = AsyncMock(
-            return_value=_make_mock_active_list(count_return)
-        )
+        mock_repo.get_active_by_guild_and_division = AsyncMock(return_value=_make_mock_active_list(count_return))
 
     sys.modules["persist.repositories.bounty_repository"].BountyRepository = MagicMock(return_value=mock_repo)
     return mock_repo

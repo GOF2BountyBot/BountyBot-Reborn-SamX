@@ -19,6 +19,7 @@ the module can be safely imported in test environments without a live database
 or all ORM dependencies being present.
 """
 
+import contextlib
 import os
 import traceback
 import uuid
@@ -596,9 +597,7 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
         try:
             expiry_job_id = await _schedule_expiry_job(job_id, spawned_bounty)
         except Exception as expiry_err:  # pylint: disable=broad-exception-caught
-            flogger.error(
-                f"BountySpawnOne[{job_id}] failed to schedule expiry for bounty id={bounty_id}: {expiry_err}"
-            )
+            flogger.error(f"BountySpawnOne[{job_id}] failed to schedule expiry for bounty id={bounty_id}: {expiry_err}")
 
         # ------------------------------------------------------------------
         # 8. Push bounty cache to gateway autocomplete (Phase 5b, non-fatal)
@@ -1069,7 +1068,7 @@ async def _compensate_failed_spawn(
                         f"BountySpawnRollback[{parent_job_id}] cancelled expiry job "
                         f"id={expiry_job_id} for bounty id={bounty_id}"
                     )
-                except Exception as remove_err:  # noqa: BLE001
+                except Exception as remove_err:
                     # Job already fired or does not exist — acceptable.
                     flogger.debug(
                         f"BountySpawnRollback[{parent_job_id}] expiry job {expiry_job_id} "
@@ -1113,18 +1112,15 @@ async def _compensate_failed_spawn(
             # Already gone — treat as success.
             result["bounty_deleted"] = True
             flogger.debug(
-                f"BountySpawnRollback[{parent_job_id}] bounty row id={bounty_id} "
-                f"already absent — nothing to delete"
+                f"BountySpawnRollback[{parent_job_id}] bounty row id={bounty_id} already absent — nothing to delete"
             )
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(
             f"BountySpawnRollback[{parent_job_id}] failed to delete bounty row "
             f"id={bounty_id}: {type(e).__name__}: {e} — failsafe cleanup will reap"
         )
-        try:
+        with contextlib.suppress(Exception):
             await db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
 
     # Step 4: Re-push the now-shortened bounty cache to the gateway so
     # autocomplete reflects the rollback. Independent try/except.

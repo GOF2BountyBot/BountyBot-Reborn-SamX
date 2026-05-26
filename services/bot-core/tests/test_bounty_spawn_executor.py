@@ -281,9 +281,7 @@ async def _create_apscheduler_table(db: AsyncSession) -> None:
     # Schema must include next_run_time (DOUBLE PRECISION in production) for
     # the orchestrator's gap-aware fire-time query (Fix C). SQLite stores it
     # as REAL, which is the same float representation used in production.
-    await db.execute(
-        text("CREATE TABLE IF NOT EXISTS apscheduler_jobs (id TEXT PRIMARY KEY, next_run_time REAL)")
-    )
+    await db.execute(text("CREATE TABLE IF NOT EXISTS apscheduler_jobs (id TEXT PRIMARY KEY, next_run_time REAL)"))
     await db.commit()
 
 
@@ -1551,9 +1549,7 @@ class TestComputeNextFireTime:
             active_issue_times=[past_anchor],
         )
         min_allowed = self._NOW + timedelta(seconds=_MIN_LEAD_SECONDS)
-        assert fire_time >= min_allowed, (
-            f"fire_time={fire_time.isoformat()} below clamp {min_allowed.isoformat()}"
-        )
+        assert fire_time >= min_allowed, f"fire_time={fire_time.isoformat()} below clamp {min_allowed.isoformat()}"
 
     def test_collision_nudge_moves_fire_away_from_queued(self) -> None:
         """When the deterministic target lands exactly on a queued fire, the
@@ -1719,9 +1715,7 @@ class TestSpawnOneEarlyCommit:
     happened first.
     """
 
-    async def test_bounty_visible_in_fresh_session_before_announce_completes(
-        self, sqlite_engine_and_factory
-    ):
+    async def test_bounty_visible_in_fresh_session_before_announce_completes(self, sqlite_engine_and_factory):
         """The bounty row must be query-able from a fresh session as soon as
         spawn_bounty returns, well before announce finishes. This is the
         invariant that shrinks the TOCTOU race window for concurrent
@@ -1823,9 +1817,7 @@ class TestSpawnOneDiscordMessageFailureRollsBack:
     see it but the bot could not update it on system-check / capture.
     """
 
-    async def test_msg_db_failure_triggers_post_delete_and_bounty_delete(
-        self, sqlite_engine_and_factory
-    ):
+    async def test_msg_db_failure_triggers_post_delete_and_bounty_delete(self, sqlite_engine_and_factory):
         """DiscordMessage create_or_update raises → compensating rollback
         DELETEs the Discord post AND DELETEs the bounty row.
 
@@ -1924,9 +1916,7 @@ class TestSpawnOneDiscordMessageFailureRollsBack:
         assert len(spawned_ids) == 1
         async with factory() as verify_db:
             row = await verify_db.get(Bounty, spawned_ids[0])
-        assert row is None, (
-            f"Bounty row must be deleted by rollback when msg_db fails; found {row!r}"
-        )
+        assert row is None, f"Bounty row must be deleted by rollback when msg_db fails; found {row!r}"
 
         # 4. Rollback summary reports the expected steps.
         rollback = result.get("rollback", {})

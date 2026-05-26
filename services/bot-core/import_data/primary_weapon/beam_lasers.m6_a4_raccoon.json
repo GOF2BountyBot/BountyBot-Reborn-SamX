@@ -15,8 +15,14 @@
   "icon": "https://i.postimg.cc/VkT7PPfz/m6-a4-raccoon.png",
   "name": "M6 A4 \"Raccoon\"",
   "techLevel": 9,
-  "value": 552747,
+  "value": 533913,
   "wiki": "https://galaxyonfire.fandom.com/wiki/M6_A4_\"Raccoon\"",
   "type": "PrimaryWeapon",
-  "subtype": "beam_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 1300,
+    "range_m": 3900,
+    "damage_per_shot": 120,
+    "subtype": "beam-laser",
+    "mechanics_text": "## In-Game Description\nThe M6 A4 is the most powerful laser beam in the entire galaxy. If you've mounted several of these lethal devices to your ship, you will be able to pulverize your enemies before they are even close enough to open fire on you. In most cases, a single shot of the M6 A4 is all it takes to turn your target into space dust."
+  }
 }

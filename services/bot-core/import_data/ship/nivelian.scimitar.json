@@ -52,5 +52,12 @@
     "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_diffuse.png",
     "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_normal_specular.png",
+  "builtinModules": [
+    "U'tool"
+  ],
+  "extra_atts": {
+    "dlc": "Supernova",
+    "price_credits_android": 3314286
+  }
 }

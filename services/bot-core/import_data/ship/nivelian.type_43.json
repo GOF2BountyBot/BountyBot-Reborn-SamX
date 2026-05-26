@@ -56,5 +56,9 @@
     "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 58000,
+    "mechanics_text": "## In-Game Description\nThis ship was designed as a lightweight rocket ship and is often used by the Nivelian armed forces in large battles. This model has been slightly scaled back for the civilian market.\n\n## Trivia\n*Trot Lykkt piloted a Type 43 equipped with the prototype Disruptor laser that he had stolen from Netor.\n*The Type 43 is used as Nivelian basic interceptor in Galaxy on Fire: Alliances.\n*The ship is the only Nivelian ship to have a number in its name, and the only ship to do so in the game, apart from the Razor 6.\n*The ship may be even stronger as said in the description but as a player we are unable to buy a military grade Type 43."
+  }
 }

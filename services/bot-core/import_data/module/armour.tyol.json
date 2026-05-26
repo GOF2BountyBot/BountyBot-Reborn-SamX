@@ -1,14 +1,18 @@
 {
-    "aliases": [
-        "Tyol"
-    ],
+  "aliases": [
+    "Tyol"
+  ],
+  "armour": 250,
+  "builtIn": false,
+  "emoji": "<:tyol:723706394821525595>",
+  "icon": "https://i.postimg.cc/vZp1d3CJ/t-yol.png",
+  "name": "T'yol",
+  "techLevel": 10,
+  "type": "ArmourModule",
+  "value": 110832,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/T%27yol",
+  "extra_atts": {
     "armour": 250,
-    "builtIn": false,
-    "emoji": "<:tyol:723706394821525595>",
-    "icon": "https://i.postimg.cc/vZp1d3CJ/t-yol.png",
-    "name": "T'yol",
-    "techLevel": 10,
-    "type": "ArmourModule",
-    "value": 117922,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/T%27yol"
+    "mechanics_text": "## In-Game Description\nAn ultra-hard armor from the Vossk elite production. This armor is the pride of Vossk industry and provides the strongest protection in the galactic market today. T'yol means \"forehead\", not to be confused with T'yool, which refers to the Vossk sex organs. This mix up has been the undoing of many an unfortunate trader...\n\n## Trivia\n*The representative image of the T'yol appears to be luminescent in its grooves, a property exclusive only to this armor.\n*It is noticed that the person selling the blueprint got the plans from a Most Wanted Criminal.\n*Despite the armor looking extremely thick from the picture, it is actually not as that strong and can be drained very fast if you are being attacked by multiple enemies at the same time.\n*All Vossk equipment and weapons are good for any part of the storyline in the game, they also produced the best armor, sentry gun (T'Suum), mine (Ksann'k), booster (Me'al, in base game) and turret (L'ksaar, in base game)."
+  }
 }

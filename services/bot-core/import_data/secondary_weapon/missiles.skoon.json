@@ -1,14 +1,22 @@
 {
-    "aliases":  [
-                    "skoon"
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "https://i.postimg.cc/nVk0cDFR/sh-koom.png",
-    "loading speed":  0,
-    "name":  "S'koon",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "missiles"
+  "aliases": [
+    "skoon"
+  ],
+  "builtIn": false,
+  "damage": 140,
+  "icon": "https://i.postimg.cc/nVk0cDFR/sh-koom.png",
+  "loading speed": 3000,
+  "name": "S'koon",
+  "value": 181,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "techLevel": 3,
+  "extra_atts": {
+    "loading_speed_ms": 3000,
+    "range_m": 5500,
+    "speed_km_h": 2500,
+    "subtype": "missile",
+    "steerable": true,
+    "emp_damage": 0
+  }
 }

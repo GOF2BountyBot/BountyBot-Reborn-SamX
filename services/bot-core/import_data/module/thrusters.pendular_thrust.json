@@ -7,6 +7,10 @@
   "name": "Pendular Thrust",
   "techLevel": 3,
   "type": "ThrusterModule",
-  "value": 2957,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Pendular_Thrust"
+  "value": 2809,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Pendular_Thrust",
+  "extra_atts": {
+    "effect_pct": 40.0,
+    "handling_multiplier": 1.4
+  }
 }

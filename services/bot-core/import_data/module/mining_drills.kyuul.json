@@ -1,15 +1,19 @@
 {
-    "aliases": [
-        "Kyuul"
-    ],
-    "builtIn": false,
-    "emoji": "<:kyuul:723706605660667967>",
-    "drillHandling": 1.8,
-    "icon": "https://i.postimg.cc/CL0T9Dvc/k-yuul.png",
-    "name": "K'yuul",
-    "oreYield": 1.4,
-    "techLevel": 5,
-    "type": "MiningDrillModule",
-    "value": 37743,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/K%27yuul"
+  "aliases": [
+    "Kyuul"
+  ],
+  "builtIn": false,
+  "emoji": "<:kyuul:723706605660667967>",
+  "drillHandling": 1.8,
+  "icon": "https://i.postimg.cc/CL0T9Dvc/k-yuul.png",
+  "name": "K'yuul",
+  "oreYield": 1.4,
+  "techLevel": 5,
+  "type": "MiningDrillModule",
+  "value": 33868,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/K%27yuul",
+  "extra_atts": {
+    "drill_yield_pct": 40,
+    "drill_handling_pct": 80
+  }
 }

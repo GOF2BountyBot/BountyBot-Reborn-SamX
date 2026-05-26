@@ -54,5 +54,8 @@
     "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.png",
     "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 120000
+  }
 }

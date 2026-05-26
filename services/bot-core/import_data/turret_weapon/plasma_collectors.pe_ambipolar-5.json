@@ -10,9 +10,14 @@
   "icon": "https://i.postimg.cc/8C2zqcfN/pe-ambipolar-5.png",
   "name": "PE Ambipolar-5",
   "techLevel": 9,
-  "value": 115169,
+  "value": 113062,
   "automatic": false,
   "wiki": "https://galaxyonfire.fandom.com/wiki/PE_Ambipolar-5",
   "type": "TurretWeapon",
-  "subtype": "plasma_collectors"
+  "extra_atts": {
+    "range_m": 5000,
+    "speed_km_h": 1400,
+    "subtype": "plasma-collector",
+    "autonomous": false
+  }
 }

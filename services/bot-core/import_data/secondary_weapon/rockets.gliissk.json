@@ -1,20 +1,28 @@
 {
-    "aliases":  [
-                    "Gliissk",
-                    "Glissk",
-                    "Gliisk",
-                    "Glisk",
-                    "G'lissk",
-                    "G'liisk",
-                    "G'lisk"
-                ],
-    "builtIn":  false,
-    "damage":  60,
-    "icon":  "https://i.postimg.cc/m2kjKpgs/gliissk.png",
-    "loading speed":  1.2,
-    "name":  "G'liissk",
-    "value":  23,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "rockets"
+  "aliases": [
+    "Gliissk",
+    "Glissk",
+    "Gliisk",
+    "Glisk",
+    "G'lissk",
+    "G'liisk",
+    "G'lisk"
+  ],
+  "builtIn": false,
+  "damage": 60,
+  "icon": "https://i.postimg.cc/m2kjKpgs/gliissk.png",
+  "loading speed": 1200,
+  "name": "G'liissk",
+  "value": 21,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "techLevel": 1,
+  "extra_atts": {
+    "loading_speed_ms": 1200,
+    "range_m": 1000,
+    "speed_km_h": 3000,
+    "subtype": "rocket",
+    "steerable": false,
+    "emp_damage": 0
+  }
 }

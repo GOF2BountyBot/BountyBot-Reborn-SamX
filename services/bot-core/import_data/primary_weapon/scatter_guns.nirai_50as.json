@@ -10,8 +10,14 @@
   "icon": "https://i.postimg.cc/9MPCKpjY/nirai-50as.png",
   "name": "Nirai .50AS",
   "techLevel": 5,
-  "value": 44092,
+  "value": 38532,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_.50AS",
   "type": "PrimaryWeapon",
-  "subtype": "scatter_guns"
+  "extra_atts": {
+    "loading_speed_ms": 700,
+    "range_m": 3000,
+    "damage_per_shot": 13,
+    "speed_km_h": 5500,
+    "subtype": "scatter-gun"
+  }
 }

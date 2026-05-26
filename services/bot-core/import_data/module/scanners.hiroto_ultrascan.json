@@ -11,6 +11,9 @@
   "techLevel": 7,
   "timeToLock": 1.8,
   "type": "ScannerModule",
-  "value": 95309,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Hiroto_Ultrascan"
+  "value": 89789,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Hiroto_Ultrascan",
+  "extra_atts": {
+    "time_to_lock_s": 1.8
+  }
 }

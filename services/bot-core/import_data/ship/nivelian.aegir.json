@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/ship_021_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/ship_021_nivelian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/ship_021_nivelian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 1808600,
+    "mechanics_text": "The Aegir is the Nivelian's flagship vessel. It is perfection, elegance and power all rolled into one. It is not a cheap ship by any means, but is highly sought after by a lot of pilots across the galaxy.\n\nTrivia: Aegir is the name of a Scandinavian sea god. Aegir is the name of a sea giant, god of the ocean and king of the sea creatures in Norse mythology. The Aegir bears a resemblance to the Vic Viper in Gradius. This is one of the two Nivelian ships that have four secondary weapons. This is oddly not the agilest of the ultimate ships, being less agile than the VoidX and the Mantis."
+  }
 }

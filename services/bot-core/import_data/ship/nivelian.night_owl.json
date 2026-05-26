@@ -55,5 +55,8 @@
     "/app/data/game-objects/items/ships/Nivelian/Night Owl.bbship/ship_035_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Night Owl.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Night Owl.bbship/ship_035_nivelian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Night Owl.bbship/ship_035_nivelian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 26500
+  }
 }

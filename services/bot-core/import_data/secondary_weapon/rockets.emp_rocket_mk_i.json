@@ -8,12 +8,20 @@
     "EMP Rocket Mark 1"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 10,
   "icon": "https://i.postimg.cc/RC1kBhJG/emp-rocket-mk-i.png",
-  "loading speed": 0,
+  "loading speed": 1000,
   "name": "EMP Rocket Mk I",
-  "value": 0,
+  "value": 54,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "rockets"
+  "techLevel": 6,
+  "extra_atts": {
+    "loading_speed_ms": 1000,
+    "range_m": 1300,
+    "speed_km_h": 4500,
+    "subtype": "rocket",
+    "steerable": false,
+    "emp_damage": 45
+  }
 }

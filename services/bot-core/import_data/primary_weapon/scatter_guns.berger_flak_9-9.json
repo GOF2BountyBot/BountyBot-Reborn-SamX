@@ -12,8 +12,14 @@
   "icon": "https://i.postimg.cc/g0ZYqpS5/berger-flak-9-9.png",
   "name": "Berger FlaK 9-9",
   "techLevel": 7,
-  "value": 135058,
+  "value": 123624,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_FlaK_9-9",
   "type": "PrimaryWeapon",
-  "subtype": "scatter_guns"
+  "extra_atts": {
+    "loading_speed_ms": 750,
+    "range_m": 3600,
+    "damage_per_shot": 19,
+    "speed_km_h": 6250,
+    "subtype": "scatter-gun"
+  }
 }

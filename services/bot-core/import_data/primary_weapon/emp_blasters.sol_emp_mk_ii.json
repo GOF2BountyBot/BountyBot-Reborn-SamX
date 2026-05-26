@@ -12,8 +12,14 @@
   "icon": "https://i.postimg.cc/W1QV4KN7/sol-emp-mk-ii.png",
   "name": "Sol EMP Mk II",
   "techLevel": 5,
-  "value": 12517,
+  "value": 11382,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Sol_EMP_Mk_II",
   "type": "PrimaryWeapon",
-  "subtype": "emp_blasters"
+  "extra_atts": {
+    "loading_speed_ms": 450,
+    "range_m": 2000,
+    "damage_per_shot": 5,
+    "speed_km_h": 3750,
+    "subtype": "emp-blaster"
+  }
 }

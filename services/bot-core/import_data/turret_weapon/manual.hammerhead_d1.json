@@ -8,9 +8,14 @@
   "icon": "https://i.postimg.cc/qMv4DyD2/hammerhead-d1.png",
   "name": "Hammerhead D1",
   "techLevel": 5,
-  "value": 24174,
+  "value": 21888,
   "automatic": false,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Hammerhead_D1",
   "type": "TurretWeapon",
-  "subtype": "manual"
+  "extra_atts": {
+    "loading_speed_ms": 300,
+    "range_m": 3800,
+    "speed_km_h": 7000,
+    "autonomous": false
+  }
 }

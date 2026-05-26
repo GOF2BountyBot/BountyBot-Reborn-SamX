@@ -53,5 +53,8 @@
     "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/sn_ship_052_retro_diffuse.png",
     "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/sn_ship_052_retro_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/sn_ship_052_retro_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/sn_ship_052_retro_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 1400000
+  }
 }

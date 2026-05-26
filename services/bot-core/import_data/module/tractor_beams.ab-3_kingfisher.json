@@ -11,6 +11,9 @@
   "techLevel": 7,
   "timeToLock": 0,
   "type": "TractorBeamModule",
-  "value": 61448,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-3_\"Kingfisher\""
+  "value": 56378,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-3_\"Kingfisher\"",
+  "extra_atts": {
+    "time_to_lock_s": 0.0
+  }
 }

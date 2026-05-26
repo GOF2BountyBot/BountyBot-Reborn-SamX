@@ -53,5 +53,8 @@
     "/app/data/game-objects/items/ships/Pirate/Mantis.bbship/ship_029_pirates_normal_specular.png",
     "/app/data/game-objects/items/ships/Pirate/Mantis.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Pirate/Mantis.bbship/ship_029_pirates_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Mantis.bbship/ship_029_pirates_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 2363886
+  }
 }

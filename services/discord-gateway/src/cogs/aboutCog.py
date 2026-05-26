@@ -249,6 +249,17 @@ class AboutCog(commands.Cog):
             if obj_data.get("dps") is not None:
                 embed.add_field(name="DPS", value=f"{obj_data['dps']:.1f}", inline=True)
 
+        elif category == "secondary_weapon":
+            if obj_data.get("damage") is not None:
+                embed.add_field(name="Damage", value=str(obj_data["damage"]), inline=True)
+            ls = obj_data.get("loading_speed")
+            if ls is not None:
+                embed.add_field(name="Loading Speed", value=f"{ls} ms", inline=True)
+
+        elif category == "turret_weapon":
+            if obj_data.get("dps") is not None:
+                embed.add_field(name="DPS", value=f"{obj_data['dps']:.1f}", inline=True)
+
         elif category == "ship":
             # Hull & capacity
             if obj_data.get("armour") is not None:
@@ -274,6 +285,9 @@ class AboutCog(commands.Cog):
                 embed.add_field(name="Manufacturer", value=obj_data["manufacturer"], inline=True)
             if obj_data.get("skinnable"):
                 embed.add_field(name="Skinnable", value="Yes", inline=True)
+            if obj_data.get("builtin_modules"):
+                bm = ", ".join(obj_data["builtin_modules"])
+                embed.add_field(name="Built-in Modules", value=bm, inline=True)
             if obj_data.get("compatible_skins"):
                 names = list(obj_data["compatible_skins"].keys())
                 # build pairs of two
@@ -317,10 +331,20 @@ class AboutCog(commands.Cog):
         if obj_data.get("wiki"):
             embed.add_field(name="Wiki", value=f"[More Info]({obj_data['wiki']})", inline=False)
 
-        # Add extra attributes if available
-        if obj_data.get("extra_atts"):
+        # Mechanics / lore text — extracted from extra_atts and shown separately
+        # so it doesn't get buried in the generic attribute dump.
+        extra_atts = obj_data.get("extra_atts") or {}
+        mechanics = extra_atts.get("mechanics_text")
+        if mechanics and isinstance(mechanics, str) and mechanics.strip():
+            trunc = mechanics[:500] + "…" if len(mechanics) > 500 else mechanics
+            embed.add_field(name="Lore / Mechanics", value=trunc, inline=False)
+
+        # Add remaining extra attributes (skip mechanics_text — shown above)
+        if extra_atts:
             extra_text = ""
-            for key, value in obj_data["extra_atts"].items():
+            for key, value in extra_atts.items():
+                if key == "mechanics_text":
+                    continue
                 if isinstance(value, (int, float, str, bool)):
                     extra_text += f"**{key.replace('_', ' ').title()}:** {value}\n"
             if extra_text:

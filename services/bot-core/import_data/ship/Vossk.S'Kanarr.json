@@ -52,5 +52,9 @@
     "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/S'Kanarr_Full.obj",
     "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/v_ship_039_vossk_diffuse.png"
-  ]
+  ],
+  "extra_atts": {
+    "dlc": "Valkyrie",
+    "price_credits_android": 7250000
+  }
 }

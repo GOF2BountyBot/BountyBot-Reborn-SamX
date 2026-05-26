@@ -1,12 +1,20 @@
 {
   "aliases": [],
   "builtIn": false,
-  "damage": 0,
+  "damage": 1,
   "icon": "https://i.postimg.cc/J45MPKQr/fireworks.png",
-  "loading speed": 0,
+  "loading speed": 8000,
   "name": "Fireworks",
-  "value": 0,
+  "value": 21920,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "nukes"
+  "techLevel": 10,
+  "extra_atts": {
+    "loading_speed_ms": 8000,
+    "range_m": 6600,
+    "speed_km_h": 30000,
+    "subtype": "nuke",
+    "steerable": false,
+    "magnitude_m": 10000
+  }
 }

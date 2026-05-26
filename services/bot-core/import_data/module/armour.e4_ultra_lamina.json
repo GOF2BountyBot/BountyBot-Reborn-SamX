@@ -13,6 +13,10 @@
   "name": "E4 Ultra Lamina",
   "techLevel": 3,
   "type": "ArmourModule",
-  "value": 4705,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/E4_Ultra_Lamina"
+  "value": 4162,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/E4_Ultra_Lamina",
+  "extra_atts": {
+    "armour": 80,
+    "mechanics_text": "## In-Game Description\nThis armor is for pilots who want the best possible value for money. Offers adequate protection for most combat situations.\n\n## Trivia\n* E4 Ultra Lamina is the armor preinstalled into your Inflict or Berger CrossXT when you start a new game from Valkyrie or Supernova, along with a Riot Shield."
+  }
 }

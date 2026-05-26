@@ -11,6 +11,9 @@
   "techLevel": 6,
   "timeToLock": 1.8,
   "type": "ScannerModule",
-  "value": 38955,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Hiroto_Proscan"
+  "value": 35812,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Hiroto_Proscan",
+  "extra_atts": {
+    "time_to_lock_s": 1.8
+  }
 }

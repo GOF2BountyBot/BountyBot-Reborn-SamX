@@ -1,12 +1,20 @@
 {
   "aliases": [],
   "builtIn": false,
-  "damage": 0,
+  "damage": 140,
   "icon": "https://i.postimg.cc/DwfJgSLN/shock-blast.png",
-  "loading speed": 0,
+  "loading speed": 6000,
   "name": "Shock Blast",
   "value": 0,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "misc"
+  "techLevel": 9,
+  "extra_atts": {
+    "loading_speed_ms": 6000,
+    "range_m": 0,
+    "speed_km_h": 0,
+    "subtype": "shock-blast",
+    "magnitude_m": 40000,
+    "emp_damage": 80
+  }
 }

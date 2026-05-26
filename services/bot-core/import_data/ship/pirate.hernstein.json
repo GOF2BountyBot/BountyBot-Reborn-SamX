@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Pirate/Hernstein.bbship/ship_011_pirates_normal_specular.png",
     "/app/data/game-objects/items/ships/Pirate/Hernstein.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Pirate/Hernstein.bbship/ship_011_pirates_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Hernstein.bbship/ship_011_pirates_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 262240,
+    "mechanics_text": "## In-Game Description\nThe Hernstein is a dangerous battleship and is particularly popular with wealthy mercenaries.\n\n## Trivia\n*Hernstein is a town in Lower Austria.\n*The Hernstein slightly resembles the OV-10 Bronco close air support fighter or P-38 Lightning.\n*The Hernstein resembles a modified  Anaan.\n*A marking in the rear closely resembles the symbol of the Nivelian Republic.\n*It is one of the only 3 ships that has an \"arch\" or \"spoiler\" on the back, the other 2 being the Salvéhn and the Hector.\n*It appears to have a gatling gun on each side of the wings, which may be a preinstalled Micro Gun MKII, it also somewhat looks like an GAU-8 Avenger gatling gun.\n*This is the Pirate ship that has the highest cargo hold, which makes it reliable for trading and combat, before the player has enough credits to purchase the Rhino."
+  }
 }

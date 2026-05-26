@@ -9,6 +9,10 @@
   "shield": 380,
   "techLevel": 10,
   "type": "ShieldModule",
-  "value": 189194,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Particle_Shield"
+  "value": 170472,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Particle_Shield",
+  "extra_atts": {
+    "shield_capacity": 380,
+    "shield_recharge_ms": 55000
+  }
 }

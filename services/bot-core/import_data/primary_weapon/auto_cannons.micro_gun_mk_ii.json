@@ -1,19 +1,26 @@
 {
-    "aliases":  [
-                    "Micro MK II",
-                    "Micro II",
-                    "Micro Gun Mk 2",
-                    "Micro MK 2",
-                    "Micro 2"
-                ],
-    "builtIn":  false,
-    "dps":  11.76,
-    "emoji":  "<:microgunmkii:723709599244353606>",
-    "icon":  "https://i.postimg.cc/nL0128X4/micro-gun-mkii.png",
-    "name":  "Micro Gun MK II",
-    "techLevel":  2,
-    "value":  5538,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Micro_Gun_MK_II",
-    "type":  "PrimaryWeapon",
-    "subtype":  "auto_cannons"
+  "aliases": [
+    "Micro MK II",
+    "Micro II",
+    "Micro Gun Mk 2",
+    "Micro MK 2",
+    "Micro 2"
+  ],
+  "builtIn": false,
+  "dps": 11.76,
+  "emoji": "<:microgunmkii:723709599244353606>",
+  "icon": "https://i.postimg.cc/nL0128X4/micro-gun-mkii.png",
+  "name": "Micro Gun MK II",
+  "techLevel": 2,
+  "value": 5170,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Micro_Gun_MK_II",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 170,
+    "range_m": 1300,
+    "damage_per_shot": 2,
+    "speed_km_h": 5000,
+    "subtype": "auto-cannon",
+    "mechanics_text": "## In-Game Description\nEven 2000 years after their invention, ballistic weapons still haven't disappeared from the scene. The Micro Guns from this category of weapon are very good value."
+  }
 }

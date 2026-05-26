@@ -1,15 +1,21 @@
 {
-    "aliases":  [
-                    "shkoom"
-                ],
-    "builtIn":  false,
-    "dps":  16.66,
-    "emoji":  "<:shkoom:723709563840495622>",
-    "icon":  "https://i.postimg.cc/nVk0cDFR/sh-koom.png",
-    "name":  "Sh'koom",
-    "techLevel":  6,
-    "value":  14195,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Sh%27koom",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blaster_lasers"
+  "aliases": [
+    "shkoom"
+  ],
+  "builtIn": false,
+  "dps": 16.66,
+  "emoji": "<:shkoom:723709563840495622>",
+  "icon": "https://i.postimg.cc/nVk0cDFR/sh-koom.png",
+  "name": "Sh'koom",
+  "techLevel": 6,
+  "value": 13469,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Sh%27koom",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 600,
+    "range_m": 2700,
+    "damage_per_shot": 10,
+    "speed_km_h": 5000,
+    "subtype": "laser"
+  }
 }

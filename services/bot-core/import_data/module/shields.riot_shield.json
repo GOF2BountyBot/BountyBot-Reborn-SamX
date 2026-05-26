@@ -9,6 +9,10 @@
   "shield": 80,
   "techLevel": 3,
   "type": "ShieldModule",
-  "value": 5306,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Riot_Shield"
+  "value": 4895,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Riot_Shield",
+  "extra_atts": {
+    "shield_capacity": 80,
+    "shield_recharge_ms": 46000
+  }
 }

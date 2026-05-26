@@ -11,6 +11,9 @@
   "name": "E2 Exoclad",
   "techLevel": 1,
   "type": "ArmourModule",
-  "value": 1070,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/E2_Exoclad"
+  "value": 962,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/E2_Exoclad",
+  "extra_atts": {
+    "armour": 40
+  }
 }

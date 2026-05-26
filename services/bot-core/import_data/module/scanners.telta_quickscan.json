@@ -11,6 +11,9 @@
   "techLevel": 2,
   "timeToLock": 4,
   "type": "ScannerModule",
-  "value": 2438,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Telta_Quickscan"
+  "value": 2314,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Telta_Quickscan",
+  "extra_atts": {
+    "time_to_lock_s": 4.0
+  }
 }

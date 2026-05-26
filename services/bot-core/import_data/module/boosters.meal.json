@@ -1,15 +1,20 @@
 {
-    "aliases": [
-        "Meal"
-    ],
-    "builtIn": false,
-    "duration": 7,
-    "effect": 3,
-    "emoji": "<:meal:723706427260141629>",
-    "icon": "https://i.postimg.cc/9FmZxgj1/me-al.png",
-    "name": "Me'al",
-    "techLevel": 7,
-    "type": "BoosterModule",
-    "value": 46897,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Me%27al"
+  "aliases": [
+    "Meal"
+  ],
+  "builtIn": false,
+  "duration": 7,
+  "effect": 3,
+  "emoji": "<:meal:723706427260141629>",
+  "icon": "https://i.postimg.cc/9FmZxgj1/me-al.png",
+  "name": "Me'al",
+  "techLevel": 7,
+  "type": "BoosterModule",
+  "value": 42212,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Me%27al",
+  "extra_atts": {
+    "effect_pct": 200.0,
+    "duration_ms": 6000,
+    "loading_speed_ms": 16000
+  }
 }

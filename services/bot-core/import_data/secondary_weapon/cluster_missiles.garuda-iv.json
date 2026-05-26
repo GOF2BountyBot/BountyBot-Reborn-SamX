@@ -6,12 +6,18 @@
     "garuda-4"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 75,
   "icon": "https://i.postimg.cc/g0fDwVQR/garuda-iv.png",
-  "loading speed": 0,
+  "loading speed": 3000,
   "name": "Garuda-IV",
-  "value": 0,
+  "value": 780,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "cluster_missiles"
+  "techLevel": 9,
+  "extra_atts": {
+    "loading_speed_ms": 3000,
+    "range_m": 6300,
+    "speed_km_h": 2250,
+    "subtype": "cluster-missile"
+  }
 }

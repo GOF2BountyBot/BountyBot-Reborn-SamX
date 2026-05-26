@@ -11,6 +11,11 @@
   "name": "Nirai SPP-C1",
   "techLevel": 8,
   "type": "RepairBeamModule",
-  "value": 68336,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_SPP-C1"
+  "value": 67008,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_SPP-C1",
+  "extra_atts": {
+    "heal_per_pulse": 60.0,
+    "pulse_count": 1,
+    "range_m": 1500
+  }
 }

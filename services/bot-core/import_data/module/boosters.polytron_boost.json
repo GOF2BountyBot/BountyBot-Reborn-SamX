@@ -10,6 +10,11 @@
   "name": "Polytron Boost",
   "techLevel": 8,
   "type": "BoosterModule",
-  "value": 86815,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Polytron_Boost"
+  "value": 79120,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Polytron_Boost",
+  "extra_atts": {
+    "effect_pct": 300.0,
+    "duration_ms": 6000,
+    "loading_speed_ms": 16000
+  }
 }

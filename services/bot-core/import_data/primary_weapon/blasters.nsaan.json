@@ -1,15 +1,22 @@
 {
-    "aliases":  [
-                    "Nsaan"
-                ],
-    "builtIn":  false,
-    "dps":  13.33,
-    "emoji":  "<:nsaan:723709620476182579>",
-    "icon":  "https://i.postimg.cc/sfSTFNqr/n-saan.png",
-    "name":  "N'saan",
-    "techLevel":  1,
-    "value":  12894,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/N%27saan",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blasters"
+  "aliases": [
+    "Nsaan"
+  ],
+  "builtIn": false,
+  "dps": 13.33,
+  "emoji": "<:nsaan:723709620476182579>",
+  "icon": "https://i.postimg.cc/sfSTFNqr/n-saan.png",
+  "name": "N'saan",
+  "techLevel": 1,
+  "value": 11478,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/N%27saan",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 600,
+    "range_m": 1400,
+    "damage_per_shot": 8,
+    "speed_km_h": 3500,
+    "subtype": "blaster",
+    "mechanics_text": "## In-Game Description\nN'saan in Vossk means, \"little stab\" and is a garden variety blaster weapon.\n\n## Trivia\n*It is required as a blueprint component for the H'nookk.\n*The N'saan blaster is the predecessor of the K'booskk blaster.\n*It is the lowest level blaster.\n*It can be found on most Vossk stations."
+  }
 }

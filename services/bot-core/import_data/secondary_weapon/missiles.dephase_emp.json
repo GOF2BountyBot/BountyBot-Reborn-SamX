@@ -3,12 +3,20 @@
     "dephase"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 120,
   "icon": "https://i.postimg.cc/4ybk2NVL/dephase-emp.png",
-  "loading speed": 0,
+  "loading speed": 3000,
   "name": "Dephase EMP",
-  "value": 0,
+  "value": 260,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "missiles"
+  "techLevel": 8,
+  "extra_atts": {
+    "loading_speed_ms": 3000,
+    "range_m": 11800,
+    "speed_km_h": 4250,
+    "subtype": "missile",
+    "steerable": true,
+    "emp_damage": 100
+  }
 }

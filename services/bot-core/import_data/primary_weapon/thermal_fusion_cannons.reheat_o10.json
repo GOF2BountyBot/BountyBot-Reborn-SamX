@@ -9,8 +9,14 @@
   "icon": "https://i.postimg.cc/kGZ1y0h1/reheat-o10.png",
   "name": "ReHeat o10",
   "techLevel": 8,
-  "value": 35724,
+  "value": 34115,
   "wiki": "https://galaxyonfire.fandom.com/wiki/ReHeat_o10",
   "type": "PrimaryWeapon",
-  "subtype": "thermal_fusion_cannons"
+  "extra_atts": {
+    "loading_speed_ms": 170,
+    "range_m": 1900,
+    "damage_per_shot": 4,
+    "speed_km_h": 3500,
+    "subtype": "thermal-fusion"
+  }
 }

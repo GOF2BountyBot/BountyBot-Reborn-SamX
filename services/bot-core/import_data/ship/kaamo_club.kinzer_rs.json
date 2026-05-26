@@ -56,5 +56,8 @@
     "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 4465000
+  }
 }

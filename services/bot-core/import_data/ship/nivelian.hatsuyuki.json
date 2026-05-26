@@ -52,5 +52,9 @@
     "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/ship_018_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/ship_018_nivelian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/ship_018_nivelian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 137520,
+    "mechanics_text": "## In-Game Description\n“It has little in the way of cargo space, but the Hatsuyuki is agile, heavily armed and very customizable. A masterpiece of Nivelian engineering.”\n\nThe Hatsuyuki is a ship of the Nivelian Republic. While about above-average in combat and customization ability, it is notable for its fragility from its small size and unconventional shape. In the standard Niveilan fleet, this ship is at the middle of the price range.\n\n## Trivia\n* The word \"Hatsuyuki\" comes from Japanese はつゆき(初雪), meaning \"First Snow\".\n* The name is also shared with a destroyer that served during World War II, as well as an class of destroyers that were built in the 1980s for the Japanese Maritime Self-Defense Force (with one even being called Hatsuyuki).\n* It is the smallest ship in the game."
+  }
 }

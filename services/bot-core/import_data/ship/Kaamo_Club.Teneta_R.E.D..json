@@ -54,5 +54,8 @@
     "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_diffuse.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 3805000
+  }
 }

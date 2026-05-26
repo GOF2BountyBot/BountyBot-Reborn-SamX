@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Teneta.bbship/Teneta_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Teneta.bbship/Teneta_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 99316,
+    "mechanics_text": "## In-Game Description\nA heavy Terran rocket ship equipped with four secondary slots and room for a gun turret. It is a good deal because it's a bit older and doesn't have all the bells and whistles of a more modern ship.\n\n## Trivia\n*The Teneta's successor is the Teneta R.E.D.\n*The round and circular cylinder on top of the Teneta is the Turret slot.\n*The Teneta resembles a puffed up version of the Icarus Scout Class II from Galaxy on Fire 3D"
+  }
 }

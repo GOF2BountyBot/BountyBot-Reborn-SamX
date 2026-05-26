@@ -53,5 +53,8 @@
     "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/skinBase-new.png",
     "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/ship_061_elite_nivelian_prototype_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/ship_061_elite_nivelian_prototype_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 3333333
+  }
 }

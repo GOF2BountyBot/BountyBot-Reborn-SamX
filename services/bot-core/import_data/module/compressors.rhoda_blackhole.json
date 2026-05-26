@@ -11,6 +11,9 @@
   "name": "Rhoda Blackhole",
   "techLevel": 9,
   "type": "CompressorModule",
-  "value": 66305,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Rhoda_Blackhole"
+  "value": 59736,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Rhoda_Blackhole",
+  "extra_atts": {
+    "effect_pct": 100.0
+  }
 }

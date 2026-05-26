@@ -3,12 +3,20 @@
     "Extinctor"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 700,
   "icon": "https://i.postimg.cc/4dHXPgWq/amr-extinctor.png",
-  "loading speed": 0,
+  "loading speed": 7000,
   "name": "AMR Extinctor",
-  "value": 0,
+  "value": 3067,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "nukes"
+  "techLevel": 9,
+  "extra_atts": {
+    "loading_speed_ms": 7000,
+    "range_m": 4300,
+    "speed_km_h": 2250,
+    "subtype": "nuke",
+    "steerable": false,
+    "magnitude_m": 40000
+  }
 }

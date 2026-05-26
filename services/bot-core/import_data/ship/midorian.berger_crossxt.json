@@ -60,5 +60,9 @@
     "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.png",
     "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 69854,
+    "mechanics_text": "## In-Game Description\nAfter the Mido rebellion, the Berger firm saw a good business opportunity and unleashed the Berger CrossXT on the Mido System's open market. A balanced battle ship for a small budget, the ship sold well and a successor is already in the pipeline.\n\n## Trivia\n*Gunant Breh's ship is a Berger CrossXT.\n*Although classified as a Mido ship, the Berger CrossXT is actually manufactured by Berger, a Terran company.\n*The Berger Cross Special is the successor of this ship, available only in the Kaamo Club .\n*The Berger CrossXT in Java looks like a swing wing from [http://www.starwars.com Star Wars].\n*It is a Starter Ship."
+  }
 }

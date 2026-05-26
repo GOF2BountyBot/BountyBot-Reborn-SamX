@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 233560,
+    "mechanics_text": "## In-Game Description\nThe Razor 6 is the successor to the old Terran ship, the Zephyr. It has a greater emphasis on agility and weaponry, and there is only one cheaper ship with four mountable weapons brackets.\n\n## Trivia\n*When referring to the cheaper ship (in-game infobox), it most likely means the Dace.\n*This is, besides the Type 43, the only ship with a number in its name."
+  }
 }

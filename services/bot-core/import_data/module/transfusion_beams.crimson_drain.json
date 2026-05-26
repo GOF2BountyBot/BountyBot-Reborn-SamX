@@ -11,6 +11,11 @@
   "name": "Crimson Drain",
   "techLevel": 8,
   "type": "TransfusionBeamModule",
-  "value": 8735,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Crimson_Drain"
+  "value": 8566,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Crimson_Drain",
+  "extra_atts": {
+    "heal_per_pulse": 50.0,
+    "pulse_count": 1,
+    "range_m": 2000
+  }
 }

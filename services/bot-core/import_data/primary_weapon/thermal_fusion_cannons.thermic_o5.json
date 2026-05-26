@@ -9,8 +9,14 @@
   "icon": "https://i.postimg.cc/bNDFvvsK/thermic-o5.png",
   "name": "Thermic o5",
   "techLevel": 7,
-  "value": 9959,
+  "value": 8798,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Thermic_o5",
   "type": "PrimaryWeapon",
-  "subtype": "thermal_fusion_cannons"
+  "extra_atts": {
+    "loading_speed_ms": 300,
+    "range_m": 1600,
+    "damage_per_shot": 3,
+    "speed_km_h": 3000,
+    "subtype": "thermal-fusion"
+  }
 }

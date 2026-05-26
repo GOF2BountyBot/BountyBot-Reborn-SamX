@@ -52,5 +52,8 @@
     "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_diffuse.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 3618000
+  }
 }

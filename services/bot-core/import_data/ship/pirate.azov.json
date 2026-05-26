@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Pirate/Azov.bbship/ship_023_pirates_normal_specular.png",
     "/app/data/game-objects/items/ships/Pirate/Azov.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Pirate/Azov.bbship/ship_023_pirates_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Azov.bbship/ship_023_pirates_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 49520,
+    "mechanics_text": "## In-Game Description\n<span style=\"font-size:13px;\">This ship is essentially a \"</span>Groza<span style=\"font-size:13px;\"> Lite\". Lighter, more agile, but also less dangerous and smaller than its big brother. It is still a very popular ship for mercenaries and pirates.</span>\n\n## Trivia\n*The Darkzov is the successor to the Azov.\n*Azov is a sea (Sea of Azov) and also a Russian town.\n*It is a Starter Ship.\n*An Azov and 2 Hiros attack you in the prologue scene of the game.\n*In the GOF2 HD trailer, the Azov displays an armour statistic of  I50000000."
+  }
 }

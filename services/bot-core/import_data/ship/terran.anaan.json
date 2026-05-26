@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Anaan.bbship/ship_007_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Anaan.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Anaan.bbship/ship_007_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Anaan.bbship/ship_007_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 141520,
+    "mechanics_text": "## In-Game Description\nThis ship is often used to transport expensive goods or important politicians. It has a large cargo space and can handle itself when it comes to combat.\n\n## Trivia\n*When the player hires wingmen with Anaans, they will always have Vossk Organs and can be EMPed for their cargo. Therefore, it would be advisable to seek Terran wingmen. A way to get rid of wingmen quickly to get more is to bring them into enemy space or destroy them when not in their faction's territory.\n*The Anaan is used as the Terran Bomber MK. I in Galaxy on Fire: Alliances.\n*The Anaan is the only ship currently in Terran Fleet to have double letters together."
+  }
 }

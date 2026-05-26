@@ -53,5 +53,8 @@
     "/app/data/game-objects/items/ships/Vossk/Battleship.bbship/VB_Full.mtl",
     "/app/data/game-objects/items/ships/Vossk/Battleship.bbship/VB_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Vossk/Battleship.bbship/sn_battleship_vossk_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Vossk/Battleship.bbship/sn_battleship_vossk_normal_specular.png",
+  "extra_atts": {
+    "wiki_status": "missing"
+  }
 }

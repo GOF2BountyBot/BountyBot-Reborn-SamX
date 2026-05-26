@@ -9,8 +9,15 @@
   "icon": "https://i.postimg.cc/SsRftZ9w/scram-cannon.png",
   "name": "Scram Cannon",
   "techLevel": 6,
-  "value": 47203,
+  "value": 43851,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Scram_Cannon",
   "type": "PrimaryWeapon",
-  "subtype": "auto_cannons"
+  "extra_atts": {
+    "loading_speed_ms": 100,
+    "range_m": 2700,
+    "damage_per_shot": 2,
+    "speed_km_h": 4500,
+    "subtype": "auto-cannon",
+    "mechanics_text": "## In-Game Description\nThe Scram Cannon is one of the fastest firing guns in the market. The technology is so simple that anyone could build one of these weapons from scratch, but it is still preferable to get an original design, handmade by droids.\n\n## Notes\nThe Scram Cannon is the highest level auto-cannon that can be found in shops. It is a powerful weapon but is relatively weak in comparison to much cheaper laser weapons and blasters. It comes in handy if you find yourself in firefights often. If you don't particularly care about the rate of fire and you've got the credits, the Mass Driver series is a better choice.\n\nThe Scram Cannon can't be crafted, although the description implies it can."
+  }
 }

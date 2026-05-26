@@ -15,10 +15,17 @@
   "builtIn": false,
   "damage": 0,
   "icon": "https://i.postimg.cc/HxwQVfQD/ion-lambda-mk1.png",
-  "loading speed": 0,
+  "loading speed": 6000,
   "name": "Ion Lambda MK1",
-  "value": 0,
+  "value": 1050,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "ionizing_missiles"
+  "techLevel": 4,
+  "extra_atts": {
+    "loading_speed_ms": 6000,
+    "range_m": 2500,
+    "speed_km_h": 1500,
+    "subtype": "ionizing-missile",
+    "magnitude_m": 5000
+  }
 }

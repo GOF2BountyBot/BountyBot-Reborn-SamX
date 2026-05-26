@@ -12,6 +12,10 @@
   "name": "Sight Suppressor II",
   "techLevel": 4,
   "type": "CloakModule",
-  "value": 29599,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Sight_Suppressor_II"
+  "value": 26728,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Sight_Suppressor_II",
+  "extra_atts": {
+    "duration_ms": 20000,
+    "loading_speed_ms": 6500
+  }
 }

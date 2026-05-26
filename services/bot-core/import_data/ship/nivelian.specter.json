@@ -55,5 +55,12 @@
     "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/Specter_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/Specter_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.png",
+  "builtinModules": [
+    "U'tool"
+  ],
+  "extra_atts": {
+    "dlc": "Supernova",
+    "price_credits_android": 12000000
+  }
 }

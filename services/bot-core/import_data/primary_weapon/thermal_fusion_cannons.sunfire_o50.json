@@ -9,8 +9,14 @@
   "icon": "https://i.postimg.cc/59kR1zNB/sunfire-o50.png",
   "name": "SunFire o50",
   "techLevel": 9,
-  "value": 183413,
+  "value": 169688,
   "wiki": "https://galaxyonfire.fandom.com/wiki/SunFire_o50",
   "type": "PrimaryWeapon",
-  "subtype": "thermal_fusion_cannons"
+  "extra_atts": {
+    "loading_speed_ms": 120,
+    "range_m": 2500,
+    "damage_per_shot": 5,
+    "speed_km_h": 4250,
+    "subtype": "thermal-fusion"
+  }
 }

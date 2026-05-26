@@ -7,6 +7,10 @@
   "name": "Static Thrust",
   "techLevel": 1,
   "type": "ThrusterModule",
-  "value": 1398,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Static_Thrust"
+  "value": 1270,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Static_Thrust",
+  "extra_atts": {
+    "effect_pct": 20.0,
+    "handling_multiplier": 1.2
+  }
 }

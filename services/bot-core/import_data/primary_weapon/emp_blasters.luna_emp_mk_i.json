@@ -12,8 +12,14 @@
   "icon": "https://i.postimg.cc/RCRvTXdM/luna-emp-mk-i.png",
   "name": "Luna EMP Mk I",
   "techLevel": 4,
-  "value": 5942,
+  "value": 5316,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Luna_EMP_Mk_I",
   "type": "PrimaryWeapon",
-  "subtype": "emp_blasters"
+  "extra_atts": {
+    "loading_speed_ms": 350,
+    "range_m": 1400,
+    "damage_per_shot": 3,
+    "speed_km_h": 4250,
+    "subtype": "emp-blaster"
+  }
 }

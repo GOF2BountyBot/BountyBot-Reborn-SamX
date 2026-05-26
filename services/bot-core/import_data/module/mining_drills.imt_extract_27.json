@@ -11,6 +11,10 @@
   "oreYield": 1.5,
   "techLevel": 4,
   "type": "MiningDrillModule",
-  "value": 17297,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/IMT_Extract_2.7"
+  "value": 16142,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/IMT_Extract_2.7",
+  "extra_atts": {
+    "drill_yield_pct": 50,
+    "drill_handling_pct": 50
+  }
 }

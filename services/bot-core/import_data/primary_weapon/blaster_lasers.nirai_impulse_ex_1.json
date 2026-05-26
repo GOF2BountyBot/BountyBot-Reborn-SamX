@@ -22,8 +22,14 @@
   "icon": "https://i.postimg.cc/bvtmzVrk/nirai-impulse-ex-1.png",
   "name": "Nirai Impulse EX 1",
   "techLevel": 1,
-  "value": 2500,
+  "value": 2204,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Impulse_EX_1",
   "type": "PrimaryWeapon",
-  "subtype": "blaster_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 400,
+    "range_m": 2700,
+    "damage_per_shot": 3,
+    "speed_km_h": 5000,
+    "subtype": "laser"
+  }
 }

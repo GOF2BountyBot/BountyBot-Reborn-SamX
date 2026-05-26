@@ -12,6 +12,10 @@
   "name": "E6 D-X Plating",
   "techLevel": 5,
   "type": "ArmourModule",
-  "value": 20171,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/E6_D-X_Plating"
+  "value": 17956,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/E6_D-X_Plating",
+  "extra_atts": {
+    "armour": 110,
+    "mechanics_text": "## In-Game Description\nThe use of hardened DX particles from ancient asteroids is responsible for the E6 armor's special resilience. The cost of this type of armor plummeted a few years ago when a technique for creating the DX particles under lab conditions was discovered."
+  }
 }

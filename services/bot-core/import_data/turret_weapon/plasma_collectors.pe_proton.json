@@ -8,9 +8,14 @@
   "icon": "https://i.postimg.cc/Px15hH1Z/pe-proton.png",
   "name": "PE Proton",
   "techLevel": 9,
-  "value": 43856,
+  "value": 43010,
   "automatic": false,
   "wiki": "https://galaxyonfire.fandom.com/wiki/PE_Proton",
   "type": "TurretWeapon",
-  "subtype": "plasma_collectors"
+  "extra_atts": {
+    "range_m": 4000,
+    "speed_km_h": 1300,
+    "subtype": "plasma-collector",
+    "autonomous": false
+  }
 }

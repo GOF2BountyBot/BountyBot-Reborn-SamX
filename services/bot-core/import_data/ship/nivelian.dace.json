@@ -52,5 +52,8 @@
     "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/ship_004_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/ship_004_nivelian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/ship_004_nivelian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 188480
+  }
 }

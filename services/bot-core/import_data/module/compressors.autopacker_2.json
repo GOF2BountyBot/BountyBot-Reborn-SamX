@@ -9,6 +9,9 @@
   "name": "Autopacker 2",
   "techLevel": 3,
   "type": "CompressorModule",
-  "value": 5747,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Autopacker_2"
+  "value": 5106,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Autopacker_2",
+  "extra_atts": {
+    "effect_pct": 25.0
+  }
 }

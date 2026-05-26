@@ -9,6 +9,10 @@
   "shield": 50,
   "techLevel": 1,
   "type": "ShieldModule",
-  "value": 1620,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Targe_Shield"
+  "value": 1532,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Targe_Shield",
+  "extra_atts": {
+    "shield_capacity": 50,
+    "shield_recharge_ms": 20000
+  }
 }

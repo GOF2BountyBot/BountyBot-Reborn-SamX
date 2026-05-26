@@ -11,6 +11,9 @@
   "techLevel": 3,
   "timeToLock": 3,
   "type": "ScannerModule",
-  "value": 8647,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Telta_Ecoscan"
+  "value": 8128,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Telta_Ecoscan",
+  "extra_atts": {
+    "time_to_lock_s": 3.0
+  }
 }

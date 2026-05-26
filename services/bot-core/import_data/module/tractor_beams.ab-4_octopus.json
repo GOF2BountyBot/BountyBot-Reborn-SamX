@@ -11,6 +11,9 @@
   "techLevel": 8,
   "timeToLock": 0,
   "type": "TractorBeamModule",
-  "value": 199026,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-4_\"Octopus\""
+  "value": 179300,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-4_\"Octopus\"",
+  "extra_atts": {
+    "time_to_lock_s": 0.0
+  }
 }

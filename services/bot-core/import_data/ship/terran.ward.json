@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Ward.bbship/Ward_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Ward.bbship/Ward_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Ward.bbship/ship_017_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Ward.bbship/ship_017_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 1103200,
+    "mechanics_text": "## Notes\nThe Ward has a high number of module slots. It has high firepower too, but it is also very expensive.\n\nCompared to the Nuyang II, the Ward has one more equipment slot and slightly better handling and it's also much more expensive. However, it has 80 fewer armor points and a far smaller cargo hold, which gives the Nuyang II a large advantage in trading and durability.\n\n## Trivia\n*Ward means to protect or guard.\n*This is like an upgraded Razor 6.\n*The Ward is particularly expensive, despite the description saying that it is perfect for most pilots.\n*This is the Terran Interceptor MKI in Galaxy On Fire: Alliances.\n*This is the only Terran ship with a one-syllable name.\n*This is the ship used by the hijacker that kidnapped Thomas Boyle."
+  }
 }

@@ -51,5 +51,9 @@
     "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/mask2.png",
     "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/ship_002_pirates_diffuse.png",
     "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/skinBase.png"
-  ]
+  ],
+  "extra_atts": {
+    "price_credits_android": 32600,
+    "mechanics_text": "## In-Game Description\nA modified version of the Terran Inflict. At the expense of a primary weapons slot it has two secondary weapon slots installed.\n\n## Trivia\n*The Hiro is a good ship to buy after the Betty.\n*The Hiro may be based off the Phantom, as both ships were modifications of the standard Terran fighter in their respective eras.\n*Hiros seem to be second hand ships, If you look carefully at the Hiro's right side, you'll discover several bullet holes and scratches that seem to mark the impacts the former owner recieved while flying their ship.\n*When using a Hiro you should always have homing missiles equipped(Edo, Intelijet) as this ship only has one primary weapon\n*Two hiros are seen in the begining of gof2 story."
+  }
 }

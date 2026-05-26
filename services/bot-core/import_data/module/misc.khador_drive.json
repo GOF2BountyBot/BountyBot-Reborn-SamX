@@ -8,6 +8,9 @@
   "name": "Khador Drive",
   "techLevel": 10,
   "type": "JumpDriveModule",
-  "value": 310037,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Khador_Drive"
+  "value": 284146,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Khador_Drive",
+  "extra_atts": {
+    "loading_speed_ms": 5000
+  }
 }

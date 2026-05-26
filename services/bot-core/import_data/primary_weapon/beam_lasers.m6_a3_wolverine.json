@@ -15,8 +15,14 @@
   "icon": "https://i.postimg.cc/PrS3K80p/m6-a3-wolverine.png",
   "name": "M6 A3 \"Wolverine\"",
   "techLevel": 9,
-  "value": 68725,
+  "value": 64413,
   "wiki": "https://galaxyonfire.fandom.com/wiki/M6_A3_\"Wolverine\"",
   "type": "PrimaryWeapon",
-  "subtype": "beam_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 1500,
+    "range_m": 3600,
+    "damage_per_shot": 51,
+    "subtype": "beam-laser",
+    "mechanics_text": "## In-Game Description\nBeam weapons are the sniper rifles of the cannon world. A good aim is rewarded with the greatest penetrating power of all automatic primary weapons.\n\n## Trivia\nThis weapon, unlike others (one shot), instantly hits the enemy without delay. Although this weapon is very low in DPS, it is possible to destroy an enemy with this weapon with one blast with a ship that has four weapon slots.\n\n## Trivia\n*The Wolverine looks like the M6 A1 \"Wolf\", possibly because 1x M4 A1 \"Wolf\" is required for the Wolverine blueprint.\n*This the succesor of the M6 A2 \"Cougar\" and the predecessor of the M6 A4 \"Raccoon\"."
+  }
 }

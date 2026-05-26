@@ -8,8 +8,15 @@
   "icon": "https://i.postimg.cc/CLgmw4pf/ridil-blaster.png",
   "name": "Ridil Blaster",
   "techLevel": 8,
-  "value": 67535,
+  "value": 63634,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Ridil_Blaster",
   "type": "PrimaryWeapon",
-  "subtype": "blasters"
+  "extra_atts": {
+    "loading_speed_ms": 250,
+    "range_m": 1300,
+    "damage_per_shot": 12,
+    "speed_km_h": 4500,
+    "subtype": "blaster",
+    "mechanics_text": "## In-Game Description\nThe Ridil Blaster comes from the famous Hervarar series and is the faster version of the Gram Blaster. It's less powerful but has a slightly faster firing rate.\n\n## Notes\nDespite what is stated in the description, the Ridil Blaster deals just as much damage as the Gram Blaster. It has an increased firing rate, making it a very powerful weapon, although its range has been reduced by 300m compared to the Gram Blaster, turning the range from short to downright abysmal.\n\n## Trivia\n* The Ridil Blaster is the successor to the Gram Blaster and predecessor of the Tyrfing Blaster and Mimung Blaster.\n* The Ridill is a sword wielded by the dwarf Regin in Norse mythology."
+  }
 }

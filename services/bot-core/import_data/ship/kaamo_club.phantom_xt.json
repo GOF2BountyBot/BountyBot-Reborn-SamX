@@ -34,5 +34,8 @@
     "/app/data/game-objects/items/ships/Kaamo Club/Phantom XT.bbship/sn_ship_058_modified_normal_specular.png"
   ],
   "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Phantom XT.bbship/sn_ship_058_modified_normal_specular.png",
-  "compatibleSkins": {}
+  "compatibleSkins": {},
+  "extra_atts": {
+    "price_credits_android": 3715000
+  }
 }

@@ -52,5 +52,9 @@
     "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_normal_specular.png",
     "/app/data/game-objects/items/ships/Midorian/Hector.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 38016,
+    "mechanics_text": "## In-Game Description\nThe Mido regularly use the Hector as a light reconnaissance vehicle, and it is often found patrolling border areas. They are not very robust, and rarely used in combat.\n\n## Trivia\n*The Hector bears a mid-level resemblance to the P-38 Lightning, An American fighter plane (Lockheed Martin) used during World War II.\n*It also bears some resemblace to the North American Rockwell [https://en.wikipedia.org/wiki/North_American_Rockwell_OV-10_Bronco OV-10 Bronco] , an American light attack aircraft\n*It is a Starter Ship."
+  }
 }

@@ -9,9 +9,14 @@
   "icon": "https://i.postimg.cc/76NrmZgB/matador-ts.png",
   "name": "Matador TS",
   "techLevel": 9,
-  "value": 485350,
+  "value": 475949,
   "automatic": false,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Matador_TS",
   "type": "TurretWeapon",
-  "subtype": "manual"
+  "extra_atts": {
+    "loading_speed_ms": 200,
+    "range_m": 6600,
+    "speed_km_h": 8000,
+    "autonomous": false
+  }
 }

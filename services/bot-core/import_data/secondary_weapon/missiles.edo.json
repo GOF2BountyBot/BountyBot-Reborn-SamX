@@ -1,12 +1,20 @@
 {
   "aliases": [],
   "builtIn": false,
-  "damage": 0,
+  "damage": 70,
   "icon": "https://i.postimg.cc/CMjgxJXG/edo.png",
-  "loading speed": 0,
+  "loading speed": 2000,
   "name": "Edo",
-  "value": 0,
+  "value": 92,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "missiles"
+  "techLevel": 1,
+  "extra_atts": {
+    "loading_speed_ms": 2000,
+    "range_m": 3300,
+    "speed_km_h": 2000,
+    "subtype": "missile",
+    "steerable": true,
+    "emp_damage": 0
+  }
 }

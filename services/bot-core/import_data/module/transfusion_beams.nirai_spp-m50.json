@@ -11,6 +11,11 @@
   "name": "Nirai SPP-M50",
   "techLevel": 8,
   "type": "RepairBeamModule",
-  "value": 365681,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_SPP-M50"
+  "value": 361146,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_SPP-M50",
+  "extra_atts": {
+    "heal_per_pulse": 100.0,
+    "pulse_count": 3,
+    "range_m": 6000
+  }
 }

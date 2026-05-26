@@ -151,6 +151,11 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
                     result["max_equipped"] = obj.max_equipped
                 elif category == DataCategory.primary:
                     result["dps"] = obj.dps
+                elif category == DataCategory.secondary:
+                    result["damage"] = obj.damage
+                    result["loading_speed"] = obj.loading_speed
+                elif category == DataCategory.turret:
+                    result["dps"] = obj.dps
                 elif category == DataCategory.ship:
                     result.update(
                         {
@@ -169,6 +174,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
                             "norm_spec": obj.norm_spec,
                             "assets": obj.assets or [],
                             "save_due": obj.save_due,
+                            "builtin_modules": obj.builtin_modules or [],
                         }
                     )
                 elif category == DataCategory.criminal:
@@ -221,6 +227,11 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
                     result["max_equipped"] = obj.max_equipped
                 elif category == DataCategory.primary:
                     result["dps"] = obj.dps
+                elif category == DataCategory.secondary:
+                    result["damage"] = obj.damage
+                    result["loading_speed"] = obj.loading_speed
+                elif category == DataCategory.turret:
+                    result["dps"] = obj.dps
                 elif category == DataCategory.ship:
                     result.update(
                         {
@@ -239,6 +250,7 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
                             "norm_spec": obj.norm_spec,
                             "assets": obj.assets or [],
                             "save_due": obj.save_due,
+                            "builtin_modules": obj.builtin_modules or [],
                         }
                     )
                 elif category == DataCategory.criminal:
@@ -298,6 +310,11 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
             result["max_equipped"] = obj.max_equipped
         elif category == DataCategory.primary:
             result["dps"] = obj.dps
+        elif category == DataCategory.secondary:
+            result["damage"] = obj.damage
+            result["loading_speed"] = obj.loading_speed
+        elif category == DataCategory.turret:
+            result["dps"] = obj.dps
         elif category == DataCategory.ship:
             result.update(
                 {
@@ -316,6 +333,7 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
                     "norm_spec": obj.norm_spec,
                     "assets": obj.assets or [],
                     "save_due": obj.save_due,
+                    "builtin_modules": obj.builtin_modules or [],
                 }
             )
         elif category == DataCategory.criminal:

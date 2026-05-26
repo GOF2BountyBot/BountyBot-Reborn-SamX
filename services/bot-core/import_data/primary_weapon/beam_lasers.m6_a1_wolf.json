@@ -15,8 +15,13 @@
   "icon": "https://i.postimg.cc/brT67GJ5/m6-a1-wolf.png",
   "name": "M6 A1 \"Wolf\"",
   "techLevel": 7,
-  "value": 38838,
+  "value": 36548,
   "wiki": "https://galaxyonfire.fandom.com/wiki/M6_A1_\"Wolf\"",
   "type": "PrimaryWeapon",
-  "subtype": "beam_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 1200,
+    "range_m": 3300,
+    "damage_per_shot": 27,
+    "subtype": "beam-laser"
+  }
 }

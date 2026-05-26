@@ -54,5 +54,9 @@
     "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_normal_specular.png",
     "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 200000,
+    "mechanics_text": "## In-Game Description\nThe Vossk military designed the N'Tirrk to be a swift interceptor, whose heavy armor and immense firepower were particularly well-suited to take down battle ships and freighters. The body of the N'Tirrk is equipped with an experimental segment plating, which gives the ship a particularly aggressive look. Despite its enormous capabilities, the slightly overpriced N'Tirrk had been dismissed in favour of the less expensive S'Kanarr. Nevertheless, the Vossk military council has kept open the option to start mass-production on the N'Tirrk whenever a bigger quantity of this powerful gunship is needed.\n\n## Notes\nThe N'Tirrk is the new Vossk bomber that was released by Fishlabs in GOF2. This ship was originally planned to appear in Supernova add-on as one of Most Wanted criminals' ships, but it was cut due to the Na'srrk being introduced. It is to be a good alternative to the H'Soc. The N'Tirrk only has 2 primary weapons, but its 4 secondary weapons can carry a lot of firepower. Its statistics are similar to the Teneta.\n\n## Trivia\n*In the description, it says that the S'kanarr is less expensive, but the opposite was true in-game.\n**Or, it can refer to the fact that S'kanarr's absurd price was well-justified by it's capabilities, whist the N'Tirrk wasn't.\n*This ship is great for beginners who want a good ship.\n*It costs 198,000 in the Android version.\n* The N'Tirrk looks like the abdomen of a katydid.\n* There is a bomb hatch on the underside of the ship.\n* In general, the speed and armour give it a good reason to be an interceptor, however, the H'Soc is still faster."
+  }
 }

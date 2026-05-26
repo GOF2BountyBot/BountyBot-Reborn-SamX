@@ -8,8 +8,15 @@
   "icon": "https://i.postimg.cc/kG91YNn8/disruptor-laser.png",
   "name": "Disruptor Laser",
   "techLevel": 9,
-  "value": 387090,
+  "value": 350174,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Disruptor_Laser",
   "type": "PrimaryWeapon",
-  "subtype": "blaster_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 300,
+    "range_m": 3800,
+    "damage_per_shot": 18,
+    "speed_km_h": 7000,
+    "subtype": "laser",
+    "mechanics_text": "## Trivia\n*The Disruptor Laser is one of the best weapons to build and resell. The best strategy for doing this is stockpiling materials on Kaamo Station.\n*This weapon was created by Khador's friend Netor.\n*The wavelength of 438.511 nanometers corresponds to a vibrant blue color, between hexadecimal values <span style=\"color:#0500FF\"><nowiki>#0500FF</nowiki></span> and <span style=\"color:#0200FF\"><nowiki>#0200FF</nowiki></span>.\n*If you look closely at this weapons specifications it shares many of the same values with other weapons. It has the same rate of fire as the Gram Blaster, the same Damage as the Berger Retribution and nearly the same range as theM6 A4 \"Raccoon\".\n*Despite Maxwell being tasked by Netor to obtain the Void Essence for this weapon, it is not used and Maxwell gets to keep it.\n*Despite the description, NPC ships do not actually have shields.\n*The projectiles of the Disruptor Laser is similar to that of the Berger Retribution, but with a higher intensity.\n*Disruptor Laser has the highest fire rate out of all Laser weapons, though it is surpassed by the Dark Matter Laser and M6A4 Raccoon in terms of DPS."
+  }
 }

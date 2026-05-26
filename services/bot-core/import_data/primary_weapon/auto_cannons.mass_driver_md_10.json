@@ -1,18 +1,25 @@
 {
-    "aliases":  [
-                    "MD 10",
-                    "MD10",
-                    "Mass Driver 10",
-                    "Mass Driver MD10"
-                ],
-    "builtIn":  false,
-    "dps":  44.44,
-    "emoji":  "<:massdrivermd10:723709599101747231>",
-    "icon":  "https://i.postimg.cc/y8CnYyqZ/mass-driver-md-10.png",
-    "name":  "Mass Driver MD 10",
-    "techLevel":  8,
-    "value":  114314,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Mass_Driver_MD_10",
-    "type":  "PrimaryWeapon",
-    "subtype":  "auto_cannons"
+  "aliases": [
+    "MD 10",
+    "MD10",
+    "Mass Driver 10",
+    "Mass Driver MD10"
+  ],
+  "builtIn": false,
+  "dps": 44.44,
+  "emoji": "<:massdrivermd10:723709599101747231>",
+  "icon": "https://i.postimg.cc/y8CnYyqZ/mass-driver-md-10.png",
+  "name": "Mass Driver MD 10",
+  "techLevel": 8,
+  "value": 100972,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Mass_Driver_MD_10",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 90,
+    "range_m": 2900,
+    "damage_per_shot": 4,
+    "speed_km_h": 7500,
+    "subtype": "auto-cannon",
+    "mechanics_text": "## In-Game Description\nAlongside Thermo-weapons, the Mass Driver MD 10 has the fastest rate of fire on the market. Unfortunately, its production requires vast quantities of resources, so the weapon is increasingly rare and a popular target for thieves, who steal them from unattended ships.\n\n## Notes\n1t Mass Driver MD 10 is required for the Icarus Heavy AS blueprint.\n\n## Trivia\n*At one round every 0.09 seconds or approximately 666 rounds per minute, the Mass Driver MD 10 has the highest fire rate of all weapons.\n**Despite this fact, the NPC who sells its blueprint claims to know one that fires even faster. This could be a subtle foreshadowing to Mass Driver MD 12's description, which claims it is \"the deadliest ballistic weapon that is legally available on the market\", implying the existence of superior alternatives that are still in use.\n*Though the description says that it is a popular target for thieves, there is no such mechanic where items can actually be occasionally stolen from the player's ship."
+  }
 }

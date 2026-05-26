@@ -1008,4 +1008,73 @@ Following architect's recommended sequencing:
 - All Entry 4, 5a–5h locked decisions stand.
 - Architect report `/proj/COMBAT_SCHEMA_MAPPING.md` is the authoritative implementation reference.
 
-*Last updated: 2026-05-24*
+### Entry 5j — Data-gap pass: rounding + mechanics_text (2026-05-26)
+
+Two parallel researcher tasks resolved both open data questions before PR work
+begins.
+
+**Stat-distribution analysis** (`/tmp/stat_distribution_report.md`):
+- All 77 weapon `loading_speed_ms` values across primary + secondary + turret
+  are clean multiples of 10ms. Range 90ms–10000ms. **Zero outliers.**
+- GCD across all weapon loading speeds = **10ms**.
+- GCD across all module cooldowns = 500ms.
+- **LOCKED**: **no rounding needed**. Wiki values copied verbatim into enriched
+  JSONs. The "stat rounding allowed" clause in Entry 5i stays as fallback
+  authority but never exercises on current data.
+- **LOCKED**: **base tick = 10ms**. Tick-cadence fairness problem (raised by
+  user this session) is resolved by construction — every weapon fires on its
+  exact cadence because every `loading_speed_ms` is an integer multiple of the
+  base tick. No accumulator carry, no drift, no fairness skew.
+- Implementation: each weapon holds `cooldown_remaining_ms`. Per tick:
+  decrement by 10ms; if `≤ 0` AND in range AND not gated by mechanic, fire and
+  reset to `loading_speed_ms`. 3-min combat cap = 18,000 ticks (in-memory math,
+  trivially fast).
+- Per-fight tick base stays 10ms (no longer derived from fastest weapon in
+  fight) — simpler and equally correct given the clean-10ms-grid finding.
+
+**Wiki mechanics_text re-scrape** (`/proj/.combat-rewrite-wiki-v2/_mechanics_rescrape.json`):
+- Direct `?action=raw` fetch against galaxyonfire.wiki.gg for the 48 items
+  whose v2 capture had empty `mechanics_text`. Kept sections in priority
+  order: In-Game Description, Notes, Trivia, Strategy, Overview, Description.
+  Wiki markup stripped (link/template/ref/gallery/category/file).
+- Result: **48/48 FOUND, 0 EMPTY, 0 ERROR.**
+- Prose lengths: median 653 chars, range 186–3058 chars.
+- **LOCKED**: no residual mechanics-text gaps to surface to user.
+- Two artefacts committed inside `.combat-rewrite-wiki-v2/`:
+  - `_mechanics_rescrape.json` — 48 entries keyed by item name.
+  - `_mechanics_rescrape_summary.md` — counts + per-category breakdown.
+- Stage A enrichment script (PR-3) should merge this prose back into the
+  item-level v2 records (or read it as a side-table) when producing the
+  enriched seed JSONs.
+
+**Vossk Battlecruiser sentinel** (user-directed):
+- Stage A enrichment script must set `extra_atts.wiki_status = "missing"` on
+  the Vossk Battlecruiser seed JSON so future audits can find it
+  programmatically. Item stays inert (max_primaries=0 still excludes it from
+  bounty generation).
+
+### Implementation plan (refined post-5j)
+PR sequencing unchanged; both blocking analyses are now closed.
+
+- **PR-1**: Alembic migration — `ship.extra_atts` + Phase-2 damage-tracking
+  columns on `Player` and `Bounty`.
+- **PR-2**: Loader patches — fix `"loading speed"` (with space) →
+  `loading_speed_ms` mapping; normalize subtype handling; respect
+  `extra_atts` in seed JSONs.
+- **PR-3**: Seed JSON enrichment — Stage A merge script. Wiki values copied
+  verbatim (no rounding). `value` set to wiki median. TL drift fixed.
+  `builtinModules: ["U'tool"]` for Scimitar + Specter. Mechanics prose
+  carried into description field (or `extra_atts.mechanics_text`). Vossk
+  Battlecruiser gets the missing-data sentinel.
+- **PR-4**: New tick-based resolver (10ms base tick, per-weapon cooldown
+  decrement) behind feature flag. `SimpleTTKResolver` retained as fallback
+  for one release.
+
+### Carries forward unchanged (post-5j)
+- All Entry 4, 5a–5i locked decisions stand.
+- Architect report `/proj/COMBAT_SCHEMA_MAPPING.md` is the authoritative
+  implementation reference for catalog enrichment + migration.
+- Wiki v2 capture at `/proj/.combat-rewrite-wiki-v2/` is the authoritative
+  game-data source.
+
+*Last updated: 2026-05-26*

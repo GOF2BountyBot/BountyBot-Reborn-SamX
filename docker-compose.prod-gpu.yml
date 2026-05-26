@@ -39,16 +39,12 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
-    ports:
-      - "5432:5432"
 
   bot-core:
     image: ghcr.io/gof2bountybot/bountybot-reborn-samx/bot-core:${BOUNTYBOT_VERSION:-latest}
     container_name: bountybot-bot-core
     networks:
       - botnetv2
-    ports:
-      - 8000:8000
     depends_on:
       db:
         condition: service_healthy
@@ -73,8 +69,6 @@ services:
     container_name: bountybot-discord-gateway
     networks:
       - botnetv2
-    ports:
-      - 7999:7999
     depends_on:
       db:
         condition: service_healthy
@@ -105,8 +99,6 @@ services:
               capabilities: [gpu]
     networks:
       - botnetv2
-    ports:
-      - 8001:8001
     depends_on:
       db:
         condition: service_healthy

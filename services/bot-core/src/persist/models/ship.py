@@ -1,3 +1,5 @@
+from typing import Any
+
 from sqlalchemy import ARRAY, JSON, Boolean, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,6 +43,12 @@ class Ship(Base):
     wiki: Mapped[str] = mapped_column(String, nullable=True)
 
     assets: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=True)
+
+    # Combat-rewrite escape hatch: arbitrary wiki-sourced fields land here
+    # (e.g. DLC tag, Android price, mechanics prose, ``wiki_status`` sentinel).
+    # Brings Ship into line with Weapon/Module which already own this column.
+    # Added in revision 0009.
+    extra_atts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=True, default=dict)
 
     __mapper_args__ = {
         "polymorphic_identity": "ship",

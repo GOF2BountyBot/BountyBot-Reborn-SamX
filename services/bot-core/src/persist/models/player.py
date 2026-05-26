@@ -56,6 +56,15 @@ class Player(Base):
         Integer, ForeignKey(f"{TableNames.PlayerShips.value}.id", use_alter=True), nullable=True
     )
 
+    # Combat damage-state hooks (Phase-2 OOC recovery; Phase-1 is read-only).
+    # All nullable: NULL == "at full HP, never been damaged". Populated by the
+    # tick-resolver post-fight; consumed by the OOC-recovery scheduled job
+    # (25%/hr player recovery, guild-configurable). Added in revision 0009.
+    current_hull: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_armour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_shield: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_damage_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(

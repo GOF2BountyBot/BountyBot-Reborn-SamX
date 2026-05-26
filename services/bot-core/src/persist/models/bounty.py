@@ -49,6 +49,16 @@ class Bounty(Base):
     win_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     respawn_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Criminal damage-state hooks (Phase-2 OOC recovery; Phase-1 is read-only).
+    # Symmetric to Player.current_* — NULL == "at full HP, never damaged".
+    # Populated by the tick-resolver after a failed bounty attempt; consumed
+    # by the criminal-recovery scheduled job (12.5%/hr by default,
+    # guild-configurable). Added in revision 0009.
+    criminal_current_hull: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    criminal_current_armour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    criminal_current_shield: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    criminal_last_damage_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(

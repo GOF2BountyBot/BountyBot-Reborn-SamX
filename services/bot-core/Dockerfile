@@ -20,6 +20,8 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         postgresql-client \
         # 7zip for extraction of assets on container startup
         7zip \
+        # zstd for pg_dump backup compression (used by pg_backup_executor)
+        zstd \
         # vim and sudo for debugging — comment out once stable
         # vim \
         # sudo \

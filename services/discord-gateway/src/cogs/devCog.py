@@ -314,45 +314,60 @@ class DevCog(commands.Cog):
 
     @commands.command(name="snooze")
     async def snooze(self, ctx: commands.Context):
-        """Hide this bot's slash commands on Discord without touching the in-memory tree (owner only).
+        """Hide this bot's slash commands in the current guild only (owner only).
 
-        Previously this called ``tree.clear_commands`` which wiped the in-memory
-        command registry — leaving ``wake`` nothing to copy back. Now it
-        pushes an empty command list directly to Discord via the HTTP bulk-upsert
-        endpoints, so the local tree stays intact and ``wake`` can re-sync it.
+        Pushes an empty command list to Discord scoped to ``ctx.guild`` via
+        the HTTP bulk-upsert endpoint. Other guilds and global commands are
+        untouched, and the in-memory command tree stays intact so ``wake``
+        can re-sync it.
         """
         if not self._is_developer(ctx.author.id):
             return
+        if ctx.guild is None:
+            await ctx.send("⚠ `snooze` must be run inside a guild.", delete_after=15)
+            return
         app_id = self.bot.application_id
-        for guild in self.bot.guilds:
-            await self.bot.http.bulk_upsert_guild_commands(app_id, guild.id, [])
-        await self.bot.http.bulk_upsert_global_commands(app_id, [])
-        guild_names = ", ".join(g.name for g in self.bot.guilds) or "none"
-        flogger.info(f"snooze: commands cleared by {ctx.author} ({ctx.author.id})")
-        await ctx.send(f"💤 **{self.bot.user.name}** commands cleared from {len(self.bot.guilds)} guild(s): {guild_names}", delete_after=30)
+        await self.bot.http.bulk_upsert_guild_commands(app_id, ctx.guild.id, [])
+        flogger.info(
+            f"snooze: commands cleared in guild {ctx.guild.name} ({ctx.guild.id}) "
+            f"by {ctx.author} ({ctx.author.id})"
+        )
+        await ctx.send(
+            f"💤 **{self.bot.user.name}** commands cleared in **{ctx.guild.name}**.",
+            delete_after=30,
+        )
 
     @commands.command(name="wake")
     async def wake(self, ctx: commands.Context):
-        """Re-sync this bot's slash commands to all guilds (owner only).
+        """Re-sync this bot's slash commands in the current guild only (owner only).
 
         Reloads every loaded extension first so the in-memory command tree
-        is rebuilt from cog definitions. This makes wake idempotent and
-        self-healing: it can recover from any prior state where the tree
-        was cleared or partially populated.
+        is rebuilt from cog definitions, then copies the global tree into
+        ``ctx.guild`` and syncs that guild only. This makes wake idempotent
+        and self-healing: it can recover from any prior state where the
+        tree was cleared or partially populated, without disturbing
+        registrations in other guilds.
         """
         if not self._is_developer(ctx.author.id):
+            return
+        if ctx.guild is None:
+            await ctx.send("⚠ `wake` must be run inside a guild.", delete_after=15)
             return
         for ext_name in list(self.bot.extensions.keys()):
             try:
                 await self.bot.reload_extension(ext_name)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 flogger.error(f"wake: failed to reload extension {ext_name}: {exc}")
-        for guild in self.bot.guilds:
-            self.bot.tree.copy_global_to(guild=guild)
-            await self.bot.tree.sync(guild=discord.Object(id=guild.id))
-        guild_names = ", ".join(g.name for g in self.bot.guilds) or "none"
-        flogger.info(f"wake: commands synced by {ctx.author} ({ctx.author.id})")
-        await ctx.send(f"✅ **{self.bot.user.name}** commands synced to {len(self.bot.guilds)} guild(s): {guild_names}", delete_after=30)
+        self.bot.tree.copy_global_to(guild=ctx.guild)
+        await self.bot.tree.sync(guild=discord.Object(id=ctx.guild.id))
+        flogger.info(
+            f"wake: commands synced in guild {ctx.guild.name} ({ctx.guild.id}) "
+            f"by {ctx.author} ({ctx.author.id})"
+        )
+        await ctx.send(
+            f"✅ **{self.bot.user.name}** commands synced in **{ctx.guild.name}**.",
+            delete_after=30,
+        )
 
     @commands.command(name="botstatus")
     async def botstatus(self, ctx: commands.Context):

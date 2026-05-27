@@ -353,19 +353,28 @@ class DevCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send("⚠ `wake` must be run inside a guild.", delete_after=15)
             return
+        flogger.info(
+            f"wake: invoked in guild {ctx.guild.name} ({ctx.guild.id}) "
+            f"by {ctx.author} ({ctx.author.id})"
+        )
         for ext_name in list(self.bot.extensions.keys()):
             try:
                 await self.bot.reload_extension(ext_name)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 flogger.error(f"wake: failed to reload extension {ext_name}: {exc}")
-        self.bot.tree.copy_global_to(guild=ctx.guild)
-        await self.bot.tree.sync(guild=discord.Object(id=ctx.guild.id))
+        try:
+            self.bot.tree.copy_global_to(guild=ctx.guild)
+            synced = await self.bot.tree.sync(guild=discord.Object(id=ctx.guild.id))
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.exception(f"wake: sync failed for guild {ctx.guild.id}: {exc}")
+            await ctx.send(f"❌ wake failed: `{type(exc).__name__}: {exc}`", delete_after=60)
+            return
         flogger.info(
-            f"wake: commands synced in guild {ctx.guild.name} ({ctx.guild.id}) "
+            f"wake: synced {len(synced)} commands in guild {ctx.guild.name} ({ctx.guild.id}) "
             f"by {ctx.author} ({ctx.author.id})"
         )
         await ctx.send(
-            f"✅ **{self.bot.user.name}** commands synced in **{ctx.guild.name}**.",
+            f"✅ **{self.bot.user.name}** synced {len(synced)} command(s) in **{ctx.guild.name}**.",
             delete_after=30,
         )
 

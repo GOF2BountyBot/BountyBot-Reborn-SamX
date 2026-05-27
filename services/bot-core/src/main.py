@@ -12,6 +12,8 @@ CHANGES MADE:
 - Option 2: Use SQLAlchemy AsyncEngine and a real sync_engine for APScheduler
 """
 
+import asyncio
+import fcntl
 import importlib
 import logging as pyLogging
 import os
@@ -338,7 +340,43 @@ async def lifespan(fastapi_app: FastAPI):
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"⚠️ Auto-seed encountered an unexpected error (continuing): {e}")
 
-    # Initialize scheduler with a true sync_engine for APScheduler
+    # Initialize scheduler with a true sync_engine for APScheduler.
+    #
+    # Cross-worker safety: when uvicorn runs N workers, all N reach this block
+    # on startup and race to CREATE TABLE apscheduler_jobs. PostgreSQL's
+    # pg_type catalog rejects the duplicate type registration even with
+    # CREATE TABLE IF NOT EXISTS semantics (the check-then-create window is
+    # not atomic at the catalog level). Serialize startup with a non-blocking
+    # fcntl.flock + poll: first worker creates the table; subsequent workers
+    # block on the lock, then see the table already exists and proceed.
+    _SCHEDULER_LOCK_PATH = "/tmp/bountybot_scheduler_init.lock"
+    _SCHEDULER_LOCK_TIMEOUT_S = 60.0
+    _SCHEDULER_LOCK_POLL_S = 0.5
+
+    try:
+        sched_lock_fd = os.open(_SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o644)
+    except OSError as exc:
+        flogger.error(f"⏰ Could not open scheduler init lock {_SCHEDULER_LOCK_PATH}: {exc} — proceeding without lock")
+        sched_lock_fd = None
+
+    if sched_lock_fd is not None:
+        acquired = False
+        elapsed = 0.0
+        while elapsed < _SCHEDULER_LOCK_TIMEOUT_S:
+            try:
+                fcntl.flock(sched_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                await asyncio.sleep(_SCHEDULER_LOCK_POLL_S)
+                elapsed += _SCHEDULER_LOCK_POLL_S
+        if not acquired:
+            os.close(sched_lock_fd)
+            sched_lock_fd = None
+            flogger.error(
+                f"⏰ Scheduler init lock not acquired within {_SCHEDULER_LOCK_TIMEOUT_S}s — proceeding without lock"
+            )
+
     try:
         flogger.info("⏰ Initializing Scheduler…")
 
@@ -382,6 +420,13 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.error(f"❌ Scheduler initialization failed: {e}")
         flogger.error("🛑 Application startup aborted due to scheduler issues")
         raise
+    finally:
+        if sched_lock_fd is not None:
+            try:
+                fcntl.flock(sched_lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(sched_lock_fd)
 
     flogger.info("📚 API Documentation available at: /docs")
     flogger.info("📖 ReDoc Documentation available at: /redoc")

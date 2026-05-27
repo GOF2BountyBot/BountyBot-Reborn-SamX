@@ -102,6 +102,7 @@ def register_default_jobs(scheduler) -> None:
             trigger=trigger,
             args=[jid, job_def["payload"]],
             id=jid,
+            replace_existing=True,
         )
         jitter_info = f", jitter={jitter}s" if jitter else ""
         flogger.info(f"📅 Registered default job '{jid}' with cron '{job_def['cron']}'{jitter_info}")

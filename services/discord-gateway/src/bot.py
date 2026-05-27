@@ -32,7 +32,12 @@ class GatewayBot(commands.Bot):
         intents.guilds = True
         intents.members = True
 
-        super().__init__(command_prefix="!", intents=intents, application_id=int(os.getenv("BOTAPPID", "0")))
+        super().__init__(
+            command_prefix=os.getenv("COMMAND_PREFIX", "?p"),
+            intents=intents,
+            application_id=int(os.getenv("BOTAPPID", "0")),
+            status=discord.Status.online,
+        )
 
         self.flogger = bblogger.get_logger("discord-gateway")
         self.startup_complete = False
@@ -68,6 +73,7 @@ class GatewayBot(commands.Bot):
 
     async def on_ready(self):
         self.flogger.info(f"Bot logged in as {self.user} ({self.user.id})")
+        await self.change_presence(status=discord.Status.online)
         if not self.startup_complete:
             await self.sync_commands()
             self.startup_complete = True

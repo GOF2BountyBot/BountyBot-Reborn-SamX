@@ -15,6 +15,7 @@ Key Features:
 
 from shared import bblogger
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 
 from persist.models.base import Base
 from persist.models.schema_version import SchemaVersion
@@ -80,8 +81,11 @@ class SchemaManager:
             if schema_version is None:
                 # if no schema version, set the current one
                 flogger.debug("No existing SchemaVersion found; initializing with current version")
-                schema_version = SchemaVersion(version=CURRENT_SCHEMA_VERSION, description="Initial Schema Version")
-                session.add(schema_version)
+                stmt = insert(SchemaVersion).values(
+                    version=CURRENT_SCHEMA_VERSION,
+                    description="Initial Schema Version",
+                ).on_conflict_do_nothing(index_elements=["version"])
+                await session.execute(stmt)
                 flogger.debug(f"Committing new SchemaVersion record: {CURRENT_SCHEMA_VERSION}")
                 await session.commit()
                 flogger.info(f"Initialized schema version to {CURRENT_SCHEMA_VERSION}")

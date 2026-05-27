@@ -306,6 +306,53 @@ class DevCog(commands.Cog):
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
 
+    # ── Bot management prefix commands ──────────────────────────────────────
+
+    def _is_developer(self, user_id: int) -> bool:
+        devs = {int(uid.strip()) for uid in os.getenv("DEVELOPERS", "").split(",") if uid.strip()}
+        return user_id in devs
+
+    @commands.command(name="snooze")
+    async def snooze(self, ctx: commands.Context):
+        """Clear this bot's slash commands from all guilds (owner only)."""
+        if not self._is_developer(ctx.author.id):
+            return
+        for guild in self.bot.guilds:
+            self.bot.tree.clear_commands(guild=guild)
+            await self.bot.tree.sync(guild=discord.Object(id=guild.id))
+        self.bot.tree.clear_commands(guild=None)
+        await self.bot.tree.sync()
+        guild_names = ", ".join(g.name for g in self.bot.guilds) or "none"
+        flogger.info(f"snooze: commands cleared by {ctx.author} ({ctx.author.id})")
+        await ctx.send(f"💤 **{self.bot.user.name}** commands cleared from {len(self.bot.guilds)} guild(s): {guild_names}", delete_after=30)
+
+    @commands.command(name="wake")
+    async def wake(self, ctx: commands.Context):
+        """Re-sync this bot's slash commands to all guilds (owner only)."""
+        if not self._is_developer(ctx.author.id):
+            return
+        for guild in self.bot.guilds:
+            self.bot.tree.copy_global_to(guild=guild)
+            await self.bot.tree.sync(guild=discord.Object(id=guild.id))
+        guild_names = ", ".join(g.name for g in self.bot.guilds) or "none"
+        flogger.info(f"wake: commands synced by {ctx.author} ({ctx.author.id})")
+        await ctx.send(f"✅ **{self.bot.user.name}** commands synced to {len(self.bot.guilds)} guild(s): {guild_names}", delete_after=30)
+
+    @commands.command(name="botstatus")
+    async def botstatus(self, ctx: commands.Context):
+        """Show this bot's command registration status per guild (owner only)."""
+        if not self._is_developer(ctx.author.id):
+            return
+        lines = [f"**{self.bot.user.name}** (`{self.bot.user.id}`)"]
+        for guild in self.bot.guilds:
+            cmds = await self.bot.tree.fetch_commands(guild=discord.Object(id=guild.id))
+            lines.append(f"• {guild.name}: {len(cmds)} command(s)")
+        global_cmds = await self.bot.tree.fetch_commands()
+        lines.append(f"• Global: {len(global_cmds)} command(s)")
+        flogger.info(f"botstatus: queried by {ctx.author} ({ctx.author.id})")
+        await ctx.send("\n".join(lines), delete_after=60)
+
+
 async def setup(bot: commands.Bot):
     flogger.debug("Setting up DevCog...")
     await bot.add_cog(DevCog(bot))

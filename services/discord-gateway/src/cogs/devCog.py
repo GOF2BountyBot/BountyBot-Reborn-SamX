@@ -314,23 +314,39 @@ class DevCog(commands.Cog):
 
     @commands.command(name="snooze")
     async def snooze(self, ctx: commands.Context):
-        """Clear this bot's slash commands from all guilds (owner only)."""
+        """Hide this bot's slash commands on Discord without touching the in-memory tree (owner only).
+
+        Previously this called ``tree.clear_commands`` which wiped the in-memory
+        command registry — leaving ``wake`` nothing to copy back. Now it
+        pushes an empty command list directly to Discord via the HTTP bulk-upsert
+        endpoints, so the local tree stays intact and ``wake`` can re-sync it.
+        """
         if not self._is_developer(ctx.author.id):
             return
+        app_id = self.bot.application_id
         for guild in self.bot.guilds:
-            self.bot.tree.clear_commands(guild=guild)
-            await self.bot.tree.sync(guild=discord.Object(id=guild.id))
-        self.bot.tree.clear_commands(guild=None)
-        await self.bot.tree.sync()
+            await self.bot.http.bulk_upsert_guild_commands(app_id, guild.id, [])
+        await self.bot.http.bulk_upsert_global_commands(app_id, [])
         guild_names = ", ".join(g.name for g in self.bot.guilds) or "none"
         flogger.info(f"snooze: commands cleared by {ctx.author} ({ctx.author.id})")
         await ctx.send(f"💤 **{self.bot.user.name}** commands cleared from {len(self.bot.guilds)} guild(s): {guild_names}", delete_after=30)
 
     @commands.command(name="wake")
     async def wake(self, ctx: commands.Context):
-        """Re-sync this bot's slash commands to all guilds (owner only)."""
+        """Re-sync this bot's slash commands to all guilds (owner only).
+
+        Reloads every loaded extension first so the in-memory command tree
+        is rebuilt from cog definitions. This makes wake idempotent and
+        self-healing: it can recover from any prior state where the tree
+        was cleared or partially populated.
+        """
         if not self._is_developer(ctx.author.id):
             return
+        for ext_name in list(self.bot.extensions.keys()):
+            try:
+                await self.bot.reload_extension(ext_name)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                flogger.error(f"wake: failed to reload extension {ext_name}: {exc}")
         for guild in self.bot.guilds:
             self.bot.tree.copy_global_to(guild=guild)
             await self.bot.tree.sync(guild=discord.Object(id=guild.id))

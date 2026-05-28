@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import db_manager
+from persist.repositories.commodity_repository import CommodityRepository
 from persist.repositories.criminal_repository import CriminalRepository
 from persist.repositories.module_repository import ModuleRepository
 from persist.repositories.primary_weapon_repository import PrimaryWeaponRepository
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.data import DataCategory
 from api.schemas.about_schema import (
+    CommodityResponse,
     CriminalResponse,
     ModuleResponse,
     PrimaryWeaponResponse,
@@ -37,6 +39,7 @@ turret_weapon_repo = TurretWeaponRepository()
 ship_repo = ShipRepository()
 system_repo = SystemRepository()
 criminal_repo = CriminalRepository()
+commodity_repo = CommodityRepository()
 
 # Category to repository mapping
 CATEGORY_REPOS = {
@@ -47,6 +50,7 @@ CATEGORY_REPOS = {
     DataCategory.ship: ship_repo,
     DataCategory.system: system_repo,
     DataCategory.criminal: criminal_repo,
+    DataCategory.commodity: commodity_repo,
 }
 
 # Category to response model mapping
@@ -183,6 +187,8 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
                 elif category == DataCategory.system:
                     result["coordinates"] = obj.coordinates
                     result["faction"] = obj.faction
+                elif category == DataCategory.commodity:
+                    result.update(CommodityResponse.model_validate(obj).model_dump())
 
                 flogger.debug(f"Object found: name={object_name}, category={category.value}, id={obj.id}")
                 return result
@@ -259,6 +265,8 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
                 elif category == DataCategory.system:
                     result["coordinates"] = obj.coordinates
                     result["faction"] = obj.faction
+                elif category == DataCategory.commodity:
+                    result.update(CommodityResponse.model_validate(obj).model_dump())
 
                 flogger.debug(f"Object found by alias: alias={alias}, category={category.value}, id={obj.id}")
                 return result
@@ -344,6 +352,8 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
             result["faction"] = obj.faction
             result["neighbours"] = getattr(obj, "neighbours", None)
             result["security"] = getattr(obj, "security", None)
+        elif category == DataCategory.commodity:
+            result.update(CommodityResponse.model_validate(obj).model_dump())
 
         flogger.debug(f"Object retrieved by ID: category={category.value}, object_id={object_id}")
         return result

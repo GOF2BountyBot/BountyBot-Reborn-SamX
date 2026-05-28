@@ -15,6 +15,7 @@ class DataCategory(StrEnum):
     ship = "ship"
     criminal = "criminal"
     system = "system"
+    commodity = "commodity"
 
 
 router = APIRouter(prefix="/data", tags=["data"])

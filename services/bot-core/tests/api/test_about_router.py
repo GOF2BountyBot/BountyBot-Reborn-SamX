@@ -87,6 +87,21 @@ def make_mock_system(**overrides):
     return obj
 
 
+def make_mock_commodity(**overrides):
+    obj = make_mock_object(**overrides)
+    obj.type = "commodity"
+    obj.manufacturer = None
+    obj.subcategory = "booze"
+    obj.price_source = "origin_system_price"
+    obj.price_range_min_credits = 720
+    obj.price_range_max_credits = 792
+    obj.price_range_min_system = "Behén"
+    obj.price_range_max_system = "Loma"
+    obj.highest_non_loma_price = None
+    obj.highest_non_loma_system = None
+    return obj
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -101,7 +116,7 @@ def mock_db_session():
 def mock_repos(mock_db_session):
     """Create mocked repositories that return no results by default."""
     repos = {}
-    for name in ["module", "primary", "secondary", "turret", "ship", "system", "criminal"]:
+    for name in ["module", "primary", "secondary", "turret", "ship", "system", "criminal", "commodity"]:
         repo = AsyncMock()
         repo.list_all = AsyncMock(return_value=[])
         repo.get_by_name = AsyncMock(return_value=None)
@@ -126,6 +141,7 @@ def test_app(mock_db_session, mock_repos):
     about_module.ship_repo = mock_repos["ship"]
     about_module.system_repo = mock_repos["system"]
     about_module.criminal_repo = mock_repos["criminal"]
+    about_module.commodity_repo = mock_repos["commodity"]
 
     # CRITICAL: CATEGORY_REPOS is a dict populated at module-import time with
     # references to the original repo instances.  Reassigning module attributes
@@ -138,6 +154,7 @@ def test_app(mock_db_session, mock_repos):
     about_module.CATEGORY_REPOS[DataCategory.ship] = mock_repos["ship"]
     about_module.CATEGORY_REPOS[DataCategory.system] = mock_repos["system"]
     about_module.CATEGORY_REPOS[DataCategory.criminal] = mock_repos["criminal"]
+    about_module.CATEGORY_REPOS[DataCategory.commodity] = mock_repos["commodity"]
 
     app = FastAPI()
     app.include_router(about_router, prefix="/api/v1")
@@ -180,7 +197,16 @@ class TestListCategories:
 
         assert response.status_code == 200
         data = response.json()
-        expected = {"module", "primary_weapon", "secondary_weapon", "turret_weapon", "ship", "criminal", "system"}
+        expected = {
+            "module",
+            "primary_weapon",
+            "secondary_weapon",
+            "turret_weapon",
+            "ship",
+            "criminal",
+            "system",
+            "commodity",
+        }
         assert expected == set(data)
 
     def test_list_categories_returns_strings(self, client):
@@ -225,6 +251,18 @@ class TestListObjectsForCategory:
         data = response.json()
         assert len(data) == 1
         assert data[0]["name"] == "Eagle"
+
+    def test_list_objects_commodity_category(self, client, mock_repos):
+        """Returns 200 with list of commodity objects."""
+        mock_commodity = make_mock_commodity(name="Iron")
+        mock_repos["commodity"].list_all = AsyncMock(return_value=[mock_commodity])
+
+        response = client.get("/api/v1/about/categories/commodity/objects")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["name"] == "Iron"
 
     def test_list_objects_empty_category(self, client, mock_repos):
         """Returns 200 with empty list when no objects exist."""
@@ -365,6 +403,21 @@ class TestGetObjectByName:
         assert data["category"] == "system"
         assert "coordinates" in data
         assert "faction" in data
+
+    def test_get_object_by_name_found_in_commodity(self, client, mock_repos):
+        """Returns 200 with subcategory + price fields when found in commodity repo."""
+        mock_commodity = make_mock_commodity(name="Behén Wine", value=756)
+        mock_repos["commodity"].get_by_name = AsyncMock(return_value=mock_commodity)
+
+        response = client.get("/api/v1/about/object/name/Behén Wine")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["category"] == "commodity"
+        assert data["subcategory"] == "booze"
+        assert data["price_source"] == "origin_system_price"
+        assert data["price_range_min_system"] == "Behén"
+        assert data["value"] == 756
 
     def test_get_object_by_name_not_found_returns_404(self, client, mock_repos):
         """Returns 404 when object not found in any category."""
@@ -537,6 +590,21 @@ class TestGetObjectById:
         data = response.json()
         assert data["category"] == "criminal"
         assert "faction" in data
+
+    def test_get_object_by_id_commodity_has_subcategory(self, client, mock_repos):
+        """Returns 200 with subcategory + price fields for commodity."""
+        mock_commodity = make_mock_commodity(name="Iron")
+        mock_commodity.subcategory = "ore"
+        mock_repos["commodity"].get_by_id = AsyncMock(return_value=mock_commodity)
+
+        response = client.get("/api/v1/about/object/commodity/1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["category"] == "commodity"
+        assert data["subcategory"] == "ore"
+        assert "price_range_min_credits" in data
+        assert "highest_non_loma_system" in data
 
 
 # ===========================================================================

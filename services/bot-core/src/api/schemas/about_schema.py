@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # Pydantic models for responses
@@ -64,3 +64,16 @@ class CriminalResponse(ItemResponse):
 class SystemResponse(ItemResponse):
     coordinates: list[float]  # ← e.g. [x, y, z]
     faction: str  # ← add faction
+
+
+class CommodityResponse(ItemResponse):
+    model_config = ConfigDict(from_attributes=True)
+
+    subcategory: str
+    price_source: str | None = None
+    price_range_min_credits: int | None = None
+    price_range_max_credits: int | None = None
+    price_range_min_system: str | None = None
+    price_range_max_system: str | None = None
+    highest_non_loma_price: int | None = None
+    highest_non_loma_system: str | None = None

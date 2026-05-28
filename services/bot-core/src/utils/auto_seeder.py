@@ -7,6 +7,7 @@ the existing ``load_data()`` infrastructure.  The seeding is idempotent:
 tables that already contain rows are skipped without modification.
 """
 
+import contextlib
 import fcntl
 import os
 
@@ -75,10 +76,8 @@ async def auto_seed_data() -> None:
             return
         await _run_seed_loop()
     finally:
-        try:
+        with contextlib.suppress(OSError):
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
         os.close(lock_fd)
 
 

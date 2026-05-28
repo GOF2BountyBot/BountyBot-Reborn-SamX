@@ -18,7 +18,7 @@ import importlib
 import logging as pyLogging
 import os
 import pkgutil
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from api import routers
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -422,10 +422,8 @@ async def lifespan(fastapi_app: FastAPI):
         raise
     finally:
         if sched_lock_fd is not None:
-            try:
+            with suppress(OSError):
                 fcntl.flock(sched_lock_fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
             os.close(sched_lock_fd)
 
     flogger.info("📚 API Documentation available at: /docs")

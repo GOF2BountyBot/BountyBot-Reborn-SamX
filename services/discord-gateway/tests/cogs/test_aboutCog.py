@@ -1053,6 +1053,43 @@ class TestCreateObjectEmbed:
         mc.embed_to_payload.assert_called_once()
         assert result is not None
 
+    def test_embed_commodity_category(self, mock_about_cog):
+        """_create_object_embed for 'commodity' renders subcategory + price fields,
+        suppresses raw_infobox from the generic dump, and still shows lore."""
+        obj_data = {
+            **_make_object_data("Hydrogen", "commodity", 200),
+            "subcategory": "raw_material",
+            "price_source": "wiki_table",
+            "price_range_min_credits": 1000,
+            "price_range_max_credits": 5000,
+            "price_range_min_system": "Vega",
+            "price_range_max_system": "Loma",
+            "highest_non_loma_price": 4200,
+            "highest_non_loma_system": "Vega",
+            "extra_atts": {
+                "raw_infobox": "RAWINFOBOXMARKER {{Infobox|price=999}}",
+                "price_source": "wiki_table",
+                "mechanics_text": "A common industrial gas traded across the galaxy.",
+            },
+        }
+
+        # Commodity is in the 2-column grid set; pass EmbedConverter through so we can
+        # inspect the real fields instead of a grid-rearranged MagicMock.
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.side_effect = lambda embed: embed
+            mc.payload_to_grid_embed.side_effect = lambda embed, fields_per_row: embed
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        field_names = [f.name for f in result.fields]
+        field_values = [f.value for f in result.fields]
+
+        assert "Subcategory" in field_names
+        assert "Price Range" in field_names
+        assert "Lore / Mechanics" in field_names
+        # raw_infobox must be suppressed from the generic "Additional Info" dump
+        assert "Raw Infobox" not in field_names
+        assert all("RAWINFOBOXMARKER" not in (v or "") for v in field_values)
+
 
 # ---------------------------------------------------------------------------
 # object_autocomplete — additional branch coverage

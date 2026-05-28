@@ -20,6 +20,20 @@ flogger = bblogger.get_logger("discord-gateway-AboutCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"aboutCog loading with BOT_API_BASE_URL: {api_base}")
 
+# Commodity price/raw fields are rendered explicitly in the commodity branch, so they
+# must be suppressed from the generic "Additional Info" extra_atts dump to avoid
+# duplicate fields and raw wiki markup leaking into the embed.
+_COMMODITY_EXTRA_SKIP = {
+    "price_source",
+    "price_range_min_credits",
+    "price_range_max_credits",
+    "price_range_min_system",
+    "price_range_max_system",
+    "highest_non_loma_price",
+    "highest_non_loma_system",
+    "raw_infobox",
+}
+
 
 def is_developer():
     # Example role check, uncomment and configure as needed
@@ -206,6 +220,7 @@ class AboutCog(commands.Cog):
             "ship": discord.Color.green(),
             "criminal": discord.Color.dark_red(),
             "system": discord.Color.gold(),
+            "commodity": discord.Color.teal(),
         }
         color = color_map.get(category, discord.Color.default())
 
@@ -316,6 +331,29 @@ class AboutCog(commands.Cog):
         elif category == "criminal" and obj_data.get("faction"):
             embed.add_field(name="Faction", value=str(obj_data["faction"]), inline=True)
 
+        elif category == "commodity":
+            if obj_data.get("subcategory"):
+                embed.add_field(
+                    name="Subcategory", value=str(obj_data["subcategory"]).replace("_", " ").title(), inline=True
+                )
+            pmin = obj_data.get("price_range_min_credits")
+            pmax = obj_data.get("price_range_max_credits")
+            if pmin is not None and pmax is not None:
+                embed.add_field(name="Price Range", value=f"{pmin:,} – {pmax:,} cr", inline=True)
+            if obj_data.get("price_range_min_system"):
+                embed.add_field(name="Lowest @", value=str(obj_data["price_range_min_system"]), inline=True)
+            if obj_data.get("price_range_max_system"):
+                embed.add_field(name="Highest @", value=str(obj_data["price_range_max_system"]), inline=True)
+            if obj_data.get("highest_non_loma_price") is not None:
+                _sys = obj_data.get("highest_non_loma_system") or "?"
+                embed.add_field(
+                    name="Best non-Loma", value=f"{obj_data['highest_non_loma_price']:,} cr @ {_sys}", inline=True
+                )
+            if obj_data.get("price_source"):
+                embed.add_field(
+                    name="Price Basis", value=str(obj_data["price_source"]).replace("_", " ").title(), inline=True
+                )
+
         # Add aliases if available
         if obj_data.get("aliases"):
             aliases_text = ", ".join(obj_data["aliases"])
@@ -345,6 +383,8 @@ class AboutCog(commands.Cog):
             for key, value in extra_atts.items():
                 if key == "mechanics_text":
                     continue
+                if category == "commodity" and key in _COMMODITY_EXTRA_SKIP:
+                    continue
                 if isinstance(value, (int, float, str, bool)):
                     extra_text += f"**{key.replace('_', ' ').title()}:** {value}\n"
             if extra_text:
@@ -356,7 +396,7 @@ class AboutCog(commands.Cog):
         embed.set_footer(text=f"ID: {obj_data.get('id', 'N/A')}")
 
         # ─── FORCE 2-COLUMN LAYOUT FOR MODULES, WEAPONS & SHIPS ─────────────
-        if category in ("ship", "module", "primary_weapon", "secondary_weapon", "turret_weapon"):
+        if category in ("ship", "module", "primary_weapon", "secondary_weapon", "turret_weapon", "commodity"):
             payload = EmbedConverter.embed_to_payload(embed)
             embed = EmbedConverter.payload_to_grid_embed(payload, fields_per_row=2)
 

@@ -334,8 +334,8 @@ class TestAutoSeedData:
     # Correct categories list
     # ------------------------------------------------------------------
 
-    def test_seed_categories_contains_all_seven(self):
-        """SEED_CATEGORIES must include all 7 expected game-data categories."""
+    def test_seed_categories_contains_all_eight(self):
+        """SEED_CATEGORIES must include all 8 expected game-data categories."""
         from utils.auto_seeder import SEED_CATEGORIES
 
         expected = {
@@ -346,6 +346,7 @@ class TestAutoSeedData:
             "module",
             "criminal",
             "system",
+            "commodity",
         }
         assert set(SEED_CATEGORIES) == expected
-        assert len(SEED_CATEGORIES) == 7
+        assert len(SEED_CATEGORIES) == 8

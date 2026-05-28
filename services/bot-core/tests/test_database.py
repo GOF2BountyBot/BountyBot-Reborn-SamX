@@ -653,6 +653,7 @@ class TestTableNames:
         """All expected names must exist as enum members."""
         expected_names = {
             "Bounty",
+            "Commodity",
             "Criminal",
             "DiscordMessage",
             "DuelRequest",

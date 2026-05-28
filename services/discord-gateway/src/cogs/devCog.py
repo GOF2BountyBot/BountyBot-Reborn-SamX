@@ -305,7 +305,6 @@ class DevCog(commands.Cog):
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
-
     # ── Bot management prefix commands ──────────────────────────────────────
 
     def _is_developer(self, user_id: int) -> bool:
@@ -329,8 +328,7 @@ class DevCog(commands.Cog):
         app_id = self.bot.application_id
         await self.bot.http.bulk_upsert_guild_commands(app_id, ctx.guild.id, [])
         flogger.info(
-            f"snooze: commands cleared in guild {ctx.guild.name} ({ctx.guild.id}) "
-            f"by {ctx.author} ({ctx.author.id})"
+            f"snooze: commands cleared in guild {ctx.guild.name} ({ctx.guild.id}) by {ctx.author} ({ctx.author.id})"
         )
         await ctx.send(
             f"💤 **{self.bot.user.name}** commands cleared in **{ctx.guild.name}**.",
@@ -353,10 +351,7 @@ class DevCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send("⚠ `wake` must be run inside a guild.", delete_after=15)
             return
-        flogger.info(
-            f"wake: invoked in guild {ctx.guild.name} ({ctx.guild.id}) "
-            f"by {ctx.author} ({ctx.author.id})"
-        )
+        flogger.info(f"wake: invoked in guild {ctx.guild.name} ({ctx.guild.id}) by {ctx.author} ({ctx.author.id})")
         for ext_name in list(self.bot.extensions.keys()):
             try:
                 await self.bot.reload_extension(ext_name)

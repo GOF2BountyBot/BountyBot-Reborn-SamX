@@ -1,0 +1,27 @@
+{
+  "_name": "Cesogen Core",
+  "_category": "commodity",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Cesogen_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Ore core",
+    "Tech level": "3",
+    "Known Price Range": "-> 280$ (Augmenta)\n-> 434$ (Me'enkk)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 280,
+    "price_range_min_system": "Augmenta",
+    "price_range_max_credits": 434,
+    "price_range_max_system": "Me'Enkk",
+    "value": 357,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Asteroids are divided into different classes, which are visible after scanning. Ore cores are only found in the Class A variety and are the precious essence of asteroids.",
+  "mechanics_text": [
+    "5t of Cesogen Core are required for the Disruptor Laser blueprint.",
+    "12t of Cesogen Core are required for the Gamma Shield II blueprint."
+  ],
+  "wiki_categories": ["Commodities", "Core", "GOF2", "Tech level 3", "Trading commodities", "Minigames", "GOF2HD", "Mining"]
+}

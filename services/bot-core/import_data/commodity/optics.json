@@ -1,0 +1,27 @@
+{
+  "_name": "Optics",
+  "_category": "commodity",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Optics",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Optics",
+    "Type": "Commodity",
+    "Tech Level": "7",
+    "Known Price Range": "-> 48$ (Magnetar)\n-> 189$ (Pan)"
+  },
+  "stats": {
+    "tech_level": 7,
+    "price_range_min_credits": 48,
+    "price_range_min_system": "Magnetar",
+    "price_range_max_credits": 189,
+    "price_range_max_system": "Pan",
+    "value": 119,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Optical components for data transmission, wide-range scanners, implants, medical applications and many other uses.",
+  "mechanics_text": [
+    "Required for blueprints: 2t Intelli Jet, 5t M6 A3 \"Wolverine\", 8t Liberator, 9t H'nookk, 68t Pandora Leech, 40t Yin Co. Shadow Ninja, 40t Khador Drive."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 7", "GOF2", "Technical commodities", "Valkyrie", "Supernova", "Blueprints", "Freelance Missions", "GOF2HD"]
+}

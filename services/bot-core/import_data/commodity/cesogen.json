@@ -1,0 +1,24 @@
+{
+  "_name": "Cesogen",
+  "_category": "commodity",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Cesogen",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 42$ (Augmenta)\n-> 83$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 42,
+    "price_range_min_system": "Augmenta",
+    "price_range_max_credits": 83,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 63,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Ores can be obtained through mining asteroids. Ore is not found in every system.",
+  "mechanics_text": [],
+  "wiki_categories": ["Ore", "Tech level 1", "Commodities", "GOF2", "Trading commodities", "GOF2HD", "Minigames", "Mining"]
+}

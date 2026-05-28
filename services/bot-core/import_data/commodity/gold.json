@@ -1,0 +1,27 @@
+{
+  "_name": "Gold",
+  "_category": "commodity",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Gold",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 76$ (Weymire)\n-> 105$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 76,
+    "price_range_min_system": "Weymire",
+    "price_range_max_credits": 105,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 91,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Ores can be obtained through mining asteroids. Ore is not found in every system.",
+  "mechanics_text": [
+    "55t Gold is required for the Mass Driver MD10 blueprint.",
+    "Gold is one of three minerals in the game that can be found on Earth. The other two being Iron and Titanium."
+  ],
+  "wiki_categories": ["Ore", "Tech level 1", "Commodities", "GOF2", "Trading commodities", "Minigames", "GOF2HD", "Mining", "Blueprints"]
+}

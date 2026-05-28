@@ -1,0 +1,27 @@
+{
+  "_name": "Pyresium",
+  "_category": "commodity",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Pyresium",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Pyresium",
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 77$ (Eanya)\n-> 126$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 77,
+    "price_range_min_system": "Eanya",
+    "price_range_max_credits": 126,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 102,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Ores can be obtained through mining asteroids. Ore is not found in every system.",
+  "mechanics_text": [
+    "10t required for Khador Drive blueprint (200t on Android)."
+  ],
+  "wiki_categories": ["Ore", "Tech level 1", "Commodities", "GOF2", "Trading commodities", "Blueprints", "GOF2HD", "Minigames", "Mining"]
+}

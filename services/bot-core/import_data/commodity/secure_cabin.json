@@ -1,0 +1,29 @@
+{
+  "_name": "Secure Cabin",
+  "_category": "commodity",
+  "_subcategory": "mission",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Secure_Cabin",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Secure Cabin",
+    "Type": "Commodity",
+    "Tech Level": "5",
+    "Price Range": "-> 0$",
+    "mission_only": true
+  },
+  "stats": {
+    "tech_level": 5,
+    "price_range_min_credits": 0,
+    "price_range_min_system": null,
+    "price_range_max_credits": 0,
+    "price_range_max_system": null,
+    "value": 0,
+    "price_source": "mission_only"
+  },
+  "in_game_description": "A cabin that was picked up in space. It is closed and has no windows, but you can hear muffled screams.",
+  "mechanics_text": [
+    "Appears in cargo hold when retrieving hostages from Salvage missions; cannot be sold or stored and disappears on mission completion.",
+    "Multiple Secure Cabins can accumulate in the hold by accepting new Salvage missions without completing the current one."
+  ],
+  "wiki_categories": ["Commodities", "Mission-only Commodities", "Tech level 5", "GOF2", "Missions", "Freelance Missions", "GOF2HD"]
+}

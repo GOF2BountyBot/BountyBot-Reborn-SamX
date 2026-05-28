@@ -1,0 +1,28 @@
+{
+  "_name": "Iron",
+  "_category": "commodity",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Iron",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 9$ (Suteo)\n-> 42$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 9,
+    "price_range_min_system": "Suteo",
+    "price_range_max_credits": 42,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 26,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Ores can be obtained through mining asteroids. Ore is not found in every system.",
+  "mechanics_text": [
+    "35t Iron is required for the T'yol blueprint.",
+    "Iron is insanely cheap in Suteo.",
+    "Iron is one of three minerals in the game that can be found on Earth. The other two being Gold and Titanium."
+  ],
+  "wiki_categories": ["Ore", "Tech level 1", "Commodities", "GOF2", "Trading commodities", "Minigames", "GOF2HD", "Mining"]
+}

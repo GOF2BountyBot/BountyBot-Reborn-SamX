@@ -1,0 +1,30 @@
+{
+  "_name": "Titanium",
+  "_category": "commodity",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Titanium",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Titanium",
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 144$ (Ni'mrrod)\n-> 207$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 144,
+    "price_range_min_system": "Ni'Mrrod",
+    "price_range_max_credits": 207,
+    "price_range_max_system": "Eanya",
+    "value": 176,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Ores can be obtained through mining asteroids. Ore is not found in every system.",
+  "mechanics_text": [
+    "10t required for M6 A3 \"Wolverine\" blueprint; 40t required for Gunant's Drill blueprint.",
+    "In the Supernova DLC, Keith is required to mine 100t of Titanium (140t on Android).",
+    "One of three minerals in the game that can be found on Earth (the others being Iron and Gold).",
+    "Most common deep in Vossk territory."
+  ],
+  "wiki_categories": ["Ore", "Tech level 1", "Commodities", "GOF2", "Trading commodities", "Blueprints", "Minigames", "Supernova", "Mining", "GOF2HD"]
+}

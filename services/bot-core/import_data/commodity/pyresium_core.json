@@ -1,0 +1,25 @@
+{
+  "_name": "Pyresium Core",
+  "_category": "commodity",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Pyresium_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Pyresium Core",
+    "Type": "Ore core",
+    "Tech level": "3",
+    "Known Price Range": "-> 451$ (Eanya)\n-> 700$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 451,
+    "price_range_min_system": "Eanya",
+    "price_range_max_credits": 700,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 576,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Asteroids are divided into different classes, which are visible after scanning. Ore cores are only found in the Class A variety and are the precious essence of asteroids.",
+  "mechanics_text": [],
+  "wiki_categories": ["Commodities", "Core", "GOF2", "Tech level 3", "Trading commodities", "Minigames", "Mining"]
+}

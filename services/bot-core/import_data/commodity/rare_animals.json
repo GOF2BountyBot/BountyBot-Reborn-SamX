@@ -1,0 +1,25 @@
+{
+  "_name": "Rare Animals",
+  "_category": "commodity",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Rare_Animals",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Rare Animals",
+    "Type": "Commodity",
+    "Tech Level": "5",
+    "Known Price Range": "-> 2,297$ (Prospero)\n-> 3,560$ (Pan)"
+  },
+  "stats": {
+    "tech_level": 5,
+    "price_range_min_credits": 2297,
+    "price_range_min_system": "Prospero",
+    "price_range_max_credits": 3560,
+    "price_range_max_system": "Pan",
+    "value": 2929,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "The universe is full of interesting animals, such as K'mirkk frogs, Mhura bees, or Zepar Kumppa stilts. Most animals can be used or prepared in various ways.",
+  "mechanics_text": [],
+  "wiki_categories": ["Commodities", "Tech level 5", "Trading commodities", "GOF2", "Rare commodities", "Freelance Missions", "GOF2HD"]
+}

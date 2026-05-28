@@ -1,0 +1,30 @@
+{
+  "_name": "Hydraulics",
+  "_category": "commodity",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Hydraulics",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "2",
+    "Known Price Range": "-> 54$ (Pan)\n-> 125$ (Wolf-Reiser)"
+  },
+  "stats": {
+    "tech_level": 2,
+    "price_range_min_credits": 54,
+    "price_range_min_system": "Pan",
+    "price_range_max_credits": 125,
+    "price_range_max_system": "Wolf-Reiser",
+    "value": 90,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "The hydraulic was perfected over a thousand years ago, and has since been reduced to the nano scale. They're still useful for various applications and are relatively inexpensive to produce.",
+  "mechanics_text": [
+    "14t of Hydraulics are required for the H'nookk blueprint.",
+    "20t of Hydraulics are required for the Yin Co. Shadow Ninja blueprint.",
+    "27t of Hydraulics are required for the Mass Driver MD 10 blueprint.",
+    "60t of Hydraulics are required for the Rhoda Blackhole blueprint.",
+    "90t of Hydraulics are required for the Gunant's Drill blueprint."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 2", "GOF2", "Technical commodities", "Blueprints", "Freelance Missions", "GOF2HD"]
+}

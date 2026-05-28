@@ -1,0 +1,34 @@
+{
+  "_name": "Novanium Core",
+  "_category": "commodity",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Novanium_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Novanium Core",
+    "Type": "Ore core",
+    "Tech Level": "3",
+    "Location": "Naneroh (Ginoya)",
+    "KnownPrice Range": "-> 4,927$ (Mido)\n->5,249$ (Ni'mrrod)",
+    "Loma Price": "$5,407"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 4927,
+    "price_range_min_system": "Mido",
+    "price_range_max_credits": 5249,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 5088,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "The cemented core of Novanium.",
+  "mechanics_text": [
+    "Can only be mined at Naneroh in the Ginoya System — requires Gamma Shield II.",
+    "One of only two cores (with Void Essence) that cannot be found at any Hangar unless placed there.",
+    "5x required for Pandora Leech blueprint.",
+    "5x required for Particle Shield blueprint.",
+    "Mining before end of Supernova storyline is nearly impossible; Gamma Shield II depletes first — use Rhoda Vortex to buy extra time.",
+    "30t (100t in extreme mode) Novanium ore can be exchanged for 1 core at the Mido Mining Plant in Coromesk (Skavac system)."
+  ],
+  "wiki_categories": ["Supernova", "Commodities", "Core", "GOF2", "Trading commodities", "Tech level 3", "Minigames", "GOF2HD", "Mining"]
+}

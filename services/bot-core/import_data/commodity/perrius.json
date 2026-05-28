@@ -1,0 +1,25 @@
+{
+  "_name": "Perrius",
+  "_category": "commodity",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Perrius",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Perrius",
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 37$ (Magnetar)\n-> 77$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 37,
+    "price_range_min_system": "Magnetar",
+    "price_range_max_credits": 77,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 57,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Ores can be obtained through mining asteroids. Ore is not found in every system.",
+  "mechanics_text": [],
+  "wiki_categories": ["Ore", "Tech level 1", "Commodities", "GOF2", "Trading commodities", "GOF2HD", "Minigames", "Mining"]
+}

@@ -1,0 +1,29 @@
+{
+  "_name": "Orichalzin Core",
+  "_category": "commodity",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Orichalzin_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Orichalzin Core",
+    "Type": "Ore core",
+    "Tech level": "3",
+    "Known Price Range": "-> 654$ (Aquila)\n-> 994$ (Me'enkk)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 654,
+    "price_range_min_system": "Aquila",
+    "price_range_max_credits": 994,
+    "price_range_max_system": "Me'Enkk",
+    "value": 824,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Asteroids are divided into different classes, which are visible after scanning. Ore cores are only found in the Class A variety and are the precious essence of asteroids.",
+  "mechanics_text": [
+    "15t required for T'yol blueprint.",
+    "40t required for HH-AT \"Archimedes\" blueprint.",
+    "Class A Orichalzine asteroids (mining locations): Aquila, Beidan, Mido, Nesla, Vulpes, Wolf-Reiser, Shima, Union."
+  ],
+  "wiki_categories": ["Commodities", "Core", "GOF2", "Tech level 3", "Trading commodities", "Minigames", "GOF2HD", "Mining"]
+}

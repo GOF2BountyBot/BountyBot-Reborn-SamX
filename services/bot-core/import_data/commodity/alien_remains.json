@@ -1,0 +1,26 @@
+{
+  "_name": "Alien Remains",
+  "_category": "commodity",
+  "_subcategory": "waste",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Alien_Remains",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "10",
+    "Price Range": "-> 190$ (Union)\n-> 208$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 10,
+    "price_range_min_credits": 190,
+    "price_range_min_system": "Union",
+    "price_range_max_credits": 208,
+    "price_range_max_system": "Eanya",
+    "value": 199,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Organic and inorganic remains of a Void ship. It looks as strange as it smells.",
+  "mechanics_text": [
+    "Alien Remains is the cheapest Tech 10 item in the entire game."
+  ],
+  "wiki_categories": ["GOF2", "Tech level 10", "Commodities"]
+}

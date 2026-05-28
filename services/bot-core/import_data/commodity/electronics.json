@@ -1,0 +1,35 @@
+{
+  "_name": "Electronics",
+  "_category": "commodity",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Electronics",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "2",
+    "Known Price Range": "-> 48$ (S'kolptorr)\n-> 189$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 2,
+    "price_range_min_credits": 48,
+    "price_range_min_system": "S'Kolptorr",
+    "price_range_max_credits": 189,
+    "price_range_max_system": "Eanya",
+    "value": 119,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Electronics today are comprised of mainly of quantum and nano components. Even a cocktail glass has nano-electronic sensors built into it, which change the glass's color when it's empty so the bartender knows it needs refilling.",
+  "mechanics_text": [
+    "3t of Electronics are required for the Amour Rocket blueprint.",
+    "5t of Electronics are required for the Phoenix SIS blueprint.",
+    "10t of Electronics are required for the AMR Extinctor blueprint.",
+    "10t of Electronics are required for the Liberator blueprint.",
+    "30t of Electronics are required for the Disruptor Laser blueprint.",
+    "40t of Electronics are required for the Khador Drive blueprint.",
+    "45t of Electronics are required for the Rhoda Blackhole blueprint.",
+    "75t of Electronics are required for the Fluxed Matter Shield blueprint.",
+    "75t of Electronics are required for the Particle Shield blueprint.",
+    "In Galaxy on Fire 3D, electronics look more futuristic than in Galaxy on Fire 2."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 2", "GOF2", "GoF1", "Technical commodities", "Blueprints", "Freelance Missions", "GOF2HD"]
+}

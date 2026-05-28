@@ -1,0 +1,28 @@
+{
+  "_name": "Organs",
+  "_category": "commodity",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Organs",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Organs",
+    "Type": "Commodity",
+    "Tech Level": "5",
+    "Known Price Range": "-> 3,910$ (Pan)\n-> 6,290$ (Beidan)",
+    "GoF2 HD (Android) Price Range": "-> 4,117$ (Pan)\n-> 4,706$ (Wolf-Reiser)"
+  },
+  "stats": {
+    "tech_level": 5,
+    "price_range_min_credits": 3910,
+    "price_range_min_system": "Pan",
+    "price_range_max_credits": 6290,
+    "price_range_max_system": "Beidan",
+    "value": 5100,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "There are also synthetic organs available on the market, but real ones are cheaper most of the time.",
+  "mechanics_text": [
+    "Cheapest in Pan; best sell prices at Loma, Beidan, and Wolf-Reiser."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 5", "Trading commodities", "GOF2", "Rare commodities", "GOF2HD", "Terrans", "Nivelians", "Midorians", "Vossk"]
+}

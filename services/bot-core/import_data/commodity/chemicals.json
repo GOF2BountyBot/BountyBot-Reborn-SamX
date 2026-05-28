@@ -1,0 +1,28 @@
+{
+  "_name": "Chemicals",
+  "_category": "commodity",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Chemicals",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "7",
+    "Known Price Range": "-> 29$ (Weymire)\n-> 203$ (Me'enkk)"
+  },
+  "stats": {
+    "tech_level": 7,
+    "price_range_min_credits": 29,
+    "price_range_min_system": "Weymire",
+    "price_range_max_credits": 203,
+    "price_range_max_system": "Me'Enkk",
+    "value": 116,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Natural and laboratory-made substances that have all sorts of different applications.",
+  "mechanics_text": [
+    "5t of Chemicals are required for the Phoenix SIS blueprint.",
+    "5t of Chemicals are required for the Gamma Shield II blueprint.",
+    "15t of Chemicals are required for the Yin Co. Shadow Ninja blueprint."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 7", "GOF2", "GoF1", "Supernova", "Standard commodities", "Blueprints", "Freelance Missions", "GOF2HD"]
+}

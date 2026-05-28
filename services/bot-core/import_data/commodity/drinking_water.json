@@ -1,0 +1,26 @@
+{
+  "_name": "Drinking Water",
+  "_category": "commodity",
+  "_subcategory": "standard",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Drinking_Water",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "1",
+    "Known Price Range": "-> 9$ (Magnetar)\n-> 63$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 9,
+    "price_range_min_system": "Magnetar",
+    "price_range_max_credits": 63,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 36,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "There are still places in the galaxy where there is no drinking water. As unfortunate as this might be, dealers certainly enjoy the trade benefit caused by the need for fresh water in certain systems.",
+  "mechanics_text": [
+    "This commodity may be found on convoys carrying 'illegal goods'."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 1", "GOF2", "Standard commodities", "Freelance Missions", "GOF2HD"]
+}

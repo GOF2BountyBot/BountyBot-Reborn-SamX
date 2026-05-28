@@ -1,0 +1,33 @@
+{
+  "_name": "Ni'mrrod Muck",
+  "_category": "commodity",
+  "_subcategory": "booze",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Booze",
+  "_extracted_at": "2026-05-27T22:30:00Z",
+  "raw_infobox": {
+    "Type": "Booze",
+    "Tech Level": "1",
+    "Named System Price": "485$ (Ni'mrrod)",
+    "Highest Non-Loma Sale": "874$ (Eanya)",
+    "Loma Price": "876$"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 485,
+    "price_range_max_credits": 876,
+    "value": 485,
+    "price_source": "origin_system_price",
+    "origin_system": "Ni'Mrrod",
+    "price_range_min_system": "Ni'Mrrod",
+    "price_range_max_system": "Loma",
+    "highest_non_loma_price": 874,
+    "highest_non_loma_system": "Eanya"
+  },
+  "in_game_description": "Alcoholic beverages always sell well; each beverage is named after the system where it's produced, where its price is lowest and where it is normally most available.",
+  "mechanics_text": [
+    "Origin system: Ni'mrrod (cheapest at 485cr).",
+    "Highest non-Loma sale: 874cr (Eanya).",
+    "Loma price: 876cr."
+  ],
+  "wiki_categories": ["Commodities", "GOF2", "Tech level 1", "Standard commodities", "GOF2HD"]
+}

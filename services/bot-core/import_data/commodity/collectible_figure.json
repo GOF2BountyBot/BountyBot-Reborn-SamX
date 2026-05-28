@@ -1,0 +1,31 @@
+{
+  "_name": "Collectible Figure",
+  "_category": "commodity",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Collectible_Figure",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "5",
+    "Known Price Range": "-> 9$ (Ni'mrrod)\n-> 10,239$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 5,
+    "price_range_min_credits": 9,
+    "price_range_min_system": "Ni'Mrrod",
+    "price_range_max_credits": 10239,
+    "price_range_max_system": "Eanya",
+    "value": 5124,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "A statue with a familiar face. Everyone should have one of these figures.",
+  "mechanics_text": [
+    "According to the Galaxy on Fire website, the figure has a string on its back that, when pulled, says quotes such as: 'Take me home if you need a cure for that sleeping problem of yours...', 'Did I ever tell you I was a cunning linguist?', 'Don't worry, I won't bite... unless you want me to.', 'I'd wrestle a Rhinocitroll just for you...'",
+    "Collectible figures are extremely rare items that can also be bought for a high price from vendors in Space Lounges that appear at random.",
+    "Collectible Figures can be extremely profitable. Their minimum price is 1$ (cheaper than space junk), and their maximum is 10,500$.",
+    "Sell these at Eanya or Loma as they can sell up to $10,000 or more.",
+    "The further south one goes on the map, the cheaper they are, and vice-versa.",
+    "Ni'mrrod sells these expensive figures for just 9$ because the Vossk do not like Keith Maxwell."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 5", "Trading commodities", "Easter eggs", "GOF2", "Rare commodities", "GOF2HD", "Characters"]
+}

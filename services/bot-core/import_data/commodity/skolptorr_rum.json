@@ -1,0 +1,33 @@
+{
+  "_name": "S'kolptorr Rum",
+  "_category": "commodity",
+  "_subcategory": "booze",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Booze",
+  "_extracted_at": "2026-05-27T22:30:00Z",
+  "raw_infobox": {
+    "Type": "Booze",
+    "Tech Level": "1",
+    "Named System Price": "233$ (S'kolptorr)",
+    "Highest Non-Loma Sale": "487$ (Eanya)",
+    "Loma Price": "503$"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 233,
+    "price_range_max_credits": 503,
+    "value": 233,
+    "price_source": "origin_system_price",
+    "origin_system": "S'Kolptorr",
+    "price_range_min_system": "S'Kolptorr",
+    "price_range_max_system": "Loma",
+    "highest_non_loma_price": 487,
+    "highest_non_loma_system": "Eanya"
+  },
+  "in_game_description": "Alcoholic beverages always sell well; each beverage is named after the system where it's produced, where its price is lowest and where it is normally most available.",
+  "mechanics_text": [
+    "Origin system: S'kolptorr (cheapest at 233cr).",
+    "Highest non-Loma sale: 487cr (Eanya).",
+    "Loma price: 503cr."
+  ],
+  "wiki_categories": ["Commodities", "GOF2", "Tech level 1", "Standard commodities", "GOF2HD"]
+}

@@ -1,0 +1,27 @@
+{
+  "_name": "Perrius Core",
+  "_category": "commodity",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Perrius_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Perrius Core",
+    "Type": "Ore core",
+    "Tech level": "3",
+    "Known Price Range": "-> 255$ (Magnetar)\n-> 402$ (Pan)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 255,
+    "price_range_min_system": "Magnetar",
+    "price_range_max_credits": 402,
+    "price_range_max_system": "Pan",
+    "value": 329,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Asteroids are divided into different classes, which are visible after scanning. Ore cores are only found in the Class A variety and are the precious essence of asteroids.",
+  "mechanics_text": [
+    "2t required for Ion Lambda MK2 blueprint."
+  ],
+  "wiki_categories": ["Commodities", "Core", "GOF2", "Trading commodities", "Tech level 3", "Minigames", "Trading", "GOF2HD", "Mining"]
+}

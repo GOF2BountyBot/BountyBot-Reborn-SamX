@@ -1,0 +1,26 @@
+{
+  "_name": "Medical Supplies",
+  "_category": "commodity",
+  "_subcategory": "standard",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Medical_Supplies",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Medical Supplies",
+    "Type": "Commodity",
+    "Tech Level": "2",
+    "Known Price Range": "-> 49$ (Suteo)\n-> 251$ (Ni'mrrod)",
+    "GoF 3D™ Price Range": "180-420 Cr."
+  },
+  "stats": {
+    "tech_level": 2,
+    "price_range_min_credits": 49,
+    "price_range_min_system": "Suteo",
+    "price_range_max_credits": 251,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 150,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Although most serious diseases have been eradicated over the centuries, the increase in inter-species mating means there are always new infections cropping up that must be dealt with.",
+  "mechanics_text": [],
+  "wiki_categories": ["Commodities", "Tech level 2", "GOF2", "GoF1", "Standard commodities", "Freelance Missions", "GOF2HD"]
+}

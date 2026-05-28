@@ -1,0 +1,34 @@
+{
+  "_name": "Union Draught",
+  "_category": "commodity",
+  "_subcategory": "booze",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Booze",
+  "_extracted_at": "2026-05-27T22:30:00Z",
+  "raw_infobox": {
+    "Type": "Booze",
+    "Tech Level": "1",
+    "Named System Price": "100$ (Union)",
+    "Highest Non-Loma Sale": "186$ (Pan / Pescal Inartu / Ni'mrrod)",
+    "Loma Price": "186$"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 100,
+    "price_range_max_credits": 186,
+    "value": 100,
+    "price_source": "origin_system_price",
+    "origin_system": "Union",
+    "price_range_min_system": "Union",
+    "price_range_max_system": "Loma",
+    "highest_non_loma_price": 186,
+    "highest_non_loma_system": "Pan / Pescal Inartu / Ni'Mrrod"
+  },
+  "in_game_description": "Alcoholic beverages always sell well; each beverage is named after the system where it's produced, where its price is lowest and where it is normally most available.",
+  "mechanics_text": [
+    "Origin system: Union (cheapest at 100cr).",
+    "Highest non-Loma sale: 186cr (Pan, Pescal Inartu, Ni'mrrod — tied).",
+    "Loma price: 186cr.",
+    "A Union Draught bottle is seen drifting in space at the end of the GOF2 base game."
+  ],
+  "wiki_categories": ["Commodities", "GOF2", "Tech level 1", "Standard commodities", "GOF2HD"]
+}

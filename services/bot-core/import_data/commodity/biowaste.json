@@ -1,0 +1,26 @@
+{
+  "_name": "Biowaste",
+  "_category": "commodity",
+  "_subcategory": "waste",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Biowaste",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "1",
+    "Known Price Range": "-> 3$ (V'ikka)\n-> 17$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 3,
+    "price_range_min_system": "V'Ikka",
+    "price_range_max_credits": 17,
+    "price_range_max_system": "Eanya",
+    "value": 10,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Biomass is an edible substance for sentient beings and animals; it is a renewable raw material and an energy source all rolled into one.",
+  "mechanics_text": [
+    "This is one dollar cheaper than Space Waste, which is 4 dollars, making biowaste the 2nd cheapest item in the game before Basic Food."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 1", "GOF2", "GoF1", "Standard commodities", "GOF3D", "GOF2HD"]
+}

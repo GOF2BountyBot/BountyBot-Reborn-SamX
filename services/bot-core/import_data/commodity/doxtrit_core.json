@@ -1,0 +1,27 @@
+{
+  "_name": "Doxtrit Core",
+  "_category": "commodity",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Doxtrit_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Ore core",
+    "Tech level": "3",
+    "Known Price Range": "-> 214$ (Vulpes)\n-> 330$ (Ginoya)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 214,
+    "price_range_min_system": "Vulpes",
+    "price_range_max_credits": 330,
+    "price_range_max_system": "Ginoya",
+    "value": 272,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Asteroids are divided into different classes, which are visible after scanning. Ore cores are only found in the Class A variety and are the precious essence of asteroids.",
+  "mechanics_text": [
+    "The final 'e' of the ore names 'Doxtrite' and 'Orichalzine' is removed in naming the corresponding core.",
+    "1t Doxtrit Core is required for the Icarus Heavy AS blueprint (5t on Android)."
+  ],
+  "wiki_categories": ["Commodities", "Core", "GOF2", "Trading commodities", "Tech level 3", "Minigames", "GOF2HD", "Mining"]
+}

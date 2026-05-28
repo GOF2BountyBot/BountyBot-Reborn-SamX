@@ -1,0 +1,28 @@
+{
+  "_name": "Titanium Core",
+  "_category": "commodity",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Titanium_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Titanium Core",
+    "Type": "Ore core",
+    "Tech level": "3",
+    "Known Price Range": "-> 789$ (Ni'mrrod)\n-> 1,224$ (Ginoya)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 789,
+    "price_range_min_system": "Ni'Mrrod",
+    "price_range_max_credits": 1224,
+    "price_range_max_system": "Ginoya",
+    "value": 1007,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Asteroids are divided into different classes, which are visible after scanning. Ore cores are only found in the Class A variety and are the precious essence of asteroids.",
+  "mechanics_text": [
+    "2t required for Liberator blueprint (25t on Android); 10t required for Gunant's Drill; 1t required for H'nookk.",
+    "Rarely available to buy even in Vossk systems where it is cheapest."
+  ],
+  "wiki_categories": ["Commodities", "Core", "GOF2", "Trading commodities", "Tech level 3", "Minigames", "GOF2HD", "Mining"]
+}

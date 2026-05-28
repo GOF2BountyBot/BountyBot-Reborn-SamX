@@ -1,0 +1,27 @@
+{
+  "_name": "Sodil",
+  "_category": "commodity",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Sodil",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Sodil",
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 67$ (Pescal Inartu)\n-> 114$ (Mido)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 67,
+    "price_range_min_system": "Pescal Inartu",
+    "price_range_max_credits": 114,
+    "price_range_max_system": "Mido",
+    "value": 91,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Ores can be obtained through mining asteroids. Ore is not found in every system.",
+  "mechanics_text": [
+    "Chromo Plasma is stored in containers made from a special sodil-alloy, though no Sodil is required for the Chromo Plasma blueprint."
+  ],
+  "wiki_categories": ["Ore", "Tech level 1", "Commodities", "GOF2", "Trading commodities", "GOF2HD", "Minigames", "Mining"]
+}

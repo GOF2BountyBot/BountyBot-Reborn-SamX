@@ -1,0 +1,28 @@
+{
+  "_name": "Basic Food",
+  "_category": "commodity",
+  "_subcategory": "standard",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Basic_Food",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "1",
+    "Known Price Range": "-> 2$ (Augmenta)\n-> 21$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 2,
+    "price_range_min_system": "Augmenta",
+    "price_range_max_credits": 21,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 12,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "For today's nutrition, almost all foods are created in laboratories, packed with flavor, vitamins and are prepared in a visually appealing way. Naturally produced foods are usually only eaten on special occasions.",
+  "mechanics_text": [
+    "If one looks closely, one can see a fish and \"TU\", hinting tuna. However, it is possibly not real tuna, since tuna swims in the oceans of Earth, and Terrans long ago migrated out of their home planet and left it behind. It is probably made artificially in the lab, hence the in-game description.",
+    "Nobody is ever seen eating any type of food, or talking about food, only drinking booze.",
+    "This is one dollar cheaper than Biowaste, making this the cheapest item in the entire game."
+  ],
+  "wiki_categories": ["Commodities", "GOF2", "Standard commodities", "GOF2HD"]
+}

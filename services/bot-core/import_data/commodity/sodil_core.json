@@ -1,0 +1,25 @@
+{
+  "_name": "Sodil Core",
+  "_category": "commodity",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Sodil_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Sodil Core",
+    "Type": "Ore core",
+    "Tech level": "3",
+    "Known Price Range": "-> 406$ (Pescal Inartu)\n-> 633$ (Mido)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 406,
+    "price_range_min_system": "Pescal Inartu",
+    "price_range_max_credits": 633,
+    "price_range_max_system": "Mido",
+    "value": 520,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Asteroids are divided into different classes, which are visible after scanning. Ore cores are only found in the Class A variety and are the precious essence of asteroids.",
+  "mechanics_text": [],
+  "wiki_categories": ["Commodities", "Core", "GOF2", "Trading commodities", "Tech level 3", "GOF2HD", "Minigames", "Mining"]
+}

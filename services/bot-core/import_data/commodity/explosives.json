@@ -1,0 +1,32 @@
+{
+  "_name": "Explosives",
+  "_category": "commodity",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Explosives",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "3",
+    "Known Price Range": "-> 152$ (Mido)\n-> 417$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 152,
+    "price_range_min_system": "Mido",
+    "price_range_max_credits": 417,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 285,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Good explosives are manufactured in the Nesla system and are used primarily for mining resources.",
+  "mechanics_text": [
+    "20t of Explosives are required for the AMR Extinctor blueprint.",
+    "25t of Explosives are required for the Liberator blueprint.",
+    "20t of Explosives are required for the Ion Lambda MK2 blueprint.",
+    "10t of Explosives are required for the Fireworks blueprint.",
+    "25t of Explosives are required for the Shock Blast blueprint.",
+    "The image for Explosives looks like a piece of modern-day C4.",
+    "These can be found in large quantities in Sao Perula in the Loma system, along with Radioactive Goods."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 3", "GOF2", "Technical commodities", "Valkyrie", "Supernova", "Blueprints", "Freelance Missions", "GOF2HD"]
+}

@@ -27,6 +27,7 @@ SEED_CATEGORIES: list[str] = [
     "module",
     "criminal",
     "system",
+    "commodity",
 ]
 
 # Cross-worker file lock — prevents N uvicorn workers from racing the

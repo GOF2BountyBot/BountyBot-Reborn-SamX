@@ -1,0 +1,27 @@
+{
+  "_name": "Drugs",
+  "_category": "commodity",
+  "_subcategory": "standard",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Drugs",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "1",
+    "Known Price Range": "-> 19$ (Augmenta)\n-> 417$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 19,
+    "price_range_min_system": "Augmenta",
+    "price_range_max_credits": 417,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 218,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Since almost every station is now equipped with contamination shields, the threat posed by drugs is quite low. Many illegal substances are still regularly used in the Space Lounges, however.",
+  "mechanics_text": [
+    "You will often see people trying to buy drugs from you in the space lounge for a quite high price.",
+    "The drugs appear in pill form."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 1", "GOF2", "Standard commodities", "Freelance Missions", "GOF2HD"]
+}

@@ -1,0 +1,32 @@
+{
+  "_name": "Red Plasma",
+  "_category": "commodity",
+  "_subcategory": "plasma",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Red_Plasma",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Red Plasma",
+    "Type": "Plasma",
+    "Tech": "9",
+    "Price": "(not listed)",
+    "volatile": true
+  },
+  "stats": {
+    "tech_level": 9,
+    "price_range_min_credits": 170,
+    "price_range_min_system": null,
+    "price_range_max_credits": 170,
+    "price_range_max_system": null,
+    "value": 170,
+    "price_source": "unverified"
+  },
+  "in_game_description": "A special kind of gas cloud plasma characterized by its red glimmer. It is very unstable and likely to explode if exposed to concussion. Can only be found deep in Vossk territory.",
+  "mechanics_text": [
+    "917t required for Chromo Plasma blueprint.",
+    "25t required for Pandora Leech blueprint.",
+    "Cannot be transported via Khador Drive without the 'Using Khador Drive To Transport Volatile Goods' glitch.",
+    "Available in all Vossk systems except V'ikka and Oom'bak (border systems); S'kolptorr (Risky) is the safest harvest point.",
+    "Most systems where it is found are ranked Dangerous — avoid fights and head for the jumpgate immediately on entry."
+  ],
+  "wiki_categories": ["Plasma", "Supernova", "Tech level 9", "Volatile Goods", "Gas Cloud Mining", "GOF2", "GOF2HD", "Minigames"]
+}

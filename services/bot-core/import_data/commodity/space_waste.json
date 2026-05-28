@@ -1,0 +1,27 @@
+{
+  "_name": "Space Waste",
+  "_category": "commodity",
+  "_subcategory": "waste",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Space_Waste",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Space Waste",
+    "Type": "Commodity",
+    "Tech Level": "1",
+    "Known Price Range": "-> 4$ (Mido)\n-> 8$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 4,
+    "price_range_min_system": "Mido",
+    "price_range_max_credits": 8,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 6,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Some dealers cannot stop buying space debris, convinced that they might find something valuable hidden in the waste. The problem is so widespread that there's even a special type of clinical therapy available for combatting the addiction.",
+  "mechanics_text": [
+    "Destroyed Space Junk pieces from Space Junk missions are sometimes looted as this commodity."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 1", "Missions", "Freelance Missions", "GOF2", "Standard commodities", "GOF2HD"]
+}

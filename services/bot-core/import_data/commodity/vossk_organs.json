@@ -1,0 +1,32 @@
+{
+  "_name": "Vossk Organs",
+  "_category": "commodity",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Vossk_Organs",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Vossk Organs",
+    "Type": "Commodity",
+    "Tech Level": "7",
+    "Known Price Range": "-> 18,170$ (Pescal Inartu)\n-> 26,946$ (Aquila)",
+    "Loma Price": "-> 27,299$",
+    "GoF2 HD (Android) Price Range": "-> 22,302$ (Pan)\n-> 24,585$ (Aquila)"
+  },
+  "stats": {
+    "tech_level": 7,
+    "price_range_min_credits": 18170,
+    "price_range_min_system": "Pescal Inartu",
+    "price_range_max_credits": 26946,
+    "price_range_max_system": "Aquila",
+    "value": 22558,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Whether or not you want to cook a tasty dish, or study them for research purposes, Vossk organs aren't readily available and you will usually have to search long and hard for them.",
+  "mechanics_text": [
+    "Were the most valuable commodity in the entire game until Supernova introduced Chromo Plasma and K'mirkk Toad Mutagen.",
+    "Comparable to Buskat in rarity; sell at ~27,000$ per ton (~32,000$ with Supernova).",
+    "Sao Perula in the Loma system always stocks Vossk Organs.",
+    "Can be found in Pan alongside regular Organs; sell at Loma or Thynome for best profits."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 7", "GOF2", "Rare commodities", "Trading commodities", "Vossk", "GOF2HD"]
+}

@@ -1,0 +1,25 @@
+{
+  "_name": "Purple Plasma",
+  "_category": "commodity",
+  "_subcategory": "plasma",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Purple_Plasma",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Purple Plasma",
+    "Type": "Plasma",
+    "Tech Level": "9",
+    "Price": "(not listed)"
+  },
+  "stats": {
+    "tech_level": 9,
+    "price_range_min_credits": 110,
+    "price_range_min_system": null,
+    "price_range_max_credits": 110,
+    "price_range_max_system": null,
+    "value": 110,
+    "price_source": "unverified"
+  },
+  "in_game_description": "A special kind of gas cloud plasma characterized by its purple glimmer. This type of plasma can be found near Pescal Inartu.",
+  "mechanics_text": [],
+  "wiki_categories": ["Plasma", "Pescal Inartu", "Tech level 9", "GOF2", "Supernova", "Gas Cloud Mining", "GOF2HD", "Minigames"]
+}

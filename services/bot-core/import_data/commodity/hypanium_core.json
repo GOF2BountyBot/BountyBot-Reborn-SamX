@@ -1,0 +1,24 @@
+{
+  "_name": "Hypanium Core",
+  "_category": "commodity",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Hypanium_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Ore core",
+    "Tech level": "3",
+    "Known Price Range": "-> 373$ (S'kolptorr)\n-> 486$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 373,
+    "price_range_min_system": "S'Kolptorr",
+    "price_range_max_credits": 486,
+    "price_range_max_system": "Eanya",
+    "value": 430,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Asteroids are divided into different classes, which are visible after scanning. Ore cores are only found in the Class A variety and are the precious essence of asteroids.",
+  "mechanics_text": [],
+  "wiki_categories": ["Commodities", "Core", "GOF2", "Tech level 3", "Trading commodities", "GOF2HD", "Minigames", "Mining"]
+}

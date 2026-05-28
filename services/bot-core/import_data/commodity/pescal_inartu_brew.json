@@ -1,0 +1,33 @@
+{
+  "_name": "Pescal Inartu Brew",
+  "_category": "commodity",
+  "_subcategory": "booze",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Booze",
+  "_extracted_at": "2026-05-27T22:30:00Z",
+  "raw_infobox": {
+    "Type": "Booze",
+    "Tech Level": "1",
+    "Named System Price": "671$ (Pescal Inartu)",
+    "Highest Non-Loma Sale": "1384$ (Mido)",
+    "Loma Price": "1384$"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 671,
+    "price_range_max_credits": 1384,
+    "value": 671,
+    "price_source": "origin_system_price",
+    "origin_system": "Pescal Inartu",
+    "price_range_min_system": "Pescal Inartu",
+    "price_range_max_system": "Loma",
+    "highest_non_loma_price": 1384,
+    "highest_non_loma_system": "Mido"
+  },
+  "in_game_description": "Alcoholic beverages always sell well; each beverage is named after the system where it's produced, where its price is lowest and where it is normally most available.",
+  "mechanics_text": [
+    "Origin system: Pescal Inartu (cheapest at 671cr).",
+    "Highest non-Loma sale: 1384cr (Mido).",
+    "Loma price: 1384cr."
+  ],
+  "wiki_categories": ["Commodities", "GOF2", "Tech level 1", "Standard commodities", "GOF2HD"]
+}

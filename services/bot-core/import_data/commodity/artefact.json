@@ -1,0 +1,26 @@
+{
+  "_name": "Artefact",
+  "_category": "commodity",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Artefact",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "5",
+    "Known Price Range": "-> 1,176 $ (Y'mirr)\n-> 1,340 $ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 5,
+    "price_range_min_credits": 1176,
+    "price_range_min_system": "Y'Mirr",
+    "price_range_max_credits": 1340,
+    "price_range_max_system": "Eanya",
+    "value": 1258,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Archeology - be it bones, books or cell phones.",
+  "mechanics_text": [
+    "The spelling in-game is the British spelling."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 5", "GOF2", "Rare commodities", "Trading commodities", "GOF2HD"]
+}

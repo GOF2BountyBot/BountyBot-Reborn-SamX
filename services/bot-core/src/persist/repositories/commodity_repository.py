@@ -34,9 +34,7 @@ class CommodityRepository(GenericRepository[Commodity]):
         """
         commodity_name = raw.get("_name", "unknown")
         flogger.trace(f"Creating or updating commodity: {commodity_name}")
-        flogger.debug(
-            f"Commodity data: name={commodity_name}, subcategory={raw.get('_subcategory')}"
-        )
+        flogger.debug(f"Commodity data: name={commodity_name}, subcategory={raw.get('_subcategory')}")
 
         try:
             # validate required keys upfront

@@ -1,6 +1,7 @@
 {
   "_name": "Iron",
   "_category": "commodity",
+  "icon": "https://i.postimg.cc/cCDTLpS1/iron.png",
   "_subcategory": "ore",
   "_url": "https://galaxyonfire.wiki.gg/wiki/Iron",
   "_extracted_at": "2026-05-27T23:00:00Z",

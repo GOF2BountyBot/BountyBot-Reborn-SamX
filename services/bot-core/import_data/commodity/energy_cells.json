@@ -1,6 +1,8 @@
 {
   "_name": "Energy Cells",
   "_category": "commodity",
+  "icon": "https://i.postimg.cc/8PjjY2jp/energy-cell.png",
+  "emoji": "<:energycell:1508869559925473463>",
   "_subcategory": "technical",
   "_url": "https://galaxyonfire.wiki.gg/wiki/Energy_Cells",
   "_extracted_at": "2026-05-27T23:00:00Z",

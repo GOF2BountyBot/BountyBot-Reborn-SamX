@@ -1,6 +1,7 @@
 {
   "_name": "Medical Supplies",
   "_category": "commodity",
+  "icon": "https://i.postimg.cc/qqm6K0qY/medical-supplies.png",
   "_subcategory": "standard",
   "_url": "https://galaxyonfire.wiki.gg/wiki/Medical_Supplies",
   "_extracted_at": "2026-05-27T23:00:00Z",

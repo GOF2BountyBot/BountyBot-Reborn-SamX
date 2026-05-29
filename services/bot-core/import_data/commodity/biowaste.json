@@ -1,6 +1,7 @@
 {
   "_name": "Biowaste",
   "_category": "commodity",
+  "icon": "https://i.postimg.cc/vHz3P6xF/biowaste.png",
   "_subcategory": "waste",
   "_url": "https://galaxyonfire.wiki.gg/wiki/Biowaste",
   "_extracted_at": "2026-05-27T23:00:00Z",

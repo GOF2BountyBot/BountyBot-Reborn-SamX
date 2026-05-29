@@ -250,11 +250,29 @@ class TestOnReadyEvent:
         bot.startup_complete = False
         bot.sync_commands = AsyncMock()
 
-        asyncio.run(bot.on_ready())
+        with patch.dict("os.environ", {"AUTO_SYNC_COMMANDS": "true"}):
+            asyncio.run(bot.on_ready())
 
         bot.sync_commands.assert_called_once()
         assert bot.startup_complete is True
         bot.flogger.info.assert_called_with("Commands synced")
+
+    def test_on_ready_skips_sync_when_auto_sync_disabled(self, mock_gateway_bot):
+        """on_ready should skip startup sync when AUTO_SYNC_COMMANDS=false (boot dark)."""
+        bot = mock_gateway_bot
+        bot.flogger = MagicMock()
+        bot.user = MagicMock()
+        bot.user.name = "TestBot"
+        bot.user.id = 123456789
+        bot.startup_complete = False
+        bot.sync_commands = AsyncMock()
+
+        with patch.dict("os.environ", {"AUTO_SYNC_COMMANDS": "false"}):
+            asyncio.run(bot.on_ready())
+
+        bot.sync_commands.assert_not_called()
+        assert bot.startup_complete is True
+        assert call("Commands synced") not in bot.flogger.info.call_args_list
 
     def test_on_ready_does_not_resync(self, mock_gateway_bot):
         """on_ready should not resync commands if startup_complete is True."""

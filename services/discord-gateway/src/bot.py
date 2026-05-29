@@ -75,9 +75,12 @@ class GatewayBot(commands.Bot):
         self.flogger.info(f"Bot logged in as {self.user} ({self.user.id})")
         await self.change_presence(status=discord.Status.online)
         if not self.startup_complete:
-            await self.sync_commands()
+            if os.getenv("AUTO_SYNC_COMMANDS", "true").lower() == "true":
+                await self.sync_commands()
+                self.flogger.info("Commands synced")
+            else:
+                self.flogger.info("AUTO_SYNC_COMMANDS=false; skipping startup command sync (use wake to force-sync)")
             self.startup_complete = True
-            self.flogger.info("Commands synced")
 
         if not self._warm_jobs_registered:
             self._warm_jobs_registered = True

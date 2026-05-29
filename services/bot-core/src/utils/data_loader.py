@@ -71,10 +71,14 @@ def _resolve_emojis(obj):
     Leaves 'name' (and all other fields) untouched.
     """
     service = get_emoji_service()
-    if isinstance(obj, dict) and "name" in obj:
-        new_emoji = service.resolve_emoji(obj["name"])
-        if new_emoji:
-            obj["emoji"] = new_emoji
+    if isinstance(obj, dict):
+        # Commodity seed files key the display name as "_name"; every other category
+        # uses "name". Resolve the emoji against whichever key is present.
+        lookup_name = obj.get("name") or obj.get("_name")
+        if lookup_name:
+            new_emoji = service.resolve_emoji(lookup_name)
+            if new_emoji:
+                obj["emoji"] = new_emoji
     return obj
 
 

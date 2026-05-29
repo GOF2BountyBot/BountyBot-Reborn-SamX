@@ -147,7 +147,7 @@ class TestGatewayBotInitialization:
         from bot import GatewayBot
 
         bot = GatewayBot()
-        assert bot.command_prefix == "!"
+        assert bot.command_prefix == "?p"
         assert bot.intents.message_content is True
         assert bot.intents.guilds is True
         assert bot.intents.members is True

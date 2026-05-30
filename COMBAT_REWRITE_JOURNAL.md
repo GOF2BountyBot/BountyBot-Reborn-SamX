@@ -98,15 +98,15 @@ attacker_accuracy = combatant_base                 # 60% / 50%
 - **No in-range distance penalty (RESOLVED 2026-05-30, closes O-DP):** primaries do NOT degrade with distance inside their range envelope. The earlier-floated 0.20 max was a stale carry-over from before primaries/rockets were split; distance-as-accuracy is a secondary-weapon concern (rocket 5%→60% curve, missile tier-A degrade) — see Secondary weapons below.
 
 ### Secondary weapons
-**Phase-1 in-scope subtypes:** rocket, missile, nuke, shock-blast. (HE-5d + HE-7 session)
+**Phase-1 in-scope subtypes:** rocket, missile, cluster-missile, nuke, shock-blast. (HE-5d + HE-7 session + RESOLVED O-M 2026-05-30)
 **Phase-2 deferred:** emp-bomb (mechanic in scope when EMP lands; physical track inert in Phase-1).
-**Phase-3+ deferred:** mine, sentry-gun. (HE-7 session)
-**Open status (§2 O-M):** cluster-missile (3 files), ionizing-missile (2 files).
+**Phase-3+ deferred:** mine, sentry-gun, ionizing-missile (no ionizer mechanic planned; seed `damage` already 0 — fires/rolls/applies 0). (HE-7 session + RESOLVED O-M 2026-05-30)
 
 - **Rocket** (`steerable: false`): accuracy curve linear 5% at `range_m` → 60% at min distance. `accuracy = 0.05 + 0.55 × ((range_m − current_distance) / (range_m − min_distance))`, clamped `[0.05, 0.60]`. (HE-5f)
 - **Missile** (`steerable: true`): behavior depends on equipped scanner tier (§1.7):
   - Tier B / C scanner equipped → tracking active → fires at pilot's current accuracy from §1.5 (no distance penalty applied)
   - Tier A (no scanner) → degrades to rocket behavior (same projectile, same stats, rocket accuracy curve applies). (HE-7)
+- **Cluster missile** (`subtype: "cluster-missile"`, `burst_count: N` in seed): lock-on tracking missile that releases N sub-munitions per fire (RESOLVED O-M 2026-05-30). Inherits the plain-Missile scanner-tier rule for whether tracking is active. **Accuracy snapshot:** the pilot's §1.5 accuracy is captured ONCE at the moment of fire; ALL N sub-munitions roll independently against that single snapshot (so a thruster ramp / cloak activation mid-flight does NOT retroactively change sub-munition rolls). Each landing sub-munition deals `damage` (per-sub-munition, NOT total). Single-target (no AoE; cluster missiles have no `magnitude_m`). **Combat-log:** ONE event per cluster fire with summary fields `{weapon, fired: N, hits: K, damage_per_hit, total_damage: K × damage}` — NOT N rows per fire. Seed inventory: Shesha (N=3, dmg=60), Garuda-IV (N=4, dmg=75), Patala (N=5, dmg=90).
 - **Nuke** (AoE, direct-hit `damage` per seed): per-nuke real values (Liberator=850, Oppressor=400, Extinctor=700, Tormentor=150, Fireworks=1). Fireworks is decorative; ignore as baseline. Liberator/Oppressor anchor the AoE-falloff design. **AoE falloff specifics:** OPEN (O-N).
 - **Shock-blast**: see §1.2 (pure distance-reset utility, 100% guaranteed, no damage). One seed file (`misc.shock_blast.json`) — physical `damage: 140` and `emp_damage: 80` in seed are IGNORED by the Phase-1 mechanic. (HE-7 session)
 
@@ -358,7 +358,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 | O-TH4 | Thruster passive vs toggled (with HP-thresholds + cooldown)? | ✅ **RESOLVED 2026-05-30 — PASSIVE.** Always active when `current_distance < 750m`; no HP threshold, no `duration_ms`, no cooldown, no toggle. See §1.7 Thrusters / §1.8. |
 | O-B | Booster opponent-accuracy debuff magnitude — scaling vs `effect_pct`? | ✅ **RESOLVED 2026-05-30 — linear.** `debuff_pp = effect_pct × k_boost`, `k_boost` configurable (default 0.10, `BOOSTER_ACCURACY_DEBUFF_FACTOR`). 6–30pp across the 5 boosters; no cap (under cloak at default). Additive with distance-push. See §1.5 / §1.7 Boosters. |
 | O-DP | Distance penalty for primaries — separate from rocket curve? Max value? | ✅ **RESOLVED 2026-05-30 — DOES NOT EXIST for primaries.** Range is a pure binary gate (§1.2/§1.6); within range, primaries fire at full §1.5 accuracy. The "0.20 max" was a stale carry-over from before primaries/rockets were split. Distance-as-accuracy lives entirely on the secondary side (rocket 5%→60% curve, missile tier-A degrade) — §1.6. Absorbed former §6 O2 (the duplicate). |
-| O-M | Cluster-missile (3 files) + ionizing-missile (2 files) Phase-1 status: (a) treat as "missile" variants; (b) inert in Phase-1; (c) own rule. | OPEN — leaning (b) per HE-5l. Moved from §6 O6. |
+| O-M | Cluster-missile (3 files) + ionizing-missile (2 files) Phase-1 status: (a) treat as "missile" variants; (b) inert in Phase-1; (c) own rule. | ✅ RESOLVED 2026-05-30 → **split**: cluster-missile = in-scope missile variant with `burst_count` sub-munitions (N independent rolls against a fire-time accuracy snapshot, per-sub-munition damage, condensed to one combat-log event); ionizing-missile = Phase-3+ deferred (seed `damage` already 0, no ionizer mechanic planned). Seed-edit adds `burst_count` (3/4/5) to the 3 cluster-missile files. Promoted to `COMBAT_SPEC_LOCKED.md` §6.2 + new §14 (downstream sync). |
 | O-N | Nuke AoE falloff specifics + per-nuke real damage values (Liberator/Oppressor anchors) | OPEN |
 | O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | ✅ RESOLVED 2026-05-30 → **(a) accept**. Combat log surfaces the 0-damage outcome post-fight; no preflight warning, no filter. Promoted to `COMBAT_SPEC_LOCKED.md` §4. Seed-fix `e87db57` corrected the 3 EMP-blaster primaries from misplaced-physical to true pure-EMP; Phase-1 pure-EMP set = 5 weapons (3 primaries + mamba_emp + netha_emp). |
 | O-LOG | Combat-log knobs (§1.12): `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (≈72 h default?), and whether any per-side summary fields get denormalized columns vs living only in the `data` JSON. (Discord rendering/condensation is a later cycle — out of scope.) | OPEN — design in §1.12; only the numerics/policy are unsettled |
@@ -459,7 +459,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 | C3 | **Entry 7 roster wording (hull / auto-turrets as "modules")** | ✓ **CONFIRMED** — Entry 7's "in: shields, hull, armour, repair-bot, … auto-turrets, scanners" was a loose list of *Phase-1 combat-relevant loadout items*, not a literal SQLAlchemy module-type claim. §1.7 already reflects this. |
 | C4 | **Specter / Scimitar seed JSON `builtinModules`** | ✅ **RESOLVED 2026-05-30** — both files DO populate `builtinModules: ["U'tool"]` (gap closed during PR-3 enrichment). §1.7 Cloaks paragraph reflects actual state. No further action. |
 | C5 | **Non-combat modules explicit ruling** | ✓ **CONFIRMED** — §1.7 gives the one-line "resolver ignores entirely" rule for the 8 non-combat modules, with PrimaryWeaponMod carved out separately as combat-relevant. |
-| C6 | **cluster-missile + ionizing-missile Phase-1 status** | ➡️ **MOVED → §2 O-M** (still open; leaning inert per HE-5l). |
+| C6 | **cluster-missile + ionizing-missile Phase-1 status** | ✅ **CLOSED via §2 O-M (split decision)** (2026-05-30). Cluster-missile in-scope as burst-roll missile variant; ionizing-missile deferred to Phase-3+. |
 | C7 | **Shock-blast + in-flight projectiles** | ✓ **CONFIRMED** — all firings resolve same-tick (no multi-tick projectile travel in Phase-1), so a shock-blast distance reset cannot strand an in-flight projectile. Question moot. |
 | C8 | **Pure-EMP weapons in Phase-1 loadout** | ✅ **CLOSED via §2 O-PE → (a) accept** (2026-05-30). Seed-fix `e87db57` reclassified the 3 EMP-blaster primaries as true pure-EMP (Phase-1 pure-EMP set now = 3 primaries + mamba_emp + netha_emp). |
 | C9 | **Reorganization approach** | ✓ **CONFIRMED** — §1–§5 canonical + §6 disposition log + §7/§8 reviews on top, Historical Entries preserved verbatim below. |
@@ -2292,6 +2292,42 @@ edge case.
 inventory line rewritten with all 5 weapons; `netha_emp` added (was
 missing). §2 O-PE marked RESOLVED. §6 C8 marked CLOSED.
 `COMBAT_SPEC_LOCKED.md` §4 updated to match.
+
+---
+
+## Entry 9 — O-M split + cluster-missile mechanic lock (2026-05-30)
+
+Researcher subagent deep-dived cluster-missile mechanics from
+galaxyonfire.wiki.gg. Findings: all 3 cluster-missile weapons are
+**lock-on tracking missiles** (not dumb-fire rockets) that release a
+fixed number of sub-munitions per fire (Shesha=3, Garuda-IV=4,
+Patala=5). Each sub-munition deals `damage` (per-sub-munition, NOT
+total — confirmed via Patala wiki note "If all Missiles hit an enemy
+ship, the total damage would be 450" = 90 × 5). Single-target (no
+AoE; cluster missiles have no `magnitude_m`).
+
+O-M resolved as a **split**:
+- **Cluster-missile** → Phase-1 in-scope as a missile variant. Inherits
+  the plain-Missile scanner-tier rule. **N independent accuracy rolls
+  against a single fire-time accuracy snapshot** (i.e. thruster ramp or
+  cloak activation mid-flight does not retroactively change rolls).
+  Each landing sub-munition deals `damage`. Combat-log = ONE event per
+  cluster fire with summary `{weapon, fired, hits, damage_per_hit,
+  total_damage}` — not N rows per fire.
+- **Ionizing-missile** → Phase-3+ deferred (alongside mine, sentry-gun).
+  Seed `damage` already 0; no ionizer mechanic planned.
+
+Seed-edit: `burst_count` field added to `extra_atts` on the 3
+cluster-missile JSONs (Shesha=3, Garuda-IV=4, Patala=5). Resolver
+reads `burst_count` generically; no hardcoded per-weapon mapping.
+
+§1.6 updated: Phase-1 subtypes list adds `cluster-missile`; Phase-3+
+deferred list adds `ionizing-missile`; new Cluster-missile bullet added;
+open-status O-M line dropped. §2 O-M marked RESOLVED. §6 C6 marked
+CLOSED. `COMBAT_SPEC_LOCKED.md` §6.2 updated with the cluster-missile
+sub-section; new §14 added capturing **downstream sync requirements**
+for item-detail embeds (EMP physical/EMP-damage distinction post seed-
+fix e87db57; cluster-missile burst_count display).
 
 ---
 

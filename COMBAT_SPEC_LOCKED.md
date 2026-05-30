@@ -171,9 +171,9 @@ Per-weapon `accuracy_modifier` is permanently removed.
 
 ### 6.2 Secondary weapons
 
-**Phase-1 in-scope subtypes:** rocket, missile, shock-blast.
+**Phase-1 in-scope subtypes:** rocket, missile, cluster-missile, shock-blast.
 **Phase-2 deferred:** `emp-bomb` (mechanic in scope when EMP lands; the physical track is inert in Phase-1).
-**Phase-3+ deferred:** `mine`, `sentry-gun`.
+**Phase-3+ deferred:** `mine`, `sentry-gun`, `ionizing-missile` (no ionizer mechanic planned; seed `damage` is already 0 — fires, rolls accuracy, applies 0 HP delta).
 
 #### Rocket (`steerable: false`)
 Linear accuracy curve from 5 % at max range → 60 % at min distance:
@@ -186,6 +186,14 @@ accuracy = 0.05 + 0.55 × ((range_m − current_distance) / (range_m − min_dis
 Behavior depends on the equipping ship's scanner tier (§7.1):
 - **Tier B or C scanner equipped** → tracking active → fires at the pilot's current §5 accuracy (no distance penalty applied).
 - **Tier A (no scanner)** → degrades to rocket behavior (same projectile, same stats, rocket accuracy curve applies).
+
+#### Cluster missile (`subtype: "cluster-missile"`, `burst_count: N`)
+Lock-on tracking missile that releases **N sub-munitions** per fire. Inherits the plain-Missile scanner-tier rule for whether tracking is active (Tier B/C → §5 accuracy; Tier A → rocket curve).
+
+- **Accuracy snapshot semantics:** the pilot's §5 accuracy is captured **once** at the moment of fire. ALL N sub-munitions roll independently against that single snapshot. A thruster ramp / cloak activation occurring mid-flight does NOT retroactively alter sub-munition rolls.
+- **Damage application:** each landing sub-munition deals `damage` (per-sub-munition, NOT total). Single-target only (no AoE — cluster missiles carry no `magnitude_m`).
+- **Combat-log condensation:** **ONE event per cluster fire** with summary fields `{weapon, fired: N, hits: K, damage_per_hit, total_damage: K × damage}`. Not N rows.
+- **Seed inventory (Phase-1):** Shesha (`burst_count: 3`, damage 60), Garuda-IV (`burst_count: 4`, damage 75), Patala (`burst_count: 5`, damage 90). Resolver reads `burst_count` from `extra_atts` generically.
 
 #### Shock-blast
 Pure distance-reset utility (§2). No damage. 100 % guaranteed. Fires on cooldown. The seed file (`misc.shock_blast.json`) carries `damage: 140` / `emp_damage: 80` — **both IGNORED** by the Phase-1 mechanic.
@@ -483,6 +491,23 @@ Aggregate **lifetime** combat metrics (module activations, nukes used, secondari
 - The `Player` model gains additional Integer counter columns (default 0). `duel_wins` / `bounty_wins` already exist.
 - The combat processor increments these on the `Player` row(s) for any human combatant as part of the post-fight update. NPC side has no Player row → skipped.
 - Requires an Alembic migration for the new columns.
+
+---
+
+## 14. Downstream sync — item-detail embeds
+
+Phase-1 combat-spec corrections to seed-data structure must be reflected in user-facing item-detail embeds (the embed shown when a player views an individual weapon/module, typically via inventory/ships flows). The embed is the only surface where a player sees raw weapon stats; it is the canonical place to disambiguate physical vs EMP damage and to surface cluster-missile burst behavior.
+
+**Required embed fields** (any item-detail embed that renders a weapon MUST include):
+
+1. **EMP / physical damage distinction** — for any weapon with `emp_damage > 0` in `extra_atts`, the embed MUST surface EMP damage as a distinct labelled field, separate from physical `damage` / `damage_per_shot`. Background: seed-fix `e87db57` corrected the 3 EMP-blaster primaries (Luna/Sol/Dia EMP) from misplaced-physical to true pure-EMP (`damage_per_shot: 0`, `emp_damage: 3/5/8`). Without this distinction the embed shows "damage: 0" with no explanation, hiding the real weapon characteristic.
+2. **Cluster missile `burst_count`** — for any weapon with `subtype: "cluster-missile"`, the embed MUST surface the `burst_count` value, ideally alongside per-sub-munition `damage` AND derived `total damage on full hit = burst_count × damage`. This is the only way a player can compare cluster-missile DPS to plain-missile DPS meaningfully.
+
+**Implementation scope** (touches both services):
+- `services/bot-core/src/api/schemas/` — extend item-detail Pydantic schema(s) so `emp_damage` and `burst_count` are explicit response fields (currently they live inside the generic `extra_atts` blob).
+- `services/discord-gateway/src/cogs/` — the cog(s) that build the item-detail embed must render the new fields. Most likely the inventory / ships cogs; verify against current cog list at implementation time.
+
+**Out of scope** for this section: the `/about` bot-info command (BountyBot version/owner info, unrelated to item rendering). The phrase "/about embed" elsewhere in the journal refers to the item-detail embed described here.
 
 ---
 

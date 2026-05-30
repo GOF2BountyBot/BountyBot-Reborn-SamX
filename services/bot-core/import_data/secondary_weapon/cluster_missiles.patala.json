@@ -13,6 +13,7 @@
     "loading_speed_ms": 3000,
     "range_m": 6900,
     "speed_km_h": 2500,
-    "subtype": "cluster-missile"
+    "subtype": "cluster-missile",
+    "burst_count": 5
   }
 }

@@ -2,9 +2,587 @@
 
 > Working memory for the effort to replace `services/bot-core/src/services/combat_service.py`
 > and related code with a proper combat system.
-> Started: 2026-05-24
+> Started: 2026-05-24. Last reorganized: 2026-05-29.
+
+**Resume rule:** read §1–§5 below; fall back to Historical Entries only when you need decision provenance or original rationale. §6 is the active queue of ambiguities surfaced during the 2026-05-29 condensation pass.
+
+**Current PR target:** PR-4 (tick-based combat resolver). PRs 1–3 (catalog enrichment) and PRs A–E (commodity foundation) have shipped on `dev`.
+
+**Working tree state (2026-05-29):** Entry 7 + 5 seed-JSON gap-fill edits + this reorganization are uncommitted. Reorganization preserves all Historical Entry text verbatim; only adds structure on top.
 
 ---
+
+# 1. CURRENT DECISIONS
+
+*Canonical Phase-1 combat spec. Supersedes any conflicting text in Historical Entries. Each subsection cites originating Historical Entry (HE-N) for traceability. Where a numeric is still TBD, the open-question ID (O-X) is given.*
+
+**Configuration policy (locked 2026-05-30):** every numeric in §1 (rates, percentages, thresholds, durations, distances, magnitudes, etc.) is a **starting default**. The intent is for all of them to land in `services/bot-core/src/services/game_constants.py` as `GameConstants.X` with `BOUNTYBOT_<NAME>` env-var overrides AND per-guild overrides (matching the existing pattern for `DUEL_VARIANCE_PERCENT`, `BOUNTY_PVC_ARMOUR_BUFF_FACTOR`). Tuning post-Phase-1 should not require code changes.
+
+**Resource policy (locked 2026-05-30, generalises HE-5a):** **energy is assumed infinite** — for combat AND any other gameplay surface that might check energy. Energy cells are NOT tracked. Wiki lore references to "energy cell consumption per use" (e.g. U'tool cloak) are cosmetic only; the resolver does not gate on energy. Applies to player AND criminal/NPC combatants.
+
+## 1.1 Tick & timing
+- **Tick = 10ms fixed.** (HE-5j)
+- **Max ticks per fight = 18,000 (3-minute hard cap).** (HE-5 / HE-5j)
+- Per-weapon cooldown: each weapon holds `cooldown_remaining_ms`; per tick, decrement by 10; fires when ≤ 0 AND in-range AND not gated; resets to `loading_speed_ms`. All wiki `loading_speed_ms` values are clean multiples of 10ms (verified HE-5j) — no accumulator carry, no drift.
+- **Retired:** HE-5's "tick = fire-rate of fastest weapon, per fight" rule (superseded by HE-5j).
+
+## 1.2 Distance model
+- **Starting distance:** 5000m. (HE-5e)
+- **Base ship speed:** 150 m/s, pinned (same both combatants). (HE-5e)
+- **Passive closure:** 300 m/s relative (both ships approaching at 150 m/s). (HE-5e)
+- **Minimum distance floor:** 300m. (HE-5e)
+- **Booster distance push:** `distance_gained_m = base_speed × (effect_pct/100) × (duration_ms/1000)`. During boost-active window, passive closure is suspended; booster outward velocity dominates. After expiry, normal closure resumes. (HE-5f)
+- **Shock-blast distance reset:** instantly resets both ships to starting distance (5000m). 100% guaranteed (no accuracy roll). No damage. Fires on cooldown (`loading_speed_ms`); no per-fight cap; no HP-threshold gating. (HE-7, session 2026-05-29) — see §6 C7 for the in-flight-projectile rule.
+- **Range gating:** weapons fire only when `current_distance ≤ weapon.range_m`. (HE-5d)
+
+## 1.3 HP layers + damage stacking + regen
+- **Three layers per combatant:** shield, armour, hull. (HE-5e / HE-1)
+- **Hull = `ship.armour` column** (intrinsic to the Ship row, NOT a separate module type). (HE-1 #13)
+- **Armour = sum of equipped ArmourModule HP** (separate buffer above hull). (HE-1 / HE-3)
+- **Shield = sum of equipped ShieldModule HP** (separate regenerating layer). (HE-3)
+- **Damage stacking order:** shield → armour → hull. (HE-5e)
+- **Repair Bot fill order:** hull first, then armour (inverse of damage stacking). (HE-5f)
+- **Starting HP (Phase-1):** both combatants at max(hull, armour, shield). Hooks for damaged-start ship in Phase-1 schema for Phase-2 use. (HE-3)
+- **HP is integer; per-tick HP delta is integer.** (HE-7)
+- **Shield regen schedule:** `+1 HP every N ticks` where `N = ceil(shield_recharge_ms / shield_capacity / tick_ms)`. Worked example: Targe (50 cap / 20000ms recharge) → +1 HP every 40 ticks (= 400ms). Same shape for any slow regen. (HE-7)
+- **Repair-bot regen rate:** percentage-of-max (HE-3, locked 2026-05-30 closing §6 C1). **Scope: hull + armour ONLY — repair bots do NOT touch the shield layer.** Shield recharge is fully independent (per-shield-module `shield_recharge_ms`, §1.3 shield regen schedule). Ketar I = **2.5%/s**, Ketar II = **5.0%/s** of `max_hull + max_armour`. Per-tick HP delta = `(max_hull + max_armour) × rate × (tick_ms / 1000)`, accumulated and integer-flushed (the +1-HP-every-N-ticks discretization PATTERN is shared with shield regen, but the LAYERS are disjoint). Fill order: hull first, then armour (HE-5f). Seed `extra_atts.HPps` values (7 / 15) are stale data — ignore. Rates are starting defaults; planned `BOUNTYBOT_KETAR_I_REPAIR_PCT_PER_SEC` / `BOUNTYBOT_KETAR_II_REPAIR_PCT_PER_SEC` env-var + per-guild overrides per §1's Configuration policy.
+- **Concurrent regen:** shield regen and hull/armour regen run in parallel each tick (independent tracks). (HE-7)
+- **Regen pulse applied BEFORE damage in each tick** — finishing-blow detection is clean (HP ≤ 0 at end of tick = dead). (HE-7)
+
+## 1.4 Damage type model
+- **Phase-1 in-scope damage type: physical ONLY.** (HE-7, session 2026-05-29)
+- **EMP is a separate damage type; deferred to Phase-2+.** (HE-7, session 2026-05-29)
+- **Resolver rule:** every weapon participates in cooldown / firing / event-log. Each hit applies `damage_per_shot` (physical) only; `emp_damage` is ignored regardless of value.
+- **Pure-EMP weapons** (`damage_per_shot` = 0/absent, `emp_damage` > 0): fire normally, roll accuracy, log hit/miss, apply **0 HP delta**. Equipping one in Phase-1 is a no-op-cost choice — see §2 O-PE for the filter/warn/accept ruling.
+  - Pure-EMP inventory (verified 2026-05-29): primaries `dia_emp_mk_iii`, `luna_emp_mk_i`, `sol_emp_mk_ii` (all have small physical `damage_per_shot` values — actually NOT pure-EMP; see below); secondary `missiles.mamba_emp` (damage=0, emp_damage=100).
+  - **Correction:** the 3 EMP-blaster primaries all have non-zero `damage_per_shot` (3 / 5 / 8). They are LOW-damage physical weapons, not pure-EMP. They contribute small physical damage in Phase-1.
+- **Hybrid weapons** (`damage_per_shot` > 0 AND `emp_damage` > 0, secondaries only): fire normally; apply ONLY the physical `damage_per_shot`. EMP component ignored.
+  - Hybrid inventory (verified 2026-05-29): `missiles.dephase_emp` (120+100), `missiles.intelli_jet` (100+50), `rockets.emp_rocket_mk_i` (10+45), `rockets.emp_rocket_mk_ii` (30+60), `emp_bombs.emp_gl_dx` (4+300), `emp_bombs.emp_gl_i` (2+80), `emp_bombs.emp_gl_ii` (2+150). **Bonus surprise:** `rockets.armour_rocket` carries `emp_damage: 24` despite no EMP-naming — Phase-1 non-issue (ignored); flagged for Phase-2 to verify it's not a seed typo.
+- **GammaShield inert in Phase-1** (no radiation-damage source). Kept in `UNIQUE_EQUIP_TYPES` for fidelity. (HE-4 #12)
+
+## 1.5 Accuracy system
+**Combatant base accuracy** (HE-7):
+- Player: **60%**
+- NPC / criminal: **50%**
+
+**Layered formula:**
+```
+attacker_accuracy = combatant_base                 # 60% / 50%
+                  + own_scanner_bonus              # 0 (A) / +5pp (B) / +10pp (C)
+                  − opponent_cloak_debuff          # while cloak active           [O-Q1]
+                  − opponent_booster_debuff        # while boost active           [O-B]
+                  − opponent_thruster_debuff       # when current_distance < 750m [O-TH3/TH4]
+                  ± distance_penalty               # primaries only               [O-DP]
+                  → clamp [0.05, 0.99]
+```
+- **Per-weapon `accuracy_modifier`: dropped permanently.** (HE-7, session 2026-05-29 — closes Q2)
+- Forward-compat hook: `weapon_accuracy(pilot_acc, weapon) -> float` returns `pilot_acc` unchanged in Phase-1; an empty `SUBTYPE_ACCURACY_MOD: dict[str, float]` lives in `combat_balance.py`. Future homing-vs-must-aim split slots in here without structural rewrite.
+- Code cleanup: remove `WeaponStats.accuracy_modifier` (multiplicative, default 1.0 — never populated); keep `ModuleStats.accuracy_modifier` (additive, default 0.0 — carries scanner bonus).
+
+## 1.6 Weapons
+
+### Primary weapons
+- Hit damage = `damage_per_shot` (physical). Cooldown = `loading_speed_ms`. Range-gated by `range_m`. Accuracy per §1.5 layered formula.
+- **Distance penalty:** OPEN (O-DP). Earlier-floated 0.20 max; relationship to rocket curve unclear.
+
+### Secondary weapons
+**Phase-1 in-scope subtypes:** rocket, missile, nuke, shock-blast. (HE-5d + HE-7 session)
+**Phase-2 deferred:** emp-bomb (mechanic in scope when EMP lands; physical track inert in Phase-1).
+**Phase-3+ deferred:** mine, sentry-gun. (HE-7 session)
+**Open status (§2 O-M):** cluster-missile (3 files), ionizing-missile (2 files).
+
+- **Rocket** (`steerable: false`): accuracy curve linear 5% at `range_m` → 60% at min distance. `accuracy = 0.05 + 0.55 × ((range_m − current_distance) / (range_m − min_distance))`, clamped `[0.05, 0.60]`. (HE-5f)
+- **Missile** (`steerable: true`): behavior depends on equipped scanner tier (§1.7):
+  - Tier B / C scanner equipped → tracking active → fires at pilot's current accuracy from §1.5 (no distance penalty applied)
+  - Tier A (no scanner) → degrades to rocket behavior (same projectile, same stats, rocket accuracy curve applies). (HE-7)
+- **Nuke** (AoE, direct-hit `damage` per seed): per-nuke real values (Liberator=850, Oppressor=400, Extinctor=700, Tormentor=150, Fireworks=1). Fireworks is decorative; ignore as baseline. Liberator/Oppressor anchor the AoE-falloff design. **AoE falloff specifics:** OPEN (O-N).
+- **Shock-blast**: see §1.2 (pure distance-reset utility, 100% guaranteed, no damage). One seed file (`misc.shock_blast.json`) — physical `damage: 140` and `emp_damage: 80` in seed are IGNORED by the Phase-1 mechanic. (HE-7 session)
+
+### Turret weapons
+**Three subtypes exist; two are combat-relevant.** (HE-7 session 2026-05-29)
+- **Auto** (`automatic: true`): fires on own cooldown, additively alongside primaries. Accuracy = `pilot_current_accuracy × multiplier` where multiplier is in band ×0.85–0.90 (final number TBD — O-T2). All auto turrets on a single ship share one accuracy value (no per-turret variation; an 8-turret battlecruiser has one auto-turret-accuracy value applied to all 8). (HE-7)
+- **Manual** (`automatic: false`): mutually exclusive with primary; pre-combat pilot-dedicates. Default = primary (typically higher damage). Modeled by `manual_turret_mode: bool` flag on loadout. Override command does not exist yet. (HE-7)
+- **Plasma-collector** (`subtype: "plasma-collector"`, `dps: 0`): inert in combat. Equippable for fidelity; no effect.
+- **Data note:** auto/manual turrets lack explicit `subtype` field in seed; discriminate using `automatic: bool`. Only plasma-collectors carry `subtype`.
+
+## 1.7 Modules
+
+### Scanners (combat scanners; plasma scanners ignored)
+**Three tiers** (HE-7):
+
+| Tier | Lock time | Pilot accuracy bonus | Missile behavior | Modules |
+|---|---|---|---|---|
+| A | n/a (no scanner) | 0 | Degrade to rocket | — |
+| B | ≥ 3.0s | +5pp | Track at pilot accuracy (no distance penalty) | Telta Quickscan (4.0s), Telta Ecoscan (3.0s) |
+| C | ~1.8s | +10pp | Same as Tier B | Hiroto Proscan (1.8s), Hiroto Ultrascan (1.8s) |
+
+- Combat scanner is **unique-equip on its own subclass** (one combat scanner at a time). Plasma scanner is a separate subclass with no combat effect (none in seed).
+- Lock-time numerics are flavor only in Phase-1; tier membership is what matters.
+- **Thermal-fusion homing effect bypassed in Phase-1.** Thermal-fusion is a primary class and follows primary rules; scanner tier does NOT modify thermal-fusion behavior.
+
+### Cloaks
+- **Effect:** opponent's hit-chance against you is reduced while active. NOT a forced miss. Example: 60% → 25% during cloak. (HE-7)
+- **Activation:** HP thresholds **66% / 33%** (up to 2 activations per fight). (HE-7 — supersedes HE-5b's "30% single activation")
+- **Trigger rule:** activates iff off cooldown at threshold crossing; missed threshold = skipped, no retry; cooldown timer starts at effect expiry. (HE-7)
+- **Duration:** `effect_duration_ms` from wiki (U'tool=10s, Sight Suppressor II=20s, Shadow Ninja=40s).
+- **Cooldown:** `loading_speed_ms` from wiki.
+- **Built-in cloaks (Scimitar + Specter):** these ships carry an implicit U'tool cloak that **DOES function in combat** — it is a real, active cloak (same mechanic, duration, cooldown, HP-threshold activation as any equipped cloak). The built-in does NOT count against `max_modules` (off-slot — pilot still gets the ship's full equippable slot count). **Supersession rule:** if the pilot equips a cloak module, the equipped one wins and the built-in is bypassed: `effective_cloak = equipped if has_equipped else builtin`. (HE-5h) **Generalises to all `UNIQUE_EQUIP_TYPES`:** if any future ship gains a built-in <TYPE>, equipped wins over built-in, built-in still functions when no equipped instance is present. **Status (verified 2026-05-30):** both `nivelian.specter.json` and `nivelian.scimitar.json` populate `builtinModules: ["U'tool"]`; gap was closed during PR-3 enrichment. §6 C4 RESOLVED.
+- **Energy:** see §1's Resource policy — infinite, not tracked.
+- **Math interpretation** (additive / absolute / multiplicative): OPEN (O-Q1).
+
+### Boosters
+- **Effect:** (a) push distance outward (formula in §1.2), AND (b) reduce opponent's accuracy while active. (HE-7)
+- **Activation:** HP thresholds **80% / 60% / 40% / 20%** (up to 4 activations if cooldown permits). (HE-5b — confirmed in HE-7; 75/50/25 alternative retired)
+- **Trigger rule:** same universal HP-threshold rule (§1.8).
+- **Booster-user can still fire during boost** (accepted simplification, mirrors GoF2 base behavior). (HE-5f)
+- **Opponent accuracy debuff magnitude:** OPEN (O-B) — scales with `effect_pct`.
+
+### Thrusters
+- **Effect:** close-range maneuverability only. When `current_distance < 750m`, opponent's hit-chance against you is reduced. (HE-7)
+- **NO effect on distance / closure / weapon range / rocket accuracy.** (HE-7 — supersedes HE-5f's attacker-bonus framing; 750m window stays)
+- **Passive vs toggled:** OPEN (O-TH4) — leaning passive (no `duration_ms` in wiki).
+- **Debuff magnitude:** OPEN (O-TH3) — scaling vs `effect_pct`.
+
+### Shields
+- Layer 1 (absorbs damage first per §1.3 stacking order).
+- **Continuous per-tick recharge** via the integer schedule in §1.3.
+- Recharge does NOT pause after a hit (no "interrupt window" in Phase-1).
+
+### Repair Bot
+- **Scope: hull + armour ONLY.** Repair bots do NOT touch the shield layer; shield recharge is fully independent (§1.3 shield regen schedule).
+- Heals hull first, then armour (inverse of damage stacking — HE-5f).
+- **Rate (locked 2026-05-30):** percentage-of-max. Ketar I = 2.5%/s, Ketar II = 5.0%/s of `max_hull + max_armour`. See §1.3 for formula and configuration. Closes §6 C1.
+
+### EmergencySystem (fully locked, HE-7)
+- **Trigger:** when an incoming damage event would reduce **hull** to 0 or below (true ship-death interception). Shield or armour reaching 0 does NOT trigger.
+- **Effect:** hull HP clamped to 1; 10s of full invuln (ALL incoming damage blocked).
+- **Regen during invuln:** continues (shield + hull/armour concurrently if Repair Bot equipped).
+- **HP at expiry:** `1 + 10s × applicable regen rates`, capped per layer max. Edge case (no shield, no Repair Bot) → HP = 1 at expiry.
+- **Consumable:** removed from loadout after use; player must manually re-equip a spare from inventory. Once per fight by consumption.
+- **Retired:** HE-3 #5's "trigger at hull ≤ 25%, 10s invuln, once-per-fight" lock — superseded by HE-7's lethal-blow rule.
+
+### GammaShield
+- Inert in Phase-1 (no radiation damage source). Kept in `UNIQUE_EQUIP_TYPES` for fidelity. (HE-4 #12)
+
+### Phoenix SIS / RepairBeam / TransfusionBeam
+- Deferred to Phase-2. (HE-7)
+
+### Other modules
+- **PrimaryWeaponMod:** unique-equip in `UNIQUE_EQUIP_TYPES`; passive `+N%` primary DPS multiplier (HE-3 #8). In scope for Phase-1.
+- **Non-combat modules** (no Phase-1 combat effect, resolver ignores entirely): JumpDriveModule (Khador Drive), TimeExtenderModule (Rhoda Vortex), Compressor, MiningDrill, TractorBeam, Cabin, Signature, SpectralFilter. (Inventoried 2026-05-29 + name-mapping corrected 2026-05-30 per §7 verification.)
+
+## 1.8 Activation rules (HP-threshold devices)
+- **Cloak:** 66% / 33% HP (2 activations max).
+- **Booster:** 80% / 60% / 40% / 20% HP (4 activations max).
+- **Thruster:** passive — no HP-threshold gating (pending O-TH4 confirmation).
+- **EmergencySystem:** triggers on lethal hull damage (not a percentage threshold).
+
+**Universal trigger rule (HE-7):** at any HP-threshold crossing, the device activates **iff off cooldown**. Still cooling = threshold *skipped*, no retry. Cooldown timer starts when **effect expires**, NOT when activated.
+
+Per-activation sequence: `trigger → run for duration_ms → cooldown begins → cooldown lasts loading_speed_ms → eligible at next threshold crossing`.
+
+## 1.9 Fight termination
+- **Hard cap:** 18,000 ticks (3 simulated minutes). (HE-5j)
+- **One side dead:** other side wins.
+- **PvP stalemate (cap reached, both alive):** draw, both players keep credits, no rewards. (HE-5)
+- **PvC stalemate (cap reached, both alive):** draw, BUT the criminal escapes — new system selected along route, hunt-checks reset. (HE-5) Implementation note: reuse existing loss-path flow when coding; verify at code time.
+
+## 1.10 Unique-equip list (`UNIQUE_EQUIP_TYPES`)
+At most one of each type per ship loadout:
+- Cloak
+- Booster
+- EmergencySystem
+- ShieldInjector (Phoenix SIS) — Phase-2
+- TimeExtenderModule (Rhoda Vortex) — non-combat
+- PrimaryWeaponMod
+- Combat scanner (one combat scanner)
+- Plasma scanner (one plasma scanner — inert)
+
+(HE-3 #8 + HE-7 scanner addition)
+
+## 1.11 Scope summary
+
+**In scope for Phase-1:**
+- Weapons: primary, secondary (rocket/missile/nuke/shock-blast), turret (auto+manual)
+- Modules: shields, armour, repair-bot, thrusters, cloaks, boosters, scanners, EmergencySystem, PrimaryWeaponMod
+- Mechanics: tick-based simulation, distance, HP layers, regen, HP-threshold activations, EmergencySystem invuln
+
+**Inert in Phase-1 (kept for fidelity):**
+- GammaShield, plasma-collector turret, plasma scanner, non-combat modules listed in §1.7
+
+**Phase-2 (designed; deferred):**
+- EMP mechanic (full disable-window spec partially captured — see DEFERRED §3)
+- ShieldInjector (Phoenix SIS), RepairBeam, TransfusionBeam
+- Out-of-combat HP recovery + dock mechanic (schema in Phase-1)
+- Damaged-opponent start state (schema hooks in Phase-1)
+- emp-bomb subtype
+
+**Phase-3+:**
+- Mines, sentry-guns
+
+---
+
+## 1.12 Combat log & results output
+
+**Scope of this section: combat mechanics + data persistence only.** The resolver simulates at full 10 ms tick fidelity and persists a full event-tick battle log per fight, plus returns a lightweight summary inline. **User-facing visualization (Discord rendering / condensation / summarization) is a LATER cycle** — those transformation helpers will live on the consumer side and are out of scope here. This section defines what the resolver produces and how it is stored.
+
+### Persistence model — `combat_log` table (NEW)
+The full battle log is persisted per fight, keyed by the row's integer PK, so it can be retrieved later without re-simulating. Types follow existing model conventions (cf. `bounty.py`, `duel_request.py`).
+
+| Column | Type | Null? | Notes |
+|---|---|---|---|
+| `id` | `Integer` PK autoincrement | no | The only handle — returned inline so a fight can be pulled back later. No separate UUID (kept simple). |
+| `guild_id` | `BigInteger` | no | Discord snowflake (same as `Bounty.guild_id`) |
+| `context` | `String(20)` | no | `duel` / `bounty_pvc` / `bounty_bonus` — origin of the fight |
+| `combatant1_name` / `combatant2_name` | `String(255)` | no | Display name. For PvC the NPC side holds the **criminal / bounty name** |
+| `combatant1_user_id` / `combatant2_user_id` | `BigInteger` | yes | Discord user id (matches `DuelRequest.challenger_id`, `Bounty.win_user_id`). **NULL ⇒ that side is an NPC.** |
+| `winner_name` | `String(255)` | yes | NULL on stalemate |
+| `is_stalemate` | `Boolean` | no | |
+| `data` | `JSON` | no | The whole log object (schema below). Generic `JSON` per existing convention (we never query inside it). |
+| `created_at` | `DateTime(timezone=True)`, default `now(UTC)` | no | **Retention key** |
+
+- **Invariant: ≥ 1 combatant is always a real player** (NPC-vs-NPC never occurs) — at least one `*_user_id` is non-NULL. The resolver/persist layer may assert this.
+- **Single `data` blob** holds summary + full timeline + metadata; combatant identity + outcome are projected to columns for cheap lookup/listing.
+- **Size is bounded by retention, not truncation** — the timeline is stored whole.
+
+### Retention — 72 h cleanup
+A scheduled cleanup deletes `combat_log` rows older than **~72 h** (`BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS`, default 72 — env/per-guild per §1 config policy), implemented by extending the existing **`db_retention_default`** job (daily 03:45 UTC) with `CombatLogRepository.delete_older_than(cutoff)`, mirroring the bounty/duel/audit pattern. Table size is therefore self-limiting.
+
+### `data` blob — internal schema
+```jsonc
+{
+  "schema_version": 1,
+  "summary": {                                  // Tier-0 — also copied inline into combat_result
+    "outcome": "win",                           // win | stalemate
+    "reason": "hp_depleted",                    // hp_depleted | time_cap | mutual | draw
+    "duration_ticks": 8421,
+    "winner": "Specter",
+    "combatants": {
+      "1": {
+        "name": "Wraith", "ship": "Specter",
+        "start_hp": { "shield": 120, "armour": 300, "hull": 200 },
+        "final_hp": { "shield": 0,   "armour": 0,   "hull": 140 },
+        "damage_dealt": 620, "damage_taken": 480,
+        "shots_fired": 240, "shots_hit": 168, "accuracy": 0.70,
+        "module_activations": { "Cloak": 2, "Repair Bot": 3 },   // which + counts
+        "secondary_fired":    { "rocket": 12, "nuke": 1 }
+      },
+      "2": { "name": "Vossk Raider", "ship": "Nivelian Berserker", "...": "..." }
+    }
+  },
+  "timeline": [ /* event-tick rows, in processing order — see below */ ],
+  "metadata": { "tick_ms": 10, "total_ticks": 8421, "variance_percent": 0.05, "resolver": "tick_v1", "pvc_armour_buff": 1.5 }
+}
+```
+
+### Timeline — real event-ticks (not every tick, not narrative milestones)
+- A **tick counter starts at 0** at combat start and increments by 1 each 10 ms tick. Real time = `tick × tick_ms`.
+- The timeline records **one row per event**, only for ticks where something actually happens (a weapon fires, damage is applied, a module activates, shield/HP regen pulses, a cooldown ends, distance changes, a layer depletes, …). **Empty ticks are not stored.**
+- **Multiple events on the same tick → multiple rows sharing that `tick` value.** They are stored in **exact processing order** within the tick. Array order *is* the sequence (no separate index needed). E.g. a tick that resolves `regen → primary fire → damage dealt → booster activation` produces four consecutive rows with that `tick`, in that order.
+
+`CombatEvent` (one timeline row):
+```jsonc
+{
+  "tick":   3000,            // tick counter (0 at start). Real ms = tick × tick_ms
+  "type":   "weapon_fire",
+  "actor":  "Specter",       // acting combatant name; null for global/system events
+  "target": "Vossk Raider",  // null when N/A
+  "data":   { /* type-specific payload */ }
+}
+```
+
+Representative event vocabulary (extensible — the resolver emits a row for any state-changing tick-step):
+
+| `type` | Emitted when | `data` payload (example) |
+|---|---|---|
+| `fight_start` | tick 0 | combatants, ships, start HP layers, initial distance |
+| `regen` | shield recharge pulse or repair-bot hull/armour pulse applies | `{layer, amount, hp_after}` |
+| `weapon_fire` | a primary / secondary / turret fires (incl. miss) | `{slot, subtype, weapon, hit, accuracy}` |
+| `damage` | HP applied to a target after a hit | `{amount, breakdown:{shield,armour,hull}, hp_after, source}` |
+| `module_activation` | cloak / booster / repair-bot / EmergencySystem / etc. engages | `{module, trigger_hp_pct}` |
+| `cooldown_end` | a weapon or module comes off cooldown | `{system}` |
+| `layer_depleted` | a ship's shield → 0 or armour → 0 | `{layer}` |
+| `distance` | distance changes (booster push, closing, shock-blast reset) | `{from, to, cause}` |
+| `fight_end` | terminal | `{winner, reason, duration_ticks, final_hp}` |
+
+`CombatEvent` carries **structured data only** — no pre-rendered human strings (those are a later-cycle concern), so wording can change without rewriting stored history.
+
+### Tier-0 summary returned inline
+On every fight the response (`combat_result` dict) carries the `summary` object above **plus the `combat_log` row id** (`combat_log_id`) so the detail can be fetched later. The bulky `timeline` is **never** sent on the fight response — it goes only to the DB.
+
+Summary content: outcome / reason / duration; per-combatant module activations (which + counts), secondary-weapon use (by subtype), accuracy %, HP remaining per layer, damage dealt / taken.
+
+### Player-profile stat promotion (separate from the log)
+Aggregate **lifetime** combat metrics (module activations, nukes used, secondaries fired, etc.) are promoted onto the **`Player` record** by the combat processor — **NOT** stored in `combat_log`. This is a handler/helper inside the combat-service code that mutates the `Player` object after a fight; the log tables are unaffected.
+
+- **`Player` model gains new metric columns** (Integer counters, default 0). `duel_wins` / `bounty_wins` already exist; representative additions: `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`. Final field set = **§2 O-STAT**.
+- The combat processor increments these on the `Player` row(s) for any human combatant as part of the post-fight update (NPC side has no Player row → skipped). Requires an Alembic migration for the new columns.
+
+### In-memory production & mapping onto `FightResults`
+- The tick resolver builds the full `timeline` + summary in memory during the sim. `FightResults.combat_log: list[dict]` ← the timeline; `FightResults.metadata: dict` ← the summary (both stub fields already exist).
+- After resolution the callsite (a) persists a `combat_log` row via `CombatLogService`, (b) updates Player metrics, (c) puts `{summary…, combat_log_id}` into `combat_result`.
+- Legacy `FightStats` (`raw_hp/varied_hp/raw_dps/varied_dps/ttk`) **stay populated** for wire compat (HE-0): tick resolver maps `varied_hp`→effective start HP, `varied_dps`→`damage_dealt / duration_s`, `ttk`→`duration_s` (loser) / `None` (winner).
+- Deferred to a later cycle: the `GET /combat-log/{id}` endpoint, gateway command, and any timeline→text condensation. Open knobs (retention hours; whether to denormalize summary columns) → **§2 O-LOG**; promoted Player metric field set → **§2 O-STAT**.
+
+---
+
+# 2. OPEN QUESTIONS
+
+Status = OPEN unless noted. **This is the single canonical registry of every genuinely-open design question.** Resolve these before / during PR-4.
+
+**ID namespaces (read once):**
+- **`O-*` (this table)** — the only live open-question queue. Cite these everywhere going forward.
+- **`C1–C9` (§6)** — *closed* condensation-pass disposition log (resolved / confirmed-in-§1 / moved here). Not an open queue; renamed from `O1–O9` to stop colliding with `O-*`.
+- **`Q*/TH*/T*` (Entry 7, Historical)** — verbatim HE shorthand, bridged to `O-*` (e.g. `Q1 ≡ O-Q1`, `TH3 ≡ O-TH3`, `T2 ≡ O-T2`).
+
+| ID | Topic | Status / Notes |
+|---|---|---|
+| O-Q1 | Cloak math: additive (`acc − 35pp`) / absolute (`set 25`) / multiplicative (`× 0.42`)? | OPEN |
+| O-T2 | Auto-turret accuracy multiplier final value within ×0.85–0.90 band | OPEN |
+| O-TH3 | Thruster opponent-accuracy debuff magnitude (close-range window) — scaling vs `effect_pct`? | OPEN |
+| O-TH4 | Thruster passive vs toggled (with HP-thresholds + cooldown)? | OPEN — leaning passive |
+| O-B | Booster opponent-accuracy debuff magnitude — scaling vs `effect_pct`? | OPEN |
+| O-DP | Distance penalty for primaries — separate from rocket curve? Max value? | OPEN (was floated at 0.20 max). **Single source of truth — absorbs former §6 O2 (the duplicate).** |
+| O-M | Cluster-missile (3 files) + ionizing-missile (2 files) Phase-1 status: (a) treat as "missile" variants; (b) inert in Phase-1; (c) own rule. | OPEN — leaning (b) per HE-5l. Moved from §6 O6. |
+| O-N | Nuke AoE falloff specifics + per-nuke real damage values (Liberator/Oppressor anchors) | OPEN |
+| O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | OPEN — moved from §6 O8. (NB: the 3 EMP-blaster primaries are NOT pure-EMP — see §1.4.) |
+| O-LOG | Combat-log knobs (§1.12): `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (≈72 h default?), and whether any per-side summary fields get denormalized columns vs living only in the `data` JSON. (Discord rendering/condensation is a later cycle — out of scope.) | OPEN — design in §1.12; only the numerics/policy are unsettled |
+| O-STAT | Exact set of lifetime combat-metric columns to add to `Player` (§1.12 stat promotion): beyond existing `duel_wins`/`bounty_wins`, which of `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`, … to persist? | OPEN — mechanism locked (combat processor mutates `Player`); only the field list is unsettled |
+| O-E | EMP mechanic full design (disable window, stacking, hit-roll, etc.) | DEFERRED to Phase-2 |
+
+---
+
+# 3. DEFERRED
+
+| Item | Defer to | Reason |
+|---|---|---|
+| EMP mechanic | Phase-2 | New damage type; partial spec captured (victim outgoing damage = 0, firer accuracy vs victim = 100%, duration TBD); full design parked |
+| ShieldInjector (Phoenix SIS) | Phase-2 | Plasma resource model needed |
+| RepairBeam / TransfusionBeam | Phase-2 | Active heal pairing model needed |
+| emp-bomb subtype | Phase-2 | EMP-only effect; physical track inert in Phase-1 |
+| Mines | Phase-3+ | Deployment + proximity-trigger mechanic |
+| Sentry-guns | Phase-3+ | Deployment + persistent-entity mechanic |
+| Out-of-combat HP recovery (25%/hr players, 12.5%/hr criminals) | Phase-2 (schema in Phase-1) | Damage-tracking columns ship in Phase-1 migration |
+| Dock instant-repair (2.5% of current credits) | Phase-2 | Pairs with OOC recovery |
+| Damaged-opponent start state | Phase-2 (hooks in Phase-1) | Optional `current_hull / current_armour / current_shield` accepted by combatant init |
+| Thermal-fusion homing effect | Indefinite | Phase-1 bypasses for simplicity; thermal-fusion follows primary rules |
+
+---
+
+# 4. IMPLEMENTATION PLAN
+
+**Shipped on `dev`:**
+- PR-1: Alembic migration — `ship.extra_atts` + Phase-2 damage-tracking columns on `Player` and `Bounty`
+- PR-2: Loader patches — `"loading speed"` (space) → `loading_speed_ms` mapping; subtype normalization; `extra_atts` respected
+- PR-3: Seed JSON enrichment — wiki values, `value = wiki median`, TL drift fixed, mechanics_text carried
+- PR-A through PR-E: Commodity foundation (schema → seed → schemas → routers → cog)
+
+**In progress:**
+- PR-4: New tick-based combat resolver
+
+**PR-4 file map:**
+- `services/bot-core/src/services/game_constants.py` — add `UNIQUE_EQUIP_TYPES`, OOC recovery rates, dock cost; combat-log retention knob `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (default 72) — env/per-guild per §1 config policy (§1.12, O-LOG)
+- `services/bot-core/src/services/combat_balance.py` — NEW: per-subtype defaults, empty `SUBTYPE_ACCURACY_MOD`
+- `services/bot-core/src/services/combat_models.py` — drop `WeaponStats.accuracy_modifier`; keep `ModuleStats.accuracy_modifier`. `FightResults.combat_log` + `.metadata` fields ALREADY EXIST (stubs) — tick resolver populates them in memory (§1.12); no model change needed
+- `services/bot-core/src/services/combat_service.py` — public API unchanged; default resolver swapped to new tick resolver; `SimpleTTKResolver` kept behind feature flag for one release
+- `services/bot-core/src/services/combat/` — NEW package: `combatant.py`, `tick_resolver.py`, `weapon_systems.py`, `module_systems.py`, `event_log.py` (← Tier-0 summary aggregator + event-tick `CombatEvent` timeline collector; emits a row per state-changing tick-step in processing order, §1.12)
+- `services/bot-core/src/services/bounty_service.py` — extend `_serialize_fight_results()` to emit Tier-0 `summary` + `combat_log_id` (NOT the full timeline — that goes to the DB). Wire slot `combat_result: dict` is free-form so this is additive/non-breaking
+- **Player stat promotion (§1.12):** extend `services/bot-core/src/persist/models/player.py` with new lifetime combat-metric columns (Integer, default 0; exact set = O-STAT) + Alembic migration; combat processor increments them on each human combatant's `Player` row post-fight. NOT stored in `combat_log`.
+
+**PR-5 — combat-log persistence slice (NEW table + retention; §1.12). NB: Discord visualization / on-demand render endpoint is a LATER cycle, not PR-5:**
+- `services/bot-core/src/persist/models/combat_log.py` — NEW `CombatLog` model (`id` Integer PK, `guild_id` BigInteger, `context` String(20), `combatant{1,2}_name` String(255), `combatant{1,2}_user_id` BigInteger nullable [NULL ⇒ NPC], `winner_name` nullable, `is_stalemate` Boolean, `data` `JSON`, `created_at`). Add `CombatLog = "combat_log"` to `TableNames` enum.
+- Alembic migration — create `combat_log` table (+ index on `created_at` for retention scans, optional on `guild_id`).
+- `services/bot-core/src/persist/repositories/combat_log_repository.py` — NEW: `add(...)`, `get_by_id(...)`, `delete_older_than(cutoff)`.
+- `services/bot-core/src/services/combat_log_service.py` — NEW: `persist(fight_results, *, context, combatants) -> int` (returns the row id; called by the 5 callsites after resolution, `commit=False`).
+- `services/bot-core/src/utils/executors/db_retention_executor.py` — extend to call `CombatLogRepository.delete_older_than` using `COMBAT_LOG_RETENTION_HOURS` (mirrors bounty/duel/audit retention).
+- Tests: extend `tests/services/test_combat_service.py`; add `tests/services/test_combat_log_service.py` + retention coverage; ≤ 2 mocks per test (per services AGENTS.md).
+
+**Later cycle (out of current scope):** `GET /api/v1/combat-log/{id}` endpoint, `BattleLog` deserialization + timeline→text condensation, and the discord-gateway `/combat-log` command. User-facing visualization is deferred; condensation/summarization helpers will live on the consumer side.
+
+**Combat callsites (preserve `CombatService.fight_ships` contract):**
+- `services/bot-core/src/services/duel_service.py:233`
+- `services/bot-core/src/services/bounty_service.py:1318` (Bronze 2× bonus)
+- `services/bot-core/src/services/bounty_service.py:1357` (Silver/Gold/Platinum gate)
+- `services/bot-core/src/api/routers/bounties.py:227` (cleanup target — fresh `CombatService` per request)
+- `services/bot-core/src/services/combat_preflight_service.py:173` (Monte-Carlo estimator)
+
+**Public contract:** `CombatService.fight_ships(loadout1, loadout2, variance_percent=None, player_armour_buff=1.0, guild_config=None) -> FightResults` + statics + `CombatResolver` Protocol. (HE-0 / HE-4)
+
+**Combat-log / results output wiring (§1.12):**
+- **Mechanics + persistence only here; rendering is a later cycle.** Resolver builds the full event-tick timeline + summary in memory; the fight response carries only the small Tier-0 `summary` + `combat_log_id`. The full timeline is persisted to the `combat_log` table.
+- **`FightStats` legacy fields stay populated** for wire compat (HE-0): tick resolver maps `varied_hp`→effective start HP, `varied_dps`→`damage_dealt / duration_s`, `ttk`→`duration_s` (loser) / `None` (winner). Per-layer richness lives in the persisted `data` JSON, NOT by mutating frozen `FightStats`.
+- **Consumers unaffected unless they opt in:** `duelCog`/`bountyCog` read the same dict; the new `summary` + `combat_log_id` keys are ignored by existing renderers until wired.
+- **Player metrics promoted separately:** combat processor increments lifetime counters on each human combatant's `Player` row post-fight (O-STAT) — independent of the `combat_log` table.
+- **Size bounded by retention, not truncation:** stored timeline is whole; `db_retention` clears rows > ~72 h.
+
+---
+
+# 5. DATA REFERENCES
+
+| Resource | Path |
+|---|---|
+| This journal | `/proj/COMBAT_REWRITE_JOURNAL.md` |
+| Seed JSONs (runtime canonical) | `/proj/services/bot-core/import_data/{ship,primary_weapon,secondary_weapon,turret_weapon,module,criminal,system,commodity}/*.json` |
+| Wiki v2 (catalog truth) | `/proj/.combat-rewrite-wiki-v2/{primary,secondary,turret,module,ship,commodities}/*.json` |
+| Schema mapping report (architect) | `/proj/COMBAT_SCHEMA_MAPPING.md` |
+| Audit report (stale 2026-05-22) | `/proj/AUDIT_REPORT.md` |
+| Current combat code (being replaced) | `/proj/services/bot-core/src/services/combat_service.py` |
+| Combat models (extend, don't rewrite) | `/proj/services/bot-core/src/services/combat_models.py` |
+| Live DB (via docker) | `sudo docker exec bountybot-db psql -U bounty -d bountydb` |
+| Live API (via docker) | `sudo docker exec bountybot-bot-core curl -s http://localhost:8000/api/v1/...` |
+
+---
+
+# 6. CONDENSATION REVIEW — DISPOSITION LOG (closed)
+
+*Queue surfaced during the 2026-05-29 condensation pass, fully processed by 2026-05-30. Every item is now **RESOLVED**, **CONFIRMED** in §1, or **MOVED** to the canonical §2 registry. Renumbered `C1–C9` so the prefix no longer collides with §2's `O-*`. No open items remain here — live questions live in §2.*
+
+| # | Topic | Disposition |
+|---|---|---|
+| C1 | **Repair Bot rate canonical rule** | ✅ **RESOLVED 2026-05-30** — percentage-of-max. Ketar I = 2.5%/s, Ketar II = 5.0%/s of `max_hull + max_armour`. Seed `extra_atts.HPps` (7/15) is stale; ignore. Rates are starting defaults; configurable per §1's Configuration policy. §1.3 + §1.7 updated. |
+| C2 | **Primary distance penalty** | ➡️ **MOVED → §2 O-DP** (single source of truth). Was a duplicate of the §2 entry; resolve it there. |
+| C3 | **Entry 7 roster wording (hull / auto-turrets as "modules")** | ✓ **CONFIRMED** — Entry 7's "in: shields, hull, armour, repair-bot, … auto-turrets, scanners" was a loose list of *Phase-1 combat-relevant loadout items*, not a literal SQLAlchemy module-type claim. §1.7 already reflects this. |
+| C4 | **Specter / Scimitar seed JSON `builtinModules`** | ✅ **RESOLVED 2026-05-30** — both files DO populate `builtinModules: ["U'tool"]` (gap closed during PR-3 enrichment). §1.7 Cloaks paragraph reflects actual state. No further action. |
+| C5 | **Non-combat modules explicit ruling** | ✓ **CONFIRMED** — §1.7 gives the one-line "resolver ignores entirely" rule for the 8 non-combat modules, with PrimaryWeaponMod carved out separately as combat-relevant. |
+| C6 | **cluster-missile + ionizing-missile Phase-1 status** | ➡️ **MOVED → §2 O-M** (still open; leaning inert per HE-5l). |
+| C7 | **Shock-blast + in-flight projectiles** | ✓ **CONFIRMED** — all firings resolve same-tick (no multi-tick projectile travel in Phase-1), so a shock-blast distance reset cannot strand an in-flight projectile. Question moot. |
+| C8 | **Pure-EMP weapons in Phase-1 loadout** | ➡️ **MOVED → §2 O-PE** (still open). The 3 EMP-blaster primaries are NOT pure-EMP (low physical damage) — clarified inline in §1.4. |
+| C9 | **Reorganization approach** | ✓ **CONFIRMED** — §1–§5 canonical + §6 disposition log + §7/§8 reviews on top, Historical Entries preserved verbatim below. |
+
+---
+
+# 7. Researcher verification pass (2026-05-30)
+
+*Final verification pass on §1 CURRENT DECISIONS against Historical Entries and live seed data. All claims spot-checked against `/proj/services/bot-core/import_data/` and Historical Entries.*
+
+## §1.1 — Tick & timing — ✓ verified
+
+## §1.2 — Distance model — ✓ verified
+
+## §1.3 — HP layers + damage stacking + regen
+
+### ⚠️ Repair Bot rate specification mismatch
+
+**Finding:** §1.3 states repair bot rates are "2.5%/sec (Ketar I), 5.0%/sec (Ketar II) of `max_hull + max_armour`" but seed data shows flat HPps values, not percentages.
+
+| Module | §1.3 claim | Seed data | Discrepancy |
+|---|---|---|---|
+| Ketar Repair Bot | 2.5%/sec | `extra_atts.HPps: 7` | Percentage vs flat rate |
+| Ketar Repair Bot II | 5.0%/sec | `extra_atts.HPps: 15` | Percentage vs flat rate |
+
+**Source:** `/proj/services/bot-core/import_data/module/repair_bots.ketar_repair_bot.json` (L16), `ketar_repair_bot_ii.json` (L19).
+
+**Severity:** Critical. The resolver needs to know which rate model applies (percentage-of-max vs flat HPps). Entry 5l notes these are "pre-existing seed values, not wiki-sourced," but §1.3's lock contradicts the seed data.
+
+**Recommended action:** Clarify which model the user intends before PR-4 code writes the repair bot logic.
+
+## §1.4 — Damage type model
+
+### ✓ EMP-blaster primaries verified
+
+- `dia_emp_mk_iii.json`: `damage_per_shot: 8` ✓
+- `luna_emp_mk_i.json`: `damage_per_shot: 3` ✓
+- `sol_emp_mk_ii.json`: `damage_per_shot: 5` ✓
+
+### ✓ Pure-EMP secondary verified
+
+- `missiles.mamba_emp.json`: `damage: 0, emp_damage: 100` ✓
+
+### ✓ Hybrid secondaries verified
+
+All 7 exist: `dephase_emp` (120+100), `intelli_jet` (100+50), `emp_rocket_mk_i`, `emp_rocket_mk_ii`, `emp_gl_dx`, `emp_gl_i`, `emp_gl_ii`. ✓
+
+### ✓ Armour rocket bonus surprise verified
+
+`rockets.armour_rocket.json`: `damage: 72, emp_damage: 24` ✓
+
+## §1.5 — Accuracy system — ✓ verified
+
+## §1.6 — Weapons — ✓ verified
+
+## §1.7 — Modules
+
+### ⚠️ Built-in modules claim outdated
+
+**Finding:** §1.7 states "Data gap: Specter / Scimitar seed JSONs currently do NOT populate `builtinModules: ["U'tool"]` (verified 2026-05-29)."
+
+**Reality:** Both files have the field populated:
+- `/proj/services/bot-core/import_data/ship/nivelian.specter.json` (L56-58): `"builtinModules": ["U'tool"]` ✓
+- `/proj/services/bot-core/import_data/ship/nivelian.scimitar.json` (L56-58): `"builtinModules": ["U'tool"]` ✓
+
+**Severity:** Cosmetic. The gap mentioned in O4 has been filled (likely during PR-3 enrichment). Journal text is now stale but does not affect code correctness since both ships correctly have the field.
+
+**Recommended action:** Update §1.7's O4 entry to note "RESOLVED: both seed JSONs populated 2026-05-30" when documenting this pass.
+
+### ⚠️ Module type name confusion
+
+**Finding:** §1.7 states "Non-combat modules (no Phase-1 combat effect, resolver ignores entirely): TimeExtender (Khador Drive)..." but the actual type mapping is:
+- **Khador Drive** → `type: "JumpDriveModule"` (not TimeExtender)
+- **Rhoda Vortex** → `type: "TimeExtenderModule"` (not JumpDrive)
+
+**Source:** `/proj/services/bot-core/import_data/module/misc.khador_drive.json` (L10), `misc.rhoda_vortex.json` (L12).
+
+**Severity:** Cosmetic (parenthetical naming confusion only; the mechanics are clear). Code should discriminate by `Item.type` value, not by the mnemonic name in the journal.
+
+**Recommended action:** Clarify in text that Khador Drive is the JumpDrive and Rhoda Vortex is the TimeExtender. No code impact.
+
+### ✓ Cloaks verified
+
+3 files: utool (duration_ms=10000), sight_suppressor_ii (20s), shadow_ninja (40s). ✓
+
+### ✓ Scanners verified
+
+4 files with correct lock times: Telta Quickscan (4.0s), Telta Ecoscan (3.0s), Hiroto Proscan (1.8s), Hiroto Ultrascan (1.8s). ✓
+
+### ✓ Boosters verified
+
+5 files: cyclotron, linear, meal, polytron, synchrotron. ✓
+
+### ✓ Thrusters verified
+
+5 files: dozzt, mpzzzm, pendular, pulsed_plasma, static. ✓
+
+### ✓ Emergency System verified
+
+`misc.emergency_system.json`: `duration_ms: 10000` (10s). ✓
+
+### ✓ Shield regen formula verified
+
+Targe Shield: 50 capacity, 20000ms recharge. Formula `N = ceil(20000 / 50 / 10) = 40 ticks` ✓
+
+### ✓ Shock-blast verified
+
+`misc.shock_blast.json`: seed `damage: 140, emp_damage: 80` correctly marked as ignored in Phase-1. ✓
+
+### ✓ PrimaryWeaponMod verified
+
+2 files: nirai_overcharge, nirai_overdrive. ✓
+
+### ✓ Non-combat modules verified
+
+All 8 categories present: Cabins (3 files), Mining drills (5 files), Signatures (2+ files), TractorBeam, SpectralFilter, Compressor, Khador Drive (JumpDrive), Rhoda Vortex (TimeExtender). ✓
+
+## §1.8–§1.11 — Activation rules, fight termination, unique-equip list — ✓ verified
+
+## Summary
+
+| Severity | Count | Items |
+|---|---|---|
+| 🔴 Critical | 1 | Repair Bot rate model (§1.3): percentage vs flat HPps conflict |
+| ⚠️ Cosmetic | 2 | Built-in modules claim outdated (§1.7 O4); module type naming confusion (§1.7) |
+| ✓ Verified | 13+ | All primary claims, EMP inventory, module counts, specifications, mechanics |
+
+## Recommended actions
+
+1. **Before PR-4 code:** Clarify repair bot rate model (percentage-of-max or flat HPps from seed). Current §1.3 lock contradicts seed data; resolver needs explicit direction.
+2. **Journal housekeeping:** Update §1.7 O4 to note built-in modules gap is resolved; clarify Khador/Rhoda type mapping in text (cosmetic, no code impact).
+3. **No blocking issues:** All other §1 claims verified against seed data and HE-N citations. Journal is accurate for implementation.
+
+---
+
+# Historical Entries
+
+*Verbatim from prior sessions. Subsequent decisions in §1 supersede any conflicting text below. Entries 0 through 7 follow unchanged from their original write — this includes superseded locks (e.g. HE-3 #5's "EmergencySystem at 25% HP" replaced by HE-7's lethal-blow rule). When in doubt, §1 wins.*
 
 ## Entry 0 — Codebase Map (2026-05-24)
 
@@ -1115,4 +1693,654 @@ hereby corrected: those zeros are baked into the JSONs themselves. The
 loader bug is real but its symptom is NULL `loading_speed` on the
 populated rows, not zero damage on the placeholder rows.
 
-*Last updated: 2026-05-26*
+### Entry 5l — Data-gap close: combat modules + Terran Battlecruiser + Specter key fix (2026-05-27)
+
+Verification pass against PR-3 enrichment identified five files with missing or incorrect data.
+
+**Combat module extra_atts gaps filled (3 files):**
+- `repair_bots.ketar_repair_bot.json` — added `extra_atts.HPps: 7`, `mechanics_text` from wiki v2.
+- `repair_bots.ketar_repair_bot_ii.json` — added `extra_atts.HPps: 15`, `dlc: "Valkyrie"`, `mechanics_text` from wiki v2.
+- `misc.phoenix_sis.json` — added `extra_atts.plasma_consumption_t: 30`, `blueprint_only: true`, `mechanics_text` from wiki v2.
+
+Note: HP/s figures (7 and 15) are pre-existing seed values, not wiki-sourced. The wiki v2 repair bot entries explicitly state "HP/s not listed in category table." The module loader already stashes unknown top-level keys into `extra_atts`; explicit `extra_atts` entries win on key conflict (PR-2 loader design).
+
+**Terran Battlecruiser enrichment (1 file):**
+- `terran.battleship.json` — added `extra_atts.wiki_status: "npc_stats_only"` sentinel + `mechanics_text` from wiki v2.
+- Wiki describes the NPC capital-ship variant (armour 7000–7700, listed as non-player-purchasable). Player seed-JSON stats (armour 1800, maxPrimaries 2, etc.) are correct for the Supernova player version and were NOT overwritten.
+- The "NPC capital ship. Not player-purchasable." wiki line was excluded from mechanics_text as it contradicts the ship's in-game shop behaviour.
+
+**Specter duplicate key removed (1 file):**
+- `nivelian.specter.json` — removed erroneous `builtin_modules` (snake_case) key introduced by the PR-3 enrichment script. Kept `builtinModules` (camelCase) which ShipRepository maps correctly to the `builtin_modules` DB column.
+
+**Items intentionally not enriched in this pass:**
+- 4 cargo/freighter ships (`midorian.cargo_midorian`, `nivelian.cargo_nivelian`, `terran.cargo_terran`, `vossk.cargo_vossk`) — non-combat (`maxPrimaries: 0`), deferred.
+- `misc.shock_blast` `value: 0` — no wiki price source available.
+- Ion Lambda MK1/MK2 `damage: 0` — ionizing missiles are inert in the combat system; no ionizer mechanic is planned.
+
+**EMP secondary verdict (from verification):**
+- `netha_emp` and `mamba_emp` `damage: 0` is correct — `extra_atts.emp_damage` holds the real stat.
+- Ion Lambda weapons have `damage: 0` and no `emp_damage` — their effect is `magnitude_m` (engine disable radius), which requires no combat resolver support.
+
+### Entry 6 — Commodities scrape + data model proposal (2026-05-27)
+
+Scope: collect "loot" commodity catalog (drinks/space junk/ores/etc.) for the
+upcoming tractor-beam-capture-to-shop-sell mechanic. Combat resolver (PR-4) is
+deferred until commodity foundation lands.
+
+**Data captured at `/proj/.combat-rewrite-wiki-v2/commodities/`** — 91 individual
+JSON files + `_combined.json` + `_summary.md`.
+
+Each file shape:
+```json
+{
+  "_name": "...",
+  "_category": "commodity",
+  "_subcategory": "ore|ore_core|standard|technical|rare|waste|mission|booze|plasma",
+  "_url": "...",
+  "_extracted_at": "...",
+  "raw_infobox": { ... },
+  "stats": {
+    "tech_level": int|null,
+    "price_range_min_credits": int|null,
+    "price_range_min_system": str|null,
+    "price_range_max_credits": int|null,
+    "price_range_max_system": str|null,
+    "value": int|null,
+    "price_source": "range_midpoint|single_price|origin_system_price|not_listed|mission_only|not_purchasable|not_available",
+    "origin_system": str (booze only)
+  },
+  "in_game_description": str,
+  "mechanics_text": [str, ...],
+  "wiki_categories": [str, ...]
+}
+```
+
+**Value calculation rules (locked per user):**
+- Default: `value = round((min + max) / 2)` from wiki "Known Price Range"
+- Single-price items (Documents): use that single value, `price_source = "single_price"`
+- Booze (22 individual files): `value = named-system (origin) price`, NOT midpoint. User direction was explicit. `price_source = "origin_system_price"`.
+- Items without listed prices: `value = null`, `price_source = "not_listed"`
+
+**Coverage:** 87 real GOF2 commodities + 4 non-commodity pages still in the
+directory (`amr.json`, `gemstones.json`, `neuro_algae.json`, `sao_perula.json`).
+These four should be excluded at seed time, not deleted — user has not
+confirmed deletion.
+
+**Subcategory breakdown (91 files):**
+- standard: 29 (22 booze + 7 others)
+- ore: 12 · ore_core: 12 · technical: 13 · rare: 10
+- plasma: 5 · waste: 3 · mission: 3 · other: 4 (excluded)
+
+**8 null-value items (legitimate, all in `_summary.md`):**
+- Purple Plasma, Red Plasma — no price on wiki
+- Secure Cabin, Secure Container — mission-only, 0$ price
+- AMR, Gemstones, Sao Perula — non-commodities
+- Neuro-algae — not purchasable in GOF2
+
+**Special flags surfaced in stats / mechanics:**
+- `volatile=true`: K'mirkk Toad Mutagen, Red Plasma
+- `blueprint_only=true`: Chromo Plasma (value ~471,801cr)
+- `mission_only=true`: Documents, Secure Cabin, Secure Container
+- Booze: `origin_system` field drives `value`
+
+**Process gotchas (for future scrapes):**
+1. Direct `wiki/Item_Name` HTML fetches via `crawl4ai_scrape` hit Cloudflare. Use `?action=raw` MediaWiki endpoint via `searxng_web_url_read` — bypasses the JS challenge cleanly. This is the same approach Entry 5j used for the mechanics_text rescrape.
+2. Researcher subagent's HTTP client gets blocked; architect subagent + searxng works.
+3. Each page must be fetched and parsed individually — infobox structures vary (`{{Infobox}}`, `{{infobox}}`, wikitable, no infobox at all for collection pages like Booze). NEVER assume layouts are uniform.
+
+### Entry 6a — Commodity data model proposal (locked) (2026-05-27)
+
+User-locked model: extend the existing `Item` joined-table-inheritance tree
+with a new `Commodity` branch:
+
+```
+Item  [item table]
+├── Module / Weapon / PrimaryWeapon / SecondaryWeapon / TurretWeapon  (existing)
+└── Commodity   [commodity table]                       ← NEW
+    ├── Booze   [booze table]                           ← NEW
+    ├── Ore     [ore table]                             ← NEW
+    └── OreCore [ore_core table]                        ← NEW
+```
+
+Standard/Technical/Rare/Waste/Mission/Plasma subcategories live directly on
+`Commodity` and are distinguished by a `subcategory` enum column on the base.
+Subclasses only exist where there are real schema differences:
+- **Booze**: has `origin_system`, `loma_price`, `highest_non_loma_price`, `highest_non_loma_system`
+- **Ore**: has `mining_locations` (ARRAY)
+- **OreCore**: sibling of Ore (NOT a subclass / not via `is_core` flag) — user reasoning: ore cores are a distinct gameplay concept (higher value, mining-mechanic-specific, likely to grow more divergent), modeled as siblings makes future divergence cheap
+
+Plasma was dropped from subclass list per user direction: SIS is the only
+planned consumer and consumes plasma by name — no per-plasma column needed.
+
+**`Commodity` base columns:**
+- `id` (FK → item.id, PK)
+- `subcategory` (String(32), discriminator: `standard|technical|rare|waste|mission|booze|ore|ore_core|plasma`)
+- `tech_level` (Integer, nullable)
+- `price_range_min_credits` / `price_range_min_system` / `price_range_max_credits` / `price_range_max_system` (nullable)
+- `price_source` (String(32))
+- `volatile`, `blueprint_only`, `mission_only` (Boolean, default False)
+- `in_game_description` (Text, nullable)
+- `mechanics_text` (JSON, default `[]`)
+- `wiki_categories` (ARRAY(String), default `[]`)
+- `extra_atts` (JSON, default `{}`) — escape hatch matching Weapon/Module/Ship pattern
+- `polymorphic_identity = "commodity"`
+
+`Item.value` is inherited (will hold the computed `value` from the JSON).
+
+### Entry 6b — Commodity rollout plan (5 PRs) (2026-05-27)
+
+PR ordering and scope locked. Each PR is independently mergeable.
+
+**PR-A — Schema (smallest landable chunk):**
+1. `persist/database/tablenames.py` — add `Commodity = "commodity"`, `Booze = "booze"`, `Ore = "ore"`, `OreCore = "ore_core"`
+2. `persist/models/commodity.py` — new `Commodity(Item)`, polymorphic_identity = "commodity"
+3. `persist/models/booze.py`, `persist/models/ore.py`, `persist/models/ore_core.py` — three subclass files
+4. `persist/database/revisions/versions/0010_commodity_schema.py` — generated + hand-reviewed, idempotent inspector pattern matching 0008/0009
+5. Migration smoke test on dev DB — verify 4 tables exist with correct FKs to item.id
+
+**PR-B — Seed data + repositories:**
+6. Copy 87 commodity JSONs (exclude the 4 `_subcategory: "other"` files) from `/proj/.combat-rewrite-wiki-v2/commodities/` to `/proj/services/bot-core/import_data/commodity/`
+7. `persist/repositories/commodity_repository.py` — `CommodityRepository` with `create_or_update(payload)` dispatching on `_subcategory`:
+   - `"booze"` → `Booze`
+   - `"ore"` → `Ore`
+   - `"ore_core"` → `OreCore`
+   - everything else → base `Commodity` with `subcategory` set from `_subcategory`
+   - `"other"` → skip with warning (defense-in-depth)
+   - Maps `_name` → `Item.name`, `stats.value` → `Item.value` (or 0 for null), carries flags + locations + mechanics into the right columns
+   - Standard `try/except` + `await db.rollback()` per repo AGENTS.md
+8. `persist/repositories/booze_repository.py`, `ore_repository.py`, `ore_core_repository.py` — thin subclass repos for type-specific queries
+9. `utils/auto_seeder.py` — append `"commodity"` to `SEED_CATEGORIES`
+10. Smoke test: empty-DB startup → 87 commodity rows across 4 tables
+
+**PR-C — Pydantic schemas:**
+11. `api/schemas/about_schema.py` (or new `commodity_schema.py`) — `CommodityResponse`, `BoozeResponse(CommodityResponse)`, `OreResponse(CommodityResponse)`, `OreCoreResponse(CommodityResponse)`. All `ConfigDict(from_attributes=True)`.
+
+**PR-E — bot-core about API surface:**
+12. `api/routers/about.py` — extend three endpoints:
+    - `GET /about/categories` — append `"commodity"`
+    - `GET /about/categories/{category}/objects` — handle `commodity`, return `[{name, aliases, emoji, icon, subcategory, tech_level}, ...]`
+    - `GET /about/object/name/{name}` — dispatch order: ship → weapon tree → module → commodity → criminal → system. Return correct subclass response.
+13. `commodity_repository.list_all()` — lightweight catalog dict for the `/objects` endpoint
+
+**PR-D — discord-gateway aboutCog:**
+14. `cogs/aboutCog.py` `_create_object_embed` (~line 195):
+    - Add `"commodity": discord.Color.teal()` to color_map (~line 201)
+    - New `elif category == "commodity":` branch after the existing ones (~line 318):
+      - **Subcategory** (inline) — `subcategory.replace("_", " ").title()`
+      - **Tech Level** + **Value** — handled by existing generic block at lines 237/240
+      - **Price Range** (inline=False) — `{min:,}cr ({min_system}) → {max:,}cr ({max_system})`, omitted when `price_source == "not_listed"` or null
+      - **Origin System** (Booze only, inline)
+      - **Loma Price** + **Highest Non-Loma** (Booze only)
+      - **Mining Locations** (Ore/OreCore, inline=False, truncated to 1024 chars)
+      - **Lore / Mechanics** — `in_game_description` + first few `mechanics_text` entries, truncated to 500 chars (reuse pattern at lines 338-339)
+      - **Flags footer** — append to existing footer (`f"ID: {id} · Volatile · Blueprint-Only"`) only when applicable
+    - Add `"commodity"` to 2-column grid tuple (~line 359)
+    - `_preload_data` (~line 87) — NO CHANGES (iterates whatever `/about/categories` returns)
+    - `object_autocomplete` (~line 131) — NO CHANGES (uses `_objects_cache` populated by generic preload)
+
+**Smoke tests (PR-D + PR-E together):**
+- `/about` category dropdown shows "Commodity"
+- Iron → Subcategory=Ore, TL=1, Value=26cr, Price Range=9cr (Suteo) → 42cr (Ni'mrrod), Mining Locations populated
+- Aquila Cocktail → Subcategory=Booze, Value=304cr, Origin System=Aquila, Loma Price=680cr
+- Chromo Plasma → Value=471,801cr, "Blueprint-Only" in footer
+- K'mirkk Toad Mutagen → "Volatile" in footer
+- Documents → "Mission-Only" in footer
+- Purple Plasma → no Value field, no Price Range field
+- `/list_category category:commodity` → paginated list of all 87 commodities
+
+**Tests:** `tests/cogs/test_aboutCog.py` — module-scoped `mock_bot` per `cogs/AGENTS.md`, max 2 mocks per test, mock the http_client.get to return commodity payloads, assert embed fields.
+
+**Out of scope (deferred):**
+- Loot rolls from combat (waits for PR-4 tick resolver to have stable fight-end hooks)
+- Shop selling of captured commodities (`ShopService.sell_item` extension)
+- Business rules for non-sellable items (Documents/Secure Cabin/Secure Container) and non-droppable items (Chromo Plasma)
+
+**Risks called out at planning time:**
+- `Item.name` unique constraint — must preflight-check all 87 commodity names against existing weapon/module/ship/criminal/system names before PR-A merge
+- New polymorphic_identity values (`commodity`, `booze`, `ore`, `ore_core`) don't collide with existing ones — sanity-grep before PR-A
+- auto_seeder idempotency holds: `table_is_empty(repo)` returns False once any row exists, same contract as existing 7 categories
+
+**Rollback:** `python -m persist.database.run_migration downgrade -1` removes all 4 new tables. PRs are linear-dependent (D needs C needs B needs A) but each is shippable on its own once its predecessor lands.
+
+### Entry 6c — Open process issues (2026-05-27)
+
+Documented here so they don't get lost across context boundaries:
+
+1. **Task tool subagent dispatch failing** — `task` tool calls with `subagent_type: "architect"` returned `Unknown agent type: oracle is not a valid agent type` despite `architect` being listed as valid in the system prompt AND `/proj/.opencode/agents/architect.md` being a valid `mode: subagent` definition. Same error for "general" and "developer". User opted to proceed without subagent dispatch — I (Opus 4.7) did the data model design work directly. If we need to dispatch subagents later, the opencode agent-type-resolution path needs investigation; the agent definitions look correct.
+
+2. **User feedback updates** — `feedback_check_before_changing.md` was already updated this session to reflect "no exceptions on assumptions" — applies to ALL data/numbers/decisions, not just code edits. Saved before context compaction.
+
+3. **PR-4 (tick combat resolver) is paused** — commodity foundation (PRs A-E above) lands first per user direction. Tick resolver work was the next thing in queue per the Entry 5j plan; resume after PR-D ships.
+
+---
+
+### Entry 7 — PR-4 design decisions session (2026-05-29 → 2026-05-30)
+
+Live working session to resolve the remaining open design questions before
+any PR-4 code is written. This entry is updated **in-place** during the
+session as decisions land. See "LOCKED" and "STILL OPEN" rolling sections
+at the bottom.
+
+> **Canonical surface moved on 2026-05-30**: §1–§5 at the top of the file
+> are now the canonical Phase-1 spec. Entry 7 below remains as a
+> chronological working log of what was decided in this session and
+> when. If §1 and Entry 7 disagree, §1 wins.
+
+> Resume rule: on session resume, read §1–§5 first; only consult this
+> entry if you need decision provenance.
+
+#### Role separation (CORRECTED — was previously conflated)
+
+- **Thrusters** = close-range maneuverability **only**. They do NOT affect
+  distance / closure / weapon range / rocket accuracy. Their combat effect
+  is to reduce the opponent's hit-chance against you while you are at close
+  range (defender-side debuff). Range window: current_distance < 750m
+  (inherited from Entry 5f, but the *direction* flips from attacker-bonus
+  to defender-debuff).
+- **Boosters** = the speed-boost / "turbo" device. Push distance out
+  (locked 5e/5f formula stands) AND reduce opponent's accuracy while active
+  (5a returns).
+
+#### Combatant base accuracy (NEW — supersedes the per-weapon-base proposal)
+
+- Player base accuracy: **60%**.
+- NPC / criminal base accuracy: **50%**.
+- Base is a property of the *pilot* (combatant-level), not the weapon. The
+  committed `ShipLoadout.base_accuracy = 1.0` stub at
+  `combat_models.py:128` is the slot — value gets set to 0.60 / 0.50.
+
+#### Layered accuracy formula (shape)
+
+```
+attacker_accuracy = combatant_base                 # 60% / 50%
+                  + own_equipment_modifiers        # scanner +X%, etc.
+                  − opponent_cloak_debuff          # while cloak active
+                  − opponent_booster_debuff        # while boost active, scales w/ speed
+                  − opponent_thruster_debuff       # when current_distance < 750m
+                  ± per-weapon mods?               # see Q2
+                  ± distance penalty               # for primaries
+                  → clamp [0.05, 0.99]
+```
+
+#### Cloak (REFRAMED)
+
+- Cloak is an **accuracy debuff**, NOT a forced miss. User example:
+  60% → 25% during cloak.
+- Math interpretation (additive / absolute / multiplicative) still open —
+  see Q1.
+- HP-threshold triggers: **66% / 33%** (2 activations), replacing
+  Entry 5b's "30% single activation" lock.
+
+#### HP / damage integer rule
+
+- HP pool is int; per-tick HP delta is int.
+- Shield regen schedule: emit `+1 HP every N ticks`, where
+  `N = ceil(shield_recharge_ms / shield_capacity / tick_ms)`.
+  Worked example: Targe (50 cap / 20000ms recharge) → +1 HP every 40 ticks
+  (400ms). Same shape for any slow regen.
+- Regen pulse applied **before** damage in the tick, so "finishing blow"
+  detection is clean (HP ≤ 0 at end of tick = dead).
+- **Concurrent regen across layers**: shield regen and hull/armour regen
+  run *in parallel* each tick (independent regen tracks). When both layers
+  are damaged, both recover simultaneously — neither blocks or delays the
+  other.
+
+#### Activation triggers (HP-threshold devices)
+
+- **Cloaks**: 66% / 33% HP (2 activations).
+- **Boosters**: 80/60/40/20 HP (4 activations). Locked from Entry 5b;
+  the 75/50/25 alternative is retired.
+- **Thrusters**: passive vs toggled pending TH4 — leaning **passive**
+  (close-range always-on, no HP-trigger needed, no `duration_ms` in wiki).
+- **EmergencySystem**: triggers when an incoming damage event would
+  reduce hull HP to 0 or below (lethal-blow interception). On trigger:
+  **hull HP is clamped to 1** (lethal damage prevented from taking it
+  below 1); 10s of full invuln begins. ALL incoming damage blocked during
+  invuln. Regen continues — shield recharge and hull/armour repair (if a
+  Repair Bot is equipped) both accumulate over the 10s window per the
+  concurrent-regen rule. **HP at invuln expiry = 1 + 10s × applicable
+  regen rates** (capped at each layer's max). Edge case: no shield and no
+  Repair Bot equipped → HP = 1 at expiry. **Consumable** — removed from
+  the player's ship loadout after use; must manually re-equip from
+  inventory if they have a spare. **Trigger scope: hull-layer only**
+  (true ship-death prevention; shield or armour reaching 0 does NOT
+  trigger the device).
+
+**Trigger rule (locked):** at any HP-threshold crossing, the device
+activates iff off cooldown. Still cooling = threshold *skipped*, no retry.
+Cooldown timer starts when the **effect expires**, not when activated.
+Sequence per activation:
+`trigger → run for duration_ms → cooldown begins → cooldown lasts loading_speed_ms → eligible at next threshold`.
+
+#### Turrets
+
+- **Manual turret + primary** = mutually exclusive. Pre-combat
+  pilot-dedicates one. Default = primary (typically higher damage).
+  Override command does not exist yet; modeled with a `manual_turret_mode`
+  flag on the loadout (default False).
+- **Auto turret** = additive — fires on its own cooldown alongside
+  primaries.
+- **Auto turret accuracy** = multiplicative against pilot's *current*
+  accuracy (scales with all live debuffs). Magnitude: ×0.85 to ×0.90
+  (= 10–15% reduction band). Final number TBD (T2).
+- All auto turrets on a single ship **share one accuracy value** (no
+  per-turret variation; e.g. an 8-turret battlecruiser has one
+  auto-turret-accuracy value applied to all 8).
+
+#### Scanners
+
+- **Three tiers** (combat scanners only — plasma scanners ignored for
+  Phase-1, none in seed data):
+  - **Tier A — no scanner equipped**: no accuracy bonus. **Missiles
+    degrade to rocket behavior** — no tracking, no lock, fire-and-forget.
+    Same projectile object, same base stats (damage / cooldown / speed);
+    accuracy uses the rocket curve (linear 5% at max range → 60% at min
+    distance, Entry 5f) with the distance penalty applied.
+  - **Tier B — slow combat scanner (≥3.0s lock)**: +5% to pilot base
+    accuracy. Enables **missile tracking**: missiles fire at the pilot's
+    current accuracy (subject to cloak / thruster / booster debuffs;
+    distance penalty does NOT apply when tracking is active). Modules:
+    Telta Quickscan (4.0s), Telta Ecoscan (3.0s).
+  - **Tier C — fast combat scanner (~1.8s lock)**: +10% to pilot base
+    accuracy. Same missile-tracking behavior as Tier B. Modules: Hiroto
+    Proscan, Hiroto Ultrascan.
+- **Unique-equip**: combat scanner is unique-equip on its own subclass
+  (one combat scanner at a time). Plasma scanner is a separate subclass
+  with no combat effect.
+- **Stacking**: the +5% / +10% is added to combatant base accuracy
+  (60% player / 50% NPC) before all other modifiers. A Tier-C player
+  starts at 70% pre-modifier; a Tier-B player starts at 65%.
+- **Lock-time numerics** (4.0 / 3.0 / 1.8s) are flavor in Phase-1 — the
+  tick resolver does not model lock-time delay; tier membership is what
+  matters. Recorded here for future use.
+- **Thermal-fusion "homing" effect: out of scope.** Thermal-fusion is a
+  primary weapon class and follows primary-weapon accuracy rules
+  (combatant base + own/opponent modifiers + distance penalty). Its
+  in-game homing effect is bypassed in Phase-1 for simplicity; scanner
+  tier does **not** modify thermal-fusion behavior.
+
+#### Phase-1 module roster
+
+- **In**: shields, hull, armour, repair-bot, thrusters, cloaks, boosters,
+  auto-turrets, scanners, secondaries (rocket / missile / nuke), and
+  EmergencySystem (consumable; mechanic TBD).
+- **Out (deferred to Phase-2)**: ShieldInjector (Phoenix SIS), RepairBeam,
+  TransfusionBeam.
+- **Inert (kept for fidelity, no combat effect)**: GammaShield (no
+  radiation-damage source in scope).
+
+#### EMP
+
+- Gets a **real mechanic** (TBD), not flat damage.
+- Applies to: EMP-blaster primaries, EMP-bomb secondaries, EMP nukes (e.g.
+  `dephase_emp`, `mamba_emp`, `netha_emp`, EMP rockets, `intelli_jet`-style
+  carriers). Possibly the right model is shield-disable for N seconds — to
+  be decided.
+
+#### Nukes
+
+- **Fireworks** (`damage=1`) is decorative / joke item; ignore as baseline.
+- Use **Liberator** and **Oppressor** as the realistic baseline. Pull all 5
+  nukes' real damage values when we design AoE-falloff specifics.
+
+#### Decisions log — running
+
+##### LOCKED (in this Entry-7 session)
+1. Combatant base accuracy: 60% player / 50% NPC.
+2. HP / damage are int; shield regen via +1 HP every N ticks; regen before
+   damage in each tick.
+3. Auto-turret accuracy: multiplicative ×0.85–0.90 of pilot's current
+   accuracy, uniform across all turrets.
+4. Manual turret + primary mutex: pre-combat pilot-dedicates,
+   default = primary, future override command.
+5. Thrusters: close-range maneuverability only
+   (`current_distance < 750m`). Direction: defender-side opponent-accuracy
+   debuff. Do NOT affect distance / range. Entry 5f's *attacker-bonus*
+   framing is **retired**; window stays the same.
+6. Boosters: distance push (5e/5f formula stands) + opponent-accuracy
+   debuff (5a returns) while active.
+7. Cloak: accuracy debuff (60→25 example), NOT a forced miss. Earlier
+   "forced miss" model **retired**.
+8. Cloak HP-thresholds: **66% / 33%** (2 activations). Replaces Entry 5b's
+   30%-single.
+9. Phase-1 module roster: in = EmergencySystem (consumable, mechanic TBD);
+   out = ShieldInjector, RepairBeam, TransfusionBeam.
+10. EMP gets a real mechanic (TBD).
+11. Nukes: Liberator / Oppressor baseline; ignore Fireworks.
+12. Activation rule (HP-threshold devices): triggers iff off cooldown;
+    missed = skipped, no retry; cooldown starts at *effect expiry*.
+13. Scanner tiers (combat scanners; plasma ignored for Phase-1):
+    Tier A = no scanner → no bonus, missiles act as rockets;
+    Tier B = slow (≥3.0s lock — Quickscan, Ecoscan) → +5% pilot
+    accuracy, enables missile tracking;
+    Tier C = fast (~1.8s lock — Proscan, Ultrascan) → +10% pilot
+    accuracy, same tracking.
+14. Combat scanner is unique-equip on its own subclass.
+15. Missile base accuracy: when tracking is active (Tier B/C scanner
+    equipped), missiles use the pilot's current accuracy (with all live
+    modifiers, no distance penalty). When no scanner is equipped
+    (Tier A), missiles behave exactly like rockets including the
+    distance penalty. Closes the "Missile base accuracy" open question.
+16. Thermal-fusion homing effect bypassed in Phase-1. Thermal-fusion is
+    a primary weapon — follows primary accuracy rules; scanner tier
+    does not affect it.
+17. Booster activation thresholds: 80/60/40/20 HP (4 activations).
+    Inherits Entry 5b's lock; the 75/50/25 alternative is retired.
+18. Per-weapon `accuracy_modifier` dropped permanently. All weapons use
+    pilot's current accuracy verbatim (subject to distance penalty +
+    cloak/thruster/booster debuffs). Weapon differentiation in Phase-1
+    lives in damage / range / cooldown only. Forward-compat hook:
+    `weapon_accuracy(pilot_acc, weapon)` returns `pilot_acc` unchanged;
+    an empty `SUBTYPE_ACCURACY_MOD: dict[str, float]` lives in
+    `combat_balance.py`. Tech-debt: remove `WeaponStats.accuracy_modifier`
+    (multiplicative, never populated); keep `ModuleStats.accuracy_modifier`
+    (additive, carries scanner bonus). Closes Q2.
+19. Damage-type model: Phase-1 = **physical only**. EMP is a separate
+    damage type, deferred to Phase-2+. Resolver rule: every weapon fires
+    on cooldown, rolls accuracy, logs hit/miss; physical `damage_per_shot`
+    is applied to HP layers; `emp_damage` is ignored regardless of value.
+    Pure-EMP weapons (e.g. `mamba_emp`) fire normally but apply 0 HP delta.
+    Hybrid weapons (e.g. `dephase_emp`, `intelli_jet`, EMP rockets, EMP
+    bombs, plus surprise `armour_rocket` with `emp_damage=24`) apply only
+    the physical component. **Verified inventory note:** the 3 EMP-blaster
+    PRIMARIES (`dia_emp_mk_iii`, `luna_emp_mk_i`, `sol_emp_mk_ii`) all
+    have non-zero `damage_per_shot` (3 / 5 / 8) — they are LOW-damage
+    physical weapons, not pure-EMP.
+20. Shock-blast pulled into Phase-1 with simplest mechanic:
+    instantly resets both ships to starting distance (5000m); 100%
+    guaranteed (no accuracy roll); no damage applied; fires on cooldown
+    (`loading_speed_ms`); no per-fight cap; no HP-threshold gating. The
+    seed's `damage: 140` and `emp_damage: 80` are IGNORED in Phase-1.
+21. Phase scope tightening: mines + sentry-guns deferred to **Phase-3+**
+    (not Phase-2 as Entry 5d originally claimed). EMP mechanic, emp-bombs,
+    ShieldInjector (Phoenix SIS), RepairBeam, TransfusionBeam, OOC HP
+    recovery, dock instant-repair, damaged-opponent start state remain
+    Phase-2.
+22. Turret subtypes: 3 exist in seed (auto, manual, plasma-collector);
+    only 2 are combat-relevant (auto + manual). Plasma-collector
+    (`subtype: "plasma-collector"`, `dps: 0`) is inert in combat —
+    equippable for fidelity, no effect. Mirrors plasma-scanner pattern.
+    **Data note:** auto/manual turrets carry no `subtype` field in
+    `extra_atts`; combat code must discriminate via `automatic: bool`.
+    Only plasma-collectors carry an explicit `subtype` value.
+23. EMP Phase-2 partial spec captured for parking: when an EMP hit lands
+    on victim, victim outgoing damage = 0, firer accuracy vs victim =
+    100%, duration TBD (some seconds). "Exponential backoff" phrasing
+    parked. Stacking, hit-roll-vs-effect, other-subsystem-disable
+    sub-questions all parked for Phase-2 revisit. Full design = O-E in
+    §2.
+24. Repair Bot rate model: **percentage-of-max** locked
+    (2026-05-30, closing §6 O1). Ketar I = 2.5%/s, Ketar II = 5.0%/s
+    of `max_hull + max_armour`. Seed `extra_atts.HPps` (7/15) becomes
+    stale data; resolver ignores. §1.3, §1.7 updated.
+25. **Configuration policy** (2026-05-30): every numeric in §1 is a
+    starting default. Targets `game_constants.py` + `BOUNTYBOT_*`
+    env-var + per-guild override, matching the existing
+    `DUEL_VARIANCE_PERCENT` / `BOUNTY_PVC_ARMOUR_BUFF_FACTOR` pattern.
+    Post-Phase-1 tuning should not require code changes.
+26. **Resource policy** (2026-05-30, generalises HE-5a): energy is
+    assumed infinite for combat AND any other gameplay surface.
+    Energy cells are NOT tracked. Wiki lore references to per-use
+    energy consumption (U'tool cloak, etc.) are cosmetic. Applies
+    to players AND criminals. Repair-bot consumption, cloak
+    activation, and any future energy-gated mechanic skip the check
+    and proceed unconditionally.
+
+##### LOCKED (inherited from earlier journal entries)
+- Tick = 10ms fixed; max ticks = 18,000 (3-min cap). (Entry 5j)
+- Booster distance-push formula:
+  `distance_gained = base_speed × (effect_pct/100) × (duration_ms/1000)`.
+  (Entry 5f)
+- Distance: 5000m start, 150 m/s base ship speed, 300 m/s passive closure,
+  300m floor. (Entry 5e)
+- Rocket accuracy curve: linear 5% at max range → 60% at min distance.
+  (Entry 5f)
+- Shield + Repair-bot recharge: continuous per tick. (Entry 5f)
+- Repair Bot rates: 2.5%/s (Ketar I), 5.0%/s (Ketar II) of
+  `max_hull + max_armour`. (Entry 3)
+- EmergencySystem (fully locked): triggers when an incoming damage event
+  would reduce the **hull layer** to 0 or below (true ship-death
+  interception; shield or armour reaching 0 does NOT trigger). On
+  trigger: hull HP clamped to 1. 10s full invuln — ALL incoming damage
+  blocked. Regen continues during invuln (shield + hull/armour
+  concurrently if a Repair Bot is equipped). HP at expiry = 1 + 10s ×
+  applicable regen rates (capped per layer max). Edge case: no shield, no
+  Repair Bot → HP = 1 at expiry. Consumable — removed from loadout after
+  use; player must manually re-equip a spare from inventory; once per
+  fight because consumed.
+- WeaponMod is unique-equip in `UNIQUE_EQUIP_TYPES`. (Entry 4 #8)
+- Damage stacking order: shield → armour → hull. (Entry 5e)
+- Repair Bot fill order: hull first, then armour. (Entry 5f)
+- GammaShield inert in Phase-1. (Entry 4 #12)
+- Energy pool: unlimited (no energy-cell tracking). (Entry 5a)
+- PvP duel stalemate = draw, no rewards. PvC stalemate = criminal
+  escapes, hunt-checks reset, new system along route. (Entry 5a)
+
+##### STILL OPEN (canonical queue now at §2 OPEN QUESTIONS — synced)
+- **Q1 / O-Q1** Cloak math: additive (-35pp) / absolute (set-to-25) /
+  multiplicative (×0.42)?
+- **TH3 / O-TH3** Thruster opponent-accuracy debuff magnitude (close-range
+  window). Scaling vs `effect_pct`?
+- **TH4 / O-TH4** Thruster passive vs toggled (HP-thresholds + cooldown)?
+  Leaning passive.
+- **T2 / O-T2** Auto-turret accuracy multiplier final value within
+  ×0.85–0.90 band.
+- **O-B** Booster opponent-accuracy debuff magnitude (scales w/
+  `effect_pct`).
+- **O-DP** Distance penalty max for primary accuracy (was floated at
+  0.20) — separate from rocket curve?
+- **O-N** Nuke AoE falloff specifics + per-nuke real damage values
+  (Liberator/Oppressor anchors).
+- **O-E** EMP mechanic shape — DEFERRED to Phase-2 (partial spec in
+  locked item #23 + §3 DEFERRED).
+
+##### Resolved this session (2026-05-29)
+- **Q2** dropped — see locked #18.
+- Missile base accuracy — closed by scanner-tier rule, locked #15.
+- Phase-1 scope of shock-blast / mines / sentry-guns — locked #20, #21.
+- Damage-type model — locked #19.
+- 3rd turret subtype recognition (plasma-collector) — locked #22.
+
+##### Condensation review topics (2026-05-29 audit pass)
+- See §6 CONDENSATION REVIEW OPEN TOPICS at top of file. Walks one at
+  a time per standing user rule.
+
+*Entry 7 was updated in-place across multiple sessions. As of
+2026-05-30 the canonical surface is §1–§5 at the top of this file;
+this entry remains as the chronological working log. This file remains
+uncommitted in the working tree until the user reviews and locks PR-4
+design.*
+
+---
+
+# 8. Architect review (2026-05-30)
+
+*Structural sanity check on the reorganized journal, factoring in §7 researcher findings. **This review supersedes a prior in-tree §8** (discarded as unreliable; its lone 🔴 was stale). The original review made NO design changes and left §1–§7 unchanged. **Follow-up edit (2026-05-30 consolidation pass, user-authorized):** open-question IDs were consolidated — §2 is now the single canonical `O-*` registry, §6 relabelled to a closed `C1–C9` disposition log, the §6 O2 ≡ §2 O-DP duplicate merged, and §6 O6/O8 promoted to §2 O-M/O-PE; §1 inline cites updated to match. No design/numeric values changed. Historical Entries and §7 prose left verbatim as dated snapshots. Data claims independently spot-checked against `import_data/` seed JSONs.*
+
+## 1. Completeness — ⚠️ minor gaps
+
+- ✓ §1.1–§1.11 cover tick/timing, distance, HP layers, damage type, accuracy, all weapon classes, all combat modules, activation rules, termination, unique-equip, and scope. Sufficient as the read-first surface.
+- ✅ **FightResults `combat_log` output format — RESOLVED 2026-05-30.** Now specified in **§1.12**: a small Tier-0 summary returned inline with every fight + the `combat_log` row id, and the full **event-tick timeline** (one row per state-changing tick-step, intra-tick processing order preserved) **persisted to a new `combat_log` table** (Integer PK handle, `JSON` `data`, combatant columns w/ Discord-`user_id` player-vs-NPC discriminator, 72 h retention via `db_retention`). Wired in **§4** (PR-4 in-memory production + Player stat promotion; PR-5 persistence slice). Lifetime combat metrics promoted onto `Player` (O-STAT). Discord visualization/render = a later cycle (out of scope). Residual knobs parked as **§2 O-LOG**.
+- ⚠️ **Per-weapon stat availability never asserted.** §1.6 assumes every primary/secondary carries `damage_per_shot` + `loading_speed_ms` (post-PR-3 wiki enrichment). HE-1's `PRIMARY_DEFAULTS`/`SECONDARY_DEFAULTS` fallback tables are thereby superseded, but §1 never states "all weapons now carry these post-PR-3, so no damage fallback is needed." One confirming line closes the loop for the implementer.
+- ⚠️ §1.6 manual turret cites a `manual_turret_mode: bool` loadout flag; §4 file map does not list adding it to `ShipLoadout`.
+- ⚠️ §4 omits two resolver branches present in §1: shock-blast distance-reset hook (§1.2) and missile-tracking-vs-rocket dispatch on scanner tier (§1.6/§1.7).
+- Note (not a gap): HE-3 Q9's "winner-by-remaining-HP% (≤5% delta = stalemate)" recommendation was **not** adopted; §1.9 deliberately uses flat draw-on-cap. Divergence is intentional, just undocumented as such.
+
+## 2. Internal consistency within §1 — ✓ clean (1 cross-ref nit)
+
+- §1.5 `own_scanner_bonus` (0/+5pp/+10pp) ↔ §1.7 Scanner tier table (A/B/C). ✓
+- §1.8 thresholds ↔ §1.7 per-module: cloak 66/33, booster 80/60/40/20, thruster passive, EmergencySystem lethal-blow — all match. ✓
+- §1.6 weapons apply physical `damage_per_shot` ↔ §1.3 stacking shield→armour→hull. ✓
+- §1.6 missile Tier-A "degrades to rocket curve" ↔ §1.7 Scanner Tier-A "Degrade to rocket". ✓
+- §1.2 shock-blast → "see §6 C7" ↔ §6 C7 (same-tick resolution → moot). ✓
+- §1.3 repair-bot scope (hull+armour only, shield independent) stated identically in §1.3, §1.7 Repair Bot, and §1.7 Shields. ✓
+- ✓ nit (was ⚠️, now resolved): §1.5 lists `distance_penalty (primaries only) [O-DP]` while §1.6 rockets carry their own 5%→60% curve and missiles (B/C) explicitly skip distance penalty. Internally consistent; O-DP's relationship to the rocket curve remains the open seam, now tracked under the single ID **§2 O-DP** (former §6 O2 merged in — see §8.3).
+
+## 3. Naming / convention — ✅ RESOLVED 2026-05-30 (consolidation pass)
+
+The three coexisting ID schemes have been consolidated. §2 is now the single open-question registry; §6 is a closed log:
+
+| Surface | Scheme | Role |
+|---|---|---|
+| §2 OPEN QUESTIONS | `O-*` | **Single canonical open-question registry** (namespace legend added at top) |
+| §6 DISPOSITION LOG | `C1–C9` | Renamed from `O1–O9` (collision removed); closed log, not a queue |
+| Entry 7 (Historical) | `Q*/TH*/T*` | Verbatim HE shorthand, bridged to `O-*` (e.g. `Q1 ≡ O-Q1`) |
+
+- ✅ **Prefix collision removed:** §6 `O<n>` → `C<n>`, so a bare `O-*` cite is unambiguously §2.
+- ✅ **Duplication resolved:** former §6 O2 absorbed into §2 **O-DP** (single source of truth); §6 C2 now points there.
+- ✅ **Two orphaned open items promoted into §2:** §6 O6 → **O-M** (cluster/ionizing-missile status), §6 O8 → **O-PE** (pure-EMP loadout); §6 C6/C8 point to them.
+- ✅ **Inline §1 cites updated:** `§6 C1`, `§6 C7`, `§2 O-M`, `§2 O-PE`.
+- ✓ Entry 7's STILL-OPEN HE↔§2 bridge (`Q1 / O-Q1`, `TH3 / O-TH3` …) unchanged and still valid.
+- ℹ️ §7's prose still references the pre-rename `O4` (now `C4`); left verbatim as a dated snapshot — the §2 legend documents the `O1–O9 → C1–C9` rename.
+
+## 4. Forward-compat hooks — ✓ adequate (one pointer thin)
+
+- Damaged-start: §1.3 + §3 + HE-3 API hint (`current_*` overrides on combatant init). ✓
+- OOC HP recovery + dock: §3 DEFERRED, columns shipped PR-1 (§4). ✓
+- EMP: §1.4 detection seam (physical track only) + §3 + §2 O-E + Entry 7 #23 partial spec. ✓
+- `weapon_accuracy()` + empty `SUBTYPE_ACCURACY_MOD`: §1.5. ✓
+- ⚠️ **Schema column names** for the Phase-2 damage-tracking migration (`current_hull/current_armour/current_shield/last_damage_at` on Player; `criminal_current_*` on Bounty) live only in HE-3 step 4 / HE-4; §4 PR-1 line is terse ("Phase-2 damage-tracking columns"). A Phase-2 reader must dig. Add the column names to §4.
+
+## 5. Reorganization integrity (HE 0–7) — ✓ load-bearing miss now closed
+
+- HE-0 public contract + 5 callsites + cleanup target (bounties.py:227) → §4. ✓
+- HE-0 #4 `FightResults.combat_log` addition → ✅ **RESOLVED** — output format specified in §1.12, wired in §4 (see §8.1).
+- HE-1 default tables → superseded by wiki-enriched seed; §4 keeps `combat_balance.py` for per-subtype accuracy. ✓ (confirmation line wanted — §8.1).
+- HE-2 wiki scrape / DB-drift → audit trail only; data already merged PR-3. ✓ not load-bearing.
+- HE-3/5e/5f formulas (distance, stacking, rocket curve, booster push, fill order) → §1.2/§1.3. ✓
+- HE-5h built-in cloak + UNIQUE_EQUIP generalization → §1.7. ✓
+- HE-5h "`Item.built_in` attribute is DEAD" audit → not mentioned in §1; combat won't touch it, so safe, but a one-liner in §1.7 would prevent re-litigation. ⚠️ very minor.
+- HE-5j tick=10ms / clean-grid / no-rounding → §1.1. ✓
+- HE-6 commodities → out of PR-4 scope; §4 records PRs A–E shipped. ✓
+- HE-7 → promoted wholesale into §1. ✓
+- HE-5a PvC-stalemate route reuse → §1.9 (with "verify at code time"). ✓
+
+## 6. Disposition of each §7 finding
+
+Menu: (a) fix in-place in §1 · (b) add to §6 · (c) add to §8 to-do · (d) defer.
+
+| §7 finding | Severity in §7 | Reality | Proposed disposition |
+|---|---|---|---|
+| Repair-Bot rate: §1.3 % vs seed flat `HPps` 7/15 | 🔴 Critical | **STALE.** §6 C1 = ✅ RESOLVED, Entry 7 #24 locks percentage-of-max, and §1.3 already states "seed `HPps` 7/15 are stale data — ignore." §7 compared spec to raw seed without crediting that clause. Verified seed still holds 7/15. | **(d) defer/close — NOT blocking.** Already resolved in-spec. |
+| Built-in modules text outdated (§1.7) | ⚠️ Cosmetic | Already current: §1.7 Cloaks reads "verified 2026-05-30 … §6 C4 RESOLVED"; §6 C4 = ✅. Verified both ship JSONs hold `builtinModules:["U'tool"]`, no snake_case dup. | **(a)-equivalent already present — no action.** |
+| Khador/Rhoda type-name swap (§1.7) | ⚠️ Cosmetic | Already current: §1.7 reads `JumpDriveModule (Khador Drive)` / `TimeExtenderModule (Rhoda Vortex)`. Verified seed: Khador=`JumpDriveModule`, Rhoda=`TimeExtenderModule`. | **(a)-equivalent already present — no action.** |
+
+## 7. Improvements (non-blocking)
+
+1. **§1.0 Glossary** — tick, layer, track, tier, window, threshold, debuff, modifier, regen pulse, activation, cooldown, in-flight projectile.
+2. ✅ **DONE (this pass): Cross-reference / ID legend at top of §2** mapping the three schemes; former §6 O2 merged into §2 O-DP; §6 renamed `C1–C9` (§8.3).
+3. ✅ **DONE (this pass): combat-log output format** — `FightResults.combat_log`/`CombatEvent` two-tier design + wire-compat now in §1.12 / §4 (§8.1). Remaining §4 nice-to-haves: `manual_turret_mode: bool` on `ShipLoadout`; shock-blast reset hook; missile/rocket dispatch; explicit Phase-2 column names (§8.4).
+4. **TOC / anchor links** at file top (§1–§8) — file is 2200+ lines.
+5. ✅ **DONE (this pass): §6 progress marked in place** — items kept as a `C1–C9` disposition log (RESOLVED / CONFIRMED / MOVED) rather than deleted, preserving history.
+
+## Summary
+
+- ✓ **No blocking items.** Correcting the prior §8: §6 C1 (repair-bot rate) is RESOLVED, and §7's lone 🔴 is stale relative to §1.3's explicit "ignore seed `HPps`" clause. §1 is implementable as written.
+- ✅ **Combat-log output format RESOLVED (this pass):** §1.12 specifies an inline Tier-0 summary + `combat_log_id`, with the full event-tick timeline persisted to a new `combat_log` table (72 h retention) and lifetime metrics promoted onto `Player`; §4 splits the work into PR-4 (in-memory production + Player stat promotion) + PR-5 (persistence/retention). Discord rendering deferred to a later cycle. Was the prior "highest-value miss."
+- ⚠️ **Thin pointers:** Phase-2 schema column names and the `manual_turret_mode` flag exist only in Historical Entries / prose; surface them in §4.
+- ✓ **Reorg integrity sound:** §1 = read-first spec, §2 = sole open-question registry, §6 = closed disposition log, §7 = data snapshot, HE = audit trail.
+- All §7 cosmetic findings already reflected in current §1.7 text; §7 prose left verbatim as a dated snapshot.
+
+---
+
+*Last updated: 2026-05-30 (§8 superseded prior in-tree review; open-question IDs consolidated — §2 canonical `O-*`, §6 relabelled `C1–C9`; combat-log data model added as §1.12 — `combat_log` table w/ full event-tick timeline + inline summary + Player stat promotion; §4 PR-4/PR-5 wiring; new §2 O-LOG / O-STAT. Discord visualization deferred to a later cycle.)*

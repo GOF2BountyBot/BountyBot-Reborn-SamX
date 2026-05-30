@@ -363,7 +363,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 | O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | ✅ RESOLVED 2026-05-30 → **(a) accept**. Combat log surfaces the 0-damage outcome post-fight; no preflight warning, no filter. Promoted to `COMBAT_SPEC_LOCKED.md` §4. Seed-fix `e87db57` corrected the 3 EMP-blaster primaries from misplaced-physical to true pure-EMP; Phase-1 pure-EMP set = 5 weapons (3 primaries + mamba_emp + netha_emp). |
 | O-LOG | Combat-log knobs (§1.12): `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (≈72 h default?), and whether any per-side summary fields get denormalized columns vs living only in the `data` JSON. (Discord rendering/condensation is a later cycle — out of scope.) | OPEN — design in §1.12; only the numerics/policy are unsettled |
 | O-STAT | Exact set of lifetime combat-metric columns to add to `Player` (§1.12 stat promotion): beyond existing `duel_wins`/`bounty_wins`, which of `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`, … to persist? | OPEN — mechanism locked (combat processor mutates `Player`); only the field list is unsettled |
-| O-E | EMP mechanic full design (disable window, stacking, hit-roll, etc.) | DEFERRED to Phase-2 |
+| O-E | EMP mechanic full design (disable window, stacking, hit-roll, etc.) | ✅ LOCKED 2026-05-30 → **Phase-2 DEFERRED (formal)**. Partial Entry-7 #23 spec (victim outgoing damage = 0, firer accuracy vs victim = 100%, duration TBD) is a Phase-2 design starting-point, NOT a Phase-1 mechanic. All Phase-1 EMP weapons fire/roll/log/0-damage today per O-PE. Spec already reflects deferral in §4 / §11 / Appendix C — no spec edit needed. |
 
 ---
 
@@ -2328,6 +2328,29 @@ CLOSED. `COMBAT_SPEC_LOCKED.md` §6.2 updated with the cluster-missile
 sub-section; new §14 added capturing **downstream sync requirements**
 for item-detail embeds (EMP physical/EMP-damage distinction post seed-
 fix e87db57; cluster-missile burst_count display).
+
+---
+
+## Entry 10 — O-E formally locked as Phase-2 DEFERRED (2026-05-30)
+
+EMP mechanic full design (O-E) was already marked "DEFERRED to Phase-2"
+in §2 but never formally locked. User confirmed: EMP is unambiguously a
+Phase-2 mechanic, fully deferred — closing it.
+
+The partial Entry-7 #23 spec snippet (victim outgoing damage = 0; firer
+accuracy vs victim = 100%; duration TBD) is a Phase-2 design
+starting-point, NOT a Phase-1 mechanic. It is intentionally NOT
+promoted to `COMBAT_SPEC_LOCKED.md` (the spec only carries firmly-locked
+Phase-1 content per the strict no-escape-hatch rule).
+
+Phase-1 handling of all EMP weapons (pure-EMP and hybrid) is fully
+specified by:
+- §1.4 damage type model (Phase-1 = physical only; EMP ignored)
+- §2 O-PE (✅ pure-EMP equip policy = accept)
+- §6 / spec §4 / spec §6.2 / spec §11 / spec Appendix C (deferral
+  cross-references)
+
+§2 O-E marked ✅ LOCKED as Phase-2 DEFERRED. No spec edit needed.
 
 ---
 

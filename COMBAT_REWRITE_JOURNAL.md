@@ -14,6 +14,8 @@
 
 # 1. CURRENT DECISIONS
 
+> **Locked-in canonical design lives in [`COMBAT_SPEC_LOCKED.md`](./COMBAT_SPEC_LOCKED.md).** This journal is the WIP / decision-log space — it contains the same locked content plus open questions, in-progress decisions, rationale, and Historical Entries. Promote items from §1 here into `COMBAT_SPEC_LOCKED.md` only once they are firmly locked-in (no `?`, no `OPEN`, no `pending`).
+
 *Canonical Phase-1 combat spec. Supersedes any conflicting text in Historical Entries. Each subsection cites originating Historical Entry (HE-N) for traceability. Where a numeric is still TBD, the open-question ID (O-X) is given.*
 
 **Configuration policy (locked 2026-05-30):** every numeric in §1 (rates, percentages, thresholds, durations, distances, magnitudes, etc.) is a **starting default**. The intent is for all of them to land in `services/bot-core/src/services/game_constants.py` as `GameConstants.X` with `BOUNTYBOT_<NAME>` env-var overrides AND per-guild overrides (matching the existing pattern for `DUEL_VARIANCE_PERCENT`, `BOUNTY_PVC_ARMOUR_BUFF_FACTOR`). Tuning post-Phase-1 should not require code changes.
@@ -69,12 +71,23 @@
 ```
 attacker_accuracy = combatant_base                 # 60% / 50%
                   + own_scanner_bonus              # 0 (A) / +5pp (B) / +10pp (C)
-                  − opponent_cloak_debuff          # while cloak active           [O-Q1]
-                  − opponent_booster_debuff        # while boost active           [O-B]
-                  − opponent_thruster_debuff       # when current_distance < 750m [O-TH3/TH4]
-                  ± distance_penalty               # primaries only               [O-DP]
+                  + own_thruster_bonus             # primaries only; ramps 0 at 750m → max at 300m  [O-TH3 ✓]
+                  − opponent_booster_debuff        # while boost active: effect_pct × k_boost       [O-B ✓]
                   → clamp [0.05, 0.99]
+# Primaries: no in-range distance penalty (resolved O-DP, 2026-05-30). Range is
+# a pure binary gate via §1.6 — within range_m fires at the value above; beyond
+# range, primary cannot fire at all. Distance-as-accuracy is a SECONDARY-weapon
+# concern (rocket curve, missile tier-A degrade) and lives in §1.6, not here.
+
+# Cloak override (ABSOLUTE — resolved O-Q1, 2026-05-30):
+# while the TARGET's cloak is active, the layered result above is REPLACED by a
+# hard-set value: attacker_accuracy = cloak_set_value (default 0.25). It does
+# NOT stack with / subtract from the other terms — it supersedes them — then
+# re-clamp [0.05, 0.99].
 ```
+- **Cloak is an absolute set, not a debuff term.** While the target is cloaked the attacker's hit-chance against it is forced to `cloak_set_value` regardless of scanner/booster/thruster/distance; those modifiers are moot for the duration. (O-Q1 RESOLVED — see §1.7 Cloaks for the value.)
+- **Booster accuracy debuff (RESOLVED O-B, 2026-05-30):** `opponent_booster_debuff_pp = effect_pct × k_boost`, where `k_boost` is a configurable scaling factor (**default 0.10**, env/per-guild per §1's Configuration policy — `BOOSTER_ACCURACY_DEBUFF_FACTOR`). Percentage-points, subtracted from attacker accuracy while the target's boost is active, then clamped. At default k, the strongest booster (Polytron, `effect_pct`=300) yields 30pp — below cloak's 35pp, so no separate cap; the `[0.05, 0.99]` clamp bounds any extreme `k`. This is **in addition to** the booster's distance-push effect (§1.2). See §1.7 Boosters.
+- **Thruster accuracy bonus (RESOLVED O-TH3, 2026-05-30 — restores HE-5f framing; HE-7's defender-debuff reframing was a thruster↔booster confusion, superseded):** ATTACKER-SIDE bonus on the equipping ship's own primary accuracy. `bonus_pp = max_bonus_pp × ramp`, where `max_bonus_pp = effect_pct × k_thruster` (**`k_thruster` default 0.10**, configurable — `THRUSTER_ACCURACY_BONUS_FACTOR`, env/per-guild per §1 config policy) and `ramp = clamp((750 − current_distance) / (750 − min_distance), 0, 1)`. → 0 outside the 750 m window, ramping linearly up to `max_bonus_pp` at the 300 m distance floor. **Primaries only.** Turrets and rockets unaffected (rockets have their own 5%→60% curve). At default k, per-module max bonus: Static +2pp / Pendular +4pp / D'ozzt +7pp / Mp'zzzm +10pp / Pulsed Plasma +13pp. See §1.7 Thrusters.
 - **Per-weapon `accuracy_modifier`: dropped permanently.** (HE-7, session 2026-05-29 — closes Q2)
 - Forward-compat hook: `weapon_accuracy(pilot_acc, weapon) -> float` returns `pilot_acc` unchanged in Phase-1; an empty `SUBTYPE_ACCURACY_MOD: dict[str, float]` lives in `combat_balance.py`. Future homing-vs-must-aim split slots in here without structural rewrite.
 - Code cleanup: remove `WeaponStats.accuracy_modifier` (multiplicative, default 1.0 — never populated); keep `ModuleStats.accuracy_modifier` (additive, default 0.0 — carries scanner bonus).
@@ -82,8 +95,8 @@ attacker_accuracy = combatant_base                 # 60% / 50%
 ## 1.6 Weapons
 
 ### Primary weapons
-- Hit damage = `damage_per_shot` (physical). Cooldown = `loading_speed_ms`. Range-gated by `range_m`. Accuracy per §1.5 layered formula.
-- **Distance penalty:** OPEN (O-DP). Earlier-floated 0.20 max; relationship to rocket curve unclear.
+- Hit damage = `damage_per_shot` (physical). Cooldown = `loading_speed_ms`. **Range is a pure binary gate**: `current_distance ≤ range_m` → fires at full §1.5 accuracy; otherwise cannot fire at all. (Range gate is also locked in §1.2.)
+- **No in-range distance penalty (RESOLVED 2026-05-30, closes O-DP):** primaries do NOT degrade with distance inside their range envelope. The earlier-floated 0.20 max was a stale carry-over from before primaries/rockets were split; distance-as-accuracy is a secondary-weapon concern (rocket 5%→60% curve, missile tier-A degrade) — see Secondary weapons below.
 
 ### Secondary weapons
 **Phase-1 in-scope subtypes:** rocket, missile, nuke, shock-blast. (HE-5d + HE-7 session)
@@ -100,7 +113,7 @@ attacker_accuracy = combatant_base                 # 60% / 50%
 
 ### Turret weapons
 **Three subtypes exist; two are combat-relevant.** (HE-7 session 2026-05-29)
-- **Auto** (`automatic: true`): fires on own cooldown, additively alongside primaries. Accuracy = `pilot_current_accuracy × multiplier` where multiplier is in band ×0.85–0.90 (final number TBD — O-T2). All auto turrets on a single ship share one accuracy value (no per-turret variation; an 8-turret battlecruiser has one auto-turret-accuracy value applied to all 8). (HE-7)
+- **Auto** (`automatic: true`): fires on own cooldown, additively alongside primaries. `auto_turret_accuracy = clamp(pilot_current_accuracy × auto_turret_multiplier, 0.05, 0.99)` (RESOLVED O-T2 2026-05-30; **multiplier default 0.85**, configurable — `AUTO_TURRET_ACCURACY_MULTIPLIER`, env/per-guild per §1 config policy). `pilot_current_accuracy` is the full §1.5 result (post layered modifiers OR cloak override). **Auto turrets inherit the cloak set-value** — if the target is cloaked, pilot's current accuracy is `cloak_set_value` (default 0.25), so auto turrets fire at ~0.2125 (= 0.25 × 0.85), re-clamped to `[0.05, 0.99]`. All auto turrets on a single ship share one accuracy value (no per-turret variation; an 8-turret battlecruiser has one auto-turret-accuracy value applied to all 8). (HE-7)
 - **Manual** (`automatic: false`): mutually exclusive with primary; pre-combat pilot-dedicates. Default = primary (typically higher damage). Modeled by `manual_turret_mode: bool` flag on loadout. Override command does not exist yet. (HE-7)
 - **Plasma-collector** (`subtype: "plasma-collector"`, `dps: 0`): inert in combat. Equippable for fidelity; no effect.
 - **Data note:** auto/manual turrets lack explicit `subtype` field in seed; discriminate using `automatic: bool`. Only plasma-collectors carry `subtype`.
@@ -121,27 +134,30 @@ attacker_accuracy = combatant_base                 # 60% / 50%
 - **Thermal-fusion homing effect bypassed in Phase-1.** Thermal-fusion is a primary class and follows primary rules; scanner tier does NOT modify thermal-fusion behavior.
 
 ### Cloaks
-- **Effect:** opponent's hit-chance against you is reduced while active. NOT a forced miss. Example: 60% → 25% during cloak. (HE-7)
+- **Effect:** while active, the opponent's hit-chance against you is **hard-set to an absolute value** (`cloak_set_value`, default **25%**) — NOT a relative reduction and NOT a forced miss. Example: a 60% attacker is set to 25% for the cloak's duration. (HE-7)
 - **Activation:** HP thresholds **66% / 33%** (up to 2 activations per fight). (HE-7 — supersedes HE-5b's "30% single activation")
 - **Trigger rule:** activates iff off cooldown at threshold crossing; missed threshold = skipped, no retry; cooldown timer starts at effect expiry. (HE-7)
 - **Duration:** `effect_duration_ms` from wiki (U'tool=10s, Sight Suppressor II=20s, Shadow Ninja=40s).
 - **Cooldown:** `loading_speed_ms` from wiki.
 - **Built-in cloaks (Scimitar + Specter):** these ships carry an implicit U'tool cloak that **DOES function in combat** — it is a real, active cloak (same mechanic, duration, cooldown, HP-threshold activation as any equipped cloak). The built-in does NOT count against `max_modules` (off-slot — pilot still gets the ship's full equippable slot count). **Supersession rule:** if the pilot equips a cloak module, the equipped one wins and the built-in is bypassed: `effective_cloak = equipped if has_equipped else builtin`. (HE-5h) **Generalises to all `UNIQUE_EQUIP_TYPES`:** if any future ship gains a built-in <TYPE>, equipped wins over built-in, built-in still functions when no equipped instance is present. **Status (verified 2026-05-30):** both `nivelian.specter.json` and `nivelian.scimitar.json` populate `builtinModules: ["U'tool"]`; gap was closed during PR-3 enrichment. §6 C4 RESOLVED.
 - **Energy:** see §1's Resource policy — infinite, not tracked.
-- **Math interpretation** (additive / absolute / multiplicative): OPEN (O-Q1).
+- **Math interpretation (RESOLVED 2026-05-30, closes O-Q1):** **ABSOLUTE set** — opponent accuracy is hard-set to `cloak_set_value` (default **0.25**), overriding the §1.5 layered terms (does not stack with booster/thruster/distance). Value is a starting default, configurable per §1's Configuration policy. **Phase-1: all cloak tiers use the same set-value; tiers differ by duration only** (U'tool 10s / Sight Suppressor II 20s / Shadow Ninja 40s).
 
 ### Boosters
-- **Effect:** (a) push distance outward (formula in §1.2), AND (b) reduce opponent's accuracy while active. (HE-7)
+- **Effect:** (a) push distance outward (formula in §1.2, uses `effect_pct`), AND (b) reduce opponent's accuracy while active. Both fire together. (HE-7)
 - **Activation:** HP thresholds **80% / 60% / 40% / 20%** (up to 4 activations if cooldown permits). (HE-5b — confirmed in HE-7; 75/50/25 alternative retired)
 - **Trigger rule:** same universal HP-threshold rule (§1.8).
 - **Booster-user can still fire during boost** (accepted simplification, mirrors GoF2 base behavior). (HE-5f)
-- **Opponent accuracy debuff magnitude:** OPEN (O-B) — scales with `effect_pct`.
+- **Opponent accuracy debuff (RESOLVED 2026-05-30, closes O-B):** `debuff_pp = effect_pct × k_boost`, subtracted from attacker accuracy in §1.5 while boost is active. `k_boost` configurable, **default 0.10** (`BOOSTER_ACCURACY_DEBUFF_FACTOR`, env/per-guild per §1 config policy). Resulting per-module debuffs at default: Linear 6pp / Cyclotron 8pp / Synchrotron 16pp / Me'al 20pp / Polytron 30pp. No separate cap (stays under cloak's 35pp at default k; §1.5 `[0.05,0.99]` clamp bounds extremes). Independent of and additive with the distance-push (a).
 
 ### Thrusters
-- **Effect:** close-range maneuverability only. When `current_distance < 750m`, opponent's hit-chance against you is reduced. (HE-7)
-- **NO effect on distance / closure / weapon range / rocket accuracy.** (HE-7 — supersedes HE-5f's attacker-bonus framing; 750m window stays)
-- **Passive vs toggled:** OPEN (O-TH4) — leaning passive (no `duration_ms` in wiki).
-- **Debuff magnitude:** OPEN (O-TH3) — scaling vs `effect_pct`.
+- **Effect (RESTORED to HE-5f framing 2026-05-30):** thruster is the equipping ship's *handling / maneuverability* module → ATTACKER-SIDE primary-accuracy bonus. While **YOU** are within 750 m of your opponent, **YOUR** primary-weapon hit-chance is boosted. (HE-7's defender-debuff reframing was a thruster↔booster confusion — see HE-5f/5g for original locked design; HE-7 superseded on this point.)
+- **NO effect on distance / closure / weapon range / rocket accuracy / turrets.** Rockets carry their own 5%→60% distance curve; thrusters do not stack on top.
+- **Magnitude (RESOLVED 2026-05-30, closes O-TH3):** `bonus_pp = max_bonus_pp × ramp`, where:
+  - `max_bonus_pp = effect_pct × k_thruster`, with `k_thruster` configurable (**default 0.10** — `THRUSTER_ACCURACY_BONUS_FACTOR`, env/per-guild per §1 config policy).
+  - `ramp = clamp((750 − current_distance) / (750 − min_distance), 0, 1)` — linear from 0 at the 750 m window edge → 1 at the 300 m distance floor.
+- **Per-module max bonus at default k:** Static +2pp / Pendular +4pp / D'ozzt +7pp / Mp'zzzm +10pp / Pulsed Plasma +13pp.
+- **Passive (RESOLVED 2026-05-30, closes O-TH4):** thruster is **always active when conditions permit** — no HP-threshold gating, no `duration_ms`, no cooldown, no toggle. The bonus formula above is evaluated every tick: if `current_distance < 750m`, apply the ramped bonus; otherwise zero. (Consistent with the wiki having no `duration_ms` for thrusters.)
 
 ### Shields
 - Layer 1 (absorbs damage first per §1.3 stacking order).
@@ -174,7 +190,7 @@ attacker_accuracy = combatant_base                 # 60% / 50%
 ## 1.8 Activation rules (HP-threshold devices)
 - **Cloak:** 66% / 33% HP (2 activations max).
 - **Booster:** 80% / 60% / 40% / 20% HP (4 activations max).
-- **Thruster:** passive — no HP-threshold gating (pending O-TH4 confirmation).
+- **Thruster:** passive — no HP-threshold gating, no toggle, no cooldown. Always evaluated; effect gated solely by `current_distance < 750m`. (O-TH4 RESOLVED 2026-05-30.)
 - **EmergencySystem:** triggers on lethal hull damage (not a percentage threshold).
 
 **Universal trigger rule (HE-7):** at any HP-threshold crossing, the device activates **iff off cooldown**. Still cooling = threshold *skipped*, no retry. Cooldown timer starts when **effect expires**, NOT when activated.
@@ -337,12 +353,12 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 
 | ID | Topic | Status / Notes |
 |---|---|---|
-| O-Q1 | Cloak math: additive (`acc − 35pp`) / absolute (`set 25`) / multiplicative (`× 0.42`)? | OPEN |
-| O-T2 | Auto-turret accuracy multiplier final value within ×0.85–0.90 band | OPEN |
-| O-TH3 | Thruster opponent-accuracy debuff magnitude (close-range window) — scaling vs `effect_pct`? | OPEN |
-| O-TH4 | Thruster passive vs toggled (with HP-thresholds + cooldown)? | OPEN — leaning passive |
-| O-B | Booster opponent-accuracy debuff magnitude — scaling vs `effect_pct`? | OPEN |
-| O-DP | Distance penalty for primaries — separate from rocket curve? Max value? | OPEN (was floated at 0.20 max). **Single source of truth — absorbs former §6 O2 (the duplicate).** |
+| O-Q1 | Cloak math: additive (`acc − 35pp`) / absolute (`set 25`) / multiplicative (`× 0.42`)? | ✅ **RESOLVED 2026-05-30 — ABSOLUTE set.** Opponent accuracy hard-set to `cloak_set_value` (default 0.25), overriding §1.5 layered terms (no stacking). Tiers differ by duration only in Phase-1. See §1.5 / §1.7 Cloaks. |
+| O-T2 | Auto-turret accuracy multiplier final value within ×0.85–0.90 band | ✅ **RESOLVED 2026-05-30 — ×0.85.** Configurable (`AUTO_TURRET_ACCURACY_MULTIPLIER`, default 0.85). Applied AFTER §1.5 result (incl. cloak override), then re-clamped `[0.05, 0.99]`. Auto turrets inherit the cloak set-value. See §1.6 Turret weapons. |
+| O-TH3 | Thruster opponent-accuracy debuff magnitude (close-range window) — scaling vs `effect_pct`? | ✅ **RESOLVED 2026-05-30 — REFRAMED to attacker-side bonus** (HE-7's defender-debuff framing was a thruster↔booster confusion, restored to HE-5f/5g). `bonus_pp = (effect_pct × k_thruster) × ramp(750→300m)`, `k_thruster` configurable (default 0.10, `THRUSTER_ACCURACY_BONUS_FACTOR`). Primaries only. 2–13pp peak across the 5 thrusters at default. See §1.5 / §1.7 Thrusters. |
+| O-TH4 | Thruster passive vs toggled (with HP-thresholds + cooldown)? | ✅ **RESOLVED 2026-05-30 — PASSIVE.** Always active when `current_distance < 750m`; no HP threshold, no `duration_ms`, no cooldown, no toggle. See §1.7 Thrusters / §1.8. |
+| O-B | Booster opponent-accuracy debuff magnitude — scaling vs `effect_pct`? | ✅ **RESOLVED 2026-05-30 — linear.** `debuff_pp = effect_pct × k_boost`, `k_boost` configurable (default 0.10, `BOOSTER_ACCURACY_DEBUFF_FACTOR`). 6–30pp across the 5 boosters; no cap (under cloak at default). Additive with distance-push. See §1.5 / §1.7 Boosters. |
+| O-DP | Distance penalty for primaries — separate from rocket curve? Max value? | ✅ **RESOLVED 2026-05-30 — DOES NOT EXIST for primaries.** Range is a pure binary gate (§1.2/§1.6); within range, primaries fire at full §1.5 accuracy. The "0.20 max" was a stale carry-over from before primaries/rockets were split. Distance-as-accuracy lives entirely on the secondary side (rocket 5%→60% curve, missile tier-A degrade) — §1.6. Absorbed former §6 O2 (the duplicate). |
 | O-M | Cluster-missile (3 files) + ionizing-missile (2 files) Phase-1 status: (a) treat as "missile" variants; (b) inert in Phase-1; (c) own rule. | OPEN — leaning (b) per HE-5l. Moved from §6 O6. |
 | O-N | Nuke AoE falloff specifics + per-nuke real damage values (Liberator/Oppressor anchors) | OPEN |
 | O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | OPEN — moved from §6 O8. (NB: the 3 EMP-blaster primaries are NOT pure-EMP — see §1.4.) |
@@ -381,7 +397,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 - PR-4: New tick-based combat resolver
 
 **PR-4 file map:**
-- `services/bot-core/src/services/game_constants.py` — add `UNIQUE_EQUIP_TYPES`, OOC recovery rates, dock cost; combat-log retention knob `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (default 72) — env/per-guild per §1 config policy (§1.12, O-LOG)
+- `services/bot-core/src/services/game_constants.py` — add `UNIQUE_EQUIP_TYPES`, OOC recovery rates, dock cost; combat-log retention knob `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (default 72); resolved combat tunables `CLOAK_SET_VALUE` (default 0.25, O-Q1), `BOOSTER_ACCURACY_DEBUFF_FACTOR` (default 0.10, O-B), `THRUSTER_ACCURACY_BONUS_FACTOR` (default 0.10, O-TH3), `AUTO_TURRET_ACCURACY_MULTIPLIER` (default 0.85, O-T2) — all env/per-guild per §1 config policy (§1.5/§1.6/§1.7, O-LOG)
 - `services/bot-core/src/services/combat_balance.py` — NEW: per-subtype defaults, empty `SUBTYPE_ACCURACY_MOD`
 - `services/bot-core/src/services/combat_models.py` — drop `WeaponStats.accuracy_modifier`; keep `ModuleStats.accuracy_modifier`. `FightResults.combat_log` + `.metadata` fields ALREADY EXIST (stubs) — tick resolver populates them in memory (§1.12); no model change needed
 - `services/bot-core/src/services/combat_service.py` — public API unchanged; default resolver swapped to new tick resolver; `SimpleTTKResolver` kept behind feature flag for one release

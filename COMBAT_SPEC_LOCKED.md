@@ -96,9 +96,13 @@ Tuning post-Phase-1 must not require code changes.
 - **Resolver rule:** every weapon participates in cooldown / firing / event-log. Each hit applies `damage_per_shot` (physical) only; any `emp_damage` field is ignored regardless of value.
 - **Hybrid weapons** (`damage_per_shot > 0` AND `emp_damage > 0`, secondaries only): fire normally; apply ONLY the physical `damage_per_shot`. EMP component ignored.
 - **Pure-EMP weapons** (`damage_per_shot` = 0 / absent, `emp_damage > 0`): fire normally, roll accuracy, log hit/miss, apply **0 HP delta**.
+- **Pure-EMP equip policy:** equipping a pure-EMP weapon in Phase-1 is accepted as a player choice. No preflight warning. No loadout-build filter. The combat log surfaces the 0-damage outcome.
 - **GammaShield is inert in Phase-1** (no radiation-damage source exists). Kept in `UNIQUE_EQUIP_TYPES` for fidelity.
 
-> **Seed-data note (verified):** the 3 EMP-blaster primaries (`dia_emp_mk_iii`, `luna_emp_mk_i`, `sol_emp_mk_ii`) have non-zero `damage_per_shot` (3 / 5 / 8). They are LOW-damage physical weapons, **not** pure-EMP. The only true pure-EMP weapon in the in-scope set is `missiles.mamba_emp` (`damage=0`, `emp_damage=100`).
+> **Phase-1 pure-EMP inventory** (5 weapons, verified against galaxyonfire.wiki.gg, seed-fix `e87db57`):
+> - Primaries: `luna_emp_mk_i` (emp_damage=3), `sol_emp_mk_ii` (5), `dia_emp_mk_iii` (8)
+> - Secondary missile: `missiles.mamba_emp` (emp_damage=100)
+> - Secondary mine: `mines.netha_emp` (emp_damage=500)
 
 ---
 

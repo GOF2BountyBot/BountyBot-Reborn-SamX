@@ -55,9 +55,8 @@
 - **Phase-1 in-scope damage type: physical ONLY.** (HE-7, session 2026-05-29)
 - **EMP is a separate damage type; deferred to Phase-2+.** (HE-7, session 2026-05-29)
 - **Resolver rule:** every weapon participates in cooldown / firing / event-log. Each hit applies `damage_per_shot` (physical) only; `emp_damage` is ignored regardless of value.
-- **Pure-EMP weapons** (`damage_per_shot` = 0/absent, `emp_damage` > 0): fire normally, roll accuracy, log hit/miss, apply **0 HP delta**. Equipping one in Phase-1 is a no-op-cost choice — see §2 O-PE for the filter/warn/accept ruling.
-  - Pure-EMP inventory (verified 2026-05-29): primaries `dia_emp_mk_iii`, `luna_emp_mk_i`, `sol_emp_mk_ii` (all have small physical `damage_per_shot` values — actually NOT pure-EMP; see below); secondary `missiles.mamba_emp` (damage=0, emp_damage=100).
-  - **Correction:** the 3 EMP-blaster primaries all have non-zero `damage_per_shot` (3 / 5 / 8). They are LOW-damage physical weapons, not pure-EMP. They contribute small physical damage in Phase-1.
+- **Pure-EMP weapons** (`damage_per_shot` = 0/absent, `emp_damage` > 0): fire normally, roll accuracy, log hit/miss, apply **0 HP delta**. Equipping one in Phase-1 is a no-op-cost choice — RESOLVED O-PE (2026-05-30) → option (a) accept: combat log surfaces the 0-damage outcome; no preflight warning, no loadout-build filter.
+  - Pure-EMP inventory (post seed-fix `e87db57`, verified 2026-05-30): primaries `luna_emp_mk_i` (emp_damage=3), `sol_emp_mk_ii` (5), `dia_emp_mk_iii` (8); secondaries `missiles.mamba_emp` (emp_damage=100), `mines.netha_emp` (emp_damage=500). 5 weapons total.
 - **Hybrid weapons** (`damage_per_shot` > 0 AND `emp_damage` > 0, secondaries only): fire normally; apply ONLY the physical `damage_per_shot`. EMP component ignored.
   - Hybrid inventory (verified 2026-05-29): `missiles.dephase_emp` (120+100), `missiles.intelli_jet` (100+50), `rockets.emp_rocket_mk_i` (10+45), `rockets.emp_rocket_mk_ii` (30+60), `emp_bombs.emp_gl_dx` (4+300), `emp_bombs.emp_gl_i` (2+80), `emp_bombs.emp_gl_ii` (2+150). **Bonus surprise:** `rockets.armour_rocket` carries `emp_damage: 24` despite no EMP-naming — Phase-1 non-issue (ignored); flagged for Phase-2 to verify it's not a seed typo.
 - **GammaShield inert in Phase-1** (no radiation-damage source). Kept in `UNIQUE_EQUIP_TYPES` for fidelity. (HE-4 #12)
@@ -361,7 +360,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 | O-DP | Distance penalty for primaries — separate from rocket curve? Max value? | ✅ **RESOLVED 2026-05-30 — DOES NOT EXIST for primaries.** Range is a pure binary gate (§1.2/§1.6); within range, primaries fire at full §1.5 accuracy. The "0.20 max" was a stale carry-over from before primaries/rockets were split. Distance-as-accuracy lives entirely on the secondary side (rocket 5%→60% curve, missile tier-A degrade) — §1.6. Absorbed former §6 O2 (the duplicate). |
 | O-M | Cluster-missile (3 files) + ionizing-missile (2 files) Phase-1 status: (a) treat as "missile" variants; (b) inert in Phase-1; (c) own rule. | OPEN — leaning (b) per HE-5l. Moved from §6 O6. |
 | O-N | Nuke AoE falloff specifics + per-nuke real damage values (Liberator/Oppressor anchors) | OPEN |
-| O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | OPEN — moved from §6 O8. (NB: the 3 EMP-blaster primaries are NOT pure-EMP — see §1.4.) |
+| O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | ✅ RESOLVED 2026-05-30 → **(a) accept**. Combat log surfaces the 0-damage outcome post-fight; no preflight warning, no filter. Promoted to `COMBAT_SPEC_LOCKED.md` §4. Seed-fix `e87db57` corrected the 3 EMP-blaster primaries from misplaced-physical to true pure-EMP; Phase-1 pure-EMP set = 5 weapons (3 primaries + mamba_emp + netha_emp). |
 | O-LOG | Combat-log knobs (§1.12): `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (≈72 h default?), and whether any per-side summary fields get denormalized columns vs living only in the `data` JSON. (Discord rendering/condensation is a later cycle — out of scope.) | OPEN — design in §1.12; only the numerics/policy are unsettled |
 | O-STAT | Exact set of lifetime combat-metric columns to add to `Player` (§1.12 stat promotion): beyond existing `duel_wins`/`bounty_wins`, which of `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`, … to persist? | OPEN — mechanism locked (combat processor mutates `Player`); only the field list is unsettled |
 | O-E | EMP mechanic full design (disable window, stacking, hit-roll, etc.) | DEFERRED to Phase-2 |
@@ -462,7 +461,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 | C5 | **Non-combat modules explicit ruling** | ✓ **CONFIRMED** — §1.7 gives the one-line "resolver ignores entirely" rule for the 8 non-combat modules, with PrimaryWeaponMod carved out separately as combat-relevant. |
 | C6 | **cluster-missile + ionizing-missile Phase-1 status** | ➡️ **MOVED → §2 O-M** (still open; leaning inert per HE-5l). |
 | C7 | **Shock-blast + in-flight projectiles** | ✓ **CONFIRMED** — all firings resolve same-tick (no multi-tick projectile travel in Phase-1), so a shock-blast distance reset cannot strand an in-flight projectile. Question moot. |
-| C8 | **Pure-EMP weapons in Phase-1 loadout** | ➡️ **MOVED → §2 O-PE** (still open). The 3 EMP-blaster primaries are NOT pure-EMP (low physical damage) — clarified inline in §1.4. |
+| C8 | **Pure-EMP weapons in Phase-1 loadout** | ✅ **CLOSED via §2 O-PE → (a) accept** (2026-05-30). Seed-fix `e87db57` reclassified the 3 EMP-blaster primaries as true pure-EMP (Phase-1 pure-EMP set now = 3 primaries + mamba_emp + netha_emp). |
 | C9 | **Reorganization approach** | ✓ **CONFIRMED** — §1–§5 canonical + §6 disposition log + §7/§8 reviews on top, Historical Entries preserved verbatim below. |
 
 ---
@@ -2266,6 +2265,33 @@ Sequence per activation:
 this entry remains as the chronological working log. This file remains
 uncommitted in the working tree until the user reviews and locks PR-4
 design.*
+
+---
+
+## Entry 8 — Seed-fix + O-PE lock (2026-05-30)
+
+Researcher subagent verified all 8 EMP-family weapon seeds against
+galaxyonfire.wiki.gg as source of truth. Three EMP-blaster primary
+seeds were structurally wrong (EMP value misplaced into `damage_per_shot`,
+`emp_damage` field missing). Fixed in commit `e87db57`. EMP-bombs,
+`mamba_emp`, `netha_emp` verified correct as-is.
+
+Post-fix Phase-1 pure-EMP inventory = 5 weapons:
+- Primaries: `luna_emp_mk_i`, `sol_emp_mk_ii`, `dia_emp_mk_iii`
+- Secondary missile: `missiles.mamba_emp`
+- Secondary mine: `mines.netha_emp`
+
+O-PE resolved → option (a) accept: player can fit pure-EMP, fight goes
+ahead, combat log surfaces 0-damage post-fight. No preflight warning,
+no loadout-build filter. Rationale: degrades naturally when EMP arrives
+in Phase-2 (no UI to rip out); consistent with combat-log being the
+canonical visibility surface; "buyer beware" acceptable for a knowable
+edge case.
+
+§1.4 updated: `Correction` paragraph removed (was wrong post-fix);
+inventory line rewritten with all 5 weapons; `netha_emp` added (was
+missing). §2 O-PE marked RESOLVED. §6 C8 marked CLOSED.
+`COMBAT_SPEC_LOCKED.md` §4 updated to match.
 
 ---
 

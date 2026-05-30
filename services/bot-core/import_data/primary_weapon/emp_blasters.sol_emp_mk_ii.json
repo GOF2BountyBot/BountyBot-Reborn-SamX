@@ -18,7 +18,8 @@
   "extra_atts": {
     "loading_speed_ms": 450,
     "range_m": 2000,
-    "damage_per_shot": 5,
+    "damage_per_shot": 0,
+    "emp_damage": 5,
     "speed_km_h": 3750,
     "subtype": "emp-blaster"
   }

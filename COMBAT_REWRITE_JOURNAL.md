@@ -191,7 +191,11 @@ attacker_accuracy = combatant_base                 # 60% / 50%
 - Deferred to Phase-2. (HE-7)
 
 ### Other modules
-- **PrimaryWeaponMod:** unique-equip in `UNIQUE_EQUIP_TYPES`; passive `+N%` primary DPS multiplier (HE-3 #8). In scope for Phase-1.
+- **PrimaryWeaponMod:** unique-equip in `UNIQUE_EQUIP_TYPES` (HE-3 #8; mutual-exclusion locked in Entry 3). **Phase-1 mechanic (RESOLVED O-PWM 2026-05-30):** the new tick-based resolver honors the seed `damage_pct` + `fire_rate_pct` breakdown (NOT the legacy `dpsMultiplier` field, which is metadata-only and used only by the current SimpleTTKResolver + item-detail embed). Applies to **primary weapons ONLY** (secondaries, turrets, auto-turrets unaffected). Formulas:
+  - `effective_damage_per_shot = round(damage_per_shot × (1 + damage_pct / 100))`
+  - `effective_loading_speed_ms = round((loading_speed_ms / (1 + fire_rate_pct / 100)) / TICK_MS) × TICK_MS` (snaps to 10ms tick boundary)
+  - No floor guard on damage — base 0 (EMP-blasters) stays 0; normal primaries (damage ≥ 2) never round to 0 from −10%.
+  - Seed inventory: `nirai_overdrive` (damage_pct=−10, fire_rate_pct=+20 → lighter-faster shots), `nirai_overcharge` (damage_pct=+20, fire_rate_pct=−10 → heavier-slower shots). Both `dpsMultiplier=1.1` is coincidental (~+8% effective DPS in both cases) — the *feel* differs but headline DPS is the same.
 - **Non-combat modules** (no Phase-1 combat effect, resolver ignores entirely): JumpDriveModule (Khador Drive), TimeExtenderModule (Rhoda Vortex), Compressor, MiningDrill, TractorBeam, Cabin, Signature, SpectralFilter. (Inventoried 2026-05-29 + name-mapping corrected 2026-05-30 per §7 verification.)
 
 ## 1.8 Activation rules (HP-threshold devices)
@@ -369,6 +373,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 | O-M | Cluster-missile (3 files) + ionizing-missile (2 files) Phase-1 status: (a) treat as "missile" variants; (b) inert in Phase-1; (c) own rule. | ✅ RESOLVED 2026-05-30 → **split**: cluster-missile = in-scope missile variant with `burst_count` sub-munitions (N independent rolls against a fire-time accuracy snapshot, per-sub-munition damage, condensed to one combat-log event); ionizing-missile = Phase-3+ deferred (seed `damage` already 0, no ionizer mechanic planned). Seed-edit adds `burst_count` (3/4/5) to the 3 cluster-missile files. Promoted to `COMBAT_SPEC_LOCKED.md` §6.2 + new §14 (downstream sync). |
 | O-N | Nuke AoE falloff specifics + per-nuke real damage values (Liberator/Oppressor anchors) | ✅ RESOLVED 2026-05-30 → mechanic locked. **No accuracy roll** (cloak/thruster/booster all ignored — nukes always apply). **Random epicenter** in `[300m, 5000m]` along 1D combat-distance axis. **Inverse-square falloff** `dmg = damage × (1 - min(1, d / eff_mag))²` with `eff_mag = magnitude_m × NUKE_MAGNITUDE_SCALE` (default **0.10**). **Self-damage** at `NUKE_FRIENDLY_FACTOR` (default **0.25**) — firer caught in own blast using same falloff formula at `d_firer = epicenter`. **Steerable flag ignored** Phase-1; per-nuke `damage` seed values (Liberator 850 / Extinctor 700 / Oppressor 400 / Tormentor 150 / Fireworks 1) accepted as direct-hit anchors. Promoted to `COMBAT_SPEC_LOCKED.md` §6.2 + Appendix A + Appendix B + §14. |
 | O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | ✅ RESOLVED 2026-05-30 → **(a) accept**. Combat log surfaces the 0-damage outcome post-fight; no preflight warning, no filter. Promoted to `COMBAT_SPEC_LOCKED.md` §4. Seed-fix `e87db57` corrected the 3 EMP-blaster primaries from misplaced-physical to true pure-EMP; Phase-1 pure-EMP set = 5 weapons (3 primaries + mamba_emp + netha_emp). |
+| O-PWM | PrimaryWeaponMod (Nirai Overdrive / Overcharge) — which formula governs the new tick-based resolver? Spec §7.8 originally said "flat +N% dpsMultiplier" but seed data carries `damage_pct` + `fire_rate_pct` breakdowns that the spec ignored. | ✅ RESOLVED 2026-05-30 → **honor `damage_pct` + `fire_rate_pct`** breakdown; legacy `dpsMultiplier` is metadata-only (current SimpleTTKResolver + item-detail embed). Applies to **primary weapons only**. Effective damage rounds to integer, effective loading_speed_ms rounds to nearest TICK_MS (10ms). No floor guard on damage (base-0 stays 0, base-≥2 never reaches 0 from −10%). Promoted to `COMBAT_SPEC_LOCKED.md` §7.8 + Appendix B + §14. |
 | O-LOG | Combat-log knobs (§1.12): `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (≈72 h default?), and whether any per-side summary fields get denormalized columns vs living only in the `data` JSON. (Discord rendering/condensation is a later cycle — out of scope.) | OPEN — design in §1.12; only the numerics/policy are unsettled |
 | O-STAT | Exact set of lifetime combat-metric columns to add to `Player` (§1.12 stat promotion): beyond existing `duel_wins`/`bounty_wins`, which of `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`, … to persist? | ✅ RESOLVED 2026-05-30 → **3 fields only**: `total_fights`, `total_nukes_fired`, `total_module_activations` (all Integer, default 0). Dropped from consideration: `total_shots_fired` + `total_secondaries_fired` (grow uninterestingly fast); `total_damage_*` family (same big-number concern); `bounty_losses` (intentional asymmetry with current bounty scoring). One Alembic migration. Promoted to `COMBAT_SPEC_LOCKED.md` §13. |
 | O-E | EMP mechanic full design (disable window, stacking, hit-roll, etc.) | ✅ LOCKED 2026-05-30 → **Phase-2 DEFERRED (formal)**. Partial Entry-7 #23 spec (victim outgoing damage = 0, firer accuracy vs victim = 100%, duration TBD) is a Phase-2 design starting-point, NOT a Phase-1 mechanic. All Phase-1 EMP weapons fire/roll/log/0-damage today per O-PE. Spec already reflects deferral in §4 / §11 / Appendix C — no spec edit needed. |
@@ -2455,6 +2460,51 @@ NOT locked here (intentionally left for later):
   from `combat_log` if needed, within retention window
 - Damage tracks — may revisit in Phase-2 if a tankiness / DPS
   leaderboard feature lands
+
+---
+
+## Entry 13 — O-PWM lock: PrimaryWeaponMod uses damage_pct + fire_rate_pct breakdown (2026-05-30)
+
+Side-question surfaced mid-O-STAT batch: spec §7.8 originally treated
+Nirai Overdrive / Overcharge as a flat `+N%` primary DPS multiplier
+(honoring only the legacy `dpsMultiplier: 1.1` field), which made the
+two modules mechanically indistinguishable. Seed-data inspection
+revealed each module carries `damage_pct` + `fire_rate_pct` fields
+that represent the actual tradeoff:
+
+- Nirai Overdrive: damage_pct=-10, fire_rate_pct=+20 → lighter-faster
+- Nirai Overcharge: damage_pct=+20, fire_rate_pct=-10 → heavier-slower
+- Both `dpsMultiplier=1.1` is coincidental (~+8% effective DPS in both
+  cases); the *feel* differs even though headline DPS is the same.
+
+Resolved (option b): the new tick-based resolver honors the
+damage_pct + fire_rate_pct breakdown. Legacy `dpsMultiplier` is
+metadata-only — used by the current SimpleTTKResolver and as an
+item-detail-embed display hint, but ignored by the tick-resolver.
+
+Locked formulas:
+- `effective_damage_per_shot = round(damage_per_shot × (1 + damage_pct / 100))`
+- `effective_loading_speed_ms = round((loading_speed_ms / (1 + fire_rate_pct / 100)) / TICK_MS) × TICK_MS`
+
+Scope clamp: **primary weapons only**. Secondaries (rockets, missiles,
+cluster-missiles, nukes, shock-blast), turrets (auto + manual), and
+auto-turret outputs are all UNAFFECTED by these modules.
+
+Rounding rules: damage rounds to nearest integer (no `max(1, ...)`
+floor — base-0 EMP-blasters stay 0, normal primaries with damage ≥ 2
+never reach 0 from -10%). Cooldown snaps to the nearest TICK_MS
+boundary (10ms) so the tick-based resolver lines up cleanly.
+
+Mutual exclusion was already locked (Entry 3 + UNIQUE_EQUIP_TYPES);
+only the effect-formula was open.
+
+§1.7 PrimaryWeaponMod bullet rewritten. §2 gains a new O-PWM row
+(marked RESOLVED — skipped the open phase since the conversation went
+straight to lock). Spec: §7.8 rewritten as a proper mechanic spec;
+Appendix B gains a PrimaryWeaponMod formula reference block; §14
+gains a 4th item-detail embed requirement (display damage_pct,
+fire_rate_pct, AND the legacy dpsMultiplier so a player can see both
+the breakdown and the net DPS shift).
 
 ---
 

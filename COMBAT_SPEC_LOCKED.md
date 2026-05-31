@@ -308,8 +308,30 @@ Three tiers:
 - **Consumable:** removed from loadout after use; player must manually re-equip a spare from inventory. **Once per fight by consumption.**
 
 ### 7.8 PrimaryWeaponMod
-- Passive `+N%` primary DPS multiplier (per-module value from seed).
-- Unique-equip (§10).
+Passive per-shot stat modifier. **Unique-equip** (§10) — only one PrimaryWeaponMod can be slotted at a time.
+
+**Scope:** primary weapons ONLY. Secondaries (rockets / missiles / cluster-missiles / nukes / shock-blast), turrets (auto + manual), and auto-turret outputs are all UNAFFECTED.
+
+**Mechanic** — honor seed `damage_pct` + `fire_rate_pct` (NOT the legacy `dpsMultiplier`):
+```
+effective_damage_per_shot   = round(damage_per_shot × (1 + damage_pct / 100))
+effective_loading_speed_ms  = round((loading_speed_ms / (1 + fire_rate_pct / 100)) / TICK_MS) × TICK_MS
+```
+- `damage_pct` and `fire_rate_pct` are integer percentages from the module's `extra_atts`.
+- `effective_damage_per_shot` rounds to nearest integer. **No floor guard** — base-0 EMP-blaster primaries stay 0; normal primaries (`damage_per_shot ≥ 2`) never round to 0 from −10%.
+- `effective_loading_speed_ms` snaps to the nearest `TICK_MS` boundary (10ms) so the tick-based resolver lines up cleanly.
+- `fire_rate_pct` semantics: positive = faster (lower cooldown). +20% means the weapon fires every `loading_speed_ms / 1.2` ms.
+
+**Legacy `dpsMultiplier` field:** retained on the seed for two consumers — the *current* SimpleTTKResolver (until it's retired) and the item-detail embed (a quick "net DPS shift" hint for the player). The new tick-based resolver IGNORES it; the breakdown above is the source of truth.
+
+**Seed inventory (Phase-1):**
+
+| Module | `damage_pct` | `fire_rate_pct` | `dpsMultiplier` | Feel |
+|---|---|---|---|---|
+| Nirai Overdrive | −10 | +20 | 1.1 | lighter, faster shots |
+| Nirai Overcharge | +20 | −10 | 1.1 | heavier, slower shots |
+
+Both have ~+8% effective DPS (`(1 ± 0.10) × (1 ∓ 0.10) ≈ 1.08`); the `dpsMultiplier: 1.1` is a hand-rounded source-data approximation. The two modules feel mechanically distinct under the new resolver even though the headline DPS shift is the same.
 
 ### 7.9 Inert in Phase-1 (kept for fidelity)
 The resolver loads these but applies no combat effect:
@@ -538,6 +560,7 @@ Phase-1 combat-spec corrections to seed-data structure must be reflected in user
 1. **EMP / physical damage distinction** — for any weapon with `emp_damage > 0` in `extra_atts`, the embed MUST surface EMP damage as a distinct labelled field, separate from physical `damage` / `damage_per_shot`. Background: seed-fix `e87db57` corrected the 3 EMP-blaster primaries (Luna/Sol/Dia EMP) from misplaced-physical to true pure-EMP (`damage_per_shot: 0`, `emp_damage: 3/5/8`). Without this distinction the embed shows "damage: 0" with no explanation, hiding the real weapon characteristic.
 2. **Cluster missile `burst_count`** — for any weapon with `subtype: "cluster-missile"`, the embed MUST surface the `burst_count` value, ideally alongside per-sub-munition `damage` AND derived `total damage on full hit = burst_count × damage`. This is the only way a player can compare cluster-missile DPS to plain-missile DPS meaningfully.
 3. **Nuke direct-hit + effective magnitude + self-damage warning** — for any weapon with `subtype: "nuke"`, the embed MUST surface (a) the direct-hit `damage` value (epicenter damage), (b) the **effective magnitude** = `magnitude_m × NUKE_MAGNITUDE_SCALE` (not the raw `magnitude_m`, which is misleading since the runtime scales it), and (c) a **self-damage warning** indicating the firer is caught in the blast at `NUKE_FRIENDLY_FACTOR × falloff_damage`. Without these the player has no way to reason about the risk/reward of nuke usage (e.g. Liberator's 850 direct damage carries a ~123 point-blank self-damage cost — that cost MUST be visible).
+4. **PrimaryWeaponMod breakdown** — for any module with `type: "PrimaryWeaponModModule"`, the embed MUST surface (a) `damage_pct`, (b) `fire_rate_pct`, AND (c) the legacy `dpsMultiplier` value (separately labelled as "net DPS shift"). Background: §7.8 honors the per-shot breakdown, but the two modules in scope (Nirai Overdrive / Overcharge) have an identical `dpsMultiplier: 1.1` despite producing mechanically distinct loadouts (lighter-faster vs heavier-slower) — surfacing all 3 fields is the only way a player sees the tradeoff at equip time rather than discovering it mid-fight.
 
 **Implementation scope** (touches both services):
 - `services/bot-core/src/api/schemas/` — extend item-detail Pydantic schema(s) so `emp_damage` and `burst_count` are explicit response fields (currently they live inside the generic `extra_atts` blob).
@@ -614,6 +637,13 @@ opponent_damage     = dmg(d_opponent)
 self_damage         = dmg(d_firer) × NUKE_FRIENDLY_FACTOR
 ```
 Both ships always take damage. Accuracy / cloak / thruster / booster modifiers do NOT apply. Steerable flag ignored.
+
+### PrimaryWeaponMod (Nirai Overdrive / Overcharge — primary weapons only)
+```
+effective_damage_per_shot   = round(damage_per_shot × (1 + damage_pct / 100))
+effective_loading_speed_ms  = round((loading_speed_ms / (1 + fire_rate_pct / 100)) / TICK_MS) × TICK_MS
+```
+`damage_pct` and `fire_rate_pct` per seed `extra_atts`. Legacy `dpsMultiplier` field IGNORED by tick-resolver (kept only for current SimpleTTKResolver + embed display). No floor on effective damage. Cooldown snaps to nearest `TICK_MS`.
 
 ### Regen pulse schedule (per layer source)
 - **Shield:** `+1 HP every N ticks`, `N = ceil(shield_recharge_ms / shield_capacity / tick_ms)` per shield module.

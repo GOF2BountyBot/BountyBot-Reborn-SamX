@@ -3,10 +3,6 @@
 > Canonical, locked-in design for the BountyBot Phase-1 combat system. Items
 > here have been explicitly confirmed and are not subject to ambiguity.
 > Configurable knobs include their default values.
->
-> **For decision history, open questions, and rationale, see
-> [`COMBAT_REWRITE_JOURNAL.md`](./COMBAT_REWRITE_JOURNAL.md).** The journal is
-> the working / WIP space; this file is the destination for promoted decisions.
 
 ---
 
@@ -16,12 +12,19 @@
 Every numeric in this spec (rates, percentages, thresholds, durations, distances, magnitudes) is a **starting default**. All defaults land in
 `services/bot-core/src/services/game_constants.py` as `GameConstants.<NAME>` with:
 - `BOUNTYBOT_<NAME>` environment-variable override, and
-- per-guild override (matching the existing pattern for `DUEL_VARIANCE_PERCENT`, `BOUNTY_PVC_ARMOUR_BUFF_FACTOR`).
+- per-guild override (matching the existing pattern in `GameConstants`).
 
 Tuning post-Phase-1 must not require code changes.
 
 ### 0.2 Resource policy
 **Energy is assumed infinite — for combat and any other gameplay surface that might check energy.** Energy cells are not tracked. Wiki lore references to "energy cell consumption per use" (e.g. U'tool cloak) are cosmetic only; the resolver does not gate on energy. Applies to player AND criminal/NPC combatants.
+
+### 0.3 Symbol naming convention
+Throughout this spec:
+- **`UPPERCASE_SNAKE_CASE`** (e.g. `MIN_DISTANCE_M`, `CLOAK_SET_VALUE`, `PVC_DAMAGE_REDUCTION`, `TICK_MS`) — **configurable tunables**. These land in `GameConstants` (§0.1) and are overridable via `BOUNTYBOT_<NAME>` environment variables and per-guild overrides. Appendix A is the canonical list of locked defaults.
+- **`lowercase_snake_case`** (e.g. `current_distance`, `base_speed`, `effect_pct`, `damage_pct`, `loading_speed_ms`, `range_m`, `duration_ms`) — **internal variables, function arguments, formula parameters, or per-item seed-data attributes**. NOT configuration knobs. These flow from runtime resolver state (e.g. `current_distance`) or from per-weapon / per-module seed JSON (e.g. `loading_speed_ms`, `effect_pct`).
+
+When a formula uses a lowercase symbol whose value is sourced from a config knob, the formula is written in the lowercase form for readability but the value is read from the matching UPPERCASE constant. Example: `ramp = clamp((750 − current_distance) / (750 − min_distance), 0, 1)` — `current_distance` is runtime state, `750` is the literal value of `THRUSTER_WINDOW_M`, `min_distance` is the literal value of `MIN_DISTANCE_M`. The lowercase form is for the prose; the implementation reads from `GameConstants`.
 
 ---
 
@@ -31,6 +34,8 @@ Tuning post-Phase-1 must not require code changes.
 - **Hard cap: 18,000 ticks per fight (3 simulated minutes).**
 - **Per-weapon cooldown:** each weapon holds `cooldown_remaining_ms`; per tick decrement by 10; fires when `≤ 0` AND in-range AND not gated; resets to `loading_speed_ms`.
 - All wiki `loading_speed_ms` values are clean multiples of 10 ms — no accumulator carry, no drift.
+- **Initial state at tick 0:** all weapons enter combat fully ready (`cooldown_remaining_ms = 0`); first-tick firing is gated only by range and any other normal checks. HP-threshold module cooldowns are also `0` at tick 0 (see §8). Regen-track dormancy and damaged-start handling: see §3.
+- **Implementation note:** initial cooldown / regen state is a *combatant init* concern (set during combatant construction, not inside the tick loop). This isolates Phase-2 "damaged-start" / "ambush" scenarios — where a combatant might enter with weapons mid-cooldown — from the tick-step logic.
 
 ---
 
@@ -49,6 +54,7 @@ Tuning post-Phase-1 must not require code changes.
   distance_gained_m = base_speed × (effect_pct / 100) × (duration_ms / 1000)
   ```
   During the boost window, passive closure is suspended; the booster's outward velocity dominates. After expiry, normal closure resumes.
+- **No upper distance bound.** `current_distance` is naturally bounded by per-module booster limits (`effect_pct × duration_ms`) and the 4-activation-per-fight cap on boosters; there is no synthetic `MAX_DISTANCE_M` cap. Weapons stop firing once they exceed their own `range_m`; otherwise no special behavior at extreme distances.
 - **Shock-blast distance reset:** instantly resets both ships to the starting distance (5000 m). 100% guaranteed (no accuracy roll). No damage. Fires on cooldown (`loading_speed_ms`); no per-fight cap; no HP-threshold gating. (Phase-1 weapons resolve same-tick, so in-flight projectile interaction is moot.)
 
 ---
@@ -87,6 +93,23 @@ Tuning post-Phase-1 must not require code changes.
 - **Regen pulses are applied BEFORE damage in each tick.** Finishing-blow detection is clean: HP ≤ 0 at end of tick = dead.
 - **Concurrent regen:** shield regen and hull/armour regen run in parallel each tick (independent tracks).
 
+### Incoming damage reduction — PvC player buff (Keith T. Maxwell bonus)
+In **PvC fights only**, the player-side combatant receives a uniform reduction on all incoming damage. Lore: the player character (Keith T. Maxwell in GoF2 canon) is a tougher pilot than a stock-loadout ship reflects.
+
+- **Formula:** for each damage event landing on the player-side combatant, `applied_damage = raw_damage × (1 − PVC_DAMAGE_REDUCTION)`. Apply this scaling *before* the shield → armour → hull stacking.
+- **Default magnitude:** `PVC_DAMAGE_REDUCTION = 0.33` (`BOUNTYBOT_PVC_DAMAGE_REDUCTION`, env/per-guild overridable per §0.1).
+- **Sources covered — all incoming damage:** opponent weapon hits, opponent secondary impacts, AND the firer's own nuke self-damage (§6.2). The buff is a uniform "tougher hull" effect — it does not discriminate by damage source.
+- **Stacking with other mechanics:** DR is the *first* modifier applied to a damage event before it walks the layers. EmergencySystem (§7.7) still evaluates against the post-DR end-of-damage-phase hull.
+- **NPC-side and PvP combatants:** receive zero DR. PvP fights run with no DR on either side (the buff would cancel out, so it isn't applied).
+- **Why DR instead of an HP / armour multiplier:** keeps the player's stored `max_*` and (Phase-2) `current_*` HP-layer values on their stock-loadout scale, so the planned Phase-2 "enter combat with sustained damage from earlier battles" hook does not need scale-aware conversion. The buff lives entirely in the damage-application step, not in the loadout.
+- **Legacy retirement:** this replaces the older `player_armour_buff: float = 1.0` parameter on `CombatService.fight_ships(...)` and the `BOUNTY_PVC_ARMOUR_BUFF_FACTOR` constant. The PR-4 cut renames the parameter to `pvc_damage_reduction: float = 0.0` and removes the old constant; the SimpleTTKResolver retires alongside.
+
+### Regen dormancy & initial state
+- **Regen runs only when its target layer has HP to recover.** Shield regen ticks only while `current_shield < shield_max`. Repair Bot regen ticks only while `current_hull < hull_max` OR `current_armour < armour_max` (its fill scope per §7.6).
+- **Accumulator semantics:** when a layer drops below max, the regen accumulator starts at 0 and ticks per the integer-flush schedule above. When the layer returns to max, the accumulator goes dormant and any partial accumulation is **discarded** — next damage to that layer starts a fresh accumulator. ("Recharge does NOT pause after a hit" still holds *within* a damaged window — it's continuous from first damage until layer returns to max.)
+- **Phase-1 initial state:** all combatants start at max on every layer, so all regen accumulators are dormant at tick 0; each starts when the first damage on its relevant layer applies.
+- **Phase-2 damaged-start hook:** if a combatant is constructed with `current_shield < shield_max` (or `current_hull / current_armour` below max), the relevant accumulator is active immediately at tick 0 — the dormancy check sees an already-damaged layer and engages. No tick-loop change needed; this is a combatant-init concern (see §1 implementation note).
+
 ---
 
 ## 4. Damage type model
@@ -97,7 +120,7 @@ Tuning post-Phase-1 must not require code changes.
 - **Hybrid weapons** (`damage_per_shot > 0` AND `emp_damage > 0`, secondaries only): fire normally; apply ONLY the physical `damage_per_shot`. EMP component ignored.
 - **Pure-EMP weapons** (`damage_per_shot` = 0 / absent, `emp_damage > 0`): fire normally, roll accuracy, log hit/miss, apply **0 HP delta**.
 - **Pure-EMP equip policy:** equipping a pure-EMP weapon in Phase-1 is accepted as a player choice. No preflight warning. No loadout-build filter. The combat log surfaces the 0-damage outcome.
-- **GammaShield is inert in Phase-1** (no radiation-damage source exists). Kept in `UNIQUE_EQUIP_TYPES` for fidelity.
+- **GammaShield is inert in Phase-1** (no radiation-damage source exists). Referenced in §10 for fidelity (the resolver loads the module class but applies no combat effect).
 
 > **Phase-1 pure-EMP inventory** (5 weapons, verified against galaxyonfire.wiki.gg, seed-fix `e87db57`):
 > - Primaries: `luna_emp_mk_i` (emp_damage=3), `sol_emp_mk_ii` (5), `dia_emp_mk_iii` (8)
@@ -188,11 +211,11 @@ Behavior depends on the equipping ship's scanner tier (§7.1):
 - **Tier A (no scanner)** → degrades to rocket behavior (same projectile, same stats, rocket accuracy curve applies).
 
 #### Cluster missile (`subtype: "cluster-missile"`, `burst_count: N`)
-Lock-on tracking missile that releases **N sub-munitions** per fire. Inherits the plain-Missile scanner-tier rule for whether tracking is active (Tier B/C → §5 accuracy; Tier A → rocket curve).
+A cluster missile is **identical to a plain missile in every respect except that it releases N sub-munitions per fire instead of one**. Inherits the plain-Missile scanner-tier rule for whether tracking is active (Tier B/C → §5 accuracy; Tier A → rocket curve).
 
-- **Accuracy snapshot semantics:** the pilot's §5 accuracy is captured **once** at the moment of fire. ALL N sub-munitions roll independently against that single snapshot. A thruster ramp / cloak activation occurring mid-flight does NOT retroactively alter sub-munition rolls.
-- **Damage application:** each landing sub-munition deals `damage` (per-sub-munition, NOT total). Single-target only (no AoE — cluster missiles carry no `magnitude_m`).
-- **Combat-log condensation:** **ONE event per cluster fire** with summary fields `{weapon, fired: N, hits: K, damage_per_hit, total_damage: K × damage}`. Not N rows.
+- **Accuracy snapshot semantics:** the fire-time accuracy is captured **once** per cluster fire — sourced from the pilot's §5 accuracy under Tier B/C, or from the rocket-curve evaluated against `current_distance` at fire time under Tier A. ALL N sub-munitions then roll independently against that single snapshot. A thruster ramp / cloak activation / distance change occurring after the cluster fires does NOT retroactively alter sub-munition rolls.
+- **Damage application — per-sub-munition, sequential:** each landing sub-munition deals `damage` (per-sub-munition, NOT total) and walks the shield → armour → hull stack independently. Single-target only (no AoE — cluster missiles carry no `magnitude_m`). **All K landed sub-munitions apply** even if an earlier one drops the target to HP ≤ 0; overkill is allowed (HP can go transiently negative within Appendix B step 4). EmergencySystem evaluates against the *cumulative* end-of-phase hull, not per sub-munition (§7.7) — so a cluster that goes wildly past lethal still triggers ES at most once.
+- **Combat-log condensation:** **ONE event per cluster fire** with summary fields `{weapon, fired: N, hits: K, damage_per_hit, total_damage: K × damage}`. `total_damage` reports the weapon's *swung* output (max-possible across landed sub-munitions); the actual HP absorbed (post-clamp) feeds the per-combatant `damage_dealt` rollup in §12's summary. Not N rows.
 - **Seed inventory (Phase-1):** Shesha (`burst_count: 3`, damage 60), Garuda-IV (`burst_count: 4`, damage 75), Patala (`burst_count: 5`, damage 90). Resolver reads `burst_count` from `extra_atts` generically.
 
 #### Nuke (`subtype: "nuke"`)
@@ -222,6 +245,8 @@ Area-of-effect weapon with **no accuracy roll**. Bypasses the entire §5 accurac
 #### Shock-blast
 Pure distance-reset utility (§2). No damage. 100 % guaranteed. Fires on cooldown. The seed file (`misc.shock_blast.json`) carries `damage: 140` / `emp_damage: 80` — **both IGNORED** by the Phase-1 mechanic.
 
+Weapons and modules are independent subsystems: firing shock-blast resets `current_distance` only — active cloak / booster effects continue running on their own `duration_ms`, and module cooldowns are unaffected.
+
 ### 6.3 Turret weapons
 
 Three subtypes exist; two are combat-relevant. Discriminate using the `automatic: bool` field (auto/manual turrets carry no explicit `subtype` field; only plasma-collectors do).
@@ -233,14 +258,26 @@ Three subtypes exist; two are combat-relevant. Discriminate using the `automatic
   auto_turret_accuracy = clamp(pilot_current_accuracy × auto_turret_multiplier, 0.05, 0.99)
   ```
   - `auto_turret_multiplier` default **0.85** (`AUTO_TURRET_ACCURACY_MULTIPLIER`).
-  - `pilot_current_accuracy` is the full §5 result (post layered modifiers OR cloak override).
+  - `pilot_current_accuracy` is the §5 result **with the thruster bonus excluded** (turrets are unaffected by thrusters per §7.4 — thruster bonus is a primary-only term). Scanner bonus and opponent booster debuff still apply; cloak override still applies (see next bullet).
   - **Auto turrets inherit the cloak set-value.** If the target is cloaked, pilot accuracy is `cloak_set_value` (0.25 default), so auto turrets fire at ~0.2125 (= 0.25 × 0.85), re-clamped.
+  - **Implementation note:** the resolver computes two pilot-accuracy values per tick — `pilot_primary_acc` (full §5, with thruster) used for primaries, and `pilot_turret_acc` (§5 minus thruster) used for auto turrets and any future turret-class accuracy lookup.
 - **One accuracy value shared across all auto turrets on a ship** — no per-turret variation. An 8-turret battlecruiser computes one value per tick and applies it to all 8 turret shots.
 
 #### Manual turrets (`automatic: false`)
-- **Mutually exclusive with primary.** Pre-combat pilot-dedicates via a `manual_turret_mode: bool` flag on `ShipLoadout`.
-- Default mode = primary (manual is opt-in; primary is typically higher damage).
-- Override command does not exist yet (loadout flag is the modeling slot).
+- **Mutually exclusive with primary** via a ship-wide `manual_turret_mode: bool` flag on `ShipLoadout`. Auto turrets are **unaffected** by the flag — they always fire on their own cooldown regardless of mode.
+  - `manual_turret_mode = false` (default — "primary mode"): primaries fire normally; **manual turrets do NOT fire** this fight (the pilot is focused on the primary). Manual turrets stay equipped but inert. Auto turrets fire as usual.
+  - `manual_turret_mode = true` ("turret mode"): **primaries do NOT fire**; manual turrets fire as pilot-aimed weapons (rules below). Auto turrets fire as usual.
+- **Accuracy when firing — treated as a primary.** Each manual turret fires at `pilot_primary_acc` (full §5 layered formula, including the thruster bonus; the cloak override still applies if the target is cloaked). The 0.85 auto-turret multiplier does **NOT** apply. Range gate per §6.1 (`current_distance ≤ range_m`).
+- **Cooldown — independent per turret.** Each manual turret runs its own `loading_speed_ms` cooldown. A ship with N manual turrets in turret-mode fires up to N shots per cycle, each rolled independently against `pilot_primary_acc`.
+- **PrimaryWeaponMod does NOT apply** to manual turrets (§7.8 excludes all turrets — auto and manual).
+
+##### Required schema / data-model enhancements (Phase-1)
+The `manual_turret_mode` flag is the canonical Phase-1 mechanism for choosing primary vs. manual-turret mode. The field does not yet exist in code; Phase-1 implementation must add it. (Decomposition into ordered implementation tasks is a later concern — this section documents the required surface.)
+
+1. **`ShipLoadout.manual_turret_mode: bool`** — new field on the frozen dataclass at `services/bot-core/src/services/combat_models.py`, default `false`.
+2. **`PlayerShip` persistence** — the per-ship record needs to carry the mode (top-level `"manual_turret_mode": false` in the existing JSON blob, or a dedicated column — implementer's choice; both are consistent with current `PlayerShip` patterns).
+3. **`LoadoutBuilder.from_player()` and `LoadoutBuilder.from_criminal_ship()`** — read the persisted value and surface it on the built `ShipLoadout`. Criminals default to `false` (NPCs always run primary-mode in Phase-1 — no per-criminal toggle exists yet).
+4. **No UI command in Phase-1.** Flipping the flag is deferred to a later cycle. The default-`false` ("primary mode") path is what every fight runs through until a turret-mode toggle command lands. The resolver implements both branches now so it is forward-ready when the UI exists.
 
 #### Plasma-collector turrets (`subtype: "plasma-collector"`, `dps: 0`)
 - **Inert in combat.** Equippable for fidelity; produces no effect.
@@ -248,6 +285,8 @@ Three subtypes exist; two are combat-relevant. Discriminate using the `automatic
 ---
 
 ## 7. Modules
+
+> **Naming convention:** §7 prose uses friendly names (Cloak, Booster, Repair Bot, Thruster, etc.). The canonical SQLAlchemy STI discriminator (`Item.type` value, e.g. `CloakModule`, `RepairBotModule`) for every module class referenced below is listed in §10's mapping table. When this spec promotes to implementation tasks, code identifiers come from §10.
 
 ### 7.1 Scanners (combat scanners; plasma scanners ignored)
 
@@ -274,7 +313,7 @@ Three tiers:
   ```
   effective_cloak = equipped if has_equipped else builtin
   ```
-  Generalises to all `UNIQUE_EQUIP_TYPES`: equipped wins over built-in; built-in still functions when no equipped instance is present.
+  This is the only built-in / equipped supersession case in Phase-1 (§10). The same rule generalises to any future built-in-vs-equipped collision on a unique-equip combat module: equipped wins over built-in; built-in still functions when no equipped instance is present.
 
 ### 7.3 Boosters
 - **Two simultaneous effects** while active:
@@ -301,11 +340,13 @@ Three tiers:
 - Rate, formula, integer-flush schedule: §3.
 
 ### 7.7 EmergencySystem
-- **Trigger:** an incoming damage event that would reduce **hull** to ≤ 0 (true ship-death interception). Shield or armour reaching 0 does NOT trigger.
-- **Effect:** hull HP clamped to 1; **10 s of full invulnerability** (ALL incoming damage blocked).
-- **Regen during invuln:** continues normally (shield + hull/armour concurrently if Repair Bot equipped).
+- **Trigger:** evaluated at the **end of the damage-application phase** (Appendix B step 4). If, after ALL tick damage has been applied (including any overkill that pushed hull transiently negative), the combatant's hull is ≤ 0 AND the combatant has an unconsumed ES equipped → fire. Shield or armour reaching 0 does NOT trigger; only true ship-death does.
+- **Effect:** hull HP clamped to **1**; the combatant enters **10 s of full invulnerability** (ALL incoming damage blocked across subsequent ticks until the window expires).
+- **Multi-source same-tick:** when multiple weapons / sub-munitions / nuke self-damage all contribute to the lethal damage, the trigger still fires ONCE at end-of-phase — ES does not try to identify "the lethal hit," only whether end-of-phase hull is ≤ 0. Overkill is discarded by the clamp-to-1; it does not carry into the invuln window.
+- **Regen during invuln:** continues normally (shield + hull/armour concurrently if Repair Bot equipped), subject to the dormancy rule in §3 (regen only ticks on layers below max).
 - **HP at expiry:** `1 + 10 s × applicable regen rates`, capped per-layer max. Edge case (no shield, no Repair Bot) → HP = 1 at expiry.
 - **Consumable:** removed from loadout after use; player must manually re-equip a spare from inventory. **Once per fight by consumption.**
+- **Not an HP-threshold device:** despite being grouped with cloak/booster in §8 for activation-rule discussion, ES does NOT use the universal HP-threshold trigger rule. It fires from the lethal-damage check above, at step 4 of the tick (not step 5).
 
 ### 7.8 PrimaryWeaponMod
 Passive per-shot stat modifier. **Unique-equip** (§10) — only one PrimaryWeaponMod can be slotted at a time.
@@ -362,12 +403,14 @@ The resolver loads these but applies no combat effect:
 
 | Device | Thresholds | Max activations | Notes |
 |---|---|---|---|
-| Cloak | 66 % / 33 % | 2 | |
-| Booster | 80 % / 60 % / 40 % / 20 % | 4 (if cooldown permits) | |
-| Thruster | — (passive) | — | Always active when `current_distance < 750 m` |
-| EmergencySystem | Lethal hull damage (not a %) | 1 (consumable) | |
+| Cloak | 66 % / 33 % | 2 | Universal HP-threshold rule below. Fires at Appendix B step 5. |
+| Booster | 80 % / 60 % / 40 % / 20 % | 4 (if cooldown permits) | Universal HP-threshold rule below. Fires at Appendix B step 5. |
+| Thruster | — (passive) | — | Always active when `current_distance < 750 m`. No activation event. |
+| EmergencySystem | End-of-damage-phase hull ≤ 0 (not a %) | 1 (consumable) | NOT an HP-threshold device. Fires at Appendix B step 4 (after damage applies, before clamp). See §7.7. |
 
 **Universal trigger rule:** at any HP-threshold crossing, the device activates **iff off cooldown**. Still cooling = threshold *skipped*, no retry. Cooldown timer starts when **effect expires**, NOT when activated.
+
+**Initial state at tick 0:** all HP-threshold module cooldowns start at `0` — the device is ready to activate on the *first* qualifying threshold crossing without any warmup delay. (Combatant-init concern per §1.)
 
 Per-activation sequence:
 ```
@@ -379,26 +422,60 @@ trigger → run for duration_ms → cooldown begins → cooldown lasts loading_s
 ## 9. Fight termination
 
 - **Hard cap:** 18,000 ticks (3 simulated minutes).
-- **One side dead:** other side wins.
-- **PvP stalemate (cap reached, both alive):** draw. Both players keep credits; no rewards.
-- **PvC stalemate (cap reached, both alive):** draw, BUT the criminal escapes — new system is selected along the route; hunt-checks reset. (Reuse the existing loss-path flow when coding.)
+- **One side dead at end of tick (`reason: hp_depleted`):** the surviving side wins. Per Appendix B step 4 → step 8, damage is fully applied before the termination check, so HP ≤ 0 at end-of-tick = dead.
+- **Both sides dead at end of tick (`reason: mutual`):** draw. Same reward semantics as a time-cap stalemate, but logged distinctly so battle history reflects *how* the fight ended.
+  - **PvP:** draw. Both players keep credits; no rewards.
+  - **PvC:** draw, criminal escapes (mirrors the time-cap PvC path — new system selected along the route; hunt-checks reset; reuse the existing loss-path flow when coding).
+- **Time-cap, both alive (`reason: time_cap` for the resolver; `outcome: stalemate`):**
+  - **PvP (`summary.reason: draw`):** draw. Both players keep credits; no rewards.
+  - **PvC (`summary.reason: draw`):** draw, criminal escapes — new system selected along the route; hunt-checks reset. (Reuse the existing loss-path flow when coding.)
+
+**`outcome` × `reason` matrix** (§12 `data.summary` fields):
+
+| `outcome` | `reason` | When |
+|---|---|---|
+| `win` | `hp_depleted` | exactly one side at HP ≤ 0 at end of tick |
+| `stalemate` | `mutual` | both sides at HP ≤ 0 on the same tick |
+| `stalemate` | `time_cap` (resolver) / `draw` (summary) | tick == `MAX_FIGHT_TICKS`, both alive |
+
+Reward / route-progression handling for `stalemate` is identical across `mutual` and `time_cap` — the reason field is for log granularity only.
 
 ---
 
-## 10. Unique-equip list (`UNIQUE_EQUIP_TYPES`)
+## 10. Modules referenced in combat (code-identifier mapping)
 
-At most one of each type per ship loadout:
+This section maps every module class the combat spec mentions in §7 to its SQLAlchemy STI discriminator (`Item.type`) so that implementation tasks reference the correct identifier strings. Spec prose uses friendly names; this table is the canonical translation.
 
-| Type | Scope |
-|---|---|
-| Cloak | Phase-1 |
-| Booster | Phase-1 |
-| EmergencySystem | Phase-1 |
-| PrimaryWeaponMod | Phase-1 |
-| Combat scanner | Phase-1 |
-| Plasma scanner (inert) | Phase-1 (fidelity) |
-| TimeExtenderModule (Rhoda Vortex) | Non-combat |
-| ShieldInjector (Phoenix SIS) | Phase-2 |
+**Why "unique-equip" appears in the mechanics:** several combat formulae throughout §7 talk about "the cloak," "the booster," "the thruster" as singular things. That singularity is a *mechanical assumption* this spec makes when deriving behavior (one cooldown, one supersession rule, one set of HP-threshold gates per fight). It currently matches loadout-builder behavior, but this spec is *describing* what mechanics assume — it is **not** responsible for *enforcing* equip rules. The loadout builder is a separate process; see "Loadout contract" below.
+
+| Friendly name | `Item.type` | Mechanics assumes unique? | Section |
+|---|---|---|---|
+| Shield | `ShieldModule` | Yes | §7.5 |
+| Armour | `ArmourModule` | Yes | §3, §7 |
+| Repair Bot | `RepairBotModule` | Yes | §7.6 |
+| Thruster | `ThrusterModule` | Yes | §7.4 |
+| Cloak | `CloakModule` | Yes (+ built-in supersession case — see §7.2 and below) | §7.2 |
+| Booster | `BoosterModule` | Yes | §7.3 |
+| Scanner | `ScannerModule` | Yes (combat scanner active; plasma scanner shares the class but is inert in combat) | §7.1 |
+| EmergencySystem | `EmergencySystemModule` | Yes (consumable, once per fight) | §7.7 |
+| PrimaryWeaponMod | `PrimaryWeaponModModule` | Yes | §7.8 |
+| GammaShield | `GammaShieldModule` | Yes (Phase-1 inert — no rad-damage source) | §7.9 |
+| RepairBeam | `RepairBeamModule` | Yes (Phase-2 deferred) | §7.10 |
+| ShieldInjector (Phoenix SIS) | `ShieldInjectorModule` | Yes (Phase-2 deferred) | §7.10 |
+| TransfusionBeam | `TransfusionBeamModule` | Yes (Phase-2 deferred) | §7.10 |
+
+Modules not referenced by combat (Cabin, Compressor, JumpDrive, MiningDrill, Signature, SpectralFilter, TimeExtender, TractorBeam) live entirely in the loadout-builder's domain and are out of scope for this document.
+
+### Built-in cloak supersession (the one special case)
+The Scimitar and Specter ships carry an implicit U'tool cloak as a built-in (off-slot — does not consume a regular module slot). Combat treatment:
+
+- **No cloak equipped** → the built-in U'tool is the active cloak. Same mechanic as any equipped cloak (§7.2): set-value 0.25, HP-threshold activations at 66 % / 33 %, U'tool's 10 s duration and cooldown.
+- **Equipped cloak present** → the equipped cloak supersedes the built-in. Combat uses only the equipped cloak's stats; the built-in is bypassed for the fight. (Canonical statement: `effective_cloak = equipped if has_equipped else builtin`.)
+
+This is the only built-in / equipped supersession case in Phase-1. The same rule generalises to any future built-in-vs-equipped collision on a unique-equip combat module — combat picks the equipped instance when present, otherwise falls back to the built-in.
+
+### Loadout contract
+The combat resolver consumes a baked `ShipLoadout` from the loadout builder and **does not re-validate** equip rules, slot counts, or any other loadout-construction invariants. The loadout builder is a separate process (out of scope here) and is assumed to produce a well-formed loadout. If a malformed loadout reaches combat, behavior is undefined — that is an upstream invariant violation, not a combat-resolver concern.
 
 ---
 
@@ -433,7 +510,7 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
 |---|---|---|---|
 | `id` | `Integer` PK autoincrement | no | The only handle. No separate UUID. |
 | `guild_id` | `BigInteger` | no | Discord snowflake (same type as `Bounty.guild_id`). |
-| `context` | `String(20)` | no | `duel` / `bounty_pvc` / `bounty_bonus`. |
+| `context` | `String(20)` | no | One of `duel` / `bounty_pvc` / `bounty_bonus`. `duel` = PvP duel (`duel_service.accept_duel`). `bounty_pvc` = Silver+ tier bounty gate (`bounty_service.check_system` — combat win required to collect base reward). `bounty_bonus` = Bronze tier post-collection bonus combat (both the auto-run path in `bounty_service.check_system` and the manual `POST /bounties/combat-bonus` endpoint — combat result decides only the 2× reward multiplier, not collection). The combat resolver itself is `loadouts in → FightResults out` and has no awareness of reward semantics — the `context` value is set by the caller when invoking `CombatLogService.persist()`. |
 | `combatant1_name` / `combatant2_name` | `String(255)` | no | Display name. For PvC the NPC side holds the criminal / bounty name. |
 | `combatant1_user_id` / `combatant2_user_id` | `BigInteger` | yes | Discord user id (matches `DuelRequest.challenger_id`). **NULL ⇒ that side is an NPC.** |
 | `winner_name` | `String(255)` | yes | NULL on stalemate. |
@@ -442,6 +519,7 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
 | `created_at` | `DateTime(timezone=True)` default `now(UTC)` | no | **Retention key.** |
 
 - **Invariant:** at least one `combatant{1,2}_user_id` is non-NULL — NPC-vs-NPC never occurs. The persist layer may assert this.
+- **C1/C2 assignment rule:** for duels, challenger = C1, opponent = C2. For PvC, player = C1, NPC (criminal/bounty) = C2 (NPC always gets `combatant2_user_id = NULL`). Same convention drives Appendix B's tick processing order — combatant slots are stable across the schema, the resolver, and the timeline.
 - Combatant identity + outcome are **projected to columns** for cheap lookup/listing; the authoritative per-combatant detail lives in `data.summary`.
 - **Size is bounded by retention, not by truncation.** The timeline is stored whole.
 
@@ -462,14 +540,14 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
         "final_hp": { "shield": 0,   "armour": 0,   "hull": 140 },
         "damage_dealt": 620, "damage_taken": 480,
         "shots_fired": 240, "shots_hit": 168, "accuracy": 0.70,
-        "module_activations": { "Cloak": 2, "Repair Bot": 3 },
+        "module_activations": { "Cloak": 2, "Booster": 3 },
         "secondary_fired":    { "rocket": 12 }
       },
       "2": { /* …same shape… */ }
     }
   },
   "timeline": [ /* CombatEvent rows, in processing order */ ],
-  "metadata": { "tick_ms": 10, "total_ticks": 8421, "variance_percent": 0.05, "resolver": "tick_v1", "pvc_armour_buff": 1.5 }
+  "metadata": { "tick_ms": 10, "total_ticks": 8421, "resolver": "tick_v1", "pvc_damage_reduction": 0.33 }
 }
 ```
 
@@ -501,7 +579,7 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
 | `regen` | shield recharge pulse or repair-bot hull/armour pulse applies | `{layer, amount, hp_after}` |
 | `weapon_fire` | a primary / secondary / turret fires (incl. miss) | `{slot, subtype, weapon, hit, accuracy}` |
 | `damage` | HP applied to a target after a hit | `{amount, breakdown:{shield,armour,hull}, hp_after, source}` |
-| `module_activation` | cloak / booster / repair-bot / EmergencySystem / etc. engages | `{module, trigger_hp_pct}` |
+| `module_activation` | a discrete activation occurs — Phase-1: cloak / booster (HP-threshold crossing) or EmergencySystem (lethal-hull trigger). Passive modules (Repair Bot, Thruster, PrimaryWeaponMod, shield regen) do NOT emit this event. | `{module, trigger_hp_pct}` (trigger_hp_pct omitted for EmergencySystem) |
 | `cooldown_end` | a weapon or module comes off cooldown | `{system}` |
 | `layer_depleted` | a ship's shield → 0 or armour → 0 | `{layer}` |
 | `distance` | distance changes (booster push, closing, shock-blast reset) | `{from, to, cause}` |
@@ -541,20 +619,64 @@ When the battle-log command is implemented (deferred — Discord rendering is a 
 
 This is captured here so the eventual command lands with the right contract — `combatant{1,2}_name` + `created_at` are already projected to columns precisely so this dropdown query is a single indexed scan, no JOINs.
 
+### Public API: `CombatService.fight_ships(...)`
+
+```python
+fight_ships(
+    loadout1: ShipLoadout,
+    loadout2: ShipLoadout,
+    *,
+    context: str | None = None,           # "duel" / "bounty_pvc" / "bounty_bonus" — required when log_result=True
+    log_result: bool = True,              # gates BOTH combat-log persistence AND §13 Player lifetime-stat updates
+    pvc_damage_reduction: float = 0.0,    # Keith T. Maxwell bonus (§3) — 0.33 in PvC, 0.0 in PvP/preflight
+    guild_config: GuildConfig | None = None,
+) -> FightResults
+```
+
+**`log_result` semantics:**
+- **`log_result=True`** (default, safe-by-default for real fights) — `fight_ships` runs the sim, then **internally**: (a) persists a `combat_log` row via `CombatLogService.persist(...)` keyed by `context`, and (b) applies §13 Player lifetime-stat updates for each human combatant. Returns `FightResults` with `combat_log_id` populated.
+- **`log_result=False`** — `fight_ships` runs the sim and returns `FightResults` only. **No database state is touched** (no `combat_log` row, no Player stat updates, no Bounty / Inventory / etc. mutations). Used exclusively by `CombatPreflightService` for the `/promote` Monte-Carlo loop. `FightResults.combat_log_id` is `None`.
+
+**`context` parameter validation:**
+- Required (non-None) when `log_result=True`. Allowed values: `"duel"` / `"bounty_pvc"` / `"bounty_bonus"` (matches the `combat_log.context` enum).
+- Ignored when `log_result=False` (preflight passes `None` or a sentinel).
+- The service raises at the call boundary if `log_result=True` AND `context is None`.
+
+**Wire-compat parameters (retiring with `SimpleTTKResolver`):**
+- `variance_percent` and the old positional `player_armour_buff` are accepted (existing callsites may still pass them) but ignored by the tick resolver. See §3 (PvC damage reduction) and the "Why variance is dropped" note further down. Both retire when `SimpleTTKResolver` is removed.
+
+**Callsite assignment (Phase-1):**
+
+| Callsite | `log_result` | `context` | Notes |
+|---|---|---|---|
+| `duel_service.accept_duel` | `True` (default) | `"duel"` | PvP duel; persists + updates stats |
+| `bounty_service.check_system` (Bronze) | `True` (default) | `"bounty_bonus"` | Base reward already paid; combat decides 2× multiplier |
+| `bounty_service.check_system` (Silver+) | `True` (default) | `"bounty_pvc"` | Combat win required to collect base reward |
+| `bounties.POST /bounties/combat-bonus` | `True` (default) | `"bounty_bonus"` | Manual-trigger endpoint for the Bronze bonus combat |
+| `combat_preflight_service` (Monte-Carlo loop) | **`False`** | n/a | Ephemeral simulations for `/promote` gear-check; no state touched |
+
 ### In-memory production & `FightResults` mapping
 
 - The tick resolver builds the full `timeline` + summary in memory during the sim:
   - `FightResults.combat_log: list[dict]` ← the timeline
   - `FightResults.metadata: dict` ← the summary
   - Both stub fields already exist on the dataclass.
-- After resolution the callsite:
-  1. Persists a `combat_log` row via `CombatLogService` (returns `combat_log_id`).
-  2. Updates Player lifetime metrics (§13).
-  3. Puts `{summary…, combat_log_id}` into `combat_result`. The bulky `timeline` is **NOT** sent on the fight response.
+- After tick-resolution, **`fight_ships` itself** (gated by `log_result=True`):
+  1. Persists a `combat_log` row via `CombatLogService.persist(...)` using the caller-supplied `context`. Returns `combat_log_id` on the `FightResults`.
+  2. Applies §13 Player lifetime-stat updates on the human combatant(s).
+- The **caller** then:
+  - Receives the `FightResults` (with `combat_log_id` populated if `log_result=True`, `None` otherwise).
+  - Puts `{summary…, combat_log_id}` into its own response payload (e.g. `combat_result` dict). The bulky `timeline` is **NOT** sent on the fight response — only the `combat_log_id`, which the player can later use to fetch detail.
+  - Applies whatever **reward / game-state logic** belongs to that caller (credit transfer for duels, bounty collection for Silver+ gate, 2× multiplier for Bronze bonus, etc.). The combat service is `loadouts in → FightResults out + maybe a persisted log + maybe stat updates`. Reward semantics are out of scope here.
+
+### Legacy `FightStats` wire-compat
+
 - **Legacy `FightStats` (`raw_hp` / `varied_hp` / `raw_dps` / `varied_dps` / `ttk`) stay populated** for wire compatibility with existing consumers:
-  - `varied_hp` ← effective start HP
+  - `varied_hp` ← effective start HP. **The tick resolver does NOT apply `variance_percent`** (see note below), so `varied_hp = raw_hp` for new fights. The two fields stay distinct only because legacy consumers may still read both.
   - `varied_dps` ← `damage_dealt / duration_s`
   - `ttk` ← `duration_s` for the loser / `None` for the winner
+
+> **Why variance is dropped:** the `variance_percent` parameter (sourced from `DUEL_VARIANCE_PERCENT`) was a TTK-era smoothing layer used by `SimpleTTKResolver` to add fight-to-fight variability on top of an otherwise-deterministic time-to-kill calculation. The tick resolver derives all randomness from per-shot accuracy rolls (one uniform draw per weapon fire) — that intrinsic RNG is already the source of fight variance, so a separate `variance_percent` would compound randomness without giving anything back. The parameter stays in the `CombatService.fight_ships(...)` signature for wire-compat (callsites unchanged), but the tick resolver ignores it. `DUEL_VARIANCE_PERCENT` and `variance_percent` retire when `SimpleTTKResolver` is removed.
 
 ---
 
@@ -562,13 +684,15 @@ This is captured here so the eventual command lands with the right contract — 
 
 Aggregate **lifetime** combat metrics are promoted onto the **`Player` record** by the combat processor — **NOT** stored in `combat_log`. This is a handler inside the combat-service code that mutates the `Player` object after a fight; the log tables are unaffected.
 
+**Gated by `log_result`:** stat updates run inside `fight_ships` only when `log_result=True` (§12 Public API). The preflight Monte-Carlo loop passes `log_result=False` and therefore does NOT increment any Player counters — its 20 ephemeral simulations have zero impact on lifetime stats.
+
 **Phase-1 locked counter set** — 3 new `Player` columns (all `Integer`, `default=0`):
 
 | Column | Increments when… |
 |---|---|
 | `total_fights` | post-fight (any fight the player participated in) |
 | `total_nukes_fired` | per nuke fire event (uses §6.2 Nuke mechanic) |
-| `total_module_activations` | per HP-threshold or manual module activation (cloak / booster / EmergencySystem / etc.) |
+| `total_module_activations` | per discrete activation of an HP-threshold-gated or consumable module — Phase-1: **Cloak** (HP-threshold), **Booster** (HP-threshold), **EmergencySystem** (lethal-hull-damage trigger, consumable). **Passive modules are NOT counted** — Repair Bot, Thruster, PrimaryWeaponMod, and shield regen are always-on and produce no `module_activation` event. |
 
 All 3 are **bounded-per-fight** — a single fight contributes a small finite count, so headline lifetime numbers stay meaningful rather than drifting into uninteresting-big-number territory. Existing counters (`bounty_wins`, `duel_wins`, `duel_losses`, `duel_credits_won`, `duel_credits_lost`, `lifetime_credits`, `systems_checked`, `xp`, `prestige_count`) are unchanged.
 
@@ -594,7 +718,7 @@ Phase-1 combat-spec corrections to seed-data structure must be reflected in user
 - `services/bot-core/src/api/schemas/` — extend item-detail Pydantic schema(s) so `emp_damage` and `burst_count` are explicit response fields (currently they live inside the generic `extra_atts` blob).
 - `services/discord-gateway/src/cogs/` — the cog(s) that build the item-detail embed must render the new fields. Most likely the inventory / ships cogs; verify against current cog list at implementation time.
 
-**Out of scope** for this section: the `/about` bot-info command (BountyBot version/owner info, unrelated to item rendering). The phrase "/about embed" elsewhere in the journal refers to the item-detail embed described here.
+**Out of scope** for this section: the `/about` bot-info command (BountyBot version/owner info), which is unrelated to item rendering. §14 applies only to *item-detail* embeds — the per-weapon / per-module display surfaces in inventory/ships flows where a player inspects a single item. The motivation for §14 is the recent enrichment of the item data model (EMP-vs-physical damage split, cluster `burst_count`, nuke effective magnitude, PrimaryWeaponMod `damage_pct`/`fire_rate_pct` breakdown); without these embed updates the player loses visibility into mechanically-relevant fields the combat resolver now consumes.
 
 ---
 
@@ -627,6 +751,7 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 | `EMERGENCY_SYSTEM_INVULN_S` | **10** | §7.7 |
 | `NUKE_MAGNITUDE_SCALE` | **0.10** | §6.2 |
 | `NUKE_FRIENDLY_FACTOR` | **0.25** | §6.2 |
+| `PVC_DAMAGE_REDUCTION` | **0.33** | §3 (Keith T. Maxwell bonus — PvC, player side only) |
 | `COMBAT_LOG_RETENTION_HOURS` | **72** | §12 |
 
 > Names with `BOUNTYBOT_` prefix are listed verbatim where the existing convention uses the prefix in the env name; others use the unprefixed `GameConstants` name (the runtime env override is `BOUNTYBOT_<NAME>` in all cases).
@@ -645,7 +770,7 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 - **Cloak override:** `acc = clamp(CLOAK_SET_VALUE, 0.05, 0.99)` (replaces layered)
 - **Booster debuff:** `debuff_pp = effect_pct × BOOSTER_ACCURACY_DEBUFF_FACTOR`
 - **Thruster bonus:** `bonus_pp = effect_pct × THRUSTER_ACCURACY_BONUS_FACTOR × ramp`, where `ramp = clamp((750 − current_distance) / (750 − 300), 0, 1)`
-- **Auto turret:** `acc = clamp(pilot_current_accuracy × AUTO_TURRET_ACCURACY_MULTIPLIER, 0.05, 0.99)`
+- **Auto turret:** `acc = clamp(pilot_turret_acc × AUTO_TURRET_ACCURACY_MULTIPLIER, 0.05, 0.99)`, where `pilot_turret_acc` = §5 layered result with thruster bonus excluded (cloak override still applies if active).
 
 ### Rocket accuracy curve
 ```
@@ -678,15 +803,34 @@ effective_loading_speed_ms  = round((loading_speed_ms / (1 + fire_rate_pct / 100
 - **Shield:** `+1 HP every N ticks`, `N = ceil(shield_recharge_ms / shield_capacity / tick_ms)` per shield module.
 - **Repair Bot (hull + armour):** per-tick delta = `(max_hull + max_armour) × rate × (tick_ms / 1000)`, accumulated and integer-flushed. `rate` ∈ {0.025, 0.050} for Ketar I / II.
 
+### Incoming damage reduction (PvC player buff — Keith T. Maxwell bonus)
+```
+applied_damage = raw_damage × (1 − PVC_DAMAGE_REDUCTION)   if pvc_fight AND recipient is player
+                 raw_damage                                otherwise
+```
+Default `PVC_DAMAGE_REDUCTION = 0.33`. Applied per-damage-event before shield → armour → hull stacking. Covers ALL incoming damage to the player, including own-nuke self-damage. PvP and NPC-side events: unscaled.
+
 ### Tick step order (per tick)
-1. Decrement all cooldowns (`-= tick_ms`).
-2. Apply regen pulses (shield + hull/armour, in parallel — independent tracks).
-3. Evaluate weapon firings (primary + secondary + auto turret) for any system with cooldown ≤ 0 AND in range AND not gated.
-4. Apply damage (shield → armour → hull stacking order).
-5. Check HP-threshold crossings → trigger eligible HP-gated activations (cloak / booster / EmergencySystem).
-6. Update distance (passive closure OR booster push OR shock-blast reset).
-7. Emit any state-changing events to the timeline (in the processing order above).
-8. Check termination (any combatant dead OR tick == `MAX_FIGHT_TICKS`).
+
+Each numbered step below is a **phase**. Within each phase, combatant 1 (C1) is processed before combatant 2 (C2). Phases run in strict order; intra-tick log events are emitted in this exact order (phase order × C1-before-C2 within phase).
+
+**Combatant assignment:** for duels, challenger = C1, opponent = C2. For PvC, player = C1, NPC (criminal/bounty) = C2. Same convention used by §12's `combatant{1,2}_*` columns.
+
+1. **Decrement cooldowns** (`-= tick_ms`) for both combatants. (Independent counters — phase-internal ordering doesn't change outcomes; C1 logs first if any `cooldown_end` events emit.)
+2. **Apply regen pulses** — shield + hull/armour in parallel for each combatant (independent tracks per §3). C1 pulses logged before C2's.
+3. **Evaluate weapon firings** — for C1 first, then C2: compute hit/miss for every weapon with `cooldown_remaining_ms ≤ 0` AND in range AND not gated. Hits are *recorded* this phase, not applied.
+4. **Apply damage** — C1's hits land on C2 first, then C2's hits land on C1. For each damage event:
+   - **(i) PvC damage reduction (player-side only):** if the fight is PvC AND the recipient is the player-side combatant, scale the raw damage by `(1 − PVC_DAMAGE_REDUCTION)` (default 0.33 — Keith T. Maxwell bonus, §3). Applies to *all* sources, including the firer's own nuke self-damage. PvP and NPC-side events: no scaling.
+   - **(ii) Shield → armour → hull stacking** — apply the (possibly DR-scaled) damage in the stacking order.
+   HP is allowed to go transiently negative mid-phase (overkill tracking — important for cluster missiles and nuke self-damage). After all C1→C2 and C2→C1 damage has been resolved:
+   - **(4a) EmergencySystem evaluation** per combatant (C1 then C2): if combatant has an unconsumed ES equipped AND end-of-phase hull ≤ 0 → fire ES, clamp hull to 1, consume the ES instance, start the 10 s invuln window (§7.7).
+   - **(4b) HP clamp** per combatant: any layer still below 0 is clamped to 0 for display and for the step 8 termination check. Negative HP never persists past step 4.
+5. **HP-threshold checks** — for C1 first, then C2: evaluate threshold crossings against own post-damage HP; trigger eligible HP-gated activations (cloak / booster only — EmergencySystem already resolved at step 4a per §7.7).
+6. **Update distance** — passive closure OR active booster push OR shock-blast reset. Distance is a shared scalar — no C1/C2 ordering concern.
+7. **Emit timeline events** for everything state-changing in steps 1–6, in the order above.
+8. **Check termination** — both combatants at HP ≤ 0 → `reason: mutual`; exactly one at HP ≤ 0 → `reason: hp_depleted` (other side wins); tick == `MAX_FIGHT_TICKS` with both alive → `reason: time_cap`. See §9.
+
+**Why fire and damage are separate phases:** step 3 only *computes* hits; step 4 *applies* them. A same-tick mutual-fire ALWAYS lands both sides' damage — neither side's lethal blow "cancels" the other side's shot at fire time. This is what makes the mutual-kill rule (§9, terminal check at step 8) fall out naturally.
 
 ---
 

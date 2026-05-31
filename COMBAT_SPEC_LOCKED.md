@@ -509,9 +509,37 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
 
 ### Retention
 
+- **Default: 72 hours (3 days).** Configurable via **`BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS`** (env / per-guild per §0.1).
 - Mechanism: extend the existing **`db_retention_default`** scheduled job (daily 03:45 UTC) with `CombatLogRepository.delete_older_than(cutoff)`, mirroring the bounty / duel / audit retention pattern.
 - Retention key: `created_at`.
-- Configurable via **`BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS`** (env / per-guild per §0.1).
+- Per-battle aggregate stats (damage_dealt, shots_fired, secondaries_fired per combatant, etc.) live in `data.summary` and are therefore retention-bounded — distinct from lifetime stats which are promoted onto `Player` per §13.
+
+### Lookup pattern
+
+The future battle-log command surfaces a per-player history. Canonical query:
+
+```sql
+SELECT id, combatant1_name, combatant2_name, created_at
+  FROM combat_log
+ WHERE combatant1_user_id = :player_id
+    OR combatant2_user_id = :player_id
+ ORDER BY created_at DESC
+ LIMIT :n;
+```
+
+- `:player_id` is the Discord `user_id` of the command invoker.
+- Indexes: `combatant1_user_id` and `combatant2_user_id` (single-column each — the PG planner OR-merges; a covering composite is not required at expected scale).
+- Combatant names are denormalized columns (frozen at fight-end, audit-log style). No JOIN to `users` / `players` is required — and the NPC case (no Users row) is handled natively.
+
+### Future battle-log dropdown — UX requirement
+
+When the battle-log command is implemented (deferred — Discord rendering is a later cycle), the result dropdown MUST disambiguate duplicate-name fights (common for bounty caps where multiple criminals share a name). Required entry format:
+
+```
+{combatant1_name} v {combatant2_name} ({created_at, local-formatted})
+```
+
+This is captured here so the eventual command lands with the right contract — `combatant{1,2}_name` + `created_at` are already projected to columns precisely so this dropdown query is a single indexed scan, no JOINs.
 
 ### In-memory production & `FightResults` mapping
 
@@ -599,6 +627,7 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 | `EMERGENCY_SYSTEM_INVULN_S` | **10** | §7.7 |
 | `NUKE_MAGNITUDE_SCALE` | **0.10** | §6.2 |
 | `NUKE_FRIENDLY_FACTOR` | **0.25** | §6.2 |
+| `COMBAT_LOG_RETENTION_HOURS` | **72** | §12 |
 
 > Names with `BOUNTYBOT_` prefix are listed verbatim where the existing convention uses the prefix in the env name; others use the unprefixed `GameConstants` name (the runtime env override is `BOUNTYBOT_<NAME>` in all cases).
 

@@ -374,7 +374,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 | O-N | Nuke AoE falloff specifics + per-nuke real damage values (Liberator/Oppressor anchors) | ✅ RESOLVED 2026-05-30 → mechanic locked. **No accuracy roll** (cloak/thruster/booster all ignored — nukes always apply). **Random epicenter** in `[300m, 5000m]` along 1D combat-distance axis. **Inverse-square falloff** `dmg = damage × (1 - min(1, d / eff_mag))²` with `eff_mag = magnitude_m × NUKE_MAGNITUDE_SCALE` (default **0.10**). **Self-damage** at `NUKE_FRIENDLY_FACTOR` (default **0.25**) — firer caught in own blast using same falloff formula at `d_firer = epicenter`. **Steerable flag ignored** Phase-1; per-nuke `damage` seed values (Liberator 850 / Extinctor 700 / Oppressor 400 / Tormentor 150 / Fireworks 1) accepted as direct-hit anchors. Promoted to `COMBAT_SPEC_LOCKED.md` §6.2 + Appendix A + Appendix B + §14. |
 | O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | ✅ RESOLVED 2026-05-30 → **(a) accept**. Combat log surfaces the 0-damage outcome post-fight; no preflight warning, no filter. Promoted to `COMBAT_SPEC_LOCKED.md` §4. Seed-fix `e87db57` corrected the 3 EMP-blaster primaries from misplaced-physical to true pure-EMP; Phase-1 pure-EMP set = 5 weapons (3 primaries + mamba_emp + netha_emp). |
 | O-PWM | PrimaryWeaponMod (Nirai Overdrive / Overcharge) — which formula governs the new tick-based resolver? Spec §7.8 originally said "flat +N% dpsMultiplier" but seed data carries `damage_pct` + `fire_rate_pct` breakdowns that the spec ignored. | ✅ RESOLVED 2026-05-30 → **honor `damage_pct` + `fire_rate_pct`** breakdown; legacy `dpsMultiplier` is metadata-only (current SimpleTTKResolver + item-detail embed). Applies to **primary weapons only**. Effective damage rounds to integer, effective loading_speed_ms rounds to nearest TICK_MS (10ms). No floor guard on damage (base-0 stays 0, base-≥2 never reaches 0 from −10%). Promoted to `COMBAT_SPEC_LOCKED.md` §7.8 + Appendix B + §14. |
-| O-LOG | Combat-log knobs (§1.12): `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (≈72 h default?), and whether any per-side summary fields get denormalized columns vs living only in the `data` JSON. (Discord rendering/condensation is a later cycle — out of scope.) | OPEN — design in §1.12; only the numerics/policy are unsettled |
+| O-LOG | Combat-log knobs (§1.12): `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (≈72 h default?), and whether any per-side summary fields get denormalized columns vs living only in the `data` JSON. (Discord rendering/condensation is a later cycle — out of scope.) | ✅ RESOLVED 2026-05-30 → retention **72h** default (configurable knob); column lookups stay **modest** (combatant identity + outcome already projected; per-battle aggregates STAY in `data` JSON — NOT lifetime stats, those were O-STAT's bounded-growth concern); combatant names DENORMALIZED into `combatant1_name`/`combatant2_name` columns (frozen at fight-end, audit-log style — handles NPC case natively, no JOIN needed); canonical battle-log query pattern: `WHERE combatant1_user_id = :player_id OR combatant2_user_id = :player_id ORDER BY created_at DESC`. Future battle-log dropdown UX must surface "combatant1 v combatant2 (battle time)" so duplicate-name bounty-cap fights disambiguate. Promoted to `COMBAT_SPEC_LOCKED.md` §12 + Appendix A. |
 | O-STAT | Exact set of lifetime combat-metric columns to add to `Player` (§1.12 stat promotion): beyond existing `duel_wins`/`bounty_wins`, which of `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`, … to persist? | ✅ RESOLVED 2026-05-30 → **3 fields only**: `total_fights`, `total_nukes_fired`, `total_module_activations` (all Integer, default 0). Dropped from consideration: `total_shots_fired` + `total_secondaries_fired` (grow uninterestingly fast); `total_damage_*` family (same big-number concern); `bounty_losses` (intentional asymmetry with current bounty scoring). One Alembic migration. Promoted to `COMBAT_SPEC_LOCKED.md` §13. |
 | O-E | EMP mechanic full design (disable window, stacking, hit-roll, etc.) | ✅ LOCKED 2026-05-30 → **Phase-2 DEFERRED (formal)**. Partial Entry-7 #23 spec (victim outgoing damage = 0, firer accuracy vs victim = 100%, duration TBD) is a Phase-2 design starting-point, NOT a Phase-1 mechanic. All Phase-1 EMP weapons fire/roll/log/0-damage today per O-PE. Spec already reflects deferral in §4 / §11 / Appendix C — no spec edit needed. |
 
@@ -2505,6 +2505,59 @@ Appendix B gains a PrimaryWeaponMod formula reference block; §14
 gains a 4th item-detail embed requirement (display damage_pct,
 fire_rate_pct, AND the legacy dpsMultiplier so a player can see both
 the breakdown and the net DPS shift).
+
+---
+
+## Entry 14 — O-LOG lock: 72h retention + denormalized labels + dropdown UX (2026-05-30)
+
+Final Phase-1 design item — **closes the §2 open-question queue**
+(modulo O-E which remains formally deferred to Phase-2).
+
+User input across one turn covered all sub-decisions:
+
+1. **Retention default** — 72h (3 days). Configurable via
+   `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS`. Existing
+   `db_retention_default` job (daily 03:45 UTC) gets a
+   `CombatLogRepository.delete_older_than(cutoff)` extension —
+   mirrors bounty/duel/audit retention pattern.
+2. **Column lookup robustness** — modest. The schema already projects
+   combatant identity + outcome to columns (per §1.12). No additional
+   denormalization needed beyond what was already specced.
+3. **Combatant name surfacing** — denormalized into `combatant1_name`
+   / `combatant2_name` String(255) columns (already in §1.12
+   schema). Frozen-at-fight-time labels — audit-log style. Handles
+   NPC case natively (no Users-table JOIN required, since NPCs have
+   no Users row anyway). Display-name changes do NOT retroactively
+   rewrite log labels (desirable for audit).
+4. **Per-battle aggregate stats** — STAY in `data` JSON (not promoted
+   to lifetime Player columns). This explicitly differs from O-STAT:
+   per-battle totals (damage_dealt, shots_fired, secondaries_fired,
+   etc.) ARE useful within the 72h retention window for the future
+   battle-log command, just NOT lifetime-aggregated.
+5. **Canonical lookup query** — for the future battle-log command:
+   ```sql
+   SELECT * FROM combat_log
+   WHERE combatant1_user_id = :player_id
+      OR combatant2_user_id = :player_id
+   ORDER BY created_at DESC
+   ```
+   The `:player_id` is the Discord user_id of the command invoker.
+   Indexes on the two combatant_user_id columns; PG planner OR-merges.
+6. **Dropdown UX format** — "combatant1 v combatant2 (battle time)"
+   — needed for disambiguation when bounty caps create duplicate-name
+   fights. Not implemented Phase-1 (Discord rendering deferred), but
+   captured as a UX requirement so the eventual command lands with
+   the right contract.
+
+§2 O-LOG row marked RESOLVED. Spec §12 Retention sub-section gains
+the explicit 72h default + a new "Lookup pattern" sub-section + a
+brief "Future battle-log dropdown UX" requirement. Appendix A gains
+`COMBAT_LOG_RETENTION_HOURS` (72).
+
+**Phase-1 design queue: CLEAR.** All §2 items resolved or formally
+deferred. Implementation work (PR-4 in-memory production, PR-5
+persistence slice, future battle-log command) proceeds against the
+locked spec without further design blockers.
 
 ---
 

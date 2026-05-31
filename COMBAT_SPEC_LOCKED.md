@@ -510,11 +510,22 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
 
 ## 13. Player-profile stat promotion — mechanism
 
-Aggregate **lifetime** combat metrics (module activations, nukes used, secondaries fired, etc.) are promoted onto the **`Player` record** by the combat processor — **NOT** stored in `combat_log`. This is a handler inside the combat-service code that mutates the `Player` object after a fight; the log tables are unaffected.
+Aggregate **lifetime** combat metrics are promoted onto the **`Player` record** by the combat processor — **NOT** stored in `combat_log`. This is a handler inside the combat-service code that mutates the `Player` object after a fight; the log tables are unaffected.
 
-- The `Player` model gains additional Integer counter columns (default 0). `duel_wins` / `bounty_wins` already exist.
+**Phase-1 locked counter set** — 3 new `Player` columns (all `Integer`, `default=0`):
+
+| Column | Increments when… |
+|---|---|
+| `total_fights` | post-fight (any fight the player participated in) |
+| `total_nukes_fired` | per nuke fire event (uses §6.2 Nuke mechanic) |
+| `total_module_activations` | per HP-threshold or manual module activation (cloak / booster / EmergencySystem / etc.) |
+
+All 3 are **bounded-per-fight** — a single fight contributes a small finite count, so headline lifetime numbers stay meaningful rather than drifting into uninteresting-big-number territory. Existing counters (`bounty_wins`, `duel_wins`, `duel_losses`, `duel_credits_won`, `duel_credits_lost`, `lifetime_credits`, `systems_checked`, `xp`, `prestige_count`) are unchanged.
+
 - The combat processor increments these on the `Player` row(s) for any human combatant as part of the post-fight update. NPC side has no Player row → skipped.
-- Requires an Alembic migration for the new columns.
+- Requires an Alembic migration for the 3 new columns.
+
+**Intentionally NOT tracked at Player level** (revisit in Phase-2+ if a leaderboard feature lands): per-subtype shot breakdowns (rocket / missile / cluster), `total_shots_fired`, `total_secondaries_fired`, any `total_damage_*` family, `bounty_losses`. Per-subtype detail is derivable from `combat_log` while inside the retention window (§12).
 
 ---
 

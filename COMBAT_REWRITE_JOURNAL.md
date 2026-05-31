@@ -338,7 +338,7 @@ Summary content: outcome / reason / duration; per-combatant module activations (
 ### Player-profile stat promotion (separate from the log)
 Aggregate **lifetime** combat metrics (module activations, nukes used, secondaries fired, etc.) are promoted onto the **`Player` record** by the combat processor — **NOT** stored in `combat_log`. This is a handler/helper inside the combat-service code that mutates the `Player` object after a fight; the log tables are unaffected.
 
-- **`Player` model gains new metric columns** (Integer counters, default 0). `duel_wins` / `bounty_wins` already exist; representative additions: `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`. Final field set = **§2 O-STAT**.
+- **`Player` model gains 3 new metric columns** (Integer counters, default 0) — RESOLVED O-STAT 2026-05-30: `total_fights`, `total_nukes_fired`, `total_module_activations`. (Existing `duel_wins`/`duel_losses`/`bounty_wins`/`lifetime_credits`/`systems_checked`/`xp`/`prestige_count`/`duel_credits_won`/`duel_credits_lost` stay as-is.) Counters chosen for bounded growth per fight (no `total_shots_fired` or `total_secondaries_fired` to avoid uninteresting-large-number drift; no `total_damage_*` for the same reason; no `bounty_losses` since the wins/losses asymmetry with bounties is intentional in current scoring). One Alembic migration adds all 3.
 - The combat processor increments these on the `Player` row(s) for any human combatant as part of the post-fight update (NPC side has no Player row → skipped). Requires an Alembic migration for the new columns.
 
 ### In-memory production & mapping onto `FightResults`
@@ -370,7 +370,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 | O-N | Nuke AoE falloff specifics + per-nuke real damage values (Liberator/Oppressor anchors) | ✅ RESOLVED 2026-05-30 → mechanic locked. **No accuracy roll** (cloak/thruster/booster all ignored — nukes always apply). **Random epicenter** in `[300m, 5000m]` along 1D combat-distance axis. **Inverse-square falloff** `dmg = damage × (1 - min(1, d / eff_mag))²` with `eff_mag = magnitude_m × NUKE_MAGNITUDE_SCALE` (default **0.10**). **Self-damage** at `NUKE_FRIENDLY_FACTOR` (default **0.25**) — firer caught in own blast using same falloff formula at `d_firer = epicenter`. **Steerable flag ignored** Phase-1; per-nuke `damage` seed values (Liberator 850 / Extinctor 700 / Oppressor 400 / Tormentor 150 / Fireworks 1) accepted as direct-hit anchors. Promoted to `COMBAT_SPEC_LOCKED.md` §6.2 + Appendix A + Appendix B + §14. |
 | O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | ✅ RESOLVED 2026-05-30 → **(a) accept**. Combat log surfaces the 0-damage outcome post-fight; no preflight warning, no filter. Promoted to `COMBAT_SPEC_LOCKED.md` §4. Seed-fix `e87db57` corrected the 3 EMP-blaster primaries from misplaced-physical to true pure-EMP; Phase-1 pure-EMP set = 5 weapons (3 primaries + mamba_emp + netha_emp). |
 | O-LOG | Combat-log knobs (§1.12): `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (≈72 h default?), and whether any per-side summary fields get denormalized columns vs living only in the `data` JSON. (Discord rendering/condensation is a later cycle — out of scope.) | OPEN — design in §1.12; only the numerics/policy are unsettled |
-| O-STAT | Exact set of lifetime combat-metric columns to add to `Player` (§1.12 stat promotion): beyond existing `duel_wins`/`bounty_wins`, which of `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`, … to persist? | OPEN — mechanism locked (combat processor mutates `Player`); only the field list is unsettled |
+| O-STAT | Exact set of lifetime combat-metric columns to add to `Player` (§1.12 stat promotion): beyond existing `duel_wins`/`bounty_wins`, which of `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`, … to persist? | ✅ RESOLVED 2026-05-30 → **3 fields only**: `total_fights`, `total_nukes_fired`, `total_module_activations` (all Integer, default 0). Dropped from consideration: `total_shots_fired` + `total_secondaries_fired` (grow uninterestingly fast); `total_damage_*` family (same big-number concern); `bounty_losses` (intentional asymmetry with current bounty scoring). One Alembic migration. Promoted to `COMBAT_SPEC_LOCKED.md` §13. |
 | O-E | EMP mechanic full design (disable window, stacking, hit-roll, etc.) | ✅ LOCKED 2026-05-30 → **Phase-2 DEFERRED (formal)**. Partial Entry-7 #23 spec (victim outgoing damage = 0, firer accuracy vs victim = 100%, duration TBD) is a Phase-2 design starting-point, NOT a Phase-1 mechanic. All Phase-1 EMP weapons fire/roll/log/0-damage today per O-PE. Spec already reflects deferral in §4 / §11 / Appendix C — no spec edit needed. |
 
 ---
@@ -410,7 +410,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 - `services/bot-core/src/services/combat_service.py` — public API unchanged; default resolver swapped to new tick resolver; `SimpleTTKResolver` kept behind feature flag for one release
 - `services/bot-core/src/services/combat/` — NEW package: `combatant.py`, `tick_resolver.py`, `weapon_systems.py`, `module_systems.py`, `event_log.py` (← Tier-0 summary aggregator + event-tick `CombatEvent` timeline collector; emits a row per state-changing tick-step in processing order, §1.12)
 - `services/bot-core/src/services/bounty_service.py` — extend `_serialize_fight_results()` to emit Tier-0 `summary` + `combat_log_id` (NOT the full timeline — that goes to the DB). Wire slot `combat_result: dict` is free-form so this is additive/non-breaking
-- **Player stat promotion (§1.12):** extend `services/bot-core/src/persist/models/player.py` with new lifetime combat-metric columns (Integer, default 0; exact set = O-STAT) + Alembic migration; combat processor increments them on each human combatant's `Player` row post-fight. NOT stored in `combat_log`.
+- **Player stat promotion (§1.12):** extend `services/bot-core/src/persist/models/player.py` with 3 new lifetime combat-metric Integer columns (default 0) — `total_fights`, `total_nukes_fired`, `total_module_activations` (RESOLVED O-STAT 2026-05-30) — plus an Alembic migration. Combat processor increments them on each human combatant's `Player` row post-fight. NOT stored in `combat_log`.
 
 **PR-5 — combat-log persistence slice (NEW table + retention; §1.12). NB: Discord visualization / on-demand render endpoint is a LATER cycle, not PR-5:**
 - `services/bot-core/src/persist/models/combat_log.py` — NEW `CombatLog` model (`id` Integer PK, `guild_id` BigInteger, `context` String(20), `combatant{1,2}_name` String(255), `combatant{1,2}_user_id` BigInteger nullable [NULL ⇒ NPC], `winner_name` nullable, `is_stalemate` Boolean, `data` `JSON`, `created_at`). Add `CombatLog = "combat_log"` to `TableNames` enum.
@@ -2410,6 +2410,51 @@ updates: §6.2 gains a Nuke sub-section; Appendix A adds
 Appendix B adds the falloff formula; §14 adds an item-detail embed
 requirement (display direct-hit damage + effective magnitude + self-
 damage warning so players can reason about the trade-off).
+
+---
+
+## Entry 12 — O-STAT lock: 3 lifetime counters on Player (2026-05-30)
+
+Conversation pared the draft 6-field list down through two filtering
+rounds:
+
+1. **Granularity** — chose hybrid (option c): one coarse
+   `total_secondaries_fired` bucket + `total_nukes_fired` callout;
+   skip per-rocket / per-missile / per-cluster counters (those are
+   derivable from `combat_log` when it exists / before retention
+   prunes).
+2. **Bounded-growth concern** — user flagged that any counter that
+   grows uninterestingly fast over time becomes a "huge meaningless
+   number" stat. Removed:
+   - `total_damage_dealt` / `total_damage_taken` / `total_self_damage`
+     (damage values accumulate fast and the headline number isn't
+     interesting to a player)
+   - `total_shots_fired` (every primary trigger; same drift)
+   - `total_secondaries_fired` (similar drift; less acute but still
+     uninteresting at scale)
+3. **Asymmetry** — user opted to keep `bounty_wins` without
+   `bounty_losses`; the asymmetry is intentional in current bounty
+   scoring (loss is implicit in "the bounty got away" rather than a
+   counter-worthy event).
+
+Final locked list (3 Integer counters, default 0):
+- `total_fights`              — aggregate fight participation
+- `total_nukes_fired`         — nuke-specific callout (self-damage
+                                flavor; brag-worthy)
+- `total_module_activations`  — cloak / booster / EmergencySystem etc.
+
+All three are bounded-per-fight (a single fight contributes a small
+finite count), so the long-term headline numbers stay meaningful.
+
+§1.12, §2 O-STAT, §4 PR-4/PR-5 file map all updated to the locked
+3-field list. Spec §13 prose-list updated to match. One Alembic
+migration adds all 3.
+
+NOT locked here (intentionally left for later):
+- Per-subtype shot breakdowns (rocket / missile / cluster) — derive
+  from `combat_log` if needed, within retention window
+- Damage tracks — may revisit in Phase-2 if a tankiness / DPS
+  leaderboard feature lands
 
 ---
 

@@ -404,7 +404,7 @@ At most one of each type per ship loadout:
 
 ## 11. Phase-1 scope summary
 
-**In scope:** primary, secondary (rocket / missile / shock-blast), turret (auto + manual); shields, armour, repair-bot, thrusters, cloaks, boosters, scanners, EmergencySystem, PrimaryWeaponMod; tick-based simulation, distance, HP layers, regen, HP-threshold activations, EmergencySystem invuln.
+**In scope:** primary, secondary (rocket / missile / cluster-missile / nuke / shock-blast), turret (auto + manual); shields, armour, repair-bot, thrusters, cloaks, boosters, scanners, EmergencySystem, PrimaryWeaponMod; tick-based simulation, distance, HP layers, regen, HP-threshold activations, EmergencySystem invuln.
 
 **Inert** (loaded for fidelity, no combat effect): see §7.9.
 

@@ -195,6 +195,30 @@ Lock-on tracking missile that releases **N sub-munitions** per fire. Inherits th
 - **Combat-log condensation:** **ONE event per cluster fire** with summary fields `{weapon, fired: N, hits: K, damage_per_hit, total_damage: K × damage}`. Not N rows.
 - **Seed inventory (Phase-1):** Shesha (`burst_count: 3`, damage 60), Garuda-IV (`burst_count: 4`, damage 75), Patala (`burst_count: 5`, damage 90). Resolver reads `burst_count` from `extra_atts` generically.
 
+#### Nuke (`subtype: "nuke"`)
+Area-of-effect weapon with **no accuracy roll**. Bypasses the entire §5 accuracy system (no cloak override, no thruster/booster modifiers). `range_m` is the binary fire gate (consistent with primaries).
+
+- **Epicenter:** on fire, sample a uniform random distance `epicenter ~ U[300, 5000]` along the 1D combat-distance axis (the §2 combat-distance bounds).
+- **Both ships always take damage** based on their distance from the epicenter:
+  - Firer is at position 0 → `d_firer = epicenter`.
+  - Opponent is at position `current_distance` → `d_opponent = |epicenter − current_distance|`.
+- **Falloff formula** (inverse-square shape, reaches 0 at the effective magnitude):
+  ```
+  dmg(d) = damage × (1 − min(1, d / effective_magnitude))²
+  effective_magnitude = magnitude_m × NUKE_MAGNITUDE_SCALE
+  ```
+  - `NUKE_MAGNITUDE_SCALE` default **0.10** (`BOUNTYBOT_NUKE_MAGNITUDE_SCALE`). Calibrates seed `magnitude_m` (10000–40000m) down to combat-distance scale (1000–4000m effective).
+- **Opponent damage** = `dmg(d_opponent)`.
+- **Firer self-damage** = `dmg(d_firer) × NUKE_FRIENDLY_FACTOR`.
+  - `NUKE_FRIENDLY_FACTOR` default **0.25** (`BOUNTYBOT_NUKE_FRIENDLY_FACTOR`). Same falloff, scaled by friendly factor — nukes do not respect friend/foe, just attenuate.
+- **Steerable flag IGNORED Phase-1.** Liberator's `steerable: true` is data-only fidelity; all 5 nukes behave identically except for `damage` and `magnitude_m`.
+- **Seed inventory (Phase-1, direct-hit anchors):**
+  - Liberator (`damage: 850`, `magnitude_m: 12500` → eff 1250m)
+  - Extinctor (`damage: 700`, `magnitude_m: 40000` → eff 4000m)
+  - Oppressor (`damage: 400`, `magnitude_m: 30000` → eff 3000m)
+  - Tormentor (`damage: 150`, `magnitude_m: 10000` → eff 1000m)
+  - Fireworks (`damage: 1`, `magnitude_m: 10000` → eff 1000m; decorative — same code path applies)
+
 #### Shock-blast
 Pure distance-reset utility (§2). No damage. 100 % guaranteed. Fires on cooldown. The seed file (`misc.shock_blast.json`) carries `damage: 140` / `emp_damage: 80` — **both IGNORED** by the Phase-1 mechanic.
 
@@ -502,6 +526,7 @@ Phase-1 combat-spec corrections to seed-data structure must be reflected in user
 
 1. **EMP / physical damage distinction** — for any weapon with `emp_damage > 0` in `extra_atts`, the embed MUST surface EMP damage as a distinct labelled field, separate from physical `damage` / `damage_per_shot`. Background: seed-fix `e87db57` corrected the 3 EMP-blaster primaries (Luna/Sol/Dia EMP) from misplaced-physical to true pure-EMP (`damage_per_shot: 0`, `emp_damage: 3/5/8`). Without this distinction the embed shows "damage: 0" with no explanation, hiding the real weapon characteristic.
 2. **Cluster missile `burst_count`** — for any weapon with `subtype: "cluster-missile"`, the embed MUST surface the `burst_count` value, ideally alongside per-sub-munition `damage` AND derived `total damage on full hit = burst_count × damage`. This is the only way a player can compare cluster-missile DPS to plain-missile DPS meaningfully.
+3. **Nuke direct-hit + effective magnitude + self-damage warning** — for any weapon with `subtype: "nuke"`, the embed MUST surface (a) the direct-hit `damage` value (epicenter damage), (b) the **effective magnitude** = `magnitude_m × NUKE_MAGNITUDE_SCALE` (not the raw `magnitude_m`, which is misleading since the runtime scales it), and (c) a **self-damage warning** indicating the firer is caught in the blast at `NUKE_FRIENDLY_FACTOR × falloff_damage`. Without these the player has no way to reason about the risk/reward of nuke usage (e.g. Liberator's 850 direct damage carries a ~123 point-blank self-damage cost — that cost MUST be visible).
 
 **Implementation scope** (touches both services):
 - `services/bot-core/src/api/schemas/` — extend item-detail Pydantic schema(s) so `emp_damage` and `burst_count` are explicit response fields (currently they live inside the generic `extra_atts` blob).
@@ -538,6 +563,8 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 | `CLOAK_HP_THRESHOLDS_PCT` | **[66, 33]** | §7.2 / §8 |
 | `BOOSTER_HP_THRESHOLDS_PCT` | **[80, 60, 40, 20]** | §7.3 / §8 |
 | `EMERGENCY_SYSTEM_INVULN_S` | **10** | §7.7 |
+| `NUKE_MAGNITUDE_SCALE` | **0.10** | §6.2 |
+| `NUKE_FRIENDLY_FACTOR` | **0.25** | §6.2 |
 
 > Names with `BOUNTYBOT_` prefix are listed verbatim where the existing convention uses the prefix in the env name; others use the unprefixed `GameConstants` name (the runtime env override is `BOUNTYBOT_<NAME>` in all cases).
 
@@ -563,6 +590,20 @@ accuracy = 0.05 + 0.55 × ((range_m − current_distance) / (range_m − MIN_DIS
          → clamp [0.05, 0.60]
 ```
 
+### Nuke (AoE — no accuracy roll)
+```
+epicenter           ~ U[MIN_DISTANCE_M, STARTING_DISTANCE_M]   # [300, 5000]
+d_firer             = epicenter                                # firer at position 0
+d_opponent          = |epicenter − current_distance|
+effective_magnitude = magnitude_m × NUKE_MAGNITUDE_SCALE
+
+dmg(d)              = damage × (1 − min(1, d / effective_magnitude))²
+
+opponent_damage     = dmg(d_opponent)
+self_damage         = dmg(d_firer) × NUKE_FRIENDLY_FACTOR
+```
+Both ships always take damage. Accuracy / cloak / thruster / booster modifiers do NOT apply. Steerable flag ignored.
+
 ### Regen pulse schedule (per layer source)
 - **Shield:** `+1 HP every N ticks`, `N = ceil(shield_recharge_ms / shield_capacity / tick_ms)` per shield module.
 - **Repair Bot (hull + armour):** per-tick delta = `(max_hull + max_armour) × rate × (tick_ms / 1000)`, accumulated and integer-flushed. `rate` ∈ {0.025, 0.050} for Ketar I / II.
@@ -586,6 +627,8 @@ accuracy = 0.05 + 0.55 × ((range_m − current_distance) / (range_m − MIN_DIS
 | Primary weapons | In scope | §6.1 |
 | Secondary: rocket | In scope | §6.2 |
 | Secondary: missile | In scope | §6.2 |
+| Secondary: cluster-missile | In scope | §6.2 |
+| Secondary: nuke | In scope | §6.2 |
 | Secondary: shock-blast | In scope | §6.2 |
 | Turret: auto | In scope | §6.3 |
 | Turret: manual | In scope | §6.3 |
@@ -608,6 +651,7 @@ accuracy = 0.05 + 0.55 × ((range_m − current_distance) / (range_m − MIN_DIS
 | Secondary: `emp-bomb` | Deferred — Phase-2 | §6.2 / §7.10 |
 | Mine | Deferred — Phase-3+ | §6.2 |
 | Sentry-gun | Deferred — Phase-3+ | §6.2 |
+| Secondary: ionizing-missile | Deferred — Phase-3+ | §6.2 |
 | EMP damage type | Deferred — Phase-2 | §4 |
 | Out-of-combat HP recovery + dock | Deferred — Phase-2 (schema hooks in Phase-1) | §11 |
 | Damaged-opponent start state | Deferred — Phase-2 (schema hooks in Phase-1) | §3 / §11 |

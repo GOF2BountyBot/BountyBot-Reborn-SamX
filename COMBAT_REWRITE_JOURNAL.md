@@ -107,7 +107,15 @@ attacker_accuracy = combatant_base                 # 60% / 50%
   - Tier B / C scanner equipped → tracking active → fires at pilot's current accuracy from §1.5 (no distance penalty applied)
   - Tier A (no scanner) → degrades to rocket behavior (same projectile, same stats, rocket accuracy curve applies). (HE-7)
 - **Cluster missile** (`subtype: "cluster-missile"`, `burst_count: N` in seed): lock-on tracking missile that releases N sub-munitions per fire (RESOLVED O-M 2026-05-30). Inherits the plain-Missile scanner-tier rule for whether tracking is active. **Accuracy snapshot:** the pilot's §1.5 accuracy is captured ONCE at the moment of fire; ALL N sub-munitions roll independently against that single snapshot (so a thruster ramp / cloak activation mid-flight does NOT retroactively change sub-munition rolls). Each landing sub-munition deals `damage` (per-sub-munition, NOT total). Single-target (no AoE; cluster missiles have no `magnitude_m`). **Combat-log:** ONE event per cluster fire with summary fields `{weapon, fired: N, hits: K, damage_per_hit, total_damage: K × damage}` — NOT N rows per fire. Seed inventory: Shesha (N=3, dmg=60), Garuda-IV (N=4, dmg=75), Patala (N=5, dmg=90).
-- **Nuke** (AoE, direct-hit `damage` per seed): per-nuke real values (Liberator=850, Oppressor=400, Extinctor=700, Tormentor=150, Fireworks=1). Fireworks is decorative; ignore as baseline. Liberator/Oppressor anchor the AoE-falloff design. **AoE falloff specifics:** OPEN (O-N).
+- **Nuke** (AoE, no accuracy roll — RESOLVED O-N 2026-05-30): completely bypasses the §1.5 accuracy system (no accuracy roll, no cloak override, no thruster/booster modifiers). `range_m` is the binary fire gate (consistent with primaries). On fire, an **epicenter** is sampled uniformly at random from `[300m, 5000m]` along the 1D combat-distance axis (same model as §1.2). Both ships always take damage based on their distance from this epicenter — there is no hit/miss:
+  - `d_firer = epicenter` (firer treated as position 0)
+  - `d_opponent = |epicenter − current_distance|`
+  - **Falloff formula:** `dmg(d) = damage × (1 − min(1, d / effective_magnitude))²`, where `effective_magnitude = magnitude_m × NUKE_MAGNITUDE_SCALE` (**default 0.10**, configurable — `BOUNTYBOT_NUKE_MAGNITUDE_SCALE`, env/per-guild per §1 config policy). Effective magnitudes at default 0.10: Tormentor 1000m, Liberator 1250m, Oppressor 3000m, Extinctor 4000m, Fireworks 1000m.
+  - **Opponent damage:** `dmg(d_opponent)`.
+  - **Firer self-damage:** `dmg(d_firer) × NUKE_FRIENDLY_FACTOR` (**default 0.25**, configurable — `BOUNTYBOT_NUKE_FRIENDLY_FACTOR`). Same epicenter, same falloff formula, just scaled by friendly factor.
+  - **Steerable flag IGNORED Phase-1** — all nukes treated identically; per-nuke flavor comes from `damage` + `magnitude_m`.
+  - **Per-nuke seed values (direct-hit anchors):** Liberator=850, Extinctor=700, Oppressor=400, Tormentor=150, Fireworks=1 (decorative; same code path). Liberator/Oppressor calibrate the design.
+  - **Combat-log event** (one per fire): `{weapon, epicenter, current_distance, d_firer, d_opponent, opponent_damage, self_damage}`.
 - **Shock-blast**: see §1.2 (pure distance-reset utility, 100% guaranteed, no damage). One seed file (`misc.shock_blast.json`) — physical `damage: 140` and `emp_damage: 80` in seed are IGNORED by the Phase-1 mechanic. (HE-7 session)
 
 ### Turret weapons
@@ -359,7 +367,7 @@ Status = OPEN unless noted. **This is the single canonical registry of every gen
 | O-B | Booster opponent-accuracy debuff magnitude — scaling vs `effect_pct`? | ✅ **RESOLVED 2026-05-30 — linear.** `debuff_pp = effect_pct × k_boost`, `k_boost` configurable (default 0.10, `BOOSTER_ACCURACY_DEBUFF_FACTOR`). 6–30pp across the 5 boosters; no cap (under cloak at default). Additive with distance-push. See §1.5 / §1.7 Boosters. |
 | O-DP | Distance penalty for primaries — separate from rocket curve? Max value? | ✅ **RESOLVED 2026-05-30 — DOES NOT EXIST for primaries.** Range is a pure binary gate (§1.2/§1.6); within range, primaries fire at full §1.5 accuracy. The "0.20 max" was a stale carry-over from before primaries/rockets were split. Distance-as-accuracy lives entirely on the secondary side (rocket 5%→60% curve, missile tier-A degrade) — §1.6. Absorbed former §6 O2 (the duplicate). |
 | O-M | Cluster-missile (3 files) + ionizing-missile (2 files) Phase-1 status: (a) treat as "missile" variants; (b) inert in Phase-1; (c) own rule. | ✅ RESOLVED 2026-05-30 → **split**: cluster-missile = in-scope missile variant with `burst_count` sub-munitions (N independent rolls against a fire-time accuracy snapshot, per-sub-munition damage, condensed to one combat-log event); ionizing-missile = Phase-3+ deferred (seed `damage` already 0, no ionizer mechanic planned). Seed-edit adds `burst_count` (3/4/5) to the 3 cluster-missile files. Promoted to `COMBAT_SPEC_LOCKED.md` §6.2 + new §14 (downstream sync). |
-| O-N | Nuke AoE falloff specifics + per-nuke real damage values (Liberator/Oppressor anchors) | OPEN |
+| O-N | Nuke AoE falloff specifics + per-nuke real damage values (Liberator/Oppressor anchors) | ✅ RESOLVED 2026-05-30 → mechanic locked. **No accuracy roll** (cloak/thruster/booster all ignored — nukes always apply). **Random epicenter** in `[300m, 5000m]` along 1D combat-distance axis. **Inverse-square falloff** `dmg = damage × (1 - min(1, d / eff_mag))²` with `eff_mag = magnitude_m × NUKE_MAGNITUDE_SCALE` (default **0.10**). **Self-damage** at `NUKE_FRIENDLY_FACTOR` (default **0.25**) — firer caught in own blast using same falloff formula at `d_firer = epicenter`. **Steerable flag ignored** Phase-1; per-nuke `damage` seed values (Liberator 850 / Extinctor 700 / Oppressor 400 / Tormentor 150 / Fireworks 1) accepted as direct-hit anchors. Promoted to `COMBAT_SPEC_LOCKED.md` §6.2 + Appendix A + Appendix B + §14. |
 | O-PE | Pure-EMP weapons equipped in Phase-1 (fire, roll accuracy, apply 0 damage): (a) accept as player choice; (b) preflight warn; (c) filter at loadout-build. | ✅ RESOLVED 2026-05-30 → **(a) accept**. Combat log surfaces the 0-damage outcome post-fight; no preflight warning, no filter. Promoted to `COMBAT_SPEC_LOCKED.md` §4. Seed-fix `e87db57` corrected the 3 EMP-blaster primaries from misplaced-physical to true pure-EMP; Phase-1 pure-EMP set = 5 weapons (3 primaries + mamba_emp + netha_emp). |
 | O-LOG | Combat-log knobs (§1.12): `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` (≈72 h default?), and whether any per-side summary fields get denormalized columns vs living only in the `data` JSON. (Discord rendering/condensation is a later cycle — out of scope.) | OPEN — design in §1.12; only the numerics/policy are unsettled |
 | O-STAT | Exact set of lifetime combat-metric columns to add to `Player` (§1.12 stat promotion): beyond existing `duel_wins`/`bounty_wins`, which of `total_module_activations`, `total_nukes_fired`, `total_secondaries_fired`, `total_shots_fired`, `total_damage_dealt`, `total_fights`, … to persist? | OPEN — mechanism locked (combat processor mutates `Player`); only the field list is unsettled |
@@ -2351,6 +2359,57 @@ specified by:
   cross-references)
 
 §2 O-E marked ✅ LOCKED as Phase-2 DEFERRED. No spec edit needed.
+
+---
+
+## Entry 11 — O-N lock: nuke mechanic (epicenter + inverse-square + self-damage) (2026-05-30)
+
+User-driven design conversation locked the full nuke mechanic. Major
+departures from the prior "AoE secondary" placeholder model:
+
+1. **No accuracy roll.** Nukes completely bypass the §1.5 accuracy
+   system: no cloak override, no thruster/booster modifiers, no §1.6
+   missile/rocket curves. Rationale: nukes are area-of-effect /
+   "radiation"-style weapons that cover the whole combat zone — there
+   is nothing to "miss."
+2. **Steerable flag ignored Phase-1.** Liberator's `steerable: true` is
+   data-only fidelity. All 5 nukes are mechanically identical except
+   for `damage` and `magnitude_m`.
+3. **Epicenter is RNG.** On fire, sample a uniform random distance in
+   `[300m, 5000m]` (the §1.2 combat-distance bounds). This is the
+   "where the nuke detonates" point on the 1D combat axis.
+4. **Both ships always take damage.** Computed from each ship's
+   distance to the epicenter via inverse-square falloff:
+   `dmg(d) = damage × (1 - min(1, d / effective_magnitude))²`. Firer
+   is at position 0 (so `d_firer = epicenter`); opponent at
+   `current_distance` (so `d_opponent = |epicenter - current_distance|`).
+5. **Magnitude scaling.** Seed `magnitude_m` (10000–40000m) vastly
+   exceeds combat distance (5000m max). Without scaling, falloff
+   barely bites. Locked: `effective_magnitude = magnitude_m ×
+   NUKE_MAGNITUDE_SCALE` where `NUKE_MAGNITUDE_SCALE` defaults to
+   **0.10** (configurable). Resulting effective magnitudes: Tormentor
+   1000m, Liberator 1250m, Oppressor 3000m, Extinctor 4000m,
+   Fireworks 1000m. Preserves per-nuke AoE variation (Tormentor =
+   tight short-range, Extinctor = wide long-range).
+6. **Self-damage.** Firer absorbs `dmg(d_firer) ×
+   NUKE_FRIENDLY_FACTOR` where `NUKE_FRIENDLY_FACTOR` defaults to
+   **0.25** (configurable). Reasonable tactical layer emerges:
+   firing at a close opponent risks heavy self-damage (Liberator
+   point-blank ≈ 123 self-dmg, Extinctor point-blank ≈ 150 self-dmg).
+7. **Combat-log event** (one per nuke fire) records `{weapon,
+   epicenter, current_distance, d_firer, d_opponent, opponent_damage,
+   self_damage}` per the §1.12 event-tick model.
+
+Per-nuke `damage` seed values (Liberator 850 / Extinctor 700 /
+Oppressor 400 / Tormentor 150 / Fireworks 1) accepted as direct-hit
+anchors — the other half of O-N. No seed-data edits needed.
+
+§1.6 Nuke bullet rewritten in full. §2 O-N marked RESOLVED. Spec
+updates: §6.2 gains a Nuke sub-section; Appendix A adds
+`NUKE_MAGNITUDE_SCALE` (0.10) and `NUKE_FRIENDLY_FACTOR` (0.25);
+Appendix B adds the falloff formula; §14 adds an item-detail embed
+requirement (display direct-hit damage + effective magnitude + self-
+damage warning so players can reason about the trade-off).
 
 ---
 

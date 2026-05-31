@@ -37,9 +37,6 @@
   "maxSecondaries": 2,
   "maxTurrets": 0,
   "model": "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/Specter_Full.obj",
-  "builtin_modules": [
-    "U'tool"
-  ],
   "name": "Specter",
   "saveDue": false,
   "shopSpawnRate": 9.585,

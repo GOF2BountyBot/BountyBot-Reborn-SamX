@@ -57,5 +57,9 @@
     "/app/data/game-objects/items/ships/Terran/Battleship.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Terran/Battleship.bbship/tertiary_mask.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Battleship.bbship/battleship_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Battleship.bbship/battleship_terran_normal_specular.png",
+  "extra_atts": {
+    "wiki_status": "npc_stats_only",
+    "mechanics_text": "Serves as primary starship of Terran fleet. Armed with 7 Hammerhead D2A2 turrets. Can take massive amounts of damage even from M6 A4 Raccoon beams and multiple nukes. Pre-1.0.5 update: formidable but defenseless alone. Post-1.0.5 update: gained turrets for active defense."
+  }
 }

@@ -11,5 +11,9 @@
   "techLevel": 4,
   "type": "RepairBotModule",
   "value": 14530,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Ketar_Repair_Bot"
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Ketar_Repair_Bot",
+  "extra_atts": {
+    "HPps": 7,
+    "mechanics_text": "Repair Bots automatically make in-flight repairs to a ship's armor and hull. Continuous passive repair while equipped."
+  }
 }

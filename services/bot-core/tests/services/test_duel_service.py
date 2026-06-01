@@ -1271,7 +1271,9 @@ class TestCreateChallengeAvailableBalance:
         duel_repo.create.return_value = created_duel
 
         svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
-        result = await svc.create_challenge(db=self._make_db(), challenger_id=1, target_id=2, stakes=5_000, guild_id=9999)
+        result = await svc.create_challenge(
+            db=self._make_db(), challenger_id=1, target_id=2, stakes=5_000, guild_id=9999
+        )
 
         assert result.id == 99
 
@@ -1331,7 +1333,9 @@ class TestAcceptDuelAvailableBalance:
         db.refresh = AsyncMock()
         return db
 
-    def _make_duel_and_repos(self, *, challenger_credits, target_credits, stakes, challenger_other_pending=0, target_other_pending=0):
+    def _make_duel_and_repos(
+        self, *, challenger_credits, target_credits, stakes, challenger_other_pending=0, target_other_pending=0
+    ):
         duel = make_duel(duel_id=5, challenger_id=1, target_id=2, stakes=stakes)
         challenger = make_player(1, credits=challenger_credits)
         challenger.display_name = "Alice"
@@ -1357,7 +1361,7 @@ class TestAcceptDuelAvailableBalance:
     @pytest.mark.asyncio
     async def test_accept_blocks_when_challenger_other_pending_exceeds_available(self):
         """Challenger has 10k, 7k in OTHER pending duels, trying to accept 6k duel → blocked."""
-        duel, challenger, target, duel_repo, player_repo = self._make_duel_and_repos(
+        duel, _challenger, _target, duel_repo, player_repo = self._make_duel_and_repos(
             challenger_credits=10_000,
             target_credits=10_000,
             stakes=6_000,
@@ -1377,7 +1381,7 @@ class TestAcceptDuelAvailableBalance:
     @pytest.mark.asyncio
     async def test_accept_excludes_current_duel_from_pending_sum(self):
         """Accepting a 10k duel with exactly 10k credits and no OTHER pending → passes."""
-        duel, challenger, target, duel_repo, player_repo = self._make_duel_and_repos(
+        duel, _challenger, _target, duel_repo, player_repo = self._make_duel_and_repos(
             challenger_credits=10_000,
             target_credits=10_000,
             stakes=10_000,

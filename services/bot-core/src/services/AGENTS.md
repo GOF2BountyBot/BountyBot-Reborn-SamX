@@ -274,7 +274,7 @@ Uses: `CriminalRepository`, `BountyRepository`, `PathfindingService`, `SystemGra
 **This file contains only dataclasses and protocols — no service class.** Do not confuse with `combat_service.py`.
 
 Key types:
-- `WeaponStats` — frozen dataclass: `name`, `dps`, optional `fire_rate`, `damage_per_shot`, `accuracy_modifier`
+- `WeaponStats` — frozen dataclass: `name`, `dps`, optional `fire_rate`, `damage_per_shot`
 - `ModuleStats` — frozen dataclass: `name`, `module_type`, effect fields
 - `ShipLoadout` — frozen dataclass: assembles ship + weapons + modules into one structure
 - `CombatStats` — computed stats from a loadout

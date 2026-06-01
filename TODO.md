@@ -14,7 +14,7 @@ truth. Do not duplicate spec content here.
 ## Tasks
 
 ### T1 — Foundation: constants + model surfaces + balance hooks
-- All 26 Appendix A constants in `game_constants.py` (env + per-guild override)
+- All 25 Appendix A constants in `game_constants.py` (env + per-guild override)
 - `ShipLoadout.manual_turret_mode: bool = False` field (in-memory dataclass)
 - `LoadoutBuilder.from_player()` + `from_criminal_ship()` surface the new field
 - `CombatEvent` dataclass + event-type literals

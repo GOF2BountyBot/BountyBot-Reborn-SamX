@@ -14,6 +14,7 @@ limits) remain hardcoded to maintain game balance integrity.
 """
 
 import os
+from typing import Any
 
 from shared import bblogger
 
@@ -42,6 +43,14 @@ class GameConstants:
     def _env_float(key: str, default: float) -> float:
         """Return *float* value from ``BOUNTYBOT_{key}`` env var, or *default*."""
         return float(os.environ.get(f"BOUNTYBOT_{key}", default))
+
+    @staticmethod
+    def _env_int_list(key: str, default: list[int]) -> list[int]:
+        """Return list[int] from ``BOUNTYBOT_{key}`` env var (comma-separated), or *default*."""
+        raw = os.environ.get(f"BOUNTYBOT_{key}")
+        if raw is None or not raw.strip():
+            return default
+        return [int(x.strip()) for x in raw.split(",") if x.strip()]
 
     # ------------------------------------------------------------------
     # Tech Levels
@@ -299,6 +308,54 @@ class GameConstants:
     PERSISTENT_DAMAGE_DECAY_RATE: float = 0.0
 
     # ------------------------------------------------------------------
+    # Combat System — Phase-1 Constants (Appendix A, COMBAT_SPEC_LOCKED.md)
+    # All overridable via BOUNTYBOT_<NAME> env var and per-guild override.
+    # ------------------------------------------------------------------
+
+    # Accuracy system (§5)
+    CLOAK_SET_VALUE: float = 0.25
+    BOOSTER_ACCURACY_DEBUFF_FACTOR: float = 0.10
+    THRUSTER_ACCURACY_BONUS_FACTOR: float = 0.10
+    AUTO_TURRET_ACCURACY_MULTIPLIER: float = 0.85
+    PLAYER_BASE_ACCURACY: float = 0.60
+    NPC_BASE_ACCURACY: float = 0.50
+    ACCURACY_CLAMP_MIN: float = 0.05
+    ACCURACY_CLAMP_MAX: float = 0.99
+    SCANNER_TIER_B_BONUS_PP: int = 5
+    SCANNER_TIER_C_BONUS_PP: int = 10
+
+    # Repair bots (§3 / §7.6)
+    KETAR_I_REPAIR_PCT_PER_SEC: float = 0.025
+    KETAR_II_REPAIR_PCT_PER_SEC: float = 0.050
+
+    # Tick / timing (§1)
+    TICK_MS: int = 10
+    MAX_FIGHT_TICKS: int = 18000
+
+    # Distance model (§2)
+    STARTING_DISTANCE_M: int = 5000
+    BASE_SHIP_SPEED_MPS: int = 150
+    MIN_DISTANCE_M: int = 300
+    THRUSTER_WINDOW_M: int = 750
+
+    # HP-threshold activation lists (§7.2 / §7.3 / §8)
+    CLOAK_HP_THRESHOLDS_PCT: list[int] = [66, 33]
+    BOOSTER_HP_THRESHOLDS_PCT: list[int] = [80, 60, 40, 20]
+
+    # EmergencySystem (§7.7)
+    EMERGENCY_SYSTEM_INVULN_S: int = 10
+
+    # Nuke (§6.2)
+    NUKE_MAGNITUDE_SCALE: float = 0.10
+    NUKE_FRIENDLY_FACTOR: float = 0.25
+
+    # PvC damage reduction — Keith T. Maxwell bonus (§3)
+    PVC_DAMAGE_REDUCTION: float = 0.33
+
+    # Combat log retention (§12)
+    COMBAT_LOG_RETENTION_HOURS: int = 72
+
+    # ------------------------------------------------------------------
     # Environment variable overrides (operational constants only)
     # ------------------------------------------------------------------
 
@@ -386,13 +443,43 @@ class GameConstants:
         # Bounty winner reserve factor
         cls.BOUNTY_WINNER_RESERVE_FACTOR = _track_float("BOUNTY_WINNER_RESERVE_FACTOR", 0.25)
 
+        def _track_int_list(key: str, default: list[int]) -> list[int]:
+            val = cls._env_int_list(key, default)
+            if os.environ.get(f"BOUNTYBOT_{key}") is not None:
+                _overrides.append(f"{key}={val}")
+            return val
+
+        # Combat System — Phase-1 Constants (Appendix A)
+        cls.CLOAK_SET_VALUE = _track_float("CLOAK_SET_VALUE", 0.25)
+        cls.BOOSTER_ACCURACY_DEBUFF_FACTOR = _track_float("BOOSTER_ACCURACY_DEBUFF_FACTOR", 0.10)
+        cls.THRUSTER_ACCURACY_BONUS_FACTOR = _track_float("THRUSTER_ACCURACY_BONUS_FACTOR", 0.10)
+        cls.AUTO_TURRET_ACCURACY_MULTIPLIER = _track_float("AUTO_TURRET_ACCURACY_MULTIPLIER", 0.85)
+        cls.PLAYER_BASE_ACCURACY = _track_float("PLAYER_BASE_ACCURACY", 0.60)
+        cls.NPC_BASE_ACCURACY = _track_float("NPC_BASE_ACCURACY", 0.50)
+        cls.ACCURACY_CLAMP_MIN = _track_float("ACCURACY_CLAMP_MIN", 0.05)
+        cls.ACCURACY_CLAMP_MAX = _track_float("ACCURACY_CLAMP_MAX", 0.99)
+        cls.SCANNER_TIER_B_BONUS_PP = _track_int("SCANNER_TIER_B_BONUS_PP", 5)
+        cls.SCANNER_TIER_C_BONUS_PP = _track_int("SCANNER_TIER_C_BONUS_PP", 10)
+        cls.KETAR_I_REPAIR_PCT_PER_SEC = _track_float("KETAR_I_REPAIR_PCT_PER_SEC", 0.025)
+        cls.KETAR_II_REPAIR_PCT_PER_SEC = _track_float("KETAR_II_REPAIR_PCT_PER_SEC", 0.050)
+        cls.TICK_MS = _track_int("TICK_MS", 10)
+        cls.MAX_FIGHT_TICKS = _track_int("MAX_FIGHT_TICKS", 18000)
+        cls.STARTING_DISTANCE_M = _track_int("STARTING_DISTANCE_M", 5000)
+        cls.BASE_SHIP_SPEED_MPS = _track_int("BASE_SHIP_SPEED_MPS", 150)
+        cls.MIN_DISTANCE_M = _track_int("MIN_DISTANCE_M", 300)
+        cls.THRUSTER_WINDOW_M = _track_int("THRUSTER_WINDOW_M", 750)
+        cls.CLOAK_HP_THRESHOLDS_PCT = _track_int_list("CLOAK_HP_THRESHOLDS_PCT", [66, 33])
+        cls.BOOSTER_HP_THRESHOLDS_PCT = _track_int_list("BOOSTER_HP_THRESHOLDS_PCT", [80, 60, 40, 20])
+        cls.EMERGENCY_SYSTEM_INVULN_S = _track_int("EMERGENCY_SYSTEM_INVULN_S", 10)
+        cls.NUKE_MAGNITUDE_SCALE = _track_float("NUKE_MAGNITUDE_SCALE", 0.10)
+        cls.NUKE_FRIENDLY_FACTOR = _track_float("NUKE_FRIENDLY_FACTOR", 0.25)
+        cls.PVC_DAMAGE_REDUCTION = _track_float("PVC_DAMAGE_REDUCTION", 0.33)
+        cls.COMBAT_LOG_RETENTION_HOURS = _track_int("COMBAT_LOG_RETENTION_HOURS", 72)
+
         if _overrides:
             _flogger.info(f"GameConstants env overrides detected: {', '.join(_overrides)}")
         else:
             _flogger.info("GameConstants.load() — no env overrides, using defaults")
-
-
-from typing import Any
 
 
 def resolve_constant[T](guild_config: Any | None, field: str, fallback: T) -> T:

@@ -183,6 +183,7 @@ class LoadoutBuilder:
         return ShipLoadout(
             ship_name=ship_name,
             base_armour=base_armour,
+            manual_turret_mode=getattr(player_ship, "manual_turret_mode", False),
             weapons=weapons,
             turrets=turrets,
             modules=modules,
@@ -228,6 +229,7 @@ class LoadoutBuilder:
         """
         ship_name = criminal_ship.get("ship_name", "Unknown")
         base_armour = criminal_ship.get("ship_armour", 100)
+        manual_turret_mode = criminal_ship.get("manual_turret_mode", False)
 
         flogger.debug(f"Building criminal loadout: ship={ship_name!r}, base_armour={base_armour}")
 
@@ -259,6 +261,7 @@ class LoadoutBuilder:
         return ShipLoadout(
             ship_name=ship_name,
             base_armour=base_armour,
+            manual_turret_mode=manual_turret_mode,
             weapons=weapons,
             turrets=turrets,
             modules=modules,

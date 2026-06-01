@@ -11,7 +11,7 @@ Defines the data structures used by the combat system:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 # ---------------------------------------------------------------------------
 # Input data structures — assembled by callers from DB models
@@ -29,7 +29,6 @@ class WeaponStats:
     Future extension fields (unused now, reserved for fire-rate combat):
         fire_rate: Shots per second (None = use averaged DPS model).
         damage_per_shot: Damage dealt per individual shot.
-        accuracy_modifier: Per-weapon accuracy adjustment (1.0 = neutral).
     """
 
     name: str
@@ -37,7 +36,6 @@ class WeaponStats:
     # Future fields — unused in SimpleTTKResolver, present for type stability
     fire_rate: float | None = None
     damage_per_shot: float | None = None
-    accuracy_modifier: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +118,7 @@ class ShipLoadout:
 
     ship_name: str
     base_armour: int
+    manual_turret_mode: bool = False
     weapons: list[WeaponStats] = field(default_factory=list)
     turrets: list[WeaponStats] = field(default_factory=list)
     modules: list[ModuleStats] = field(default_factory=list)
@@ -221,6 +220,44 @@ class FightResults:
     # Future fields
     combat_log: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Combat event — one timeline row (§12)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CombatEvent:
+    """One tick-timeline entry in a fight's combat log (§12).
+
+    type is an open str — use CombatEventType constants at emit sites.
+    actor / target are combatant display names; None for global events.
+    """
+
+    tick: int
+    type: str
+    actor: str | None
+    target: str | None
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+class CombatEventType:
+    """Event-type string constants for CombatEvent.type (§12 vocabulary table).
+
+    The field stays open (str) for extensibility; these constants are
+    documentation + reusable identifiers for emit-site code in T3+.
+    """
+
+    fight_start: Final[str] = "fight_start"
+    fight_end: Final[str] = "fight_end"
+    regen: Final[str] = "regen"
+    weapon_fire: Final[str] = "weapon_fire"
+    damage: Final[str] = "damage"
+    module_activation: Final[str] = "module_activation"
+    cooldown_end: Final[str] = "cooldown_end"
+    layer_depleted: Final[str] = "layer_depleted"
+    distance: Final[str] = "distance"
 
 
 # ---------------------------------------------------------------------------

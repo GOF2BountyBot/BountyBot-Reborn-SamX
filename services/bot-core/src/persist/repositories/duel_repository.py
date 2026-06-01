@@ -351,9 +351,7 @@ class DuelRepository(IRepository[DuelRequest]):
             flogger.error(f"Error summing pending stakes for player_id={player_id}: {e}")
             raise
 
-    async def get_all_pending_involving_player(
-        self, db: AsyncSession, player_id: int
-    ) -> list[DuelRequest]:
+    async def get_all_pending_involving_player(self, db: AsyncSession, player_id: int) -> list[DuelRequest]:
         """All pending duels where player_id is challenger or target.
 
         Used by DuelService.cancel_underfunded_duels to evaluate each pending

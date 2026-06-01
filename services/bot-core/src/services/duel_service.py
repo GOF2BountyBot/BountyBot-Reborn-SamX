@@ -306,7 +306,10 @@ class DuelService:
             try:
                 await self.cancel_underfunded_duels(db, loser.id, commit=False)
             except Exception as _cancel_exc:  # pylint: disable=broad-exception-caught
-                flogger.warning(f"cancel_underfunded_duels failed after duel {duel_id} resolution for loser={loser.id}: {_cancel_exc}")
+                flogger.warning(
+                    f"cancel_underfunded_duels failed after duel {duel_id} "
+                    f"resolution for loser={loser.id}: {_cancel_exc}"
+                )
 
             flogger.info(f"Duel {duel_id} resolved: winner player={winner.id} stakes={stakes} transferred")
         else:

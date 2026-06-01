@@ -253,7 +253,10 @@ class PlayerService:
 
                     await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
                 except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
-                    flogger.warning(f"cancel_underfunded_duels failed after update_player_credits for player_id={player_id}: {_duel_exc}")
+                    flogger.warning(
+                        f"cancel_underfunded_duels failed after update_player_credits "
+                        f"for player_id={player_id}: {_duel_exc}"
+                    )
 
             await db.commit()
             await db.refresh(player)
@@ -514,7 +517,9 @@ class PlayerService:
 
                     await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
                 except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
-                    flogger.warning(f"cancel_underfunded_duels failed after demote_player for player_id={player_id}: {_duel_exc}")
+                    flogger.warning(
+                        f"cancel_underfunded_duels failed after demote_player for player_id={player_id}: {_duel_exc}"
+                    )
 
             scrubbed = await self._scrub_orphaned_checks_after_tier_change(
                 db, player_id=player_id, guild_id=player.guild_id, new_tier=prev_tier
@@ -632,7 +637,9 @@ class PlayerService:
 
                 await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
             except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
-                flogger.warning(f"cancel_underfunded_duels failed after prestige_player for player_id={player_id}: {_duel_exc}")
+                flogger.warning(
+                    f"cancel_underfunded_duels failed after prestige_player for player_id={player_id}: {_duel_exc}"
+                )
 
             # Forfeit checks on bounties outside the new (Bronze) tier.
             await self._scrub_orphaned_checks_after_tier_change(
@@ -820,7 +827,10 @@ class PlayerService:
 
             await DuelService().cancel_underfunded_duels(db, source_player_id, commit=False)
         except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
-            flogger.warning(f"cancel_underfunded_duels failed after transfer_credits for source_player_id={source_player_id}: {_duel_exc}")
+            flogger.warning(
+                f"cancel_underfunded_duels failed after transfer_credits "
+                f"for source_player_id={source_player_id}: {_duel_exc}"
+            )
 
         flogger.info(f"Transferred {amount} credits from player {source_player_id} to player {target_player_id}")
 

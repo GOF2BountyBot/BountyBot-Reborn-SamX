@@ -198,7 +198,9 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
                 await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
             except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
-                flogger.warning(f"cancel_underfunded_duels failed after buy_item for player_id={player_id}: {_duel_exc}")
+                flogger.warning(
+                    f"cancel_underfunded_duels failed after buy_item for player_id={player_id}: {_duel_exc}"
+                )
 
             # Add item to player inventory (commit=False — this service owns the
             # explicit single commit below). B.34 closeout: previously this used
@@ -349,7 +351,9 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
                 await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
             except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
-                flogger.warning(f"cancel_underfunded_duels failed after purchase_ship for player_id={player_id}: {_duel_exc}")
+                flogger.warning(
+                    f"cancel_underfunded_duels failed after purchase_ship for player_id={player_id}: {_duel_exc}"
+                )
 
             # d. Remove new ship from shop stock (commit=False — caller's transaction controls commit)
             new_shop_quantity = shop_item.quantity - 1

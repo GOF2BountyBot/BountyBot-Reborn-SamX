@@ -238,8 +238,23 @@ class PlayerService:
                 credit_increase = new_credits - player.credits
                 player.lifetime_credits += credit_increase
 
+            old_credits = player.credits
             player.credits = new_credits
             player.new_credits = new_credits  # backward-compat alias (not a DB column)
+
+            # Auto-cancel any pending duels the player can no longer cover on
+            # a credit decrease (admin set, etc.). Note: this method commits
+            # internally; cancel_underfunded_duels runs commit=False so the
+            # cancel and the credit update are captured in the same commit below.
+            # Non-fatal: a failure here must never block a legitimate credit update.
+            if new_credits < old_credits:
+                try:
+                    from services.duel_service import DuelService  # deferred to avoid circular import
+
+                    await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
+                except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(f"cancel_underfunded_duels failed after update_player_credits for player_id={player_id}: {_duel_exc}")
+
             await db.commit()
             await db.refresh(player)
 
@@ -491,6 +506,16 @@ class PlayerService:
             penalty = int(player.credits * penalty_pct / 100)
             player.credits = max(0, player.credits - penalty)
 
+            # Auto-cancel any pending duels the player can no longer cover after
+            # the demotion credit penalty. Non-fatal: must never block demotion.
+            if penalty > 0:
+                try:
+                    from services.duel_service import DuelService  # deferred to avoid circular import
+
+                    await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
+                except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(f"cancel_underfunded_duels failed after demote_player for player_id={player_id}: {_duel_exc}")
+
             scrubbed = await self._scrub_orphaned_checks_after_tier_change(
                 db, player_id=player_id, guild_id=player.guild_id, new_tier=prev_tier
             )
@@ -598,6 +623,16 @@ class PlayerService:
             player.tier = "Bronze"
             player.prestige_count += 1
             self._apply_tier_change_cooldown(player, config)
+
+            # Auto-cancel ALL pending duels — credits just reset to 0 so every
+            # pending duel with stakes > 0 is now unbacked.
+            # Non-fatal: must never block prestige.
+            try:
+                from services.duel_service import DuelService  # deferred to avoid circular import
+
+                await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
+            except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"cancel_underfunded_duels failed after prestige_player for player_id={player_id}: {_duel_exc}")
 
             # Forfeit checks on bounties outside the new (Bronze) tier.
             await self._scrub_orphaned_checks_after_tier_change(
@@ -776,6 +811,16 @@ class PlayerService:
         target_new = target.credits + amount
         await self.player_repo.update_credits(db, source_player_id, source_new, commit=False)
         await self.player_repo.update_credits(db, target_player_id, target_new, commit=False)
+
+        # Auto-cancel any pending duels the SOURCE can no longer cover after
+        # the transfer. Target is gaining credits — no cancellation needed.
+        # Non-fatal: a failure here must never block a legitimate credit transfer.
+        try:
+            from services.duel_service import DuelService  # deferred to avoid circular import
+
+            await DuelService().cancel_underfunded_duels(db, source_player_id, commit=False)
+        except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"cancel_underfunded_duels failed after transfer_credits for source_player_id={source_player_id}: {_duel_exc}")
 
         flogger.info(f"Transferred {amount} credits from player {source_player_id} to player {target_player_id}")
 

@@ -36,6 +36,26 @@ class DuelService:
         self.combat_service = CombatService()
 
     # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    async def _resolve_player_label(self, db, player) -> str:
+        """Resolve a player to a display label for user-facing error messages.
+
+        Preference order: player.display_name → user.discord_username → "Player {id}".
+        Always returns a string — never raises.
+        """
+        try:
+            if getattr(player, "display_name", None):
+                return player.display_name
+            user = await self.user_repo.get_by_id(db, player.user_id)
+            if user and user.discord_username:
+                return user.discord_username
+        except Exception as exc:
+            flogger.debug(f"Could not resolve display label for player_id={player.id}: {exc}")
+        return f"Player {player.id}"
+
+    # ------------------------------------------------------------------
     # Challenge
     # ------------------------------------------------------------------
 
@@ -99,18 +119,40 @@ class DuelService:
             flogger.error(f"Target not found: player_id={target_id}")
             raise ValueError(f"Target player with ID {target_id} not found.")
 
-        # Validate credits
-        if challenger.credits < stakes:
+        # Validate available credits (balance minus total pending stakes in both roles).
+        # This prevents the double-spend exploit where a player issues multiple challenges
+        # backed by the same credits, or is simultaneously challenged by multiple people.
+        challenger_pending = await self.duel_repo.get_total_pending_stakes_for_player(db, challenger_id)
+        target_pending = await self.duel_repo.get_total_pending_stakes_for_player(db, target_id)
+        challenger_available = challenger.credits - challenger_pending
+        target_available = target.credits - target_pending
+
+        if challenger_available < stakes:
+            challenger_label = await self._resolve_player_label(db, challenger)
             flogger.warning(
-                f"Challenger insufficient stakes: player_id={challenger_id} "
-                f"has {challenger.credits} credits, needs {stakes}"
+                f"Challenger insufficient available credits: player_id={challenger_id} "
+                f"credits={challenger.credits} pending_stakes={challenger_pending} "
+                f"available={challenger_available} needs={stakes}"
             )
-            raise ValueError(f"Challenger has insufficient credits: has {challenger.credits}, needs {stakes}.")
-        if target.credits < stakes:
+            raise ValueError(
+                f"{challenger_label} has insufficient available credits: "
+                f"{challenger_available:,} available "
+                f"({challenger.credits:,} − {challenger_pending:,} in pending duels), "
+                f"needs {stakes:,}."
+            )
+        if target_available < stakes:
+            target_label = await self._resolve_player_label(db, target)
             flogger.warning(
-                f"Target insufficient stakes: player_id={target_id} has {target.credits} credits, needs {stakes}"
+                f"Target insufficient available credits: player_id={target_id} "
+                f"credits={target.credits} pending_stakes={target_pending} "
+                f"available={target_available} needs={stakes}"
             )
-            raise ValueError(f"Target has insufficient credits: has {target.credits}, needs {stakes}.")
+            raise ValueError(
+                f"{target_label} has insufficient available credits to accept this challenge: "
+                f"{target_available:,} available "
+                f"({target.credits:,} − {target_pending:,} in pending duels), "
+                f"needs {stakes:,}."
+            )
 
         # Prevent duplicate pending duels
         existing = await self.duel_repo.get_pending_by_players(db, challenger_id, target_id, guild_id)
@@ -119,25 +161,8 @@ class DuelService:
                 f"Duplicate duel attempt: duel_id={existing.id} already pending between "
                 f"challenger_id={challenger_id} and target_id={target_id} in guild_id={guild_id}"
             )
-            # Resolve display names for a friendly error message — fall back to "Player N" on any miss
-            try:
-                challenger_user = await self.user_repo.get_by_id(db, challenger.user_id)
-                challenger_label = (
-                    challenger_user.discord_username
-                    if challenger_user and challenger_user.discord_username
-                    else f"Player {challenger_id}"
-                )
-            except Exception:
-                challenger_label = f"Player {challenger_id}"
-            try:
-                target_user = await self.user_repo.get_by_id(db, target.user_id)
-                target_label = (
-                    target_user.discord_username
-                    if target_user and target_user.discord_username
-                    else f"Player {target_id}"
-                )
-            except Exception:
-                target_label = f"Player {target_id}"
+            challenger_label = await self._resolve_player_label(db, challenger)
+            target_label = await self._resolve_player_label(db, target)
             raise ValueError(f"A pending duel already exists between {challenger_label} and {target_label}.")
 
         # Resolve per-guild duel expiry
@@ -210,20 +235,43 @@ class DuelService:
         challenger = locked[duel.challenger_id]
         target = locked[duel.target_id]
 
-        if challenger.credits < stakes:
+        # Re-validate available credits at accept-time, excluding this duel from the
+        # pending sum (it's being resolved, not additional exposure).
+        challenger_other_pending = await self.duel_repo.get_total_pending_stakes_for_player(
+            db, challenger.id, exclude_duel_id=duel_id
+        )
+        target_other_pending = await self.duel_repo.get_total_pending_stakes_for_player(
+            db, target.id, exclude_duel_id=duel_id
+        )
+        challenger_available = challenger.credits - challenger_other_pending
+        target_available = target.credits - target_other_pending
+
+        if challenger_available < stakes:
+            challenger_label = await self._resolve_player_label(db, challenger)
             flogger.warning(
-                f"Challenger insufficient credits at accept-time: duel_id={duel_id} "
-                f"player_id={challenger.id} has {challenger.credits}, needs {stakes}"
+                f"Challenger insufficient available credits at accept-time: duel_id={duel_id} "
+                f"player_id={challenger.id} credits={challenger.credits} "
+                f"other_pending={challenger_other_pending} available={challenger_available} needs={stakes}"
             )
             raise ValueError(
-                f"Challenger has insufficient credits at accept-time: has {challenger.credits}, needs {stakes}."
+                f"{challenger_label} can no longer cover this duel: "
+                f"{challenger_available:,} available "
+                f"({challenger.credits:,} − {challenger_other_pending:,} in other pending duels), "
+                f"needs {stakes:,}."
             )
-        if target.credits < stakes:
+        if target_available < stakes:
+            target_label = await self._resolve_player_label(db, target)
             flogger.warning(
-                f"Target insufficient credits at accept-time: duel_id={duel_id} "
-                f"player_id={target.id} has {target.credits}, needs {stakes}"
+                f"Target insufficient available credits at accept-time: duel_id={duel_id} "
+                f"player_id={target.id} credits={target.credits} "
+                f"other_pending={target_other_pending} available={target_available} needs={stakes}"
             )
-            raise ValueError(f"Target has insufficient credits at accept-time: has {target.credits}, needs {stakes}.")
+            raise ValueError(
+                f"{target_label} can no longer cover this duel: "
+                f"{target_available:,} available "
+                f"({target.credits:,} − {target_other_pending:,} in other pending duels), "
+                f"needs {stakes:,}."
+            )
 
         # Build full ship loadouts (weapons, turrets, modules) from DB
         challenger_loadout = await LoadoutBuilder.from_player(db, challenger.id)
@@ -251,6 +299,14 @@ class DuelService:
             loser.duel_credits_lost += stakes
 
             credits_transferred = stakes
+
+            # Auto-cancel any other pending duels the loser can no longer cover.
+            # The loser's balance just dropped by stakes; some of their remaining
+            # pending duels may now be unbacked. Non-fatal: must never block duel resolution.
+            try:
+                await self.cancel_underfunded_duels(db, loser.id, commit=False)
+            except Exception as _cancel_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"cancel_underfunded_duels failed after duel {duel_id} resolution for loser={loser.id}: {_cancel_exc}")
 
             flogger.info(f"Duel {duel_id} resolved: winner player={winner.id} stakes={stakes} transferred")
         else:
@@ -554,6 +610,62 @@ class DuelService:
             flogger.info(f"Admin bulk-cancelled duel {duel.id} in guild {guild_id}.")
 
         return cancelled
+
+    # ------------------------------------------------------------------
+    # Auto-cancel underfunded duels
+    # ------------------------------------------------------------------
+
+    async def cancel_underfunded_duels(
+        self,
+        db,
+        player_id: int,
+        *,
+        commit: bool = False,
+    ) -> list[DuelRequest]:
+        """Cancel any pending duel involving player_id where the player's current
+        balance is below that duel's stakes.
+
+        Called from every credit-deduction site (see services/AGENTS.md →
+        "Duel Pending-Stakes Invariant"). Idempotent; safe to call when no
+        duels are underfunded (returns []).
+
+        The caller normally owns the transaction (commit=False default); the
+        method flushes per-update so subsequent in-transaction reads see the
+        cancelled status.
+
+        Args:
+            db: AsyncSession.
+            player_id: Player whose balance just dropped.
+            commit: If True, commit at end. Default False — caller owns commit.
+
+        Returns:
+            List of cancelled DuelRequest rows.
+        """
+        flogger.debug(f"cancel_underfunded_duels: scanning player_id={player_id}")
+        try:
+            player = await self.player_repo.get_by_id(db, player_id)
+            if player is None:
+                return []
+
+            pending = await self.duel_repo.get_all_pending_involving_player(db, player_id)
+            cancelled: list[DuelRequest] = []
+            for duel in pending:
+                if duel.stakes > player.credits:
+                    updated = await self.duel_repo.update_status(db, duel.id, "cancelled", commit=False)
+                    if updated is not None:
+                        cancelled.append(updated)
+                        role = "challenger" if duel.challenger_id == player_id else "target"
+                        flogger.info(
+                            f"Auto-cancelled underfunded duel id={duel.id} "
+                            f"player_id={player_id} credits={player.credits} "
+                            f"stakes={duel.stakes} role={role}"
+                        )
+            if commit:
+                await db.commit()
+            return cancelled
+        except Exception as e:
+            flogger.error(f"cancel_underfunded_duels failed for player_id={player_id}: {e}")
+            raise
 
     # ------------------------------------------------------------------
     # Expire

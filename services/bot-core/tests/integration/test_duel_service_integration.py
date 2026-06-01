@@ -199,7 +199,7 @@ class TestCreateChallengeIntegration:
                 challenger = await _seed_player(session_a, user_id=3, guild_id=100, credits=50)
                 target = await _seed_player(session_a, user_id=4, guild_id=100, credits=5000)
 
-                with pytest.raises(ValueError, match="insufficient credits"):
+                with pytest.raises(ValueError, match="insufficient available credits"):
                     await service.create_challenge(
                         session_a,
                         challenger_id=challenger.id,
@@ -539,7 +539,7 @@ class TestAcceptDuelIntegration:
                 )
                 duel_id = duel.id
 
-                with pytest.raises(ValueError, match="insufficient credits"):
+                with pytest.raises(ValueError, match="can no longer cover this duel"):
                     await service.accept_duel(session_a, duel_id=duel_id)
 
             # Duel status should remain "pending"

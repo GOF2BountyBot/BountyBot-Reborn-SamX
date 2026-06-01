@@ -190,6 +190,18 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # Deduct credits from player
             player.credits -= total_cost
 
+            # Auto-cancel any pending duels the player can no longer cover after
+            # this purchase. Must run before commit so both mutations are atomic.
+            # Non-fatal: a failure here must never block a legitimate purchase.
+            try:
+                from services.duel_service import DuelService  # deferred to avoid circular import
+
+                await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
+            except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"cancel_underfunded_duels failed after buy_item for player_id={player_id}: {_duel_exc}"
+                )
+
             # Add item to player inventory (commit=False — this service owns the
             # explicit single commit below). B.34 closeout: previously this used
             # the default commit=True, which committed the credit deduction
@@ -331,6 +343,17 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # c. Calculate and set final credit balance in a single update
             updated_credits = player.credits - new_ship_price
             await self.player_repo.update_credits(db, player_id, updated_credits, commit=False)
+
+            # Auto-cancel any pending duels the player can no longer cover.
+            # Non-fatal: a failure here must never block a legitimate ship purchase.
+            try:
+                from services.duel_service import DuelService  # deferred to avoid circular import
+
+                await DuelService().cancel_underfunded_duels(db, player_id, commit=False)
+            except Exception as _duel_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"cancel_underfunded_duels failed after purchase_ship for player_id={player_id}: {_duel_exc}"
+                )
 
             # d. Remove new ship from shop stock (commit=False — caller's transaction controls commit)
             new_shop_quantity = shop_item.quantity - 1

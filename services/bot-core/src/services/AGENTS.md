@@ -4,6 +4,50 @@ Business logic layer for bot-core. All 16 service modules live here + 1 normaliz
 
 ---
 
+## Duel Pending-Stakes Invariant (and auto-cancel contract)
+
+A pending `DuelRequest` carries an implicit credit reservation for **both** the
+challenger and the target equal to `stakes`. A player's **available balance** is:
+
+```
+available = player.credits - SUM(stakes WHERE status='pending' AND (challenger_id=P OR target_id=P))
+```
+
+Total exposure is counted **regardless of role** — a player who is challenger in
+a 6k duel and target in another 6k duel has 12k total exposure.
+
+### Validation
+
+- **`DuelService.create_challenge`** — blocks creation when `challenger_available`
+  or `target_available` is below the new stakes. Uses
+  `duel_repo.get_total_pending_stakes_for_player(db, player_id)`.
+- **`DuelService.accept_duel`** — re-validates under `FOR UPDATE` lock, excluding
+  the current duel from the pending sum (it's being resolved, not additional
+  exposure). Uses `exclude_duel_id=duel_id`.
+
+### HARD RULE — Auto-cancel contract
+
+Every credit-deduction site **MUST** call
+`DuelService().cancel_underfunded_duels(db, player_id, commit=False)` after the
+deduction and before the transaction commit.
+
+**Current call sites:**
+
+| Site | File | Notes |
+|------|------|-------|
+| `ShopService.buy_item` | `shop_service.py` | after `player.credits -= total_cost` |
+| `ShopService.purchase_ship` | `shop_service.py` | after `player_repo.update_credits` |
+| `PlayerService.transfer_credits` | `player_service.py` | source side only; target is gaining |
+| `PlayerService.update_player_credits` | `player_service.py` | decrease path only (`new_credits < old_credits`) |
+| `PlayerService.demote_player` | `player_service.py` | only when `penalty > 0` |
+| `PlayerService.prestige_player` | `player_service.py` | credits reset to 0 — all pending cancelled |
+| `DuelService.accept_duel` | `duel_service.py` | loser side only, after credit transfer |
+
+**New credit-deduction code paths MUST add the same call.** The deferred import
+pattern `from services.duel_service import DuelService` avoids circular imports.
+
+---
+
 ## Inventory & Equipment Data Model — CANONICAL REFERENCE
 
 ### Two Separate Pools

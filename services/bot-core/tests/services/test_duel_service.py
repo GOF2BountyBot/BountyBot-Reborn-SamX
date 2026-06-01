@@ -261,6 +261,7 @@ class TestCreateChallenge:
         }.get(pid)
 
         duel_repo = AsyncMock()
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
         duel_repo.get_pending_by_players.return_value = None
         expected = make_duel(duel_id=42)
         duel_repo.create.return_value = expected
@@ -373,8 +374,11 @@ class TestCreateChallenge:
             2: target,
         }.get(pid)
 
-        svc = make_service(player_repo=player_repo)
-        with pytest.raises(ValueError, match="Challenger has insufficient"):
+        duel_repo = AsyncMock()
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        with pytest.raises(ValueError, match="insufficient available credits"):
             await svc.create_challenge(db=None, challenger_id=1, target_id=2, stakes=100, guild_id=1)
 
     @pytest.mark.asyncio
@@ -389,8 +393,11 @@ class TestCreateChallenge:
             2: target,
         }.get(pid)
 
-        svc = make_service(player_repo=player_repo)
-        with pytest.raises(ValueError, match="Target has insufficient"):
+        duel_repo = AsyncMock()
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        with pytest.raises(ValueError, match="insufficient available credits"):
             await svc.create_challenge(db=None, challenger_id=1, target_id=2, stakes=100, guild_id=1)
 
     @pytest.mark.asyncio
@@ -406,6 +413,7 @@ class TestCreateChallenge:
         }.get(pid)
 
         duel_repo = AsyncMock()
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
         duel_repo.get_pending_by_players.return_value = make_duel()  # existing duel
 
         svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
@@ -425,6 +433,7 @@ class TestCreateChallenge:
         }.get(pid)
 
         duel_repo = AsyncMock()
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
         duel_repo.get_pending_by_players.return_value = None
         duel_repo.create.return_value = make_duel(stakes=0)
 
@@ -454,6 +463,7 @@ class TestAcceptDuel:
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
         duel_repo.update_status.return_value = duel
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
@@ -500,6 +510,7 @@ class TestAcceptDuel:
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
         duel_repo.update_status.return_value = duel
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
@@ -543,6 +554,7 @@ class TestAcceptDuel:
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
         duel_repo.update_status.return_value = duel
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
@@ -611,6 +623,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
@@ -620,7 +633,7 @@ class TestAcceptDuel:
         }.get(pid)
 
         svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
-        with pytest.raises(ValueError, match="insufficient credits at accept-time"):
+        with pytest.raises(ValueError, match="can no longer cover this duel"):
             await svc.accept_duel(db=None, duel_id=1)
 
     @pytest.mark.asyncio
@@ -633,6 +646,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
@@ -642,7 +656,7 @@ class TestAcceptDuel:
         }.get(pid)
 
         svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
-        with pytest.raises(ValueError, match="insufficient credits at accept-time"):
+        with pytest.raises(ValueError, match="can no longer cover this duel"):
             await svc.accept_duel(db=None, duel_id=1)
 
     @pytest.mark.asyncio
@@ -657,6 +671,7 @@ class TestAcceptDuel:
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
         duel_repo.update_status.return_value = duel
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
@@ -1109,3 +1124,394 @@ class TestGetOutgoingForChallenger:
         result = await svc.get_outgoing_for_challenger(db=None, challenger_id=10, guild_id=9999)
 
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Double-spend protection: _resolve_player_label
+# ---------------------------------------------------------------------------
+
+
+class TestResolvePlayerLabel:
+    @pytest.mark.asyncio
+    async def test_prefers_display_name(self):
+        """display_name is returned when set."""
+        player = make_player(1, credits=1000)
+        player.display_name = "CoolPilot"
+
+        user_repo = AsyncMock()
+        svc = make_service(user_repo=user_repo)
+        label = await svc._resolve_player_label(db=None, player=player)
+
+        assert label == "CoolPilot"
+        user_repo.get_by_id.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_discord_username(self):
+        """Falls back to discord_username when display_name is None/falsy."""
+        player = make_player(1, credits=1000)
+        player.display_name = None
+
+        mock_user = MagicMock()
+        mock_user.discord_username = "galaxy55"
+        user_repo = AsyncMock()
+        user_repo.get_by_id.return_value = mock_user
+
+        svc = make_service(user_repo=user_repo)
+        label = await svc._resolve_player_label(db=None, player=player)
+
+        assert label == "galaxy55"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_player_id(self):
+        """Falls back to 'Player {id}' when both display_name and discord_username are absent."""
+        player = make_player(42, credits=1000)
+        player.display_name = None
+
+        user_repo = AsyncMock()
+        user_repo.get_by_id.return_value = None
+
+        svc = make_service(user_repo=user_repo)
+        label = await svc._resolve_player_label(db=None, player=player)
+
+        assert label == "Player 42"
+
+    @pytest.mark.asyncio
+    async def test_db_error_falls_back_to_player_id(self):
+        """DB error during lookup gracefully falls back to 'Player {id}'."""
+        player = make_player(7, credits=500)
+        player.display_name = None
+
+        user_repo = AsyncMock()
+        user_repo.get_by_id.side_effect = RuntimeError("connection lost")
+
+        svc = make_service(user_repo=user_repo)
+        label = await svc._resolve_player_label(db=None, player=player)
+
+        assert label == "Player 7"
+
+
+# ---------------------------------------------------------------------------
+# Double-spend protection: create_challenge available-balance validation
+# ---------------------------------------------------------------------------
+
+
+class TestCreateChallengeAvailableBalance:
+    """Tests that create_challenge uses available balance (credits - pending stakes)."""
+
+    def _make_db(self):
+        return AsyncMock()
+
+    @pytest.mark.asyncio
+    async def test_blocks_when_challenger_has_pending_stakes(self):
+        """Challenger with 10k credits and 8k in pending duels cannot wager 5k more."""
+        challenger = make_player(1, credits=10_000)
+        challenger.display_name = "Alice"
+        target = make_player(2, credits=10_000)
+        target.display_name = "Bob"
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+
+        duel_repo = AsyncMock()
+        # 8k pending for challenger, 0 for target
+        duel_repo.get_total_pending_stakes_for_player.side_effect = lambda db, pid, **kw: 8_000 if pid == 1 else 0
+        duel_repo.get_pending_by_players.return_value = None
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        with pytest.raises(ValueError) as exc_info:
+            await svc.create_challenge(db=self._make_db(), challenger_id=1, target_id=2, stakes=5_000, guild_id=9999)
+
+        msg = str(exc_info.value)
+        assert "Alice" in msg
+        assert "available" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_blocks_when_target_has_pending_stakes(self):
+        """Target with 6k credits and 5k in pending duels cannot be challenged for 3k."""
+        challenger = make_player(1, credits=10_000)
+        challenger.display_name = "Alice"
+        target = make_player(2, credits=6_000)
+        target.display_name = "Bob"
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+
+        duel_repo = AsyncMock()
+        # 0 for challenger, 5k pending for target
+        duel_repo.get_total_pending_stakes_for_player.side_effect = lambda db, pid, **kw: 5_000 if pid == 2 else 0
+        duel_repo.get_pending_by_players.return_value = None
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        with pytest.raises(ValueError) as exc_info:
+            await svc.create_challenge(db=self._make_db(), challenger_id=1, target_id=2, stakes=3_000, guild_id=9999)
+
+        msg = str(exc_info.value)
+        assert "Bob" in msg
+        assert "available" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_allows_when_pending_stakes_leave_room(self):
+        """10k credits, 3k pending, new 5k challenge should pass (7k available)."""
+        challenger = make_player(1, credits=10_000)
+        challenger.display_name = "Alice"
+        target = make_player(2, credits=10_000)
+        target.display_name = "Bob"
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+
+        duel_repo = AsyncMock()
+        duel_repo.get_total_pending_stakes_for_player.return_value = 3_000
+        duel_repo.get_pending_by_players.return_value = None
+        created_duel = make_duel(duel_id=99, challenger_id=1, target_id=2, stakes=5_000)
+        duel_repo.create.return_value = created_duel
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        result = await svc.create_challenge(
+            db=self._make_db(), challenger_id=1, target_id=2, stakes=5_000, guild_id=9999
+        )
+
+        assert result.id == 99
+
+    @pytest.mark.asyncio
+    async def test_zero_stakes_always_passes(self):
+        """Friendly duel (stakes=0) passes even when player has 0 available credits."""
+        challenger = make_player(1, credits=0)
+        challenger.display_name = "Alice"
+        target = make_player(2, credits=0)
+        target.display_name = "Bob"
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+
+        duel_repo = AsyncMock()
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
+        duel_repo.get_pending_by_players.return_value = None
+        created_duel = make_duel(duel_id=1, stakes=0)
+        duel_repo.create.return_value = created_duel
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        result = await svc.create_challenge(db=self._make_db(), challenger_id=1, target_id=2, stakes=0, guild_id=9999)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_error_message_includes_display_name(self):
+        """Insufficient credits error message includes the player's display name."""
+        challenger = make_player(1, credits=500)
+        challenger.display_name = "SpartanAce"
+        target = make_player(2, credits=10_000)
+        target.display_name = "Bob"
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+
+        duel_repo = AsyncMock()
+        duel_repo.get_total_pending_stakes_for_player.return_value = 0
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        with pytest.raises(ValueError) as exc_info:
+            await svc.create_challenge(db=self._make_db(), challenger_id=1, target_id=2, stakes=1_000, guild_id=9999)
+
+        assert "SpartanAce" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Double-spend protection: accept_duel available-balance validation
+# ---------------------------------------------------------------------------
+
+
+class TestAcceptDuelAvailableBalance:
+    """Tests that accept_duel uses available balance and excludes the current duel."""
+
+    def _make_db(self):
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        db.refresh = AsyncMock()
+        return db
+
+    def _make_duel_and_repos(
+        self, *, challenger_credits, target_credits, stakes, challenger_other_pending=0, target_other_pending=0
+    ):
+        duel = make_duel(duel_id=5, challenger_id=1, target_id=2, stakes=stakes)
+        challenger = make_player(1, credits=challenger_credits)
+        challenger.display_name = "Alice"
+        target = make_player(2, credits=target_credits)
+        target.display_name = "Bob"
+
+        duel_repo = AsyncMock()
+        duel_repo.get_by_id.return_value = duel
+
+        def pending_stakes(db, pid, *, exclude_duel_id=None):
+            if pid == 1:
+                return challenger_other_pending
+            return target_other_pending
+
+        duel_repo.get_total_pending_stakes_for_player.side_effect = pending_stakes
+
+        player_repo = AsyncMock()
+        # get_by_id_for_update returns locked player
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
+
+        return duel, challenger, target, duel_repo, player_repo
+
+    @pytest.mark.asyncio
+    async def test_accept_blocks_when_challenger_other_pending_exceeds_available(self):
+        """Challenger has 10k, 7k in OTHER pending duels, trying to accept 6k duel → blocked."""
+        duel, _challenger, _target, duel_repo, player_repo = self._make_duel_and_repos(
+            challenger_credits=10_000,
+            target_credits=10_000,
+            stakes=6_000,
+            challenger_other_pending=7_000,
+            target_other_pending=0,
+        )
+        duel_repo.update_status = AsyncMock(return_value=duel)
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        with pytest.raises(ValueError) as exc_info:
+            await svc.accept_duel(db=self._make_db(), duel_id=5)
+
+        msg = str(exc_info.value)
+        assert "Alice" in msg
+        assert "available" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_accept_excludes_current_duel_from_pending_sum(self):
+        """Accepting a 10k duel with exactly 10k credits and no OTHER pending → passes."""
+        duel, _challenger, _target, duel_repo, player_repo = self._make_duel_and_repos(
+            challenger_credits=10_000,
+            target_credits=10_000,
+            stakes=10_000,
+            challenger_other_pending=0,
+            target_other_pending=0,
+        )
+        duel_repo.update_status = AsyncMock(return_value=duel)
+
+        # Mock LoadoutBuilder so combat can run
+        with patch("services.duel_service.LoadoutBuilder") as mock_lb:
+            mock_lb.from_player = AsyncMock(return_value=make_ship_loadout("ShipA"))
+            svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+            # combat_service will run — use a deterministic resolver
+            svc.combat_service = MagicMock()
+            svc.combat_service.fight_ships.return_value = MagicMock(
+                is_stalemate=True,
+                winner_name=None,
+            )
+            result = await svc.accept_duel(db=self._make_db(), duel_id=5)
+
+        assert result["stakes"] == 10_000
+
+
+# ---------------------------------------------------------------------------
+# Double-spend protection: cancel_underfunded_duels
+# ---------------------------------------------------------------------------
+
+
+class TestCancelUnderfundedDuels:
+    @pytest.mark.asyncio
+    async def test_cancels_only_underfunded_duels(self):
+        """Player has 5k credits. 3k duel stays pending; 7k duel is cancelled."""
+        player = make_player(1, credits=5_000)
+        duel_ok = make_duel(duel_id=1, challenger_id=1, stakes=3_000)
+        duel_bad = make_duel(duel_id=2, challenger_id=1, stakes=7_000)
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = player
+
+        duel_repo = AsyncMock()
+        duel_repo.get_all_pending_involving_player.return_value = [duel_ok, duel_bad]
+        cancelled_duel = make_duel(duel_id=2, status="cancelled")
+        duel_repo.update_status.return_value = cancelled_duel
+
+        mock_db = AsyncMock()
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        cancelled = await svc.cancel_underfunded_duels(db=mock_db, player_id=1)
+
+        assert len(cancelled) == 1
+        assert cancelled[0].id == 2
+        # Only duel 2 should have been updated
+        duel_repo.update_status.assert_called_once_with(mock_db, 2, "cancelled", commit=False)
+
+    @pytest.mark.asyncio
+    async def test_cancels_in_both_roles(self):
+        """Player is target in one unaffordable duel and challenger in another — both cancelled."""
+        player = make_player(1, credits=1_000)
+        duel_as_challenger = make_duel(duel_id=10, challenger_id=1, target_id=99, stakes=2_000)
+        duel_as_target = make_duel(duel_id=11, challenger_id=99, target_id=1, stakes=5_000)
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = player
+
+        duel_repo = AsyncMock()
+        duel_repo.get_all_pending_involving_player.return_value = [duel_as_challenger, duel_as_target]
+        duel_repo.update_status.side_effect = lambda db, did, status, **kw: make_duel(duel_id=did, status=status)
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        cancelled = await svc.cancel_underfunded_duels(db=AsyncMock(), player_id=1)
+
+        assert len(cancelled) == 2
+        cancelled_ids = {d.id for d in cancelled}
+        assert cancelled_ids == {10, 11}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_all_duels_affordable(self):
+        """No duels cancelled when player can cover all of them."""
+        player = make_player(1, credits=10_000)
+        duel1 = make_duel(duel_id=1, stakes=3_000)
+        duel2 = make_duel(duel_id=2, stakes=4_000)
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = player
+
+        duel_repo = AsyncMock()
+        duel_repo.get_all_pending_involving_player.return_value = [duel1, duel2]
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        cancelled = await svc.cancel_underfunded_duels(db=AsyncMock(), player_id=1)
+
+        assert cancelled == []
+        duel_repo.update_status.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handles_nonexistent_player(self):
+        """Returns empty list without error when player_id doesn't exist."""
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = None
+
+        svc = make_service(player_repo=player_repo)
+        cancelled = await svc.cancel_underfunded_duels(db=AsyncMock(), player_id=999)
+
+        assert cancelled == []
+
+    @pytest.mark.asyncio
+    async def test_idempotent_no_pending(self):
+        """Returns empty list when player has no pending duels."""
+        player = make_player(1, credits=100)
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = player
+
+        duel_repo = AsyncMock()
+        duel_repo.get_all_pending_involving_player.return_value = []
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        cancelled = await svc.cancel_underfunded_duels(db=AsyncMock(), player_id=1)
+
+        assert cancelled == []
+
+    @pytest.mark.asyncio
+    async def test_zero_stakes_friendly_duel_never_cancelled(self):
+        """Friendly duels (stakes=0) are never cancelled even when player has 0 credits."""
+        player = make_player(1, credits=0)
+        friendly = make_duel(duel_id=1, challenger_id=1, stakes=0)
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = player
+
+        duel_repo = AsyncMock()
+        duel_repo.get_all_pending_involving_player.return_value = [friendly]
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        cancelled = await svc.cancel_underfunded_duels(db=AsyncMock(), player_id=1)
+
+        assert cancelled == []
+        duel_repo.update_status.assert_not_called()

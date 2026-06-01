@@ -70,7 +70,7 @@ When a formula uses a lowercase symbol whose value is sourced from a config knob
 
 - **Damage stacking order (per hit):** shield → armour → hull.
 - **Starting HP (Phase-1):** every combatant starts at max on every layer. Damaged-start support is Phase-2 (schema hooks already exist on `Player.current_*` and `Bounty.criminal_current_*`).
-- **HP is integer; per-tick HP delta is integer.**
+- **HP is integer; per-layer HP delta is integer at end of tick.** Intermediate calculations (PvC DR scaling, nuke falloff, regen accumulators, etc.) may carry float values mid-phase. The integer boundary is enforced when an HP delta is committed to a layer at the end of the damage/regen phase — use Python `round()` (consistent with §7.8's PrimaryWeaponMod convention).
 
 ### Shield regen (per shield module)
 - **Continuous per-tick recharge** via integer schedule:
@@ -410,6 +410,15 @@ The resolver loads these but applies no combat effect:
 
 **Universal trigger rule:** at any HP-threshold crossing, the device activates **iff off cooldown**. Still cooling = threshold *skipped*, no retry. Cooldown timer starts when **effect expires**, NOT when activated.
 
+**HP-percent definition:** the percent that thresholds are evaluated against is the **sum-of-layers / sum-of-maxes** across all three HP layers:
+
+```
+hp_percent = (current_shield + current_armour + current_hull)
+           / (shield_max + armour_max + hull_max)
+```
+
+A ship without shield modules has `shield_max = 0` and the formula degrades naturally. A threshold is **crossed** when `hp_percent` transitions from above the threshold to at-or-below it on a single tick (Phase-1 starts every combatant at 100%, so all thresholds are crossable from above). Crossings are evaluated at Appendix B step 5 (post-damage HP), C1-before-C2 within the phase.
+
 **Initial state at tick 0:** all HP-threshold module cooldowns start at `0` — the device is ready to activate on the *first* qualifying threshold crossing without any warmup delay. (Combatant-init concern per §1.)
 
 Per-activation sequence:
@@ -540,7 +549,7 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
         "final_hp": { "shield": 0,   "armour": 0,   "hull": 140 },
         "damage_dealt": 620, "damage_taken": 480,
         "shots_fired": 240, "shots_hit": 168, "accuracy": 0.70,
-        "module_activations": { "Cloak": 2, "Booster": 3 },
+        "module_activations": { "cloak": 2, "booster": 3 },          // lowercase_snake_case keys per §0.3; embed layer renders friendly names
         "secondary_fired":    { "rocket": 12 }
       },
       "2": { /* …same shape… */ }
@@ -577,13 +586,30 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
 |---|---|---|
 | `fight_start` | tick 0 | combatants, ships, start HP layers, initial distance |
 | `regen` | shield recharge pulse or repair-bot hull/armour pulse applies | `{layer, amount, hp_after}` |
-| `weapon_fire` | a primary / secondary / turret fires (incl. miss) | `{slot, subtype, weapon, hit, accuracy}` |
-| `damage` | HP applied to a target after a hit | `{amount, breakdown:{shield,armour,hull}, hp_after, source}` |
+| `weapon_fire` | a primary / secondary / turret fires (incl. miss) | Base shape `{slot, subtype, weapon, hit, accuracy}` for accuracy-roll fires. Cluster-missile, nuke, and shock-blast substitute or extend per the table below. |
+| `damage` | HP applied to a target after a hit | `{amount, breakdown:{shield,armour,hull}, hp_after, source}`. During an active EmergencySystem invuln window (§7.7), the event still emits but with `amount: 0`, `breakdown` omitted, `hp_after` unchanged, and a `blocked_by: "emergency_system_invuln"` annotation. |
 | `module_activation` | a discrete activation occurs — Phase-1: cloak / booster (HP-threshold crossing) or EmergencySystem (lethal-hull trigger). Passive modules (Repair Bot, Thruster, PrimaryWeaponMod, shield regen) do NOT emit this event. | `{module, trigger_hp_pct}` (trigger_hp_pct omitted for EmergencySystem) |
 | `cooldown_end` | a weapon or module comes off cooldown | `{system}` |
 | `layer_depleted` | a ship's shield → 0 or armour → 0 | `{layer}` |
 | `distance` | distance changes (booster push, closing, shock-blast reset) | `{from, to, cause}` |
 | `fight_end` | terminal | `{winner, reason, duration_ticks, final_hp}` |
+
+#### `weapon_fire` per-subtype payloads
+
+The base `{slot, subtype, weapon, hit, accuracy}` covers per-shot accuracy-roll fires. Cluster-missile condenses to one event per fire (§6.2). Nuke and shock-blast bypass the accuracy roll and use subtype-specific shapes.
+
+| Subtype | Payload |
+|---|---|
+| primary | `{slot: "primary", subtype: "primary", weapon, hit, accuracy}` |
+| rocket | `{slot: "secondary", subtype: "rocket", weapon, hit, accuracy}` |
+| missile | `{slot: "secondary", subtype: "missile", weapon, hit, accuracy, branch: "tier_a" \| "tier_bc"}` |
+| cluster-missile | `{slot: "secondary", subtype: "cluster-missile", weapon, fired, hits, damage_per_hit, total_damage}` |
+| nuke | `{slot: "secondary", subtype: "nuke", weapon, epicenter, opponent_damage, self_damage}` |
+| shock-blast | `{slot: "secondary", subtype: "shock-blast", weapon, hit: true, accuracy: 1.0}` |
+| auto-turret | `{slot: "turret", subtype: "auto", weapon, hit, accuracy}` |
+| manual-turret | `{slot: "turret", subtype: "manual", weapon, hit, accuracy}` |
+
+Phase-2/3+ deferred subtypes (ionizing-missile fire-but-noop per §6.2, etc.) emit with their declared `subtype` value and the base shape.
 
 ### Retention
 
@@ -647,13 +673,13 @@ fight_ships(
 
 **Callsite assignment (Phase-1):**
 
-| Callsite | `log_result` | `context` | Notes |
-|---|---|---|---|
-| `duel_service.accept_duel` | `True` (default) | `"duel"` | PvP duel; persists + updates stats |
-| `bounty_service.check_system` (Bronze) | `True` (default) | `"bounty_bonus"` | Base reward already paid; combat decides 2× multiplier |
-| `bounty_service.check_system` (Silver+) | `True` (default) | `"bounty_pvc"` | Combat win required to collect base reward |
-| `bounties.POST /bounties/combat-bonus` | `True` (default) | `"bounty_bonus"` | Manual-trigger endpoint for the Bronze bonus combat |
-| `combat_preflight_service` (Monte-Carlo loop) | **`False`** | n/a | Ephemeral simulations for `/promote` gear-check; no state touched |
+| Callsite | `log_result` | `context` | `pvc_damage_reduction` | Notes |
+|---|---|---|---|---|
+| `duel_service.accept_duel` | `True` (default) | `"duel"` | `0.0` | PvP duel; persists + updates stats |
+| `bounty_service.check_system` (Bronze) | `True` (default) | `"bounty_bonus"` | `0.33` | Base reward already paid; combat decides 2× multiplier |
+| `bounty_service.check_system` (Silver+) | `True` (default) | `"bounty_pvc"` | `0.33` | Combat win required to collect base reward |
+| `bounties.POST /bounties/combat-bonus` | `True` (default) | `"bounty_bonus"` | `0.33` | Manual-trigger endpoint for the Bronze bonus combat |
+| `combat_preflight_service` (Monte-Carlo loop) | **`False`** | n/a | `0.33` | Ephemeral simulations for `/promote` gear-check (PvC); matches target-tier experience. No state touched. |
 
 ### In-memory production & `FightResults` mapping
 

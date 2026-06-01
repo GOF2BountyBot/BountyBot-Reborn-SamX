@@ -1214,9 +1214,7 @@ class TestCreateChallengeAvailableBalance:
 
         duel_repo = AsyncMock()
         # 8k pending for challenger, 0 for target
-        duel_repo.get_total_pending_stakes_for_player.side_effect = (
-            lambda db, pid, **kw: 8_000 if pid == 1 else 0
-        )
+        duel_repo.get_total_pending_stakes_for_player.side_effect = lambda db, pid, **kw: 8_000 if pid == 1 else 0
         duel_repo.get_pending_by_players.return_value = None
 
         svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
@@ -1240,9 +1238,7 @@ class TestCreateChallengeAvailableBalance:
 
         duel_repo = AsyncMock()
         # 0 for challenger, 5k pending for target
-        duel_repo.get_total_pending_stakes_for_player.side_effect = (
-            lambda db, pid, **kw: 5_000 if pid == 2 else 0
-        )
+        duel_repo.get_total_pending_stakes_for_player.side_effect = lambda db, pid, **kw: 5_000 if pid == 2 else 0
         duel_repo.get_pending_by_players.return_value = None
 
         svc = make_service(duel_repo=duel_repo, player_repo=player_repo)

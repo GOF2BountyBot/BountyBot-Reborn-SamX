@@ -8,7 +8,7 @@ queries, CRUD operations, and status management.
 from datetime import datetime
 
 from shared import bblogger
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -308,6 +308,81 @@ class DuelRepository(IRepository[DuelRequest]):
             return list(result.scalars().all())
         except Exception as e:
             flogger.error(f"Error getting pending duels for target={target_id} guild={guild_id}: {e}")
+            raise
+
+    async def get_total_pending_stakes_for_player(
+        self,
+        db: AsyncSession,
+        player_id: int,
+        *,
+        exclude_duel_id: int | None = None,
+    ) -> int:
+        """Sum of stakes across all pending duels where player_id is challenger OR target.
+
+        Counts total exposure regardless of role — a player with 10k credits who
+        is challenger in a 6k duel and target in another 6k duel has 12k total
+        exposure, exceeding their balance.
+
+        Args:
+            db: Async database session.
+            player_id: Player whose pending exposure to sum.
+            exclude_duel_id: If provided, excludes this duel from the sum.
+                Used by accept_duel to compute OTHER pending stakes (everything
+                except the duel being resolved).
+
+        Returns:
+            Total pending stakes as an integer (0 if none).
+        """
+        try:
+            query = select(func.coalesce(func.sum(DuelRequest.stakes), 0)).where(
+                and_(
+                    DuelRequest.status == "pending",
+                    or_(
+                        DuelRequest.challenger_id == player_id,
+                        DuelRequest.target_id == player_id,
+                    ),
+                )
+            )
+            if exclude_duel_id is not None:
+                query = query.where(DuelRequest.id != exclude_duel_id)
+            result = await db.execute(query)
+            return int(result.scalar_one() or 0)
+        except Exception as e:
+            flogger.error(f"Error summing pending stakes for player_id={player_id}: {e}")
+            raise
+
+    async def get_all_pending_involving_player(
+        self, db: AsyncSession, player_id: int
+    ) -> list[DuelRequest]:
+        """All pending duels where player_id is challenger or target.
+
+        Used by DuelService.cancel_underfunded_duels to evaluate each pending
+        duel against the player's current balance. Does NOT apply the
+        expires_at > NOW() guard intentionally — auto-cancel should still fire
+        on duels at/near expiry; the expire job handles TTL separately.
+
+        Args:
+            db: Async database session.
+            player_id: Player to look up.
+
+        Returns:
+            List of pending DuelRequest rows involving this player.
+        """
+        try:
+            result = await db.execute(
+                select(DuelRequest).where(
+                    and_(
+                        DuelRequest.status == "pending",
+                        or_(
+                            DuelRequest.challenger_id == player_id,
+                            DuelRequest.target_id == player_id,
+                        ),
+                    )
+                )
+            )
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error listing pending duels involving player_id={player_id}: {e}")
             raise
 
     async def get_all_pending_by_guild(self, db: AsyncSession, guild_id: int) -> list[DuelRequest]:

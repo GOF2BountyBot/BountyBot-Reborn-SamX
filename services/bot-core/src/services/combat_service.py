@@ -68,6 +68,33 @@ class _PrimaryWeaponRuntime:
     cooldown_remaining_ms: int = 0  # §1: fully ready at tick 0; mutated by Phase 1 each tick
 
 
+@dataclass(slots=True)
+class _SecondaryWeaponRuntime:
+    """Baked per-secondary-weapon stats for one combatant in the tick loop.
+
+    Mirror of _PrimaryWeaponRuntime for secondary weapons (D1, T6).
+    PrimaryWeaponMod does NOT apply to secondaries (§7.8).
+    Secondaries read raw seed damage/loading_speed_ms directly.
+
+    RNG draw order (§ determinism):
+        C1 secondaries in loadout insertion order, then C2 secondaries.
+        Shock-blast takes NO RNG draw; nuke draws rng.uniform() for epicenter;
+        all others draw rng.random() for hit roll.
+    """
+
+    name: str
+    subtype: str  # "rocket"|"missile"|"cluster-missile"|"nuke"|"shock-blast"|"emp-bomb"|...
+    damage_per_shot: int  # raw seed damage (§7.8: secondaries read raw seed, NOT effective_*)
+    loading_speed_ms: int  # raw seed loading_speed_ms (reset on fire — hit OR miss)
+    range_m: float  # binary gate (§2 / §6.2 D1.2); 0.0 = infinite range
+    burst_count: int  # cluster-missile: sub-munition count; 0 for non-cluster
+    emp_damage: int  # EMP damage (baked for log fidelity; phase-2+); 0 if none
+    magnitude_m: float  # nuke: seed magnitude_m (scaled by NUKE_MAGNITUDE_SCALE at resolve time)
+    steerable: bool  # data-only flag in Phase-1; no behaviour branch
+    weapon_stats_ref: WeaponStats  # back-ref for weapon_accuracy() passthrough
+    cooldown_remaining_ms: int = 0  # §1: fully ready at tick 0; mutated by Phase 1 each tick
+
+
 @dataclass
 class _CombatantState:
     """Per-side mutable runtime state for TickResolver. Not frozen — mutated every tick."""
@@ -104,6 +131,9 @@ class _CombatantState:
     # T5: baked per-primary-weapon runtime list (effective stats + mutable cooldown)
     # Primaries only — turrets/secondaries are NOT in this list (§7.8 PrimaryWeaponMod scope)
     effective_primaries: list[_PrimaryWeaponRuntime] = field(default_factory=list)
+    # T6: baked per-secondary-weapon runtime list (raw seed stats + mutable cooldown)
+    # PrimaryWeaponMod does NOT apply to secondaries (§7.8).
+    effective_secondaries: list[_SecondaryWeaponRuntime] = field(default_factory=list)
 
 
 def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState:
@@ -188,6 +218,30 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
             )
         )
 
+    # ------------------------------------------------------------------
+    # T6: Secondary weapon runtime list — baked once at init (§1)
+    # PrimaryWeaponMod does NOT apply (§7.8); raw seed values used directly.
+    # ------------------------------------------------------------------
+    effective_secondaries: list[_SecondaryWeaponRuntime] = []
+    for sw in loadout.secondary_weapons:
+        raw_dmg = sw.damage_per_shot if sw.damage_per_shot is not None else 0.0
+        raw_speed = sw.loading_speed_ms if sw.loading_speed_ms > 0 else tick_ms
+        effective_secondaries.append(
+            _SecondaryWeaponRuntime(
+                name=sw.name,
+                subtype=sw.subtype,
+                damage_per_shot=round(raw_dmg),
+                loading_speed_ms=raw_speed,
+                range_m=sw.range_m,
+                burst_count=sw.burst_count,
+                emp_damage=sw.emp_damage,
+                magnitude_m=sw.magnitude_m,
+                steerable=sw.steerable,
+                weapon_stats_ref=sw,
+                cooldown_remaining_ms=0,  # §1: fully ready at tick 0
+            )
+        )
+
     return _CombatantState(
         name=loadout.ship_name,
         loadout=loadout,
@@ -211,6 +265,7 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
         pilot_primary_acc=0.0,  # recomputed at start of tick 0
         pilot_turret_acc=0.0,
         effective_primaries=effective_primaries,
+        effective_secondaries=effective_secondaries,
     )
 
 
@@ -387,6 +442,64 @@ def _apply_damage(
         )
 
 
+def _rocket_accuracy(current_distance: float, range_m: float, min_distance: float) -> float:
+    """Linear rocket accuracy curve (§6.2 / Appendix B).
+
+    accuracy = 0.05 + 0.55 × ((range_m − current_distance) / (range_m − min_distance))
+             → clamp [0.05, 0.60]
+
+    Args:
+        current_distance: Fire-time distance in meters.
+        range_m: Weapon range gate from seed.
+        min_distance: GameConstants.MIN_DISTANCE_M.
+
+    Returns:
+        Accuracy float in [0.05, 0.60].
+    """
+    denom = range_m - min_distance
+    if denom <= 0:
+        return 0.05  # degenerate: range_m == min_distance → floor
+    raw = 0.05 + 0.55 * ((range_m - current_distance) / denom)
+    return max(0.05, min(0.60, raw))
+
+
+def _nuke_dmg(distance: float, damage: int, effective_magnitude: float) -> float:
+    """Nuke falloff formula (§6.2 / Appendix B).
+
+    dmg(d) = damage × (1 − min(1, d / effective_magnitude))²
+
+    Returns un-rounded float; callers pass to _apply_damage which rounds.
+    """
+    if effective_magnitude <= 0:
+        return 0.0
+    fraction = min(1.0, distance / effective_magnitude)
+    return damage * (1.0 - fraction) ** 2
+
+
+def _shock_blast_apply(attacker: _CombatantState, current_distance: float) -> float:
+    """Apply shock-blast Phase 6 effect: returns new distance (STARTING_DISTANCE_M).
+
+    Shock-blast resets current_distance to STARTING_DISTANCE_M (D6 / Appendix B §6).
+    This function is PURE with respect to combatant state — it ONLY computes the
+    new distance value. It does NOT mutate attacker, the target, module_cooldowns,
+    weapon_cooldowns, or any other field on any _CombatantState.
+
+    The caller (TickResolver Phase 6) is responsible for:
+      - updating the resolver-local current_distance variable
+      - emitting the distance event to the combat log
+
+    Args:
+        attacker: Shock-blast owner (used for name in event; state NOT mutated).
+        current_distance: Current resolver-local distance before reset.
+
+    Returns:
+        New distance after shock-blast reset (always STARTING_DISTANCE_M).
+    """
+    _ = attacker  # name used by caller for event actor; no state mutation
+    _ = current_distance  # captured by caller for 'from' field; not used here
+    return float(GameConstants.STARTING_DISTANCE_M)
+
+
 class TickResolver:
     """Tick-based combat resolver implementing Appendix B phase order.
 
@@ -523,6 +636,20 @@ class TickResolver:
                                 data={"system": _pw.name},
                             )
                         )
+                # T6: secondary weapon cooldowns (mirror of primary path above)
+                for _sw in _cs.effective_secondaries:
+                    _sw_prior = _sw.cooldown_remaining_ms
+                    _sw.cooldown_remaining_ms = max(0, _sw_prior - tick_ms)
+                    if _sw_prior > 0 and _sw.cooldown_remaining_ms == 0:
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.cooldown_end,
+                                actor=_cs.name,
+                                target=None,
+                                data={"system": _sw.name},
+                            )
+                        )
                 for _w in _cs.weapon_cooldowns:
                     _cs.weapon_cooldowns[_w] = max(0, _cs.weapon_cooldowns[_w] - tick_ms)
                 for _m in _cs.module_cooldowns:
@@ -580,6 +707,173 @@ class TickResolver:
                     _pw.cooldown_remaining_ms = _pw.effective_loading_speed_ms
 
             # ------------------------------------------------------------------
+            # Phase 3 (T6): Evaluate secondary weapon firings.
+            # RNG draw order: C1 secondaries (insertion order) then C2 secondaries.
+            # Hits/pending entries are recorded here; damage applied at Phase 4.
+            # Shock-blast fires here (weapon_fire emitted); distance reset at Phase 6.
+            # ------------------------------------------------------------------
+            # Secondary pending queue entries:
+            #   ("primary_hit", attacker, target, sw, raw_damage_float)   — rocket/missile/EMP
+            #   ("cluster", attacker, target, sw, hit_mask: list[bool])   — cluster
+            #   ("nuke", attacker, sw, opponent_raw, self_raw)             — nuke (attacker == firer)
+            #   ("shock_blast", attacker, sw, prev_distance)              — no damage, for Phase 6
+            _sec_pending: list[tuple] = []
+
+            for _attacker, _target in ((c1, c2), (c2, c1)):
+                for _sw in _attacker.effective_secondaries:
+                    # D1.1: cooldown gate
+                    if _sw.cooldown_remaining_ms > 0:
+                        continue
+                    # D1.2: range gate — shock-blast has range_m=0 → always in range
+                    _sw_range = _sw.range_m
+                    if _sw_range > 0 and current_distance > _sw_range:
+                        continue
+                    # D1.3: subtype dispatch
+                    _sub = _sw.subtype
+
+                    if _sub == "rocket":
+                        # D2: linear accuracy curve
+                        _acc_r = _rocket_accuracy(current_distance, _sw.range_m, min_dist)
+                        _hit_r = _rng.random() < _acc_r
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.weapon_fire,
+                                actor=_attacker.name,
+                                target=_target.name,
+                                data={"slot": "secondary", "subtype": "rocket", "weapon": _sw.name,
+                                      "hit": _hit_r, "accuracy": _acc_r},
+                            )
+                        )
+                        if _hit_r:
+                            _sec_pending.append(("primary_hit", _attacker, _target, _sw, float(_sw.damage_per_shot)))
+                        _sw.cooldown_remaining_ms = _sw.loading_speed_ms
+
+                    elif _sub == "missile":
+                        # D3: scanner-tier branch
+                        _tracking = _attacker.scanner_tier.missile_tracking_active
+                        if _tracking:
+                            _acc_m = weapon_accuracy(_attacker.pilot_primary_acc, _sw.weapon_stats_ref)
+                            _branch = "tier_bc"
+                        else:
+                            _acc_m = _rocket_accuracy(current_distance, _sw.range_m, min_dist)
+                            _branch = "tier_a"
+                        _hit_m = _rng.random() < _acc_m
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.weapon_fire,
+                                actor=_attacker.name,
+                                target=_target.name,
+                                data={"slot": "secondary", "subtype": "missile", "weapon": _sw.name,
+                                      "hit": _hit_m, "accuracy": _acc_m, "branch": _branch},
+                            )
+                        )
+                        if _hit_m:
+                            _sec_pending.append(("primary_hit", _attacker, _target, _sw, float(_sw.damage_per_shot)))
+                        _sw.cooldown_remaining_ms = _sw.loading_speed_ms
+
+                    elif _sub == "cluster-missile":
+                        # D4: accuracy snapshot captured ONCE at fire time; all N sub-munitions roll
+                        _tracking_c = _attacker.scanner_tier.missile_tracking_active
+                        if _tracking_c:
+                            _acc_c = weapon_accuracy(_attacker.pilot_primary_acc, _sw.weapon_stats_ref)
+                            _cbranch = "tier_bc"
+                        else:
+                            _acc_c = _rocket_accuracy(current_distance, _sw.range_m, min_dist)
+                            _cbranch = "tier_a"
+                        _n = _sw.burst_count if _sw.burst_count > 0 else 1
+                        _hits_mask: list[bool] = [_rng.random() < _acc_c for _ in range(_n)]
+                        _k = sum(_hits_mask)
+                        # ONE condensed weapon_fire event per cluster fire (§6.2 D4)
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.weapon_fire,
+                                actor=_attacker.name,
+                                target=_target.name,
+                                data={"slot": "secondary", "subtype": "cluster-missile", "weapon": _sw.name,
+                                      "fired": _n, "hits": _k, "damage_per_hit": _sw.damage_per_shot,
+                                      "total_damage": _k * _sw.damage_per_shot,
+                                      "branch": _cbranch, "accuracy": _acc_c},
+                            )
+                        )
+                        _sec_pending.append(("cluster", _attacker, _target, _sw, _hits_mask))
+                        _sw.cooldown_remaining_ms = _sw.loading_speed_ms
+
+                    elif _sub == "nuke":
+                        # D5: no accuracy roll; epicenter sampled via injected RNG
+                        _epicenter = _rng.uniform(min_dist, float(GameConstants.STARTING_DISTANCE_M))
+                        _d_firer = _epicenter  # firer at position 0
+                        _d_opp = abs(_epicenter - current_distance)
+                        _eff_mag = _sw.magnitude_m * GameConstants.NUKE_MAGNITUDE_SCALE
+                        _opp_raw = _nuke_dmg(_d_opp, _sw.damage_per_shot, _eff_mag)
+                        _self_raw = (
+                            _nuke_dmg(_d_firer, _sw.damage_per_shot, _eff_mag) * GameConstants.NUKE_FRIENDLY_FACTOR
+                        )
+                        _opp_dmg_int = round(_opp_raw)
+                        _self_dmg_int = round(_self_raw)
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.weapon_fire,
+                                actor=_attacker.name,
+                                target=_target.name,
+                                data={"slot": "secondary", "subtype": "nuke", "weapon": _sw.name,
+                                      "epicenter": _epicenter, "d_firer": _d_firer, "d_opponent": _d_opp,
+                                      "opponent_damage": _opp_dmg_int, "self_damage": _self_dmg_int},
+                            )
+                        )
+                        # Queue: opponent damage, then self-damage (phase 4 canonical order)
+                        _sec_pending.append(("nuke_opponent", _attacker, _target, _sw, _opp_raw))
+                        _sec_pending.append(("nuke_self", _attacker, _sw, _self_raw))
+                        _sw.cooldown_remaining_ms = _sw.loading_speed_ms
+
+                    elif _sub == "shock-blast":
+                        # D6: 100% guaranteed distance reset — no RNG draw, no damage
+                        _prev_dist = current_distance
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.weapon_fire,
+                                actor=_attacker.name,
+                                target=_target.name,
+                                data={"slot": "secondary", "subtype": "shock-blast", "weapon": _sw.name,
+                                      "hit": True, "accuracy": 1.0, "damage": 0},
+                            )
+                        )
+                        # Queue for Phase 6 distance reset (Appendix B step 6)
+                        _sec_pending.append(("shock_blast", _attacker, _sw, _prev_dist))
+                        _sw.cooldown_remaining_ms = _sw.loading_speed_ms
+
+                    elif _sub == "ionizing-missile":
+                        # D1.3: fire-but-noop; fires, rolls accuracy, applies 0 HP delta
+                        _tracking_ion = _attacker.scanner_tier.missile_tracking_active
+                        if _tracking_ion:
+                            _acc_ion = weapon_accuracy(_attacker.pilot_primary_acc, _sw.weapon_stats_ref)
+                            _branch_ion = "tier_bc"
+                        else:
+                            _acc_ion = _rocket_accuracy(current_distance, _sw.range_m, min_dist)
+                            _branch_ion = "tier_a"
+                        _hit_ion = _rng.random() < _acc_ion
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.weapon_fire,
+                                actor=_attacker.name,
+                                target=_target.name,
+                                data={"slot": "secondary", "subtype": "ionizing-missile", "weapon": _sw.name,
+                                      "hit": _hit_ion, "accuracy": _acc_ion, "branch": _branch_ion},
+                            )
+                        )
+                        if _hit_ion:
+                            # fire-but-noop: routes through helper with raw_damage=0
+                            _sec_pending.append(("primary_hit", _attacker, _target, _sw, 0.0))
+                        _sw.cooldown_remaining_ms = _sw.loading_speed_ms
+
+                    # else: deferred subtypes (emp-bomb, mine, sentry-gun) — noop; cooldown continues
+
+            # ------------------------------------------------------------------
             # Phase 4: Apply damage — drain pending queue (C1 hits first, then C2)
             # The pending list preserves (c1,c2) then (c2,c1) ordering from Phase 3.
             # Pure-EMP primaries land with raw_damage=0; helper records the 0-delta event (§4/D5).
@@ -593,6 +887,61 @@ class TickResolver:
                     source={"subtype": "primary", "weapon": _pw.name, "attacker": _attacker.name},
                     pvc_damage_reduction=pvc_damage_reduction,
                 )
+
+            # ------------------------------------------------------------------
+            # Phase 4 (T6): Apply secondary pending entries.
+            # Entries are in phase-3 recording order (C1 then C2).
+            # Shock-blast entries skipped here — handled in Phase 6.
+            # ------------------------------------------------------------------
+            _shock_blast_entries: list[tuple] = []
+            for _entry in _sec_pending:
+                _kind = _entry[0]
+                if _kind == "primary_hit":
+                    _, _att, _tgt, _sw_e, _raw = _entry
+                    _apply_damage(
+                        _tgt,
+                        raw_damage=_raw,
+                        tick=tick,
+                        events=events,
+                        source={"subtype": _sw_e.subtype, "weapon": _sw_e.name, "attacker": _att.name},
+                        pvc_damage_reduction=pvc_damage_reduction,
+                    )
+                elif _kind == "cluster":
+                    _, _att, _tgt, _sw_e, _mask = _entry
+                    for _hit_sub in _mask:
+                        if _hit_sub:
+                            _apply_damage(
+                                _tgt,
+                                raw_damage=float(_sw_e.damage_per_shot),
+                                tick=tick,
+                                events=events,
+                                source={"subtype": "cluster-missile", "weapon": _sw_e.name, "attacker": _att.name},
+                                pvc_damage_reduction=pvc_damage_reduction,
+                            )
+                elif _kind == "nuke_opponent":
+                    _, _att, _tgt, _sw_e, _raw = _entry
+                    _apply_damage(
+                        _tgt,
+                        raw_damage=_raw,
+                        tick=tick,
+                        events=events,
+                        source={"subtype": "nuke", "weapon": _sw_e.name, "attacker": _att.name},
+                        pvc_damage_reduction=pvc_damage_reduction,
+                    )
+                elif _kind == "nuke_self":
+                    _, _firer, _sw_e, _raw = _entry
+                    # Self-damage: firer IS the target; PvC DR applies via T3's helper (§3/D5)
+                    _apply_damage(
+                        _firer,
+                        raw_damage=_raw,
+                        tick=tick,
+                        events=events,
+                        source={"subtype": "nuke", "weapon": _sw_e.name, "attacker": _firer.name, "is_self": True},
+                        pvc_damage_reduction=pvc_damage_reduction,
+                    )
+                elif _kind == "shock_blast":
+                    _shock_blast_entries.append(_entry)
+                # else: unrecognised — defensive skip
 
             # ------------------------------------------------------------------
             # Phase 4a: EmergencySystem evaluation — T9: EmergencySystem evaluation
@@ -615,20 +964,45 @@ class TickResolver:
             # (no-op T3)
 
             # ------------------------------------------------------------------
-            # Phase 6: Update distance — passive closure (§2); Appendix B
+            # Phase 6: Update distance — passive closure (§2); shock-blast reset (T6); Appendix B
+            # Shock-blast entries from Phase 3 are applied here (Appendix B step 6).
+            # If a shock-blast fires, it resets distance; passive closure is skipped this tick
+            # (the reset already set distance back to STARTING_DISTANCE_M).
             # ------------------------------------------------------------------
-            old_dist = current_distance
-            current_distance = max(min_dist, current_distance - distance_delta)
-            if current_distance != old_dist:
-                events.append(
-                    CombatEvent(
-                        tick=tick,
-                        type=CombatEventType.distance,
-                        actor=None,
-                        target=None,
-                        data={"from": old_dist, "to": current_distance, "cause": "closure"},
+            _shock_blast_fired = bool(_shock_blast_entries)
+            if _shock_blast_fired:
+                # Apply shock-blasts in phase-3 recording order.
+                # Multiple shock-blasts same tick: each one resets to STARTING_DISTANCE_M.
+                # The `from` field in each distance event reflects the actual pre-reset distance
+                # AT PHASE 6 APPLICATION TIME (not the phase-3 capture), so the second shock-blast
+                # correctly reports `from: STARTING_DISTANCE_M` (already reset by the first).
+                for _sb_entry in _shock_blast_entries:
+                    _, _sb_att, _sb_sw, _sb_prev = _sb_entry  # _sb_prev unused — use live distance
+                    _sb_from = current_distance  # actual pre-reset distance at phase 6 apply time
+                    _sb_new_dist = _shock_blast_apply(_sb_att, current_distance)
+                    current_distance = _sb_new_dist
+                    events.append(
+                        CombatEvent(
+                            tick=tick,
+                            type=CombatEventType.distance,
+                            actor=_sb_att.name,
+                            target=None,
+                            data={"from": _sb_from, "to": _sb_new_dist, "cause": "shock_blast"},
+                        )
                     )
-                )
+            else:
+                old_dist = current_distance
+                current_distance = max(min_dist, current_distance - distance_delta)
+                if current_distance != old_dist:
+                    events.append(
+                        CombatEvent(
+                            tick=tick,
+                            type=CombatEventType.distance,
+                            actor=None,
+                            target=None,
+                            data={"from": old_dist, "to": current_distance, "cause": "closure"},
+                        )
+                    )
 
             # ------------------------------------------------------------------
             # Phase 7: Events emitted inline above (already in processing order)

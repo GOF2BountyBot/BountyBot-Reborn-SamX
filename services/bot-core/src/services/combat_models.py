@@ -20,7 +20,7 @@ from typing import Any, Final, Protocol
 
 @dataclass(frozen=True, slots=True)
 class WeaponStats:
-    """Stats for a single weapon (primary or turret).
+    """Stats for a single weapon (primary, secondary, or turret).
 
     Attributes:
         name: Weapon display name.
@@ -29,6 +29,14 @@ class WeaponStats:
     Future extension fields (unused now, reserved for fire-rate combat):
         fire_rate: Shots per second (None = use averaged DPS model).
         damage_per_shot: Damage dealt per individual shot.
+
+    T6 discriminator fields (D0): default zero/empty for backward compat.
+        subtype: Secondary weapon subtype string (e.g. "rocket", "missile", "nuke").
+                 Empty string for primaries/turrets.
+        burst_count: Cluster-missile sub-munition count (D4). 0 for non-cluster.
+        emp_damage: EMP damage value (phase-2+ deferred; baked for log fidelity). 0 if none.
+        magnitude_m: Nuke blast radius seed value (D5). 0.0 if non-nuke.
+        steerable: Nuke/missile steerable flag (data-only in Phase-1; no behaviour branch). False by default.
     """
 
     name: str
@@ -38,6 +46,12 @@ class WeaponStats:
     damage_per_shot: float | None = None  # physical damage per shot (§4/§6.1); None → 0 in resolver
     loading_speed_ms: int = 0  # cooldown in ms between shots (§1/§6.1); 0 = DPS-model only
     range_m: float = 0.0  # binary fire gate: fires when current_distance ≤ range_m (§2)
+    # T6 discriminator fields (D0) — default zero/empty so legacy code paths are unaffected
+    subtype: str = ""  # secondary subtype: "rocket"|"missile"|"cluster-missile"|"nuke"|"shock-blast"|...
+    burst_count: int = 0  # cluster-missile sub-munition count (§6.2 D4); 0 for non-cluster
+    emp_damage: int = 0  # EMP damage (baked for log fidelity; deferred to phase-2+)
+    magnitude_m: float = 0.0  # nuke blast radius seed value (§6.2 D5); 0.0 for non-nukes
+    steerable: bool = False  # steerable flag — data-only in Phase-1; no behaviour branch (§6.2 D5)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +144,8 @@ class ShipLoadout:
     turrets: list[WeaponStats] = field(default_factory=list)
     modules: list[ModuleStats] = field(default_factory=list)
     upgrades: list[UpgradeStats] = field(default_factory=list)
+    # T6 (D0): secondary weapons — runtime home for secondaries consumed by TickResolver
+    secondary_weapons: list[WeaponStats] = field(default_factory=list)
     # Future fields
     base_accuracy: float = 1.0
     base_evasion: float = 0.0

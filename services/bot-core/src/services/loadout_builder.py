@@ -140,15 +140,28 @@ class LoadoutBuilder:
 
         flogger.debug(f"Player {player_id} active ship: {ship_name!r}, base_armour={base_armour}")
 
-        # 4. Build weapon stats
+        # 4. Build primary weapon stats (D0.5 T6 true-up: populate damage_per_shot/loading_speed_ms/range_m)
+        # DB extra_atts structure: {"builtIn": ..., "extra_atts": {"loading_speed_ms": ..., "range_m": ..., ...}}
+        # The combat-relevant snake_case fields live in the INNER extra_atts dict.
         weapons: list[WeaponStats] = []
         for w_name in player_ship.weapons or []:
             item = await item_repo.get_by_name(db, w_name, item_type="primary_weapon")
             if item is None:
                 item = await item_repo.get_by_name(db, w_name)
             dps = float(getattr(item, "dps", 0) or 0) if item else 0.0
-            weapons.append(WeaponStats(name=w_name, dps=dps))
-            flogger.trace(f"Weapon {w_name!r} dps={dps}")
+            outer = getattr(item, "extra_atts", None) or {}
+            # Unpack inner extra_atts (DB nesting); fall back to outer for legacy flat dicts
+            inner = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+            dmg = inner.get("damage_per_shot") or inner.get("damage") or getattr(item, "damage_per_shot", None)
+            dmg_val = float(dmg) if dmg is not None else None
+            spd = int(inner.get("loading_speed_ms", 0) or 0)
+            rng_m = float(inner.get("range_m", 0.0) or 0.0)
+            weapons.append(WeaponStats(name=w_name, dps=dps, damage_per_shot=dmg_val,
+                                       loading_speed_ms=spd, range_m=rng_m))
+            flogger.trace(
+                f"Weapon {w_name!r} dps={dps} damage_per_shot={dmg_val} "
+                f"loading_speed_ms={spd} range_m={rng_m}"
+            )
 
         # 5. Build turret stats
         turrets: list[WeaponStats] = []
@@ -175,9 +188,57 @@ class LoadoutBuilder:
                 flogger.debug(f"Module {m_name!r} not found in DB — using zero-effect ModuleStats")
                 modules.append(ModuleStats(name=m_name))
 
+        # 6a. Build secondary weapon stats (D0.5 T6)
+        # DB extra_atts structure: {"builtIn": ..., "loading speed": ..., "extra_atts": {"loading_speed_ms": ..., ...}}
+        # Combat-relevant snake_case fields (subtype, loading_speed_ms, range_m, burst_count, emp_damage,
+        # magnitude_m, steerable) live in the INNER extra_atts dict; damage comes from sw_item.damage column.
+        # Local import matches the pattern used for Module/PlayerShip/Ship above;
+        # all ORM model imports are kept function-local to avoid SQLAlchemy setup ordering issues.
+        from persist.models.secondary_weapon import SecondaryWeapon
+
+        secondary_weapons: list[WeaponStats] = []
+        for sw_name in getattr(player_ship, "secondary_weapons", None) or []:
+            sw_result = await db.execute(select(SecondaryWeapon).where(SecondaryWeapon.name == sw_name))
+            sw_item = sw_result.scalars().first()
+            if sw_item is None:
+                sw_item = await item_repo.get_by_name(db, sw_name, item_type="secondary_weapon")
+            if sw_item is None:
+                sw_item = await item_repo.get_by_name(db, sw_name)
+            sw_outer = getattr(sw_item, "extra_atts", None) or {}
+            # Unpack inner extra_atts (DB nesting); fall back to outer for legacy flat dicts (tests)
+            sw_extra = sw_outer.get("extra_atts", sw_outer) if isinstance(sw_outer, dict) else {}
+            sw_dps = float(getattr(sw_item, "dps", 0) or 0) if sw_item else 0.0
+            sw_damage = int(getattr(sw_item, "damage", 0) or 0) if sw_item else 0
+            sw_spd = int(sw_extra.get("loading_speed_ms", 0) or 0)
+            sw_rng = float(sw_extra.get("range_m", 0.0) or 0.0)
+            sw_subtype = sw_extra.get("subtype", "")
+            sw_burst = int(sw_extra.get("burst_count", 0) or 0)
+            sw_emp = int(sw_extra.get("emp_damage", 0) or 0)
+            sw_mag = float(sw_extra.get("magnitude_m", 0.0) or 0.0)
+            sw_steer = bool(sw_extra.get("steerable", False))
+            secondary_weapons.append(
+                WeaponStats(
+                    name=sw_name,
+                    dps=sw_dps,
+                    damage_per_shot=float(sw_damage),
+                    loading_speed_ms=sw_spd,
+                    range_m=sw_rng,
+                    subtype=sw_subtype,
+                    burst_count=sw_burst,
+                    emp_damage=sw_emp,
+                    magnitude_m=sw_mag,
+                    steerable=sw_steer,
+                )
+            )
+            flogger.trace(
+                f"Secondary {sw_name!r} subtype={sw_subtype!r} damage={sw_damage} "
+                f"loading_speed_ms={sw_spd} range_m={sw_rng}"
+            )
+
         flogger.debug(
             f"Player {player_id} loadout built: ship={ship_name!r}, base_armour={base_armour}, "
-            f"weapons={len(weapons)}, turrets={len(turrets)}, modules={len(modules)}"
+            f"weapons={len(weapons)}, turrets={len(turrets)}, modules={len(modules)}, "
+            f"secondary_weapons={len(secondary_weapons)}"
         )
 
         return ShipLoadout(
@@ -187,6 +248,7 @@ class LoadoutBuilder:
             weapons=weapons,
             turrets=turrets,
             modules=modules,
+            secondary_weapons=secondary_weapons,
         )
 
     @staticmethod

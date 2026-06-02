@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 from shared import bblogger
 
-from services.combat_balance import ScannerTier, compute_pilot_accuracy, resolve_scanner_tier
+from services.combat_balance import ScannerTier, compute_pilot_accuracy, resolve_scanner_tier, weapon_accuracy
 from services.combat_models import (
     CombatEvent,
     CombatEventType,
@@ -28,6 +28,7 @@ from services.combat_models import (
     FightResults,
     FightStats,
     ShipLoadout,
+    WeaponStats,
 )
 from services.game_constants import GameConstants, resolve_constant
 
@@ -40,6 +41,31 @@ flogger = bblogger.get_logger(__name__)
 # Ketar Repair Bot module name constants (used for rate detection in _init_combatant)
 _KETAR_II_NAME = "Ketar Repair Bot II"
 _KETAR_I_NAME = "Ketar Repair Bot I"
+
+# STI discriminator for the PrimaryWeaponMod module class (§10)
+_PRIMARY_WEAPON_MOD_TYPE = "PrimaryWeaponModModule"
+
+
+@dataclass(slots=True)
+class _PrimaryWeaponRuntime:
+    """Baked per-primary-weapon stats for one combatant in the tick loop.
+
+    NOT frozen — cooldown_remaining_ms is mutated every tick. Effective stats
+    are baked once at combatant init (§7.8 / §1 implementation note); the tick
+    loop never recomputes them.
+
+    RNG draw order within a tick (§ determinism):
+        C1 primaries in loadout insertion order, then C2 primaries in loadout
+        insertion order. This matches the (c1, c2) iteration in Phase 3.
+    """
+
+    name: str
+    effective_damage_per_shot: int  # round(damage_per_shot × (1 + damage_pct/100)); no floor (§7.8)
+    effective_loading_speed_ms: int  # snapped to nearest TICK_MS (§7.8); ≥ TICK_MS
+    range_m: float  # binary gate; PrimaryWeaponMod does NOT modify range (§7.8)
+    is_pure_emp: bool  # damage_per_shot == 0; fires normally, applies 0 HP delta (§4)
+    weapon_stats_ref: WeaponStats  # back-ref for weapon_accuracy() passthrough
+    cooldown_remaining_ms: int = 0  # §1: fully ready at tick 0; mutated by Phase 1 each tick
 
 
 @dataclass
@@ -75,6 +101,9 @@ class _CombatantState:
     )
     pilot_primary_acc: float = 0.0
     pilot_turret_acc: float = 0.0
+    # T5: baked per-primary-weapon runtime list (effective stats + mutable cooldown)
+    # Primaries only — turrets/secondaries are NOT in this list (§7.8 PrimaryWeaponMod scope)
+    effective_primaries: list[_PrimaryWeaponRuntime] = field(default_factory=list)
 
 
 def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState:
@@ -109,7 +138,8 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
             repair_rate = max(repair_rate, GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)
 
     # All cooldowns start at 0 — weapons fully ready at tick 0 (§1)
-    weapon_cooldowns = {w.name: 0 for w in loadout.weapons + loadout.turrets}
+    # Primary weapon cooldowns are tracked in effective_primaries (T5); turrets stay here.
+    weapon_cooldowns = {w.name: 0 for w in loadout.turrets}
     module_cooldowns = {m.name: 0 for m in loadout.modules}
 
     # Precompute scanner tier once — stateless, same loadout always returns same result (§7.1)
@@ -118,6 +148,45 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
         tier_b_bonus_pp=float(GameConstants.SCANNER_TIER_B_BONUS_PP),
         tier_c_bonus_pp=float(GameConstants.SCANNER_TIER_C_BONUS_PP),
     )
+
+    # ------------------------------------------------------------------
+    # T5: PrimaryWeaponMod pre-pass — bake effective stats once at init (§7.8)
+    # Applies to primary weapons ONLY; turrets and secondaries are unaffected.
+    # ------------------------------------------------------------------
+    pw_mods = [m for m in loadout.modules if m.module_type == _PRIMARY_WEAPON_MOD_TYPE]
+    if len(pw_mods) > 1:
+        # Unique-equip invariant violation — first wins; log once outside tick loop (§10)
+        flogger.warning(
+            f"Combatant '{loadout.ship_name}': multiple PrimaryWeaponMods equipped "
+            f"({[m.name for m in pw_mods]}). Using first: '{pw_mods[0].name}'. "
+            "Upstream loadout-builder invariant violated."
+        )
+    pw_mod = pw_mods[0] if pw_mods else None
+    damage_pct_val: int = pw_mod.damage_pct if pw_mod is not None else 0
+    fire_rate_pct_val: int = pw_mod.fire_rate_pct if pw_mod is not None else 0
+
+    effective_primaries: list[_PrimaryWeaponRuntime] = []
+    for ws in loadout.weapons:
+        base_dmg = ws.damage_per_shot if ws.damage_per_shot is not None else 0.0
+        base_speed = float(ws.loading_speed_ms) if ws.loading_speed_ms > 0 else float(tick_ms)
+        # Formula (§7.8 / Appendix B):
+        #   effective_damage  = round(base × (1 + damage_pct/100))      — integer, no floor
+        #   effective_speed   = round((base / (1 + fire_rate_pct/100)) / TICK_MS) × TICK_MS
+        eff_damage: int = round(base_dmg * (1.0 + damage_pct_val / 100.0))
+        eff_speed: int = round((base_speed / (1.0 + fire_rate_pct_val / 100.0)) / tick_ms) * tick_ms
+        # Ensure cooldown is at least one tick (0ms would fire every tick; unintended for Phase-1 seeds)
+        eff_speed = max(tick_ms, eff_speed)
+        effective_primaries.append(
+            _PrimaryWeaponRuntime(
+                name=ws.name,
+                effective_damage_per_shot=eff_damage,
+                effective_loading_speed_ms=eff_speed,
+                range_m=ws.range_m,
+                is_pure_emp=(base_dmg == 0.0),
+                weapon_stats_ref=ws,
+                cooldown_remaining_ms=0,  # §1: fully ready at tick 0
+            )
+        )
 
     return _CombatantState(
         name=loadout.ship_name,
@@ -141,6 +210,7 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
         scanner_tier=scanner_tier,
         pilot_primary_acc=0.0,  # recomputed at start of tick 0
         pilot_turret_acc=0.0,
+        effective_primaries=effective_primaries,
     )
 
 
@@ -436,15 +506,27 @@ class TickResolver:
 
             # ------------------------------------------------------------------
             # Phase 1: Decrement cooldowns (C1 then C2; floor at 0)
+            # Primary weapon cooldowns tracked in effective_primaries; emit cooldown_end
+            # on the tick a cooldown crosses >0 → 0 (no emission for weapons that start at 0).
             # ------------------------------------------------------------------
-            for w in c1.weapon_cooldowns:
-                c1.weapon_cooldowns[w] = max(0, c1.weapon_cooldowns[w] - tick_ms)
-            for m in c1.module_cooldowns:
-                c1.module_cooldowns[m] = max(0, c1.module_cooldowns[m] - tick_ms)
-            for w in c2.weapon_cooldowns:
-                c2.weapon_cooldowns[w] = max(0, c2.weapon_cooldowns[w] - tick_ms)
-            for m in c2.module_cooldowns:
-                c2.module_cooldowns[m] = max(0, c2.module_cooldowns[m] - tick_ms)
+            for _cs in (c1, c2):
+                for _pw in _cs.effective_primaries:
+                    _prior = _pw.cooldown_remaining_ms
+                    _pw.cooldown_remaining_ms = max(0, _prior - tick_ms)
+                    if _prior > 0 and _pw.cooldown_remaining_ms == 0:
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.cooldown_end,
+                                actor=_cs.name,
+                                target=None,
+                                data={"system": _pw.name},
+                            )
+                        )
+                for _w in _cs.weapon_cooldowns:
+                    _cs.weapon_cooldowns[_w] = max(0, _cs.weapon_cooldowns[_w] - tick_ms)
+                for _m in _cs.module_cooldowns:
+                    _cs.module_cooldowns[_m] = max(0, _cs.module_cooldowns[_m] - tick_ms)
 
             # ------------------------------------------------------------------
             # Phase 2: Apply regen pulses (C1 then C2; shield + repair bot parallel)
@@ -455,14 +537,62 @@ class TickResolver:
             _tick_repair_bot_regen(c2, tick, events)
 
             # ------------------------------------------------------------------
-            # Phase 3: Evaluate weapon firings — T5: weapon firing evaluation
+            # Phase 3: Evaluate weapon firings — primary weapons (T5)
+            # Hits are RECORDED here, not applied. Fire/apply separation is what
+            # makes mutual-fire-on-the-lethal-tick correct (Appendix B).
+            # RNG draw order: C1 primaries (insertion order), then C2 primaries.
             # ------------------------------------------------------------------
-            # (no-op T3 — no weapons fire; hits list is empty)
+            # pending: (attacker_state, target_state, weapon_runtime) — hits only
+            _pending: list[tuple[_CombatantState, _CombatantState, _PrimaryWeaponRuntime]] = []
+
+            for _attacker, _target in ((c1, c2), (c2, c1)):
+                for _pw in _attacker.effective_primaries:
+                    # Gate 1: cooldown ready (§6.1 / D3)
+                    if _pw.cooldown_remaining_ms > 0:
+                        continue
+                    # Gate 2: in range — binary gate (§2 / §6.1); weapon stays ready while out of range
+                    if current_distance > _pw.range_m:
+                        continue
+                    # Accuracy — T4 passthrough; clamp already applied by compute_pilot_accuracy
+                    _acc = weapon_accuracy(_attacker.pilot_primary_acc, _pw.weapon_stats_ref)
+                    # RNG draw — canonical order documented on _PrimaryWeaponRuntime
+                    _hit = _rng.random() < _acc
+                    # weapon_fire event — §12 primary payload shape (Q9 lock)
+                    events.append(
+                        CombatEvent(
+                            tick=tick,
+                            type=CombatEventType.weapon_fire,
+                            actor=_attacker.name,
+                            target=_target.name,
+                            data={
+                                "slot": "primary",
+                                "subtype": "primary",
+                                "weapon": _pw.name,
+                                "hit": _hit,
+                                "accuracy": _acc,
+                            },
+                        )
+                    )
+                    # Queue hit for phase 4 — misses emit weapon_fire(hit=false) only (Q10 lock)
+                    if _hit:
+                        _pending.append((_attacker, _target, _pw))
+                    # Reset cooldown — happens on both hit AND miss (§6.1 D4)
+                    _pw.cooldown_remaining_ms = _pw.effective_loading_speed_ms
 
             # ------------------------------------------------------------------
-            # Phase 4: Apply damage — no hits queued in T3
+            # Phase 4: Apply damage — drain pending queue (C1 hits first, then C2)
+            # The pending list preserves (c1,c2) then (c2,c1) ordering from Phase 3.
+            # Pure-EMP primaries land with raw_damage=0; helper records the 0-delta event (§4/D5).
             # ------------------------------------------------------------------
-            # (no-op T3 — damage helper exists and is unit-tested directly)
+            for _attacker, _target, _pw in _pending:
+                _apply_damage(
+                    _target,
+                    raw_damage=float(_pw.effective_damage_per_shot),
+                    tick=tick,
+                    events=events,
+                    source={"subtype": "primary", "weapon": _pw.name, "attacker": _attacker.name},
+                    pvc_damage_reduction=pvc_damage_reduction,
+                )
 
             # ------------------------------------------------------------------
             # Phase 4a: EmergencySystem evaluation — T9: EmergencySystem evaluation

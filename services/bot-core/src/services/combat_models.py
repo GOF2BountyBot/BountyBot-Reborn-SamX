@@ -33,9 +33,11 @@ class WeaponStats:
 
     name: str
     dps: float
-    # Future fields — unused in SimpleTTKResolver, present for type stability
-    fire_rate: float | None = None
-    damage_per_shot: float | None = None
+    # Tick-resolver fields (T5+): used by TickResolver for per-shot simulation
+    fire_rate: float | None = None  # shots/sec — DPS-model concept; kept for legacy compat
+    damage_per_shot: float | None = None  # physical damage per shot (§4/§6.1); None → 0 in resolver
+    loading_speed_ms: int = 0  # cooldown in ms between shots (§1/§6.1); 0 = DPS-model only
+    range_m: float = 0.0  # binary fire gate: fires when current_distance ≤ range_m (§2)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +78,10 @@ class ModuleStats:
     shield_recharge_ms: int = 0  # raw recharge time (ms); used by TickResolver §3 schedule
     shield_recharge_rate: float = 0.0
     repair_rate: float = 0.0
+    # Tick-resolver fields (T5+): STI discriminator + PrimaryWeaponMod stats (§7.8/§10)
+    module_type: str = ""  # STI discriminator from Item.type (e.g. "PrimaryWeaponModModule")
+    damage_pct: int = 0  # PrimaryWeaponMod: per-shot damage modifier (§7.8); can be negative
+    fire_rate_pct: int = 0  # PrimaryWeaponMod: fire-rate modifier (§7.8); positive = faster (lower cooldown)
 
 
 @dataclass(frozen=True, slots=True)

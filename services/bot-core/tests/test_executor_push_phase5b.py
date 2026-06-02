@@ -29,6 +29,12 @@ import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+# Opt out of the autouse `_stub_gateway_push_helpers` fixture in tests/conftest.py:
+# this file's whole point is to exercise the real push helpers.
+pytestmark = pytest.mark.real_push
+
 # ---------------------------------------------------------------------------
 # Path setup and stub registration
 # ---------------------------------------------------------------------------

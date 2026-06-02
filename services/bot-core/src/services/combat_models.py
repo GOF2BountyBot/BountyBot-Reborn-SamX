@@ -73,6 +73,7 @@ class ModuleStats:
     accuracy_modifier: float = 0.0
     evasion_modifier: float = 0.0
     enemy_accuracy_modifier: float = 0.0
+    shield_recharge_ms: int = 0  # raw recharge time (ms); used by TickResolver §3 schedule
     shield_recharge_rate: float = 0.0
     repair_rate: float = 0.0
 

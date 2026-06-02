@@ -40,20 +40,35 @@ def _get_extra(extra: dict, snake_key: str, camel_key: str, default):
     return val
 
 
-def _module_stats_from_extra(name: str, extra: dict) -> ModuleStats:
+def _module_stats_from_extra(name: str, extra: dict, *, module_type: str = "") -> ModuleStats:
     """Build a ModuleStats from a module's extra_atts dict.
 
     Maps both snake_case and camelCase variant keys to handle
     data stored by the module_repository (camelCase, from JSON files)
     and any future snake_case data sources.
 
+    The ``extra`` argument is the OUTER extra_atts dict as stored in the DB.
+    For T8 fields (effect_pct, effect_duration_ms, loading_speed_ms), the
+    authoritative values live in the INNER extra_atts nested dict:
+
+        outer = mod.extra_atts  (e.g. {"duration": 10, "extra_atts": {"duration_ms": 10000, ...}})
+        inner = outer.get("extra_atts", outer)   ← combat-relevant snake_case fields live here
+
+    The HP/DPS fields (armour, shield, etc.) are also checked in the inner dict
+    as a fallback, because they live in the inner extra_atts in some module types.
+
     Args:
         name: Module display name.
-        extra: The extra_atts dict from the Module ORM model or criminal_ship dict.
+        extra: The OUTER extra_atts dict from the Module ORM model or criminal_ship dict.
+        module_type: STI discriminator string (Item.type), e.g. "CloakModule". Empty string
+                     for legacy callers that do not supply it.
 
     Returns:
         ModuleStats with all relevant combat fields populated.
     """
+    # Resolve inner extra_atts (T6/T7/T8 pattern: combat-relevant fields live in nested dict)
+    inner: dict = extra.get("extra_atts", extra) if isinstance(extra, dict) else {}
+
     armour = int(_get_extra(extra, "armour", "armour", 0))
     armour_multiplier = float(_get_extra(extra, "armour_multiplier", "armourMultiplier", 1.0))
     shield = int(_get_extra(extra, "shield", "shield", 0))
@@ -61,9 +76,31 @@ def _module_stats_from_extra(name: str, extra: dict) -> ModuleStats:
     dps = int(_get_extra(extra, "dps", "dps", 0))
     dps_multiplier = float(_get_extra(extra, "dps_multiplier", "dpsMultiplier", 1.0))
 
+    # Also check inner dict for HP/DPS fields (some modules store them there)
+    if armour == 0:
+        armour = int(_get_extra(inner, "armour", "armour", 0))
+    if shield == 0:
+        shield = int(_get_extra(inner, "shield", "shield", 0))
+
+    # T5 PrimaryWeaponMod fields (also in inner)
+    damage_pct = int(_get_extra(inner, "damage_pct", "damagePct", 0))
+    fire_rate_pct = int(_get_extra(inner, "fire_rate_pct", "fireRatePct", 0))
+
+    # Shield regen fields (T3 — also in inner)
+    shield_recharge_ms = int(_get_extra(inner, "shield_recharge_ms", "shieldRechargeMs", 0))
+    shield_recharge_rate = float(_get_extra(inner, "shield_recharge_rate", "shieldRechargeRate", 0.0))
+    repair_rate = float(_get_extra(inner, "repair_rate", "repairRate", 0.0))
+
+    # T8 activation-rule fields — all in inner extra_atts
+    effect_pct = float(_get_extra(inner, "effect_pct", "effectPct", 0.0))
+    # Cloak/Booster store effect window as "duration_ms" in seed; T8 reads it as effect_duration_ms
+    effect_duration_ms = int(_get_extra(inner, "duration_ms", "durationMs", 0))
+    loading_speed_ms = int(_get_extra(inner, "loading_speed_ms", "loadingSpeedMs", 0))
+
     flogger.trace(
-        f"Module stats for {name!r}: armour={armour}, armour_mult={armour_multiplier}, "
-        f"shield={shield}, shield_mult={shield_multiplier}, dps={dps}, dps_mult={dps_multiplier}"
+        f"Module stats for {name!r}: type={module_type!r}, armour={armour}, armour_mult={armour_multiplier}, "
+        f"shield={shield}, shield_mult={shield_multiplier}, dps={dps}, dps_mult={dps_multiplier}, "
+        f"effect_pct={effect_pct}, effect_duration_ms={effect_duration_ms}, loading_speed_ms={loading_speed_ms}"
     )
 
     return ModuleStats(
@@ -74,6 +111,15 @@ def _module_stats_from_extra(name: str, extra: dict) -> ModuleStats:
         shield_multiplier=shield_multiplier,
         dps=dps,
         dps_multiplier=dps_multiplier,
+        shield_recharge_ms=shield_recharge_ms,
+        shield_recharge_rate=shield_recharge_rate,
+        repair_rate=repair_rate,
+        module_type=module_type,
+        damage_pct=damage_pct,
+        fire_rate_pct=fire_rate_pct,
+        effect_pct=effect_pct,
+        effect_duration_ms=effect_duration_ms,
+        loading_speed_ms=loading_speed_ms,
     )
 
 
@@ -211,6 +257,7 @@ class LoadoutBuilder:
             )
 
         # 6. Build module stats
+        # Pass module_type (Item.type STI discriminator) so T5/T8 detection works with builder-fed loadouts.
         modules: list[ModuleStats] = []
         for m_name in player_ship.modules or []:
             mod_result = await db.execute(select(Module).where(Module.name == m_name))
@@ -220,7 +267,8 @@ class LoadoutBuilder:
                 mod = item
             if mod:
                 extra = mod.extra_atts or {}
-                modules.append(_module_stats_from_extra(m_name, extra))
+                mod_type = getattr(mod, "type", "") or ""
+                modules.append(_module_stats_from_extra(m_name, extra, module_type=mod_type))
             else:
                 flogger.debug(f"Module {m_name!r} not found in DB — using zero-effect ModuleStats")
                 modules.append(ModuleStats(name=m_name))
@@ -272,10 +320,13 @@ class LoadoutBuilder:
                 f"loading_speed_ms={sw_spd} range_m={sw_rng}"
             )
 
+        # T8: Read ship's built-in modules (e.g. U'tool for Scimitar/Specter) for §10 supersession
+        ship_builtin_modules: list[str] = list(getattr(ship, "builtin_modules", None) or [])
+
         flogger.debug(
             f"Player {player_id} loadout built: ship={ship_name!r}, base_armour={base_armour}, "
             f"weapons={len(weapons)}, turrets={len(turrets)}, modules={len(modules)}, "
-            f"secondary_weapons={len(secondary_weapons)}"
+            f"secondary_weapons={len(secondary_weapons)}, builtin_modules={ship_builtin_modules}"
         )
 
         return ShipLoadout(
@@ -286,6 +337,7 @@ class LoadoutBuilder:
             turrets=turrets,
             modules=modules,
             secondary_weapons=secondary_weapons,
+            builtin_modules=ship_builtin_modules,
         )
 
     @staticmethod
@@ -367,15 +419,20 @@ class LoadoutBuilder:
                 f"loading_speed_ms={t_spd} range_m={t_rng}"
             )
 
-        # Modules
+        # Modules — pass module_type from the criminal_ship dict entry (T5/T8 detection)
         modules: list[ModuleStats] = []
         for m in criminal_ship.get("modules", []):
             extra = m.get("extra_atts") or {}
-            modules.append(_module_stats_from_extra(m["name"], extra))
+            mod_type = m.get("type", "") or ""
+            modules.append(_module_stats_from_extra(m["name"], extra, module_type=mod_type))
+
+        # T8: built-in modules from criminal_ship dict (e.g. Scimitar has U'tool built-in)
+        criminal_builtin_modules: list[str] = list(criminal_ship.get("builtin_modules") or [])
 
         flogger.debug(
             f"Criminal loadout built: ship={ship_name!r}, base_armour={base_armour}, "
-            f"weapons={len(weapons)}, turrets={len(turrets)}, modules={len(modules)}"
+            f"weapons={len(weapons)}, turrets={len(turrets)}, modules={len(modules)}, "
+            f"builtin_modules={criminal_builtin_modules}"
         )
 
         return ShipLoadout(
@@ -385,4 +442,5 @@ class LoadoutBuilder:
             weapons=weapons,
             turrets=turrets,
             modules=modules,
+            builtin_modules=criminal_builtin_modules,
         )

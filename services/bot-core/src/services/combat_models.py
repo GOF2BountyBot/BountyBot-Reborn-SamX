@@ -101,6 +101,10 @@ class ModuleStats:
     module_type: str = ""  # STI discriminator from Item.type (e.g. "PrimaryWeaponModModule")
     damage_pct: int = 0  # PrimaryWeaponMod: per-shot damage modifier (§7.8); can be negative
     fire_rate_pct: int = 0  # PrimaryWeaponMod: fire-rate modifier (§7.8); positive = faster (lower cooldown)
+    # T8 activation-rule module fields (§7.2 / §7.3 / §7.4) — default zero/empty for backward compat
+    effect_pct: float = 0.0  # Booster: speed boost pct; Thruster: accuracy bonus pct (from extra_atts)
+    effect_duration_ms: int = 0  # Cloak/Booster: effect window in ms (seed key: duration_ms)
+    loading_speed_ms: int = 0  # Cloak/Booster: cooldown after effect expiry in ms
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +155,8 @@ class ShipLoadout:
     upgrades: list[UpgradeStats] = field(default_factory=list)
     # T6 (D0): secondary weapons — runtime home for secondaries consumed by TickResolver
     secondary_weapons: list[WeaponStats] = field(default_factory=list)
+    # T8: built-in modules from ship config (§10 supersession); e.g. ["U'tool"] for Scimitar/Specter
+    builtin_modules: list[str] = field(default_factory=list)
     # Future fields
     base_accuracy: float = 1.0
     base_evasion: float = 0.0

@@ -19,7 +19,14 @@ from dataclasses import dataclass, field
 
 from shared import bblogger
 
-from services.combat_balance import ScannerTier, compute_pilot_accuracy, resolve_scanner_tier, weapon_accuracy
+from services.combat_balance import (
+    ScannerTier,
+    booster_debuff_pp,
+    compute_pilot_accuracy,
+    resolve_scanner_tier,
+    thruster_ramp,
+    weapon_accuracy,
+)
 from services.combat_models import (
     CombatEvent,
     CombatEventType,
@@ -27,6 +34,7 @@ from services.combat_models import (
     CombatStats,
     FightResults,
     FightStats,
+    ModuleStats,
     ShipLoadout,
     WeaponStats,
 )
@@ -126,6 +134,49 @@ class _TurretWeaponRuntime:
     cooldown_remaining_ms: int = 0  # §1: fully ready at tick 0; mutated by Phase 1 each tick
 
 
+# STI discriminator constants for T8 module detection
+_CLOAK_MODULE_TYPE = "CloakModule"
+_BOOSTER_MODULE_TYPE = "BoosterModule"
+_THRUSTER_MODULE_TYPE = "ThrusterModule"
+
+# Built-in U'tool module name (§10 supersession)
+_UTOOL_BUILTIN_NAME = "U'tool"
+
+# U'tool virtual stats when used as built-in (§10 / §7.2 wiki values)
+_UTOOL_EFFECT_DURATION_MS = 10_000
+_UTOOL_LOADING_SPEED_MS = 2_000
+
+
+@dataclass(slots=True)
+class _CloakRuntime:
+    """Per-combatant runtime state for the cloak module (§7.2 / §8).
+
+    Tracks activation count, effect/cooldown timers, and consumed thresholds.
+    Initial state: cooldown=0, effect=0, activation_count=0 (§1 / §8).
+    """
+
+    stats: ModuleStats  # effective cloak module stats (equipped or U'tool virtual)
+    cooldown_remaining_ms: int = 0
+    effect_remaining_ms: int = 0
+    activation_count: int = 0
+    consumed_thresholds: list = field(default_factory=list)  # list[int] of consumed threshold pct values
+
+
+@dataclass(slots=True)
+class _BoosterRuntime:
+    """Per-combatant runtime state for the booster module (§7.3 / §8).
+
+    Tracks activation count, effect/cooldown timers, and consumed thresholds.
+    Initial state: cooldown=0, effect=0, activation_count=0 (§1 / §8).
+    """
+
+    stats: ModuleStats  # effective booster module stats
+    cooldown_remaining_ms: int = 0
+    effect_remaining_ms: int = 0
+    activation_count: int = 0
+    consumed_thresholds: list = field(default_factory=list)  # list[int] of consumed threshold pct values
+
+
 @dataclass
 class _CombatantState:
     """Per-side mutable runtime state for TickResolver. Not frozen — mutated every tick."""
@@ -168,6 +219,13 @@ class _CombatantState:
     # T7: baked per-turret-weapon runtime list (non-plasma only; PrimaryWeaponMod excluded §7.8)
     # Plasma-collectors are skipped at init; only auto + manual turrets appear here.
     effective_turrets: list[_TurretWeaponRuntime] = field(default_factory=list)
+    # T8: activation-rule module runtime states (None = module not equipped/available)
+    cloak_runtime: _CloakRuntime | None = None
+    booster_runtime: _BoosterRuntime | None = None
+    # T8: thruster stats (passive, no runtime state needed beyond the ModuleStats reference)
+    thruster_stats: ModuleStats | None = None
+    # T8: per-combatant HP-percent tracking (post-damage, used for threshold crossing detection)
+    prev_hp_pct: float = 1.0  # starts at 100% (§8: Phase-1 always starts at 100%)
 
 
 def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState:
@@ -308,6 +366,37 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
             )
         )
 
+    # ------------------------------------------------------------------
+    # T8: Cloak runtime state (§7.2 / §10)
+    # Supersession: equipped cloak wins; else U'tool built-in (Scimitar/Specter); else None.
+    # ------------------------------------------------------------------
+    cloak_runtime: _CloakRuntime | None = None
+    _cloak_equipped = next((m for m in loadout.modules if m.module_type == _CLOAK_MODULE_TYPE), None)
+    if _cloak_equipped is not None:
+        cloak_runtime = _CloakRuntime(stats=_cloak_equipped)
+    elif _UTOOL_BUILTIN_NAME in (loadout.builtin_modules or []):
+        # Synthesize virtual U'tool with wiki stats
+        _utool_virtual = ModuleStats(
+            name=_UTOOL_BUILTIN_NAME,
+            module_type=_CLOAK_MODULE_TYPE,
+            effect_duration_ms=_UTOOL_EFFECT_DURATION_MS,
+            loading_speed_ms=_UTOOL_LOADING_SPEED_MS,
+        )
+        cloak_runtime = _CloakRuntime(stats=_utool_virtual)
+
+    # ------------------------------------------------------------------
+    # T8: Booster runtime state (§7.3)
+    # ------------------------------------------------------------------
+    booster_runtime: _BoosterRuntime | None = None
+    _booster_equipped = next((m for m in loadout.modules if m.module_type == _BOOSTER_MODULE_TYPE), None)
+    if _booster_equipped is not None:
+        booster_runtime = _BoosterRuntime(stats=_booster_equipped)
+
+    # ------------------------------------------------------------------
+    # T8: Thruster stats (§7.4) — passive; no runtime state beyond ModuleStats ref
+    # ------------------------------------------------------------------
+    _thruster_equipped = next((m for m in loadout.modules if m.module_type == _THRUSTER_MODULE_TYPE), None)
+
     return _CombatantState(
         name=loadout.ship_name,
         loadout=loadout,
@@ -333,6 +422,10 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
         effective_primaries=effective_primaries,
         effective_secondaries=effective_secondaries,
         effective_turrets=effective_turrets,
+        cloak_runtime=cloak_runtime,
+        booster_runtime=booster_runtime,
+        thruster_stats=_thruster_equipped,
+        prev_hp_pct=1.0,  # §8: combat starts at 100% HP
     )
 
 
@@ -420,6 +513,137 @@ def _tick_repair_bot_regen(state: _CombatantState, tick: int, events: list[Comba
     # Discard partial when both layers are back at max
     if state.current_hull >= state.max_hull and state.current_armour >= state.max_armour:
         state.repair_bot_regen_accumulator = 0.0
+
+
+def _compute_hp_pct(state: _CombatantState) -> float:
+    """Compute HP-percent for threshold detection (§8 locked formula).
+
+    hp_percent = (current_shield + current_armour + current_hull)
+               / (max_shield + max_armour + max_hull)
+
+    Ships without shield have max_shield=0; formula degrades naturally.
+    Returns 1.0 if total max is zero (degenerate loadout — no threshold ever crosses).
+    """
+    total_max = state.max_shield + state.max_armour + state.max_hull
+    if total_max <= 0:
+        return 1.0
+    total_current = state.current_shield + state.current_armour + state.current_hull
+    return total_current / total_max
+
+
+def _tick_module_effects(state: _CombatantState, tick: int, events: list[CombatEvent], tick_ms: int) -> None:
+    """Phase 1 (alongside cooldown decrement): tick down effect and cooldown timers for T8 modules.
+
+    - Cloak and Booster: effect_remaining_ms decrements; on expiry cooldown starts; cooldown decrements.
+    - Thruster: passive, no timer.
+    - Emits cooldown_end when cooldown transitions >0 → 0 (consistent with weapon cooldown semantics).
+
+    Cooldown timing (§7.2): when effect expires, cooldown is set to loading_speed_ms and does NOT
+    decrement on that same tick — it starts decrementing on the NEXT tick. This mirrors the weapon
+    cooldown path where Phase-1 decrement runs BEFORE Phase-3 fire sets the cooldown, so the
+    effective cooldown is always exactly loading_speed_ms ticks long.
+    """
+    for mod_rt in (state.cloak_runtime, state.booster_runtime):
+        if mod_rt is None:
+            continue
+        # Effect tick-down; track whether cooldown was set this tick to avoid an immediate decrement.
+        cooldown_just_set = False
+        if mod_rt.effect_remaining_ms > 0:
+            prior_effect = mod_rt.effect_remaining_ms
+            mod_rt.effect_remaining_ms = max(0, prior_effect - tick_ms)
+            # Cooldown starts at effect EXPIRY (§7.2 / §7.3)
+            if mod_rt.effect_remaining_ms <= 0 and prior_effect > 0:
+                mod_rt.cooldown_remaining_ms = mod_rt.stats.loading_speed_ms
+                cooldown_just_set = True
+        # Cooldown tick-down — skip on the tick cooldown was just set so the effective
+        # window is exactly loading_speed_ms (not loading_speed_ms - tick_ms).
+        if mod_rt.cooldown_remaining_ms > 0 and not cooldown_just_set:
+            prior_cd = mod_rt.cooldown_remaining_ms
+            mod_rt.cooldown_remaining_ms = max(0, prior_cd - tick_ms)
+            if prior_cd > 0 and mod_rt.cooldown_remaining_ms == 0:
+                events.append(
+                    CombatEvent(
+                        tick=tick,
+                        type=CombatEventType.cooldown_end,
+                        actor=state.name,
+                        target=None,
+                        data={"system": mod_rt.stats.name},
+                    )
+                )
+
+
+def _eval_hp_threshold_modules(
+    state: _CombatantState,
+    tick: int,
+    events: list[CombatEvent],
+    cloak_thresholds: list[int],
+    booster_thresholds: list[int],
+) -> None:
+    """Phase 5: evaluate HP-threshold module activations for one combatant (§8).
+
+    Crossing detection: previous-tick HP-pct was above threshold; post-damage HP-pct is at or below.
+    Threshold consumed regardless of whether device activates (universal trigger rule §8).
+    Booster-user can still fire (§7.3) — no phase-3 suppression needed here.
+    """
+    current_pct = _compute_hp_pct(state)
+    prev_pct = state.prev_hp_pct
+
+    # --- Cloak (§7.2) ---
+    if state.cloak_runtime is not None:
+        cr = state.cloak_runtime
+        for threshold in cloak_thresholds:
+            threshold_frac = threshold / 100.0
+            # Crossing: was above threshold last tick, now at or below (§8 definition)
+            if prev_pct > threshold_frac >= current_pct and threshold not in cr.consumed_thresholds:
+                cr.consumed_thresholds.append(threshold)
+                # Check activation eligibility (§7.2)
+                eligible = (
+                    cr.cooldown_remaining_ms <= 0
+                    and cr.activation_count < 2
+                    and cr.effect_remaining_ms == 0
+                )
+                if eligible:
+                    cr.effect_remaining_ms = cr.stats.effect_duration_ms
+                    cr.activation_count += 1
+                    events.append(
+                        CombatEvent(
+                            tick=tick,
+                            type=CombatEventType.module_activation,
+                            actor=state.name,
+                            target=None,
+                            data={"module": "cloak", "trigger_hp_pct": threshold},
+                        )
+                    )
+                # else: threshold consumed but not activated (cooling or active or count cap)
+                # Universal rule: threshold never retried (§8)
+
+    # --- Booster (§7.3) ---
+    if state.booster_runtime is not None:
+        br = state.booster_runtime
+        for threshold in booster_thresholds:
+            threshold_frac = threshold / 100.0
+            if prev_pct > threshold_frac >= current_pct and threshold not in br.consumed_thresholds:
+                br.consumed_thresholds.append(threshold)
+                eligible = (
+                    br.cooldown_remaining_ms <= 0
+                    and br.activation_count < 4
+                    and br.effect_remaining_ms == 0
+                )
+                if eligible:
+                    br.effect_remaining_ms = br.stats.effect_duration_ms
+                    br.activation_count += 1
+                    events.append(
+                        CombatEvent(
+                            tick=tick,
+                            type=CombatEventType.module_activation,
+                            actor=state.name,
+                            target=None,
+                            data={"module": "booster", "trigger_hp_pct": threshold},
+                        )
+                    )
+
+    # Update prev_hp_pct for next tick's crossing detection
+    state.prev_hp_pct = current_pct
 
 
 def _apply_damage(
@@ -628,6 +852,13 @@ class TickResolver:
         _rng = rng if rng is not None else self._rng
         # T7: auto-turret accuracy multiplier (baked once — constant per fight)
         _auto_turret_multiplier = GameConstants.AUTO_TURRET_ACCURACY_MULTIPLIER
+        # T8: HP-threshold activation constants (baked once per fight)
+        _cloak_thresholds: list[int] = list(GameConstants.CLOAK_HP_THRESHOLDS_PCT)
+        _booster_thresholds: list[int] = list(GameConstants.BOOSTER_HP_THRESHOLDS_PCT)
+        _k_boost = float(GameConstants.BOOSTER_ACCURACY_DEBUFF_FACTOR)
+        _k_thrust = float(GameConstants.THRUSTER_ACCURACY_BONUS_FACTOR)
+        _thruster_window = float(GameConstants.THRUSTER_WINDOW_M)
+        _base_speed_mps = float(GameConstants.BASE_SHIP_SPEED_MPS)
 
         # --- Combatant init (§1: separate from tick loop) ---
         c1 = _init_combatant(loadout1, is_player=(pvc_damage_reduction > 0.0))
@@ -669,18 +900,40 @@ class TickResolver:
 
         for tick in range(max_ticks):
             # ------------------------------------------------------------------
-            # T4: Per-tick accuracy recomputation — before Phase 1
-            # T8 will wire thruster bonus (own_thruster_bonus_pp), booster debuff
-            # (opponent_booster_debuff_pp), and cloak activation (opponent_cloak_active).
+            # T4/T8: Per-tick accuracy recomputation — before Phase 1.
+            # T8 wires: own_thruster_bonus_pp (passive ramp), opponent_booster_debuff_pp
+            # (opponent booster active), opponent_cloak_active (own cloak effect active
+            # → opponent's accuracy replaced). Each combatant's accuracy is affected by
+            # its OWN thruster and the OPPONENT'S booster/cloak.
             # ------------------------------------------------------------------
-            for _state in (c1, c2):
+            for _state, _opponent in ((c1, c2), (c2, c1)):
                 _acc_base = _player_base_acc if _state.is_player else _npc_base_acc
+                # Own thruster bonus (passive ramp, primaries only — turret excluded in compute_pilot_accuracy)
+                _thr_bonus_pp = 0.0
+                if _state.thruster_stats is not None and _state.thruster_stats.effect_pct > 0:
+                    _ramp = thruster_ramp(
+                        current_distance,
+                        thruster_window_m=_thruster_window,
+                        min_distance_m=min_dist,
+                    )
+                    _thr_bonus_pp = _state.thruster_stats.effect_pct * _k_thrust * _ramp
+                # Opponent booster debuff
+                _boost_debuff_pp = 0.0
+                if _opponent.booster_runtime is not None and _opponent.booster_runtime.effect_remaining_ms > 0:
+                    _boost_debuff_pp = booster_debuff_pp(
+                        _opponent.booster_runtime.stats.effect_pct, k_boost=_k_boost
+                    )
+                # Opponent cloak active (own cloak replaces our accuracy)
+                _opp_cloak_active = (
+                    _opponent.cloak_runtime is not None
+                    and _opponent.cloak_runtime.effect_remaining_ms > 0
+                )
                 _state.pilot_primary_acc, _state.pilot_turret_acc = compute_pilot_accuracy(
                     combatant_base=_acc_base,
                     own_scanner_bonus_pp=_state.scanner_tier.accuracy_bonus_pp,
-                    own_thruster_bonus_pp=0.0,
-                    opponent_booster_debuff_pp=0.0,
-                    opponent_cloak_active=False,
+                    own_thruster_bonus_pp=_thr_bonus_pp,
+                    opponent_booster_debuff_pp=_boost_debuff_pp,
+                    opponent_cloak_active=_opp_cloak_active,
                     cloak_set_value=_cloak_set,
                     clamp_min=_acc_clamp_min,
                     clamp_max=_acc_clamp_max,
@@ -740,6 +993,8 @@ class TickResolver:
                     _cs.weapon_cooldowns[_w] = max(0, _cs.weapon_cooldowns[_w] - tick_ms)
                 for _m in _cs.module_cooldowns:
                     _cs.module_cooldowns[_m] = max(0, _cs.module_cooldowns[_m] - tick_ms)
+                # T8: tick down cloak/booster effect and cooldown timers (§7.2 / §7.3)
+                _tick_module_effects(_cs, tick, events, tick_ms)
 
             # ------------------------------------------------------------------
             # Phase 2: Apply regen pulses (C1 then C2; shield + repair bot parallel)
@@ -1158,14 +1413,17 @@ class TickResolver:
 
             # ------------------------------------------------------------------
             # Phase 5: HP-threshold checks — T8: HP-threshold module activations (cloak/booster)
+            # Evaluated per combatant using post-damage HP (Appendix B step 5).
+            # Thruster is passive — no threshold check needed.
             # ------------------------------------------------------------------
-            # (no-op T3)
+            _eval_hp_threshold_modules(c1, tick, events, _cloak_thresholds, _booster_thresholds)
+            _eval_hp_threshold_modules(c2, tick, events, _cloak_thresholds, _booster_thresholds)
 
             # ------------------------------------------------------------------
             # Phase 6: Update distance — passive closure (§2); shock-blast reset (T6); Appendix B
+            # Booster push REPLACES passive closure during the boost window (§2 / §7.3).
             # Shock-blast entries from Phase 3 are applied here (Appendix B step 6).
-            # If a shock-blast fires, it resets distance; passive closure is skipped this tick
-            # (the reset already set distance back to STARTING_DISTANCE_M).
+            # Priority: shock-blast > booster push > passive closure.
             # ------------------------------------------------------------------
             _shock_blast_fired = bool(_shock_blast_entries)
             if _shock_blast_fired:
@@ -1189,18 +1447,40 @@ class TickResolver:
                         )
                     )
             else:
-                old_dist = current_distance
-                current_distance = max(min_dist, current_distance - distance_delta)
-                if current_distance != old_dist:
-                    events.append(
-                        CombatEvent(
-                            tick=tick,
-                            type=CombatEventType.distance,
-                            actor=None,
-                            target=None,
-                            data={"from": old_dist, "to": current_distance, "cause": "closure"},
+                # T8: Check both combatants for active booster push (§2 / §7.3).
+                # Booster REPLACES passive closure for the booster's owner;
+                # if both fire boosters simultaneously, both pushes apply.
+                # A push is: current_distance INCREASES (away from opponent).
+                _booster_active_any = False
+                for _bcs in (c1, c2):
+                    if _bcs.booster_runtime is not None and _bcs.booster_runtime.effect_remaining_ms > 0:
+                        _bcs_push = _base_speed_mps * (_bcs.booster_runtime.stats.effect_pct / 100.0) * (tick_ms / 1000)
+                        _old_d_b = current_distance
+                        current_distance += _bcs_push
+                        _booster_active_any = True
+                        if current_distance != _old_d_b:
+                            events.append(
+                                CombatEvent(
+                                    tick=tick,
+                                    type=CombatEventType.distance,
+                                    actor=_bcs.name,
+                                    target=None,
+                                    data={"from": _old_d_b, "to": current_distance, "cause": "booster"},
+                                )
+                            )
+                if not _booster_active_any:
+                    old_dist = current_distance
+                    current_distance = max(min_dist, current_distance - distance_delta)
+                    if current_distance != old_dist:
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.distance,
+                                actor=None,
+                                target=None,
+                                data={"from": old_dist, "to": current_distance, "cause": "closure"},
+                            )
                         )
-                    )
 
             # ------------------------------------------------------------------
             # Phase 7: Events emitted inline above (already in processing order)

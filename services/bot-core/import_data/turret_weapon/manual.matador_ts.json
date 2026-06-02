@@ -17,6 +17,7 @@
     "loading_speed_ms": 200,
     "range_m": 6600,
     "speed_km_h": 8000,
-    "autonomous": false
+    "autonomous": false,
+    "damage_per_shot": 18
   }
 }

@@ -56,6 +56,11 @@ class Player(Base):
         Integer, ForeignKey(f"{TableNames.PlayerShips.value}.id", use_alter=True), nullable=True
     )
 
+    # Combat lifetime counters (Phase-1; incremented by T10 post-fight)
+    total_fights: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    total_nukes_fired: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    total_module_activations: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
     # Combat damage-state hooks (Phase-2 OOC recovery; Phase-1 is read-only).
     # All nullable: NULL == "at full HP, never been damaged". Populated by the
     # tick-resolver post-fight; consumed by the OOC-recovery scheduled job

@@ -29,6 +29,9 @@ class PlayerShip(Base):
     turrets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped turret weapon names
     secondary_weapons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Equipped secondary weapons
 
+    # Manual turret mode: True = player controls aim; False = auto-aim (§6.3 / §10)
+    manual_turret_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     # Relationships

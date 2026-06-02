@@ -654,6 +654,7 @@ class TestTableNames:
         expected_names = {
             "Bounty",
             "Commodity",
+            "CombatLog",
             "Criminal",
             "DiscordMessage",
             "DuelRequest",

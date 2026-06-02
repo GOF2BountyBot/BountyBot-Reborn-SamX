@@ -4,6 +4,7 @@ from enum import Enum
 class TableNames(Enum):
     Bounty = "bounty"
     Commodity = "commodity"
+    CombatLog = "combat_log"
     Criminal = "criminal"
     DuelRequest = "duel_requests"
     DiscordMessage = "discord_message"

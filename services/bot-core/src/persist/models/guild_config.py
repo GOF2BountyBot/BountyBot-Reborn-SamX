@@ -7,7 +7,7 @@ economic factors, progression thresholds, and administrative settings.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, Float, Integer
+from sqlalchemy import JSON, BigInteger, DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from persist.database.tablenames import TableNames
@@ -126,6 +126,54 @@ class GuildConfig(Base):
 
     # Demotion — NULL means "use GameConstants.DEMOTION_CREDIT_PENALTY_PCT (10)"
     demotion_credit_penalty_pct: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # ------------------------------------------------------------------
+    # Combat System — Phase-1 per-guild overrides (Appendix A constants)
+    # NULL == "use GameConstants default". resolve_constant() handles fallback.
+    # ------------------------------------------------------------------
+
+    # Accuracy system (§5)
+    cloak_set_value: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    booster_accuracy_debuff_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    thruster_accuracy_bonus_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    auto_turret_accuracy_multiplier: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    player_base_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    npc_base_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    accuracy_clamp_min: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    accuracy_clamp_max: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    scanner_tier_b_bonus_pp: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    scanner_tier_c_bonus_pp: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Repair bots (§3 / §7.6)
+    ketar_i_repair_pct_per_sec: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    ketar_ii_repair_pct_per_sec: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    # Tick / timing (§1)
+    tick_ms: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    max_fight_ticks: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Distance model (§2)
+    starting_distance_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    base_ship_speed_mps: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    min_distance_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    thruster_window_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # HP-threshold activation lists (§7.2 / §7.3 / §8) — stored comma-separated
+    cloak_hp_thresholds_pct: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    booster_hp_thresholds_pct: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
+    # EmergencySystem (§7.7)
+    emergency_system_invuln_s: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Nuke (§6.2)
+    nuke_magnitude_scale: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    nuke_friendly_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    # PvC damage reduction — Keith T. Maxwell bonus (§3)
+    pvc_damage_reduction: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    # Combat log retention (§12)
+    combat_log_retention_hours: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

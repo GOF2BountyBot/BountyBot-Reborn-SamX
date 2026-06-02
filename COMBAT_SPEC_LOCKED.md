@@ -362,6 +362,9 @@ effective_loading_speed_ms  = round((loading_speed_ms / (1 + fire_rate_pct / 100
 - `effective_damage_per_shot` rounds to nearest integer. **No floor guard** — base-0 EMP-blaster primaries stay 0; normal primaries (`damage_per_shot ≥ 2`) never round to 0 from −10%.
 - `effective_loading_speed_ms` snaps to the nearest `TICK_MS` boundary (10ms) so the tick-based resolver lines up cleanly.
 - `fire_rate_pct` semantics: positive = faster (lower cooldown). +20% means the weapon fires every `loading_speed_ms / 1.2` ms.
+- **Cadence floor — one TICK_MS.** The snapped `effective_loading_speed_ms` is floored at a single `TICK_MS`: a weapon whose loading speed snaps to 0 is treated as *continuous fire* and fires every tick, so the tick itself IS the floor by definition. There is no sub-tick cadence. (This floors only the *cadence*, not the per-shot damage — see "No floor guard" above, which remains true for `effective_damage_per_shot`.)
+- **Intended model for continuous / sub-tick fire.** A weapon whose true cadence is faster than one tick must have its effect *integrated into discrete per-tick (10ms) chunks*, so that the aggregate effect summed over many ticks (e.g. ~1000 ticks) approximates the continuous effect to ~99% accuracy — rather than applying a full per-shot payload on every tick. The 10ms tick is the integration quantum; continuous fire is the limit case where the per-tick chunk is the whole per-shot payload divided across the ticks the shot would have spanned.
+- **Implementation caveat (DEFERRED ENHANCEMENT).** The currently-shipped resolver floors the cadence correctly (fires every tick when the snapped speed is 0) but still applies the *full* `effective_damage_per_shot` on each such tick — the damage-chunking integration described above is not yet implemented. This is latent today: no Phase-1 seed weapon has a base `loading_speed_ms` low enough for the snapped value to reach the floor, so no shipped fight triggers it. The chunking integration is a deferred enhancement to be added if/when a fast-enough weapon is introduced.
 
 **Legacy `dpsMultiplier` field:** retained on the seed for two consumers — the *current* SimpleTTKResolver (until it's retired) and the item-detail embed (a quick "net DPS shift" hint for the player). The new tick-based resolver IGNORES it; the breakdown above is the source of truth.
 
@@ -513,6 +516,8 @@ The combat resolver consumes a baked `ShipLoadout` from the loadout builder and 
 
 The Tier-0 summary carries: outcome / reason / duration; per-combatant module activations (which + counts), secondary-weapon use (by subtype), accuracy %, HP remaining per layer, damage dealt / taken. Plus the `combat_log_id` so detail can be fetched later.
 
+- **Key-presence policy for `module_activations` / `secondary_fired` — SPARSE.** Both objects carry only the keys that actually fired (a count > 0); modules/subtypes that never fired are omitted, not present-at-0. The outer object is **always present** — an empty `{}` when nothing of that class fired.
+
 ### `combat_log` table schema
 
 | Column | Type | Null? | Notes |
@@ -605,7 +610,7 @@ The base `{slot, subtype, weapon, hit, accuracy}` covers per-shot accuracy-roll 
 | missile | `{slot: "secondary", subtype: "missile", weapon, hit, accuracy, branch: "tier_a" \| "tier_bc"}` |
 | cluster-missile | `{slot: "secondary", subtype: "cluster-missile", weapon, fired, hits, damage_per_hit, total_damage}` |
 | nuke | `{slot: "secondary", subtype: "nuke", weapon, epicenter, opponent_damage, self_damage}` |
-| shock-blast | `{slot: "secondary", subtype: "shock-blast", weapon, hit: true, accuracy: 1.0}` |
+| shock-blast | `{slot: "secondary", subtype: "shock-blast", weapon, hit: true, accuracy: 1.0}` — may additionally carry `damage: 0` as a debug field (shock-blast deals no HP damage; additive debug fields are permitted). |
 | auto-turret | `{slot: "turret", subtype: "auto", weapon, hit, accuracy}` |
 | manual-turret | `{slot: "turret", subtype: "manual", weapon, hit, accuracy}` |
 
@@ -823,7 +828,7 @@ Both ships always take damage. Accuracy / cloak / thruster / booster modifiers d
 effective_damage_per_shot   = round(damage_per_shot × (1 + damage_pct / 100))
 effective_loading_speed_ms  = round((loading_speed_ms / (1 + fire_rate_pct / 100)) / TICK_MS) × TICK_MS
 ```
-`damage_pct` and `fire_rate_pct` per seed `extra_atts`. Legacy `dpsMultiplier` field IGNORED by tick-resolver (kept only for current SimpleTTKResolver + embed display). No floor on effective damage. Cooldown snaps to nearest `TICK_MS`.
+`damage_pct` and `fire_rate_pct` per seed `extra_atts`. Legacy `dpsMultiplier` field IGNORED by tick-resolver (kept only for current SimpleTTKResolver + embed display). No floor on effective damage. Cooldown snaps to nearest `TICK_MS`. Snapped cadence is floored at one `TICK_MS` — a weapon that snaps to 0 fires every tick (continuous fire; the tick IS the floor). Per §7.8, sub-tick fire is the intended model to be integrated into discrete per-tick chunks so the aggregate over many ticks approximates the continuous effect; the shipped resolver floors the cadence but applies the full per-shot damage each tick (damage-chunking is a deferred enhancement, latent under current Phase-1 seeds).
 
 ### Regen pulse schedule (per layer source)
 - **Shield:** `+1 HP every N ticks`, `N = ceil(shield_recharge_ms / shield_capacity / tick_ms)` per shield module.

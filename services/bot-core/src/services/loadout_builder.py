@@ -163,15 +163,52 @@ class LoadoutBuilder:
                 f"loading_speed_ms={spd} range_m={rng_m}"
             )
 
-        # 5. Build turret stats
+        # 5. Build turret stats (T7 true-up: populate automatic/subtype/loading_speed_ms/range_m)
+        # DB layout: TurretWeapon.automatic is a typed DB column (not in extra_atts).
+        # Inner extra_atts contains: loading_speed_ms, range_m, damage_per_shot, subtype (plasma-collectors only).
+        # damage_per_shot is read from seed when present; derived as dps × loading_speed_ms/1000 as fallback.
+        from persist.models.turret_weapon import TurretWeapon
+        from sqlalchemy import select as _select_tw  # avoid name collision with earlier `select`
+
         turrets: list[WeaponStats] = []
         for t_name in player_ship.turrets or []:
-            item = await item_repo.get_by_name(db, t_name, item_type="turret_weapon")
-            if item is None:
-                item = await item_repo.get_by_name(db, t_name)
-            dps = float(getattr(item, "dps", 0) or 0) if item else 0.0
-            turrets.append(WeaponStats(name=t_name, dps=dps))
-            flogger.trace(f"Turret {t_name!r} dps={dps}")
+            tw_result = await db.execute(_select_tw(TurretWeapon).where(TurretWeapon.name == t_name))
+            tw_item = tw_result.scalars().first()
+            if tw_item is None:
+                tw_item = await item_repo.get_by_name(db, t_name, item_type="turret_weapon")
+            if tw_item is None:
+                tw_item = await item_repo.get_by_name(db, t_name)
+            dps = float(getattr(tw_item, "dps", 0) or 0) if tw_item else 0.0
+            # automatic: typed DB column on TurretWeapon (True=auto-turret, False=manual-turret)
+            tw_automatic = bool(getattr(tw_item, "automatic", False)) if tw_item else False
+            tw_outer = getattr(tw_item, "extra_atts", None) or {}
+            # Unpack inner extra_atts (DB nesting); fall back to outer for legacy flat dicts (tests)
+            tw_extra = tw_outer.get("extra_atts", tw_outer) if isinstance(tw_outer, dict) else {}
+            tw_spd = int(tw_extra.get("loading_speed_ms", 0) or 0)
+            tw_rng = float(tw_extra.get("range_m", 0.0) or 0.0)
+            tw_subtype = tw_extra.get("subtype", "")
+            # Prefer explicit damage_per_shot from seed; derive from dps × cycle_time only as fallback
+            _tw_dmg_explicit = tw_extra.get("damage_per_shot")
+            tw_dmg: float | None = None
+            if _tw_dmg_explicit is not None:
+                tw_dmg = float(_tw_dmg_explicit)
+            elif tw_spd > 0 and dps > 0:
+                tw_dmg = dps * tw_spd / 1000.0
+            turrets.append(
+                WeaponStats(
+                    name=t_name,
+                    dps=dps,
+                    damage_per_shot=tw_dmg,
+                    loading_speed_ms=tw_spd,
+                    range_m=tw_rng,
+                    subtype=tw_subtype,
+                    automatic=tw_automatic,
+                )
+            )
+            flogger.trace(
+                f"Turret {t_name!r} dps={dps} automatic={tw_automatic} subtype={tw_subtype!r} "
+                f"loading_speed_ms={tw_spd} range_m={tw_rng} damage_per_shot={tw_dmg}"
+            )
 
         # 6. Build module stats
         modules: list[ModuleStats] = []
@@ -302,12 +339,33 @@ class LoadoutBuilder:
             weapons.append(WeaponStats(name=w["name"], dps=dps))
             flogger.trace(f"Criminal weapon {w['name']!r} dps={dps}")
 
-        # Turrets
+        # Turrets (T7 true-up: populate automatic/subtype/loading_speed_ms/range_m from criminal dict)
         turrets: list[WeaponStats] = []
         for t in criminal_ship.get("turrets", []):
             dps = float(t.get("dps", 0) or 0)
-            turrets.append(WeaponStats(name=t["name"], dps=dps))
-            flogger.trace(f"Criminal turret {t['name']!r} dps={dps}")
+            t_automatic = bool(t.get("automatic", False))
+            t_spd = int(t.get("loading_speed_ms", 0) or 0)
+            t_rng = float(t.get("range_m", 0.0) or 0.0)
+            t_subtype = t.get("subtype", "")
+            # Derive damage_per_shot from dps × loading_speed_ms/1000 when not explicit
+            t_damage = t.get("damage_per_shot")
+            if t_damage is None and t_spd > 0 and dps > 0:
+                t_damage = dps * t_spd / 1000.0
+            turrets.append(
+                WeaponStats(
+                    name=t["name"],
+                    dps=dps,
+                    damage_per_shot=float(t_damage) if t_damage is not None else None,
+                    loading_speed_ms=t_spd,
+                    range_m=t_rng,
+                    subtype=t_subtype,
+                    automatic=t_automatic,
+                )
+            )
+            flogger.trace(
+                f"Criminal turret {t['name']!r} dps={dps} automatic={t_automatic} subtype={t_subtype!r} "
+                f"loading_speed_ms={t_spd} range_m={t_rng}"
+            )
 
         # Modules
         modules: list[ModuleStats] = []

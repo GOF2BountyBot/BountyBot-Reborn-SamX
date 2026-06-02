@@ -37,6 +37,9 @@ class WeaponStats:
         emp_damage: EMP damage value (phase-2+ deferred; baked for log fidelity). 0 if none.
         magnitude_m: Nuke blast radius seed value (D5). 0.0 if non-nuke.
         steerable: Nuke/missile steerable flag (data-only in Phase-1; no behaviour branch). False by default.
+    T7 discriminator fields (D0): default False for backward compat.
+        automatic: Turret auto-fire flag. True = auto-turret, False = manual-turret (§6.3).
+                   Plasma-collectors are identified by subtype=="plasma-collector" regardless of automatic.
     """
 
     name: str
@@ -52,6 +55,8 @@ class WeaponStats:
     emp_damage: int = 0  # EMP damage (baked for log fidelity; deferred to phase-2+)
     magnitude_m: float = 0.0  # nuke blast radius seed value (§6.2 D5); 0.0 for non-nukes
     steerable: bool = False  # steerable flag — data-only in Phase-1; no behaviour branch (§6.2 D5)
+    # T7 discriminator fields — default False/empty so legacy code paths are unaffected
+    automatic: bool = False  # turret auto-fire flag: True = auto-turret, False = manual-turret (§6.3)
 
 
 @dataclass(frozen=True, slots=True)

@@ -725,11 +725,17 @@ class TestFromPlayer:
             result.scalars.return_value = scalars_result
             return result
 
+        # T7: turret builder now queries TurretWeapon directly (for automatic column);
+        # add a slot for that query. turret mock must have `automatic` attr.
+        turret.automatic = False  # default: manual-turret for this legacy test mock
+        turret.extra_atts = {}  # no extra_atts for this simple mock
+
         db = MagicMock()
         db.execute = AsyncMock(
             side_effect=[
                 make_execute_result(player_ship),  # PlayerShip query
                 make_execute_result(ship),  # Ship query
+                make_execute_result(turret),  # TurretWeapon query (T7 new: reads automatic column)
                 make_execute_result(shield_module),  # Module query
             ]
         )

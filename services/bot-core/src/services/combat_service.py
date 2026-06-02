@@ -95,6 +95,37 @@ class _SecondaryWeaponRuntime:
     cooldown_remaining_ms: int = 0  # §1: fully ready at tick 0; mutated by Phase 1 each tick
 
 
+@dataclass(slots=True)
+class _TurretWeaponRuntime:
+    """Baked per-turret-weapon stats for one combatant in the tick loop (T7).
+
+    Plasma-collector turrets are NOT placed in this list — they are skipped
+    entirely at init time and never appear in the tick loop (§7.9).
+
+    PrimaryWeaponMod does NOT apply to turrets (§7.8 explicit exclusion).
+    Turrets read raw seed damage_per_shot and loading_speed_ms directly.
+
+    Discriminators (read from WeaponStats typed fields — no extra_atts blob):
+        automatic=True  → auto-turret: always fires on its own cooldown alongside primaries.
+        automatic=False → manual-turret: fires only when loadout.manual_turret_mode=True,
+                          and suppresses primaries when that mode is active.
+
+    RNG draw order (§ determinism):
+        Auto turrets: C1 auto-turrets (insertion order), then C2 auto-turrets.
+        Manual turrets: C1 manual-turrets (insertion order), then C2 manual-turrets.
+        Both turret phases follow the corresponding primary / secondary phases within
+        the same Phase 3 tick step.
+    """
+
+    name: str
+    automatic: bool  # True = auto-turret, False = manual-turret (never plasma-collector)
+    damage_per_shot: int  # derived: round(dps × loading_speed_ms / 1000); raw if seed provides it
+    loading_speed_ms: int  # raw seed loading_speed_ms
+    range_m: float  # binary fire gate: current_distance ≤ range_m (§6.1)
+    weapon_stats_ref: WeaponStats  # back-ref for weapon_accuracy() passthrough
+    cooldown_remaining_ms: int = 0  # §1: fully ready at tick 0; mutated by Phase 1 each tick
+
+
 @dataclass
 class _CombatantState:
     """Per-side mutable runtime state for TickResolver. Not frozen — mutated every tick."""
@@ -134,6 +165,9 @@ class _CombatantState:
     # T6: baked per-secondary-weapon runtime list (raw seed stats + mutable cooldown)
     # PrimaryWeaponMod does NOT apply to secondaries (§7.8).
     effective_secondaries: list[_SecondaryWeaponRuntime] = field(default_factory=list)
+    # T7: baked per-turret-weapon runtime list (non-plasma only; PrimaryWeaponMod excluded §7.8)
+    # Plasma-collectors are skipped at init; only auto + manual turrets appear here.
+    effective_turrets: list[_TurretWeaponRuntime] = field(default_factory=list)
 
 
 def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState:
@@ -168,8 +202,10 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
             repair_rate = max(repair_rate, GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)
 
     # All cooldowns start at 0 — weapons fully ready at tick 0 (§1)
-    # Primary weapon cooldowns are tracked in effective_primaries (T5); turrets stay here.
-    weapon_cooldowns = {w.name: 0 for w in loadout.turrets}
+    # Primary weapon cooldowns are tracked in effective_primaries (T5).
+    # Turret cooldowns are tracked in effective_turrets (T7); weapon_cooldowns is now empty.
+    # Module cooldowns are tracked here (no per-module runtime object yet).
+    weapon_cooldowns: dict[str, int] = {}
     module_cooldowns = {m.name: 0 for m in loadout.modules}
 
     # Precompute scanner tier once — stateless, same loadout always returns same result (§7.1)
@@ -242,6 +278,36 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
             )
         )
 
+    # ------------------------------------------------------------------
+    # T7: Turret weapon runtime list — baked once at init (§1)
+    # Plasma-collectors (subtype=="plasma-collector") are SKIPPED entirely (§7.9).
+    # PrimaryWeaponMod does NOT apply (§7.8 explicit exclusion).
+    # damage_per_shot derived from dps × loading_speed_ms / 1000 when not explicitly provided.
+    # ------------------------------------------------------------------
+    effective_turrets: list[_TurretWeaponRuntime] = []
+    for tw in loadout.turrets:
+        # Skip plasma-collectors — fully inert; no cooldown, no fire, no event (§7.9)
+        if tw.subtype == "plasma-collector":
+            continue
+        tw_speed = tw.loading_speed_ms if tw.loading_speed_ms > 0 else tick_ms
+        # Derive damage_per_shot: use explicit field if set; otherwise dps × loading_speed_ms/1000
+        if tw.damage_per_shot is not None and tw.damage_per_shot > 0:
+            tw_damage = round(tw.damage_per_shot)
+        else:
+            # Fallback: derive from dps and cadence (damage = dps × cycle_seconds)
+            tw_damage = round(tw.dps * tw_speed / 1000.0)
+        effective_turrets.append(
+            _TurretWeaponRuntime(
+                name=tw.name,
+                automatic=tw.automatic,
+                damage_per_shot=tw_damage,
+                loading_speed_ms=tw_speed,
+                range_m=tw.range_m,
+                weapon_stats_ref=tw,
+                cooldown_remaining_ms=0,  # §1: fully ready at tick 0
+            )
+        )
+
     return _CombatantState(
         name=loadout.ship_name,
         loadout=loadout,
@@ -266,6 +332,7 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
         pilot_turret_acc=0.0,
         effective_primaries=effective_primaries,
         effective_secondaries=effective_secondaries,
+        effective_turrets=effective_turrets,
     )
 
 
@@ -559,6 +626,8 @@ class TickResolver:
         _acc_clamp_max = GameConstants.ACCURACY_CLAMP_MAX
         # RNG seam (T4 — not consumed until T5; inject via rng= kwarg for deterministic tests)
         _rng = rng if rng is not None else self._rng
+        # T7: auto-turret accuracy multiplier (baked once — constant per fight)
+        _auto_turret_multiplier = GameConstants.AUTO_TURRET_ACCURACY_MULTIPLIER
 
         # --- Combatant init (§1: separate from tick loop) ---
         c1 = _init_combatant(loadout1, is_player=(pvc_damage_reduction > 0.0))
@@ -650,6 +719,23 @@ class TickResolver:
                                 data={"system": _sw.name},
                             )
                         )
+                # T7: turret cooldowns (non-plasma only — plasma-collectors not in effective_turrets)
+                # Primary cooldown STILL decrements under manual_turret_mode=True (§6.3 note)
+                for _tw in _cs.effective_turrets:
+                    _tw_prior = _tw.cooldown_remaining_ms
+                    _tw.cooldown_remaining_ms = max(0, _tw_prior - tick_ms)
+                    if _tw_prior > 0 and _tw.cooldown_remaining_ms == 0:
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.cooldown_end,
+                                actor=_cs.name,
+                                target=None,
+                                data={"system": _tw.name},
+                            )
+                        )
+                # weapon_cooldowns is now empty (turrets moved to effective_turrets in T7).
+                # Kept as a field on _CombatantState for forward-compat; no-op loop below.
                 for _w in _cs.weapon_cooldowns:
                     _cs.weapon_cooldowns[_w] = max(0, _cs.weapon_cooldowns[_w] - tick_ms)
                 for _m in _cs.module_cooldowns:
@@ -673,38 +759,43 @@ class TickResolver:
             _pending: list[tuple[_CombatantState, _CombatantState, _PrimaryWeaponRuntime]] = []
 
             for _attacker, _target in ((c1, c2), (c2, c1)):
-                for _pw in _attacker.effective_primaries:
-                    # Gate 1: cooldown ready (§6.1 / D3)
-                    if _pw.cooldown_remaining_ms > 0:
-                        continue
-                    # Gate 2: in range — binary gate (§2 / §6.1); weapon stays ready while out of range
-                    if current_distance > _pw.range_m:
-                        continue
-                    # Accuracy — T4 passthrough; clamp already applied by compute_pilot_accuracy
-                    _acc = weapon_accuracy(_attacker.pilot_primary_acc, _pw.weapon_stats_ref)
-                    # RNG draw — canonical order documented on _PrimaryWeaponRuntime
-                    _hit = _rng.random() < _acc
-                    # weapon_fire event — §12 primary payload shape (Q9 lock)
-                    events.append(
-                        CombatEvent(
-                            tick=tick,
-                            type=CombatEventType.weapon_fire,
-                            actor=_attacker.name,
-                            target=_target.name,
-                            data={
-                                "slot": "primary",
-                                "subtype": "primary",
-                                "weapon": _pw.name,
-                                "hit": _hit,
-                                "accuracy": _acc,
-                            },
+                # T7: Primary suppression under manual_turret_mode=True (§6.3).
+                # Fire-eval is skipped; cooldown STILL decrements (Phase 1 above).
+                if _attacker.manual_turret_mode:
+                    pass  # suppressed — skip inner loop below
+                else:
+                    for _pw in _attacker.effective_primaries:
+                        # Gate 1: cooldown ready (§6.1 / D3)
+                        if _pw.cooldown_remaining_ms > 0:
+                            continue
+                        # Gate 2: in range — binary gate (§2 / §6.1); weapon stays ready while out of range
+                        if current_distance > _pw.range_m:
+                            continue
+                        # Accuracy — T4 passthrough; clamp already applied by compute_pilot_accuracy
+                        _acc = weapon_accuracy(_attacker.pilot_primary_acc, _pw.weapon_stats_ref)
+                        # RNG draw — canonical order documented on _PrimaryWeaponRuntime
+                        _hit = _rng.random() < _acc
+                        # weapon_fire event — §12 primary payload shape (Q9 lock)
+                        events.append(
+                            CombatEvent(
+                                tick=tick,
+                                type=CombatEventType.weapon_fire,
+                                actor=_attacker.name,
+                                target=_target.name,
+                                data={
+                                    "slot": "primary",
+                                    "subtype": "primary",
+                                    "weapon": _pw.name,
+                                    "hit": _hit,
+                                    "accuracy": _acc,
+                                },
+                            )
                         )
-                    )
-                    # Queue hit for phase 4 — misses emit weapon_fire(hit=false) only (Q10 lock)
-                    if _hit:
-                        _pending.append((_attacker, _target, _pw))
-                    # Reset cooldown — happens on both hit AND miss (§6.1 D4)
-                    _pw.cooldown_remaining_ms = _pw.effective_loading_speed_ms
+                        # Queue hit for phase 4 — misses emit weapon_fire(hit=false) only (Q10 lock)
+                        if _hit:
+                            _pending.append((_attacker, _target, _pw))
+                        # Reset cooldown — happens on both hit AND miss (§6.1 D4)
+                        _pw.cooldown_remaining_ms = _pw.effective_loading_speed_ms
 
             # ------------------------------------------------------------------
             # Phase 3 (T6): Evaluate secondary weapon firings.
@@ -874,6 +965,94 @@ class TickResolver:
                     # else: deferred subtypes (emp-bomb, mine, sentry-gun) — noop; cooldown continues
 
             # ------------------------------------------------------------------
+            # Phase 3 (T7): Evaluate turret weapon firings.
+            # Auto-turrets always fire (alongside primaries, regardless of manual_turret_mode).
+            # Manual-turrets fire only when manual_turret_mode=True; inert otherwise.
+            # RNG draw order: C1 auto-turrets, C2 auto-turrets, C1 manual-turrets, C2 manual-turrets.
+            # One auto-turret accuracy per combatant per tick (§6.3 correctness statement).
+            # Plasma-collectors are NOT in effective_turrets — already filtered at init.
+            # ------------------------------------------------------------------
+            # Turret pending: (attacker_state, target_state, turret_runtime, damage_per_shot) — hits only
+            _turret_pending: list[tuple[_CombatantState, _CombatantState, _TurretWeaponRuntime, int]] = []
+
+            # Pre-bake auto-turret accuracy once per combatant per tick (§6.3 / Appendix A)
+            # ONE value per combatant per tick — correctness statement (§6.3), not just perf.
+            _c1_auto_acc = max(_acc_clamp_min, min(_acc_clamp_max,
+                               c1.pilot_turret_acc * _auto_turret_multiplier))
+            _c2_auto_acc = max(_acc_clamp_min, min(_acc_clamp_max,
+                               c2.pilot_turret_acc * _auto_turret_multiplier))
+
+            # Auto-turrets: C1 then C2 (§ determinism)
+            for _attacker, _target, _auto_acc in ((c1, c2, _c1_auto_acc), (c2, c1, _c2_auto_acc)):
+                for _tw in _attacker.effective_turrets:
+                    if not _tw.automatic:
+                        continue  # manual-turret — handled in next loop
+                    # Gate 1: cooldown ready
+                    if _tw.cooldown_remaining_ms > 0:
+                        continue
+                    # Gate 2: range gate (§6.1)
+                    if current_distance > _tw.range_m:
+                        continue
+                    # Accuracy: pre-baked auto_turret_acc (ONE value per combatant per tick)
+                    _tw_acc = _auto_acc
+                    _tw_hit = _rng.random() < _tw_acc
+                    events.append(
+                        CombatEvent(
+                            tick=tick,
+                            type=CombatEventType.weapon_fire,
+                            actor=_attacker.name,
+                            target=_target.name,
+                            data={
+                                "slot": "turret",
+                                "subtype": "auto",
+                                "weapon": _tw.name,
+                                "hit": _tw_hit,
+                                "accuracy": _tw_acc,
+                            },
+                        )
+                    )
+                    if _tw_hit:
+                        _turret_pending.append((_attacker, _target, _tw, _tw.damage_per_shot))
+                    # Cooldown resets on fire — hit OR miss (§6.3 mirror of §6.1 D4)
+                    _tw.cooldown_remaining_ms = _tw.loading_speed_ms
+
+            # Manual-turrets: C1 then C2 — only when manual_turret_mode=True (§6.3)
+            for _attacker, _target in ((c1, c2), (c2, c1)):
+                if not _attacker.manual_turret_mode:
+                    continue  # primary-mode: manual turrets inert
+                for _tw in _attacker.effective_turrets:
+                    if _tw.automatic:
+                        continue  # auto-turret — already handled above
+                    # Gate 1: cooldown ready
+                    if _tw.cooldown_remaining_ms > 0:
+                        continue
+                    # Gate 2: range gate (§6.1 — manual turret treated as primary)
+                    if current_distance > _tw.range_m:
+                        continue
+                    # Accuracy: pilot_primary_acc (full §5 with thruster; NOT 0.85 multiplied) (§6.3)
+                    _mt_acc = weapon_accuracy(_attacker.pilot_primary_acc, _tw.weapon_stats_ref)
+                    _mt_hit = _rng.random() < _mt_acc
+                    events.append(
+                        CombatEvent(
+                            tick=tick,
+                            type=CombatEventType.weapon_fire,
+                            actor=_attacker.name,
+                            target=_target.name,
+                            data={
+                                "slot": "turret",
+                                "subtype": "manual",
+                                "weapon": _tw.name,
+                                "hit": _mt_hit,
+                                "accuracy": _mt_acc,
+                            },
+                        )
+                    )
+                    if _mt_hit:
+                        _turret_pending.append((_attacker, _target, _tw, _tw.damage_per_shot))
+                    # Cooldown resets on fire — hit OR miss
+                    _tw.cooldown_remaining_ms = _tw.loading_speed_ms
+
+            # ------------------------------------------------------------------
             # Phase 4: Apply damage — drain pending queue (C1 hits first, then C2)
             # The pending list preserves (c1,c2) then (c2,c1) ordering from Phase 3.
             # Pure-EMP primaries land with raw_damage=0; helper records the 0-delta event (§4/D5).
@@ -942,6 +1121,25 @@ class TickResolver:
                 elif _kind == "shock_blast":
                     _shock_blast_entries.append(_entry)
                 # else: unrecognised — defensive skip
+
+            # ------------------------------------------------------------------
+            # Phase 4 (T7): Apply turret pending entries.
+            # Entries are in phase-3 recording order (C1 auto then C2 auto then C1 manual then C2 manual).
+            # PrimaryWeaponMod does NOT apply to turret damage (§7.8).
+            # ------------------------------------------------------------------
+            for _t_att, _t_tgt, _t_tw, _t_dmg in _turret_pending:
+                _apply_damage(
+                    _t_tgt,
+                    raw_damage=float(_t_dmg),
+                    tick=tick,
+                    events=events,
+                    source={
+                        "subtype": "auto" if _t_tw.automatic else "manual",
+                        "weapon": _t_tw.name,
+                        "attacker": _t_att.name,
+                    },
+                    pvc_damage_reduction=pvc_damage_reduction,
+                )
 
             # ------------------------------------------------------------------
             # Phase 4a: EmergencySystem evaluation — T9: EmergencySystem evaluation

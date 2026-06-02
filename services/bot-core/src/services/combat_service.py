@@ -15,10 +15,11 @@ TTK comparison from the legacy system.
 
 import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from shared import bblogger
 
+from services.combat_balance import ScannerTier, compute_pilot_accuracy, resolve_scanner_tier
 from services.combat_models import (
     CombatEvent,
     CombatEventType,
@@ -68,6 +69,12 @@ class _CombatantState:
     # Carry-forward state for T7 / T9
     manual_turret_mode: bool
     emergency_system_consumed: bool
+    # T4: scanner tier precomputed at combatant init; pilot accuracy recomputed every tick
+    scanner_tier: ScannerTier = field(
+        default_factory=lambda: ScannerTier(tier="A", accuracy_bonus_pp=0.0, missile_tracking_active=False)
+    )
+    pilot_primary_acc: float = 0.0
+    pilot_turret_acc: float = 0.0
 
 
 def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState:
@@ -105,6 +112,13 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
     weapon_cooldowns = {w.name: 0 for w in loadout.weapons + loadout.turrets}
     module_cooldowns = {m.name: 0 for m in loadout.modules}
 
+    # Precompute scanner tier once — stateless, same loadout always returns same result (§7.1)
+    scanner_tier = resolve_scanner_tier(
+        loadout,
+        tier_b_bonus_pp=float(GameConstants.SCANNER_TIER_B_BONUS_PP),
+        tier_c_bonus_pp=float(GameConstants.SCANNER_TIER_C_BONUS_PP),
+    )
+
     return _CombatantState(
         name=loadout.ship_name,
         loadout=loadout,
@@ -124,6 +138,9 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
         module_cooldowns=module_cooldowns,
         manual_turret_mode=loadout.manual_turret_mode,
         emergency_system_consumed=False,
+        scanner_tier=scanner_tier,
+        pilot_primary_acc=0.0,  # recomputed at start of tick 0
+        pilot_turret_acc=0.0,
     )
 
 
@@ -329,6 +346,7 @@ class TickResolver:
         *,
         pvc_damage_reduction: float = 0.0,
         guild_config=None,
+        rng: random.Random | None = None,
     ) -> FightResults:
         """Run a full tick-based fight between two ShipLoadouts.
 
@@ -337,6 +355,10 @@ class TickResolver:
             loadout2: C2 — opponent (NPC in PvC; player2 in PvP).
             pvc_damage_reduction: Keith T. Maxwell DR (§3). 0.33 for PvC, 0.0 for PvP.
             guild_config: Reserved for per-guild constant overrides (T10+).
+            rng: Optional seeded RNG for deterministic testing. When provided, takes
+                 precedence over any seed passed to the constructor. Pass exactly one;
+                 passing both is allowed but rng= wins. None (default) falls back to
+                 the constructor's self._rng (seeded via TickResolver(seed=...)).
 
         Returns:
             FightResults with combat_log timeline and metadata block.
@@ -346,6 +368,14 @@ class TickResolver:
         max_ticks = GameConstants.MAX_FIGHT_TICKS
         min_dist = float(GameConstants.MIN_DISTANCE_M)
         distance_delta = GameConstants.BASE_SHIP_SPEED_MPS * 2 * (tick_ms / 1000)
+        # Accuracy constants (T4)
+        _player_base_acc = GameConstants.PLAYER_BASE_ACCURACY
+        _npc_base_acc = GameConstants.NPC_BASE_ACCURACY
+        _cloak_set = GameConstants.CLOAK_SET_VALUE
+        _acc_clamp_min = GameConstants.ACCURACY_CLAMP_MIN
+        _acc_clamp_max = GameConstants.ACCURACY_CLAMP_MAX
+        # RNG seam (T4 — not consumed until T5; inject via rng= kwarg for deterministic tests)
+        _rng = rng if rng is not None else self._rng
 
         # --- Combatant init (§1: separate from tick loop) ---
         c1 = _init_combatant(loadout1, is_player=(pvc_damage_reduction > 0.0))
@@ -386,6 +416,24 @@ class TickResolver:
         ticks_elapsed = max_ticks
 
         for tick in range(max_ticks):
+            # ------------------------------------------------------------------
+            # T4: Per-tick accuracy recomputation — before Phase 1
+            # T8 will wire thruster bonus (own_thruster_bonus_pp), booster debuff
+            # (opponent_booster_debuff_pp), and cloak activation (opponent_cloak_active).
+            # ------------------------------------------------------------------
+            for _state in (c1, c2):
+                _acc_base = _player_base_acc if _state.is_player else _npc_base_acc
+                _state.pilot_primary_acc, _state.pilot_turret_acc = compute_pilot_accuracy(
+                    combatant_base=_acc_base,
+                    own_scanner_bonus_pp=_state.scanner_tier.accuracy_bonus_pp,
+                    own_thruster_bonus_pp=0.0,
+                    opponent_booster_debuff_pp=0.0,
+                    opponent_cloak_active=False,
+                    cloak_set_value=_cloak_set,
+                    clamp_min=_acc_clamp_min,
+                    clamp_max=_acc_clamp_max,
+                )
+
             # ------------------------------------------------------------------
             # Phase 1: Decrement cooldowns (C1 then C2; floor at 0)
             # ------------------------------------------------------------------

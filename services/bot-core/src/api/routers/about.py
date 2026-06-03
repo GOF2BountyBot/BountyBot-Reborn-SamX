@@ -12,6 +12,7 @@ from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepo
 from persist.repositories.ship_repository import ShipRepository
 from persist.repositories.system_repository import SystemRepository
 from persist.repositories.turret_weapon_repository import TurretWeaponRepository
+from services.game_constants import GameConstants
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +31,68 @@ from api.schemas.about_schema import (
 flogger = bblogger.get_logger("bot-about-router")
 
 router = APIRouter(prefix="/about", tags=["about"])
+
+
+def _enrich_combat_fields(result: dict[str, Any], category: str) -> None:
+    """Populate §14 / T11 combat fields from extra_atts into the response dict.
+
+    DB storage pattern (all weapon/module categories):
+        outer = obj.extra_atts  (e.g. {"builtIn": ..., "extra_atts": {<inner>}})
+        inner = outer.get("extra_atts", outer)   <- combat-relevant fields live here
+
+    Module PrimaryWeaponMod pattern:
+        outer["dpsMultiplier"]       <- camelCase, top-level in seed → top-level in outer
+        inner["damage_pct"]          <- snake_case, in nested extra_atts
+        inner["fire_rate_pct"]       <- snake_case, in nested extra_atts
+
+    Modifies *result* in-place; safe to call on any category (no-op for non-weapon/module).
+    """
+    extra_outer: dict[str, Any] = result.get("extra_atts") or {}
+    # Unpack inner extra_atts (DB nesting pattern — see loadout_builder.py line ~200)
+    extra_inner: dict[str, Any] = extra_outer.get("extra_atts", extra_outer) if isinstance(extra_outer, dict) else {}
+    subtype: str = extra_inner.get("subtype", "") if isinstance(extra_inner, dict) else ""
+
+    if category in ("primary_weapon", "secondary_weapon", "turret_weapon"):
+        # EMP damage: any weapon with emp_damage > 0 in inner extra_atts
+        raw_emp = extra_inner.get("emp_damage") if isinstance(extra_inner, dict) else None
+        emp = int(raw_emp) if raw_emp is not None else None
+        result["emp_damage"] = emp if emp else None
+
+    if category == "secondary_weapon":
+        # Cluster-missile burst_count
+        raw_burst = extra_inner.get("burst_count") if isinstance(extra_inner, dict) else None
+        result["burst_count"] = int(raw_burst) if raw_burst is not None else None
+
+        # Nuke fields
+        if subtype == "nuke":
+            damage_val = result.get("damage")
+            result["nuke_direct_damage"] = int(damage_val) if damage_val is not None else None
+            raw_mag = extra_inner.get("magnitude_m") if isinstance(extra_inner, dict) else None
+            if raw_mag is not None:
+                result["nuke_effective_magnitude_m"] = round(float(raw_mag) * GameConstants.NUKE_MAGNITUDE_SCALE)
+            else:
+                result["nuke_effective_magnitude_m"] = None
+            result["nuke_self_damage_factor"] = GameConstants.NUKE_FRIENDLY_FACTOR
+        else:
+            result["nuke_direct_damage"] = None
+            result["nuke_effective_magnitude_m"] = None
+            result["nuke_self_damage_factor"] = None
+
+    if category == "module":
+        item_type: str = result.get("type") or ""
+        if item_type == "PrimaryWeaponModModule":
+            # dpsMultiplier is camelCase at OUTER level (top-level in seed → outer extra_atts)
+            raw_dps_mult = extra_outer.get("dpsMultiplier") if isinstance(extra_outer, dict) else None
+            result["dps_multiplier"] = float(raw_dps_mult) if raw_dps_mult is not None else None
+            # damage_pct and fire_rate_pct are in INNER extra_atts (snake_case)
+            raw_dmg_pct = extra_inner.get("damage_pct") if isinstance(extra_inner, dict) else None
+            result["damage_pct"] = int(raw_dmg_pct) if raw_dmg_pct is not None else None
+            raw_fr_pct = extra_inner.get("fire_rate_pct") if isinstance(extra_inner, dict) else None
+            result["fire_rate_pct"] = int(raw_fr_pct) if raw_fr_pct is not None else None
+        else:
+            result["dps_multiplier"] = None
+            result["damage_pct"] = None
+            result["fire_rate_pct"] = None
 
 # Repository instances
 module_repo = ModuleRepository()
@@ -190,6 +253,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
                 elif category == DataCategory.commodity:
                     result.update(CommodityResponse.model_validate(obj).model_dump())
 
+                _enrich_combat_fields(result, category.value)
                 flogger.debug(f"Object found: name={object_name}, category={category.value}, id={obj.id}")
                 return result
 
@@ -268,6 +332,7 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
                 elif category == DataCategory.commodity:
                     result.update(CommodityResponse.model_validate(obj).model_dump())
 
+                _enrich_combat_fields(result, category.value)
                 flogger.debug(f"Object found by alias: alias={alias}, category={category.value}, id={obj.id}")
                 return result
 
@@ -355,6 +420,7 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
         elif category == DataCategory.commodity:
             result.update(CommodityResponse.model_validate(obj).model_dump())
 
+        _enrich_combat_fields(result, category.value)
         flogger.debug(f"Object retrieved by ID: category={category.value}, object_id={object_id}")
         return result
 

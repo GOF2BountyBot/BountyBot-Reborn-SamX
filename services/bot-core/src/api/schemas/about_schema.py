@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict
 
 # Pydantic models for responses
 class ItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     aliases: list[str]
@@ -20,10 +22,17 @@ class ItemResponse(BaseModel):
 
 class ModuleResponse(ItemResponse):
     max_equipped: int | None = None
+    # §14 / T11: PrimaryWeaponMod breakdown fields
+    # Sourced from extra_atts["extra_atts"]["damage_pct"], extra_atts["extra_atts"]["fire_rate_pct"],
+    # and extra_atts["dpsMultiplier"] (camelCase at outer level in seed).
+    damage_pct: int | None = None
+    fire_rate_pct: int | None = None
+    dps_multiplier: float | None = None  # camelCase seed key: "dpsMultiplier"
 
 
 class WeaponResponse(ItemResponse):
-    pass
+    # §14 / T11: EMP damage field — applies to any weapon with emp_damage in inner extra_atts
+    emp_damage: int | None = None
 
 
 class PrimaryWeaponResponse(WeaponResponse):
@@ -31,7 +40,11 @@ class PrimaryWeaponResponse(WeaponResponse):
 
 
 class SecondaryWeaponResponse(WeaponResponse):
-    pass
+    # §14 / T11: cluster-missile and nuke fields
+    burst_count: int | None = None  # cluster-missile sub-munition count
+    nuke_direct_damage: int | None = None  # = damage when subtype == "nuke"
+    nuke_effective_magnitude_m: int | None = None  # = magnitude_m * NUKE_MAGNITUDE_SCALE, rounded
+    nuke_self_damage_factor: float | None = None  # = NUKE_FRIENDLY_FACTOR when subtype == "nuke"
 
 
 class TurretWeaponResponse(WeaponResponse):

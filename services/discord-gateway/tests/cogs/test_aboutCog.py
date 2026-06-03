@@ -1649,5 +1649,366 @@ class TestListCategoryBugBundleRegressions:
             assert f"Module{i:02d}" in rendered
 
 
+# ===========================================================================
+# T11 — §14 item-detail embed rendering tests
+# ===========================================================================
+
+
+def _field_names(embed: discord.Embed) -> list[str]:
+    """Return lowercased field names from a discord.Embed (before grid conversion)."""
+    return [f.name.lower() for f in embed.fields]
+
+
+def _field_value(embed: discord.Embed, name_fragment: str) -> str | None:
+    """Return the value of the first field whose name contains *name_fragment* (case-insensitive)."""
+    fragment = name_fragment.lower()
+    for f in embed.fields:
+        if fragment in f.name.lower():
+            return f.value
+    return None
+
+
+def _run_embed(cog, obj_data: dict) -> discord.Embed:
+    """Call _create_object_embed and return the *pre-grid* discord.Embed.
+
+    EmbedConverter is patched to a passthrough so we can inspect the embed
+    fields that the cog rendered before the 2-column layout transformation.
+    """
+    captured: list[discord.Embed] = []
+
+    def _capture(embed, *_a, **_kw):
+        captured.append(embed)
+        return MagicMock()
+
+    def _passthrough(*_a, **_kw):
+        # Return a real discord.Embed so we can inspect it downstream.
+        if captured:
+            return captured[0]
+        return discord.Embed()
+
+    with patch("cogs.aboutCog.EmbedConverter") as mock_conv:
+        mock_conv.embed_to_payload.side_effect = _capture
+        mock_conv.payload_to_grid_embed.side_effect = _passthrough
+        embed = asyncio.run(cog._create_object_embed(obj_data))
+    return embed
+
+
+class TestT11EmbedRendering:
+    """§14 / T11 — Discord embed rendering of combat fields in the /about cog.
+
+    Each test builds an obj_data dict as the API would return it (after
+    _enrich_combat_fields), calls _create_object_embed, and inspects the
+    pre-grid discord.Embed fields via the captured embed from EmbedConverter.
+    """
+
+    # -------------------------------------------------------------------------
+    # EMP primary weapons
+    # -------------------------------------------------------------------------
+
+    def test_emp_blaster_embed_has_emp_field(self, mock_about_cog):
+        """EMP-blaster embed must contain an 'EMP damage' field."""
+        obj_data = {
+            **_make_object_data("Luna EMP Mk I", "primary_weapon"),
+            "dps": 8.57,
+            "emp_damage": 3,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("emp damage" in n for n in _field_names(embed))
+        assert _field_value(embed, "emp damage") == "3"
+
+    def test_emp_blaster_embed_no_misleading_zero_damage(self, mock_about_cog):
+        """EMP-blaster embed must NOT display a bare 'Damage: 0' field (no physical damage field)."""
+        obj_data = {
+            **_make_object_data("Sol EMP Mk II", "primary_weapon"),
+            "dps": 11.11,
+            "emp_damage": 5,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        # There is no "damage" field at all (primary weapon embeds don't show damage directly)
+        field_names = _field_names(embed)
+        # Confirm EMP field is present
+        assert any("emp" in n for n in field_names)
+
+    def test_non_emp_primary_no_emp_field(self, mock_about_cog):
+        """Non-EMP primary weapon must NOT render an EMP damage field."""
+        obj_data = {
+            **_make_object_data("Nirai Pulse", "primary_weapon"),
+            "dps": 30.0,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert not any("emp" in n for n in _field_names(embed))
+
+    # -------------------------------------------------------------------------
+    # Cluster missiles
+    # -------------------------------------------------------------------------
+
+    def test_cluster_embed_has_burst_count_field(self, mock_about_cog):
+        """Cluster-missile embed must contain a 'Burst count' field."""
+        obj_data = {
+            **_make_object_data("Shesha", "secondary_weapon"),
+            "damage": 60,
+            "burst_count": 3,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("burst count" in n for n in _field_names(embed))
+        assert _field_value(embed, "burst count") == "3"
+
+    def test_cluster_embed_total_damage_correct(self, mock_about_cog):
+        """Cluster-missile embed must contain 'Total damage on full hit' = burst_count * damage."""
+        obj_data = {
+            **_make_object_data("Patala", "secondary_weapon"),
+            "damage": 90,
+            "burst_count": 5,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        total_field = _field_value(embed, "total damage")
+        assert total_field == "450", f"Expected 450, got {total_field!r}"
+
+    # -------------------------------------------------------------------------
+    # Nuke weapons
+    # -------------------------------------------------------------------------
+
+    def test_nuke_embed_has_direct_hit_damage(self, mock_about_cog):
+        """Nuke embed must contain a 'Direct hit damage' field."""
+        obj_data = {
+            **_make_object_data("Liberator", "secondary_weapon"),
+            "damage": 850,
+            "burst_count": None,
+            "nuke_direct_damage": 850,
+            "nuke_effective_magnitude_m": 1250,
+            "nuke_self_damage_factor": 0.25,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("direct hit" in n for n in _field_names(embed))
+        assert _field_value(embed, "direct hit") == "850"
+
+    def test_nuke_embed_has_effective_blast_radius(self, mock_about_cog):
+        """Nuke embed must contain 'Effective blast radius' (NOT raw magnitude_m)."""
+        obj_data = {
+            **_make_object_data("Liberator", "secondary_weapon"),
+            "damage": 850,
+            "burst_count": None,
+            "nuke_direct_damage": 850,
+            "nuke_effective_magnitude_m": 1250,
+            "nuke_self_damage_factor": 0.25,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("blast radius" in n for n in _field_names(embed))
+        blast_val = _field_value(embed, "blast radius")
+        # Must use effective value (1250), NOT raw magnitude_m (12500)
+        assert "1250" in blast_val, f"Expected effective radius 1250, got {blast_val!r}"
+        assert "12500" not in blast_val, "Raw magnitude_m must not appear in embed"
+
+    def test_nuke_embed_has_self_damage_warning(self, mock_about_cog):
+        """Nuke embed must contain a self-damage warning field."""
+        obj_data = {
+            **_make_object_data("Liberator", "secondary_weapon"),
+            "damage": 850,
+            "burst_count": None,
+            "nuke_direct_damage": 850,
+            "nuke_effective_magnitude_m": 1250,
+            "nuke_self_damage_factor": 0.25,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("self-damage" in n or "self damage" in n for n in _field_names(embed))
+        # self_dmg = round(850 * 0.25) = round(212.5) = 212 (Python banker's rounding)
+        self_val = _field_value(embed, "self-damage") or _field_value(embed, "self damage")
+        assert self_val is not None
+        assert "212" in self_val, f"Expected ~212 hp, got {self_val!r}"
+
+    def test_nuke_embed_does_not_show_raw_magnitude(self, mock_about_cog):
+        """Nuke embed must NOT display raw magnitude_m; only effective value is shown."""
+        obj_data = {
+            **_make_object_data("AMR Extinctor", "secondary_weapon"),
+            "damage": 700,
+            "burst_count": None,
+            "nuke_direct_damage": 700,
+            "nuke_effective_magnitude_m": 4000,
+            "nuke_self_damage_factor": 0.25,
+            "emp_damage": None,
+            "extra_atts": {"extra_atts": {"subtype": "nuke", "magnitude_m": 40000}},
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        all_values = " ".join(f.value for f in embed.fields)
+        # Raw magnitude_m (40000) must NOT appear
+        assert "40000" not in all_values, f"Raw magnitude_m must not appear; fields: {all_values!r}"
+
+    # -------------------------------------------------------------------------
+    # Pure-EMP secondary weapons (§14 / T11 — D1.4)
+    # -------------------------------------------------------------------------
+
+    def test_mamba_emp_missile_no_misleading_zero_damage(self, mock_about_cog):
+        """Mamba EMP missile (damage=0, emp_damage=100) must NOT show 'Damage: 0' and MUST show EMP damage.
+
+        Pure-EMP secondary: physical damage field must be suppressed; only 'EMP damage' rendered.
+        Mirrors the primary-weapon EMP path (test_emp_blaster_embed_no_misleading_zero_damage).
+        """
+        obj_data = {
+            **_make_object_data("Mamba EMP", "secondary_weapon"),
+            "damage": 0,
+            "burst_count": None,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": 100,
+            "subtype": "missile",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        # Must NOT show "Damage: 0"
+        damage_field = _field_value(embed, "damage")
+        assert damage_field != "0", (
+            f"Pure-EMP secondary must not show 'Damage: 0'; got damage field={damage_field!r}"
+        )
+        # Must show "EMP damage" with the correct value
+        assert any("emp damage" in n for n in names), f"Missing 'EMP damage' field; fields={names}"
+        assert _field_value(embed, "emp damage") == "100", (
+            f"Expected EMP damage=100; got {_field_value(embed, 'emp damage')!r}"
+        )
+
+    def test_neetha_emp_mine_no_misleading_zero_damage(self, mock_about_cog):
+        """Neétha EMP mine (damage=0, emp_damage=500) must NOT show 'Damage: 0' and MUST show EMP damage.
+
+        Pure-EMP secondary: physical damage field must be suppressed; only 'EMP damage' rendered.
+        """
+        obj_data = {
+            **_make_object_data("Neétha EMP", "secondary_weapon"),
+            "damage": 0,
+            "burst_count": None,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": 500,
+            "subtype": "mine",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        # Must NOT show "Damage: 0"
+        damage_field = _field_value(embed, "damage")
+        assert damage_field != "0", (
+            f"Pure-EMP secondary must not show 'Damage: 0'; got damage field={damage_field!r}"
+        )
+        # Must show "EMP damage" with the correct value
+        assert any("emp damage" in n for n in names), f"Missing 'EMP damage' field; fields={names}"
+        assert _field_value(embed, "emp damage") == "500", (
+            f"Expected EMP damage=500; got {_field_value(embed, 'emp damage')!r}"
+        )
+
+    def test_normal_secondary_with_damage_still_shows_damage(self, mock_about_cog):
+        """Normal secondary with real damage (and no emp_damage) must still show the Damage field.
+
+        Regression guard: the pure-EMP suppression must not affect ordinary missiles.
+        """
+        obj_data = {
+            **_make_object_data("Standard Missile", "secondary_weapon"),
+            "damage": 250,
+            "burst_count": None,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": None,
+            "subtype": "missile",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert _field_value(embed, "damage") == "250", (
+            f"Normal secondary must still show Damage field; got {_field_value(embed, 'damage')!r}"
+        )
+
+    # -------------------------------------------------------------------------
+    # PrimaryWeaponMod modules
+    # -------------------------------------------------------------------------
+
+    def test_pwm_embed_has_all_three_fields(self, mock_about_cog):
+        """PrimaryWeaponMod embed must show damage modifier, fire rate modifier, AND net DPS shift."""
+        obj_data = {
+            **_make_object_data("Nirai Overdrive", "module"),
+            "max_equipped": 1,
+            "damage_pct": -10,
+            "fire_rate_pct": 20,
+            "dps_multiplier": 1.1,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        assert any("damage modifier" in n for n in names), f"Missing 'damage modifier'; fields={names}"
+        assert any("fire rate modifier" in n for n in names), f"Missing 'fire rate modifier'; fields={names}"
+        assert any("net dps shift" in n for n in names), f"Missing 'net dps shift'; fields={names}"
+
+    def test_pwm_overdrive_values(self, mock_about_cog):
+        """Nirai Overdrive: damage=-10%, fire_rate=+20%, dps_mult=1.10."""
+        obj_data = {
+            **_make_object_data("Nirai Overdrive", "module"),
+            "max_equipped": 1,
+            "damage_pct": -10,
+            "fire_rate_pct": 20,
+            "dps_multiplier": 1.1,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert "-10%" in _field_value(embed, "damage modifier")
+        assert "+20%" in _field_value(embed, "fire rate modifier")
+
+    def test_pwm_overcharge_values(self, mock_about_cog):
+        """Nirai Overcharge: damage=+20%, fire_rate=-10%, dps_mult=1.10."""
+        obj_data = {
+            **_make_object_data("Nirai Overcharge", "module"),
+            "max_equipped": 1,
+            "damage_pct": 20,
+            "fire_rate_pct": -10,
+            "dps_multiplier": 1.1,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert "+20%" in _field_value(embed, "damage modifier")
+        assert "-10%" in _field_value(embed, "fire rate modifier")
+
+    def test_pwm_overdrive_overcharge_distinct_field_values(self, mock_about_cog):
+        """Overdrive and Overcharge show different field values despite same dps_multiplier."""
+        od_data = {
+            **_make_object_data("Nirai Overdrive", "module"),
+            "max_equipped": 1,
+            "damage_pct": -10,
+            "fire_rate_pct": 20,
+            "dps_multiplier": 1.1,
+        }
+        oc_data = {
+            **_make_object_data("Nirai Overcharge", "module"),
+            "max_equipped": 1,
+            "damage_pct": 20,
+            "fire_rate_pct": -10,
+            "dps_multiplier": 1.1,
+        }
+        embed_od = _run_embed(mock_about_cog, od_data)
+        embed_oc = _run_embed(mock_about_cog, oc_data)
+        # damage_pct values differ
+        od_dmg = _field_value(embed_od, "damage modifier")
+        oc_dmg = _field_value(embed_oc, "damage modifier")
+        assert od_dmg != oc_dmg, f"Overdrive and Overcharge should differ; got od={od_dmg!r} oc={oc_dmg!r}"
+
+    def test_non_pwm_module_no_pwm_fields(self, mock_about_cog):
+        """Non-PrimaryWeaponMod module (Scanner) must not show damage/fire_rate/dps_mult fields."""
+        obj_data = {
+            **_make_object_data("Scanner", "module"),
+            "max_equipped": 1,
+            "damage_pct": None,
+            "fire_rate_pct": None,
+            "dps_multiplier": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        assert not any("damage modifier" in n for n in names)
+        assert not any("fire rate modifier" in n for n in names)
+        assert not any("net dps shift" in n for n in names)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

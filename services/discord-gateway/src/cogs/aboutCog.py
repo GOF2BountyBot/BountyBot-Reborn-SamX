@@ -259,14 +259,63 @@ class AboutCog(commands.Cog):
         if category == "module":
             if obj_data.get("max_equipped") is not None:
                 embed.add_field(name="Max Equipped", value=str(obj_data["max_equipped"]), inline=True)
+            # §14 / T11: PrimaryWeaponMod breakdown — all three fields required per spec
+            dmg_pct = obj_data.get("damage_pct")
+            fr_pct = obj_data.get("fire_rate_pct")
+            dps_mult = obj_data.get("dps_multiplier")
+            if dmg_pct is not None or fr_pct is not None or dps_mult is not None:
+                if dmg_pct is not None:
+                    sign = "+" if dmg_pct >= 0 else ""
+                    embed.add_field(name="Damage modifier", value=f"{sign}{dmg_pct}%", inline=True)
+                if fr_pct is not None:
+                    sign = "+" if fr_pct >= 0 else ""
+                    embed.add_field(name="Fire rate modifier", value=f"{sign}{fr_pct}%", inline=True)
+                if dps_mult is not None:
+                    embed.add_field(name="Net DPS shift", value=f"x{dps_mult:.2f}", inline=True)
 
         elif category == "primary_weapon":
             if obj_data.get("dps") is not None:
                 embed.add_field(name="DPS", value=f"{obj_data['dps']:.1f}", inline=True)
+            # §14 / T11: EMP damage — show instead of (misleading) "Damage: 0" for pure-EMP blasters
+            emp_dmg = obj_data.get("emp_damage")
+            if emp_dmg is not None and emp_dmg > 0:
+                embed.add_field(name="EMP damage", value=str(emp_dmg), inline=True)
 
         elif category == "secondary_weapon":
-            if obj_data.get("damage") is not None:
-                embed.add_field(name="Damage", value=str(obj_data["damage"]), inline=True)
+            # §14 / T11: Cluster-missile burst fields — show before generic damage to keep context clear
+            burst = obj_data.get("burst_count")
+            if burst is not None:
+                per_shot = obj_data.get("damage")
+                embed.add_field(name="Burst count", value=str(burst), inline=True)
+                if per_shot is not None:
+                    embed.add_field(name="Total damage on full hit", value=str(burst * per_shot), inline=True)
+                # per-sub-munition damage shown after totals for comparison
+                if per_shot is not None:
+                    embed.add_field(name="Damage (per sub-munition)", value=str(per_shot), inline=True)
+            # §14 / T11: Nuke fields — direct hit + effective radius + self-damage warning
+            elif obj_data.get("nuke_effective_magnitude_m") is not None:
+                nuke_dmg = obj_data.get("nuke_direct_damage")
+                eff_mag = obj_data["nuke_effective_magnitude_m"]
+                self_factor = obj_data.get("nuke_self_damage_factor", 0.25)
+                if nuke_dmg is not None:
+                    embed.add_field(name="Direct hit damage", value=str(nuke_dmg), inline=True)
+                embed.add_field(name="Effective blast radius", value=f"{eff_mag} m", inline=True)
+                if nuke_dmg is not None:
+                    self_dmg = round(nuke_dmg * self_factor)
+                    embed.add_field(name="Self-damage at point-blank", value=f"~{self_dmg} hp", inline=True)
+            else:
+                # Standard missile/mine damage (non-cluster, non-nuke).
+                # §14 / T11: pure-EMP secondaries (damage=0, emp_damage>0) must NOT show
+                # a misleading "Damage: 0" field — mirror the primary-weapon EMP path.
+                dmg_val = obj_data.get("damage")
+                sec_emp_check = obj_data.get("emp_damage")
+                is_pure_emp = dmg_val == 0 and sec_emp_check is not None and sec_emp_check > 0
+                if dmg_val is not None and not is_pure_emp:
+                    embed.add_field(name="Damage", value=str(dmg_val), inline=True)
+            # §14 / T11: EMP damage for secondary weapons (Mamba EMP missile, Neétha EMP mine)
+            sec_emp = obj_data.get("emp_damage")
+            if sec_emp is not None and sec_emp > 0:
+                embed.add_field(name="EMP damage", value=str(sec_emp), inline=True)
             ls = obj_data.get("loading_speed")
             if ls is not None:
                 embed.add_field(name="Loading Speed", value=f"{ls} ms", inline=True)
@@ -377,11 +426,17 @@ class AboutCog(commands.Cog):
             trunc = mechanics[:500] + "…" if len(mechanics) > 500 else mechanics
             embed.add_field(name="Lore / Mechanics", value=trunc, inline=False)
 
+        # §14 / T11: suppress outer extra_atts keys that are already rendered explicitly
+        # (dpsMultiplier is a scalar at the outer level and would appear in the generic dump)
+        _T11_EXTRA_SUPPRESS = {"dpsMultiplier"}
+
         # Add remaining extra attributes (skip mechanics_text — shown above)
         if extra_atts:
             extra_text = ""
             for key, value in extra_atts.items():
                 if key == "mechanics_text":
+                    continue
+                if key in _T11_EXTRA_SUPPRESS:
                     continue
                 if category == "commodity" and key in _COMMODITY_EXTRA_SKIP:
                     continue

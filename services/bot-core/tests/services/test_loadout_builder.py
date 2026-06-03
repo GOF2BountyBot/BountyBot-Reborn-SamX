@@ -1035,6 +1035,85 @@ class TestCriminalWeaponSelfHealing:
 
 
 # ---------------------------------------------------------------------------
+# TestCriminalWeaponSelfHealingEdgeCases — additional coverage for CI-1 fix
+# ---------------------------------------------------------------------------
+
+
+class TestCriminalWeaponSelfHealingEdgeCases:
+    """Edge-case coverage for the self-healing fallback in from_criminal_ship().
+
+    Verifies that the fallback only fires when damage_per_shot is absent (None),
+    NOT when it is explicitly 0 (pure-EMP weapon); and that turrets self-heal
+    the same way primary weapons do.
+    """
+
+    def test_pure_emp_primary_not_promoted(self):
+        """A weapon with explicit damage_per_shot=0 and dps>0 is a pure-EMP weapon.
+        The self-healing fallback must NOT overwrite the explicit 0 with a derived value —
+        is_pure_emp must be True and baked damage must stay 0.
+        """
+        from src.services.combat_service import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="EMP Raider",
+            weapons=[
+                {
+                    "name": "EMP Pulse",
+                    "dps": 17.77,
+                    "damage_per_shot": 0,
+                    "loading_speed_ms": 600,
+                    "range_m": 1400.0,
+                    "subtype": "emp",
+                }
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        # The WeaponStats must preserve the explicit 0
+        assert loadout.weapons[0].damage_per_shot == pytest.approx(0.0), (
+            "damage_per_shot=0 must be preserved, not overwritten by self-heal fallback"
+        )
+        state = _init_combatant(loadout, is_player=False)
+        assert len(state.effective_primaries) == 1
+        p = state.effective_primaries[0]
+        assert p.is_pure_emp is True, "Weapon with explicit damage_per_shot=0 must be pure-EMP"
+        assert p.effective_damage_per_shot == 0, (
+            f"pure-EMP weapon baked damage must be 0, got {p.effective_damage_per_shot}"
+        )
+
+    def test_legacy_turret_self_heals_nonzero_baked_damage_and_range(self):
+        """A legacy criminal turret dict (dps>0, damage_per_shot absent, loading_speed_ms=0)
+        must self-heal to non-zero baked damage and non-zero range — mirroring the
+        primary-weapon self-heal test.
+        """
+        from src.services.combat_service import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Legacy Gunship",
+            turrets=[
+                {
+                    "name": "Old Beam",
+                    "dps": 8.5,
+                    # damage_per_shot intentionally absent (legacy dict)
+                    # loading_speed_ms absent → defaults to 0 → fallback cadence used
+                }
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        # damage_per_shot should have been derived (non-None, non-zero)
+        turret_ws = loadout.turrets[0]
+        assert turret_ws.damage_per_shot is not None, "Self-heal must set damage_per_shot"
+        assert turret_ws.damage_per_shot > 0, (
+            f"Self-healed damage_per_shot must be > 0, got {turret_ws.damage_per_shot}"
+        )
+        # range_m should have been given a non-zero floor
+        assert turret_ws.range_m > 0, f"Self-healed range_m must be > 0, got {turret_ws.range_m}"
+
+        # Confirm _init_combatant does not raise (no crash on self-healed turret)
+        _init_combatant(loadout, is_player=False)
+        assert len(loadout.turrets) == 1
+
+
+# ---------------------------------------------------------------------------
 # TestExtractWeaponCombatFields — unit tests for the bounty_service helper
 # that extracts combat fields from ORM extra_atts onto the JSONB dict.
 # ---------------------------------------------------------------------------

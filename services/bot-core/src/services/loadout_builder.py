@@ -21,6 +21,14 @@ flogger = bblogger.get_logger("loadout-builder")
 # Sentinel value for "key not found" to distinguish from None
 _MISSING = object()
 
+# Fallback constants for legacy/malformed criminal weapon dicts that lack combat fields.
+# _DEFAULT_WEAPON_CADENCE_MS: assume a 1-second fire cycle when loading_speed_ms is absent.
+# _DEFAULT_WEAPON_RANGE_M: non-zero floor so the range gate never silently blocks all shots.
+#   Chosen below real T1 weapon ranges (1300-1400 m) but above 0 so the weapon fires once
+#   ships close to within ~800 m; guards against fully-malformed JSONB with missing range.
+_DEFAULT_WEAPON_CADENCE_MS: int = 1000
+_DEFAULT_WEAPON_RANGE_M: float = 800.0
+
 
 def _get_extra(extra: dict, snake_key: str, camel_key: str, default):
     """Retrieve a value from extra_atts, trying snake_case then camelCase.
@@ -344,7 +352,7 @@ class LoadoutBuilder:
     def from_criminal_ship(criminal_ship: dict) -> ShipLoadout:
         """Build ShipLoadout from a bounty's criminal_ship JSON dict.
 
-        The criminal_ship dict is produced by BountyService._build_criminal_loadout_dict()
+        The criminal_ship dict is produced by BountyService.generate_loadout()
         and stored in the ``Bounty.criminal_ship`` JSONB column:
 
         {
@@ -354,8 +362,20 @@ class LoadoutBuilder:
             "armor_hp": 95,
             "shield_hp": 0,
             "total_hp": 95,
-            "weapons": [{"name": "...", "emoji": "...", "dps": 5.2, "value": 1000}],
-            "turrets": [{"name": "...", "emoji": "...", "dps": 3.1, "value": 500}],
+            "weapons": [
+                {
+                    "name": "...", "emoji": "...", "dps": 5.2, "value": 1000,
+                    "damage_per_shot": 8.0, "loading_speed_ms": 600,
+                    "range_m": 1400.0, "subtype": "blaster",
+                }
+            ],
+            "turrets": [
+                {
+                    "name": "...", "emoji": "...", "dps": 3.1, "value": 500,
+                    "damage_per_shot": 4.0, "loading_speed_ms": 800,
+                    "range_m": 1200.0, "subtype": "",
+                }
+            ],
             "modules": [
                 {
                     "name": "...", "emoji": "...", "type": "ArmourModule",
@@ -383,14 +403,6 @@ class LoadoutBuilder:
         manual_turret_mode = criminal_ship.get("manual_turret_mode", False)
 
         flogger.debug(f"Building criminal loadout: ship={ship_name!r}, base_armour={base_armour}")
-
-        # Fallback constants for legacy/malformed weapon dicts that lack combat fields.
-        # _DEFAULT_WEAPON_CADENCE_MS: assume a 1-second fire cycle when loading_speed_ms is absent.
-        # _DEFAULT_WEAPON_RANGE_M: non-zero floor so the range gate never silently blocks all shots.
-        #   Chosen below real T1 weapon ranges (1300-1400 m) but above 0 so the weapon fires once
-        #   ships close to within ~800 m; guards against fully-malformed JSONB with missing range.
-        _DEFAULT_WEAPON_CADENCE_MS: int = 1000
-        _DEFAULT_WEAPON_RANGE_M: float = 800.0
 
         # Weapons
         weapons: list[WeaponStats] = []

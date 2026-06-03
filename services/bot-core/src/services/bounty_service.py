@@ -25,7 +25,7 @@ from persist.repositories.player_repository import PlayerRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.combat_models import ShipLoadout, WeaponStats
+from services.combat_models import ShipLoadout
 from services.combat_service import CombatService
 from services.game_constants import GameConstants, resolve_constant
 from services.game_maths import (
@@ -643,24 +643,6 @@ class BountyService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _build_criminal_loadout(self, criminal_ship: dict) -> ShipLoadout:
-        """Build a ShipLoadout from a bounty's criminal_ship JSONB data.
-
-        Args:
-            criminal_ship: Dict containing criminal ship data from bounty JSONB column.
-
-        Returns:
-            ShipLoadout ready for combat resolution.
-        """
-        weapons = [WeaponStats(name=w["name"], dps=w.get("dps", 0)) for w in criminal_ship.get("weapons", [])]
-        turrets = [WeaponStats(name=t["name"], dps=t.get("dps", 0)) for t in criminal_ship.get("turrets", [])]
-        return ShipLoadout(
-            ship_name=criminal_ship.get("ship_name", "Unknown"),
-            base_armour=criminal_ship.get("ship_armour", 100),
-            weapons=weapons,
-            turrets=turrets,
-        )
 
     def _build_player_loadout(self, player, player_ship=None) -> ShipLoadout:
         """Build a minimal ShipLoadout from a player's active ship.

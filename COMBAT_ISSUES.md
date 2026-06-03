@@ -219,20 +219,26 @@ Owner spec: nukes are **AoE, guaranteed-hit, inverse-square damage from epicente
 self-damage, ~1 use per battle.** Current state (resolver `combat_service.py:1400-1432`,
 `_nuke_dmg` line 865, seed `AMR Tormentor`):
 - ✅ guaranteed hit (no accuracy roll), ✅ AoE, ✅ reduced self-damage (`NUKE_FRIENDLY_FACTOR=0.25`).
-- 🔴 **Random epicenter** (`_rng.uniform(300..5000m)`) almost never lands within the blast
-  radius of the target → **0 damage** (battle 50: all 4 nukes 0 dmg, epicenters 2.4–4.9km from
-  foe). Contradicts "guaranteed to hit". Likely fix: epicenter ON the target (full dmg to target,
-  inverse-square falloff to firer by firer's distance).
-- 🔴 **Seed `AMR Tormentor` has no `damage_per_shot`** → 0 dmg even on a direct hit. (All nukes
-  likely affected — same class as CI-1 turret seed gap.)
+- ✅ **Damage data PRESENT** (corrected — earlier "missing damage" was wrong): nuke damage lives in
+  the `secondary_weapon.damage` column (Tormentor **150**, Extinctor **700**), and `from_player`
+  (`loadout_builder.py:304,316`) correctly reads it into `WeaponStats.damage_per_shot`. Combat HAS
+  the damage. NOT the problem.
+- 🔴 **CORE BUG — random epicenter.** Resolver samples epicenter `_rng.uniform(300..5000m)` per the
+  **locked spec "D5: epicenter sampled via injected RNG"** — so the 1000m-radius blast almost never
+  reaches the target → ~0 damage (battle 50: all 4 nukes 0 dmg, epicenters 2.4–4.9km from foe).
+  This DIRECTLY CONFLICTS with what `/about` advertises — **"Direct hit damage 150"** and
+  **"Self-damage at point-blank ~38"** (=150×0.25) only make sense with the **epicenter ON the
+  target** (target takes 150 direct; firer takes falloff by firer's distance, ~38 at point-blank).
+  **Fix: epicenter on target.** Note this requires updating locked-spec **D5** (spec ≠ intent).
 - 🔴 **Cooldown `loading_speed_ms=6000` (6s)** → 4 fires/29s battle; owner wants **1 per battle**
   (battle-length cooldown or 1-charge ammo model — design decision).
 - 🟡 **Display:** key-event formatter (`combat_log_service.py:387`) labels nukes "miss" (assumes a
-  `hit` flag nukes lack). Nukes detonate; never miss.
-- 🟡 **Formula:** `_nuke_dmg = dmg × (1 − d/blast)²` (bounded quadratic) ≠ literal `1/d²`
-  inverse-square — confirm intended model w/ owner.
-**Plan:** d-architect to reconcile intended model + spec + seed + code → dev → tester. Decisions
-needed: epicenter-on-target?; 1-per-battle via long cooldown vs ammo/charges?; falloff formula.
+  `hit` flag nukes lack). Nukes detonate; never miss → show detonation/damage instead.
+- ✅ **Formula OK:** `_nuke_dmg = dmg × (1 − d/blast)²` is CONSISTENT with the advertised numbers
+  (direct hit 150 at d=0; self ~38 = 150×0.25 at d=0). Keep it (owner's "inverse-square" = this
+  quadratic falloff; literal 1/d² has a singularity). No change.
+**Plan:** d-architect to reconcile intent vs locked-spec D5 (epicenter-on-target) + cooldown model
+→ dev → tester. Remaining owner decision: 1-per-battle via long cooldown vs ammo/charges.
 
 ---
 

@@ -190,7 +190,16 @@ its own quantity range in the shop count config. Owner decision; no action yet.
 
 ---
 
-## CI-12 🟡 Embed shows "You won" for a LOST Bronze bonus fight  *(display bug, found in retest)*
+## CI-12 ✅ Embed showed "You won" for a LOST Bronze bonus fight — FIXED & VERIFIED
+**Resolved 2026-06-03.** Combat embeds restructured to owner-approved "compact, worded"
+layout (`⚔️ Combat vs X — Victory/Defeat/Stalemate in Ns`; `You (ship) — survived/destroyed`;
+worded Shield/Armour/Hull; criminal `name (ship)`; duel uses player names). Win/loss header now
+derived from ACTUAL final-hull (not the always-true-at-Bronze `combat_won` flag). d-tester
+live-verified a Bronze DEFEAT renders "Defeat/destroyed" despite capture succeeding. 365 gateway
+tests green; ruff clean. Live after rebuild. Two LOW theoretical edges noted (accuracy=None shows
+0%; outcome="stalemate" w/ a 0-hull side would show Stalemate — neither occurs in real resolver
+output). Committed.
+<details><summary>(original)</summary>
 At **Bronze tier**, bounty capture is **guaranteed by design** (`bounty_service.py:1389-1403`:
 `combat_won=True` hardcoded; the fight only decides a 2× bonus via
 `winner_name == player_ship`). Silver+ has a mandatory combat gate. So capturing even when

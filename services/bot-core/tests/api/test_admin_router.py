@@ -72,7 +72,9 @@ def mock_config_service():
     service.create_or_update_config = AsyncMock()
     service.clear_guild_players = AsyncMock()
     service.reset_to_defaults = AsyncMock()
-    service.uninstall_guild = AsyncMock(return_value={"players": 5, "configs": 1, "shops": 40})
+    service.uninstall_guild = AsyncMock(
+        return_value={"players": 5, "shop_items": "all", "bounties": 3, "combat_log": 7, "config": 1}
+    )
     service.update_shop_config = AsyncMock(return_value={"sale_price_factor": 0.5})
     return service
 
@@ -481,7 +483,12 @@ class TestUninstallBot:
         assert response.status_code == 200
         data = response.json()
         assert data["guild_id"] == 67890
-        assert data["removed_counts"] == {"players": 5, "configs": 1, "shops": 40}
+        removed = data["removed_counts"]
+        assert removed["players"] == 5
+        assert removed["bounties"] == 3
+        assert removed["combat_log"] == 7
+        assert removed["config"] == 1
+        assert removed["shop_items"] == "all"
         assert "67890" in data["message"]
         assert "warning" in data
         mock_config_service.uninstall_guild.assert_awaited_once()
@@ -662,7 +669,12 @@ class TestCleanupGuildOnRemove:
         assert response.status_code == 200
         data = response.json()
         assert data["guild_id"] == 67890
-        assert data["removed_counts"] == {"players": 5, "configs": 1, "shops": 40}
+        removed = data["removed_counts"]
+        assert removed["players"] == 5
+        assert removed["bounties"] == 3
+        assert removed["combat_log"] == 7
+        assert removed["config"] == 1
+        assert removed["shop_items"] == "all"
         assert data["bounties_cleared"] == 2
         assert "complete" in data["message"].lower()
         mock_config_service.uninstall_guild.assert_awaited_once()

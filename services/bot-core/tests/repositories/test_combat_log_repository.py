@@ -9,7 +9,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 from types import ModuleType
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # ---------------------------------------------------------------------------
 # Mock shared.bblogger before any src imports
@@ -357,3 +357,51 @@ async def test_delete_by_guild_id_returns_count(repo, db_session):
     # Confirm table is empty for that guild
     all_rows = await repo.list_for_player(db_session, 1, guild_id=guild_id)
     assert all_rows == []
+
+
+# ---------------------------------------------------------------------------
+# Test: delete_by_guild_id — error handling (mock-db, mirrors BountyRepository)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteByGuildIdErrorHandling:
+    """Error-handling tests for CombatLogRepository.delete_by_guild_id.
+
+    These tests use a mock AsyncSession to exercise the rollback / no-commit
+    branches without needing a live database.  They mirror the equivalents in
+    test_bounty_repository.py :: TestDeleteByGuildId.
+    """
+
+    @pytest.fixture
+    def repo(self) -> CombatLogRepository:
+        return CombatLogRepository()
+
+    @pytest.fixture
+    def mock_db(self) -> AsyncMock:
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        db.rollback = AsyncMock()
+        return db
+
+    @pytest.mark.asyncio
+    async def test_delete_by_guild_id_rollback_on_error(self, repo, mock_db):
+        """On database error, rollback is called and the exception is re-raised."""
+        mock_db.execute = AsyncMock(side_effect=Exception("DB gone"))
+
+        with pytest.raises(Exception, match="DB gone"):
+            await repo.delete_by_guild_id(mock_db, guild_id=555666777888)
+
+        mock_db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_by_guild_id_no_commit_when_commit_false(self, repo, mock_db):
+        """When commit=False, flush is called but commit is not."""
+        mock_db.flush = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.rowcount = 2
+        mock_db.execute = AsyncMock(return_value=result_mock)
+
+        await repo.delete_by_guild_id(mock_db, guild_id=777888999000, commit=False)
+
+        mock_db.flush.assert_awaited_once()
+        mock_db.commit.assert_not_awaited()

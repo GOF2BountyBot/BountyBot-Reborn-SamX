@@ -97,28 +97,39 @@ class CombatLogRepository(IRepository[CombatLog]):
     # Domain-specific methods                                              #
     # ------------------------------------------------------------------ #
 
-    async def list_for_player(self, db: AsyncSession, user_id: int, limit: int = 20) -> list[CombatLog]:
+    async def list_for_player(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        limit: int = 20,
+        guild_id: int | None = None,
+    ) -> list[CombatLog]:
         """Return the most recent fights involving a player (§12 canonical query).
 
         Matches rows where the player appears as either combatant, ordered
         newest-first. NPC fights (NULL user_id on that side) are naturally
         excluded from the player's history.
+
+        Args:
+            db:       Async DB session.
+            user_id:  Discord user ID to filter by (either combatant slot).
+            limit:    Maximum rows to return (default 20).
+            guild_id: When provided, restrict to this guild only (for autocomplete).
         """
         try:
-            result = await db.execute(
-                select(CombatLog)
-                .where(
-                    or_(
-                        CombatLog.combatant1_user_id == user_id,
-                        CombatLog.combatant2_user_id == user_id,
-                    )
+            stmt = select(CombatLog).where(
+                or_(
+                    CombatLog.combatant1_user_id == user_id,
+                    CombatLog.combatant2_user_id == user_id,
                 )
-                .order_by(CombatLog.created_at.desc())
-                .limit(limit)
             )
+            if guild_id is not None:
+                stmt = stmt.where(CombatLog.guild_id == guild_id)
+            stmt = stmt.order_by(CombatLog.created_at.desc()).limit(limit)
+            result = await db.execute(stmt)
             return list(result.scalars().all())
         except Exception as e:
-            flogger.error(f"Error listing combat_log for user_id={user_id}: {e}")
+            flogger.error(f"Error listing combat_log for user_id={user_id} guild_id={guild_id}: {e}")
             raise
 
     async def delete_older_than(self, db: AsyncSession, cutoff: datetime, *, commit: bool = True) -> int:

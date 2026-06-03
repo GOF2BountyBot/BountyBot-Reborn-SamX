@@ -9,7 +9,27 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 
 ---
 
-## CI-1 🔴 Criminals on certain ships deal 0 DPS in combat  *(HIGH — gameplay-breaking)*
+## CI-1 ✅ Criminals deal 0 DPS in combat — FIXED & VERIFIED  *(HIGH)*
+**Resolved 2026-06-03.** Fix (persist+read combat fields + self-healing fallback,
+cadence 1000ms / range floor 800m) implemented, d-tester signed off (EMP weapons not
+promoted, new bounties persist fields, legacy self-heal), cleanup done (dead code
+removed, docstring fixed, +2 coverage tests). bot-core suite green. Live: Hiro/Inflict
+criminals `raw_dps>0`. Committed.
+
+<details><summary>(historical root-cause detail)</summary>
+**d-architect verdict (2026-06-03):** the per-ship correlation was an ARTIFACT —
+no ship-discriminating factor. "Betty 3.6" was stale data from the pre-T5
+`SimpleTTKResolver` (retired in T10). Under current code **ALL criminals deal 0 DPS**
+(universal). Root cause: criminal primary weapons lose `damage_per_shot` /
+`loading_speed_ms` / `range_m` at two layers — (A) `BountyService._build_criminal_loadout_dict()`
+(`bounty_service.py:587-590`, also turrets 602-605) only persists `dps`; (B)
+`LoadoutBuilder.from_criminal_ship()` (`loadout_builder.py:388-392`) only reads `dps`.
+The T5 bake (`combat_service.py:307-327`) then yields `eff_damage=0` + `range_m=0`
+(fire gate blocks). Fix = persist + read the fields (mirror the turret block) WITH a
+self-healing fallback for legacy bounties (derive damage_per_shot from dps + cadence,
+non-zero range). Full brief handed to d-developer.
+
+<details><summary>(original symptom table — premise now corrected)</summary>
 **Symptom:** in resolved `/check` fights, some criminals render **DPS 0.0** and the
 player's **Time-to-Kill = ∞** → those bounties are unlosable free captures.
 
@@ -31,26 +51,48 @@ loads into the loadout but yields no damage in the resolver for these ships.
 mishandles weapon assignment for non-starter criminal ships (Hiro/Inflict). Compare
 the built combatant (raw_dps) of a 0-DPS criminal vs the working Betty criminal.
 
-**Next action:** d-developer to trace; reproduce live via `POST /api/v1/bounties/check`
-and inspect `combat_result.ship2_stats.raw_dps` + the criminal combatant the resolver
-actually builds. → then d-tester.
+**Next action:** d-developer applying fix (persist + read combat fields + self-heal),
+then d-tester.
+</details>
+</details>
 
 ---
 
-## CI-2 🟡 `HP: 135 → 135` dead arrow in combat summary  *(LOW — cosmetic)*
-The `raw → varied` arrow is a leftover from the **variance system removed in T10**;
-both numbers are now always identical, so the `→` is meaningless and looks broken.
-**Fix:** drop the arrow (show a single HP value) in `bountyCog._format_combat_summary`
-and the duel result embed (`duelCog`). Gateway-only change.
+## CI-2 / CI-9 🟡 Combat-summary embed is dated/inaccurate — PROPOSAL PENDING APPROVAL
+**CI-2 (the `HP: 135 → 135` dead arrow)** is folded into the broader #7 revisit below.
+
+**Root finding:** `bountyCog._format_combat_summary` renders **pre-fight PROJECTIONS**
+from `FightStats` (`raw_hp`, `varied_hp`, `raw_dps`, projected `ttk`) — NOT what actually
+happened. `varied_hp` is a dead variance-era field (== raw_hp since T10), hence the
+pointless `→`. Meanwhile the resolver now produces rich ACTUAL after-action data in
+`data.summary.combatants` that the embed never surfaces: **final HP per layer
+(shield/armour/hull), damage dealt/taken, shots fired/hit, accuracy %, duration, modules
+fired**, plus `pvc_damage_reduction`.
+
+**Proposed redesign (needs owner sign-off — UI + backend change):**
+- Backend: expose the relevant `data.summary` after-action fields in the `/check` (and
+  duel) response so the embed renders REAL outcomes, not projections.
+- Embed: drop the `→` arrow; show actual final HP (shield/armour/hull), damage dealt,
+  accuracy (hits/fired), duration; keep the `🛡️ PvC reduction` line (PvC only).
+- Applies to BOTH the bounty-capture embed and the duel result embed.
+**Status:** analysis done; awaiting approval before architect→dev→tester. CI-2's arrow
+removal ships as part of this (no separate throwaway fix).
 
 ---
 
-## CI-3 🟢 `/combat-log` feature — awaiting d-tester pass
+## CI-3 ✅ `/combat-log` feature — COMPLETE
+**Resolved 2026-06-03.** d-tester signed off (ownership gate 404, guild scoping,
+same-ship-name POV, ordinals, PvC/stalemate, key-event extraction all verified live +
+tested). One MEDIUM found & fixed: Key Events embed field could exceed Discord's
+1024-char cap → fixed with accumulator + visible `…(+N more events)` truncation marker
+(+3 tests, 17 gateway tests green). Committed.
+<details><summary>(original)</summary>
 New `/combat-log` command (mandatory battle select w/ ownership-gated autocomplete;
 detail = summary + key events: secondary fires, module activations, HP-layer
 milestones). Built by d-developer: 52 bot-core + 14 gateway tests green, ownership
 gate (404 for non-combatant) verified live. **Uncommitted.**
 **Next action:** d-tester adversarial review → fix/retest → commit.
+</details>
 
 ---
 
@@ -62,12 +104,23 @@ rendering needs Discord.
 
 ---
 
-## CI-5 🟡 Non-canonical secondary subtypes are Phase-1 no-ops  *(decision)*
+## CI-5 ⏸ Shop-exclude no-op secondaries — IMPLEMENTED, ⚠ SCOPE CONFIRM NEEDED
+**Built but NOT tester-reviewed / NOT confirmed.** The dev found `secondary_weapon`
+was gated off entirely (`CURRENTLY_ENABLED_TYPES`), so nothing was in the shop to
+exclude. To honor "exclude the no-op ones," the dev **ENABLED secondary weapons in
+shop + equip** and excluded the 3 deferred subtypes (`emp-bomb`/`mine`/`sentry-gun`
+via new `DEFERRED_SECONDARY_SUBTYPES` constant cross-ref'd to `combat_service.py:1489`).
+This is a gameplay change beyond a pure exclusion. **DECISION for owner:** (a) keep —
+secondaries become buyable/equippable except the 3 no-ops; or (b) narrow — keep
+secondaries gated, just ensure no-ops never appear. Tester pass held pending decision.
+Also fixed a shop GET crash (secondary weapons use `damage`, not `dps`). 1527 tests green.
+<details><summary>(original)</summary>
 `emp-bomb`, `mine`, `sentry-gun` subtypes (~9 seeded items: `EMP GL *`,
 `AMR Saber`/`Ksann'k`/`Neétha EMP`, `Berger SG-*`/`T'Suum`) do **nothing** in a fight
 (`combat_service.py:1489` — deferred). If they're shop-purchasable they're dead weight.
 **Decision needed:** shop-exclude, or document as a known limitation. (`ionizing-missile`
 IS handled; the canonical 5 all work.)
+</details>
 
 ---
 
@@ -77,17 +130,35 @@ Behaviour matches `COMBAT.md`; just a stale/unused seed value to reconcile.
 
 ---
 
-## CI-7 🟡 `/admin_uninstall` leaves orphaned `bounty` + `combat_log` rows  *(LOW)*
+## CI-7 ✅ `/admin_uninstall` leaves orphaned `bounty` + `combat_log` rows — FIXED & VERIFIED
+**Resolved 2026-06-03.** `delete_by_guild_id` added to BountyRepository + CombatLogRepository,
+wired into `uninstall_guild()`; endpoint docstrings corrected. d-tester verified LIVE
+(disposable-guild cleanup deleted bounty+combat_log; real dev guild untouched; idempotent;
+privacy fix confirmed — re-register no longer resurfaces fights). Test-quality cleanup done
+(hollow admin-router contract test fixed + combat_log repo test parity). 4070 tests green.
+Committed (`e154a79`, `0df3181`).
+<details><summary>(detail)</summary>
+**d-researcher verdict (2026-06-03):** confirmed GAP, not intentional. Uninstall+cleanup
+(shared path `config_service.uninstall_guild()`) deletes players/ships/inventories/
+guild_shops/guild_configs, but only sets bounties to status='cleared' (no row delete) and
+**never touches combat_log**. The `/cleanup` docstring already claims it removes bounty
+rows — untrue. No guild-scoped delete methods exist. **Confirmed privacy bug:** a user
+re-registering with the same Discord ID in the same guild sees pre-uninstall fights in
+`/combat-log`. Fix: add `delete_by_guild_id` to BountyRepository + CombatLogRepository,
+call both in `uninstall_guild()`. → d-developer.
+<details><summary>(original)</summary>
 After a guild nuke/uninstall, `users/players/player_ships/player_inventories/
 guild_configs/guild_shops` are cleared but `bounty` (2) and `combat_log` (2) rows
 survive, orphaned. Confirm whether uninstall *should* clean these; if so, it's a
 cleanup-cascade gap. (Not a rebuild/persistence bug — volume persists fine.)
+</details>
 
 ---
 
-## CI-8 🧹 Housekeeping — uncommitted artifacts / nothing pushed
-- Untracked: `COMBAT_E2E_TEST_PLAN.md`, `COMBAT_ISSUES.md` (this file),
-  `AUDIT_REPORT.md`, `COMBAT_RECONCILIATION.md`.
-- `/combat-log` code uncommitted (commit after CI-3 tester pass).
-- Branch `dev` is ahead of origin; nothing pushed (commit-freely / don't-push).
-- Lint/format gates currently green.
+## CI-8 🧹 Housekeeping — committed status / nothing pushed
+- ✅ `COMBAT_E2E_TEST_PLAN.md` + `COMBAT_ISSUES.md` committed (`ae157f0`).
+- ✅ `/combat-log` feature fully committed (backend router/schema/service + tests were
+  orphaned by independent agent commits; gathered into one feat commit).
+- Still untracked **by intent**: `AUDIT_REPORT.md`, `COMBAT_RECONCILIATION.md`.
+- Branch `dev` is ahead of origin; **nothing pushed** (commit-freely / don't-push).
+- Lint/format gates green throughout.

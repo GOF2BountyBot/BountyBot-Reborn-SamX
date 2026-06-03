@@ -58,8 +58,17 @@ then d-tester.
 
 ---
 
-## CI-2 / CI-9 🟡 Combat-summary embed is dated/inaccurate — PROPOSAL PENDING APPROVAL
-**CI-2 (the `HP: 135 → 135` dead arrow)** is folded into the broader #7 revisit below.
+## CI-2 / CI-9 ✅ Combat-summary embed modernized — FIXED & VERIFIED
+**Resolved 2026-06-03; owner approved.** Backend now exposes actual after-action data
+(`_serialize_fight_results` + duel accept response: final_hp per layer, damage_dealt,
+shots/accuracy, duration_s, pvc_dr from `data.summary`). Both embeds (bounty-capture +
+duel) rewritten to show REAL stats; `→` arrow + projected DPS/TTK removed; PvC line
+PvC-only. d-tester confirmed embed numbers match DB summary EXACTLY; found a CRITICAL
+(duel winner resolved by ship-name → wrong winner when both fly "Betty" & target wins) —
+FIXED (winner now resolved by surviving hull; slot map challenger=1/target=2).
+Live-verified BOTH directions against deployed gateway. 4086 bot-core + gateway cog
+tests green. Committed.
+<details><summary>(detail)</summary>
 
 **Root finding:** `bountyCog._format_combat_summary` renders **pre-fight PROJECTIONS**
 from `FightStats` (`raw_hp`, `varied_hp`, `raw_dps`, projected `ttk`) — NOT what actually
@@ -77,6 +86,7 @@ fired**, plus `pvc_damage_reduction`.
 - Applies to BOTH the bounty-capture embed and the duel result embed.
 **Status:** analysis done; awaiting approval before architect→dev→tester. CI-2's arrow
 removal ships as part of this (no separate throwaway fix).
+</details>
 
 ---
 
@@ -104,7 +114,14 @@ rendering needs Discord.
 
 ---
 
-## CI-5 ⏸ Shop-exclude no-op secondaries — IMPLEMENTED, ⚠ SCOPE CONFIRM NEEDED
+## CI-5 ✅ Shop-exclude no-op secondaries (+ enable secondaries) — COMPLETE
+**Resolved 2026-06-03; owner approved keeping secondaries enabled.** Deferred subtypes
+(`emp-bomb`/`mine`/`sentry-gun`) excluded from shop at all tiers (`DEFERRED_SECONDARY_SUBTYPES`,
+single-sourced w/ resolver); secondaries enabled in shop+equip. d-tester verified exclusion
++ buy→equip→fire end-to-end. Follow-up fix: exposed `secondary_weapons` in `ShipResponse` +
+`ShipLoadoutSummaryResponse` (were invisible → `/unequip` autocomplete couldn't see them).
+4082 tests green; live-verified. Committed.
+<details><summary>(detail)</summary>
 **Built but NOT tester-reviewed / NOT confirmed.** The dev found `secondary_weapon`
 was gated off entirely (`CURRENTLY_ENABLED_TYPES`), so nothing was in the shop to
 exclude. To honor "exclude the no-op ones," the dev **ENABLED secondary weapons in

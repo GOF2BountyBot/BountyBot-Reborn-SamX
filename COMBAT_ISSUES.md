@@ -190,6 +190,21 @@ its own quantity range in the shop count config. Owner decision; no action yet.
 
 ---
 
+## CI-12 🟡 Embed shows "You won" for a LOST Bronze bonus fight  *(display bug, found in retest)*
+At **Bronze tier**, bounty capture is **guaranteed by design** (`bounty_service.py:1389-1403`:
+`combat_won=True` hardcoded; the fight only decides a 2× bonus via
+`winner_name == player_ship`). Silver+ has a mandatory combat gate. So capturing even when
+you lose the fight is intended at Bronze. **BUG:** the embed's win/loss header is wrong —
+`bountyCog._format_combat_summary` derives "⚔️ You won in N.Ns" from the always-true-at-Bronze
+`combat_won` capture flag, NOT the actual fight result. Live repro (retest 2026-06-03,
+combat_log #48): player Betty hull **0** (died), criminal Inflict hull **83**, `summary.winner=Inflict`,
+no 2× bonus awarded (correct) — but embed rendered "⚔️ You won in 33.5s" (WRONG).
+**Fix:** derive the won/lost/stalemate header from the actual combat result (summary winner /
+player final hull), separate from the capture/outcome label. Same family as the CI-2/#7 duel
+winner bug. **Also confirm w/ owner:** is Bronze guaranteed-capture-on-loss intended? (code says yes.)
+
+---
+
 ## CI-8 🧹 Housekeeping — committed status / nothing pushed
 - ✅ `COMBAT_E2E_TEST_PLAN.md` + `COMBAT_ISSUES.md` committed (`ae157f0`).
 - ✅ `/combat-log` feature fully committed (backend router/schema/service + tests were

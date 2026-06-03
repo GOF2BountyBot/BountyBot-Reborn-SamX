@@ -9,6 +9,20 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 
 ---
 
+## ▶ RESUME HERE (post-compaction 2026-06-03)
+**Next major phase = build CI-16 (consumable secondary weapons).** Full ready-to-execute dev brief:
+**[`COMBAT_CI16_PLAN.md`](COMBAT_CI16_PLAN.md)**. Run d-developer → d-tester (one subagent at a
+time). ⚠ It's in the loadout/inventory **danger zone** — dev+tester MUST read
+`services/bot-core/src/services/AGENTS.md` → "Loadout & Inventory system" and test invariants
+exhaustively ([[feedback_loadout_inventory_fragile]] in memory).
+**Then, in order:** CI-17 (criminal complete loadouts — needs architect first) → CI-6 (Shock Blast
+inert EMP) → CI-10 (`/shops/refresh` crash) → CI-11 (shop weapon-density tuning) → CI-18 (player_inv
+unique constraint) → CI-4 (live §4/§5/§6 weapon/module/edge E2E tests).
+**Closed this session:** CI-1, CI-2/9, CI-3, CI-5, CI-7, CI-12, CI-14.
+**Stack:** rebuilt & healthy (combat fixes live). **Nothing pushed** — `dev` is ~30 commits ahead.
+
+---
+
 ## CI-1 ✅ Criminals deal 0 DPS in combat — FIXED & VERIFIED  *(HIGH)*
 **Resolved 2026-06-03.** Fix (persist+read combat fields + self-healing fallback,
 cadence 1000ms / range floor 800m) implemented, d-tester signed off (EMP weapons not
@@ -305,6 +319,9 @@ hull-depleted key event.
   uniform (works for criminals IF they carry secondaries) but criminal cross-fight persistence is
   deferred to Phase-2 ("pre-damaged combat states"); criminals respawn fresh so in-fight-only is fine.
 **CI-16 dev scope = PLAYER consumable secondaries (full) + uniform resolver gate + CI-13 + CI-15.**
+📄 **Full ready-to-execute dev brief: [`COMBAT_CI16_PLAN.md`](COMBAT_CI16_PLAN.md)** (architect plan +
+file checklist + test plan). ⚠ DANGER ZONE — dev/tester MUST read
+`services/bot-core/src/services/AGENTS.md` → "Loadout & Inventory system" first.
 
 ---
 
@@ -328,6 +345,16 @@ but never receives one, so the death milestone is absent from `/combat-log` key 
 showed only "Armour depleted", not the hull death). Fix: add a hull branch in `_apply_damage`
 mirroring the shield/armour emission (emit when `hull_was_positive and current_hull <= 0`).
 (Shield-absence for a no-shield ship is correct; armour-depleted already works.)
+
+---
+
+## CI-18 🔵 No DB unique constraint on `player_inventories` (latent fragility)  *(architect-flagged 2026-06-03)*
+There is NO `UniqueConstraint(player_id, item_type, item_name)` on `player_inventories` — the
+one-row-per-item property is upheld solely by `InventoryRepository.add_item` (`get_player_item` →
+increment). Concurrent/direct inserts could create duplicate rows; `sell_item` even comments "should
+be exactly 1 row." Consider a `UniqueConstraint` migration to harden it. Low urgency; documented in
+`services/AGENTS.md`. Also noted: `transfer_item_between_players` bypasses the LoadoutConsistency
+choke point (safe ONLY because both legs are cargo-only — must route through it if extended to equipped gear).
 
 ---
 

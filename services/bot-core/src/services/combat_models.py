@@ -14,6 +14,17 @@ from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
 # ---------------------------------------------------------------------------
+# Secondary-weapon subtype classification
+# ---------------------------------------------------------------------------
+
+# Subtypes that the Phase-1 tick resolver handles via the "else: noop" branch
+# (combat_service.py — "deferred subtypes (emp-bomb, mine, sentry-gun) — noop").
+# These weapons do nothing in a fight, so the shop must not offer them.
+# Cross-reference: services/bot-core/src/services/combat_service.py (the else branch).
+# Add a subtype here when promoting it from deferred → active in the resolver.
+DEFERRED_SECONDARY_SUBTYPES: Final[frozenset[str]] = frozenset({"emp-bomb", "mine", "sentry-gun"})
+
+# ---------------------------------------------------------------------------
 # Input data structures — assembled by callers from DB models
 # ---------------------------------------------------------------------------
 

@@ -29,6 +29,7 @@ from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services._item_type_normalizer import expand_item_type_to_concrete
+from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants
 
@@ -36,13 +37,13 @@ flogger = bblogger.get_logger("shop-service")
 
 # Map concrete item_type → GuildConfig key used by get_count_range() / get_quantity_range().
 # These config keys are generic (legacy) and GuildConfig hasn't been updated yet.
-# When GuildConfig gains a "secondary_weapon" key, add it here.
+# secondary_weapon reuses the "weapon" count/quantity ranges until GuildConfig gains its own key.
 _CONCRETE_TO_CONFIG_KEY: dict[str, str] = {
     "ship": "ship",
     "primary_weapon": "weapon",
+    "secondary_weapon": "weapon",  # reuses weapon ranges until a dedicated config key is added
     "module": "module",
     "turret_weapon": "turret",
-    # secondary_weapon → future: "secondary_weapon"
 }
 
 
@@ -84,22 +85,21 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         self._static_cache = {
             "ship": await self.ship_repo.list_all(db),
             "weapon": await self.primary_weapon_repo.list_all(db),
+            "secondary": await self.secondary_weapon_repo.list_all(db),
             "module": await self.module_repo.list_all(db),
             "turret": await self.turret_weapon_repo.list_all(db),
         }
         # Build price lookup from all item types (includes secondary weapons)
         self._price_cache = {}
-        secondary_weapons = await self.secondary_weapon_repo.list_all(db)
         for items in self._static_cache.values():
             for item in items:
                 self._price_cache[item.name] = item.value
-        for item in secondary_weapons:
-            self._price_cache[item.name] = item.value
 
         flogger.info(
             f"Preloaded static data: "
             f"{len(self._static_cache['ship'])} ships, "
             f"{len(self._static_cache['weapon'])} weapons, "
+            f"{len(self._static_cache['secondary'])} secondary weapons, "
             f"{len(self._static_cache['module'])} modules, "
             f"{len(self._static_cache['turret'])} turrets, "
             f"{len(self._price_cache)} prices cached"
@@ -639,8 +639,8 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # Generate new shop inventory.
             # Use concrete item types derived from CURRENTLY_ENABLED_TYPES to avoid
             # writing generic aliases to guild_shops.item_type.
-            # Only types that have a GuildConfig count_range key are generated;
-            # secondary_weapon is excluded until mechanics ship (no config key yet).
+            # secondary_weapon is now included; deferred subtypes (emp-bomb, mine, sentry-gun)
+            # are excluded at the item-selection layer in _get_random_item_by_tech_level.
             _generation_types = tuple(t for t in GameConstants.CURRENTLY_ENABLED_TYPES if t in _CONCRETE_TO_CONFIG_KEY)
             generated_items = []
 
@@ -791,6 +791,28 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 self._static_cache["module"] if self._static_cache is not None else await self.module_repo.list_all(db)
             )
             items = [m for m in all_modules if m.tech_level == tech_level]
+            return random.choice(items).name if items else None
+
+        if item_type == "secondary_weapon":
+            all_secondary = (
+                self._static_cache["secondary"]
+                if self._static_cache is not None
+                else await self.secondary_weapon_repo.list_all(db)
+            )
+
+            # Filter by tech level and exclude deferred subtypes (emp-bomb, mine, sentry-gun).
+            # Subtype lives in the inner extra_atts dict (DB nesting: outer["extra_atts"]["subtype"]).
+            # Cross-reference: DEFERRED_SECONDARY_SUBTYPES in combat_models.py.
+            def _sw_subtype(sw: object) -> str:
+                outer = getattr(sw, "extra_atts", None) or {}
+                inner = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+                return inner.get("subtype", "") if isinstance(inner, dict) else ""
+
+            items = [
+                sw
+                for sw in all_secondary
+                if sw.tech_level == tech_level and _sw_subtype(sw) not in DEFERRED_SECONDARY_SUBTYPES
+            ]
             return random.choice(items).name if items else None
 
         if item_type in ("turret", "turret_weapon"):

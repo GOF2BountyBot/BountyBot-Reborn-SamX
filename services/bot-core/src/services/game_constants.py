@@ -208,11 +208,13 @@ class GameConstants:
     )
 
     # Concrete item types exposed on the user-facing economy/equip surface TODAY.
-    # secondary_weapon is excluded until secondary-weapon mechanics ship.
-    # To enable secondary weapons: add "secondary_weapon" to this set.
-    # This is the SINGLE lever that gates secondary-weapon exposure across all
+    # secondary_weapon is included; the shop excludes deferred subtypes (emp-bomb,
+    # mine, sentry-gun) via DEFERRED_SECONDARY_SUBTYPES in combat_models.py.
+    # This is the SINGLE lever that gates item-type exposure across all
     # economy/loadout flows — no scattered if-branches needed.
-    CURRENTLY_ENABLED_TYPES: frozenset[str] = frozenset({"ship", "primary_weapon", "turret_weapon", "module"})
+    CURRENTLY_ENABLED_TYPES: frozenset[str] = frozenset(
+        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+    )
 
     # Generic alias → concrete type expansion (catalog-flavoured; includes all types).
     # Playable-flavoured expansion is derived at runtime by filtering against CURRENTLY_ENABLED_TYPES.

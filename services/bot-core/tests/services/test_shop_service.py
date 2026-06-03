@@ -1609,3 +1609,132 @@ class TestSellShip:
 
         with pytest.raises(ValueError, match="Invalid target tier"):
             await service.sell_ship(mock_db, player_id=1, ship_id=1, target_tier="Diamond")
+
+
+# ===========================================================================
+# Tests: CI-5 — secondary weapon shop exclusion of deferred subtypes
+# ===========================================================================
+
+
+def _make_secondary_weapon(
+    name: str,
+    tech_level: int = 3,
+    subtype: str = "rocket",
+    value: int = 200,
+) -> MagicMock:
+    """Create a mock SecondaryWeapon DB object with the inner extra_atts nesting used in real data.
+
+    Seed JSON stores subtype inside extra_atts → extra_atts → subtype.
+    The secondary_weapon_repository stores ``extra_atts`` key in the outer JSON blob,
+    so on the ORM object: item.extra_atts = {"extra_atts": {"subtype": ..., ...}}.
+    """
+    item = MagicMock()
+    item.name = name
+    item.tech_level = tech_level
+    item.value = value
+    item.extra_atts = {"extra_atts": {"subtype": subtype}}
+    return item
+
+
+class TestShopExcludesDeferredSecondarySubtypes:
+    """CI-5: shop candidate pool must exclude emp-bomb / mine / sentry-gun secondaries.
+
+    Two-part assertion per spec:
+    1. _get_random_item_by_tech_level never returns a deferred-subtype weapon.
+    2. refresh_shop generates at least one secondary when canonical subtypes are available.
+    """
+
+    @pytest.mark.asyncio
+    async def test_deferred_subtypes_excluded_from_candidate_pool(self, service, mock_db, mock_secondary_weapon_repo):
+        """_get_random_item_by_tech_level skips emp-bomb / mine / sentry-gun weapons."""
+        # Populate repo with one deferred weapon per deferred subtype plus a canonical one
+        deferred = [
+            _make_secondary_weapon("EMP GL I", tech_level=3, subtype="emp-bomb"),
+            _make_secondary_weapon("AMR Saber", tech_level=3, subtype="mine"),
+            _make_secondary_weapon("Berger SG-100", tech_level=3, subtype="sentry-gun"),
+        ]
+        canonical = _make_secondary_weapon("Jet Rocket", tech_level=3, subtype="rocket")
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=[*deferred, canonical])
+
+        # Run 20 draws — all must come back as the canonical weapon or None (never a deferred one)
+        deferred_names = {"EMP GL I", "AMR Saber", "Berger SG-100"}
+        for _ in range(20):
+            result = await service._get_random_item_by_tech_level(mock_db, "secondary_weapon", 3)
+            assert result not in deferred_names, (
+                f"_get_random_item_by_tech_level returned a deferred-subtype weapon: {result!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_canonical_secondary_still_included(self, service, mock_db, mock_secondary_weapon_repo):
+        """At least one canonical secondary weapon must be selectable when available."""
+        canonical_weapons = [
+            _make_secondary_weapon("Jet Rocket", tech_level=3, subtype="rocket"),
+            _make_secondary_weapon("Mamba EMP", tech_level=3, subtype="missile"),
+            _make_secondary_weapon("AMR Extinctor", tech_level=3, subtype="nuke"),
+        ]
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=canonical_weapons)
+
+        result = await service._get_random_item_by_tech_level(mock_db, "secondary_weapon", 3)
+        canonical_names = {w.name for w in canonical_weapons}
+        assert result in canonical_names, f"Expected a canonical secondary weapon name, got: {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_only_deferred_subtypes_at_tech_level(
+        self, service, mock_db, mock_secondary_weapon_repo
+    ):
+        """Returns None when every secondary at the requested tech level is deferred."""
+        deferred = [
+            _make_secondary_weapon("EMP GL I", tech_level=4, subtype="emp-bomb"),
+            _make_secondary_weapon("EMP GL II", tech_level=4, subtype="emp-bomb"),
+            _make_secondary_weapon("Ksann'k", tech_level=4, subtype="mine"),
+        ]
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=deferred)
+
+        result = await service._get_random_item_by_tech_level(mock_db, "secondary_weapon", 4)
+        assert result is None, f"Expected None when only deferred subtypes exist at tech level, got: {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_refresh_shop_includes_secondary_weapon_type(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo
+    ):
+        """refresh_shop now generates secondary_weapon items (CI-5 gate).
+
+        Verifies that secondary_weapon enters the candidate pool and that
+        the item_type written to guild_shops is the concrete "secondary_weapon"
+        string (never a generic alias).
+        """
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        # Canonical secondary at tech level 1 — should be selected
+        canonical = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype="rocket", value=150)
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=[canonical])
+
+        # Capture item_type values written to the shop
+        item_types_written: list[str] = []
+
+        async def _fake_create_or_update(db, item_data):
+            item_types_written.append(item_data["item_type"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        # Override _get_random_item_by_tech_level to return the canonical secondary for
+        # the secondary_weapon type and None for everything else (keeps test focused)
+        async def _fake_get_random(db, item_type, tech_level):
+            if item_type == "secondary_weapon":
+                return "Jet Rocket"
+            return None
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=150)
+
+        result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert "secondary_weapon" in item_types_written, (
+            "refresh_shop must write secondary_weapon items to the shop (CI-5)"
+        )
+        assert "weapon" not in item_types_written, (
+            "generic alias 'weapon' must NOT be written to guild_shops.item_type (A.36 regression)"
+        )
+        assert result["items_generated"] >= 1

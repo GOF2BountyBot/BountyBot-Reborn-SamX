@@ -97,7 +97,7 @@ def _make_player(
     return SimpleNamespace(
         id=player_id,
         user_id=player_id * 1000,  # T10: Discord user_id for fight_ships
-        guild_id=9999,             # T10: guild_id for fight_ships
+        guild_id=9999,  # T10: guild_id for fight_ships
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,

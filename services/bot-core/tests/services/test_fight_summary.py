@@ -78,9 +78,7 @@ def _loadout(
 
 
 def _gun(dps: float = 50.0, dmg: int = 50, speed_ms: int = 200, range_m: float = 5000.0) -> WeaponStats:
-    return WeaponStats(
-        name="TestGun", dps=dps, damage_per_shot=dmg, loading_speed_ms=speed_ms, range_m=range_m
-    )
+    return WeaponStats(name="TestGun", dps=dps, damage_per_shot=dmg, loading_speed_ms=speed_ms, range_m=range_m)
 
 
 def _es_mod() -> ModuleStats:
@@ -206,9 +204,7 @@ def _damage_event(target: str, attacker: str, amount: int, tick: int = 1) -> Com
     )
 
 
-def _module_activation_event(
-    actor: str, module_key: str, tick: int = 2, trigger_pct: int | None = 66
-) -> CombatEvent:
+def _module_activation_event(actor: str, module_key: str, tick: int = 2, trigger_pct: int | None = 66) -> CombatEvent:
     data: dict = {"module": module_key}
     if trigger_pct is not None:
         data["trigger_hp_pct"] = trigger_pct
@@ -241,10 +237,17 @@ class TestSummaryStructure:
         ]
         s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 10, "C1")
         expected_keys = (
-            "name", "ship", "start_hp", "final_hp",
-            "damage_dealt", "damage_taken",
-            "shots_fired", "shots_hit", "accuracy",
-            "module_activations", "secondary_fired",
+            "name",
+            "ship",
+            "start_hp",
+            "final_hp",
+            "damage_dealt",
+            "damage_taken",
+            "shots_fired",
+            "shots_hit",
+            "accuracy",
+            "module_activations",
+            "secondary_fired",
         )
         for ck in ("1", "2"):
             cb = s["combatants"][ck]
@@ -420,8 +423,8 @@ class TestDamageDealtAndTaken:
             actor=None,
             target="C2",
             data={
-                "amount": 30,    # raw overkill — kept for log display
-                "absorbed": 0,   # T10: no HP actually removed (target already dead)
+                "amount": 30,  # raw overkill — kept for log display
+                "absorbed": 0,  # T10: no HP actually removed (target already dead)
                 "breakdown": {"shield": 0, "armour": 0, "hull": 30},
                 "hp_after": _hp(-30),
                 "source": {"subtype": "cluster-missile", "weapon": "ClusterBomb", "attacker": "C1"},
@@ -430,8 +433,8 @@ class TestDamageDealtAndTaken:
         events = [
             _fight_start_event("C1", "C2", hull1=200, hull2=30),
             _damage_event("C2", attacker="C1", amount=30, tick=1),  # first sub: absorbs 30
-            overkill_ev,   # second sub: raw=30 but absorbed=0
-            overkill_ev,   # third sub: raw=30 but absorbed=0
+            overkill_ev,  # second sub: raw=30 but absorbed=0
+            overkill_ev,  # third sub: raw=30 but absorbed=0
             _fight_end_event(2, "C1", "hp_depleted", 2, _hp(200), _hp(0)),
         ]
         s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1")
@@ -516,9 +519,7 @@ class TestModuleActivationsSummary:
             data={"module": "emergency_system"},
         )
         events.append(es_ev)
-        events.append(
-            _fight_end_event(20, None, "time_cap", 20, _hp(1), _hp(100))
-        )
+        events.append(_fight_end_event(20, None, "time_cap", 20, _hp(1), _hp(100)))
         s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 20, None)
         ma = s["combatants"]["1"]["module_activations"]
         assert ma == {"cloak": 2, "booster": 3, "emergency_system": 1}

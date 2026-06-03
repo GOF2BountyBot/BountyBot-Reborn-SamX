@@ -275,8 +275,12 @@ class TestInvulnGate:
 
         events: list = []
         _apply_damage(
-            state, raw_damage=500, tick=5, events=events,
-            source=_dummy_source(), pvc_damage_reduction=0.0,
+            state,
+            raw_damage=500,
+            tick=5,
+            events=events,
+            source=_dummy_source(),
+            pvc_damage_reduction=0.0,
         )
 
         assert state.current_hull == original_hull  # HP unchanged
@@ -296,8 +300,12 @@ class TestInvulnGate:
 
         events: list = []
         _apply_damage(
-            state, raw_damage=999, tick=3, events=events,
-            source=_dummy_source(), pvc_damage_reduction=0.0,
+            state,
+            raw_damage=999,
+            tick=3,
+            events=events,
+            source=_dummy_source(),
+            pvc_damage_reduction=0.0,
         )
 
         hp_after = events[0].data["hp_after"]
@@ -313,8 +321,12 @@ class TestInvulnGate:
 
         events: list = []
         _apply_damage(
-            state, raw_damage=30, tick=0, events=events,
-            source=_dummy_source(), pvc_damage_reduction=0.0,
+            state,
+            raw_damage=30,
+            tick=0,
+            events=events,
+            source=_dummy_source(),
+            pvc_damage_reduction=0.0,
         )
 
         assert state.current_hull == 70  # 100 - 30
@@ -354,9 +366,7 @@ class TestInvulnDecrement:
         # ES must fire — ESFighter has low HP (200 base_armour) and takes 500-damage lethal hits
         assert len(es_events) == 1, f"Expected ES to fire exactly once; got {len(es_events)}"
         blocked = [
-            e for e in log
-            if e.type == CombatEventType.damage
-            and e.data.get("blocked_by") == "emergency_system_invuln"
+            e for e in log if e.type == CombatEventType.damage and e.data.get("blocked_by") == "emergency_system_invuln"
         ]
         # During 10s invuln, many damage events should be blocked (amount=0)
         assert len(blocked) >= 1
@@ -486,8 +496,7 @@ class TestESEndToEnd:
         log = result.combat_log
 
         es_acts = [
-            e for e in log
-            if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
+            e for e in log if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
         ]
         # consumable — fires exactly once (seed=0 with this low-HP loadout is deterministic)
         assert len(es_acts) == 1, f"Expected ES to fire exactly once; got {len(es_acts)}"
@@ -508,8 +517,7 @@ class TestESEndToEnd:
         log = result.combat_log
 
         es_acts = [
-            e for e in log
-            if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
+            e for e in log if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
         ]
         assert len(es_acts) == 0
 
@@ -559,9 +567,7 @@ class TestESEndToEnd:
         assert len(es_acts) == 1, f"Expected ES to fire exactly once; got {len(es_acts)}"
         # Find all blocked damage events (amount=0, blocked_by set)
         blocked = [
-            e for e in log
-            if e.type == CombatEventType.damage
-            and e.data.get("blocked_by") == "emergency_system_invuln"
+            e for e in log if e.type == CombatEventType.damage and e.data.get("blocked_by") == "emergency_system_invuln"
         ]
         assert len(blocked) >= 1, "Expected at least one invuln-blocked damage event during the 10s window"
         for ev in blocked:
@@ -578,11 +584,11 @@ class TestESEndToEnd:
         nuke_weapon = WeaponStats(
             name="TestNuke",
             dps=10.0,
-            damage_per_shot=10000,   # large payload → self-damage ≫ 10 HP hull
+            damage_per_shot=10000,  # large payload → self-damage ≫ 10 HP hull
             loading_speed_ms=100,
             range_m=6000.0,
             subtype="nuke",
-            magnitude_m=100000.0,   # huge blast radius → high self-damage even at 300 m epicenter
+            magnitude_m=100000.0,  # huge blast radius → high self-damage even at 300 m epicenter
         )
         small_primary = WeaponStats(
             name="SmallGun",
@@ -593,14 +599,14 @@ class TestESEndToEnd:
         )
         firer_loadout = ShipLoadout(
             ship_name="NukeFirer",
-            base_armour=10,          # hull=10 — nuke self-damage (≈942 at NUKE_FRIENDLY_FACTOR=0.25) is lethal
+            base_armour=10,  # hull=10 — nuke self-damage (≈942 at NUKE_FRIENDLY_FACTOR=0.25) is lethal
             modules=[_es_mod()],
             weapons=[small_primary],
             secondary_weapons=[nuke_weapon],
         )
         enemy_loadout = ShipLoadout(
             ship_name="BigEnemy",
-            base_armour=999999,       # survives; no weapon needed (fight ends by time cap or C2 takes lethal)
+            base_armour=999999,  # survives; no weapon needed (fight ends by time cap or C2 takes lethal)
             modules=[],
             weapons=[],
         )
@@ -615,7 +621,8 @@ class TestESEndToEnd:
         es_tick = es_events[0].tick
         # Confirm a nuke self-damage event exists on the same tick that triggered ES
         nuke_self_on_es_tick = [
-            e for e in log
+            e
+            for e in log
             if e.type == CombatEventType.damage
             and e.data.get("source", {}).get("subtype") == "nuke"
             and e.data.get("source", {}).get("is_self") is True
@@ -665,10 +672,9 @@ class TestESEndToEnd:
         es_tick = es_acts[0].tick
         # Any cloak activations on the SAME tick must come AFTER the ES activation in the event list
         cloak_on_same_tick = [
-            e for e in log
-            if e.type == CombatEventType.module_activation
-            and e.data.get("module") == "cloak"
-            and e.tick == es_tick
+            e
+            for e in log
+            if e.type == CombatEventType.module_activation and e.data.get("module") == "cloak" and e.tick == es_tick
         ]
         if cloak_on_same_tick:
             es_idx = log.index(es_acts[0])
@@ -728,10 +734,7 @@ class TestInertModules:
 
     def test_all_inert_module_types_in_same_loadout_no_crash(self):
         """All §7.9 + §7.10 inert module types together → no crash, fight completes."""
-        inert_mods = [
-            ModuleStats(name=f"InertMod_{mt}", module_type=mt)
-            for mt in self._INERT_MODULE_TYPES
-        ]
+        inert_mods = [ModuleStats(name=f"InertMod_{mt}", module_type=mt) for mt in self._INERT_MODULE_TYPES]
         lo = _loadout(ship_name="C1", base_armour=200, modules=inert_mods)
         lo2 = _loadout(ship_name="C2", base_armour=200)
         result = TickResolver(seed=42).resolve(lo, lo2)

@@ -188,8 +188,10 @@ class TestFightShipsLogResultTrue:
 
         with (
             patch("services.combat_log_service.CombatLogService.persist", new=AsyncMock(return_value=42)),
-            patch("persist.repositories.player_repository.PlayerRepository.get_by_user_and_guild",
-                  new=AsyncMock(return_value=None)),
+            patch(
+                "persist.repositories.player_repository.PlayerRepository.get_by_user_and_guild",
+                new=AsyncMock(return_value=None),
+            ),
         ):
             fight = await service.fight_ships(
                 l1,
@@ -218,19 +220,33 @@ class TestFightShipsLogResultTrue:
             captured_pvc_dr = pvc_damage_reduction
             # Return a minimal FightResults
             from src.services.combat_models import FightResults, FightStats
+
             s = FightStats(ship_name="A", raw_hp=200, raw_dps=0.0, varied_hp=200, varied_dps=0.0, ttk=None)
             return FightResults(
-                winner_name=None, loser_name=None, is_stalemate=True,
-                ship1_stats=s, ship2_stats=s,
-                combat_log=[], metadata={
+                winner_name=None,
+                loser_name=None,
+                is_stalemate=True,
+                ship1_stats=s,
+                ship2_stats=s,
+                combat_log=[],
+                metadata={
                     "schema_version": 1,
-                    "summary": {"outcome": "stalemate", "reason": "time_cap", "duration_ticks": 100,
-                                "winner": None, "combatants": {
-                                    "1": {"name": "A", "ship": "A", "damage_dealt": 0, "damage_taken": 0},
-                                    "2": {"name": "B", "ship": "B", "damage_dealt": 0, "damage_taken": 0},
-                                }},
-                    "metadata": {"tick_ms": 10, "total_ticks": 100, "resolver": "tick_v1",
-                                 "pvc_damage_reduction": pvc_damage_reduction},
+                    "summary": {
+                        "outcome": "stalemate",
+                        "reason": "time_cap",
+                        "duration_ticks": 100,
+                        "winner": None,
+                        "combatants": {
+                            "1": {"name": "A", "ship": "A", "damage_dealt": 0, "damage_taken": 0},
+                            "2": {"name": "B", "ship": "B", "damage_dealt": 0, "damage_taken": 0},
+                        },
+                    },
+                    "metadata": {
+                        "tick_ms": 10,
+                        "total_ticks": 100,
+                        "resolver": "tick_v1",
+                        "pvc_damage_reduction": pvc_damage_reduction,
+                    },
                 },
             )
 
@@ -262,8 +278,10 @@ class TestPlayerStatPromotion:
 
         with (
             patch("services.combat_log_service.CombatLogService.persist", new=AsyncMock(return_value=1)),
-            patch("persist.repositories.player_repository.PlayerRepository.get_by_user_and_guild",
-                  new=AsyncMock(return_value=mock_player)),
+            patch(
+                "persist.repositories.player_repository.PlayerRepository.get_by_user_and_guild",
+                new=AsyncMock(return_value=mock_player),
+            ),
         ):
             await service.fight_ships(
                 l1,
@@ -300,8 +318,10 @@ class TestPlayerStatPromotion:
 
         with (
             patch("services.combat_log_service.CombatLogService.persist", new=AsyncMock(return_value=1)),
-            patch("persist.repositories.player_repository.PlayerRepository.get_by_user_and_guild",
-                  side_effect=_mock_get_by_user_and_guild),
+            patch(
+                "persist.repositories.player_repository.PlayerRepository.get_by_user_and_guild",
+                side_effect=_mock_get_by_user_and_guild,
+            ),
         ):
             await service.fight_ships(
                 l1,
@@ -396,10 +416,9 @@ class TestFightStatsWireCompat:
         l1 = ShipLoadout(
             ship_name="C1",
             base_armour=50000,  # near-indestructible
-            weapons=[WeaponStats(
-                name="SuperGun", dps=0.0,
-                damage_per_shot=99999, loading_speed_ms=100, range_m=999999.0
-            )],
+            weapons=[
+                WeaponStats(name="SuperGun", dps=0.0, damage_per_shot=99999, loading_speed_ms=100, range_m=999999.0)
+            ],
         )
         l2 = ShipLoadout(ship_name="C2", base_armour=10)
 

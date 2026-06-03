@@ -1869,9 +1869,7 @@ class TestT11EmbedRendering:
         names = _field_names(embed)
         # Must NOT show "Damage: 0"
         damage_field = _field_value(embed, "damage")
-        assert damage_field != "0", (
-            f"Pure-EMP secondary must not show 'Damage: 0'; got damage field={damage_field!r}"
-        )
+        assert damage_field != "0", f"Pure-EMP secondary must not show 'Damage: 0'; got damage field={damage_field!r}"
         # Must show "EMP damage" with the correct value
         assert any("emp damage" in n for n in names), f"Missing 'EMP damage' field; fields={names}"
         assert _field_value(embed, "emp damage") == "100", (
@@ -1897,9 +1895,7 @@ class TestT11EmbedRendering:
         names = _field_names(embed)
         # Must NOT show "Damage: 0"
         damage_field = _field_value(embed, "damage")
-        assert damage_field != "0", (
-            f"Pure-EMP secondary must not show 'Damage: 0'; got damage field={damage_field!r}"
-        )
+        assert damage_field != "0", f"Pure-EMP secondary must not show 'Damage: 0'; got damage field={damage_field!r}"
         # Must show "EMP damage" with the correct value
         assert any("emp damage" in n for n in names), f"Missing 'EMP damage' field; fields={names}"
         assert _field_value(embed, "emp damage") == "500", (

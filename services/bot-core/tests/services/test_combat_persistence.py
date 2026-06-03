@@ -272,7 +272,7 @@ class TestAbsorbedOverkill:
             actor=None,
             target="Target",
             data={
-                "amount": 500,   # raw overkill amount
+                "amount": 500,  # raw overkill amount
                 "absorbed": 100,  # only 100 HP was actually removed
                 "source": {"attacker": "Attacker", "subtype": "primary", "weapon": "Gun"},
                 "breakdown": {"shield": 0, "armour": 0, "hull": 100},
@@ -392,14 +392,22 @@ class TestDbRetentionExecutorCombatLogPass:
         # Mock all four repo calls so no real DB is needed.
         with (
             patch("persist.database.manager.db_manager") as mock_manager,
-            patch("persist.repositories.bounty_repository.BountyRepository.delete_terminal_older_than",
-                  new=AsyncMock(return_value=0)),
-            patch("persist.repositories.duel_repository.DuelRepository.delete_terminal_older_than",
-                  new=AsyncMock(return_value=0)),
-            patch("persist.repositories.admin_audit_log_repository.AdminAuditLogRepository.delete_older_than",
-                  new=AsyncMock(return_value=0)),
-            patch("persist.repositories.combat_log_repository.CombatLogRepository.delete_older_than",
-                  new=AsyncMock(return_value=3)),
+            patch(
+                "persist.repositories.bounty_repository.BountyRepository.delete_terminal_older_than",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
+                "persist.repositories.duel_repository.DuelRepository.delete_terminal_older_than",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
+                "persist.repositories.admin_audit_log_repository.AdminAuditLogRepository.delete_older_than",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
+                "persist.repositories.combat_log_repository.CombatLogRepository.delete_older_than",
+                new=AsyncMock(return_value=3),
+            ),
         ):
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())

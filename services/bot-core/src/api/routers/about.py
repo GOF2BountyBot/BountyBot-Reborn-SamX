@@ -94,6 +94,7 @@ def _enrich_combat_fields(result: dict[str, Any], category: str) -> None:
             result["damage_pct"] = None
             result["fire_rate_pct"] = None
 
+
 # Repository instances
 module_repo = ModuleRepository()
 primary_weapon_repo = PrimaryWeaponRepository()

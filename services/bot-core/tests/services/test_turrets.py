@@ -180,7 +180,8 @@ def _loadout(
 
 def _fire_events(log, actor: str, slot: str | None = None, subtype: str | None = None) -> list:
     return [
-        e for e in log
+        e
+        for e in log
         if e.type == "weapon_fire"
         and e.actor == actor
         and (slot is None or e.data.get("slot") == slot)
@@ -207,6 +208,7 @@ def _run_n_ticks(loadout1: ShipLoadout, loadout2: ShipLoadout, n_ticks: int, rng
 # ---------------------------------------------------------------------------
 # Test 1: Auto-turret cadence — fires every loading_speed_ms ticks
 # ---------------------------------------------------------------------------
+
 
 def test_auto_turret_cadence():
     """Auto-turret with loading_speed_ms=500 fires at tick 0 then every 50 ticks.
@@ -238,6 +240,7 @@ def test_auto_turret_cadence():
 # ---------------------------------------------------------------------------
 # Test 2: Auto-turret range gate
 # ---------------------------------------------------------------------------
+
 
 def test_auto_turret_range_gate():
     """Auto-turret does NOT fire when out of range; fires at exactly range_m boundary."""
@@ -273,6 +276,7 @@ def test_auto_turret_range_gate():
 # Test 3: Auto-turret multi-turret accuracy share (one value per tick)
 # ---------------------------------------------------------------------------
 
+
 def test_auto_turret_multi_turret_accuracy_share():
     """8-turret ship: all 8 fire at the SAME auto_turret_acc value in a single tick."""
     # Use loading_speed_ms = TICK_MS so all 8 fire every tick
@@ -287,9 +291,13 @@ def test_auto_turret_multi_turret_accuracy_share():
 
     # Check tick 0: all 8 turrets should fire with the SAME accuracy value
     tick0_fires = [
-        e for e in log
-        if e.type == "weapon_fire" and e.actor == "BigShip" and e.tick == 0
-        and e.data.get("slot") == "turret" and e.data.get("subtype") == "auto"
+        e
+        for e in log
+        if e.type == "weapon_fire"
+        and e.actor == "BigShip"
+        and e.tick == 0
+        and e.data.get("slot") == "turret"
+        and e.data.get("subtype") == "auto"
     ]
     assert len(tick0_fires) == 8, f"Expected 8 auto-turret fires at tick 0, got {len(tick0_fires)}"
 
@@ -307,6 +315,7 @@ def test_auto_turret_multi_turret_accuracy_share():
 # ---------------------------------------------------------------------------
 # Test 4: Auto-turret cloak override compounds with 0.85 multiplier
 # ---------------------------------------------------------------------------
+
 
 def test_auto_turret_cloak_override_compounds():
     """Cloaked target: pilot_turret_acc = CLOAK_SET_VALUE → auto fires at 0.25×0.85=0.2125 re-clamped."""
@@ -363,6 +372,7 @@ def test_auto_turret_cloak_override_compounds():
 # Test 5: Manual turret — mode=false: manual turret inert, primaries fire
 # ---------------------------------------------------------------------------
 
+
 def test_manual_turret_mode_false_inert():
     """manual_turret_mode=False: manual turret never fires; primaries DO fire normally."""
     primary = _primary(damage=10.0, speed_ms=500, range_m=STARTING_DIST)
@@ -386,6 +396,7 @@ def test_manual_turret_mode_false_inert():
 # ---------------------------------------------------------------------------
 # Test 6: Manual turret — mode=true: primaries suppressed, manual turret fires
 # ---------------------------------------------------------------------------
+
 
 def test_manual_turret_mode_true():
     """manual_turret_mode=True: primaries suppressed, manual turret fires at pilot_primary_acc."""
@@ -411,6 +422,7 @@ def test_manual_turret_mode_true():
     # Expected: weapon_accuracy(PLAYER_BASE_ACC, ws_ref) — no scanner, no thruster, no cloak
     # weapon_accuracy is a passthrough with clamp in the balance module; c1 is_player=True
     from src.services.combat_balance import weapon_accuracy
+
     expected_acc = weapon_accuracy(PLAYER_BASE_ACC, manual)
     for evt in manual_fires[:3]:
         acc = evt.data["accuracy"]
@@ -425,6 +437,7 @@ def test_manual_turret_mode_true():
 # ---------------------------------------------------------------------------
 # Test 7: Manual turret uses pilot_primary_acc (includes thruster bonus concept)
 # ---------------------------------------------------------------------------
+
 
 def test_manual_turret_uses_primary_accuracy():
     """Manual turrets use pilot_primary_acc (full §5 formula), not pilot_turret_acc.
@@ -462,6 +475,7 @@ def test_manual_turret_uses_primary_accuracy():
 # Test 8: Manual turret — N turrets independent, each rolls independently
 # ---------------------------------------------------------------------------
 
+
 def test_manual_turret_n_turrets_independent():
     """N manual turrets in turret-mode fire up to N shots per cycle, independently."""
     n = 4
@@ -476,9 +490,13 @@ def test_manual_turret_n_turrets_independent():
 
     # At tick 0: all 4 manual turrets should have cooldown=0 and be in range → all fire
     tick0_fires = [
-        e for e in log
-        if e.type == "weapon_fire" and e.actor == "Attacker" and e.tick == 0
-        and e.data.get("slot") == "turret" and e.data.get("subtype") == "manual"
+        e
+        for e in log
+        if e.type == "weapon_fire"
+        and e.actor == "Attacker"
+        and e.tick == 0
+        and e.data.get("slot") == "turret"
+        and e.data.get("subtype") == "manual"
     ]
     assert len(tick0_fires) == n, f"Expected {n} manual-turret fires at tick 0, got {len(tick0_fires)}"
 
@@ -491,6 +509,7 @@ def test_manual_turret_n_turrets_independent():
 # ---------------------------------------------------------------------------
 # Test 9: Auto-turret unaffected by manual_turret_mode
 # ---------------------------------------------------------------------------
+
 
 def test_auto_turret_unaffected_by_manual_mode():
     """manual_turret_mode=True does NOT suppress auto turrets."""
@@ -516,6 +535,7 @@ def test_auto_turret_unaffected_by_manual_mode():
 # Test 10: PrimaryWeaponMod isolation — auto turret damage NOT scaled
 # ---------------------------------------------------------------------------
 
+
 def test_primary_weapon_mod_does_not_scale_auto_turret():
     """PrimaryWeaponMod (+20% damage) must NOT affect auto-turret damage_per_shot."""
     pw_mod = ModuleStats(
@@ -534,9 +554,9 @@ def test_primary_weapon_mod_does_not_scale_auto_turret():
 
     # Damage events caused by auto-turret
     dmg_evts = [
-        e for e in log
-        if e.type == "damage" and e.target == "Target"
-        and e.data.get("source", {}).get("subtype") == "auto"
+        e
+        for e in log
+        if e.type == "damage" and e.target == "Target" and e.data.get("source", {}).get("subtype") == "auto"
     ]
     assert len(dmg_evts) > 0, "Expected auto-turret damage events"
 
@@ -550,6 +570,7 @@ def test_primary_weapon_mod_does_not_scale_auto_turret():
 # ---------------------------------------------------------------------------
 # Test 11: PrimaryWeaponMod isolation — manual turret damage NOT scaled
 # ---------------------------------------------------------------------------
+
 
 def test_primary_weapon_mod_does_not_scale_manual_turret():
     """PrimaryWeaponMod (+20% damage) must NOT affect manual-turret damage_per_shot."""
@@ -568,9 +589,9 @@ def test_primary_weapon_mod_does_not_scale_manual_turret():
     log = result.combat_log
 
     dmg_evts = [
-        e for e in log
-        if e.type == "damage" and e.target == "Target"
-        and e.data.get("source", {}).get("subtype") == "manual"
+        e
+        for e in log
+        if e.type == "damage" and e.target == "Target" and e.data.get("source", {}).get("subtype") == "manual"
     ]
     assert len(dmg_evts) > 0, "Expected manual-turret damage events"
 
@@ -584,6 +605,7 @@ def test_primary_weapon_mod_does_not_scale_manual_turret():
 # ---------------------------------------------------------------------------
 # Test 12: Plasma-collector is fully inert
 # ---------------------------------------------------------------------------
+
 
 def test_plasma_collector_inert():
     """Plasma-collector turret: no weapon_fire event, no damage, no cooldown decrement."""
@@ -600,11 +622,7 @@ def test_plasma_collector_inert():
     assert len(fire_evts) == 0, f"Plasma-collector should emit NO weapon_fire events, got {len(fire_evts)}"
 
     # NO damage events targeting the opponent from attacker
-    dmg_evts = [
-        e for e in log
-        if e.type == "damage"
-        and e.data.get("source", {}).get("attacker") == "Attacker"
-    ]
+    dmg_evts = [e for e in log if e.type == "damage" and e.data.get("source", {}).get("attacker") == "Attacker"]
     assert len(dmg_evts) == 0, f"Plasma-collector should deal NO damage, got {len(dmg_evts)}"
 
     # Also verify plasma-collector is NOT in effective_turrets (filtered at init)
@@ -617,6 +635,7 @@ def test_plasma_collector_inert():
 # ---------------------------------------------------------------------------
 # Test 13: Primary cooldown decrements under manual_turret_mode=True
 # ---------------------------------------------------------------------------
+
 
 def test_primary_cooldown_decrements_under_turret_mode():
     """Primary runtime exists and suppression is correctly scoped when manual_turret_mode=True.
@@ -702,6 +721,7 @@ def test_primary_cooldown_decrements_under_turret_mode():
 # Test 14: Event payload contract — subtype labels per §12
 # ---------------------------------------------------------------------------
 
+
 def test_event_payload_contract():
     """weapon_fire events carry correct subtype labels per §12."""
     auto = _auto_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
@@ -718,9 +738,7 @@ def test_event_payload_contract():
     assert len(auto_fires) > 0
     for evt in auto_fires[:3]:
         assert evt.data["slot"] == "turret", f"Expected slot='turret', got {evt.data['slot']!r}"
-        assert evt.data["subtype"] == "auto", (
-            f"Expected subtype='auto', got {evt.data['subtype']!r}"
-        )
+        assert evt.data["subtype"] == "auto", f"Expected subtype='auto', got {evt.data['subtype']!r}"
         assert "weapon" in evt.data
         assert "hit" in evt.data
         assert "accuracy" in evt.data
@@ -735,9 +753,7 @@ def test_event_payload_contract():
     assert len(manual_fires) > 0
     for evt in manual_fires[:3]:
         assert evt.data["slot"] == "turret", f"Expected slot='turret', got {evt.data['slot']!r}"
-        assert evt.data["subtype"] == "manual", (
-            f"Expected subtype='manual', got {evt.data['subtype']!r}"
-        )
+        assert evt.data["subtype"] == "manual", f"Expected subtype='manual', got {evt.data['subtype']!r}"
         assert "weapon" in evt.data
         assert "hit" in evt.data
         assert "accuracy" in evt.data
@@ -746,6 +762,7 @@ def test_event_payload_contract():
 # ---------------------------------------------------------------------------
 # Test D1 (builder integration): LoadoutBuilder.from_player + fight with auto+manual+plasma turrets
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_builder_fed_turret_fight():
@@ -788,12 +805,15 @@ async def test_builder_fed_turret_fight():
         obj.extra_atts = {"extra_atts": inner}
         return obj
 
-    berger_orm = _fake_turret("Berger AGT 20mm", dps=40.0, automatic=True,
-                              loading_speed_ms=100, range_m=4400.0, damage_per_shot=4)
-    hammerhead_orm = _fake_turret("Hammerhead D1", dps=20.0, automatic=False,
-                                  loading_speed_ms=300, range_m=3800.0)  # no explicit dps → derived
-    plasma_orm = _fake_turret("PE Ambipolar-5", dps=0.0, automatic=False,
-                              loading_speed_ms=0, range_m=5000.0, subtype="plasma-collector")
+    berger_orm = _fake_turret(
+        "Berger AGT 20mm", dps=40.0, automatic=True, loading_speed_ms=100, range_m=4400.0, damage_per_shot=4
+    )
+    hammerhead_orm = _fake_turret(
+        "Hammerhead D1", dps=20.0, automatic=False, loading_speed_ms=300, range_m=3800.0
+    )  # no explicit dps → derived
+    plasma_orm = _fake_turret(
+        "PE Ambipolar-5", dps=0.0, automatic=False, loading_speed_ms=0, range_m=5000.0, subtype="plasma-collector"
+    )
 
     # Map turret name → fake ORM row so db.execute returns the right one
     _turret_orm_map = {
@@ -833,10 +853,10 @@ async def test_builder_fed_turret_fight():
     #   [4]  select(TurretWeapon) for "PE Ambipolar-5"
     _execute_returns = [
         _make_result(fake_player_ship),  # [0] PlayerShip
-        _make_result(fake_ship),         # [1] Ship
-        _make_result(berger_orm),        # [2] TurretWeapon: Berger
-        _make_result(hammerhead_orm),    # [3] TurretWeapon: Hammerhead
-        _make_result(plasma_orm),        # [4] TurretWeapon: PE Ambipolar-5
+        _make_result(fake_ship),  # [1] Ship
+        _make_result(berger_orm),  # [2] TurretWeapon: Berger
+        _make_result(hammerhead_orm),  # [3] TurretWeapon: Hammerhead
+        _make_result(plasma_orm),  # [4] TurretWeapon: PE Ambipolar-5
     ]
     db.execute.side_effect = _execute_returns
 
@@ -886,35 +906,40 @@ async def test_builder_fed_turret_fight():
     # ------------------------------------------------------------------ #
     # Feed builder output through TickResolver — confirm it fires         #
     # ------------------------------------------------------------------ #
-    target = ShipLoadout(ship_name="Target", base_armour=999_999, manual_turret_mode=False,
-                         weapons=[], turrets=[], modules=[])
+    target = ShipLoadout(
+        ship_name="Target", base_armour=999_999, manual_turret_mode=False, weapons=[], turrets=[], modules=[]
+    )
     resolver = TickResolver()
     result = resolver.resolve(loadout, target, rng=_AlwaysHit())
     log = result.combat_log
 
     # Auto-turret (Berger) fires
     auto_fires = [
-        e for e in log
-        if e.type == "weapon_fire" and e.actor == "TestShip"
-        and e.data.get("slot") == "turret" and e.data.get("subtype") == "auto"
+        e
+        for e in log
+        if e.type == "weapon_fire"
+        and e.actor == "TestShip"
+        and e.data.get("slot") == "turret"
+        and e.data.get("subtype") == "auto"
         and e.data.get("weapon") == "Berger AGT 20mm"
     ]
     assert len(auto_fires) > 0, "Berger AGT 20mm (auto) should fire"
 
     # Manual-turret (Hammerhead D1) fires — turret-mode=True
     manual_fires = [
-        e for e in log
-        if e.type == "weapon_fire" and e.actor == "TestShip"
-        and e.data.get("slot") == "turret" and e.data.get("subtype") == "manual"
+        e
+        for e in log
+        if e.type == "weapon_fire"
+        and e.actor == "TestShip"
+        and e.data.get("slot") == "turret"
+        and e.data.get("subtype") == "manual"
         and e.data.get("weapon") == "Hammerhead D1"
     ]
     assert len(manual_fires) > 0, "Hammerhead D1 (manual, mode=True) should fire"
 
     # Plasma-collector (PE Ambipolar-5) NEVER fires
     plasma_fires = [
-        e for e in log
-        if e.type == "weapon_fire" and e.actor == "TestShip"
-        and e.data.get("weapon") == "PE Ambipolar-5"
+        e for e in log if e.type == "weapon_fire" and e.actor == "TestShip" and e.data.get("weapon") == "PE Ambipolar-5"
     ]
     assert len(plasma_fires) == 0, f"PE Ambipolar-5 (plasma) should be inert, got {len(plasma_fires)} fires"
 
@@ -936,6 +961,7 @@ async def test_builder_fed_turret_fight():
 # ---------------------------------------------------------------------------
 # Additional: auto-turret fires alongside primaries (additive, test 5 regression)
 # ---------------------------------------------------------------------------
+
 
 def test_auto_turret_additive_alongside_primaries():
     """Auto-turret fires additive alongside primaries (mode=False or mode=True does not matter for auto)."""

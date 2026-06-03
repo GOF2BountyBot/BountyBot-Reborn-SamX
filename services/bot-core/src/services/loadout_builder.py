@@ -202,11 +202,11 @@ class LoadoutBuilder:
             dmg_val = float(dmg) if dmg is not None else None
             spd = int(inner.get("loading_speed_ms", 0) or 0)
             rng_m = float(inner.get("range_m", 0.0) or 0.0)
-            weapons.append(WeaponStats(name=w_name, dps=dps, damage_per_shot=dmg_val,
-                                       loading_speed_ms=spd, range_m=rng_m))
+            weapons.append(
+                WeaponStats(name=w_name, dps=dps, damage_per_shot=dmg_val, loading_speed_ms=spd, range_m=rng_m)
+            )
             flogger.trace(
-                f"Weapon {w_name!r} dps={dps} damage_per_shot={dmg_val} "
-                f"loading_speed_ms={spd} range_m={rng_m}"
+                f"Weapon {w_name!r} dps={dps} damage_per_shot={dmg_val} loading_speed_ms={spd} range_m={rng_m}"
             )
 
         # 5. Build turret stats (T7 true-up: populate automatic/subtype/loading_speed_ms/range_m)

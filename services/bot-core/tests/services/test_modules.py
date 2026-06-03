@@ -245,8 +245,11 @@ class TestCloakActivation:
         state.current_shield = 0
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         acts = _find_module_activations(events, "cloak")
         assert len(acts) == 1
@@ -262,8 +265,11 @@ class TestCloakActivation:
         state.current_hull = 65
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         # Effect expires + cooldown passes before second threshold
         state.cloak_runtime.effect_remaining_ms = 0
@@ -273,8 +279,11 @@ class TestCloakActivation:
         state.current_hull = 32
         events2: list = []
         _eval_hp_threshold_modules(
-            state, tick=1, events=events2,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=1,
+            events=events2,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         acts2 = _find_module_activations(events2, "cloak")
         assert len(acts2) == 1
@@ -293,8 +302,11 @@ class TestCloakActivation:
         state.current_hull = 65
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events, "cloak")) == 0
         assert cr.activation_count == 2  # not incremented
@@ -308,8 +320,11 @@ class TestCloakActivation:
         state.current_hull = 65
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         # No activation event
         assert len(_find_module_activations(events, "cloak")) == 0
@@ -329,8 +344,11 @@ class TestCloakActivation:
         state.current_hull = 65
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events, "cloak")) == 0
 
@@ -354,8 +372,11 @@ class TestCloakActivation:
         state.current_shield = 0
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         acts = _find_module_activations(events, "cloak")
         # Only one activation fires (66% threshold; 33% threshold sees cloak already active)
@@ -368,11 +389,14 @@ class TestCloakActivation:
         # Second threshold is consumed — no retry on a subsequent call (even after cooldown clears)
         cr.cooldown_remaining_ms = 0
         cr.effect_remaining_ms = 0  # cloak expired
-        state.prev_hp_pct = 0.25   # still below 33%, no new crossing
+        state.prev_hp_pct = 0.25  # still below 33%, no new crossing
         events2: list = []
         _eval_hp_threshold_modules(
-            state, tick=1, events=events2,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=1,
+            events=events2,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events2, "cloak")) == 0, (
             "33% threshold should be consumed-not-retried after single-tick double crossing"
@@ -393,8 +417,11 @@ class TestCloakActivation:
         state.current_shield = 0
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         acts = _find_module_activations(events, "booster")
         # Only the first threshold fires; second sees booster already active
@@ -410,8 +437,11 @@ class TestCloakActivation:
         state.prev_hp_pct = 0.62  # still below 60%; no new crossing
         events2: list = []
         _eval_hp_threshold_modules(
-            state, tick=1, events=events2,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=1,
+            events=events2,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events2, "booster")) == 0, (
             "60% threshold should be consumed-not-retried after single-tick double crossing"
@@ -438,8 +468,11 @@ class TestCloakActivation:
         state.current_hull = 65
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert cr.effect_remaining_ms == effect_duration_ms
         assert cr.cooldown_remaining_ms == 0  # cooldown not started yet
@@ -468,6 +501,7 @@ class TestCloakActivation:
         )
         # Exactly one cooldown_end event emitted on the final tick
         from src.services.combat_models import CombatEventType
+
         cd_end_events = [e for e in cooldown_end_events if e.type == CombatEventType.cooldown_end]
         assert len(cd_end_events) == 1
 
@@ -490,6 +524,7 @@ class TestCloakAccuracyEffect:
 
         # Verify c1's accuracy computation sees cloak active
         from src.services.combat_balance import compute_pilot_accuracy
+
         acc_primary, acc_turret = compute_pilot_accuracy(
             combatant_base=GameConstants.PLAYER_BASE_ACCURACY,
             own_scanner_bonus_pp=0.0,
@@ -513,6 +548,7 @@ class TestCloakAccuracyEffect:
         assert state.cloak_runtime is None
 
         from src.services.combat_balance import compute_pilot_accuracy
+
         acc_primary, _acc_turret = compute_pilot_accuracy(
             combatant_base=GameConstants.PLAYER_BASE_ACCURACY,
             own_scanner_bonus_pp=0.0,
@@ -587,8 +623,11 @@ class TestBoosterActivation:
         state.current_shield = 0
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         acts = _find_module_activations(events, "booster")
         assert len(acts) == 1
@@ -608,9 +647,12 @@ class TestBoosterActivation:
             state.current_hull = int((threshold_frac - 0.05) * 100)
             events: list = []
             _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
-        )
+                state,
+                tick=0,
+                events=events,
+                cloak_thresholds=CLOAK_THRESHOLDS,
+                booster_thresholds=BOOSTER_THRESHOLDS,
+            )
             state.prev_hp_pct = state.current_hull / 100
             all_acts.extend(_find_module_activations(events, "booster"))
         assert len(all_acts) == 4
@@ -627,8 +669,11 @@ class TestBoosterActivation:
         state.current_hull = 79
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events, "booster")) == 0
         assert br.activation_count == 4
@@ -748,16 +793,12 @@ class TestBoosterDistancePush:
         loadout_c2 = _armed_loadout(base_armour=2000)
         resolver = TickResolver(seed=99)
         results = resolver.resolve(loadout_c1, loadout_c2, rng=random.Random(99))
-        fire_events = [
-            e for e in results.combat_log
-            if e.type == CombatEventType.weapon_fire and e.actor == "Fighter"
-        ]
+        fire_events = [e for e in results.combat_log if e.type == CombatEventType.weapon_fire and e.actor == "Fighter"]
         # C2 fires normally (its weapons are present)
         assert len(fire_events) >= 0  # non-negative, always true
         # C1 should still emit weapon_fire events when booster is active
         c1_fire_events = [
-            e for e in results.combat_log
-            if e.type == CombatEventType.weapon_fire and e.actor == loadout_c1.ship_name
+            e for e in results.combat_log if e.type == CombatEventType.weapon_fire and e.actor == loadout_c1.ship_name
         ]
         # Some fire events should exist (weapons are in range from tick 0 onwards once distance closes)
         # Booster should not zero out c1's fire events
@@ -817,7 +858,8 @@ class TestThrusterRamp:
         acts = _find_module_activations(results.combat_log, "thruster")
         # Also check no module_activation at all from c1's thruster
         all_acts = [
-            e for e in results.combat_log
+            e
+            for e in results.combat_log
             if e.type == CombatEventType.module_activation and e.actor == loadout_c1.ship_name
         ]
         assert len(acts) == 0
@@ -826,6 +868,7 @@ class TestThrusterRamp:
     def test_thruster_primaries_only_turret_excluded(self):
         """Thruster bonus goes into own_thruster_bonus_pp, which compute_pilot_accuracy excludes from turret."""
         from src.services.combat_balance import compute_pilot_accuracy
+
         thruster_bonus_pp = 40.0 * 0.10 * 1.0  # full ramp
         acc_primary, acc_turret = compute_pilot_accuracy(
             combatant_base=GameConstants.PLAYER_BASE_ACCURACY,
@@ -860,8 +903,11 @@ class TestUniversalTriggerRule:
         state.current_hull = 65
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events, "cloak")) == 0
         assert 66 in cr.consumed_thresholds
@@ -872,8 +918,11 @@ class TestUniversalTriggerRule:
         state.prev_hp_pct = state.current_hull / 100.0  # same HP, no new crossing
         events2: list = []
         _eval_hp_threshold_modules(
-            state, tick=1, events=events2,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=1,
+            events=events2,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events2, "cloak")) == 0
         assert cr.activation_count == 0
@@ -886,8 +935,11 @@ class TestUniversalTriggerRule:
         state.current_hull = 55
         events: list = []
         _eval_hp_threshold_modules(
-            state, tick=0, events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS,
+            state,
+            tick=0,
+            events=events,
+            cloak_thresholds=CLOAK_THRESHOLDS,
+            booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events, "cloak")) == 0
 
@@ -903,6 +955,7 @@ class TestModuleStatsFromExtra:
     def test_cloak_fields_from_inner_extra_atts(self):
         """U'tool seed nested shape: outer has inner extra_atts with duration_ms / loading_speed_ms."""
         from src.services.loadout_builder import _module_stats_from_extra
+
         outer = {
             "duration": 10,  # legacy top-level field (ignored for T8)
             "extra_atts": {
@@ -919,6 +972,7 @@ class TestModuleStatsFromExtra:
     def test_booster_fields_from_inner_extra_atts(self):
         """Polytron seed shape: inner extra_atts has effect_pct / duration_ms / loading_speed_ms."""
         from src.services.loadout_builder import _module_stats_from_extra
+
         outer = {
             "duration": 6,
             "effect": 4,
@@ -937,6 +991,7 @@ class TestModuleStatsFromExtra:
     def test_thruster_fields_from_inner_extra_atts(self):
         """Pendular Thrust seed: inner extra_atts has effect_pct."""
         from src.services.loadout_builder import _module_stats_from_extra
+
         outer = {
             "handlingMultiplier": 1.4,
             "extra_atts": {
@@ -952,6 +1007,7 @@ class TestModuleStatsFromExtra:
     def test_legacy_flat_extra_atts_still_works(self):
         """Flat extra_atts (no nesting) still works for backward compat (armour/shield)."""
         from src.services.loadout_builder import _module_stats_from_extra
+
         flat = {"armour": 200, "armour_multiplier": 1.2}
         stats = _module_stats_from_extra("Armour Mod", flat, module_type="ArmourModule")
         assert stats.armour == 200
@@ -960,6 +1016,7 @@ class TestModuleStatsFromExtra:
     def test_module_type_empty_string_backward_compat(self):
         """Legacy callers that don't pass module_type get empty string (no regression)."""
         from src.services.loadout_builder import _module_stats_from_extra
+
         stats = _module_stats_from_extra("Old Module", {})
         assert stats.module_type == ""
         assert stats.effect_pct == pytest.approx(0.0)
@@ -1054,6 +1111,7 @@ class TestBuilderIntegration:
     async def test_primary_weapon_mod_detection_with_module_type(self):
         """PrimaryWeaponMod detection works when module_type is populated."""
         from src.services.loadout_builder import _module_stats_from_extra
+
         # Build stats as from_player would produce
         outer = {"extra_atts": {"damage_pct": 15, "fire_rate_pct": 10}}
         stats = _module_stats_from_extra("SunFire Plus", outer, module_type="PrimaryWeaponModModule")
@@ -1064,6 +1122,7 @@ class TestBuilderIntegration:
     def test_criminal_ship_cloak_module_type_populated(self):
         """from_criminal_ship passes 'type' from criminal_ship dict to _module_stats_from_extra."""
         from src.services.loadout_builder import LoadoutBuilder
+
         criminal_ship = {
             "ship_name": "Scimitar",
             "ship_armour": 300,
@@ -1092,6 +1151,7 @@ class TestBuilderIntegration:
     def test_criminal_ship_booster_module_type_populated(self):
         """from_criminal_ship: BoosterModule gets effect_pct and timing fields."""
         from src.services.loadout_builder import LoadoutBuilder
+
         criminal_ship = {
             "ship_name": "Fighter",
             "ship_armour": 500,
@@ -1119,6 +1179,7 @@ class TestBuilderIntegration:
     def test_criminal_ship_thruster_module_type_populated(self):
         """from_criminal_ship: ThrusterModule gets effect_pct."""
         from src.services.loadout_builder import LoadoutBuilder
+
         criminal_ship = {
             "ship_name": "Fighter",
             "ship_armour": 500,
@@ -1159,8 +1220,11 @@ class TestBuilderIntegration:
             "weapons": [],
             "turrets": [],
             "modules": [
-                {"name": "Pendular Thrust", "type": "ThrusterModule",
-                 "extra_atts": {"effect_pct": 40.0, "handling_multiplier": 1.4}},
+                {
+                    "name": "Pendular Thrust",
+                    "type": "ThrusterModule",
+                    "extra_atts": {"effect_pct": 40.0, "handling_multiplier": 1.4},
+                },
             ],
         }
         builder_loadout = LoadoutBuilder.from_criminal_ship(criminal_ship_with)
@@ -1193,10 +1257,9 @@ class TestBuilderIntegration:
 
         def _primary_acc(log, actor: str) -> list[float]:
             return [
-                e.data["accuracy"] for e in log
-                if e.type == CombatEventType.weapon_fire
-                and e.actor == actor
-                and e.data.get("slot") == "primary"
+                e.data["accuracy"]
+                for e in log
+                if e.type == CombatEventType.weapon_fire and e.actor == actor and e.data.get("slot") == "primary"
             ]
 
         accs_with = _primary_acc(res_with.combat_log, "TestFighter")
@@ -1248,7 +1311,8 @@ class TestAccuracyLiteralReplacement:
         # accuracy values should differ once in range
         def _get_fire_acc(log, actor):
             return [
-                e.data["accuracy"] for e in log
+                e.data["accuracy"]
+                for e in log
                 if e.type == CombatEventType.weapon_fire and e.actor == actor and e.data.get("slot") == "primary"
             ]
 
@@ -1290,7 +1354,8 @@ class TestAccuracyLiteralReplacement:
             cloak_tick = cloak_acts[0].tick
             # Find c1 weapon_fire events after cloak activated
             c1_fires_after_cloak = [
-                e for e in results.combat_log
+                e
+                for e in results.combat_log
                 if e.type == CombatEventType.weapon_fire
                 and e.actor == loadout_c1_strong.ship_name
                 and e.tick > cloak_tick

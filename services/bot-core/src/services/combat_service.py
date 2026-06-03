@@ -621,11 +621,7 @@ def _eval_hp_threshold_modules(
             if prev_pct > threshold_frac >= current_pct and threshold not in cr.consumed_thresholds:
                 cr.consumed_thresholds.append(threshold)
                 # Check activation eligibility (§7.2)
-                eligible = (
-                    cr.cooldown_remaining_ms <= 0
-                    and cr.activation_count < 2
-                    and cr.effect_remaining_ms == 0
-                )
+                eligible = cr.cooldown_remaining_ms <= 0 and cr.activation_count < 2 and cr.effect_remaining_ms == 0
                 if eligible:
                     cr.effect_remaining_ms = cr.stats.effect_duration_ms
                     cr.activation_count += 1
@@ -648,11 +644,7 @@ def _eval_hp_threshold_modules(
             threshold_frac = threshold / 100.0
             if prev_pct > threshold_frac >= current_pct and threshold not in br.consumed_thresholds:
                 br.consumed_thresholds.append(threshold)
-                eligible = (
-                    br.cooldown_remaining_ms <= 0
-                    and br.activation_count < 4
-                    and br.effect_remaining_ms == 0
-                )
+                eligible = br.cooldown_remaining_ms <= 0 and br.activation_count < 4 and br.effect_remaining_ms == 0
                 if eligible:
                     br.effect_remaining_ms = br.stats.effect_duration_ms
                     br.activation_count += 1
@@ -1015,7 +1007,7 @@ def _build_fight_summary(
             "shots_hit": hit,
             "accuracy": acc,
             "module_activations": dict(module_activations[name]),  # sparse — only keys that fired ≥1
-            "secondary_fired": dict(secondary_fired[name]),         # sparse — only subtypes that fired ≥1
+            "secondary_fired": dict(secondary_fired[name]),  # sparse — only subtypes that fired ≥1
         }
 
     return {
@@ -1159,13 +1151,10 @@ class TickResolver:
                 # Opponent booster debuff
                 _boost_debuff_pp = 0.0
                 if _opponent.booster_runtime is not None and _opponent.booster_runtime.effect_remaining_ms > 0:
-                    _boost_debuff_pp = booster_debuff_pp(
-                        _opponent.booster_runtime.stats.effect_pct, k_boost=_k_boost
-                    )
+                    _boost_debuff_pp = booster_debuff_pp(_opponent.booster_runtime.stats.effect_pct, k_boost=_k_boost)
                 # Opponent cloak active (own cloak replaces our accuracy)
                 _opp_cloak_active = (
-                    _opponent.cloak_runtime is not None
-                    and _opponent.cloak_runtime.effect_remaining_ms > 0
+                    _opponent.cloak_runtime is not None and _opponent.cloak_runtime.effect_remaining_ms > 0
                 )
                 _state.pilot_primary_acc, _state.pilot_turret_acc = compute_pilot_accuracy(
                     combatant_base=_acc_base,
@@ -1330,8 +1319,13 @@ class TickResolver:
                                 type=CombatEventType.weapon_fire,
                                 actor=_attacker.name,
                                 target=_target.name,
-                                data={"slot": "secondary", "subtype": "rocket", "weapon": _sw.name,
-                                      "hit": _hit_r, "accuracy": _acc_r},
+                                data={
+                                    "slot": "secondary",
+                                    "subtype": "rocket",
+                                    "weapon": _sw.name,
+                                    "hit": _hit_r,
+                                    "accuracy": _acc_r,
+                                },
                             )
                         )
                         if _hit_r:
@@ -1354,8 +1348,14 @@ class TickResolver:
                                 type=CombatEventType.weapon_fire,
                                 actor=_attacker.name,
                                 target=_target.name,
-                                data={"slot": "secondary", "subtype": "missile", "weapon": _sw.name,
-                                      "hit": _hit_m, "accuracy": _acc_m, "branch": _branch},
+                                data={
+                                    "slot": "secondary",
+                                    "subtype": "missile",
+                                    "weapon": _sw.name,
+                                    "hit": _hit_m,
+                                    "accuracy": _acc_m,
+                                    "branch": _branch,
+                                },
                             )
                         )
                         if _hit_m:
@@ -1381,10 +1381,17 @@ class TickResolver:
                                 type=CombatEventType.weapon_fire,
                                 actor=_attacker.name,
                                 target=_target.name,
-                                data={"slot": "secondary", "subtype": "cluster-missile", "weapon": _sw.name,
-                                      "fired": _n, "hits": _k, "damage_per_hit": _sw.damage_per_shot,
-                                      "total_damage": _k * _sw.damage_per_shot,
-                                      "branch": _cbranch, "accuracy": _acc_c},
+                                data={
+                                    "slot": "secondary",
+                                    "subtype": "cluster-missile",
+                                    "weapon": _sw.name,
+                                    "fired": _n,
+                                    "hits": _k,
+                                    "damage_per_hit": _sw.damage_per_shot,
+                                    "total_damage": _k * _sw.damage_per_shot,
+                                    "branch": _cbranch,
+                                    "accuracy": _acc_c,
+                                },
                             )
                         )
                         _sec_pending.append(("cluster", _attacker, _target, _sw, _hits_mask))
@@ -1408,9 +1415,16 @@ class TickResolver:
                                 type=CombatEventType.weapon_fire,
                                 actor=_attacker.name,
                                 target=_target.name,
-                                data={"slot": "secondary", "subtype": "nuke", "weapon": _sw.name,
-                                      "epicenter": _epicenter, "d_firer": _d_firer, "d_opponent": _d_opp,
-                                      "opponent_damage": _opp_dmg_int, "self_damage": _self_dmg_int},
+                                data={
+                                    "slot": "secondary",
+                                    "subtype": "nuke",
+                                    "weapon": _sw.name,
+                                    "epicenter": _epicenter,
+                                    "d_firer": _d_firer,
+                                    "d_opponent": _d_opp,
+                                    "opponent_damage": _opp_dmg_int,
+                                    "self_damage": _self_dmg_int,
+                                },
                             )
                         )
                         # Queue: opponent damage, then self-damage (phase 4 canonical order)
@@ -1427,8 +1441,14 @@ class TickResolver:
                                 type=CombatEventType.weapon_fire,
                                 actor=_attacker.name,
                                 target=_target.name,
-                                data={"slot": "secondary", "subtype": "shock-blast", "weapon": _sw.name,
-                                      "hit": True, "accuracy": 1.0, "damage": 0},
+                                data={
+                                    "slot": "secondary",
+                                    "subtype": "shock-blast",
+                                    "weapon": _sw.name,
+                                    "hit": True,
+                                    "accuracy": 1.0,
+                                    "damage": 0,
+                                },
                             )
                         )
                         # Queue for Phase 6 distance reset (Appendix B step 6)
@@ -1451,8 +1471,14 @@ class TickResolver:
                                 type=CombatEventType.weapon_fire,
                                 actor=_attacker.name,
                                 target=_target.name,
-                                data={"slot": "secondary", "subtype": "ionizing-missile", "weapon": _sw.name,
-                                      "hit": _hit_ion, "accuracy": _acc_ion, "branch": _branch_ion},
+                                data={
+                                    "slot": "secondary",
+                                    "subtype": "ionizing-missile",
+                                    "weapon": _sw.name,
+                                    "hit": _hit_ion,
+                                    "accuracy": _acc_ion,
+                                    "branch": _branch_ion,
+                                },
                             )
                         )
                         if _hit_ion:
@@ -1475,10 +1501,8 @@ class TickResolver:
 
             # Pre-bake auto-turret accuracy once per combatant per tick (§6.3 / Appendix A)
             # ONE value per combatant per tick — correctness statement (§6.3), not just perf.
-            _c1_auto_acc = max(_acc_clamp_min, min(_acc_clamp_max,
-                               c1.pilot_turret_acc * _auto_turret_multiplier))
-            _c2_auto_acc = max(_acc_clamp_min, min(_acc_clamp_max,
-                               c2.pilot_turret_acc * _auto_turret_multiplier))
+            _c1_auto_acc = max(_acc_clamp_min, min(_acc_clamp_max, c1.pilot_turret_acc * _auto_turret_multiplier))
+            _c2_auto_acc = max(_acc_clamp_min, min(_acc_clamp_max, c2.pilot_turret_acc * _auto_turret_multiplier))
 
             # Auto-turrets: C1 then C2 (§ determinism)
             for _attacker, _target, _auto_acc in ((c1, c2, _c1_auto_acc), (c2, c1, _c2_auto_acc)):
@@ -2238,6 +2262,4 @@ class CombatService:
                 )
             except Exception as exc:
                 # Non-fatal — stat increment failure should not abort the fight
-                flogger.error(
-                    f"Player stat increment failed: user_id={user_id} guild_id={guild_id}: {exc}"
-                )
+                flogger.error(f"Player stat increment failed: user_id={user_id} guild_id={guild_id}: {exc}")

@@ -1204,7 +1204,7 @@ def _make_player(
     return SimpleNamespace(
         id=player_id,
         user_id=player_id * 1000,  # T10: Discord user_id for combat_log
-        guild_id=9999,             # T10: guild_id for combat_log
+        guild_id=9999,  # T10: guild_id for combat_log
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
@@ -1601,14 +1601,16 @@ def combat_integration_setup(service, mock_db):
     service.combat_service = MagicMock()
     # T10: fight_ships is async — default stalemate (caller can override)
     _fs = SimpleNamespace(ship_name="Ship", raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None)
-    service.combat_service.fight_ships = AsyncMock(return_value=SimpleNamespace(
-        winner_name=None,
-        loser_name=None,
-        is_stalemate=True,
-        ship1_stats=_fs,
-        ship2_stats=_fs,
-        combat_log_id=None,
-    ))
+    service.combat_service.fight_ships = AsyncMock(
+        return_value=SimpleNamespace(
+            winner_name=None,
+            loser_name=None,
+            is_stalemate=True,
+            ship1_stats=_fs,
+            ship2_stats=_fs,
+            combat_log_id=None,
+        )
+    )
     return service, mock_db
 
 
@@ -3199,7 +3201,7 @@ def _make_player_with_tier(
     return SimpleNamespace(
         id=player_id,
         user_id=player_id * 1000,  # T10: Discord user_id for combat_log
-        guild_id=9999,             # T10: guild_id for combat_log
+        guild_id=9999,  # T10: guild_id for combat_log
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
@@ -3782,6 +3784,7 @@ def test_serialize_fight_results_win_with_pvc_buff():
 
     # T10: pvc_armour_buff kwarg is removed from _serialize_fight_results
     import pytest as _pytest
+
     with _pytest.raises(TypeError):
         _serialize_fight_results(fight, pvc_armour_buff=1.5)  # type: ignore[call-arg]
 
@@ -3839,12 +3842,8 @@ def test_serialize_fight_results_pvc_damage_reduction_zero_for_pvp():
     """pvc_damage_reduction is 0.0 when metadata has no pvc_damage_reduction key (PvP fight)."""
     from services.bounty_service import _serialize_fight_results
 
-    fight_stats1 = SimpleNamespace(
-        ship_name="Alpha", raw_hp=150, raw_dps=9.0, varied_hp=148, varied_dps=9.1, ttk=15.0
-    )
-    fight_stats2 = SimpleNamespace(
-        ship_name="Bravo", raw_hp=140, raw_dps=8.5, varied_hp=137, varied_dps=8.6, ttk=16.0
-    )
+    fight_stats1 = SimpleNamespace(ship_name="Alpha", raw_hp=150, raw_dps=9.0, varied_hp=148, varied_dps=9.1, ttk=15.0)
+    fight_stats2 = SimpleNamespace(ship_name="Bravo", raw_hp=140, raw_dps=8.5, varied_hp=137, varied_dps=8.6, ttk=16.0)
     fight = SimpleNamespace(
         winner_name="Alpha",
         loser_name="Bravo",
@@ -3865,12 +3864,8 @@ def test_serialize_fight_results_pvc_damage_reduction_zero_when_no_metadata():
     """pvc_damage_reduction is 0.0 when fight has no metadata attribute at all."""
     from services.bounty_service import _serialize_fight_results
 
-    fight_stats1 = SimpleNamespace(
-        ship_name="Alpha", raw_hp=150, raw_dps=9.0, varied_hp=148, varied_dps=9.1, ttk=15.0
-    )
-    fight_stats2 = SimpleNamespace(
-        ship_name="Bravo", raw_hp=140, raw_dps=8.5, varied_hp=137, varied_dps=8.6, ttk=16.0
-    )
+    fight_stats1 = SimpleNamespace(ship_name="Alpha", raw_hp=150, raw_dps=9.0, varied_hp=148, varied_dps=9.1, ttk=15.0)
+    fight_stats2 = SimpleNamespace(ship_name="Bravo", raw_hp=140, raw_dps=8.5, varied_hp=137, varied_dps=8.6, ttk=16.0)
     # Deliberately no `metadata` attribute
     fight = SimpleNamespace(
         winner_name="Alpha",

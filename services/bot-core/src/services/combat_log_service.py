@@ -52,9 +52,7 @@ class CombatLogService:
             ValueError: if context is invalid or the NPC-vs-NPC invariant is violated.
         """
         if context not in _VALID_CONTEXTS:
-            raise ValueError(
-                f"Invalid combat context {context!r}. Must be one of {sorted(_VALID_CONTEXTS)}."
-            )
+            raise ValueError(f"Invalid combat context {context!r}. Must be one of {sorted(_VALID_CONTEXTS)}.")
 
         metadata = fight_results.metadata
         summary = metadata.get("summary", {})

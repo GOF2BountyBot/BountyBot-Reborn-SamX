@@ -317,8 +317,9 @@ class TestClusterMissile:
         This also verifies the hits_mask is frozen at fire time: any recomputation in
         Phase 4 using a different distance would change the hit count.
         """
-        patala = _secondary(subtype="cluster-missile", range_m=5000.0, damage=90.0,
-                            speed_ms=3000, burst_count=5, name="Patala")
+        patala = _secondary(
+            subtype="cluster-missile", range_m=5000.0, damage=90.0, speed_ms=3000, burst_count=5, name="Patala"
+        )
         scanner = _telta_scanner()
         l1 = _loadout(secondary_weapons=[patala], modules=[scanner], name="Attacker")
         l2 = _loadout(base_armour=1000, name="Target")
@@ -326,8 +327,11 @@ class TestClusterMissile:
         # --- Part 1: verify weapon_fire event records Tier B snapshot accuracy ---
         rng_a = random.Random(42)
         result_a = TickResolver().resolve(l1, l2, rng=rng_a)
-        fires_a = [e for e in result_a.combat_log if e.tick == 0 and e.type == "weapon_fire"
-                   and e.data.get("subtype") == "cluster-missile"]
+        fires_a = [
+            e
+            for e in result_a.combat_log
+            if e.tick == 0 and e.type == "weapon_fire" and e.data.get("subtype") == "cluster-missile"
+        ]
         assert len(fires_a) == 1
         ev_a = fires_a[0]
 
@@ -344,8 +348,11 @@ class TestClusterMissile:
         # If Phase 4 recomputed accuracy using ANY other distance, hit count would differ.
         rng_proof = _SequencedRNG([0.50, 0.56, 0.50, 0.56, 0.50] + [0.9] * 500)
         result_proof = TickResolver().resolve(l1, l2, rng=rng_proof)
-        fires_proof = [e for e in result_proof.combat_log if e.tick == 0 and e.type == "weapon_fire"
-                       and e.data.get("subtype") == "cluster-missile"]
+        fires_proof = [
+            e
+            for e in result_proof.combat_log
+            if e.tick == 0 and e.type == "weapon_fire" and e.data.get("subtype") == "cluster-missile"
+        ]
         assert len(fires_proof) == 1
         ev_proof = fires_proof[0]
         assert ev_proof.data["hits"] == 3, (
@@ -355,8 +362,9 @@ class TestClusterMissile:
 
     def test_sub_munition_independence(self):
         """Alternating hits: seeded RNG forces alternating hit/miss. Test 9."""
-        patala = _secondary(subtype="cluster-missile", range_m=5000.0, damage=90.0,
-                            speed_ms=3000, burst_count=5, name="Patala")
+        patala = _secondary(
+            subtype="cluster-missile", range_m=5000.0, damage=90.0, speed_ms=3000, burst_count=5, name="Patala"
+        )
         scanner = _telta_scanner()
         l1 = _loadout(secondary_weapons=[patala], modules=[scanner], name="Attacker")
         l2 = _loadout(base_armour=1000, name="Target")
@@ -378,8 +386,9 @@ class TestClusterMissile:
 
     def test_overkill_allowed(self):
         """Overkill: 5 hits × 90 damage on 100 HP hull → transient negative, clamped at 0. Test 10."""
-        patala = _secondary(subtype="cluster-missile", range_m=5000.0, damage=90.0,
-                            speed_ms=3000, burst_count=5, name="Patala")
+        patala = _secondary(
+            subtype="cluster-missile", range_m=5000.0, damage=90.0, speed_ms=3000, burst_count=5, name="Patala"
+        )
         scanner = _telta_scanner()
         l1 = _loadout(secondary_weapons=[patala], modules=[scanner], name="Attacker")
         l2 = _loadout(base_armour=100, name="Target")  # 100 HP hull only
@@ -401,8 +410,9 @@ class TestClusterMissile:
 
     def test_condensed_log_event(self):
         """Exactly ONE weapon_fire per cluster fire; 5 damage events separately. Test 11."""
-        patala = _secondary(subtype="cluster-missile", range_m=5000.0, damage=90.0,
-                            speed_ms=3000, burst_count=5, name="Patala")
+        patala = _secondary(
+            subtype="cluster-missile", range_m=5000.0, damage=90.0, speed_ms=3000, burst_count=5, name="Patala"
+        )
         scanner = _telta_scanner()
         l1 = _loadout(secondary_weapons=[patala], modules=[scanner], name="Attacker")
         l2 = _loadout(base_armour=100, name="Target")
@@ -421,15 +431,19 @@ class TestClusterMissile:
 
     def test_tier_a_cluster_snapshot_uses_rocket_curve(self):
         """Tier A cluster — snapshot uses rocket curve at fire-time distance. Test 12."""
-        patala = _secondary(subtype="cluster-missile", range_m=5000.0, damage=90.0,
-                            speed_ms=3000, burst_count=5, name="Patala")
+        patala = _secondary(
+            subtype="cluster-missile", range_m=5000.0, damage=90.0, speed_ms=3000, burst_count=5, name="Patala"
+        )
         # No scanner → Tier A
         l1 = _loadout(secondary_weapons=[patala], name="Attacker")
         l2 = _loadout(base_armour=1000, name="Target")
         rng = random.Random(42)
         result = TickResolver().resolve(l1, l2, rng=rng)
-        t0_fires = [e for e in result.combat_log if e.tick == 0 and e.type == "weapon_fire"
-                    and e.data.get("subtype") == "cluster-missile"]
+        t0_fires = [
+            e
+            for e in result.combat_log
+            if e.tick == 0 and e.type == "weapon_fire" and e.data.get("subtype") == "cluster-missile"
+        ]
         assert len(t0_fires) == 1
         ev = t0_fires[0]
         assert ev.data.get("branch") == "tier_a"
@@ -448,8 +462,14 @@ class TestClusterMissile:
         burst_count=0 might cause a no-fire or infinite loop.
         """
         # burst_count=0 → DB-omitted or zero-default case; mirrors live production data
-        cluster = _secondary(subtype="cluster-missile", range_m=5000.0, damage=90.0,
-                             speed_ms=3000, burst_count=0, name="Degraded Cluster")
+        cluster = _secondary(
+            subtype="cluster-missile",
+            range_m=5000.0,
+            damage=90.0,
+            speed_ms=3000,
+            burst_count=0,
+            name="Degraded Cluster",
+        )
         scanner = _telta_scanner()
         l1 = _loadout(secondary_weapons=[cluster], modules=[scanner], name="Attacker")
         l2 = _loadout(base_armour=200, name="Target")
@@ -461,21 +481,13 @@ class TestClusterMissile:
 
         ev = fires[0]
         # Graceful degradation: _n = 1 when burst_count=0
-        assert ev.data["fired"] == 1, (
-            f"burst_count=0 → fired must be 1 (graceful degradation), got {ev.data['fired']}"
-        )
+        assert ev.data["fired"] == 1, f"burst_count=0 → fired must be 1 (graceful degradation), got {ev.data['fired']}"
         # AlwaysHit → 1 hit
-        assert ev.data["hits"] == 1, (
-            f"burst_count=0 with AlwaysHit → hits must be 1, got {ev.data['hits']}"
-        )
-        assert ev.data["total_damage"] == 90, (
-            f"1 hit × 90 damage = 90 total_damage, got {ev.data['total_damage']}"
-        )
+        assert ev.data["hits"] == 1, f"burst_count=0 with AlwaysHit → hits must be 1, got {ev.data['hits']}"
+        assert ev.data["total_damage"] == 90, f"1 hit × 90 damage = 90 total_damage, got {ev.data['total_damage']}"
         # Exactly one damage event for the single sub-munition hit
         dmg_evs = [e for e in t0 if e.type == "damage" and e.target == "Target"]
-        assert len(dmg_evs) == 1, (
-            f"burst_count=0 degraded case: 1 hit → 1 damage event, got {len(dmg_evs)}"
-        )
+        assert len(dmg_evs) == 1, f"burst_count=0 degraded case: 1 hit → 1 damage event, got {len(dmg_evs)}"
 
 
 # ===========================================================================
@@ -485,12 +497,26 @@ class TestClusterMissile:
 
 class TestNuke:
     def _liberator(self) -> WeaponStats:
-        return _secondary(name="Liberator", subtype="nuke", damage=850, speed_ms=10000,
-                          range_m=13800.0, magnitude_m=12500.0, steerable=True)
+        return _secondary(
+            name="Liberator",
+            subtype="nuke",
+            damage=850,
+            speed_ms=10000,
+            range_m=13800.0,
+            magnitude_m=12500.0,
+            steerable=True,
+        )
 
     def _tormentor(self) -> WeaponStats:
-        return _secondary(name="AMR Tormentor", subtype="nuke", damage=150, speed_ms=6000,
-                          range_m=2500.0, magnitude_m=10000.0, steerable=False)
+        return _secondary(
+            name="AMR Tormentor",
+            subtype="nuke",
+            damage=150,
+            speed_ms=6000,
+            range_m=2500.0,
+            magnitude_m=10000.0,
+            steerable=False,
+        )
 
     def test_liberator_point_blank(self):
         """Liberator: epicenter near MIN_DISTANCE_M, verify damage formula. Test 13."""
@@ -528,9 +554,15 @@ class TestNuke:
         # eff_mag = 10000 × 0.10 = 1000m
         # current_distance = 5000m (starting)
         # epicenter = MIN_DIST = 300m → d_opponent = |300 - 5000| = 4700m > 1000m → dmg = 0
-        tort = _secondary(name="AMR Tormentor", subtype="nuke", damage=150, speed_ms=6000,
-                          range_m=5000.0,  # extended range so it fires at starting distance
-                          magnitude_m=10000.0, steerable=False)
+        tort = _secondary(
+            name="AMR Tormentor",
+            subtype="nuke",
+            damage=150,
+            speed_ms=6000,
+            range_m=5000.0,  # extended range so it fires at starting distance
+            magnitude_m=10000.0,
+            steerable=False,
+        )
         l1 = _loadout(secondary_weapons=[tort], name="Firer")
         l2 = _loadout(base_armour=2000, name="Target")
         rng = _AlwaysHit()  # uniform returns MIN_DIST (epicenter = 300)
@@ -538,9 +570,7 @@ class TestNuke:
         t0 = [e for e in result.combat_log if e.tick == 0]
         fires = [e for e in t0 if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
         assert len(fires) == 1
-        assert fires[0].data["opponent_damage"] == 0, (
-            "Opponent d=4700m > eff_mag=1000m → 0 damage"
-        )
+        assert fires[0].data["opponent_damage"] == 0, "Opponent d=4700m > eff_mag=1000m → 0 damage"
         # Firer self-damage: d_firer = 300m, eff_mag = 1000m
         d_firer = MIN_DIST
         eff_mag = 10000.0 * GameConstants.NUKE_MAGNITUDE_SCALE  # 1000
@@ -566,9 +596,7 @@ class TestNuke:
         dmg_evs = [e for e in t0 if e.type == "damage" and e.target == "Player"]
         # There may be 0 or 1 depending on raw_self
         eff_mag = 12500.0 * GameConstants.NUKE_MAGNITUDE_SCALE
-        raw_self_computed = round(
-            _nuke_dmg(MIN_DIST, 850, eff_mag) * GameConstants.NUKE_FRIENDLY_FACTOR
-        )
+        raw_self_computed = round(_nuke_dmg(MIN_DIST, 850, eff_mag) * GameConstants.NUKE_FRIENDLY_FACTOR)
         if raw_self_computed > 0 and dmg_evs:
             # Verify T3 applied exactly one DR
             applied_actual = dmg_evs[0].data["amount"]
@@ -585,8 +613,15 @@ class TestNuke:
         """
         lib = self._liberator()  # range_m=13800 — fires
         # Tormentor normally has range_m=2500 < 5000; adjust for test
-        tort_adj = _secondary(name="AMR Tormentor", subtype="nuke", damage=150, speed_ms=6000,
-                              range_m=5000.0, magnitude_m=10000.0, steerable=False)
+        tort_adj = _secondary(
+            name="AMR Tormentor",
+            subtype="nuke",
+            damage=150,
+            speed_ms=6000,
+            range_m=5000.0,
+            magnitude_m=10000.0,
+            steerable=False,
+        )
         l1_lib = _loadout(secondary_weapons=[lib], name="Lib")
         l1_tort = _loadout(secondary_weapons=[tort_adj], name="Tort")
         l2 = _loadout(base_armour=2000, name="Target")
@@ -628,12 +663,19 @@ class TestNuke:
         res42b = TickResolver().resolve(l1, l2, rng=r42b)
         res99 = TickResolver().resolve(l1, l2, rng=r99)
 
-        epi42a = next(e.data["epicenter"] for e in res42a.combat_log
-                      if e.type == "weapon_fire" and e.data.get("subtype") == "nuke")
-        epi42b = next(e.data["epicenter"] for e in res42b.combat_log
-                      if e.type == "weapon_fire" and e.data.get("subtype") == "nuke")
-        epi99 = next(e.data["epicenter"] for e in res99.combat_log
-                     if e.type == "weapon_fire" and e.data.get("subtype") == "nuke")
+        epi42a = next(
+            e.data["epicenter"]
+            for e in res42a.combat_log
+            if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"
+        )
+        epi42b = next(
+            e.data["epicenter"]
+            for e in res42b.combat_log
+            if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"
+        )
+        epi99 = next(
+            e.data["epicenter"] for e in res99.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"
+        )
 
         assert abs(epi42a - epi42b) < 1e-12, "Same seed must reproduce same epicenter"
         assert abs(epi42a - epi99) > 1e-6, "Different seeds must produce different epicenters"
@@ -647,8 +689,7 @@ class TestNuke:
 class TestShockBlast:
     def _sb(self, close_range: bool = False) -> WeaponStats:
         """Shock Blast weapon. range_m=0 means infinite range."""
-        return _secondary(name="Shock Blast", subtype="shock-blast", damage=0.0,
-                          speed_ms=6000, range_m=0.0)
+        return _secondary(name="Shock Blast", subtype="shock-blast", damage=0.0, speed_ms=6000, range_m=0.0)
 
     def test_distance_reset_to_starting(self):
         """Shock-blast resets current_distance to STARTING_DISTANCE_M. Test 19."""
@@ -700,7 +741,7 @@ class TestShockBlast:
         state = _init_combatant(loadout, is_player=False)
 
         # Set non-zero cooldowns — simulating active module timers pre-shock-blast
-        state.module_cooldowns["Camo Booster"] = 5000   # active cloak duration_ms proxy
+        state.module_cooldowns["Camo Booster"] = 5000  # active cloak duration_ms proxy
         state.module_cooldowns["Speed Booster"] = 3000  # active booster window proxy
 
         # Take an immutable snapshot BEFORE calling shock-blast
@@ -719,12 +760,9 @@ class TestShockBlast:
         # CRITICAL: module_cooldowns must be byte-for-byte identical to the snapshot.
         # If _shock_blast_apply mutated them (clear/reset/zero), this fails.
         assert state.module_cooldowns == snapshot, (
-            f"_shock_blast_apply must NOT mutate module_cooldowns. "
-            f"Before: {snapshot}, After: {state.module_cooldowns}"
+            f"_shock_blast_apply must NOT mutate module_cooldowns. Before: {snapshot}, After: {state.module_cooldowns}"
         )
-        assert state.module_cooldowns["Camo Booster"] == 5000, (
-            "Camo Booster cooldown must be unaffected by shock-blast"
-        )
+        assert state.module_cooldowns["Camo Booster"] == 5000, "Camo Booster cooldown must be unaffected by shock-blast"
         assert state.module_cooldowns["Speed Booster"] == 3000, (
             "Speed Booster cooldown must be unaffected by shock-blast"
         )
@@ -759,9 +797,15 @@ class TestShockBlast:
     def test_seed_damage_ignored(self):
         """Shock-blast seed damage=140 is ignored — no HP delta. Test 23."""
         # Create shock-blast with non-zero damage_per_shot to verify it's ignored
-        sb = WeaponStats(name="Shock Blast", dps=0.0, damage_per_shot=140.0,
-                         loading_speed_ms=6000, range_m=0.0, subtype="shock-blast",
-                         emp_damage=80)
+        sb = WeaponStats(
+            name="Shock Blast",
+            dps=0.0,
+            damage_per_shot=140.0,
+            loading_speed_ms=6000,
+            range_m=0.0,
+            subtype="shock-blast",
+            emp_damage=80,
+        )
         l1 = _loadout(secondary_weapons=[sb], name="Attacker")
         l2 = _loadout(base_armour=200, name="Target")
         result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
@@ -778,9 +822,16 @@ class TestShockBlast:
 class TestPureEMPSecondary:
     def test_mamba_emp_fires_zero_damage(self):
         """Mamba EMP: fires, rolls accuracy, T3 records 0-amount damage event. Test 24."""
-        mamba = WeaponStats(name="Mamba EMP", dps=0.0, damage_per_shot=0.0,
-                            loading_speed_ms=3000, range_m=5000.0, subtype="missile",
-                            emp_damage=100, steerable=True)
+        mamba = WeaponStats(
+            name="Mamba EMP",
+            dps=0.0,
+            damage_per_shot=0.0,
+            loading_speed_ms=3000,
+            range_m=5000.0,
+            subtype="missile",
+            emp_damage=100,
+            steerable=True,
+        )
         scanner = _telta_scanner()
         l1 = _loadout(secondary_weapons=[mamba], modules=[scanner], name="Attacker")
         l2 = _loadout(base_armour=200, name="Target")
@@ -824,8 +875,11 @@ class TestCrossSubtype:
             sw_rt = state.effective_secondaries[0]
             assert sw_rt.cooldown_remaining_ms == 0, f"{subtype_name}: should start at 0"
             # Run resolve and check the weapon_fire event exists for tick 0
-            t0 = [e for e in result.combat_log if e.tick == 0 and e.type == "weapon_fire"
-                  and e.data.get("slot") == "secondary"]
+            t0 = [
+                e
+                for e in result.combat_log
+                if e.tick == 0 and e.type == "weapon_fire" and e.data.get("slot") == "secondary"
+            ]
             assert len(t0) >= 1, f"{subtype_name}: should fire on tick 0"
 
     def test_t1_t5_regression(self):
@@ -843,17 +897,22 @@ class TestCrossSubtype:
         # One of each subtype
         rocket = _secondary(name="TestRocket", subtype="rocket", speed_ms=speed, range_m=5000.0, damage=50.0)
         missile = _secondary(name="TestMissile", subtype="missile", speed_ms=speed, range_m=5000.0, damage=70.0)
-        cluster = _secondary(name="TestCluster", subtype="cluster-missile", speed_ms=speed,
-                             range_m=5000.0, damage=60.0, burst_count=3)
-        nuke = _secondary(name="TestNuke", subtype="nuke", speed_ms=speed,
-                          range_m=13800.0, damage=850.0, magnitude_m=12500.0)
+        cluster = _secondary(
+            name="TestCluster", subtype="cluster-missile", speed_ms=speed, range_m=5000.0, damage=60.0, burst_count=3
+        )
+        nuke = _secondary(
+            name="TestNuke", subtype="nuke", speed_ms=speed, range_m=13800.0, damage=850.0, magnitude_m=12500.0
+        )
         sb = _secondary(name="TestSB", subtype="shock-blast", speed_ms=speed, range_m=0.0, damage=0.0)
         all_secondaries = [rocket, missile, cluster, nuke, sb]
         l1 = _loadout(secondary_weapons=all_secondaries, base_armour=5000, name="Attacker")
         l2 = _loadout(base_armour=5000, name="Target")
         result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
-        t0 = [e for e in result.combat_log if e.tick == 0 and e.type == "weapon_fire"
-              and e.data.get("slot") == "secondary"]
+        t0 = [
+            e
+            for e in result.combat_log
+            if e.tick == 0 and e.type == "weapon_fire" and e.data.get("slot") == "secondary"
+        ]
         ev_by_sub: dict[str, dict] = {e.data["subtype"]: e.data for e in t0}
 
         # rocket: {slot, subtype, weapon, hit, accuracy}
@@ -961,8 +1020,7 @@ class TestDataModel:
     def test_init_combatant_populates_secondaries(self):
         """_init_combatant builds effective_secondaries from loadout.secondary_weapons."""
         rocket = _secondary(subtype="rocket", damage=50.0, speed_ms=1000, range_m=4000.0)
-        cluster = _secondary(subtype="cluster-missile", damage=60.0, speed_ms=3000,
-                             range_m=4400.0, burst_count=3)
+        cluster = _secondary(subtype="cluster-missile", damage=60.0, speed_ms=3000, range_m=4400.0, burst_count=3)
         test_loadout = _loadout(secondary_weapons=[rocket, cluster])
         state = _init_combatant(test_loadout, is_player=False)
         assert len(state.effective_secondaries) == 2
@@ -995,10 +1053,12 @@ class TestPerformance:
         """Secondary-heavy fight resolves in < 5 seconds (perf regression guard)."""
         import time
 
-        patala = _secondary(subtype="cluster-missile", range_m=5000.0, damage=90.0,
-                            speed_ms=3000, burst_count=5, name="Patala")
-        lib = _secondary(name="Liberator", subtype="nuke", damage=850, speed_ms=10000,
-                         range_m=13800.0, magnitude_m=12500.0)
+        patala = _secondary(
+            subtype="cluster-missile", range_m=5000.0, damage=90.0, speed_ms=3000, burst_count=5, name="Patala"
+        )
+        lib = _secondary(
+            name="Liberator", subtype="nuke", damage=850, speed_ms=10000, range_m=13800.0, magnitude_m=12500.0
+        )
         l1 = _loadout(secondary_weapons=[patala, lib], base_armour=3000, name="C1")
         l2 = _loadout(secondary_weapons=[patala], base_armour=3000, name="C2")
         start = time.perf_counter()
@@ -1116,8 +1176,8 @@ class TestBuilderFedIntegration:
         db.execute = AsyncMock(
             side_effect=[
                 _make_execute_result(player_ship),  # PlayerShip query
-                _make_execute_result(ship),          # Ship query
-                _make_execute_result(jet_rocket),    # SecondaryWeapon query for "Jet Rocket"
+                _make_execute_result(ship),  # Ship query
+                _make_execute_result(jet_rocket),  # SecondaryWeapon query for "Jet Rocket"
             ]
         )
 
@@ -1187,7 +1247,7 @@ class TestBuilderFedIntegration:
         db.execute = AsyncMock(
             side_effect=[
                 _make_execute_result(player_ship),  # PlayerShip
-                _make_execute_result(ship),          # Ship
+                _make_execute_result(ship),  # Ship
             ]
         )
 
@@ -1257,8 +1317,8 @@ class TestBuilderFedIntegration:
         db.execute = AsyncMock(
             side_effect=[
                 _make_execute_result(player_ship),  # PlayerShip
-                _make_execute_result(ship),          # Ship
-                _make_execute_result(shesha),        # SecondaryWeapon: "Shesha"
+                _make_execute_result(ship),  # Ship
+                _make_execute_result(shesha),  # SecondaryWeapon: "Shesha"
             ]
         )
 
@@ -1281,8 +1341,9 @@ class TestBuilderFedIntegration:
         result = TickResolver().resolve(player_loadout, opponent, rng=_AlwaysHit())
 
         # Secondaries should fire
-        cluster_fires = [e for e in result.combat_log
-                        if e.type == "weapon_fire" and e.data.get("subtype") == "cluster-missile"]
+        cluster_fires = [
+            e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "cluster-missile"
+        ]
         assert len(cluster_fires) >= 1, "Cluster missile should fire from builder-produced loadout"
         ev = cluster_fires[0]
         assert ev.data["fired"] == 3
@@ -1349,8 +1410,9 @@ class TestCoverageGaps:
           hits=0, total_damage=0
         And NO damage events should be emitted.
         """
-        patala = _secondary(subtype="cluster-missile", range_m=5000.0, damage=90.0,
-                            speed_ms=3000, burst_count=5, name="Patala")
+        patala = _secondary(
+            subtype="cluster-missile", range_m=5000.0, damage=90.0, speed_ms=3000, burst_count=5, name="Patala"
+        )
         scanner = _telta_scanner()
         l1 = _loadout(secondary_weapons=[patala], modules=[scanner], name="Attacker")
         l2 = _loadout(base_armour=1000, name="Target")
@@ -1407,8 +1469,8 @@ class TestCoverageGaps:
         db.execute = AsyncMock(
             side_effect=[
                 _make_execute_result(player_ship),  # PlayerShip query
-                _make_execute_result(ship),          # Ship query
-                _make_execute_result(None),          # SecondaryWeapon query → None
+                _make_execute_result(ship),  # Ship query
+                _make_execute_result(None),  # SecondaryWeapon query → None
             ]
         )
 

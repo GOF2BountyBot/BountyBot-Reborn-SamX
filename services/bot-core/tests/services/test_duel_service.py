@@ -136,10 +136,15 @@ def make_service(*, duel_repo=None, player_repo=None, user_repo=None, combat_ser
 
 def _make_fight_results(winner: str | None, loser: str | None, is_stalemate: bool = False) -> FightResults:
     """Build a deterministic FightResults for unit tests (no real DB needed)."""
-    fs1 = FightStats(ship_name=winner or "ShipA", raw_hp=100, raw_dps=10.0,
-                     varied_hp=100, varied_dps=10.0, ttk=None)
-    fs2 = FightStats(ship_name=loser or "ShipB", raw_hp=50, raw_dps=5.0,
-                     varied_hp=50, varied_dps=5.0, ttk=5.0 if not is_stalemate else None)
+    fs1 = FightStats(ship_name=winner or "ShipA", raw_hp=100, raw_dps=10.0, varied_hp=100, varied_dps=10.0, ttk=None)
+    fs2 = FightStats(
+        ship_name=loser or "ShipB",
+        raw_hp=50,
+        raw_dps=5.0,
+        varied_hp=50,
+        varied_dps=5.0,
+        ttk=5.0 if not is_stalemate else None,
+    )
     return FightResults(
         winner_name=winner,
         loser_name=loser,

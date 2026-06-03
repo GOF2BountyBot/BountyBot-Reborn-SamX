@@ -204,7 +204,7 @@ class TestPvcArmourBuffOverride:
     def _make_player(self) -> SimpleNamespace:
         return SimpleNamespace(
             id=42,
-            user_id=4200,   # T10: Discord user_id for fight_ships
+            user_id=4200,  # T10: Discord user_id for fight_ships
             guild_id=100,
             tier="Bronze",
             credits=1000,

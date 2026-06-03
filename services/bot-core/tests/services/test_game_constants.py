@@ -38,7 +38,7 @@ def _reset_constants() -> None:
     GameConstants.SHOP_DEFAULT_TURRETS_NUM = 2
     GameConstants.SHOP_DEFAULT_TOOLS_NUM = 0
     GameConstants.TURRET_SPAWN_PROBABILITY = 45
-    GameConstants.DUEL_VARIANCE_PERCENT = 0.05
+    # DUEL_VARIANCE_PERCENT retired in T10
     GameConstants.DUEL_LOG_MAX_LENGTH = 10
     GameConstants.DUEL_CLOAK_CHANCE = 20
     GameConstants.MAX_SHIP_NICKNAME_LENGTH = 30
@@ -271,8 +271,11 @@ class TestShopRankCounts:
 
 
 class TestDuels:
-    def test_duel_variance_percent(self) -> None:
-        assert pytest.approx(GameConstants.DUEL_VARIANCE_PERCENT) == 0.05
+    def test_duel_variance_percent_retired(self) -> None:
+        """DUEL_VARIANCE_PERCENT was retired in T10 — attribute must NOT exist."""
+        assert not hasattr(GameConstants, "DUEL_VARIANCE_PERCENT"), (
+            "DUEL_VARIANCE_PERCENT must be deleted in T10 (SimpleTTKResolver retired)"
+        )
 
     def test_duel_log_max_length(self) -> None:
         assert GameConstants.DUEL_LOG_MAX_LENGTH == 10
@@ -392,10 +395,12 @@ class TestEnvVarOverride:
         GameConstants.load()
         assert GameConstants.DUEL_REQUEST_EXPIRY == 3600
 
-    def test_duel_variance_percent_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_duel_variance_percent_override_is_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """BOUNTYBOT_DUEL_VARIANCE_PERCENT env var is harmless (retired symbol, silently ignored)."""
         monkeypatch.setenv("BOUNTYBOT_DUEL_VARIANCE_PERCENT", "0.10")
         GameConstants.load()
-        assert pytest.approx(GameConstants.DUEL_VARIANCE_PERCENT) == 0.10
+        # The attribute should not exist; env var is a no-op
+        assert not hasattr(GameConstants, "DUEL_VARIANCE_PERCENT")
 
     def test_ship_value_reward_percentage_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BOUNTYBOT_SHIP_VALUE_REWARD_PERCENTAGE", "0.05")
@@ -423,7 +428,6 @@ class TestEnvVarOverride:
         for key in [
             "BOUNTYBOT_MAX_BOUNTIES_PER_DIVISION",
             "BOUNTYBOT_CHECK_COOLDOWN",
-            "BOUNTYBOT_DUEL_VARIANCE_PERCENT",
         ]:
             os.environ.pop(key, None)
 
@@ -431,7 +435,6 @@ class TestEnvVarOverride:
 
         assert GameConstants.MAX_BOUNTIES_PER_DIVISION == 5
         assert GameConstants.CHECK_COOLDOWN == 180
-        assert pytest.approx(GameConstants.DUEL_VARIANCE_PERCENT) == 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -463,8 +466,9 @@ class TestTypeConversion:
         _reset_constants()
 
     def test_env_float_reads_env_var_as_float(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("BOUNTYBOT_DUEL_VARIANCE_PERCENT", "0.15")
+        # Use PVC_DAMAGE_REDUCTION as a still-live float override for this test.
+        monkeypatch.setenv("BOUNTYBOT_PVC_DAMAGE_REDUCTION", "0.15")
         GameConstants.load()
-        assert pytest.approx(GameConstants.DUEL_VARIANCE_PERCENT) == 0.15
-        assert isinstance(GameConstants.DUEL_VARIANCE_PERCENT, float)
+        assert pytest.approx(GameConstants.PVC_DAMAGE_REDUCTION) == 0.15
+        assert isinstance(GameConstants.PVC_DAMAGE_REDUCTION, float)
         _reset_constants()

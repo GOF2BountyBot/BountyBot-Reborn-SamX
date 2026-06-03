@@ -277,8 +277,18 @@ class DuelService:
         challenger_loadout = await LoadoutBuilder.from_player(db, challenger.id)
         target_loadout = await LoadoutBuilder.from_player(db, target.id)
 
-        # Resolve combat
-        fight_results = self.combat_service.fight_ships(challenger_loadout, target_loadout)
+        # Resolve combat via TickResolver (T10: async, routes through persist + stat increment)
+        fight_results = await self.combat_service.fight_ships(
+            challenger_loadout,
+            target_loadout,
+            context="duel",
+            log_result=True,
+            pvc_damage_reduction=0.0,
+            session=db,
+            guild_id=duel.guild_id,
+            combatant1_user_id=challenger.user_id,
+            combatant2_user_id=target.user_id,
+        )
 
         credits_transferred = 0
 

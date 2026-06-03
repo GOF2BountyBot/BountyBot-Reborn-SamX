@@ -1197,9 +1197,14 @@ def _make_player(
     bounty_cooldown_end=None,
     active_ship=None,
 ) -> SimpleNamespace:
-    """Return a Player-like SimpleNamespace."""
+    """Return a Player-like SimpleNamespace.
+
+    T10: guild_id and user_id added so fight_ships callsites can extract them.
+    """
     return SimpleNamespace(
         id=player_id,
+        user_id=player_id * 1000,  # T10: Discord user_id for combat_log
+        guild_id=9999,             # T10: guild_id for combat_log
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
@@ -1594,6 +1599,16 @@ def combat_integration_setup(service, mock_db):
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
     service.bounty_repo.update = AsyncMock()
     service.combat_service = MagicMock()
+    # T10: fight_ships is async — default stalemate (caller can override)
+    _fs = SimpleNamespace(ship_name="Ship", raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None)
+    service.combat_service.fight_ships = AsyncMock(return_value=SimpleNamespace(
+        winner_name=None,
+        loser_name=None,
+        is_stalemate=True,
+        ship1_stats=_fs,
+        ship2_stats=_fs,
+        combat_log_id=None,
+    ))
     return service, mock_db
 
 
@@ -1672,9 +1687,9 @@ async def test_check_bounty_correct_player_wins_combat(combat_integration_setup)
         is_stalemate=False,
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -1730,9 +1745,9 @@ async def test_check_bounty_correct_bronze_player_loses_combat_still_captured(co
         is_stalemate=False,
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -1779,9 +1794,9 @@ async def test_check_bounty_correct_silver_player_loses_combat(combat_integratio
         is_stalemate=False,
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -1817,9 +1832,9 @@ async def test_check_bounty_correct_stalemate_counts_as_win(combat_integration_s
         is_stalemate=True,
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -1894,7 +1909,7 @@ async def test_check_bounty_correct_combat_with_full_criminal_loadout(combat_int
         ship_name="Bandit", raw_hp=150, raw_dps=30.0, varied_hp=148, varied_dps=30.0, ttk=None
     )
 
-    def capture_fight(p_loadout, c_loadout, **kwargs):
+    async def capture_fight(p_loadout, c_loadout, **kwargs):
         captured_loadouts["player"] = p_loadout
         captured_loadouts["criminal"] = c_loadout
         return SimpleNamespace(
@@ -1903,10 +1918,10 @@ async def test_check_bounty_correct_combat_with_full_criminal_loadout(combat_int
             is_stalemate=False,
             ship1_stats=_fight_stats1,
             ship2_stats=_fight_stats2,
-            variance_percent=0.05,
+            combat_log_id=None,
         )
 
-    service.combat_service.fight_ships.side_effect = capture_fight
+    service.combat_service.fight_ships = capture_fight
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3177,9 +3192,14 @@ def _make_player_with_tier(
     bounty_cooldown_end=None,
     active_ship=None,
 ) -> SimpleNamespace:
-    """Return a Player-like SimpleNamespace with an active_ship but no active_ship_id."""
+    """Return a Player-like SimpleNamespace with an active_ship but no active_ship_id.
+
+    T10: guild_id and user_id added so fight_ships callsites can extract them.
+    """
     return SimpleNamespace(
         id=player_id,
+        user_id=player_id * 1000,  # T10: Discord user_id for combat_log
+        guild_id=9999,             # T10: guild_id for combat_log
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
@@ -3243,9 +3263,9 @@ async def test_check_bounty_bronze_with_ship_bonus_won(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3299,9 +3319,9 @@ async def test_check_bounty_bronze_with_ship_bonus_lost(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3345,9 +3365,9 @@ async def test_check_bounty_silver_mandatory_combat_win(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3397,9 +3417,9 @@ async def test_check_bounty_silver_mandatory_combat_loss_resets_checks(service, 
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3442,9 +3462,9 @@ async def test_check_bounty_gold_mandatory_combat_win(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3488,9 +3508,9 @@ async def test_check_bounty_silver_stalemate_counts_as_win(service, mock_db):
         is_stalemate=True,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3558,9 +3578,9 @@ async def test_check_bounty_bronze_combat_result_serialized(service, mock_db):
         is_stalemate=False,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3604,9 +3624,9 @@ async def test_check_bounty_silver_combat_result_serialized(service, mock_db):
         is_stalemate=False,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3710,7 +3730,7 @@ def test_serialize_fight_results_none():
 
 
 def test_serialize_fight_results_win():
-    """Serializes a win FightResults to a dict with all expected keys."""
+    """Serializes a win FightResults to a dict with all expected keys (T10 schema)."""
     from services.bounty_service import _serialize_fight_results
 
     fight_stats1 = SimpleNamespace(
@@ -3723,7 +3743,7 @@ def test_serialize_fight_results_win():
         is_stalemate=False,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=42,
     )
 
     result = _serialize_fight_results(fight)
@@ -3732,16 +3752,19 @@ def test_serialize_fight_results_win():
     assert result["winner_name"] == "Betty"
     assert result["loser_name"] == "Bandit"
     assert result["is_stalemate"] is False
-    assert result["variance_percent"] == 0.05
+    # T10: variance_percent removed from serialized output
+    assert "variance_percent" not in result
     assert result["ship1_stats"]["ship_name"] == "Betty"
     assert result["ship1_stats"]["ttk"] == 18.57
     assert result["ship2_stats"]["ship_name"] == "Bandit"
-    # pvc_armour_buff absent when not passed
+    # T10: pvc_armour_buff retired
     assert "pvc_armour_buff" not in result
+    # T10: combat_log_id present
+    assert result["combat_log_id"] == 42
 
 
 def test_serialize_fight_results_win_with_pvc_buff():
-    """pvc_armour_buff is included in the dict when passed."""
+    """T10: pvc_armour_buff is retired — _serialize_fight_results no longer accepts it."""
     from services.bounty_service import _serialize_fight_results
 
     fight_stats1 = SimpleNamespace(
@@ -3754,17 +3777,17 @@ def test_serialize_fight_results_win_with_pvc_buff():
         is_stalemate=False,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
 
-    result = _serialize_fight_results(fight, pvc_armour_buff=1.5)
-
-    assert result is not None
-    assert result["pvc_armour_buff"] == 1.5
+    # T10: pvc_armour_buff kwarg is removed from _serialize_fight_results
+    import pytest as _pytest
+    with _pytest.raises(TypeError):
+        _serialize_fight_results(fight, pvc_armour_buff=1.5)  # type: ignore[call-arg]
 
 
 def test_serialize_fight_results_stalemate():
-    """Serializes a stalemate FightResults correctly."""
+    """Serializes a stalemate FightResults correctly (T10 schema)."""
     from services.bounty_service import _serialize_fight_results
 
     fight_stats1 = SimpleNamespace(ship_name="A", raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None)
@@ -3775,7 +3798,7 @@ def test_serialize_fight_results_stalemate():
         is_stalemate=True,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.0,
+        combat_log_id=None,
     )
 
     result = _serialize_fight_results(fight)
@@ -3785,6 +3808,83 @@ def test_serialize_fight_results_stalemate():
     assert result["is_stalemate"] is True
     assert result["ship1_stats"]["ttk"] is None
     assert "pvc_armour_buff" not in result
+    assert "variance_percent" not in result
+
+
+def test_serialize_fight_results_includes_pvc_damage_reduction_for_pvc():
+    """pvc_damage_reduction is included from FightResults.metadata for a PvC fight."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(
+        ship_name="Betty", raw_hp=200, raw_dps=10.0, varied_hp=195, varied_dps=10.5, ttk=18.57
+    )
+    fight_stats2 = SimpleNamespace(ship_name="Bandit", raw_hp=100, raw_dps=8.0, varied_hp=98, varied_dps=8.2, ttk=23.78)
+    fight = SimpleNamespace(
+        winner_name="Betty",
+        loser_name="Bandit",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=7,
+        metadata={"pvc_damage_reduction": 0.33, "resolver": "tick_v1"},
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    assert result["pvc_damage_reduction"] == pytest.approx(0.33)
+
+
+def test_serialize_fight_results_pvc_damage_reduction_zero_for_pvp():
+    """pvc_damage_reduction is 0.0 when metadata has no pvc_damage_reduction key (PvP fight)."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(
+        ship_name="Alpha", raw_hp=150, raw_dps=9.0, varied_hp=148, varied_dps=9.1, ttk=15.0
+    )
+    fight_stats2 = SimpleNamespace(
+        ship_name="Bravo", raw_hp=140, raw_dps=8.5, varied_hp=137, varied_dps=8.6, ttk=16.0
+    )
+    fight = SimpleNamespace(
+        winner_name="Alpha",
+        loser_name="Bravo",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=None,
+        metadata={},
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    assert result["pvc_damage_reduction"] == pytest.approx(0.0)
+
+
+def test_serialize_fight_results_pvc_damage_reduction_zero_when_no_metadata():
+    """pvc_damage_reduction is 0.0 when fight has no metadata attribute at all."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(
+        ship_name="Alpha", raw_hp=150, raw_dps=9.0, varied_hp=148, varied_dps=9.1, ttk=15.0
+    )
+    fight_stats2 = SimpleNamespace(
+        ship_name="Bravo", raw_hp=140, raw_dps=8.5, varied_hp=137, varied_dps=8.6, ttk=16.0
+    )
+    # Deliberately no `metadata` attribute
+    fight = SimpleNamespace(
+        winner_name="Alpha",
+        loser_name="Bravo",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=None,
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    assert result["pvc_damage_reduction"] == pytest.approx(0.0)
 
 
 # ===========================================================================
@@ -4535,18 +4635,16 @@ async def test_generate_loadout_empty_combat_ship_pool_warns_and_returns_unknown
 
 
 # ===========================================================================
-# Keith T Maxwell bonus — PvC armour buff at both fight_ships call sites
+# Keith T Maxwell bonus — PvC damage reduction at both fight_ships call sites (T10)
 # ===========================================================================
 
 
 @pytest.mark.asyncio
 async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setup):
-    """Keith T Maxwell bonus: Bronze path fight_ships call passes
-    player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
+    """T10: Bronze path fight_ships call passes pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION.
 
-    Verifies that ``_process_single_bounty_check`` passes the PvC armour
-    buff to ``combat_service.fight_ships`` on the Bronze (auto-capture)
-    code path, not just the Silver/Gold/Platinum gate path.
+    Verifies that ``_process_single_bounty_check`` passes the PvC DR to
+    ``combat_service.fight_ships`` on the Bronze (auto-capture) code path.
 
     Max mocks used: 2 (combat_service, loadout_builder).
     """
@@ -4568,7 +4666,7 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
     )
     _fight_stats2 = SimpleNamespace(ship_name="Raider", raw_hp=80, raw_dps=5.0, varied_hp=80, varied_dps=5.0, ttk=16.0)
 
-    def _capture_fight(p_loadout, c_loadout, **kwargs):
+    async def _capture_fight(p_loadout, c_loadout, **kwargs):
         captured_kwargs.update(kwargs)
         return SimpleNamespace(
             winner_name="Betty",
@@ -4576,10 +4674,10 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
             is_stalemate=False,
             ship1_stats=_fight_stats1,
             ship2_stats=_fight_stats2,
-            variance_percent=0.0,
+            combat_log_id=None,
         )
 
-    service.combat_service.fight_ships.side_effect = _capture_fight
+    service.combat_service.fight_ships = _capture_fight
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
     service.bounty_repo.update.return_value = bounty
@@ -4596,23 +4694,22 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
         result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
 
     assert result.result == CheckResult.CORRECT
-    # The kwarg must have been passed
-    assert "player_armour_buff" in captured_kwargs, (
-        "fight_ships was not called with player_armour_buff kwarg on bronze path"
+    # T10: pvc_damage_reduction replaces player_armour_buff
+    assert "pvc_damage_reduction" in captured_kwargs, (
+        "fight_ships was not called with pvc_damage_reduction kwarg on bronze path"
     )
-    assert captured_kwargs["player_armour_buff"] == GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR, (
-        f"Expected player_armour_buff={GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR}, "
-        f"got {captured_kwargs.get('player_armour_buff')}"
+    assert captured_kwargs["pvc_damage_reduction"] == pytest.approx(GameConstants.PVC_DAMAGE_REDUCTION), (
+        f"Expected pvc_damage_reduction={GameConstants.PVC_DAMAGE_REDUCTION}, "
+        f"got {captured_kwargs.get('pvc_damage_reduction')}"
     )
 
 
 @pytest.mark.asyncio
 async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setup):
-    """Keith T Maxwell bonus: Silver/Gold/Platinum mandatory combat gate also passes
-    player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
+    """T10: Silver/Gold/Platinum fight_ships call passes pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION.
 
     Verifies that the second fight_ships call site (the Silver/Gold/Platinum
-    mandatory combat gate introduced in B.58) forwards the PvC armour buff.
+    mandatory combat gate) forwards the PvC DR kwarg.
 
     Max mocks used: 2 (combat_service, loadout_builder).
     """
@@ -4637,7 +4734,7 @@ async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setu
         ship_name="Guardian", raw_hp=150, raw_dps=10.0, varied_hp=150, varied_dps=10.0, ttk=20.0
     )
 
-    def _capture_fight(p_loadout, c_loadout, **kwargs):
+    async def _capture_fight(p_loadout, c_loadout, **kwargs):
         captured_kwargs.update(kwargs)
         return SimpleNamespace(
             winner_name="Falcon",
@@ -4645,10 +4742,10 @@ async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setu
             is_stalemate=False,
             ship1_stats=_fight_stats1,
             ship2_stats=_fight_stats2,
-            variance_percent=0.0,
+            combat_log_id=None,
         )
 
-    service.combat_service.fight_ships.side_effect = _capture_fight
+    service.combat_service.fight_ships = _capture_fight
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
     service.bounty_repo.update.return_value = bounty
@@ -4665,13 +4762,13 @@ async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setu
 
     assert result.result == CheckResult.CORRECT
     assert result.combat_won is True
-    # The kwarg must have been passed on the silver path too
-    assert "player_armour_buff" in captured_kwargs, (
-        "fight_ships was not called with player_armour_buff kwarg on silver/gold/platinum path"
+    # T10: pvc_damage_reduction replaces player_armour_buff on silver path too
+    assert "pvc_damage_reduction" in captured_kwargs, (
+        "fight_ships was not called with pvc_damage_reduction kwarg on silver/gold/platinum path"
     )
-    assert captured_kwargs["player_armour_buff"] == GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR, (
-        f"Expected player_armour_buff={GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR}, "
-        f"got {captured_kwargs.get('player_armour_buff')}"
+    assert captured_kwargs["pvc_damage_reduction"] == pytest.approx(GameConstants.PVC_DAMAGE_REDUCTION), (
+        f"Expected pvc_damage_reduction={GameConstants.PVC_DAMAGE_REDUCTION}, "
+        f"got {captured_kwargs.get('pvc_damage_reduction')}"
     )
 
 

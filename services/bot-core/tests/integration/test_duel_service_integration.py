@@ -47,6 +47,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from persist.models.base import Base
+from persist.models.combat_log import CombatLog
 from persist.models.duel_request import DuelRequest
 from persist.models.guild_config import GuildConfig
 from persist.models.guild_shop import GuildShop
@@ -56,7 +57,7 @@ from persist.models.player_ship import PlayerShip
 from persist.models.user import User
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# DuelRequest is SQLite-compatible (no ARRAY columns).
+# DuelRequest + CombatLog are SQLite-compatible (no ARRAY columns).
 _SQLITE_TABLES = [
     User.__table__,
     Player.__table__,
@@ -65,6 +66,7 @@ _SQLITE_TABLES = [
     PlayerInventory.__table__,
     PlayerShip.__table__,
     DuelRequest.__table__,
+    CombatLog.__table__,  # T10: fight_ships persists to combat_log
 ]
 
 

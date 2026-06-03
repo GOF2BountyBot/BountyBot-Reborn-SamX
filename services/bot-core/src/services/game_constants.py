@@ -187,18 +187,10 @@ class GameConstants:
     # Duels
     # ------------------------------------------------------------------
 
-    DUEL_VARIANCE_PERCENT: float = 0.05  # ±5%
     DUEL_LOG_MAX_LENGTH: int = 10
     DUEL_CLOAK_CHANCE: int = 20  # %
-
-    # ------------------------------------------------------------------
-    # Bounty PvC Combat (player vs criminal) — armour buff
-    # Applied to the player's armour when fighting a criminal.
-    # 1.5 = +50% armour buff; 1.0 = no buff.
-    # Override via: BOUNTYBOT_BOUNTY_PVC_ARMOUR_BUFF_FACTOR=1.5
-    # ------------------------------------------------------------------
-
-    BOUNTY_PVC_ARMOUR_BUFF_FACTOR: float = 1.5
+    # DUEL_VARIANCE_PERCENT — retired in T10 (SimpleTTKResolver removed; TickResolver has no variance).
+    # BOUNTY_PVC_ARMOUR_BUFF_FACTOR — retired in T10 (replaced by PVC_DAMAGE_REDUCTION §3).
 
     # ------------------------------------------------------------------
     # Item Type Vocabulary
@@ -420,12 +412,9 @@ class GameConstants:
         cls.TURRET_SPAWN_PROBABILITY = _track_int("TURRET_SPAWN_PROBABILITY", 45)
 
         # Duels
-        cls.DUEL_VARIANCE_PERCENT = _track_float("DUEL_VARIANCE_PERCENT", 0.05)
         cls.DUEL_LOG_MAX_LENGTH = _track_int("DUEL_LOG_MAX_LENGTH", 10)
         cls.DUEL_CLOAK_CHANCE = _track_int("DUEL_CLOAK_CHANCE", 20)
-
-        # PvC combat armour buff
-        cls.BOUNTY_PVC_ARMOUR_BUFF_FACTOR = _track_float("BOUNTY_PVC_ARMOUR_BUFF_FACTOR", 1.5)
+        # DUEL_VARIANCE_PERCENT and BOUNTY_PVC_ARMOUR_BUFF_FACTOR retired in T10.
 
         # Inventory
         cls.MAX_SHIP_NICKNAME_LENGTH = _track_int("MAX_SHIP_NICKNAME_LENGTH", 30)

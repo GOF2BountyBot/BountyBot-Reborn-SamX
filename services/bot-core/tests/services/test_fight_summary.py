@@ -185,6 +185,12 @@ def _weapon_fire_event(actor: str, target: str, tick: int = 1, hit: bool = True)
 
 
 def _damage_event(target: str, attacker: str, amount: int, tick: int = 1) -> CombatEvent:
+    """Helper: damage event where absorbed == amount (no overkill scenario).
+
+    T10: the summary builder reads 'absorbed' (not 'amount') for damage_dealt/taken.
+    In this helper, absorbed == amount (no overkill); use explicit CombatEvent for
+    overkill scenarios.
+    """
     return CombatEvent(
         tick=tick,
         type=CombatEventType.damage,
@@ -192,6 +198,7 @@ def _damage_event(target: str, attacker: str, amount: int, tick: int = 1) -> Com
         target=target,
         data={
             "amount": amount,
+            "absorbed": amount,  # T10: absorbed == amount when no overkill
             "breakdown": {"shield": 0, "armour": 0, "hull": amount},
             "hp_after": _hp(100 - amount),
             "source": {"subtype": "primary", "weapon": "TestGun", "attacker": attacker},
@@ -379,6 +386,7 @@ class TestDamageDealtAndTaken:
             target="C2",
             data={
                 "amount": 0,
+                "absorbed": 0,  # T10: explicitly 0 for invuln-blocked events
                 "hp_after": _hp(100),
                 "source": {"subtype": "primary", "weapon": "TestGun", "attacker": "C1"},
                 "blocked_by": "emergency_system_invuln",
@@ -399,15 +407,31 @@ class TestDamageDealtAndTaken:
 
         Scenario: cluster fires 3 sub-munitions, first kills (absorbs remaining hull 30),
         last two overkill. Only 30 HP actually absorbed per damage events.
+
+        T10: uses absorbed field; raw amount for sub-munitions 2+3 could be >0 (raw overkill),
+        but absorbed=0 for overkill hits.
         """
         c1, c2 = _make_states()
         # Simulate cluster scenario: target hull=30, cluster fires 3 sub-munitions
-        # First sub-munition absorbs 30; second + third: 0 (target HP already depleted)
+        # First sub-munition absorbs 30; second + third: raw=30 each but absorbed=0 (overkill)
+        overkill_ev = CombatEvent(
+            tick=1,
+            type=CombatEventType.damage,
+            actor=None,
+            target="C2",
+            data={
+                "amount": 30,    # raw overkill — kept for log display
+                "absorbed": 0,   # T10: no HP actually removed (target already dead)
+                "breakdown": {"shield": 0, "armour": 0, "hull": 30},
+                "hp_after": _hp(-30),
+                "source": {"subtype": "cluster-missile", "weapon": "ClusterBomb", "attacker": "C1"},
+            },
+        )
         events = [
             _fight_start_event("C1", "C2", hull1=200, hull2=30),
-            _damage_event("C2", attacker="C1", amount=30, tick=1),  # first sub: absorbs all HP
-            _damage_event("C2", attacker="C1", amount=0, tick=1),   # second sub: overkill, 0 absorbed
-            _damage_event("C2", attacker="C1", amount=0, tick=1),   # third sub: overkill, 0 absorbed
+            _damage_event("C2", attacker="C1", amount=30, tick=1),  # first sub: absorbs 30
+            overkill_ev,   # second sub: raw=30 but absorbed=0
+            overkill_ev,   # third sub: raw=30 but absorbed=0
             _fight_end_event(2, "C1", "hp_depleted", 2, _hp(200), _hp(0)),
         ]
         s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1")

@@ -146,7 +146,7 @@ async def check_bounty(
     )
     try:
         async with get_db_session() as db:
-            multi = await service.check_bounty(db, request.player_id, request.system_name, guild_id)
+            multi = await service.check_bounty(db, request.player_id, request.system_name, guild_id)  # noqa: TRANSACTION_DISCIPLINE — fight_ships owns its commit via CombatLogService.persist
         flogger.info(
             f"Bounty check result: player_id={request.player_id}"
             f" system={request.system_name!r} result_count={len(multi.outcomes)}"
@@ -209,22 +209,29 @@ async def combat_bonus(
                 flogger.info(f"combat_bonus: player_id={request.player_id} not found — returning 404")
                 raise HTTPException(status_code=404, detail=f"Player {request.player_id} not found")
 
-            # Load per-guild config for PvC armour buff override (B.49)
+            # Load per-guild config for PvC DR override (T10: pvc_damage_reduction replaces pvc_armour_buff_factor)
             guild_cfg = None
             if hasattr(player, "guild_id") and player.guild_id:
                 guild_cfg = await ConfigRepository().get_by_guild_id(db, player.guild_id)
-            _pvc_buff = resolve_constant(
-                guild_cfg, "bounty_pvc_armour_buff_factor", GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
-            )
+            _pvc_dr = resolve_constant(guild_cfg, "pvc_damage_reduction", GameConstants.PVC_DAMAGE_REDUCTION)
 
             # Build loadouts
             player_loadout = await LoadoutBuilder.from_player(db, request.player_id)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(request.criminal_ship)
 
-            # Run combat with PvC armour buff applied to the player (loadout1 = ship1).
-            # PvP duels use the same CombatService.fight_ships() with default buff=1.0.
+            # Run combat via TickResolver (T10: async, persists combat_log, increments Player stats)
             combat_svc = CombatService()
-            fight_results = combat_svc.fight_ships(player_loadout, criminal_loadout, player_armour_buff=_pvc_buff)
+            fight_results = await combat_svc.fight_ships(  # noqa: TRANSACTION_DISCIPLINE — fight_ships owns its commit via CombatLogService.persist
+                player_loadout,
+                criminal_loadout,
+                context="bounty_bonus",
+                log_result=True,
+                pvc_damage_reduction=_pvc_dr,
+                session=db,
+                guild_id=player.guild_id,
+                combatant1_user_id=player.user_id,
+                combatant2_user_id=None,  # NPC side
+            )
 
             # Determine outcome (stalemate = player wins for bounties)
             won = fight_results.is_stalemate or (fight_results.winner_name == player_loadout.ship_name)
@@ -234,7 +241,7 @@ async def combat_bonus(
                 await service._award_combat_bonus(db, request.player_id, request.base_reward)
                 bonus_credits = request.base_reward
 
-            combat_dict = _serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff) or {}
+            combat_dict = _serialize_fight_results(fight_results) or {}
             if won:
                 msg = f"Combat victory! +{bonus_credits:,}cr bonus (2x total)!"
             else:

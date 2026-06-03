@@ -96,6 +96,8 @@ def _make_player(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=player_id,
+        user_id=player_id * 1000,  # T10: Discord user_id for fight_ships
+        guild_id=9999,             # T10: guild_id for fight_ships
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
@@ -253,10 +255,10 @@ async def test_check_correct_triggers_announcement_edit_loss(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
     service.combat_service = MagicMock()
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
@@ -358,10 +360,10 @@ async def test_check_correct_silver_win_edits_with_captured_flag(service, mock_d
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
     service.combat_service = MagicMock()
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
@@ -665,10 +667,10 @@ async def test_check_correct_loss_edits_announcement_no_captured_flag(service, m
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
     service.combat_service = MagicMock()
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])

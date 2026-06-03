@@ -48,16 +48,14 @@ FORFEITED_CHECK = -2  # System checked by a player who has since promoted past t
 # eligible for the per-system payout. See scrub_player_checks_below_tier.
 
 
-def _serialize_fight_results(fight_results, *, pvc_armour_buff: float | None = None) -> dict | None:
+def _serialize_fight_results(fight_results) -> dict | None:
     """Serialize a FightResults dataclass to a plain dict for API responses.
 
-    Returns None if fight_results is None.
+    Returns None if fight_results is None. Includes the combat_log_id when present.
+    variance_percent is omitted (retired in T10 alongside SimpleTTKResolver).
 
-    Args:
-        fight_results:    FightResults instance (or None).
-        pvc_armour_buff:  When provided, included in the dict so the gateway
-                          can surface the Keith T Maxwell buff callout in the
-                          combat summary embed. Pass None for PvP (duel) results.
+    pvc_damage_reduction is included from FightResults.metadata; it is 0.0 for
+    PvP fights and the configured DR value (e.g. 0.33) for PvC bounty fights.
 
     Returns:
         Dict representation suitable for JSON serialization, or None.
@@ -75,16 +73,16 @@ def _serialize_fight_results(fight_results, *, pvc_armour_buff: float | None = N
             "ttk": fs.ttk,
         }
 
-    result = {
+    metadata = getattr(fight_results, "metadata", None) or {}
+    result: dict = {
         "winner_name": fight_results.winner_name,
         "loser_name": fight_results.loser_name,
         "is_stalemate": fight_results.is_stalemate,
         "ship1_stats": _stats_to_dict(fight_results.ship1_stats),
         "ship2_stats": _stats_to_dict(fight_results.ship2_stats),
-        "variance_percent": fight_results.variance_percent,
+        "combat_log_id": fight_results.combat_log_id,
+        "pvc_damage_reduction": float(metadata.get("pvc_damage_reduction", 0.0)),
     }
-    if pvc_armour_buff is not None:
-        result["pvc_armour_buff"] = pvc_armour_buff
     return result
 
 
@@ -1330,9 +1328,6 @@ class BountyService:
             player_loadout = await LoadoutBuilder.from_player(db, player_id)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
 
-            _pvc_buff = resolve_constant(
-                cfg, "bounty_pvc_armour_buff_factor", GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
-            )
             if is_bronze:
                 # BRONZE: Auto-capture always succeeds. Optional combat bonus.
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)
@@ -1344,8 +1339,17 @@ class BountyService:
                 bonus_won = False
                 total_reward = winner_reward
                 if not _no_ship:
-                    fight_results = self.combat_service.fight_ships(
-                        player_loadout, criminal_loadout, player_armour_buff=_pvc_buff
+                    _pvc_dr = resolve_constant(cfg, "pvc_damage_reduction", GameConstants.PVC_DAMAGE_REDUCTION)
+                    fight_results = await self.combat_service.fight_ships(
+                        player_loadout,
+                        criminal_loadout,
+                        context="bounty_bonus",
+                        log_result=True,
+                        pvc_damage_reduction=_pvc_dr,
+                        session=db,
+                        guild_id=player.guild_id,
+                        combatant1_user_id=player.user_id,
+                        combatant2_user_id=None,  # NPC side
                     )
                     combat_player_won = (
                         fight_results.winner_name == player_loadout.ship_name
@@ -1365,7 +1369,7 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
-                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
+                        combat_result=_serialize_fight_results(fight_results)
                         if fight_results
                         else None,
                         bonus_won=bonus_won,
@@ -1383,8 +1387,17 @@ class BountyService:
                 duel_won = True
                 fight_results = None
             else:
-                fight_results = self.combat_service.fight_ships(
-                    player_loadout, criminal_loadout, player_armour_buff=_pvc_buff
+                _pvc_dr_silver = resolve_constant(cfg, "pvc_damage_reduction", GameConstants.PVC_DAMAGE_REDUCTION)
+                fight_results = await self.combat_service.fight_ships(
+                    player_loadout,
+                    criminal_loadout,
+                    context="bounty_pvc",
+                    log_result=True,
+                    pvc_damage_reduction=_pvc_dr_silver,
+                    session=db,
+                    guild_id=player.guild_id,
+                    combatant1_user_id=player.user_id,
+                    combatant2_user_id=None,  # NPC side
                 )
                 duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
 
@@ -1403,7 +1416,7 @@ class BountyService:
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
                         total_reward=winner_reward,
-                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
+                        combat_result=_serialize_fight_results(fight_results)
                         if fight_results
                         else None,
                         reward_per_sys=getattr(bounty, "reward_per_sys", None),
@@ -1423,7 +1436,7 @@ class BountyService:
                     combat_won=False,
                     division=division,
                     criminal_name=bounty.criminal_name,
-                    combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
+                    combat_result=_serialize_fight_results(fight_results)
                     if fight_results
                     else None,
                 ),

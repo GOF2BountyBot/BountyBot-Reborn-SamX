@@ -1281,7 +1281,6 @@ class TestCheckBountyNewFields:
                             "is_stalemate": False,
                             "ship1_stats": {"ship_name": "Betty"},
                             "ship2_stats": {"ship_name": "Crusher"},
-                            "variance_percent": 0.05,
                         },
                     )
                 ],
@@ -1423,7 +1422,6 @@ class TestCheckBountyNewFields:
                             "is_stalemate": False,
                             "ship1_stats": {},
                             "ship2_stats": {},
-                            "variance_percent": 0.05,
                         },
                     )
                 ],
@@ -1502,8 +1500,8 @@ class TestCombatBonusEndpoint:
         mock_fight.is_stalemate = False
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
-        mock_fight.variance_percent = 0.05
-        mock_combat.fight_ships.return_value = mock_fight
+        mock_fight.combat_log_id = None
+        mock_combat.fight_ships = AsyncMock(return_value=mock_fight)
         mock_combat_cls.return_value = mock_combat
 
         # Mock player in DB
@@ -1555,8 +1553,8 @@ class TestCombatBonusEndpoint:
         mock_fight.is_stalemate = False
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
-        mock_fight.variance_percent = 0.05
-        mock_combat.fight_ships.return_value = mock_fight
+        mock_fight.combat_log_id = None
+        mock_combat.fight_ships = AsyncMock(return_value=mock_fight)
         mock_combat_cls.return_value = mock_combat
 
         # B.58: player must exist; supply a real (mocked) player so 404 guard passes.
@@ -1610,8 +1608,8 @@ class TestCombatBonusEndpoint:
         mock_fight.is_stalemate = True
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
-        mock_fight.variance_percent = 0.0
-        mock_combat.fight_ships.return_value = mock_fight
+        mock_fight.combat_log_id = None
+        mock_combat.fight_ships = AsyncMock(return_value=mock_fight)
         mock_combat_cls.return_value = mock_combat
 
         mock_player = MagicMock()
@@ -1741,8 +1739,8 @@ class TestCombatBonusAdversarial:
         mock_fight.is_stalemate = False
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
-        mock_fight.variance_percent = 0.05
-        mock_combat.fight_ships.return_value = mock_fight
+        mock_fight.combat_log_id = None
+        mock_combat.fight_ships = AsyncMock(return_value=mock_fight)
         mock_combat_cls.return_value = mock_combat
 
         mock_player = MagicMock()
@@ -1799,8 +1797,8 @@ class TestCombatBonusAdversarial:
         mock_fight.is_stalemate = False
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
-        mock_fight.variance_percent = 0.03
-        mock_combat.fight_ships.return_value = mock_fight
+        mock_fight.combat_log_id = None
+        mock_combat.fight_ships = AsyncMock(return_value=mock_fight)
         mock_combat_cls.return_value = mock_combat
 
         mock_player = MagicMock()

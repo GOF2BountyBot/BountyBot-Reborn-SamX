@@ -488,12 +488,12 @@ class BountyCog(commands.Cog):
         s2 = combat.get("ship2_stats", {})
 
         lines = []
-        # Player stats — varied_hp already reflects the PvC armour buff
+        # Player stats
         lines.append(f"**Your Ship** ({s1.get('ship_name', '?')})")
         lines.append(f"HP: {s1.get('raw_hp', 0)} → {s1.get('varied_hp', 0)} | DPS: {s1.get('raw_dps', 0):.1f}")
-        armour_buff = combat.get("pvc_armour_buff")
-        if armour_buff is not None and armour_buff != 1.0:
-            lines.append(f"🛡️ Keith T Maxwell armour buff active (×{armour_buff:g} HP)")
+        pvc_dr = combat.get("pvc_damage_reduction", 0.0) or 0.0
+        if pvc_dr > 0:
+            lines.append(f"🛡️ PvC damage reduction: {round(pvc_dr * 100)}% active")
         ttk1 = s1.get("ttk")
         lines.append(f"Time to Kill: {f'{ttk1:.1f}s' if ttk1 is not None else '∞'}")
         lines.append("")

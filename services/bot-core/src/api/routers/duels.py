@@ -281,7 +281,7 @@ async def accept_duel(
         flogger.info(f"Duel accept request: duel_id={duel_id} user_id={user_id}")
         flogger.debug(f"User {user_id} is accepting duel {duel_id} (authorization check passed)")
         try:
-            result = await service.accept_duel(db, duel_id)
+            result = await service.accept_duel(db, duel_id)  # noqa: TRANSACTION_DISCIPLINE — fight_ships owns its commit via CombatLogService.persist
         except ValueError as exc:
             msg = str(exc)
             flogger.error(f"Duel accept failed: duel_id={duel_id} user_id={user_id}: {msg}")

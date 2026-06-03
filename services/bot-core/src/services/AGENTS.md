@@ -283,14 +283,16 @@ Key types:
 
 ---
 
-### combat_service.py — `CombatService`
+### combat_service.py — `CombatService` + `TickResolver`
 
-Duel combat resolution:
-- `build_loadout(db, player_id)` — fetches player's active ship, equipped weapons and modules from DB; returns `ShipLoadout`
-- `resolve_combat(attacker_loadout, defender_loadout)` — uses `SimpleTTKResolver` (time-to-kill model) to simulate combat; applies DUEL_VARIANCE_PERCENT random factor
-- Returns `FightResults` with winner, damage log, turn count
+Tick-based combat resolution (T3–T10):
+- `fight_ships(loadout1, loadout2, *, context, log_result, pvc_damage_reduction, session, guild_id, ...)` — async;
+  routes through `TickResolver`; persists `combat_log` row + increments Player stat counters when `log_result=True`.
+  `SimpleTTKResolver` and `DUEL_VARIANCE_PERCENT` are retired (T10). Use `pvc_damage_reduction=0.33` for PvC, `0.0` for PvP.
+- `collect_stats(loadout)` — legacy stat collection (DPS/armour/shield) used by embed builders; still present.
+- Returns `FightResults` with `combat_log` timeline, metadata summary, and `combat_log_id`.
 
-Uses: `PlayerRepository`, `PlayerShipRepository`, `InventoryRepository`, `EquipmentService`
+Uses: `CombatLogService`, `PlayerRepository`, `TickResolver`
 
 ---
 

@@ -131,113 +131,38 @@ def make_service(*, duel_repo=None, player_repo=None, user_repo=None, combat_ser
 
 
 # ---------------------------------------------------------------------------
-# Deterministic custom combat resolvers
+# Deterministic fight_ships mock factories (T10: fight_ships is now async)
 # ---------------------------------------------------------------------------
 
 
-class ChallengerWinsResolver:
-    """Combat resolver: ship1 (challenger) always wins decisively."""
-
-    def resolve(
-        self,
-        ship1_stats: CombatStats,
-        ship2_stats: CombatStats,
-        variance_percent: float,
-    ) -> FightResults:
-        fs1 = FightStats(
-            ship_name=ship1_stats.ship_name,
-            raw_hp=ship1_stats.total_hp,
-            raw_dps=100.0,
-            varied_hp=ship1_stats.total_hp,
-            varied_dps=100.0,
-            ttk=10.0,
-        )
-        fs2 = FightStats(
-            ship_name=ship2_stats.ship_name,
-            raw_hp=ship2_stats.total_hp,
-            raw_dps=1.0,
-            varied_hp=ship2_stats.total_hp,
-            varied_dps=1.0,
-            ttk=1.0,
-        )
-        return FightResults(
-            winner_name=ship1_stats.ship_name,
-            loser_name=ship2_stats.ship_name,
-            is_stalemate=False,
-            ship1_stats=fs1,
-            ship2_stats=fs2,
-            variance_percent=0.0,
-        )
-
-
-class TargetWinsResolver:
-    """Combat resolver: ship2 (target) always wins decisively."""
-
-    def resolve(
-        self,
-        ship1_stats: CombatStats,
-        ship2_stats: CombatStats,
-        variance_percent: float,
-    ) -> FightResults:
-        fs1 = FightStats(
-            ship_name=ship1_stats.ship_name,
-            raw_hp=ship1_stats.total_hp,
-            raw_dps=1.0,
-            varied_hp=ship1_stats.total_hp,
-            varied_dps=1.0,
-            ttk=1.0,
-        )
-        fs2 = FightStats(
-            ship_name=ship2_stats.ship_name,
-            raw_hp=ship2_stats.total_hp,
-            raw_dps=100.0,
-            varied_hp=ship2_stats.total_hp,
-            varied_dps=100.0,
-            ttk=10.0,
-        )
-        return FightResults(
-            winner_name=ship2_stats.ship_name,
-            loser_name=ship1_stats.ship_name,
-            is_stalemate=False,
-            ship1_stats=fs1,
-            ship2_stats=fs2,
-            variance_percent=0.0,
-        )
-
-
-class StalemateResolver:
-    """Combat resolver: always stalemate."""
-
-    def resolve(
-        self,
-        ship1_stats: CombatStats,
-        ship2_stats: CombatStats,
-        variance_percent: float,
-    ) -> FightResults:
-        fs1 = FightStats(
-            ship_name=ship1_stats.ship_name,
-            raw_hp=ship1_stats.total_hp,
-            raw_dps=0.0,
-            varied_hp=ship1_stats.total_hp,
-            varied_dps=0.0,
-            ttk=None,
-        )
-        fs2 = FightStats(
-            ship_name=ship2_stats.ship_name,
-            raw_hp=ship2_stats.total_hp,
-            raw_dps=0.0,
-            varied_hp=ship2_stats.total_hp,
-            varied_dps=0.0,
-            ttk=None,
-        )
-        return FightResults(
-            winner_name=None,
-            loser_name=None,
-            is_stalemate=True,
-            ship1_stats=fs1,
-            ship2_stats=fs2,
-            variance_percent=0.0,
-        )
+def _make_fight_results(winner: str | None, loser: str | None, is_stalemate: bool = False) -> FightResults:
+    """Build a deterministic FightResults for unit tests (no real DB needed)."""
+    fs1 = FightStats(ship_name=winner or "ShipA", raw_hp=100, raw_dps=10.0,
+                     varied_hp=100, varied_dps=10.0, ttk=None)
+    fs2 = FightStats(ship_name=loser or "ShipB", raw_hp=50, raw_dps=5.0,
+                     varied_hp=50, varied_dps=5.0, ttk=5.0 if not is_stalemate else None)
+    return FightResults(
+        winner_name=winner,
+        loser_name=loser,
+        is_stalemate=is_stalemate,
+        ship1_stats=fs1,
+        ship2_stats=fs2,
+        combat_log=[],
+        metadata={
+            "schema_version": 1,
+            "summary": {
+                "outcome": "stalemate" if is_stalemate else "win",
+                "reason": "time_cap" if is_stalemate else "hp_depleted",
+                "duration_ticks": 100,
+                "winner": winner,
+                "combatants": {
+                    "1": {"name": winner or "ShipA", "ship": "ShipA", "damage_dealt": 50, "damage_taken": 10},
+                    "2": {"name": loser or "ShipB", "ship": "ShipB", "damage_dealt": 10, "damage_taken": 50},
+                },
+            },
+            "metadata": {"tick_ms": 10, "total_ticks": 100, "resolver": "tick_v1", "pvc_damage_reduction": 0.0},
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -472,11 +397,12 @@ class TestAcceptDuel:
             2: target,
         }.get(pid)
 
-        svc = make_service(
-            duel_repo=duel_repo,
-            player_repo=player_repo,
-            combat_service=CombatService(resolver=ChallengerWinsResolver()),
+        # T10: fight_ships is async; inject deterministic result via AsyncMock
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner="ChallengerShip", loser="TargetShip")
         )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
 
         # LoadoutBuilder.from_player now needs DB; mock it to return deterministic loadouts
         async def mock_from_player(db, player_id):
@@ -519,11 +445,11 @@ class TestAcceptDuel:
             2: target,
         }.get(pid)
 
-        svc = make_service(
-            duel_repo=duel_repo,
-            player_repo=player_repo,
-            combat_service=CombatService(resolver=TargetWinsResolver()),
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner="TargetShip", loser="ChallengerShip")
         )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
 
         async def mock_from_player(db, player_id):
             return make_ship_loadout("ChallengerShip" if player_id == 1 else "TargetShip")
@@ -563,11 +489,11 @@ class TestAcceptDuel:
             2: target,
         }.get(pid)
 
-        svc = make_service(
-            duel_repo=duel_repo,
-            player_repo=player_repo,
-            combat_service=CombatService(resolver=StalemateResolver()),
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner=None, loser=None, is_stalemate=True)
         )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
 
         async def mock_from_player(db, player_id):
             return make_ship_loadout("ShipA" if player_id == 1 else "ShipB")
@@ -680,10 +606,15 @@ class TestAcceptDuel:
             2: target,
         }.get(pid)
 
+        # T10: fight_ships is async. Mock it to return a deterministic stalemate.
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner=None, loser=None, is_stalemate=True)
+        )
         svc = make_service(
             duel_repo=duel_repo,
             player_repo=player_repo,
-            combat_service=CombatService(),  # real, 0% variance applied
+            combat_service=mock_combat_svc,
         )
 
         # LoadoutBuilder.from_player needs DB access; mock it to return 0-DPS unarmed ships
@@ -1390,11 +1321,10 @@ class TestAcceptDuelAvailableBalance:
         with patch("services.duel_service.LoadoutBuilder") as mock_lb:
             mock_lb.from_player = AsyncMock(return_value=make_ship_loadout("ShipA"))
             svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
-            # combat_service will run — use a deterministic resolver
+            # T10: fight_ships is async; use AsyncMock for deterministic stalemate result
             svc.combat_service = MagicMock()
-            svc.combat_service.fight_ships.return_value = MagicMock(
-                is_stalemate=True,
-                winner_name=None,
+            svc.combat_service.fight_ships = AsyncMock(
+                return_value=_make_fight_results(winner=None, loser=None, is_stalemate=True)
             )
             result = await svc.accept_duel(db=self._make_db(), duel_id=5)
 

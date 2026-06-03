@@ -170,7 +170,13 @@ class CombatPreflightService:
         for _ in range(num_sims):
             bounty = random.choice(criminals)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
-            fight = self.combat_service.fight_ships(player_loadout, criminal_loadout)
+            # T10: fight_ships is now async + keyword-only; log_result=False skips DB writes (preflight path)
+            fight = await self.combat_service.fight_ships(
+                player_loadout,
+                criminal_loadout,
+                log_result=False,
+                pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION,
+            )
             if fight.is_stalemate or fight.winner_name == player_loadout.ship_name:
                 player_wins += 1
             else:

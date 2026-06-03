@@ -204,6 +204,7 @@ class TestPvcArmourBuffOverride:
     def _make_player(self) -> SimpleNamespace:
         return SimpleNamespace(
             id=42,
+            user_id=4200,   # T10: Discord user_id for fight_ships
             guild_id=100,
             tier="Bronze",
             credits=1000,
@@ -217,7 +218,7 @@ class TestPvcArmourBuffOverride:
         )
 
     async def test_pvc_buff_global_default_passed_to_fight_ships(self):
-        """Without per-guild override, fight_ships receives player_armour_buff=1.5 (global)."""
+        """T10: Without per-guild override, fight_ships receives pvc_damage_reduction=0.33 (global)."""
         from datetime import UTC, datetime
 
         from services.combat_models import ShipLoadout
@@ -228,7 +229,8 @@ class TestPvcArmourBuffOverride:
         mock_fight = MagicMock()
         mock_fight.winner_name = "Betty"
         mock_fight.is_stalemate = False
-        service.combat_service.fight_ships = MagicMock(return_value=mock_fight)
+        mock_fight.combat_log_id = None
+        service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
         db = AsyncMock()
         bounty = self._make_bronze_bounty()
@@ -260,13 +262,13 @@ class TestPvcArmourBuffOverride:
                 cfg=None,  # no per-guild config → use global
             )
 
-        service.combat_service.fight_ships.assert_called_once()
+        service.combat_service.fight_ships.assert_awaited_once()
         call_kwargs = service.combat_service.fight_ships.call_args
-        player_armour_buff_used = call_kwargs.kwargs.get("player_armour_buff")
-        assert player_armour_buff_used == pytest.approx(GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR)
+        pvc_dr_used = call_kwargs.kwargs.get("pvc_damage_reduction")
+        assert pvc_dr_used == pytest.approx(GameConstants.PVC_DAMAGE_REDUCTION)
 
     async def test_pvc_buff_per_guild_override_passed_to_fight_ships(self):
-        """Per-guild bounty_pvc_armour_buff_factor (2.5) overrides the global 1.5."""
+        """T10: Per-guild pvc_damage_reduction override (0.20) overrides the global 0.33."""
         from datetime import UTC, datetime
 
         from services.combat_models import ShipLoadout
@@ -276,14 +278,15 @@ class TestPvcArmourBuffOverride:
         mock_fight = MagicMock()
         mock_fight.winner_name = "Betty"
         mock_fight.is_stalemate = False
-        service.combat_service.fight_ships = MagicMock(return_value=mock_fight)
+        mock_fight.combat_log_id = None
+        service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
         db = AsyncMock()
         bounty = self._make_bronze_bounty(bounty_id=2)
         service.bounty_repo.update = AsyncMock()
 
         cfg = MagicMock()
-        cfg.bounty_pvc_armour_buff_factor = 2.5  # per-guild override
+        cfg.pvc_damage_reduction = 0.20  # T10: per-guild override for PvC DR
 
         with (
             patch("services.bounty_service.BountyService.distribute_rewards", new=AsyncMock(return_value=None)),
@@ -311,7 +314,7 @@ class TestPvcArmourBuffOverride:
                 cfg=cfg,  # per-guild override
             )
 
-        service.combat_service.fight_ships.assert_called_once()
+        service.combat_service.fight_ships.assert_awaited_once()
         call_kwargs = service.combat_service.fight_ships.call_args
-        player_armour_buff_used = call_kwargs.kwargs.get("player_armour_buff")
-        assert player_armour_buff_used == pytest.approx(2.5)
+        pvc_dr_used = call_kwargs.kwargs.get("pvc_damage_reduction")
+        assert pvc_dr_used == pytest.approx(0.20)

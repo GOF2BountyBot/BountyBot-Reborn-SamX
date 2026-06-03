@@ -121,7 +121,7 @@ class TestEstimateNoBountiesSynthesis:
         svc = _make_service()
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
-        svc.combat_service.fight_ships = MagicMock(return_value=_fight_result(winner="Player"))
+        svc.combat_service.fight_ships = AsyncMock(return_value=_fight_result(winner="Player"))
 
         # Synthesis returns 5 synthetic criminals
         synthetics = [_make_synthetic_criminal() for _ in range(5)]
@@ -146,7 +146,7 @@ class TestEstimateNoBountiesSynthesis:
         svc = _make_service()
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
-        svc.combat_service.fight_ships = MagicMock(return_value=_fight_result(winner="Player"))
+        svc.combat_service.fight_ships = AsyncMock(return_value=_fight_result(winner="Player"))
 
         synthetics = [_make_synthetic_criminal() for _ in range(5)]
         with (
@@ -192,7 +192,7 @@ class TestEstimateVerdicts:
         svc = _make_service()
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
-        svc.combat_service.fight_ships = MagicMock(return_value=_fight_result(winner="Player"))
+        svc.combat_service.fight_ships = AsyncMock(return_value=_fight_result(winner="Player"))
 
         with patch(
             "services.combat_preflight_service.LoadoutBuilder.from_player",
@@ -211,7 +211,7 @@ class TestEstimateVerdicts:
         svc = _make_service()
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=50)
-        svc.combat_service.fight_ships = MagicMock(return_value=_fight_result(winner="Raider"))
+        svc.combat_service.fight_ships = AsyncMock(return_value=_fight_result(winner="Raider"))
 
         with patch(
             "services.combat_preflight_service.LoadoutBuilder.from_player",
@@ -233,13 +233,13 @@ class TestEstimateVerdicts:
 
         call_count = 0
 
-        def _alternating(*args, **kwargs):
+        async def _alternating(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             winner = "Player" if call_count % 2 == 0 else "Raider"
             return _fight_result(winner=winner)
 
-        svc.combat_service.fight_ships = MagicMock(side_effect=_alternating)
+        svc.combat_service.fight_ships = _alternating
 
         with patch(
             "services.combat_preflight_service.LoadoutBuilder.from_player",
@@ -257,7 +257,7 @@ class TestEstimateVerdicts:
         svc = _make_service()
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
-        svc.combat_service.fight_ships = MagicMock(return_value=_fight_result(winner="Player"))
+        svc.combat_service.fight_ships = AsyncMock(return_value=_fight_result(winner="Player"))
 
         with patch(
             "services.combat_preflight_service.LoadoutBuilder.from_player",
@@ -280,7 +280,7 @@ class TestEstimateVerdicts:
         ]
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=bounties)
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
-        svc.combat_service.fight_ships = MagicMock(return_value=_fight_result(winner="Player"))
+        svc.combat_service.fight_ships = AsyncMock(return_value=_fight_result(winner="Player"))
 
         with patch(
             "services.combat_preflight_service.LoadoutBuilder.from_player",
@@ -298,7 +298,7 @@ class TestEstimateVerdicts:
         svc = _make_service()
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
-        svc.combat_service.fight_ships = MagicMock(return_value=_fight_result(winner="Player"))
+        svc.combat_service.fight_ships = AsyncMock(return_value=_fight_result(winner="Player"))
 
         with patch(
             "services.combat_preflight_service.LoadoutBuilder.from_player",
@@ -320,7 +320,7 @@ class TestEstimateVerdicts:
         svc = _make_service()
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
-        svc.combat_service.fight_ships = MagicMock(return_value=_fight_result(winner="Player"))
+        svc.combat_service.fight_ships = AsyncMock(return_value=_fight_result(winner="Player"))
 
         with patch(
             "services.combat_preflight_service.LoadoutBuilder.from_player",

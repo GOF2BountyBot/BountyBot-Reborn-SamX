@@ -238,9 +238,7 @@ class FightResults:
         is_stalemate: True if neither ship can defeat the other.
         ship1_stats: Detailed combat stats for the first ship.
         ship2_stats: Detailed combat stats for the second ship.
-        variance_percent: The variance percentage that was applied.
-
-    Future extension fields:
+        combat_log_id: The combat_log row id (non-NULL when log_result=True; T10).
         combat_log: Ordered list of combat events (for tick-based sim).
         metadata: Arbitrary key-value data for extensibility.
     """
@@ -250,10 +248,27 @@ class FightResults:
     is_stalemate: bool
     ship1_stats: FightStats
     ship2_stats: FightStats
-    variance_percent: float
+    # T10: combat_log row id (populated by CombatLogService.persist; None when log_result=False)
+    combat_log_id: int | None = None
     # Future fields
     combat_log: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# CombatMeta — caller context for CombatLogService (T10)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CombatMeta:
+    """Caller context required by CombatLogService.persist (§12 / T10).
+
+    Carries guild_id — the only per-call context not already on FightResults.
+    Combatant identity is read from fight_results.metadata (T9 output).
+    """
+
+    guild_id: int
 
 
 # ---------------------------------------------------------------------------

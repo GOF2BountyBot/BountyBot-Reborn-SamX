@@ -2303,8 +2303,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "criminal_max_gear_upgrade",
         "bounty_reward_to_xp_gain_mult",
         "bounty_winner_reserve_factor",
-        "bounty_pvc_armour_buff_factor",
-        "duel_variance_percent",
+        # bounty_pvc_armour_buff_factor — retired T10 (dropped from guild_config)
+        # duel_variance_percent — retired T10 (SimpleTTKResolver removed)
         "duel_cloak_chance",
         "close_bounty_threshold",
         "max_route_length",

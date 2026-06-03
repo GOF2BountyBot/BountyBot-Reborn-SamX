@@ -1855,6 +1855,44 @@ class TestFormatCombatSummary:
         assert "Your Ship" in result
         assert "Criminal Ship" in result
 
+    def test_pvc_damage_reduction_line_shown_when_nonzero(self):
+        """PvC DR line should render when pvc_damage_reduction > 0."""
+        combat = _make_combat_result()
+        combat["pvc_damage_reduction"] = 0.33
+        result = self.cog._format_combat_summary(combat)
+        assert "PvC damage reduction" in result
+        assert "33%" in result
+
+    def test_pvc_damage_reduction_line_absent_when_zero(self):
+        """PvC DR line should NOT render when pvc_damage_reduction is 0.0 (PvP fight)."""
+        combat = _make_combat_result()
+        combat["pvc_damage_reduction"] = 0.0
+        result = self.cog._format_combat_summary(combat)
+        assert "PvC damage reduction" not in result
+
+    def test_pvc_damage_reduction_line_absent_when_missing(self):
+        """PvC DR line should NOT render when pvc_damage_reduction key is absent."""
+        combat = _make_combat_result()
+        # Ensure key is absent
+        combat.pop("pvc_damage_reduction", None)
+        result = self.cog._format_combat_summary(combat)
+        assert "PvC damage reduction" not in result
+
+    def test_pvc_damage_reduction_formats_pct_correctly(self):
+        """A DR of 0.25 should render as '25%' in the summary line."""
+        combat = _make_combat_result()
+        combat["pvc_damage_reduction"] = 0.25
+        result = self.cog._format_combat_summary(combat)
+        assert "25%" in result
+
+    def test_old_armour_buff_line_absent(self):
+        """The retired Keith T Maxwell armour-buff line must not appear in the summary."""
+        combat = _make_combat_result()
+        combat["pvc_damage_reduction"] = 0.33
+        result = self.cog._format_combat_summary(combat)
+        assert "armour buff" not in result.lower()
+        assert "Keith T Maxwell" not in result
+
 
 # ===========================================================================
 # _build_check_embed — new result types

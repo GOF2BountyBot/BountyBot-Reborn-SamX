@@ -454,7 +454,7 @@ class BountyCog(commands.Cog):
             criminal_name = outcome.get("criminal_name") or f"Bounty #{outcome.get('bounty_id')}"
             combat = outcome.get("combat_result")
             if combat:
-                summary = self._format_combat_summary(combat)
+                summary = self._format_combat_summary(combat, criminal_name=criminal_name)
                 embed.add_field(
                     name=f"⚔️ Combat — {criminal_name}",
                     value=summary[:1024],
@@ -482,7 +482,12 @@ class BountyCog(commands.Cog):
         return embed
 
     @staticmethod
-    def _format_combat_summary(combat: dict, *, combat_won: bool | None = None) -> str:
+    def _format_combat_summary(
+        combat: dict,
+        *,
+        combat_won: bool | None = None,  # retained for API compat — NOT used to drive outcome header (CI-12)
+        criminal_name: str | None = None,
+    ) -> str:
         """Format actual after-action combat results into a readable embed field.
 
         Uses the tick-resolver summary (combatants block with final HP, damage dealt,
@@ -491,54 +496,90 @@ class BountyCog(commands.Cog):
 
         Args:
             combat: The combat_result dict from the API response.
-            combat_won: Optional override for the outcome line — True = player won,
-                        False = player lost, None = derive from combat["outcome"].
+            combat_won: Retained for API compatibility — ignored for the outcome header
+                        (CI-12 fix).  Outcome is always derived from actual hull data.
+            criminal_name: Display name of the criminal (passed in by callers that have
+                           it; defaults to "Criminal" when absent).
 
         The field value is truncated to 1024 characters to stay within Discord limits.
+
+        Layout (compact worded format, owner-approved):
+            ⚔️ Combat vs {criminal_name} — {Victory|Defeat|Stalemate} in {duration}s
+
+            You ({player_ship}) — {survived|destroyed}
+              Shield {s} · Armour {a} · Hull {h}  ·  dealt {dmg} · {acc}% acc ({hits}/{fired})
+
+            {criminal_name} ({criminal_ship}) — {survived|destroyed}
+              Shield {s} · Armour {a} · Hull {h}  ·  dealt {dmg} · {acc}% acc ({hits}/{fired})
         """
         combatants = (combat.get("combatants") or {}) if combat else {}
         c1 = combatants.get("1", {}) or {}
         c2 = combatants.get("2", {}) or {}
 
-        # Duration line — shown once at the top
+        # Duration / outcome — derived from ACTUAL hull data, not the combat_won flag.
         duration_s: float | None = combat.get("duration_s") if combat else None
-        outcome: str | None = combat.get("outcome") if combat else None
         is_stalemate = combat.get("is_stalemate", False) if combat else False
+        outcome_field: str | None = combat.get("outcome") if combat else None
 
-        if duration_s is not None:
-            if is_stalemate or outcome == "stalemate":
-                outcome_line = f"⚔️ Stalemate in {duration_s:.1f}s"
-            elif combat_won is False:
-                outcome_line = f"⚔️ You lost in {duration_s:.1f}s"
+        # Resolve per-combatant survival from final hull (CI-12 fix).
+        c1_hull = ((c1.get("final_hp") or {}).get("hull") or 0) if c1 else 0
+        c2_hull = ((c2.get("final_hp") or {}).get("hull") or 0) if c2 else 0
+        c1_survived = c1_hull > 0
+        c2_survived = c2_hull > 0
+
+        # Determine match outcome from actual fight data.
+        if c1 or c2:
+            # Tick-resolver data present: derive from hull.
+            if is_stalemate or outcome_field == "stalemate":
+                match_outcome = "Stalemate"
+            elif c1_survived and not c2_survived:
+                match_outcome = "Victory"
+            elif c2_survived and not c1_survived:
+                match_outcome = "Defeat"
             else:
-                outcome_line = f"⚔️ You won in {duration_s:.1f}s"
+                # Both alive or both destroyed — treat as stalemate.
+                match_outcome = "Stalemate"
         else:
-            outcome_line = "⚔️ Stalemate" if is_stalemate else "⚔️ Combat complete"
+            # Legacy path: no combatants block; use is_stalemate flag.
+            match_outcome = "Stalemate" if (is_stalemate or outcome_field == "stalemate") else "Victory"
+
+        crim_label = criminal_name or "Criminal"
+
+        # Header line
+        if duration_s is not None:
+            header = f"⚔️ Combat vs {crim_label} — {match_outcome} in {duration_s:.1f}s"
+        else:
+            header = f"⚔️ Combat vs {crim_label} — {match_outcome}"
 
         def _hp_str(hp_block: dict) -> str:
             shield = hp_block.get("shield", 0)
             armour = hp_block.get("armour", 0)
             hull = hp_block.get("hull", 0)
-            return f"🛡 {shield}  🔩 {armour}  ❤ {hull}"
+            return f"Shield {shield} · Armour {armour} · Hull {hull}"
 
-        def _combatant_line(cb: dict, label: str) -> str:
-            ship = cb.get("ship") or "?"
+        def _combatant_block(cb: dict, label: str, survived: bool) -> str:
+            """Render one combatant block.
+
+            label already contains the ship name in the format 'You (Ship)' or
+            '{Name} (Ship)' so no extra ship suffix is appended here.
+            """
             final_hp = cb.get("final_hp") or {}
             hp_str = _hp_str(final_hp)
             dealt = cb.get("damage_dealt", 0)
             fired = cb.get("shots_fired", 0)
             hit = cb.get("shots_hit", 0)
             acc_pct = round((cb.get("accuracy") or 0) * 100)
-            acc_str = f"{acc_pct}% ({hit}/{fired})" if fired > 0 else "n/a"
-            return f"**{label}** ({ship})  {hp_str}  · dealt {dealt}  · acc {acc_str}"
+            acc_str = f"{acc_pct}% acc ({hit}/{fired})" if fired > 0 else "n/a"
+            status = "survived" if survived else "destroyed"
+            return f"**{label}** — {status}\n  {hp_str}  ·  dealt {dealt} · {acc_str}"
 
-        lines: list[str] = [outcome_line]
+        lines: list[str] = [header]
 
         if c1 or c2:
-            player_label = c1.get("name") or "You"
-            criminal_label = c2.get("name") or "Criminal"
-            lines.append(_combatant_line(c1, player_label))
-            lines.append(_combatant_line(c2, criminal_label))
+            player_ship = c1.get("ship") or "?"
+            crim_ship = c2.get("ship") or "?"
+            lines.append(_combatant_block(c1, f"You ({player_ship})", c1_survived))
+            lines.append(_combatant_block(c2, f"{crim_label} ({crim_ship})", c2_survived))
         else:
             # Fallback: legacy projection fields (pre-tick-resolver data)
             s1 = (combat.get("ship1_stats") or {}) if combat else {}
@@ -595,7 +636,7 @@ class BountyCog(commands.Cog):
                 if combat:
                     embed.add_field(
                         name="⚔️ Combat Summary",
-                        value=self._format_combat_summary(combat, combat_won=False),
+                        value=self._format_combat_summary(combat, criminal_name=criminal_name),
                         inline=False,
                     )
             else:
@@ -610,10 +651,11 @@ class BountyCog(commands.Cog):
             embed = self._build_capture_embed(data)
         elif result == "combat_loss":
             # Kept for backward compatibility (not returned by current bot-core but may exist in future)
+            _crim_name_loss = data.get("criminal_name", "Unknown")
             embed = discord.Embed(
                 title="💀 Combat Defeat!",
                 description=(
-                    f"**{data.get('criminal_name', 'Unknown')}** defeated you and escaped!\n"
+                    f"**{_crim_name_loss}** defeated you and escaped!\n"
                     "All system checks have been reset — the hunt continues!"
                 ),
                 color=discord.Color.dark_red(),
@@ -622,7 +664,7 @@ class BountyCog(commands.Cog):
             if combat:
                 embed.add_field(
                     name="⚔️ Combat Summary",
-                    value=self._format_combat_summary(combat, combat_won=False),
+                    value=self._format_combat_summary(combat, criminal_name=_crim_name_loss),
                     inline=False,
                 )
         elif result == "incorrect":
@@ -683,7 +725,7 @@ class BountyCog(commands.Cog):
         if combat:
             embed.add_field(
                 name="⚔️ Combat Summary",
-                value=self._format_combat_summary(combat, combat_won=True),
+                value=self._format_combat_summary(combat, criminal_name=criminal_name),
                 inline=False,
             )
 

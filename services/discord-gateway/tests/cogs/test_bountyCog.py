@@ -1899,16 +1899,27 @@ class TestFormatCombatSummary:
         assert "TTK" not in result
 
     def test_ci2_won_outcome_line(self):
-        """CI-2: combat_won=True → outcome line says 'won'."""
+        """CI-12: player hull > 0, criminal hull == 0 → outcome header says 'Victory'."""
+        # Default _make_combat_result_with_summary: c1_hull=95, c2_hull=0 → Victory
         combat = _make_combat_result_with_summary(duration_s=20.0)
-        result = self.cog._format_combat_summary(combat, combat_won=True)
-        assert "won" in result.lower()
+        result = self.cog._format_combat_summary(combat)
+        assert "Victory" in result
 
     def test_ci2_lost_outcome_line(self):
-        """CI-2: combat_won=False → outcome line says 'lost'."""
-        combat = _make_combat_result_with_summary(duration_s=20.0)
-        result = self.cog._format_combat_summary(combat, combat_won=False)
-        assert "lost" in result.lower()
+        """CI-12: player hull == 0, criminal hull > 0 → outcome header says 'Defeat'.
+
+        This is the CI-12 regression lock: 'Defeat' must be shown even when
+        combat_won=True is passed (as happens at Bronze tier), because outcome is
+        derived from actual hull data, NOT the capture flag.
+        """
+        combat = _make_combat_result_with_summary(
+            duration_s=20.0,
+            c1_final_hp={"shield": 0, "armour": 0, "hull": 0},
+            c2_final_hp={"shield": 0, "armour": 0, "hull": 80},
+        )
+        result = self.cog._format_combat_summary(combat, combat_won=True)  # combat_won ignored (CI-12)
+        assert "Defeat" in result
+        assert "Victory" not in result
 
     def test_ci2_stalemate_shows_stalemate_result(self):
         """CI-2: is_stalemate=True → outcome line contains 'Stalemate'."""
@@ -1981,6 +1992,193 @@ class TestFormatCombatSummary:
         result = self.cog._format_combat_summary(combat)
         assert "armour buff" not in result.lower()
         assert "Keith T Maxwell" not in result
+
+
+# ===========================================================================
+# CI-12 regression + new compact-worded layout tests
+# ===========================================================================
+
+
+class TestFormatCombatSummaryCI12:
+    """CI-12 regression: outcome header derives from actual hull data, not combat_won flag.
+
+    Also validates the approved compact-worded layout:
+      ⚔️ Combat vs {criminal_name} — {Victory|Defeat|Stalemate} in {duration}s
+      You ({ship}) — survived|destroyed
+        Shield S · Armour A · Hull H  ·  dealt D · acc% acc (hits/fired)
+      {criminal_name} ({ship}) — survived|destroyed
+        Shield S · Armour A · Hull H  ·  dealt D · acc% acc (hits/fired)
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    # -- CI-12: outcome from hull, not combat_won flag --
+
+    def test_ci12_defeat_when_player_hull_zero(self):
+        """CI-12 regression lock: player destroyed → Defeat even when combat_won=True."""
+        combat = _make_combat_result_with_summary(
+            c1_final_hp={"shield": 0, "armour": 0, "hull": 0},
+            c2_final_hp={"shield": 0, "armour": 0, "hull": 80},
+            duration_s=18.0,
+        )
+        result = self.cog._format_combat_summary(combat, combat_won=True)
+        assert "Defeat" in result, "Player hull 0 must produce Defeat header"
+        assert "Victory" not in result
+
+    def test_ci12_victory_when_criminal_hull_zero(self):
+        """CI-12: criminal destroyed → Victory."""
+        combat = _make_combat_result_with_summary(
+            c1_final_hp={"shield": 0, "armour": 0, "hull": 95},
+            c2_final_hp={"shield": 0, "armour": 0, "hull": 0},
+            duration_s=22.0,
+        )
+        result = self.cog._format_combat_summary(combat)
+        assert "Victory" in result
+        assert "Defeat" not in result
+
+    def test_ci12_stalemate_when_flag_set(self):
+        """CI-12: is_stalemate=True → Stalemate regardless of hull values."""
+        combat = _make_combat_result_with_summary(
+            c1_final_hp={"shield": 0, "armour": 0, "hull": 50},
+            c2_final_hp={"shield": 0, "armour": 0, "hull": 60},
+            is_stalemate=True,
+            outcome="stalemate",
+            duration_s=30.0,
+        )
+        result = self.cog._format_combat_summary(combat)
+        assert "Stalemate" in result
+
+    def test_ci12_stalemate_both_zero_hull(self):
+        """CI-12: both hull zero → Stalemate."""
+        combat = _make_combat_result_with_summary(
+            c1_final_hp={"shield": 0, "armour": 0, "hull": 0},
+            c2_final_hp={"shield": 0, "armour": 0, "hull": 0},
+            is_stalemate=False,
+            duration_s=12.0,
+        )
+        result = self.cog._format_combat_summary(combat)
+        assert "Stalemate" in result
+
+    # -- Layout: worded HP labels --
+
+    def test_layout_worded_shield_label(self):
+        """New format uses 'Shield' word label instead of emoji run-on."""
+        combat = _make_combat_result_with_summary(c1_final_hp={"shield": 42, "armour": 10, "hull": 80})
+        result = self.cog._format_combat_summary(combat)
+        assert "Shield 42" in result
+
+    def test_layout_worded_armour_label(self):
+        combat = _make_combat_result_with_summary(c1_final_hp={"shield": 0, "armour": 15, "hull": 80})
+        result = self.cog._format_combat_summary(combat)
+        assert "Armour 15" in result
+
+    def test_layout_worded_hull_label(self):
+        combat = _make_combat_result_with_summary(c1_final_hp={"shield": 0, "armour": 0, "hull": 99})
+        result = self.cog._format_combat_summary(combat)
+        assert "Hull 99" in result
+
+    def test_layout_no_emoji_hp_run_on(self):
+        """New format must NOT use the old emoji HP run-on (🛡 🔩 ❤)."""
+        combat = _make_combat_result_with_summary()
+        result = self.cog._format_combat_summary(combat)
+        assert "🔩" not in result
+        # '❤' without variation selector can appear in PvC line — check 🔩 is sufficient
+
+    # -- Layout: player label "You ({ship})" not "Betty (Betty)" --
+
+    def test_layout_player_label_you_ship(self):
+        """Player side label is 'You ({ship})' — not the player's name."""
+        combat = _make_combat_result_with_summary(c1_name="SamX", c1_ship="StarFighter")
+        result = self.cog._format_combat_summary(combat)
+        assert "You (StarFighter)" in result
+
+    def test_layout_no_betty_betty_duplication(self):
+        """When player ship is 'Betty', result must NOT show 'Betty (Betty)'."""
+        combat = _make_combat_result_with_summary(c1_name="Betty", c1_ship="Betty")
+        result = self.cog._format_combat_summary(combat)
+        assert "Betty (Betty)" not in result
+        # Should show "You (Betty)" instead
+        assert "You (Betty)" in result
+
+    # -- Layout: criminal label "{criminal_name} ({ship})" --
+
+    def test_layout_criminal_name_threaded(self):
+        """criminal_name param is used for the criminal label, not the internal c2.name."""
+        combat = _make_combat_result_with_summary(c2_name="internal", c2_ship="Inflict")
+        result = self.cog._format_combat_summary(combat, criminal_name="Hector")
+        assert "Hector (Inflict)" in result
+
+    def test_layout_criminal_default_label(self):
+        """When criminal_name is absent, label falls back to 'Criminal'."""
+        combat = _make_combat_result_with_summary(c2_ship="Inflict")
+        result = self.cog._format_combat_summary(combat)
+        assert "Criminal (Inflict)" in result
+
+    # -- Layout: survived/destroyed status words --
+
+    def test_layout_player_survived_label(self):
+        combat = _make_combat_result_with_summary(c1_final_hp={"shield": 0, "armour": 0, "hull": 50})
+        result = self.cog._format_combat_summary(combat)
+        lines = result.split("\n")
+        you_line = next((ln for ln in lines if "You (" in ln), "")
+        assert "survived" in you_line
+
+    def test_layout_player_destroyed_label(self):
+        combat = _make_combat_result_with_summary(c1_final_hp={"shield": 0, "armour": 0, "hull": 0})
+        result = self.cog._format_combat_summary(combat)
+        lines = result.split("\n")
+        you_line = next((ln for ln in lines if "You (" in ln), "")
+        assert "destroyed" in you_line
+
+    def test_layout_criminal_survived_label(self):
+        combat = _make_combat_result_with_summary(c2_final_hp={"shield": 0, "armour": 0, "hull": 60})
+        result = self.cog._format_combat_summary(combat)
+        lines = result.split("\n")
+        crim_line = next((ln for ln in lines if "Criminal (" in ln), "")
+        assert "survived" in crim_line
+
+    def test_layout_criminal_destroyed_label(self):
+        combat = _make_combat_result_with_summary(c2_final_hp={"shield": 0, "armour": 0, "hull": 0})
+        result = self.cog._format_combat_summary(combat)
+        lines = result.split("\n")
+        crim_line = next((ln for ln in lines if "Criminal (" in ln), "")
+        assert "destroyed" in crim_line
+
+    # -- Layout: header format --
+
+    def test_layout_header_contains_combat_vs(self):
+        """Header starts with '⚔️ Combat vs {criminal_name}'."""
+        combat = _make_combat_result_with_summary(duration_s=15.0)
+        result = self.cog._format_combat_summary(combat, criminal_name="Hector")
+        assert result.startswith("⚔️ Combat vs Hector")
+
+    def test_layout_header_duration(self):
+        """Header includes duration in seconds."""
+        combat = _make_combat_result_with_summary(duration_s=25.5)
+        result = self.cog._format_combat_summary(combat)
+        assert "25.5s" in result.split("\n")[0]
+
+    # -- Discord field limit --
+
+    def test_layout_le_1024_chars_with_criminal_name(self):
+        """Field value stays within 1024 chars even with a long criminal_name."""
+        combat = _make_combat_result_with_summary(c1_name="A" * 200, c2_name="B" * 200)
+        result = self.cog._format_combat_summary(combat, criminal_name="X" * 100)
+        assert len(result) <= 1024
+
+    # -- PvC line still present (PvC only) --
+
+    def test_layout_pvc_line_present(self):
+        combat = _make_combat_result_with_summary(pvc_damage_reduction=0.25)
+        result = self.cog._format_combat_summary(combat)
+        assert "PvC damage reduction: 25% active" in result
+
+    def test_layout_pvc_line_absent_in_pvp(self):
+        combat = _make_combat_result_with_summary(pvc_damage_reduction=0.0)
+        result = self.cog._format_combat_summary(combat)
+        assert "PvC damage reduction" not in result
 
 
 # ===========================================================================

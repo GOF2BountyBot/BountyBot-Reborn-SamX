@@ -615,28 +615,40 @@ class DuelCog(commands.Cog):
 
         # ------------------------------------------------------------------
         # After-action combat summary field (actual stats from tick resolver)
+        # Compact worded format — no "You" (duel uses real player names), no header line.
         # ------------------------------------------------------------------
-        def _hp_str(hp_block: dict) -> str:
+        def _hp_str_duel(hp_block: dict) -> str:
             shield = hp_block.get("shield", 0)
             armour = hp_block.get("armour", 0)
             hull = hp_block.get("hull", 0)
-            return f"🛡 {shield}  🔩 {armour}  ❤ {hull}"
+            return f"Shield {shield} · Armour {armour} · Hull {hull}"
 
-        def _combatant_line(cb: dict, label: str) -> str:
-            ship = cb.get("ship") or "?"
+        def _combatant_block_duel(cb: dict, label: str, survived: bool) -> str:
+            """Render one combatant block for a duel.
+
+            label already contains the ship name in the format '{Name} (Ship)' so
+            no extra ship suffix is appended here.
+            """
             final_hp = cb.get("final_hp") or {}
-            hp_str = _hp_str(final_hp)
+            hp_str = _hp_str_duel(final_hp)
             dealt = cb.get("damage_dealt", 0)
             fired = cb.get("shots_fired", 0)
             hit = cb.get("shots_hit", 0)
             acc_pct = round((cb.get("accuracy") or 0) * 100)
-            acc_str = f"{acc_pct}% ({hit}/{fired})" if fired > 0 else "n/a"
-            return f"**{label}** ({ship})  {hp_str}  · dealt {dealt}  · acc {acc_str}"
+            acc_str = f"{acc_pct}% acc ({hit}/{fired})" if fired > 0 else "n/a"
+            status = "survived" if survived else "destroyed"
+            return f"**{label}** — {status}\n  {hp_str}  ·  dealt {dealt} · {acc_str}"
 
         if c1 or c2:
+            c1_hull_val = ((c1.get("final_hp") or {}).get("hull") or 0) if c1 else 0
+            c2_hull_val = ((c2.get("final_hp") or {}).get("hull") or 0) if c2 else 0
+            c1_survived_duel = c1_hull_val > 0
+            c2_survived_duel = c2_hull_val > 0
+            c1_ship_duel = c1.get("ship") or "?"
+            c2_ship_duel = c2.get("ship") or "?"
             summary_lines = [
-                _combatant_line(c1, challenger_name),
-                _combatant_line(c2, target_name),
+                _combatant_block_duel(c1, f"{challenger_name} ({c1_ship_duel})", c1_survived_duel),
+                _combatant_block_duel(c2, f"{target_name} ({c2_ship_duel})", c2_survived_duel),
             ]
             summary_text = "\n".join(summary_lines)
             if len(summary_text) > 1024:

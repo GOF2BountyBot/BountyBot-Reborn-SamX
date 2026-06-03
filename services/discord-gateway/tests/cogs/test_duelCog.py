@@ -837,6 +837,105 @@ class TestBuildAcceptEmbedWinnerByHull:
 
 
 # ---------------------------------------------------------------------------
+# _build_accept_embed — compact-worded combat stats layout (task requirement)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildAcceptEmbedCompactLayout:
+    """Tests for the approved compact-worded Combat Stats field in duel embeds.
+
+    Rules:
+    - Worded HP labels: 'Shield', 'Armour', 'Hull' — no emoji run-on.
+    - Player names (NOT 'You') in the format '{Name} ({Ship}) — survived|destroyed'.
+    - No '⚔️ Combat vs ...' header line (duel embed title already states the winner).
+    - survived/destroyed status from hull data.
+    - Field value ≤1024 chars.
+    """
+
+    def test_duel_layout_worded_shield_label(self, mock_duel_cog):
+        """Combat Stats field uses 'Shield' word, not emoji 🛡."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "Shield" in stats_field.value
+
+    def test_duel_layout_worded_armour_label(self, mock_duel_cog):
+        """Combat Stats field uses 'Armour' word, not emoji 🔩."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "Armour" in stats_field.value
+        assert "🔩" not in stats_field.value
+
+    def test_duel_layout_worded_hull_label(self, mock_duel_cog):
+        """Combat Stats field uses 'Hull' word."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "Hull" in stats_field.value
+
+    def test_duel_layout_player_names_not_you(self, mock_duel_cog):
+        """Duel stats use real player names ('samx', 'gf') — NOT 'You'."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next((f for f in embed.fields if "Combat Stats" in f.name), None)
+        assert stats_field is not None
+        assert "You" not in stats_field.value
+        assert "samx" in stats_field.value
+        assert "gf" in stats_field.value
+
+    def test_duel_layout_no_combat_vs_header_line(self, mock_duel_cog):
+        """Combat Stats field must NOT contain a '⚔️ Combat vs ...' header line."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "Combat vs" not in stats_field.value
+
+    def test_duel_layout_challenger_survived(self, mock_duel_cog):
+        """Challenger with hull > 0 shows 'survived'."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        lines = stats_field.value.split("\n")
+        samx_line = next((ln for ln in lines if "samx" in ln), "")
+        assert "survived" in samx_line
+
+    def test_duel_layout_target_destroyed(self, mock_duel_cog):
+        """Target with hull == 0 shows 'destroyed'."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        lines = stats_field.value.split("\n")
+        gf_line = next((ln for ln in lines if "gf" in ln), "")
+        assert "destroyed" in gf_line
+
+    def test_duel_layout_challenger_destroyed_when_hull_zero(self, mock_duel_cog):
+        """Challenger with hull == 0 shows 'destroyed'."""
+        data = _make_betty_duel(c1_hull=0, c2_hull=80, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        lines = stats_field.value.split("\n")
+        samx_line = next((ln for ln in lines if "samx" in ln), "")
+        assert "destroyed" in samx_line
+
+    def test_duel_layout_ship_name_in_player_label(self, mock_duel_cog):
+        """Each player line includes the ship name in '{Name} ({Ship}) — ...' format."""
+        data = _make_accept_result_with_summary(challenger_name="samx", winner_ship="StarFighter")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        # challenger is c1 with ship=winner_ship
+        assert "samx (StarFighter)" in stats_field.value
+
+    def test_duel_layout_le_1024_chars(self, mock_duel_cog):
+        """Combat Stats field value stays within Discord's 1024-char limit."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="A" * 200, target_name="B" * 200)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next((f for f in embed.fields if "Combat Stats" in f.name), None)
+        if stats_field:
+            assert len(stats_field.value) <= 1024
+
+
+# ---------------------------------------------------------------------------
 # /duel-reject command
 # ---------------------------------------------------------------------------
 

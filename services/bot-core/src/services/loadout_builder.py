@@ -384,12 +384,45 @@ class LoadoutBuilder:
 
         flogger.debug(f"Building criminal loadout: ship={ship_name!r}, base_armour={base_armour}")
 
+        # Fallback constants for legacy/malformed weapon dicts that lack combat fields.
+        # _DEFAULT_WEAPON_CADENCE_MS: assume a 1-second fire cycle when loading_speed_ms is absent.
+        # _DEFAULT_WEAPON_RANGE_M: non-zero floor so the range gate never silently blocks all shots.
+        #   Chosen below real T1 weapon ranges (1300-1400 m) but above 0 so the weapon fires once
+        #   ships close to within ~800 m; guards against fully-malformed JSONB with missing range.
+        _DEFAULT_WEAPON_CADENCE_MS: int = 1000
+        _DEFAULT_WEAPON_RANGE_M: float = 800.0
+
         # Weapons
         weapons: list[WeaponStats] = []
         for w in criminal_ship.get("weapons", []):
             dps = float(w.get("dps", 0) or 0)
-            weapons.append(WeaponStats(name=w["name"], dps=dps))
-            flogger.trace(f"Criminal weapon {w['name']!r} dps={dps}")
+            w_spd = int(w.get("loading_speed_ms", 0) or 0)
+            w_rng = float(w.get("range_m", 0.0) or 0.0)
+            w_subtype = w.get("subtype", "") or ""
+            # Derive damage_per_shot from dps × loading_speed_ms/1000 when not explicit
+            # (self-healing fallback for legacy JSONB rows that pre-date Change A)
+            w_damage = w.get("damage_per_shot")
+            if w_damage is None:
+                cadence = w_spd if w_spd > 0 else _DEFAULT_WEAPON_CADENCE_MS
+                if dps > 0:
+                    w_damage = dps * cadence / 1000.0
+            # Supply a non-zero range floor so the fire gate never silently blocks the weapon
+            if not w_rng:
+                w_rng = _DEFAULT_WEAPON_RANGE_M
+            weapons.append(
+                WeaponStats(
+                    name=w["name"],
+                    dps=dps,
+                    damage_per_shot=float(w_damage) if w_damage is not None else None,
+                    loading_speed_ms=w_spd,
+                    range_m=w_rng,
+                    subtype=w_subtype,
+                )
+            )
+            flogger.trace(
+                f"Criminal weapon {w['name']!r} dps={dps} damage_per_shot={w_damage} "
+                f"loading_speed_ms={w_spd} range_m={w_rng} subtype={w_subtype!r}"
+            )
 
         # Turrets (T7 true-up: populate automatic/subtype/loading_speed_ms/range_m from criminal dict)
         turrets: list[WeaponStats] = []
@@ -398,11 +431,16 @@ class LoadoutBuilder:
             t_automatic = bool(t.get("automatic", False))
             t_spd = int(t.get("loading_speed_ms", 0) or 0)
             t_rng = float(t.get("range_m", 0.0) or 0.0)
-            t_subtype = t.get("subtype", "")
+            t_subtype = t.get("subtype", "") or ""
             # Derive damage_per_shot from dps × loading_speed_ms/1000 when not explicit
+            # (self-healing fallback for legacy JSONB — mirrors weapon block above)
             t_damage = t.get("damage_per_shot")
-            if t_damage is None and t_spd > 0 and dps > 0:
-                t_damage = dps * t_spd / 1000.0
+            if t_damage is None and dps > 0:
+                cadence = t_spd if t_spd > 0 else _DEFAULT_WEAPON_CADENCE_MS
+                t_damage = dps * cadence / 1000.0
+            # Supply a non-zero range floor so the fire gate never silently blocks the turret
+            if not t_rng:
+                t_rng = _DEFAULT_WEAPON_RANGE_M
             turrets.append(
                 WeaponStats(
                     name=t["name"],

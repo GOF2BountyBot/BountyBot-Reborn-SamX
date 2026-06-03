@@ -39,6 +39,28 @@ from services.system_graph_service import SystemGraphService
 flogger = bblogger.get_logger("bounty-service")
 
 
+def _extract_weapon_combat_fields(item) -> dict:
+    """Extract combat fields from a weapon ORM object's extra_atts.
+
+    DB storage nests combat-relevant snake_case fields inside an inner
+    ``extra_atts`` dict (e.g. ``{"extra_atts": {"loading_speed_ms": 220, ...}}``).
+    The canonical unwrap pattern is ``outer.get("extra_atts", outer)`` — fall
+    back to the outer dict for flat/legacy seeds.
+
+    Returns a dict with keys: ``damage_per_shot``, ``loading_speed_ms``,
+    ``range_m``, ``subtype``.  All default to safe zero/empty values so the
+    dict is always present even for weapons that lack extra_atts entirely.
+    """
+    outer: dict = getattr(item, "extra_atts", None) or {}
+    inner: dict = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+    return {
+        "damage_per_shot": inner.get("damage_per_shot"),
+        "loading_speed_ms": int(inner.get("loading_speed_ms", 0) or 0),
+        "range_m": float(inner.get("range_m", 0.0) or 0.0),
+        "subtype": inner.get("subtype", "") or "",
+    }
+
+
 # Sentinel values used in bounty.checked maps.
 # >0 = player_id who locked the slot; <0 = special state.
 UNCHECKED = -1  # System has not been checked yet — fair game.
@@ -585,7 +607,13 @@ class BountyService:
             "ship_max_modules": ship.max_modules,
             "ship_max_turrets": ship.max_turrets,
             "weapons": [
-                {"name": w.name, "emoji": getattr(w, "emoji", None), "value": w.value, "dps": w.dps}
+                {
+                    "name": w.name,
+                    "emoji": getattr(w, "emoji", None),
+                    "value": w.value,
+                    "dps": w.dps,
+                    **_extract_weapon_combat_fields(w),
+                }
                 for w in equipped_weapons
             ],
             "modules": [
@@ -600,7 +628,13 @@ class BountyService:
                 for m in equipped_modules
             ],
             "turrets": [
-                {"name": t.name, "emoji": getattr(t, "emoji", None), "value": t.value, "dps": t.dps}
+                {
+                    "name": t.name,
+                    "emoji": getattr(t, "emoji", None),
+                    "value": t.value,
+                    "dps": t.dps,
+                    **_extract_weapon_combat_fields(t),
+                }
                 for t in equipped_turrets
             ],
             "total_value": total_value,

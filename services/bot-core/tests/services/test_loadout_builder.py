@@ -942,3 +942,194 @@ class TestCollectStatsIntegration:
         assert stats.dps == pytest.approx(110.0)
         # Armour: 200 (no armour module)
         assert stats.armour == 200
+
+
+# ---------------------------------------------------------------------------
+# TestCriminalWeaponSelfHealing — CI-1 fix: self-healing fallback for legacy
+# JSONB weapon dicts that lack combat fields (damage_per_shot / range_m).
+# ---------------------------------------------------------------------------
+
+
+class TestCriminalWeaponSelfHealing:
+    """AC: from_criminal_ship with a dps-only weapon dict still bakes to
+    non-zero effective_damage_per_shot and non-zero range_m (self-healing
+    fallback for legacy bounties stored before Change A).
+    """
+
+    def test_dps_only_weapon_bakes_nonzero_effective_damage(self):
+        """Weapon dict with only 'dps' (no damage_per_shot/loading_speed_ms)
+        produces effective_damage_per_shot > 0 via the cadence fallback."""
+        from src.services.combat_service import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Hiro",
+            weapons=[{"name": "N'saan", "dps": 13.33}],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        state = _init_combatant(loadout, is_player=False)
+
+        assert len(state.effective_primaries) == 1
+        p = state.effective_primaries[0]
+        assert p.effective_damage_per_shot > 0, (
+            f"Expected effective_damage_per_shot > 0, got {p.effective_damage_per_shot}"
+        )
+
+    def test_dps_only_weapon_bakes_nonzero_range_m(self):
+        """Weapon dict with only 'dps' (no range_m) produces range_m > 0 via the floor fallback."""
+        from src.services.combat_service import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Inflict",
+            weapons=[{"name": "N'saan", "dps": 13.33}],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        state = _init_combatant(loadout, is_player=False)
+
+        assert len(state.effective_primaries) == 1
+        p = state.effective_primaries[0]
+        assert p.range_m > 0, f"Expected range_m > 0, got {p.range_m}"
+
+    def test_dps_only_weapon_is_not_pure_emp(self):
+        """Weapon with dps > 0 and no explicit damage_per_shot must not be classified pure-EMP."""
+        from src.services.combat_service import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Betty",
+            weapons=[{"name": "Micro Gun MK I", "dps": 9.09}],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        state = _init_combatant(loadout, is_player=False)
+
+        assert len(state.effective_primaries) == 1
+        p = state.effective_primaries[0]
+        assert p.is_pure_emp is False, "Weapon with dps > 0 should not be pure-EMP"
+
+    def test_full_combat_fields_dict_preserves_values(self):
+        """Weapon dict with all combat fields set preserves them exactly (no fallback applied)."""
+        from src.services.combat_service import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Betty",
+            weapons=[
+                {
+                    "name": "N'saan",
+                    "dps": 13.33,
+                    "damage_per_shot": 8.0,
+                    "loading_speed_ms": 600,
+                    "range_m": 1400.0,
+                    "subtype": "blaster",
+                }
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        assert loadout.weapons[0].damage_per_shot == pytest.approx(8.0)
+        assert loadout.weapons[0].loading_speed_ms == 600
+        assert loadout.weapons[0].range_m == pytest.approx(1400.0)
+        assert loadout.weapons[0].subtype == "blaster"
+
+        state = _init_combatant(loadout, is_player=False)
+        p = state.effective_primaries[0]
+        assert p.effective_damage_per_shot == 8  # round(8.0 * 1.0) = 8
+        assert p.range_m == pytest.approx(1400.0)
+        assert p.is_pure_emp is False
+
+
+# ---------------------------------------------------------------------------
+# TestExtractWeaponCombatFields — unit tests for the bounty_service helper
+# that extracts combat fields from ORM extra_atts onto the JSONB dict.
+# ---------------------------------------------------------------------------
+
+
+class TestExtractWeaponCombatFields:
+    """AC: _extract_weapon_combat_fields returns correct combat fields for
+    the various extra_atts nesting patterns found in the DB.
+    """
+
+    def test_nested_extra_atts_pattern(self):
+        """Standard DB nesting: outer.extra_atts has the combat fields."""
+        import types
+
+        from src.services.bounty_service import _extract_weapon_combat_fields
+
+        item = types.SimpleNamespace(
+            extra_atts={
+                "extra_atts": {
+                    "loading_speed_ms": 600,
+                    "range_m": 1400.0,
+                    "damage_per_shot": 8,
+                    "subtype": "blaster",
+                }
+            }
+        )
+        fields = _extract_weapon_combat_fields(item)
+        assert fields["damage_per_shot"] == 8
+        assert fields["loading_speed_ms"] == 600
+        assert fields["range_m"] == pytest.approx(1400.0)
+        assert fields["subtype"] == "blaster"
+
+    def test_flat_extra_atts_fallback(self):
+        """Legacy flat extra_atts (no inner nesting) is also read correctly."""
+        import types
+
+        from src.services.bounty_service import _extract_weapon_combat_fields
+
+        item = types.SimpleNamespace(
+            extra_atts={
+                "loading_speed_ms": 220,
+                "range_m": 1300.0,
+                "damage_per_shot": 2,
+                "subtype": "auto-cannon",
+            }
+        )
+        fields = _extract_weapon_combat_fields(item)
+        assert fields["damage_per_shot"] == 2
+        assert fields["loading_speed_ms"] == 220
+        assert fields["range_m"] == pytest.approx(1300.0)
+        assert fields["subtype"] == "auto-cannon"
+
+    def test_no_extra_atts_returns_safe_defaults(self):
+        """Item without extra_atts → safe zero/empty defaults (never raises)."""
+        import types
+
+        from src.services.bounty_service import _extract_weapon_combat_fields
+
+        item = types.SimpleNamespace(extra_atts=None)
+        fields = _extract_weapon_combat_fields(item)
+        assert fields["damage_per_shot"] is None
+        assert fields["loading_speed_ms"] == 0
+        assert fields["range_m"] == pytest.approx(0.0)
+        assert fields["subtype"] == ""
+
+    def test_weapon_dict_includes_combat_fields_after_extract(self):
+        """Weapon dict produced by generate_loadout() includes all four combat fields."""
+        import types
+
+        from src.services.bounty_service import _extract_weapon_combat_fields
+
+        item = types.SimpleNamespace(
+            name="N'saan",
+            dps=13.33,
+            value=11478,
+            emoji="<:nsaan:1>",
+            extra_atts={
+                "extra_atts": {
+                    "loading_speed_ms": 600,
+                    "range_m": 1400.0,
+                    "damage_per_shot": 8,
+                    "subtype": "blaster",
+                }
+            },
+        )
+        fields = _extract_weapon_combat_fields(item)
+        weapon_dict = {
+            "name": item.name,
+            "dps": item.dps,
+            "value": item.value,
+            **fields,
+        }
+        assert "damage_per_shot" in weapon_dict
+        assert "loading_speed_ms" in weapon_dict
+        assert "range_m" in weapon_dict
+        assert "subtype" in weapon_dict
+        assert weapon_dict["damage_per_shot"] == 8
+        assert weapon_dict["range_m"] == pytest.approx(1400.0)

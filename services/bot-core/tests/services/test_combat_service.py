@@ -18,7 +18,6 @@ from src.services.combat_models import (
     WeaponStats,
 )
 from src.services.combat_service import CombatService
-from src.services.game_constants import GameConstants
 
 # ---------------------------------------------------------------------------
 # Test helper

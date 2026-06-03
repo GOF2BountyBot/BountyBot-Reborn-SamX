@@ -1,5 +1,6 @@
 """Service-specific fixtures for bot-core tests."""
 
+import contextlib
 import os
 import sys
 import types
@@ -96,10 +97,8 @@ def _stub_gateway_push_helpers(request):
         yield
     finally:
         for p in started:
-            try:
+            with contextlib.suppress(RuntimeError):
                 p.stop()
-            except RuntimeError:
-                pass
 
 
 @pytest.fixture

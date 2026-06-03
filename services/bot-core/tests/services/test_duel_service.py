@@ -41,7 +41,6 @@ from unittest.mock import patch
 from services.duel_service import DuelService
 from services.loadout_builder import LoadoutBuilder
 from src.services.combat_models import (
-    CombatStats,
     FightResults,
     FightStats,
     ShipLoadout,

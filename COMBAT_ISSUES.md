@@ -261,13 +261,35 @@ ammo/count tracking for secondaries in the resolver — they fire every time coo
 (infinite ammo). `player_ships.secondary_weapons` is a JSON list (qty = repeated entries).
 **Nuke cooldowns are all 6–10s** (Tormentor 6000 … Liberator 10000ms) — far below the 180s
 battle, so the "fires once b/c cooldown > battle" property does NOT hold (battle 50 re-fired 4×).
-**Scope (needs design):** (1) consumption model — decrement equipped count on fire, stop at 0;
-(2) post-fight PERSISTENCE — does consumption permanently deplete the equipped secondary (must
-restock from inventory, like ES §348) or reset per battle? (owner implied permanent); (3) the
-qty/ammo representation for secondaries; (4) reconcile nuke cooldowns (raise to > battle, or rely
-on consumption); (5) update locked spec. → **d-architect** to design → dev → tester.
-**Folds in:** CI-13 nuke cooldown + the nuke "miss"→detonation label; CI-15 hull-depleted event
-can ride the same dev pass.
+### LOCKED DESIGN (owner-confirmed 2026-06-03) — ready for d-architect
+1. **Slot = a specific secondary weapon item ("type").** `max_secondaries` = # distinct types
+   equippable; each type carries its OWN **unbounded** ammo stack. (3 different nuke models =
+   3 types if you have 3 slots — type is the item, not the subtype category.)
+2. **Permanent cross-battle depletion.** Firing decrements that type's qty (floor 0); persists
+   across battles; restock ONLY via shop. (10 → use 3 → next fight starts at 7.)
+3. **Shop buy routing:** if the type is already equipped → buy tops up the **equipped** stack;
+   else → buy goes to **inventory** for the normal `/equip` flow.
+4. **Equip vs restock:** `/equip` of an already-equipped type = **top-up** (no new slot);
+   `/equip` of a NEW type = needs a free secondary slot.
+5. **Auto-unequip at 0:** mid-fight a depleted secondary just stops firing; the auto-unequip
+   (freeing the slot) is a **post-fight loadout cleanup**, not a live mid-tick mutation.
+6. **Cooldowns:** keep current seed values (6–10s). Nukes limited ONLY by qty + cooldown — NO
+   hard 1/battle rule. (Owner may add a "max per battle"/fire-chance RNG knob LATER for tuning.)
+7. **Uniform NPC + player consumption** (in-fight). Criminals deplete in-fight, NO cross-fight
+   persistence (respawn fresh). PvC player edge stays via the existing damage-reduction knob,
+   not via ammo asymmetry.
+8. **Cluster:** 1 round consumed per fire trigger → fires N munitions, per-munition hit roll
+   (existing burst mechanics unchanged; just add the 1-round decrement).
+9. **Display:** show the ammo count wherever equipped gear is shown — `/loadout` and the other
+   equipped-gear surfaces (alongside primary/turret/module); combat log notes "out of ammo"
+   when a secondary runs dry mid-fight.
+
+**Architect's discretion (engineering):** storage representation + migration of the
+`secondary_weapons` JSON list to a qty model; post-fight write-back from BOTH the PvC bounty and
+PvP duel paths; `combat-preflight` sim must NOT persist consumption; sell-with-ammo refund
+handling; locked-spec §(secondary weapons) delta. → **d-architect** to produce the plan → review → dev → tester.
+**Folds into the eventual dev pass:** CI-13 nuke "miss"→detonation/damage-aware label; CI-15
+hull-depleted key event.
 
 ---
 

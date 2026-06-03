@@ -482,31 +482,79 @@ class BountyCog(commands.Cog):
         return embed
 
     @staticmethod
-    def _format_combat_summary(combat: dict) -> str:
-        """Format combat results into a readable embed field."""
-        s1 = combat.get("ship1_stats", {})
-        s2 = combat.get("ship2_stats", {})
+    def _format_combat_summary(combat: dict, *, combat_won: bool | None = None) -> str:
+        """Format actual after-action combat results into a readable embed field.
 
-        lines = []
-        # Player stats
-        lines.append(f"**Your Ship** ({s1.get('ship_name', '?')})")
-        lines.append(f"HP: {s1.get('raw_hp', 0)} → {s1.get('varied_hp', 0)} | DPS: {s1.get('raw_dps', 0):.1f}")
-        pvc_dr = combat.get("pvc_damage_reduction", 0.0) or 0.0
+        Uses the tick-resolver summary (combatants block with final HP, damage dealt,
+        and accuracy) when available.  Falls back gracefully when summary data is
+        absent (e.g. pre-existing logs from before the tick resolver was deployed).
+
+        Args:
+            combat: The combat_result dict from the API response.
+            combat_won: Optional override for the outcome line — True = player won,
+                        False = player lost, None = derive from combat["outcome"].
+
+        The field value is truncated to 1024 characters to stay within Discord limits.
+        """
+        combatants = (combat.get("combatants") or {}) if combat else {}
+        c1 = combatants.get("1", {}) or {}
+        c2 = combatants.get("2", {}) or {}
+
+        # Duration line — shown once at the top
+        duration_s: float | None = combat.get("duration_s") if combat else None
+        outcome: str | None = combat.get("outcome") if combat else None
+        is_stalemate = combat.get("is_stalemate", False) if combat else False
+
+        if duration_s is not None:
+            if is_stalemate or outcome == "stalemate":
+                outcome_line = f"⚔️ Stalemate in {duration_s:.1f}s"
+            elif combat_won is False:
+                outcome_line = f"⚔️ You lost in {duration_s:.1f}s"
+            else:
+                outcome_line = f"⚔️ You won in {duration_s:.1f}s"
+        else:
+            outcome_line = "⚔️ Stalemate" if is_stalemate else "⚔️ Combat complete"
+
+        def _hp_str(hp_block: dict) -> str:
+            shield = hp_block.get("shield", 0)
+            armour = hp_block.get("armour", 0)
+            hull = hp_block.get("hull", 0)
+            return f"🛡 {shield}  🔩 {armour}  ❤ {hull}"
+
+        def _combatant_line(cb: dict, label: str) -> str:
+            ship = cb.get("ship") or "?"
+            final_hp = cb.get("final_hp") or {}
+            hp_str = _hp_str(final_hp)
+            dealt = cb.get("damage_dealt", 0)
+            fired = cb.get("shots_fired", 0)
+            hit = cb.get("shots_hit", 0)
+            acc_pct = round((cb.get("accuracy") or 0) * 100)
+            acc_str = f"{acc_pct}% ({hit}/{fired})" if fired > 0 else "n/a"
+            return f"**{label}** ({ship})  {hp_str}  · dealt {dealt}  · acc {acc_str}"
+
+        lines: list[str] = [outcome_line]
+
+        if c1 or c2:
+            player_label = c1.get("name") or "You"
+            criminal_label = c2.get("name") or "Criminal"
+            lines.append(_combatant_line(c1, player_label))
+            lines.append(_combatant_line(c2, criminal_label))
+        else:
+            # Fallback: legacy projection fields (pre-tick-resolver data)
+            s1 = (combat.get("ship1_stats") or {}) if combat else {}
+            s2 = (combat.get("ship2_stats") or {}) if combat else {}
+            lines.append(f"**Your Ship** ({s1.get('ship_name', '?')})")
+            lines.append(f"**Criminal Ship** ({s2.get('ship_name', '?')})")
+
+        pvc_dr = (combat.get("pvc_damage_reduction") or 0.0) if combat else 0.0
         if pvc_dr > 0:
             lines.append(f"🛡️ PvC damage reduction: {round(pvc_dr * 100)}% active")
-        ttk1 = s1.get("ttk")
-        lines.append(f"Time to Kill: {f'{ttk1:.1f}s' if ttk1 is not None else '∞'}")
-        lines.append("")
-        # Criminal stats
-        lines.append(f"**Criminal Ship** ({s2.get('ship_name', '?')})")
-        lines.append(f"HP: {s2.get('raw_hp', 0)} → {s2.get('varied_hp', 0)} | DPS: {s2.get('raw_dps', 0):.1f}")
-        ttk2 = s2.get("ttk")
-        lines.append(f"Time to Kill: {f'{ttk2:.1f}s' if ttk2 is not None else '∞'}")
 
-        if combat.get("is_stalemate"):
-            lines.append("\n**Result:** Stalemate")
-
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        # Truncate defensively to stay within Discord's 1024-char field limit
+        if len(text) > 1024:
+            text = text[:1021] + "…"
+        return text
 
     def _get_tier_color(self, tier: str | None) -> discord.Color:
         """Return a discord.Color for the given tier string (case-insensitive).
@@ -547,7 +595,7 @@ class BountyCog(commands.Cog):
                 if combat:
                     embed.add_field(
                         name="⚔️ Combat Summary",
-                        value=self._format_combat_summary(combat),
+                        value=self._format_combat_summary(combat, combat_won=False),
                         inline=False,
                     )
             else:
@@ -574,7 +622,7 @@ class BountyCog(commands.Cog):
             if combat:
                 embed.add_field(
                     name="⚔️ Combat Summary",
-                    value=self._format_combat_summary(combat),
+                    value=self._format_combat_summary(combat, combat_won=False),
                     inline=False,
                 )
         elif result == "incorrect":
@@ -630,12 +678,12 @@ class BountyCog(commands.Cog):
             color=self._get_tier_color(tier),
         )
 
-        # Combat summary
+        # Combat summary (capture = player won)
         combat = data.get("combat_result")
         if combat:
             embed.add_field(
                 name="⚔️ Combat Summary",
-                value=self._format_combat_summary(combat),
+                value=self._format_combat_summary(combat, combat_won=True),
                 inline=False,
             )
 

@@ -453,6 +453,94 @@ class TestAcceptDuel:
         assert data["challenger_name"] is None
         assert data["target_name"] is None
 
+    @patch("api.routers.duels.get_db_session")
+    def test_accept_duel_includes_after_action_summary(self, mock_get_db, client, mock_duel_service):
+        """CI-2: accept response includes after-action summary fields (duration_s, combatants, outcome)."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(return_value=make_mock_duel(id=1, target_id=200))
+
+        # Build a fight_results with real metadata mimicking the tick-resolver output
+        fight = make_mock_fight_result(winner_name="Ship A", loser_name="Ship B", is_stalemate=False)
+        fight.combat_log_id = 77
+        fight.metadata = {
+            "summary": {
+                "outcome": "win",
+                "reason": "hp_depleted",
+                "duration_ticks": 1500,
+                "combatants": {
+                    "1": {
+                        "name": "Ship A",
+                        "ship": "Ship A",
+                        "final_hp": {"shield": 0, "armour": 50, "hull": 120},
+                        "damage_dealt": 250,
+                        "damage_taken": 80,
+                        "shots_fired": 60,
+                        "shots_hit": 40,
+                        "accuracy": 0.667,
+                    },
+                    "2": {
+                        "name": "Ship B",
+                        "ship": "Ship B",
+                        "final_hp": {"shield": 0, "armour": 0, "hull": 0},
+                        "damage_dealt": 80,
+                        "damage_taken": 250,
+                        "shots_fired": 55,
+                        "shots_hit": 30,
+                        "accuracy": 0.545,
+                    },
+                },
+            },
+            "metadata": {"tick_ms": 10, "total_ticks": 1500, "resolver": "tick_v1", "pvc_damage_reduction": 0.0},
+        }
+        challenger = make_mock_player(player_id=100, credits=1500)
+        target = make_mock_player(player_id=200, credits=500)
+        mock_duel_service.accept_duel = AsyncMock(
+            return_value={
+                "fight_results": fight,
+                "challenger": challenger,
+                "target": target,
+                "stakes": 500,
+                "credits_transferred": 500,
+                "challenger_name": "challenger_player",
+                "target_name": "target_player",
+            }
+        )
+
+        response = client.post("/api/v1/duels/1/accept?user_id=200")
+
+        assert response.status_code == 200
+        data = response.json()
+        # After-action summary fields present
+        assert data["outcome"] == "win"
+        assert data["reason"] == "hp_depleted"
+        assert data["duration_ticks"] == 1500
+        assert abs(data["duration_s"] - 15.0) < 0.01  # 1500 * 10ms / 1000
+        assert data["combat_log_id"] == 77
+        cb = data["combatants"]
+        assert cb is not None
+        assert cb["1"]["damage_dealt"] == 250
+        assert cb["2"]["final_hp"]["hull"] == 0
+        # Legacy fields still present
+        assert data["winner_name"] == "Ship A"
+        assert data["credits_transferred"] == 500
+
+    @patch("api.routers.duels.get_db_session")
+    def test_accept_duel_summary_fields_none_when_no_metadata(self, mock_get_db, client, mock_duel_service):
+        """CI-2: after-action summary fields are null when fight has no real metadata."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(return_value=make_mock_duel(id=1, target_id=200))
+        # make_mock_accept_result uses MagicMock for fight → metadata is a MagicMock, not a real dict
+        mock_duel_service.accept_duel = AsyncMock(return_value=make_mock_accept_result())
+
+        response = client.post("/api/v1/duels/1/accept?user_id=200")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["outcome"] is None
+        assert data["duration_ticks"] is None
+        assert data["duration_s"] is None
+        assert data["combatants"] is None
+
 
 # ===========================================================================
 # 3. POST /duels/{duel_id}/reject

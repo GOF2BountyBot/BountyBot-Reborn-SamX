@@ -323,6 +323,17 @@ async def accept_duel(
             target_id=target.id,
         )
 
+        # Extract after-action summary from FightResults metadata (tick-resolver output).
+        # Included as optional fields so existing clients can ignore them; gateway embeds use them.
+        # Guard: only extract when metadata is a real dict (not a MagicMock in tests).
+        _raw_metadata = getattr(fight, "metadata", None)
+        _fight_metadata: dict = _raw_metadata if isinstance(_raw_metadata, dict) else {}
+        _fight_inner_meta: dict = _fight_metadata.get("metadata") or {}
+        _fight_summary: dict = _fight_metadata.get("summary") or {}
+        _tick_ms = int(_fight_inner_meta.get("tick_ms", 10))
+        _duration_ticks = int(_fight_summary.get("duration_ticks", 0))
+        _duration_s = (_duration_ticks * _tick_ms) / 1000.0 if _duration_ticks else None
+
         return {
             "duel_id": duel_id,
             "is_stalemate": fight.is_stalemate,
@@ -340,6 +351,13 @@ async def accept_duel(
             "target_credits": target.credits,
             "target_hp": fight.ship2_stats.varied_hp,
             "target_dps": fight.ship2_stats.varied_dps,
+            # After-action summary (from tick-resolver; None when unavailable)
+            "outcome": _fight_summary.get("outcome"),
+            "reason": _fight_summary.get("reason"),
+            "duration_ticks": _duration_ticks or None,
+            "duration_s": _duration_s,
+            "combatants": _fight_summary.get("combatants"),
+            "combat_log_id": getattr(fight, "combat_log_id", None),
         }
 
 

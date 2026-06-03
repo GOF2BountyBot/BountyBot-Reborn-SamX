@@ -486,14 +486,87 @@ class DuelCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while accepting the duel.", ephemeral=True)
 
     def _build_accept_embed(self, duel_id: int, data: dict) -> discord.Embed:
-        """Build an embed for a completed duel (accept result)."""
+        """Build an embed for a completed duel (accept result).
+
+        Renders actual after-action stats (final HP, damage dealt, accuracy, duration)
+        from the tick-resolver summary when available.  Falls back gracefully to the
+        legacy TTK-comparison approach for old responses without summary data.
+        """
         is_stalemate = data.get("is_stalemate", False)
         credits_transferred = data.get("credits_transferred", 0)
         stakes = data.get("stakes", 0)
 
+        challenger_id = data.get("challenger_id")
+        challenger_name = data.get("challenger_name") or f"Player {challenger_id}"
+        challenger_credits = data.get("challenger_credits", 0)
+        target_id = data.get("target_id")
+        target_name = data.get("target_name") or f"Player {target_id}"
+        target_credits = data.get("target_credits", 0)
+
+        # ------------------------------------------------------------------
+        # Determine winner/loser display names.
+        # Prefer actual winner_name from the fight resolver.  The tick resolver
+        # sets winner_name to the SHIP name; we map that to a PLAYER name by
+        # checking which combatant's ship name it matches (c1 = challenger,
+        # c2 = target).  Fall back to TTK heuristic, then raw ship names.
+        # ------------------------------------------------------------------
+        combatants = data.get("combatants") or {}
+        c1 = combatants.get("1") or {}
+        c2 = combatants.get("2") or {}
+
+        winner_ship = data.get("winner_name", "")
+        c1_ship = c1.get("ship") or data.get("ship1_name") or ""
+        c2_ship = c2.get("ship") or data.get("ship2_name") or ""
+
+        try:
+            if winner_ship and (c1_ship or c2_ship):
+                if winner_ship == c1_ship:
+                    winner_display, loser_display = challenger_name, target_name
+                elif winner_ship == c2_ship:
+                    winner_display, loser_display = target_name, challenger_name
+                else:
+                    raise ValueError("ship name mismatch — fall through to TTK")
+            else:
+                # Legacy TTK heuristic (pre-summary data)
+                challenger_hp = data.get("challenger_hp", 0) or 0
+                challenger_dps = data.get("challenger_dps", 0) or 0
+                target_hp = data.get("target_hp", 0) or 0
+                target_dps = data.get("target_dps", 0) or 0
+                if challenger_dps > 0 and target_dps > 0:
+                    challenger_ttk = challenger_hp / target_dps
+                    target_ttk = target_hp / challenger_dps
+                    if challenger_ttk > target_ttk:
+                        winner_display, loser_display = challenger_name, target_name
+                    else:
+                        winner_display, loser_display = target_name, challenger_name
+                else:
+                    winner_display = winner_ship or "Unknown"
+                    loser_display = data.get("loser_name", "Unknown") or "Unknown"
+        except Exception:  # pylint: disable=broad-exception-caught
+            winner_display = winner_ship or "Unknown"
+            loser_display = data.get("loser_name", "Unknown") or "Unknown"
+
+        # ------------------------------------------------------------------
+        # Duration line
+        # ------------------------------------------------------------------
+        duration_s: float | None = data.get("duration_s")
+        if is_stalemate:
+            if duration_s is not None:
+                outcome_str = f"⚔️ Duel Complete — Stalemate in {duration_s:.1f}s"
+            else:
+                outcome_str = "⚔️ Duel Complete — Stalemate"
+        else:
+            if duration_s is not None:
+                outcome_str = f"⚔️ Duel Complete — {winner_display} won in {duration_s:.1f}s"
+            else:
+                outcome_str = f"⚔️ Duel Complete — {winner_display} won"
+
+        # ------------------------------------------------------------------
+        # Build embed
+        # ------------------------------------------------------------------
         if is_stalemate:
             embed = discord.Embed(
-                title="⚔️ Duel Complete — Stalemate!",
+                title=outcome_str,
                 description=(
                     f"**Duel #{duel_id}** ended in a stalemate!\n\n"
                     "Neither combatant could overcome the other.\n"
@@ -502,43 +575,8 @@ class DuelCog(commands.Cog):
                 color=discord.Color.yellow(),
             )
         else:
-            challenger_id = data.get("challenger_id")
-            challenger_name = data.get("challenger_name") or f"Player {challenger_id}"
-            challenger_credits = data.get("challenger_credits", 0)
-            challenger_hp = data.get("challenger_hp", 0)
-            challenger_dps = data.get("challenger_dps", 0)
-
-            target_id = data.get("target_id")
-            target_name = data.get("target_name") or f"Player {target_id}"
-            target_credits = data.get("target_credits", 0)
-            target_hp = data.get("target_hp", 0)
-            target_dps = data.get("target_dps", 0)
-
-            # Determine which PLAYER won using time-to-kill (TTK) comparison.
-            # fight_ships(challenger_loadout, target_loadout) always assigns challenger
-            # as ship1, so challenger_hp/challenger_dps belong to ship1.
-            # The ship with the higher TTK wins (the opponent dies first).
-            # Fall back to the raw ship names when stats are unavailable.
-            try:
-                if challenger_dps > 0 and target_dps > 0:
-                    challenger_ttk = challenger_hp / target_dps
-                    target_ttk = target_hp / challenger_dps
-                    if challenger_ttk > target_ttk:
-                        winner_display = challenger_name
-                        loser_display = target_name
-                    else:
-                        winner_display = target_name
-                        loser_display = challenger_name
-                else:
-                    # Fallback: ship names from the API response
-                    winner_display = data.get("winner_name", "Unknown")
-                    loser_display = data.get("loser_name", "Unknown")
-            except Exception:  # pylint: disable=broad-exception-caught
-                winner_display = data.get("winner_name", "Unknown")
-                loser_display = data.get("loser_name", "Unknown")
-
             embed = discord.Embed(
-                title="⚔️ Duel Complete — Victory!",
+                title=outcome_str,
                 description=(
                     f"**Duel #{duel_id}** has been resolved!\n\n"
                     f"🏆 **Winner:** {winner_display}\n"
@@ -555,6 +593,36 @@ class DuelCog(commands.Cog):
                     ),
                     inline=False,
                 )
+
+        # ------------------------------------------------------------------
+        # After-action combat summary field (actual stats from tick resolver)
+        # ------------------------------------------------------------------
+        def _hp_str(hp_block: dict) -> str:
+            shield = hp_block.get("shield", 0)
+            armour = hp_block.get("armour", 0)
+            hull = hp_block.get("hull", 0)
+            return f"🛡 {shield}  🔩 {armour}  ❤ {hull}"
+
+        def _combatant_line(cb: dict, label: str) -> str:
+            ship = cb.get("ship") or "?"
+            final_hp = cb.get("final_hp") or {}
+            hp_str = _hp_str(final_hp)
+            dealt = cb.get("damage_dealt", 0)
+            fired = cb.get("shots_fired", 0)
+            hit = cb.get("shots_hit", 0)
+            acc_pct = round((cb.get("accuracy") or 0) * 100)
+            acc_str = f"{acc_pct}% ({hit}/{fired})" if fired > 0 else "n/a"
+            return f"**{label}** ({ship})  {hp_str}  · dealt {dealt}  · acc {acc_str}"
+
+        if c1 or c2:
+            summary_lines = [
+                _combatant_line(c1, challenger_name),
+                _combatant_line(c2, target_name),
+            ]
+            summary_text = "\n".join(summary_lines)
+            if len(summary_text) > 1024:
+                summary_text = summary_text[:1021] + "…"
+            embed.add_field(name="⚔️ Combat Stats", value=summary_text, inline=False)
 
         return embed
 

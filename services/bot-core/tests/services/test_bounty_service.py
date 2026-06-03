@@ -3882,6 +3882,100 @@ def test_serialize_fight_results_pvc_damage_reduction_zero_when_no_metadata():
     assert result["pvc_damage_reduction"] == pytest.approx(0.0)
 
 
+def test_serialize_fight_results_includes_summary_fields():
+    """CI-2: summary fields (combatants, duration_s, outcome, reason) are serialized."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(
+        ship_name="Betty", raw_hp=200, raw_dps=10.0, varied_hp=200, varied_dps=10.0, ttk=None
+    )
+    fight_stats2 = SimpleNamespace(
+        ship_name="Crusher", raw_hp=100, raw_dps=8.0, varied_hp=100, varied_dps=8.0, ttk=25.0
+    )
+    summary = {
+        "outcome": "win",
+        "reason": "hp_depleted",
+        "duration_ticks": 2650,
+        "combatants": {
+            "1": {
+                "name": "Betty",
+                "ship": "Betty",
+                "final_hp": {"shield": 0, "armour": 0, "hull": 95},
+                "damage_dealt": 312,
+                "damage_taken": 95,
+                "shots_fired": 81,
+                "shots_hit": 47,
+                "accuracy": 0.58,
+            },
+            "2": {
+                "name": "Crusher",
+                "ship": "Crusher",
+                "final_hp": {"shield": 0, "armour": 0, "hull": 0},
+                "damage_dealt": 95,
+                "damage_taken": 312,
+                "shots_fired": 78,
+                "shots_hit": 40,
+                "accuracy": 0.51,
+            },
+        },
+    }
+    fight = SimpleNamespace(
+        winner_name="Betty",
+        loser_name="Crusher",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=99,
+        metadata={
+            "summary": summary,
+            "metadata": {"tick_ms": 10, "total_ticks": 2650, "resolver": "tick_v1", "pvc_damage_reduction": 0.33},
+        },
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    # After-action fields present
+    assert result["outcome"] == "win"
+    assert result["reason"] == "hp_depleted"
+    assert result["duration_ticks"] == 2650
+    assert result["duration_s"] == pytest.approx(26.5)
+    assert result["pvc_damage_reduction"] == pytest.approx(0.33)
+    cb = result["combatants"]
+    assert cb is not None
+    assert cb["1"]["accuracy"] == pytest.approx(0.58)
+    assert cb["1"]["damage_dealt"] == 312
+    assert cb["2"]["final_hp"]["hull"] == 0
+    # Legacy projection fields still present
+    assert result["ship1_stats"]["ship_name"] == "Betty"
+    assert result["combat_log_id"] == 99
+
+
+def test_serialize_fight_results_no_summary_fields_are_none():
+    """CI-2: when fight has no metadata/summary, after-action fields default to None."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(ship_name="A", raw_hp=100, raw_dps=5.0, varied_hp=100, varied_dps=5.0, ttk=20.0)
+    fight_stats2 = SimpleNamespace(ship_name="B", raw_hp=80, raw_dps=5.0, varied_hp=80, varied_dps=5.0, ttk=20.0)
+    fight = SimpleNamespace(
+        winner_name="A",
+        loser_name="B",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=None,
+        # No metadata attribute
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    assert result["outcome"] is None
+    assert result["duration_ticks"] is None
+    assert result["duration_s"] is None
+    assert result["combatants"] is None
+
+
 # ===========================================================================
 # Tests: _edit_bounty_announcement — criminal_icon lookup
 # ===========================================================================

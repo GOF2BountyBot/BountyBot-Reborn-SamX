@@ -608,6 +608,135 @@ class TestBuildAcceptEmbedPlayerNames:
         assert "500" in balance_field.value
 
 
+def _make_accept_result_with_summary(
+    duel_id=1,
+    winner_ship="Ship A",
+    loser_ship="Ship B",
+    challenger_name="challenger_player",
+    target_name="target_player",
+    credits_transferred=500,
+    stakes=500,
+    challenger_credits=1500,
+    target_credits=500,
+    duration_s=15.0,
+    pvc_damage_reduction=0.0,
+):
+    """Build an accept result dict with full tick-resolver summary fields."""
+    return {
+        "duel_id": duel_id,
+        "is_stalemate": False,
+        "winner_name": winner_ship,
+        "loser_name": loser_ship,
+        "credits_transferred": credits_transferred,
+        "stakes": stakes,
+        "challenger_id": 100,
+        "challenger_name": challenger_name,
+        "challenger_credits": challenger_credits,
+        "target_id": 200,
+        "target_name": target_name,
+        "target_credits": target_credits,
+        "outcome": "win",
+        "reason": "hp_depleted",
+        "duration_ticks": 1500,
+        "duration_s": duration_s,
+        "combat_log_id": 77,
+        "combatants": {
+            "1": {
+                "name": winner_ship,
+                "ship": winner_ship,
+                "final_hp": {"shield": 0, "armour": 50, "hull": 120},
+                "damage_dealt": 250,
+                "shots_fired": 60,
+                "shots_hit": 40,
+                "accuracy": 0.667,
+            },
+            "2": {
+                "name": loser_ship,
+                "ship": loser_ship,
+                "final_hp": {"shield": 0, "armour": 0, "hull": 0},
+                "damage_dealt": 80,
+                "shots_fired": 55,
+                "shots_hit": 30,
+                "accuracy": 0.545,
+            },
+        },
+    }
+
+
+class TestBuildAcceptEmbedCI2:
+    """CI-2 tests for DuelCog._build_accept_embed() — actual after-action stats."""
+
+    def test_ci2_duration_in_title(self, mock_duel_cog):
+        """CI-2: When duration_s is present, title includes it."""
+        data = _make_accept_result_with_summary(duration_s=15.0)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "15.0s" in embed.title
+
+    def test_ci2_winner_name_in_title(self, mock_duel_cog):
+        """CI-2: When combatants block is present, winner is resolved from ship → player name mapping."""
+        data = _make_accept_result_with_summary(winner_ship="Ship A", challenger_name="challenger_player")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        # The title/description should identify the winner by player name
+        assert "challenger_player" in embed.title or "challenger_player" in embed.description
+
+    def test_ci2_combat_stats_field_present(self, mock_duel_cog):
+        """CI-2: Combat Stats field is added when combatants block is present."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        field_names = [f.name for f in embed.fields]
+        assert any("Combat Stats" in n for n in field_names)
+
+    def test_ci2_combat_stats_shows_damage_dealt(self, mock_duel_cog):
+        """CI-2: Combat Stats field shows damage_dealt."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "250" in stats_field.value  # c1 damage_dealt
+
+    def test_ci2_combat_stats_shows_accuracy(self, mock_duel_cog):
+        """CI-2: Combat Stats field shows accuracy as percentage."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "67%" in stats_field.value  # round(0.667 * 100)
+
+    def test_ci2_combat_stats_field_le_1024_chars(self, mock_duel_cog):
+        """CI-2: Combat Stats field value stays within Discord's 1024-char limit."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert len(stats_field.value) <= 1024
+
+    def test_ci2_no_combat_stats_field_without_summary(self, mock_duel_cog):
+        """CI-2: No Combat Stats field when combatants block is absent (legacy response)."""
+        data = _make_accept_result(is_stalemate=False)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        field_names = [f.name for f in embed.fields]
+        assert not any("Combat Stats" in n for n in field_names)
+
+    def test_ci2_stalemate_with_duration(self, mock_duel_cog):
+        """CI-2: Stalemate embed includes duration when available."""
+        data = {
+            "duel_id": 1,
+            "is_stalemate": True,
+            "winner_name": None,
+            "loser_name": None,
+            "credits_transferred": 0,
+            "stakes": 500,
+            "challenger_id": 100,
+            "challenger_name": "player_one",
+            "challenger_credits": 1000,
+            "target_id": 200,
+            "target_name": "player_two",
+            "target_credits": 1000,
+            "duration_s": 30.0,
+            "combatants": None,
+        }
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "Stalemate" in embed.title
+        assert "30.0s" in embed.title
+
+
 # ---------------------------------------------------------------------------
 # /duel-reject command
 # ---------------------------------------------------------------------------

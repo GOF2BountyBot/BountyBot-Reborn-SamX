@@ -79,6 +79,12 @@ def _serialize_fight_results(fight_results) -> dict | None:
     pvc_damage_reduction is included from FightResults.metadata; it is 0.0 for
     PvP fights and the configured DR value (e.g. 0.33) for PvC bounty fights.
 
+    Also includes the actual after-action summary (final_hp, damage_dealt,
+    damage_taken, shots_fired, shots_hit, accuracy, outcome, reason,
+    duration_ticks) from metadata["summary"] when available.  Consumers that
+    only need the legacy projection fields can ignore the new keys; they are
+    always optional so the shape stays backward-compatible.
+
     Returns:
         Dict representation suitable for JSON serialization, or None.
     """
@@ -96,6 +102,13 @@ def _serialize_fight_results(fight_results) -> dict | None:
         }
 
     metadata = getattr(fight_results, "metadata", None) or {}
+    inner_meta = metadata.get("metadata", {}) or {}
+    summary = metadata.get("summary", {}) or {}
+    pvc_damage_reduction = float(inner_meta.get("pvc_damage_reduction", metadata.get("pvc_damage_reduction", 0.0)))
+    tick_ms = int(inner_meta.get("tick_ms", 10))
+    duration_ticks = int(summary.get("duration_ticks", 0))
+    duration_s = (duration_ticks * tick_ms) / 1000.0 if duration_ticks else None
+
     result: dict = {
         "winner_name": fight_results.winner_name,
         "loser_name": fight_results.loser_name,
@@ -103,7 +116,13 @@ def _serialize_fight_results(fight_results) -> dict | None:
         "ship1_stats": _stats_to_dict(fight_results.ship1_stats),
         "ship2_stats": _stats_to_dict(fight_results.ship2_stats),
         "combat_log_id": fight_results.combat_log_id,
-        "pvc_damage_reduction": float(metadata.get("pvc_damage_reduction", 0.0)),
+        "pvc_damage_reduction": pvc_damage_reduction,
+        # After-action summary fields (populated from tick-resolver summary; None when unavailable)
+        "outcome": summary.get("outcome"),
+        "reason": summary.get("reason"),
+        "duration_ticks": duration_ticks or None,
+        "duration_s": duration_s,
+        "combatants": summary.get("combatants"),
     }
     return result
 

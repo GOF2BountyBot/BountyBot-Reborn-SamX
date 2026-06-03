@@ -1756,139 +1756,228 @@ def _make_combat_result(
     }
 
 
+def _make_combat_result_with_summary(
+    c1_name="Betty",
+    c1_ship="Betty",
+    c2_name="Pirate Bob",
+    c2_ship="Pirate Bob",
+    c1_final_hp=None,
+    c2_final_hp=None,
+    c1_damage_dealt=312,
+    c1_shots_fired=81,
+    c1_shots_hit=47,
+    c1_accuracy=0.58,
+    c2_damage_dealt=95,
+    c2_shots_fired=78,
+    c2_shots_hit=40,
+    c2_accuracy=0.51,
+    duration_s=26.5,
+    outcome="win",
+    is_stalemate=False,
+    pvc_damage_reduction=0.0,
+):
+    """Build a combat_result dict with tick-resolver summary fields."""
+    if c1_final_hp is None:
+        c1_final_hp = {"shield": 0, "armour": 0, "hull": 95}
+    if c2_final_hp is None:
+        c2_final_hp = {"shield": 0, "armour": 0, "hull": 0}
+    return {
+        "winner_name": c1_name if not is_stalemate else None,
+        "loser_name": c2_name if not is_stalemate else None,
+        "is_stalemate": is_stalemate,
+        "outcome": outcome,
+        "duration_s": duration_s,
+        "pvc_damage_reduction": pvc_damage_reduction,
+        "combatants": {
+            "1": {
+                "name": c1_name,
+                "ship": c1_ship,
+                "final_hp": c1_final_hp,
+                "damage_dealt": c1_damage_dealt,
+                "shots_fired": c1_shots_fired,
+                "shots_hit": c1_shots_hit,
+                "accuracy": c1_accuracy,
+            },
+            "2": {
+                "name": c2_name,
+                "ship": c2_ship,
+                "final_hp": c2_final_hp,
+                "damage_dealt": c2_damage_dealt,
+                "shots_fired": c2_shots_fired,
+                "shots_hit": c2_shots_hit,
+                "accuracy": c2_accuracy,
+            },
+        },
+        # Legacy projection fields (still present for backward compat)
+        "ship1_stats": {"ship_name": c1_ship, "raw_hp": 135, "varied_hp": 135, "raw_dps": 0.0, "ttk": None},
+        "ship2_stats": {"ship_name": c2_ship, "raw_hp": 110, "varied_hp": 110, "raw_dps": 0.0, "ttk": 26.5},
+    }
+
+
 class TestFormatCombatSummary:
-    """Unit tests for BountyCog._format_combat_summary()."""
+    """Unit tests for BountyCog._format_combat_summary().
+
+    CI-2: After-action format — uses actual final HP, damage dealt, accuracy,
+    and duration from the tick-resolver summary.  The old projection fields
+    (raw_hp→varied_hp arrow, DPS, TTK) are no longer rendered.
+    """
 
     @pytest.fixture(autouse=True)
     def _import_cog(self, mock_bounty_cog):
         """Ensure cog is imported for static method access."""
         self.cog = mock_bounty_cog
 
-    def test_contains_player_ship_name(self):
-        """Summary should include the player ship name."""
-        combat = _make_combat_result(s1_name="StarFighter")
+    # ------------------------------------------------------------------
+    # New after-action format (combatants block present)
+    # ------------------------------------------------------------------
+
+    def test_ci2_contains_player_ship_name(self):
+        """CI-2: Summary includes the player ship name from combatants block."""
+        combat = _make_combat_result_with_summary(c1_ship="StarFighter")
         result = self.cog._format_combat_summary(combat)
         assert "StarFighter" in result
 
-    def test_contains_criminal_ship_name(self):
-        """Summary should include the criminal ship name."""
-        combat = _make_combat_result(s2_name="DeathBringer")
+    def test_ci2_contains_criminal_ship_name(self):
+        """CI-2: Summary includes the criminal ship name from combatants block."""
+        combat = _make_combat_result_with_summary(c2_ship="DeathBringer")
         result = self.cog._format_combat_summary(combat)
         assert "DeathBringer" in result
 
-    def test_contains_player_hp_values(self):
-        """Summary should include raw_hp and varied_hp for player ship."""
-        combat = _make_combat_result(s1_raw_hp=200, s1_varied_hp=195)
+    def test_ci2_shows_final_hp_shield(self):
+        """CI-2: Summary shows final shield HP."""
+        combat = _make_combat_result_with_summary(c1_final_hp={"shield": 42, "armour": 0, "hull": 80})
         result = self.cog._format_combat_summary(combat)
-        assert "200" in result
-        assert "195" in result
+        assert "42" in result
 
-    def test_contains_criminal_hp_values(self):
-        """Summary should include raw_hp and varied_hp for criminal ship."""
-        combat = _make_combat_result(s2_raw_hp=300, s2_varied_hp=290)
+    def test_ci2_shows_final_hp_hull(self):
+        """CI-2: Summary shows final hull HP."""
+        combat = _make_combat_result_with_summary(c1_final_hp={"shield": 0, "armour": 0, "hull": 95})
         result = self.cog._format_combat_summary(combat)
-        assert "300" in result
-        assert "290" in result
+        assert "95" in result
 
-    def test_contains_player_dps(self):
-        """Summary should include DPS for player ship formatted to 1 decimal."""
-        combat = _make_combat_result(s1_raw_dps=12.5)
+    def test_ci2_shows_damage_dealt(self):
+        """CI-2: Summary shows damage_dealt for each combatant."""
+        combat = _make_combat_result_with_summary(c1_damage_dealt=312)
         result = self.cog._format_combat_summary(combat)
-        assert "12.5" in result
+        assert "312" in result
 
-    def test_contains_criminal_dps(self):
-        """Summary should include DPS for criminal ship formatted to 1 decimal."""
-        combat = _make_combat_result(s2_raw_dps=8.3)
+    def test_ci2_shows_accuracy_pct(self):
+        """CI-2: Summary shows accuracy as percentage."""
+        combat = _make_combat_result_with_summary(c1_shots_fired=81, c1_shots_hit=47, c1_accuracy=0.58)
         result = self.cog._format_combat_summary(combat)
-        assert "8.3" in result
+        assert "58%" in result
 
-    def test_contains_player_ttk(self):
-        """Summary should show time to kill for player ship."""
-        combat = _make_combat_result(s1_ttk=18.2)
+    def test_ci2_shows_shots_fired_and_hit(self):
+        """CI-2: Summary shows shots fired/hit in parentheses."""
+        combat = _make_combat_result_with_summary(c1_shots_fired=81, c1_shots_hit=47)
         result = self.cog._format_combat_summary(combat)
-        assert "18.2s" in result
+        assert "47/81" in result
 
-    def test_contains_criminal_ttk(self):
-        """Summary should show time to kill for criminal ship."""
-        combat = _make_combat_result(s2_ttk=15.8)
+    def test_ci2_shows_duration_in_outcome_line(self):
+        """CI-2: Outcome line includes duration in seconds."""
+        combat = _make_combat_result_with_summary(duration_s=26.5)
+        result = self.cog._format_combat_summary(combat, combat_won=True)
+        assert "26.5s" in result
+
+    def test_ci2_no_arrow_in_output(self):
+        """CI-2: The old HP: x → y arrow must NOT appear."""
+        combat = _make_combat_result_with_summary()
         result = self.cog._format_combat_summary(combat)
-        assert "15.8s" in result
+        assert "→" not in result
 
-    def test_ttk_none_shown_as_infinity(self):
-        """When ttk is None (can never kill), summary should show '∞'."""
-        combat = _make_combat_result(s1_ttk=None, s2_ttk=None)
+    def test_ci2_no_dps_in_output(self):
+        """CI-2: DPS must NOT appear in the new format."""
+        combat = _make_combat_result_with_summary()
         result = self.cog._format_combat_summary(combat)
-        assert "∞" in result
+        assert "DPS" not in result
 
-    def test_stalemate_shows_stalemate_result(self):
-        """When is_stalemate is True, summary should include 'Stalemate'."""
-        combat = _make_combat_result(is_stalemate=True)
+    def test_ci2_no_ttk_in_output(self):
+        """CI-2: TTK must NOT appear in the new format."""
+        combat = _make_combat_result_with_summary()
+        result = self.cog._format_combat_summary(combat)
+        assert "Time to Kill" not in result
+        assert "TTK" not in result
+
+    def test_ci2_won_outcome_line(self):
+        """CI-2: combat_won=True → outcome line says 'won'."""
+        combat = _make_combat_result_with_summary(duration_s=20.0)
+        result = self.cog._format_combat_summary(combat, combat_won=True)
+        assert "won" in result.lower()
+
+    def test_ci2_lost_outcome_line(self):
+        """CI-2: combat_won=False → outcome line says 'lost'."""
+        combat = _make_combat_result_with_summary(duration_s=20.0)
+        result = self.cog._format_combat_summary(combat, combat_won=False)
+        assert "lost" in result.lower()
+
+    def test_ci2_stalemate_shows_stalemate_result(self):
+        """CI-2: is_stalemate=True → outcome line contains 'Stalemate'."""
+        combat = _make_combat_result_with_summary(is_stalemate=True, outcome="stalemate", duration_s=30.0)
         result = self.cog._format_combat_summary(combat)
         assert "Stalemate" in result
 
-    def test_no_stalemate_text_when_not_stalemate(self):
-        """When is_stalemate is False, summary should NOT include 'Stalemate'."""
-        combat = _make_combat_result(is_stalemate=False)
-        result = self.cog._format_combat_summary(combat)
+    def test_ci2_no_stalemate_text_when_not_stalemate(self):
+        """CI-2: is_stalemate=False → 'Stalemate' absent."""
+        combat = _make_combat_result_with_summary(is_stalemate=False, outcome="win")
+        result = self.cog._format_combat_summary(combat, combat_won=True)
         assert "Stalemate" not in result
 
-    def test_empty_combat_dict_returns_string(self):
-        """_format_combat_summary with an empty dict should return a string (no crash)."""
-        result = self.cog._format_combat_summary({})
-        assert isinstance(result, str)
-        # Should show '?' for unknown ship names
-        assert "?" in result
+    def test_ci2_pvc_line_present_only_for_pvc(self):
+        """CI-2: PvC DR line appears only when pvc_damage_reduction > 0."""
+        combat_pvc = _make_combat_result_with_summary(pvc_damage_reduction=0.33)
+        result_pvc = self.cog._format_combat_summary(combat_pvc)
+        assert "PvC damage reduction" in result_pvc
+        assert "33%" in result_pvc
 
-    def test_missing_ship_stats_uses_defaults(self):
-        """When ship_stats dicts are missing, defaults (0, '?') should be used."""
-        combat = {"is_stalemate": False}
+        combat_pvp = _make_combat_result_with_summary(pvc_damage_reduction=0.0)
+        result_pvp = self.cog._format_combat_summary(combat_pvp)
+        assert "PvC damage reduction" not in result_pvp
+
+    def test_ci2_truncated_to_1024(self):
+        """CI-2: Output is truncated to ≤1024 chars."""
+        combat = _make_combat_result_with_summary(
+            c1_name="A" * 300,
+            c2_name="B" * 300,
+        )
         result = self.cog._format_combat_summary(combat)
-        # HP/DPS defaults to 0
-        assert "0" in result
-        # Ship name defaults to '?'
-        assert "?" in result
+        assert len(result) <= 1024
 
-    def test_both_ships_labelled(self):
-        """Summary should label 'Your Ship' and 'Criminal Ship'."""
+    def test_ci2_missing_summary_fallback_no_crash(self):
+        """CI-2: legacy combat_result (no combatants block) renders without crash."""
+        # Old format without combatants block
+        combat = _make_combat_result(s1_name="LegacyShip1", s2_name="LegacyShip2")
+        result = self.cog._format_combat_summary(combat)
+        assert isinstance(result, str)
+        assert len(result) <= 1024
+
+    def test_ci2_fallback_includes_ship_names(self):
+        """CI-2: fallback (no combatants block) still shows ship names."""
+        combat = _make_combat_result(s1_name="StarFighter", s2_name="DeathBringer")
+        result = self.cog._format_combat_summary(combat)
+        assert "StarFighter" in result
+        assert "DeathBringer" in result
+
+    def test_ci2_fallback_labels_your_ship_and_criminal_ship(self):
+        """CI-2: fallback (no combatants) labels 'Your Ship' and 'Criminal Ship'."""
         combat = _make_combat_result()
         result = self.cog._format_combat_summary(combat)
         assert "Your Ship" in result
         assert "Criminal Ship" in result
 
-    def test_pvc_damage_reduction_line_shown_when_nonzero(self):
-        """PvC DR line should render when pvc_damage_reduction > 0."""
-        combat = _make_combat_result()
-        combat["pvc_damage_reduction"] = 0.33
-        result = self.cog._format_combat_summary(combat)
-        assert "PvC damage reduction" in result
-        assert "33%" in result
-
-    def test_pvc_damage_reduction_line_absent_when_zero(self):
-        """PvC DR line should NOT render when pvc_damage_reduction is 0.0 (PvP fight)."""
-        combat = _make_combat_result()
-        combat["pvc_damage_reduction"] = 0.0
-        result = self.cog._format_combat_summary(combat)
-        assert "PvC damage reduction" not in result
-
-    def test_pvc_damage_reduction_line_absent_when_missing(self):
-        """PvC DR line should NOT render when pvc_damage_reduction key is absent."""
-        combat = _make_combat_result()
-        # Ensure key is absent
-        combat.pop("pvc_damage_reduction", None)
-        result = self.cog._format_combat_summary(combat)
-        assert "PvC damage reduction" not in result
+    def test_ci2_none_combat_dict_no_crash(self):
+        """CI-2: None-like empty dict does not crash."""
+        result = self.cog._format_combat_summary({})
+        assert isinstance(result, str)
 
     def test_pvc_damage_reduction_formats_pct_correctly(self):
         """A DR of 0.25 should render as '25%' in the summary line."""
-        combat = _make_combat_result()
-        combat["pvc_damage_reduction"] = 0.25
+        combat = _make_combat_result_with_summary(pvc_damage_reduction=0.25)
         result = self.cog._format_combat_summary(combat)
         assert "25%" in result
 
     def test_old_armour_buff_line_absent(self):
         """The retired Keith T Maxwell armour-buff line must not appear in the summary."""
-        combat = _make_combat_result()
-        combat["pvc_damage_reduction"] = 0.33
+        combat = _make_combat_result_with_summary(pvc_damage_reduction=0.33)
         result = self.cog._format_combat_summary(combat)
         assert "armour buff" not in result.lower()
         assert "Keith T Maxwell" not in result

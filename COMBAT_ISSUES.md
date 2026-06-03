@@ -214,6 +214,48 @@ winner bug. **Also confirm w/ owner:** is Bronze guaranteed-capture-on-loss inte
 
 ---
 
+## CI-13 🔴 Nuke mechanics broken / mismatch intended design  *(found in retest 2026-06-03)*
+Owner spec: nukes are **AoE, guaranteed-hit, inverse-square damage from epicenter, reduced
+self-damage, ~1 use per battle.** Current state (resolver `combat_service.py:1400-1432`,
+`_nuke_dmg` line 865, seed `AMR Tormentor`):
+- ✅ guaranteed hit (no accuracy roll), ✅ AoE, ✅ reduced self-damage (`NUKE_FRIENDLY_FACTOR=0.25`).
+- 🔴 **Random epicenter** (`_rng.uniform(300..5000m)`) almost never lands within the blast
+  radius of the target → **0 damage** (battle 50: all 4 nukes 0 dmg, epicenters 2.4–4.9km from
+  foe). Contradicts "guaranteed to hit". Likely fix: epicenter ON the target (full dmg to target,
+  inverse-square falloff to firer by firer's distance).
+- 🔴 **Seed `AMR Tormentor` has no `damage_per_shot`** → 0 dmg even on a direct hit. (All nukes
+  likely affected — same class as CI-1 turret seed gap.)
+- 🔴 **Cooldown `loading_speed_ms=6000` (6s)** → 4 fires/29s battle; owner wants **1 per battle**
+  (battle-length cooldown or 1-charge ammo model — design decision).
+- 🟡 **Display:** key-event formatter (`combat_log_service.py:387`) labels nukes "miss" (assumes a
+  `hit` flag nukes lack). Nukes detonate; never miss.
+- 🟡 **Formula:** `_nuke_dmg = dmg × (1 − d/blast)²` (bounded quadratic) ≠ literal `1/d²`
+  inverse-square — confirm intended model w/ owner.
+**Plan:** d-architect to reconcile intended model + spec + seed + code → dev → tester. Decisions
+needed: epicenter-on-target?; 1-per-battle via long cooldown vs ammo/charges?; falloff formula.
+
+---
+
+## CI-14 🧹 Test agents mutated samx's (main) live loadout  *(process)*
+During CI-5 buy/equip testing, an agent bought+equipped `Nirai Impulse EX 1` (primary) and
+`AMR Tormentor` (nuke secondary) onto **samx's** Betty (main char), displacing the starter
+`Micro Gun MK I` (now in inventory). Owner flagged the unexpected nuke. **Restore pending owner's
+choice** (full starter restore vs keep new primary, drop nuke). Going forward: keep
+loadout-mutating tests on general_failure / a disposable player, never samx.
+
+---
+
+## CI-15 🟡 `/combat-log` key events miss "Hull depleted" (death)  *(found in retest)*
+The resolver (`combat_service.py:821-840`) emits `layer_depleted` events for **shield** and
+**armour** only — hull-zero terminates the fight (fight_end) without a `layer_depleted{layer:hull}`
+event. The extractor is already ready (`combat_log_service.py:49` has `"hull": "Hull depleted (dead)"`)
+but never receives one, so the death milestone is absent from `/combat-log` key events (battle 50
+showed only "Armour depleted", not the hull death). Fix: add a hull branch in `_apply_damage`
+mirroring the shield/armour emission (emit when `hull_was_positive and current_hull <= 0`).
+(Shield-absence for a no-shield ship is correct; armour-depleted already works.)
+
+---
+
 ## CI-8 🧹 Housekeeping — committed status / nothing pushed
 - ✅ `COMBAT_E2E_TEST_PLAN.md` + `COMBAT_ISSUES.md` committed (`ae157f0`).
 - ✅ `/combat-log` feature fully committed (backend router/schema/service + tests were

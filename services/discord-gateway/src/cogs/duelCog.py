@@ -505,29 +505,48 @@ class DuelCog(commands.Cog):
 
         # ------------------------------------------------------------------
         # Determine winner/loser display names.
-        # Prefer actual winner_name from the fight resolver.  The tick resolver
-        # sets winner_name to the SHIP name; we map that to a PLAYER name by
-        # checking which combatant's ship name it matches (c1 = challenger,
-        # c2 = target).  Fall back to TTK heuristic, then raw ship names.
+        #
+        # When the tick-resolver summary is present (combatants block), resolve
+        # winner by who survived (final_hp.hull > 0), NOT by ship-name equality.
+        # Ship-name equality is unreliable when both players fly the same ship
+        # (e.g. both in "Betty") — whoever won, c1 hull > 0 iff challenger survived.
+        #
+        # Slot mapping (invariant from duel_service / fight_ships call order):
+        #   combatants["1"] = challenger (loadout1)
+        #   combatants["2"] = target     (loadout2)
+        #
+        # Stalemate / both-survive / both-zero: caller must set is_stalemate=True
+        # before reaching this block; we honour that flag above and never fabricate
+        # a winner in ambiguous hull states.
+        #
+        # Legacy TTK heuristic is preserved for old responses that have no
+        # combatants block.
         # ------------------------------------------------------------------
         combatants = data.get("combatants") or {}
         c1 = combatants.get("1") or {}
         c2 = combatants.get("2") or {}
 
         winner_ship = data.get("winner_name", "")
-        c1_ship = c1.get("ship") or data.get("ship1_name") or ""
-        c2_ship = c2.get("ship") or data.get("ship2_name") or ""
 
         try:
-            if winner_ship and (c1_ship or c2_ship):
-                if winner_ship == c1_ship:
+            if c1 or c2:
+                # Tick-resolver path: winner resolved by final hull HP.
+                c1_hull = (c1.get("final_hp") or {}).get("hull", 0) or 0
+                c2_hull = (c2.get("final_hp") or {}).get("hull", 0) or 0
+                if c1_hull > 0 and c2_hull <= 0:
+                    # Challenger survived; target did not.
                     winner_display, loser_display = challenger_name, target_name
-                elif winner_ship == c2_ship:
+                elif c2_hull > 0 and c1_hull <= 0:
+                    # Target survived; challenger did not.
                     winner_display, loser_display = target_name, challenger_name
                 else:
-                    raise ValueError("ship name mismatch — fall through to TTK")
+                    # Both alive, both dead, or missing data — treat as stalemate.
+                    # is_stalemate should already be True in this case; fall back
+                    # gracefully so the embed still shows something sensible.
+                    winner_display = winner_ship or "Unknown"
+                    loser_display = data.get("loser_name", "Unknown") or "Unknown"
             else:
-                # Legacy TTK heuristic (pre-summary data)
+                # Legacy TTK heuristic (pre-summary data, no combatants block)
                 challenger_hp = data.get("challenger_hp", 0) or 0
                 challenger_dps = data.get("challenger_dps", 0) or 0
                 target_hp = data.get("target_hp", 0) or 0

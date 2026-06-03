@@ -738,6 +738,105 @@ class TestBuildAcceptEmbedCI2:
 
 
 # ---------------------------------------------------------------------------
+# _build_accept_embed — winner-by-hull fix (CI-2/#7)
+# Reproduces the "both fly Betty" bug and its symmetric counterpart.
+# ---------------------------------------------------------------------------
+
+
+def _make_betty_duel(
+    *,
+    c1_hull: int,
+    c2_hull: int,
+    is_stalemate: bool = False,
+    challenger_name: str = "challenger_player",
+    target_name: str = "target_player",
+) -> dict:
+    """Build an accept result where both combatants fly the same ship ('Betty').
+
+    c1 = challenger (slot "1"), c2 = target (slot "2").
+    Hull values control who survived.
+    """
+    return {
+        "duel_id": 42,
+        "is_stalemate": is_stalemate,
+        "winner_name": "Betty",   # same ship name for both — the ambiguous case
+        "loser_name": "Betty",
+        "credits_transferred": 500 if not is_stalemate else 0,
+        "stakes": 500,
+        "challenger_id": 100,
+        "challenger_name": challenger_name,
+        "challenger_credits": 1500,
+        "target_id": 200,
+        "target_name": target_name,
+        "target_credits": 500,
+        "outcome": "stalemate" if is_stalemate else "win",
+        "reason": "time_cap" if is_stalemate else "hp_depleted",
+        "duration_s": 20.0,
+        "combatants": {
+            "1": {
+                "name": "Betty",
+                "ship": "Betty",
+                "final_hp": {"shield": 0, "armour": 0, "hull": c1_hull},
+                "damage_dealt": 200,
+                "shots_fired": 50,
+                "shots_hit": 35,
+                "accuracy": 0.70,
+            },
+            "2": {
+                "name": "Betty",
+                "ship": "Betty",
+                "final_hp": {"shield": 0, "armour": 0, "hull": c2_hull},
+                "damage_dealt": 150,
+                "shots_fired": 45,
+                "shots_hit": 25,
+                "accuracy": 0.556,
+            },
+        },
+    }
+
+
+class TestBuildAcceptEmbedWinnerByHull:
+    """Regression tests for CI-2/#7 — winner resolved by hull HP, not ship-name equality.
+
+    Both combatants fly "Betty" so ship-name equality is useless.
+    Slot "1" = challenger, slot "2" = target (invariant from fight_ships call order).
+    """
+
+    def test_target_wins_when_challenger_hull_zero(self, mock_duel_cog):
+        """The critical missing case: c1.hull==0, c2.hull>0 → target wins (NOT challenger)."""
+        data = _make_betty_duel(c1_hull=0, c2_hull=80, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        # Target (gf) must appear BEFORE challenger (samx) as winner → lower index in description
+        assert "gf" in embed.description, "target name must appear in description"
+        assert "samx" in embed.description, "challenger name must appear in description"
+        assert embed.description.index("gf") < embed.description.index("samx"), (
+            "target should be shown as winner (appears first) when c1.hull==0 and c2.hull>0"
+        )
+
+    def test_challenger_wins_when_target_hull_zero(self, mock_duel_cog):
+        """Symmetric case: c1.hull>0, c2.hull==0 → challenger wins."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "samx" in embed.description, "challenger name must appear in description"
+        assert "gf" in embed.description, "target name must appear in description"
+        assert embed.description.index("samx") < embed.description.index("gf"), (
+            "challenger should be shown as winner (appears first) when c1.hull>0 and c2.hull==0"
+        )
+
+    def test_stalemate_both_survive(self, mock_duel_cog):
+        """When both players survive (is_stalemate=True), no false winner is shown."""
+        data = _make_betty_duel(c1_hull=50, c2_hull=60, is_stalemate=True)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "Stalemate" in embed.title, "stalemate flag must produce stalemate embed"
+
+    def test_stalemate_both_zero_hull(self, mock_duel_cog):
+        """When both hull values are 0 with is_stalemate=True, stalemate embed is shown."""
+        data = _make_betty_duel(c1_hull=0, c2_hull=0, is_stalemate=True)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "Stalemate" in embed.title, "double-zero hull with stalemate flag must show stalemate"
+
+
+# ---------------------------------------------------------------------------
 # /duel-reject command
 # ---------------------------------------------------------------------------
 

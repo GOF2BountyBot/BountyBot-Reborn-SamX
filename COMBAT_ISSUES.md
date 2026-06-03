@@ -172,6 +172,24 @@ cleanup-cascade gap. (Not a rebuild/persistence bug — volume persists fine.)
 
 ---
 
+## CI-10 🟡 `POST /api/v1/shops/refresh` serialization crash  *(pre-existing, not from this work)*
+Surfaced by the CI-5 tester. `refresh_shop()` returns a dict containing ORM `GuildShop`
+objects under `"items"`, so the public `POST /api/v1/shops/refresh` endpoint throws
+`PydanticSerializationError: Unable to serialize unknown type: GuildShop`. **Pre-existing**
+(confirmed in git history before CI-5) — NOT a regression. The **admin** refresh path
+(`POST /api/v1/admin/shops/refresh`) works correctly. Fix: serialize items to the response
+schema in the endpoint (mirror the admin path). Not started.
+
+---
+
+## CI-11 ℹ️ Shop is weapon-heavy after enabling secondaries  *(informational / tuning)*
+Secondary weapons reuse the `weapon` count config key, so each shop refresh now generates
+up to **5 primary + 5 secondary = 10 weapons**, skewing the per-tier slot mix weapon-heavy.
+Intentional/expected from CI-5, but flagged for tuning: if undesired, give `secondary_weapon`
+its own quantity range in the shop count config. Owner decision; no action yet.
+
+---
+
 ## CI-8 🧹 Housekeeping — committed status / nothing pushed
 - ✅ `COMBAT_E2E_TEST_PLAN.md` + `COMBAT_ISSUES.md` committed (`ae157f0`).
 - ✅ `/combat-log` feature fully committed (backend router/schema/service + tests were

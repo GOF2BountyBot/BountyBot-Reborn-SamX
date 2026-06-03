@@ -291,6 +291,33 @@ handling; locked-spec §(secondary weapons) delta. → **d-architect** to produc
 **Folds into the eventual dev pass:** CI-13 nuke "miss"→detonation/damage-aware label; CI-15
 hull-depleted key event.
 
+### FINAL OWNER DECISIONS (2026-06-03) — architect plan accepted, ready for dev
+- **Architect plan delivered** (sidecar `secondary_ammo` JSON map on `player_ships` + migration 0013;
+  `ammo=None`=infinite back-compat; single write-back point in `fight_ships`; un-gate `secondary_weapon`).
+- **#4 — NO `DEFAULT_STARTER_AMMO` / NO backfill:** the starter loadout has zero secondaries and the
+  ONLY way to obtain one is a shop purchase, so no equipped secondaries ever pre-exist. Migration just
+  adds the column default `{}`; ammo always originates from purchase qty. (Dropped from the plan.)
+- **#2 — equip loads the whole owned stack** of that type onto the ship. ✅
+- **#3 — sell REQUIRES unequip first (already enforced — PRESERVE IT).** No sell-with-ammo path; you
+  `/unequip` (rounds → cargo) then `/sell` from cargo. ⚠ Loadout/inventory system is FRAGILE
+  ([[feedback_loadout_inventory_fragile]]) — dev + tester must guard invariants exhaustively.
+- **#1 — criminal complete loadouts → split to CI-17** (below). CI-16's resolver consumption gate is
+  uniform (works for criminals IF they carry secondaries) but criminal cross-fight persistence is
+  deferred to Phase-2 ("pre-damaged combat states"); criminals respawn fresh so in-fight-only is fine.
+**CI-16 dev scope = PLAYER consumable secondaries (full) + uniform resolver gate + CI-13 + CI-15.**
+
+---
+
+## CI-17 🔵 Criminals should get COMPLETE auto-generated loadouts  *(owner 2026-06-03)*
+Today the bounty criminal generator (`bounty_service.generate_loadout` + `loadout_builder.from_criminal_ship`)
+produces primaries/turrets/modules but **NO secondaries**. Owner wants criminal loadouts auto-generated
+as **complete** loadouts — modules, primaries, **secondaries**, turrets — bound by the ship's slot limits
+and the standard unique-equip constraints, exactly like a player ("if their generated loadout has 5 nukes,
+they have 5 nukes"). In-fight consumption applies (uniform CI-16 resolver gate); cross-fight persistence
+for criminals is **deferred to Phase-2** (pre-damaged combat states). **Separate task** — sequence AFTER
+CI-16 lands so the consumable mechanic exists first. Needs design (generation algorithm: tier/tech-level-
+appropriate item selection within slot + uniqueness constraints) → architect → dev → tester.
+
 ---
 
 ## CI-15 🟡 `/combat-log` key events miss "Hull depleted" (death)  *(found in retest)*

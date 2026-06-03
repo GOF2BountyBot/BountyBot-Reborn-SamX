@@ -243,12 +243,31 @@ range"). dev → tester. Owner decision: 1-per-battle via long cooldown vs ammo/
 
 ---
 
-## CI-14 🧹 Test agents mutated samx's (main) live loadout  *(process)*
-During CI-5 buy/equip testing, an agent bought+equipped `Nirai Impulse EX 1` (primary) and
-`AMR Tormentor` (nuke secondary) onto **samx's** Betty (main char), displacing the starter
-`Micro Gun MK I` (now in inventory). Owner flagged the unexpected nuke. **Restore pending owner's
-choice** (full starter restore vs keep new primary, drop nuke). Going forward: keep
-loadout-mutating tests on general_failure / a disposable player, never samx.
+## CI-14 ✅ Test agents mutated samx's (main) live loadout — RESTORED
+**Resolved 2026-06-03.** Owner chose full starter restore. Done via equip/unequip/remove APIs:
+samx's Betty = `Micro Gun MK I` primary, no secondary, no turrets; test items (`AMR Tormentor`,
+`Nirai Impulse EX 1`) removed from inventory. **Process rule going forward: keep loadout-mutating
+tests on general_failure / a disposable player, never samx.**
+
+---
+
+## CI-16 🔴 Secondary weapons are not CONSUMABLE  *(net-new mechanic — owner intent 2026-06-03)*
+**Owner intent:** ALL secondary weapons are consumable — firing/using one drops the equipped
+count by 1 (floor 0; "all used up"), like the EmergencySystem module. Cooldown/loading-speed
+governs cadence consistently across ALL weapons. Nukes end up ~1/battle because their cooldown
+should exceed the 180s max battle (fire once ready at t=0, never reload in-fight).
+**Current state:** spec §348/§412 makes ONLY the EmergencySystem consumable; there is NO
+ammo/count tracking for secondaries in the resolver — they fire every time cooldown allows
+(infinite ammo). `player_ships.secondary_weapons` is a JSON list (qty = repeated entries).
+**Nuke cooldowns are all 6–10s** (Tormentor 6000 … Liberator 10000ms) — far below the 180s
+battle, so the "fires once b/c cooldown > battle" property does NOT hold (battle 50 re-fired 4×).
+**Scope (needs design):** (1) consumption model — decrement equipped count on fire, stop at 0;
+(2) post-fight PERSISTENCE — does consumption permanently deplete the equipped secondary (must
+restock from inventory, like ES §348) or reset per battle? (owner implied permanent); (3) the
+qty/ammo representation for secondaries; (4) reconcile nuke cooldowns (raise to > battle, or rely
+on consumption); (5) update locked spec. → **d-architect** to design → dev → tester.
+**Folds in:** CI-13 nuke cooldown + the nuke "miss"→detonation label; CI-15 hull-depleted event
+can ride the same dev pass.
 
 ---
 

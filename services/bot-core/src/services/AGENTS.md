@@ -48,7 +48,67 @@ pattern `from services.duel_service import DuelService` avoids circular imports.
 
 ---
 
-## Inventory & Equipment Data Model — CANONICAL REFERENCE
+## Loadout & Inventory system — CANONICAL REFERENCE
+
+> ### ⚠️ BE CAREFUL — most-broken subsystem in the codebase
+>
+> Loadout ↔ inventory ↔ equip/unequip/sell/buy/transfer is the **single most
+> fragile, most-frequently-regressed area** of bot-core. Phantom items, dropped
+> copies, double-counts, and silent cross-ship duplication have all shipped here
+> before (bug classes B.19, B.34, B.41, B.94/B.95). **Read this entire section
+> before touching any code path that mutates `player_ships.{weapons,modules,
+> turrets,secondary_weapons}` or `player_inventories`.** Preserve the invariants
+> below exactly, route every cross-table mutation through the
+> `LoadoutConsistencyService` choke-point, and test the invariants exhaustively
+> (per-flow, plus a "total owned is conserved" property test). When in doubt,
+> escalate to the architect rather than improvising a new write path.
+
+### Data model
+
+Two tables back the system. **Static** catalog data (the item's stats, tech
+level, slot it occupies) lives in the `item` STI hierarchy and the `ship` table;
+**dynamic** ownership lives in the two tables below.
+
+| Table | Columns of interest | Role |
+|-------|---------------------|------|
+| `player_ships` | `weapons`, `secondary_weapons`, `turrets`, `modules` (all `JSON` list-of-name columns); `ship_name`, `player_id`, `is_active`, `nickname` | **Equipped pool.** Each string entry in a slot list is one equipped copy. Slot caps come from the matching static `ship` row (`max_primaries` → `weapons`, `max_secondaries` → `secondary_weapons`, `max_turrets` → `turrets`, `max_modules` → `modules`). |
+| `player_inventories` | `player_id`, `item_type` (concrete: `ship` / `primary_weapon` / `secondary_weapon` / `turret_weapon` / `module`), `item_name`, `quantity` | **Cargo pool.** One row per `(player_id, item_type, item_name)`; `quantity` is the loose (un-equipped) copy count. Model: `persist/models/player_inventory.py`. |
+
+The relevant maps live in `equipment_service.py` (re-exported from
+`loadout_consistency_service.py`): `_SLOT_MAP` maps each `equipment_type` to its
+**static ship slot-cap field** (`weapons → max_primaries`,
+`secondary_weapons → max_secondaries`, `turrets → max_turrets`,
+`modules → max_modules`), and `_INVENTORY_TYPE_MAP` maps each `equipment_type` to
+its **concrete inventory `item_type`** (`weapons → primary_weapon`,
+`secondary_weapons → secondary_weapon`, `turrets → turret_weapon`,
+`modules → module`). Note the deliberate naming skew: the JSON slot for primaries
+is `weapons`, its cap field is `max_primaries`, and its inventory `item_type` is
+`primary_weapon`. `VALID_EQUIPMENT_TYPES` = `{weapons, secondary_weapons,
+modules, turrets}`.
+
+> **NO DB-level uniqueness.** There is **no** `UniqueConstraint` on
+> `player_inventories(player_id, item_type, item_name)` (verified — absent from
+> every Alembic revision). The "exactly one row per item" property is upheld
+> **only** by `InventoryRepository.add_item`, which calls `get_player_item` and
+> increments an existing row instead of inserting a second. Any new write path
+> that inserts inventory rows directly **must** preserve this, or duplicate rows
+> will appear and `sell_item`'s "should be exactly 1 row" assumption breaks.
+
+### Incoming: `secondary_ammo` sidecar (CI-16 — NOT YET BUILT)
+
+Consumable secondary-weapon ammo is the next feature to land in this subsystem.
+As of this writing **nothing named `secondary_ammo` / CI-16 exists in the code**
+— there is no column, table, model, or migration. (The only "consumable" in the
+codebase today is the per-fight EMP Shockwave in `combat_service.py`, which is
+combat-state only and is **not** inventory-backed.) **Intent:** ammo will be a
+*sidecar* count attached to an equipped secondary weapon — i.e. a consumable
+quantity that depletes as the weapon fires, distinct from both the cargo
+`quantity` (number of weapon copies owned) and the equipped slot entry (the
+weapon itself). When CI-16 is designed, decide explicitly whether ammo lives as
+(a) a new JSON sidecar column on `player_ships`, (b) a new `player_inventories`
+`item_type`, or (c) its own table — and document the chosen invariant here
+**before** writing code. Whatever the choice, it must not break the
+"Total owned = cargo + equipped" conservation rule for the *weapon* itself.
 
 ### Two Separate Pools
 
@@ -104,6 +164,89 @@ This prevents equipping when there are no cargo copies left to consume, which wo
 **The guard only runs when a slot is free** — it is skipped when slots are full (the swap path). For swaps: the cog unequips first (returning the copy to cargo, incrementing quantity), then equips (decrementing quantity). After the unequip, `quantity` increases so the guard passes on the subsequent equip call.
 
 **Do not remove or weaken this guard.** It is the primary defence against inventory corruption.
+
+### The INVARIANTS — hard rules, do not violate
+
+These are the load-bearing rules. A change that breaks any of them is a bug,
+regardless of whether tests are green.
+
+1. **Pool separation.** Equipped copies live **only** in `player_ships` slot
+   lists; loose copies live **only** in `player_inventories`. A given physical
+   copy is in exactly one pool — never both, never neither.
+2. **Conservation.** `Total owned(item, player) = cargo quantity + Σ equipped
+   count across all of that player's ships`. Every mutation must preserve this:
+   equip = −1 cargo / +1 slot; unequip = +1 cargo / −1 slot; swap = net zero;
+   sell/transfer = −1 cargo only; ship purchase/sale moves items between slots
+   and cargo without minting or dropping. Never double-count; never drop a copy.
+3. **No materialisation from nothing (I2).** Every slot entry must trace back to
+   an inventory decrement. Do not append a name to a slot list without a paired
+   cargo decrement (the choke-point does both, atomically).
+4. **No cross-ship duplication (I1).** The same physical copy must not appear in
+   two ships' slot lists. `repair_player` and the `evacuate_*` anti-dup guard
+   exist to clean up legacy violations — do not reintroduce the bug class.
+5. **Slot caps + unique-equip (I4).** A ship's slot list length must never
+   exceed its static cap (`max_primaries` / `max_secondaries` / `max_turrets` /
+   `max_modules`). `MODULE_EQUIP_LIMITS` additionally caps how many of a given
+   module *class* may be equipped at once. **These caps apply uniformly to
+   players AND to auto-generated criminal/NPC loadouts** — `bounty_service`
+   generates criminal gear by looping `range(ship.max_primaries)` /
+   `range(ship.max_modules)` against the same static `ship` row, so a criminal
+   never exceeds the caps a player would face on the same hull.
+6. **`/unequip` before `/sell` (and before `/transfer`).** Sell and transfer
+   operate on **cargo only**. See the dedicated subsection below for exactly how
+   this is enforced — it is structural, not a guard you can grep for.
+7. **Surface gating.** `GameConstants.CURRENTLY_ENABLED_TYPES` is the single
+   lever that exposes a concrete item type to playable surfaces.
+   `secondary_weapon` is currently **off**; `equip_one` and the type normalizer
+   both refuse to equip/expose it until it is added to that frozenset. Honour
+   this gate in any new flow (CI-16 will flip it).
+
+### Unequip-before-sell — how it is actually enforced
+
+There is **no explicit "is this item equipped?" check** in the sell or transfer
+paths, and you should not add one expecting it to be the enforcement point.
+Enforcement is **structural**, falling out of invariant #1:
+
+- `ShopService.sell_item` (`shop_service.py`, ≈line 439) resolves the item from
+  `player_inventories` and calls `inventory_repo.remove_item`, which raises
+  `ValueError("Insufficient item quantity ...")` when cargo `quantity` is too
+  low. Equipped copies are **not in `player_inventories` at all**, so they are
+  simply unreachable by sell — a fully-equipped, zero-cargo item cannot be sold
+  until `/unequip` returns a copy to cargo. The `/sell` router
+  (`api/routers/shops.py`) wraps the call in `db.begin()`.
+- `InventoryService.transfer_item_between_players` (`inventory_service.py`) has
+  the same property: it removes from the source player's **cargo** and adds to
+  the target's cargo. Equipped gear is unreachable. ⚠️ Note transfer does a
+  remove+add pair across two players **outside** the `LoadoutConsistencyService`
+  choke-point — this is currently safe **only because both legs are cargo-only**
+  (no slot mutation, so I1/I2 cannot be violated). If transfer is ever extended
+  to move equipped gear directly, it **must** route through the choke-point.
+
+If you ever see a sell/transfer path that reads or mutates `player_ships` slot
+lists, that is a bug — flag it.
+
+### JSON-column reassignment gotcha — MUST reassign, never mutate in place
+
+`player_ships.{weapons,secondary_weapons,turrets,modules}` are SQLAlchemy `JSON`
+columns. SQLAlchemy's default change tracking does **not** detect in-place
+mutation of a `JSON`/`list` value — `ship.weapons.append(name)` will **silently
+fail to persist**. Every write must **reassign the whole list**:
+
+```python
+# CORRECT — reassign a new list (change is tracked, persists on flush)
+ship.weapons = list(current) + [item_name]
+
+# WRONG — in-place mutation; change tracker never fires; the write is lost
+ship.weapons.append(item_name)
+```
+
+The existing code already does this correctly: `PlayerShipRepository.update_loadout`
+assigns `ship.weapons = loadout["weapons"]`; `add_equipment` / `remove_equipment`
+build a fresh `list(...)` then call `update_loadout`; and
+`LoadoutConsistencyService._set_slot` assigns `ship.weapons = list(items)`.
+**Preserve this pattern in any new slot-mutating code.** (Alternatively
+`flag_modified(ship, "weapons")` after an in-place mutation, but the codebase
+convention is reassignment — match it.)
 
 ### Autocomplete Filter (discord-gateway `inventoryCog.equip_autocomplete`)
 
@@ -539,6 +682,41 @@ item_repo=None, ship_repo=None)` accepts optional repo overrides so callers
 their already-mocked repositories with the consistency service in unit
 tests.
 
+### Choke-points & flows — where each operation actually mutates state
+
+Use this as the map when changing or debugging any loadout/inventory flow. The
+**invariants** these flows preserve are stated in the
+*Loadout & Inventory system — CANONICAL REFERENCE* section above; this is the
+plumbing.
+
+| User flow | Entry point (service) | Touches slots? | Touches cargo? | Choke-point method |
+|-----------|-----------------------|----------------|----------------|--------------------|
+| `/equip` | `EquipmentService.equip_item` → `equip_one` | +1 slot | −1 cargo | `equip_one` |
+| `/unequip` | `EquipmentService.unequip_item` → `unequip_one` | −1 slot | +1 cargo | `unequip_one` |
+| swap (cog) | gateway `inventoryCog` does unequip-then-equip | replace | net 0 | `unequip_one` + `equip_one` |
+| `/buy` item | `ShopService.purchase_item` (≈line 149) | no | +qty cargo | none (cargo-only `add_item`) |
+| `/buy` ship | `ShopService.purchase_ship` (≈line 226) | moves gear src→dst, overflow→cargo | overflow only | `activate_ship` → `transfer_loadout_to_new_ship` |
+| `/sell` item | `ShopService.sell_item` (≈line 439) | no (cargo-only — see "Unequip-before-sell") | −qty cargo | none (cargo-only `remove_item`) |
+| sell ship | `ShopService.sell_ship` | evacuates gear→cargo | +cargo | `evacuate_ship_loadout_to_inventory` |
+| `/transfer` (give) | `InventoryService.transfer_item_between_players` | no (cargo-only) | −cargo src / +cargo dst | none (cargo-only; see caveat above) |
+| set active ship | `ships.set_active_ship` | reconcile + transfer | overflow→cargo | `activate_ship` |
+| transfer ship | `ships.transfer_ship` | evacuates gear→cargo | +cargo | `evacuate_ship_loadout_to_inventory` |
+| admin remove ship | `admin.remove_ship` | evacuates gear→cargo | +cargo | `evacuate_ship_loadout_to_inventory` |
+| starter loadout | `PlayerService._create_starter_loadout` | +3 slots | +4 then −3 | `equip_one` ×3 |
+| B.19 repair / migration | `repair_player` | dedups slots | none (never mints) | `repair_player` |
+
+Two reads worth knowing: `LoadoutResponseService` (`_build_cargo_items` etc.)
+assembles the `/loadout` view by reading **both** pools; gateway-side
+`inventoryCog.equip_autocomplete` filters the equip dropdown on cargo `quantity`
+(active-ship scope — see Autocomplete Filter note above). Reads must never
+mutate.
+
+Repositories backing all of this stay **dumb**: `PlayerShipRepository`
+(`update_loadout` / `add_equipment` / `remove_equipment` / `get_ship_loadout_summary`)
+and `InventoryRepository` (`add_item` / `remove_item` / `get_player_item` /
+`get_player_items_by_name`) do data access only — they enforce none of the
+cross-table invariants. That is the choke-point's job.
+
 ---
 
-*Last updated: 2026-04-29*
+*Last updated: 2026-06-03 — Loadout & Inventory system scoped + documented authoritatively ahead of CI-16 (consumable secondary-weapon ammo).*

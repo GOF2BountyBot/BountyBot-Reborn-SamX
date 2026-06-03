@@ -7,6 +7,8 @@ settings persistence, validation, and default configurations.
 
 from typing import Any
 
+from persist.repositories.bounty_repository import BountyRepository
+from persist.repositories.combat_log_repository import CombatLogRepository
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.shop_repository import ShopRepository
@@ -26,6 +28,8 @@ class ConfigService:
         self.config_repo = ConfigRepository()
         self.player_repo = PlayerRepository()
         self.shop_repo = ShopRepository()
+        self.bounty_repo = BountyRepository()
+        self.combat_log_repo = CombatLogRepository()
 
     async def get_guild_config(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
         """Get guild configuration.
@@ -181,9 +185,27 @@ class ConfigService:
             raise
 
     async def uninstall_guild(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
-        """Completely remove all data for a guild."""
+        """Completely remove all data for a guild.
+
+        Deletes (in order):
+        - All players for the guild (cascades to player_ships, player_inventories).
+        - All guild_shops rows.
+        - All bounty rows (hard-delete — NOT a status-only 'cleared' update).
+        - All combat_log rows (privacy: re-registering users must not see prior fights).
+        - The guild_configs row.
+
+        This is the shared code path for both ``DELETE /admin/guilds/{id}/uninstall``
+        and ``DELETE /admin/guilds/{id}/cleanup`` (on_guild_remove event). Both
+        endpoints benefit from the full cascade including bounty + combat_log deletion.
+        """
         try:
-            removed_counts = {"players": 0, "shop_items": 0, "config": 0}
+            removed_counts: dict[str, Any] = {
+                "players": 0,
+                "shop_items": "all",
+                "bounties": 0,
+                "combat_log": 0,
+                "config": 0,
+            }
 
             # Clear players (this will cascade to ships and inventory)
             player_counts = await self.clear_guild_players(db, guild_id)
@@ -191,8 +213,12 @@ class ConfigService:
 
             # Clear all shop items
             await self.shop_repo.clear_all_guild_shops(db, guild_id)
-            # Get count would require a separate query, so we'll estimate
-            removed_counts["shop_items"] = "all"
+
+            # Hard-delete all bounty rows for this guild
+            removed_counts["bounties"] = await self.bounty_repo.delete_by_guild_id(db, guild_id)
+
+            # Hard-delete all combat_log rows for this guild
+            removed_counts["combat_log"] = await self.combat_log_repo.delete_by_guild_id(db, guild_id)
 
             # Remove guild config
             config_deleted = await self.config_repo.delete_guild_config(db, guild_id)

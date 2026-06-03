@@ -132,6 +132,38 @@ class CombatLogRepository(IRepository[CombatLog]):
             flogger.error(f"Error listing combat_log for user_id={user_id} guild_id={guild_id}: {e}")
             raise
 
+    async def delete_by_guild_id(self, db: AsyncSession, guild_id: int, *, commit: bool = True) -> int:
+        """Hard-delete ALL combat_log rows for a guild (full uninstall cascade).
+
+        Mirrors ``delete_older_than`` style (bulk Core DELETE,
+        ``synchronize_session="fetch"``).  Called exclusively from
+        ``ConfigService.uninstall_guild()`` — not from any routine cleanup path.
+
+        Args:
+            db:        Async database session.
+            guild_id:  Discord guild ID whose combat_log rows will be destroyed.
+            commit:    When False, flush without committing (caller owns transaction).
+
+        Returns:
+            Count of deleted rows.
+        """
+        try:
+            result = await db.execute(
+                delete(CombatLog).where(CombatLog.guild_id == guild_id).execution_options(synchronize_session="fetch")
+            )
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            count = result.rowcount or 0
+            flogger.info(f"Hard-deleted {count} combat_log row(s) for guild {guild_id} (uninstall)")
+            return count
+        except Exception as e:
+            flogger.error(f"Error hard-deleting combat_log rows for guild {guild_id}: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
     async def delete_older_than(self, db: AsyncSession, cutoff: datetime, *, commit: bool = True) -> int:
         """Bulk-delete combat_log rows whose created_at is older than cutoff.
 

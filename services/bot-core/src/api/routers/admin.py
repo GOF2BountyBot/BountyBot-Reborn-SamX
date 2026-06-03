@@ -300,7 +300,11 @@ async def uninstall_bot(
     """
     Completely remove all bot data for a guild.
 
-    WARNING: This is irreversible and removes all player data, configurations, and shops.
+    WARNING: This is irreversible. Removes all player data, configurations,
+    shops, bounty rows, and combat_log rows. ``bounty`` and ``combat_log``
+    are hard-deleted (not status-only), preventing a privacy bug where a
+    re-registering user would see pre-uninstall fight history.
+
     Requires admin permissions (user_id must be in ADMIN_USER_IDS).
     """
     flogger.warning(f"Uninstalling bot from guild {guild_id} - ALL DATA WILL BE LOST")
@@ -382,10 +386,14 @@ async def cleanup_guild_on_remove(
     """
     Soft cleanup invoked by the discord-gateway ``on_guild_remove`` event.
 
-    Removes guild-scoped DB state (``guild_configs``, ``guild_shops``, ``bounty``,
-    ``apscheduler_jobs``, players & cascaded ships/inventory) for a guild the bot
-    has just left. Does NOT touch Discord channels/roles — the bot is already
-    gone from the guild, so Discord side cannot be modified.
+    Removes guild-scoped DB state (``guild_configs``, ``guild_shops``,
+    ``bounty``, ``combat_log``, players & cascaded ships/inventory) for a
+    guild the bot has just left. Does NOT touch Discord channels/roles — the
+    bot is already gone from the guild, so Discord side cannot be modified.
+
+    ``bounty`` and ``combat_log`` rows are **hard-deleted** (not status-only).
+    This prevents a privacy bug where a user who re-registers in the same guild
+    after an uninstall would otherwise see pre-uninstall fight history.
 
     This endpoint is intentionally distinct from ``DELETE /uninstall``:
 

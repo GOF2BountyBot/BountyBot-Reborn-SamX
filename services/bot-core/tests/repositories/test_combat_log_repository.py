@@ -253,3 +253,107 @@ async def test_list_all_and_remove(repo, db_session):
     await repo.remove(db_session, a)
     assert await repo.get_by_id(db_session, a.id) is None
     assert await repo.get_by_id(db_session, b.id) is not None
+
+
+# ---------------------------------------------------------------------------
+# Test: list_for_player — guild scoping (new guild_id param)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_for_player_guild_scoped(repo, db_session):
+    """list_for_player with guild_id only returns rows for that guild."""
+    uid = 111222333444555
+    guild_a = 111111111111111
+    guild_b = 222222222222222
+
+    fight_a = _make_log(combatant1_user_id=uid, guild_id=guild_a)
+    fight_b = _make_log(combatant1_user_id=uid, guild_id=guild_b)
+    await repo.add(db_session, fight_a)
+    await repo.add(db_session, fight_b)
+
+    results_a = await repo.list_for_player(db_session, uid, guild_id=guild_a)
+    assert all(r.guild_id == guild_a for r in results_a)
+    assert len(results_a) >= 1
+
+    results_b = await repo.list_for_player(db_session, uid, guild_id=guild_b)
+    assert all(r.guild_id == guild_b for r in results_b)
+    assert len(results_b) >= 1
+
+
+async def test_list_for_player_no_guild_returns_all_guilds(repo, db_session):
+    """list_for_player without guild_id returns rows across all guilds."""
+    uid = 999888777666555
+    guild_a = 333333333333333
+    guild_b = 444444444444444
+
+    a = _make_log(combatant1_user_id=uid, guild_id=guild_a)
+    b = _make_log(combatant1_user_id=uid, guild_id=guild_b)
+    await repo.add(db_session, a)
+    await repo.add(db_session, b)
+
+    results = await repo.list_for_player(db_session, uid)
+    guild_ids = {r.guild_id for r in results}
+    assert guild_a in guild_ids
+    assert guild_b in guild_ids
+
+
+async def test_list_for_player_npc_fight_included(repo, db_session):
+    """NPC fights (NULL combatant2) appear in list when player is combatant1."""
+    uid = 101010101010
+    npc_fight = _make_log(
+        combatant1_user_id=uid,
+        combatant2_user_id=None,
+        combatant1_name="Hero",
+        combatant2_name="Vossk Soldier",
+        guild_id=111222333444,
+    )
+    await repo.add(db_session, npc_fight)
+
+    results = await repo.list_for_player(db_session, uid, guild_id=111222333444)
+    assert any(r.combatant2_user_id is None for r in results)
+
+
+# ---------------------------------------------------------------------------
+# Test: delete_by_guild_id — uninstall hard-delete
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_by_guild_id_deletes_only_target_guild(repo, db_session):
+    """delete_by_guild_id removes all rows for the target guild only."""
+    guild_a = 111000111000111
+    guild_b = 222000222000222
+
+    # Insert 2 rows for guild_a, 1 row for guild_b
+    a1 = await repo.add(db_session, _make_log(guild_id=guild_a, combatant1_user_id=1001))
+    a2 = await repo.add(db_session, _make_log(guild_id=guild_a, combatant1_user_id=1002))
+    b1 = await repo.add(db_session, _make_log(guild_id=guild_b, combatant1_user_id=2001))
+
+    deleted = await repo.delete_by_guild_id(db_session, guild_a)
+
+    assert deleted == 2
+    assert await repo.get_by_id(db_session, a1.id) is None
+    assert await repo.get_by_id(db_session, a2.id) is None
+    # Guild B row must be untouched
+    assert await repo.get_by_id(db_session, b1.id) is not None
+
+
+async def test_delete_by_guild_id_returns_zero_when_no_rows(repo, db_session):
+    """delete_by_guild_id returns 0 when the guild has no combat_log rows."""
+    deleted = await repo.delete_by_guild_id(db_session, guild_id=999888777666555)
+
+    assert deleted == 0
+
+
+async def test_delete_by_guild_id_returns_count(repo, db_session):
+    """delete_by_guild_id returns the exact count of deleted rows."""
+    guild_id = 333444555666777
+
+    for i in range(4):
+        await repo.add(db_session, _make_log(guild_id=guild_id, combatant1_user_id=i + 1))
+
+    deleted = await repo.delete_by_guild_id(db_session, guild_id)
+
+    assert deleted == 4
+    # Confirm table is empty for that guild
+    all_rows = await repo.list_for_player(db_session, 1, guild_id=guild_id)
+    assert all_rows == []

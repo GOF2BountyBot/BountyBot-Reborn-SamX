@@ -106,11 +106,29 @@ def mock_shop_repo() -> AsyncMock:
 
 
 @pytest.fixture
-def service(mock_config_repo, mock_player_repo, mock_shop_repo) -> ConfigService:
+def mock_bounty_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.delete_by_guild_id = AsyncMock(return_value=0)
+    return repo
+
+
+@pytest.fixture
+def mock_combat_log_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.delete_by_guild_id = AsyncMock(return_value=0)
+    return repo
+
+
+@pytest.fixture
+def service(
+    mock_config_repo, mock_player_repo, mock_shop_repo, mock_bounty_repo, mock_combat_log_repo
+) -> ConfigService:
     svc = ConfigService()
     svc.config_repo = mock_config_repo
     svc.player_repo = mock_player_repo
     svc.shop_repo = mock_shop_repo
+    svc.bounty_repo = mock_bounty_repo
+    svc.combat_log_repo = mock_combat_log_repo
     return svc
 
 
@@ -536,19 +554,32 @@ class TestUninstallGuild:
 
     @pytest.mark.asyncio
     async def test_uninstalls_guild_completely(
-        self, service, mock_db, mock_player_repo, mock_config_repo, mock_shop_repo
+        self,
+        service,
+        mock_db,
+        mock_player_repo,
+        mock_config_repo,
+        mock_shop_repo,
+        mock_bounty_repo,
+        mock_combat_log_repo,
     ):
-        """Players, shops and config are all cleared."""
+        """Players, shops, bounties, combat_log, and config are all cleared."""
         players = [_make_player(i) for i in range(2)]
         mock_player_repo.get_players_by_guild.return_value = players
         mock_config_repo.delete_guild_config.return_value = True
+        mock_bounty_repo.delete_by_guild_id.return_value = 5
+        mock_combat_log_repo.delete_by_guild_id.return_value = 7
 
         result = await service.uninstall_guild(mock_db, guild_id=999)
 
         assert result["players"] == 2
         assert result["config"] == 1
+        assert result["bounties"] == 5
+        assert result["combat_log"] == 7
         mock_shop_repo.clear_all_guild_shops.assert_awaited_once_with(mock_db, 999)
         mock_config_repo.delete_guild_config.assert_awaited_once_with(mock_db, 999)
+        mock_bounty_repo.delete_by_guild_id.assert_awaited_once_with(mock_db, 999)
+        mock_combat_log_repo.delete_by_guild_id.assert_awaited_once_with(mock_db, 999)
 
     @pytest.mark.asyncio
     async def test_config_count_zero_when_config_not_deleted(
@@ -561,6 +592,40 @@ class TestUninstallGuild:
         result = await service.uninstall_guild(mock_db, guild_id=999)
 
         assert result["config"] == 0
+
+    @pytest.mark.asyncio
+    async def test_bounty_and_combat_log_deleted_even_when_no_players(
+        self,
+        service,
+        mock_db,
+        mock_player_repo,
+        mock_config_repo,
+        mock_shop_repo,
+        mock_bounty_repo,
+        mock_combat_log_repo,
+    ):
+        """Bounty and combat_log repos are called even when the guild has no players."""
+        mock_player_repo.get_players_by_guild.return_value = []
+        mock_config_repo.delete_guild_config.return_value = False
+        mock_bounty_repo.delete_by_guild_id.return_value = 3
+        mock_combat_log_repo.delete_by_guild_id.return_value = 9
+
+        result = await service.uninstall_guild(mock_db, guild_id=888)
+
+        mock_bounty_repo.delete_by_guild_id.assert_awaited_once_with(mock_db, 888)
+        mock_combat_log_repo.delete_by_guild_id.assert_awaited_once_with(mock_db, 888)
+        assert result["bounties"] == 3
+        assert result["combat_log"] == 9
+
+    @pytest.mark.asyncio
+    async def test_result_contains_expected_keys(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Return dict must include players, shop_items, bounties, combat_log, config."""
+        mock_player_repo.get_players_by_guild.return_value = []
+        mock_config_repo.delete_guild_config.return_value = False
+
+        result = await service.uninstall_guild(mock_db, guild_id=777)
+
+        assert set(result.keys()) >= {"players", "shop_items", "bounties", "combat_log", "config"}
 
     @pytest.mark.asyncio
     async def test_reraises_exception(self, service, mock_db, mock_player_repo, mock_config_repo):

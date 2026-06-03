@@ -111,7 +111,7 @@ class TestDriftFight:
         assert result.is_stalemate is True
         assert result.winner_name is None
         assert result.loser_name is None
-        assert result.metadata["total_ticks"] == GameConstants.MAX_FIGHT_TICKS
+        assert result.metadata["metadata"]["total_ticks"] == GameConstants.MAX_FIGHT_TICKS
         assert elapsed < 1.0, f"Drift fight took {elapsed:.3f}s (budget: 1s)"
 
     def test_event_bookends(self):
@@ -141,9 +141,13 @@ class TestDriftFight:
         assert end.data["duration_ticks"] == GameConstants.MAX_FIGHT_TICKS
 
     def test_metadata_block(self):
-        """Metadata contains required resolver fields."""
+        """Metadata contains required resolver fields (T9 envelope: schema_version / summary / metadata)."""
         result = TickResolver().resolve(_bare_loadout(), _bare_loadout(), pvc_damage_reduction=0.33)
-        md = result.metadata
+        outer = result.metadata
+        # T9 envelope keys
+        assert outer["schema_version"] == 1
+        assert "summary" in outer
+        md = outer["metadata"]
         assert md["tick_ms"] == GameConstants.TICK_MS
         assert md["resolver"] == "tick_v1"
         assert md["pvc_damage_reduction"] == 0.33
@@ -479,7 +483,7 @@ class TestTermination:
         result = TickResolver().resolve(_bare_loadout(), _bare_loadout())
         assert result.is_stalemate is True
         assert result.winner_name is None
-        assert result.metadata["total_ticks"] == GameConstants.MAX_FIGHT_TICKS
+        assert result.metadata["metadata"]["total_ticks"] == GameConstants.MAX_FIGHT_TICKS
         assert result.combat_log[-1].data["reason"] == "time_cap"
 
     def test_hp_depleted_c2_dies(self):
@@ -496,7 +500,7 @@ class TestTermination:
         assert result.loser_name == "DeadC2"
         assert result.is_stalemate is False
         assert result.combat_log[-1].data["reason"] == "hp_depleted"
-        assert result.metadata["total_ticks"] < GameConstants.MAX_FIGHT_TICKS
+        assert result.metadata["metadata"]["total_ticks"] < GameConstants.MAX_FIGHT_TICKS
 
     def test_hp_depleted_c1_dies(self):
         """C1 hull reaches 0 → resolver exits via hp_depleted, winner=C2, ticks < MAX."""
@@ -508,7 +512,7 @@ class TestTermination:
         assert result.loser_name == "DeadC1"
         assert result.is_stalemate is False
         assert result.combat_log[-1].data["reason"] == "hp_depleted"
-        assert result.metadata["total_ticks"] < GameConstants.MAX_FIGHT_TICKS
+        assert result.metadata["metadata"]["total_ticks"] < GameConstants.MAX_FIGHT_TICKS
 
     def test_mutual_kill(self):
         """Both hulls ≤ 0 same tick → resolver exits via mutual, ticks < MAX."""
@@ -519,7 +523,7 @@ class TestTermination:
         assert result.is_stalemate is True
         assert result.winner_name is None
         assert result.combat_log[-1].data["reason"] == "mutual"
-        assert result.metadata["total_ticks"] < GameConstants.MAX_FIGHT_TICKS
+        assert result.metadata["metadata"]["total_ticks"] < GameConstants.MAX_FIGHT_TICKS
 
     def test_fight_end_event_on_time_cap(self):
         """fight_end event emitted inside the loop on last tick."""

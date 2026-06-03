@@ -472,8 +472,8 @@ class TestT3DriftRegression:
         result = TickResolver(seed=42).resolve(loadout, loadout)
         assert result.is_stalemate is True
         assert result.winner_name is None
-        assert result.metadata["total_ticks"] == GameConstants.MAX_FIGHT_TICKS
-        assert result.metadata["resolver"] == "tick_v1"
+        assert result.metadata["metadata"]["total_ticks"] == GameConstants.MAX_FIGHT_TICKS
+        assert result.metadata["metadata"]["resolver"] == "tick_v1"
 
 
 # ---------------------------------------------------------------------------

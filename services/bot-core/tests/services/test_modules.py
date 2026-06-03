@@ -667,7 +667,7 @@ class TestBoosterDistancePush:
         results = resolver.resolve(loadout_c1, loadout_c2, rng=always_hit_rng)
 
         distance_events = [e for e in results.combat_log if e.type == CombatEventType.distance]
-        booster_push_events = [e for e in distance_events if e.data.get("cause") == "booster"]
+        booster_push_events = [e for e in distance_events if e.data.get("cause") == "booster_push"]
         module_acts = _find_module_activations(results.combat_log, "booster")
         # If booster activated, there should be booster push distance events
         if module_acts:
@@ -719,7 +719,7 @@ class TestBoosterDistancePush:
         results = resolver.resolve(loadout_c1, loadout_c2, rng=random.Random(1))
 
         distance_events = [e for e in results.combat_log if e.type == CombatEventType.distance]
-        booster_push_events = [e for e in distance_events if e.data.get("cause") == "booster"]
+        booster_push_events = [e for e in distance_events if e.data.get("cause") == "booster_push"]
         closure_events = [e for e in distance_events if e.data.get("cause") == "closure"]
 
         # Booster must have activated and pushed

@@ -134,10 +134,11 @@ class _TurretWeaponRuntime:
     cooldown_remaining_ms: int = 0  # §1: fully ready at tick 0; mutated by Phase 1 each tick
 
 
-# STI discriminator constants for T8 module detection
+# STI discriminator constants for T8/T9 module detection
 _CLOAK_MODULE_TYPE = "CloakModule"
 _BOOSTER_MODULE_TYPE = "BoosterModule"
 _THRUSTER_MODULE_TYPE = "ThrusterModule"
+_EMERGENCY_SYSTEM_MODULE_TYPE = "EmergencySystemModule"
 
 # Built-in U'tool module name (§10 supersession)
 _UTOOL_BUILTIN_NAME = "U'tool"
@@ -177,6 +178,18 @@ class _BoosterRuntime:
     consumed_thresholds: list = field(default_factory=list)  # list[int] of consumed threshold pct values
 
 
+@dataclass(slots=True)
+class _EmergencySystemRuntime:
+    """Per-combatant runtime state for the EmergencySystem module (§7.7 / T9).
+
+    Tracks consumption and remaining invulnerability window.
+    Initial state: consumed=False, invuln_remaining_ms=0 (§1).
+    """
+
+    consumed: bool = False
+    invuln_remaining_ms: int = 0
+
+
 @dataclass
 class _CombatantState:
     """Per-side mutable runtime state for TickResolver. Not frozen — mutated every tick."""
@@ -201,9 +214,9 @@ class _CombatantState:
     # Cooldowns in ms remaining; decremented by TICK_MS each tick; floored at 0
     weapon_cooldowns: dict[str, int]
     module_cooldowns: dict[str, int]
-    # Carry-forward state for T7 / T9
+    # Carry-forward state for T7
     manual_turret_mode: bool
-    emergency_system_consumed: bool
+    emergency_system_consumed: bool  # legacy field — superseded by es_runtime; kept for compat
     # T4: scanner tier precomputed at combatant init; pilot accuracy recomputed every tick
     scanner_tier: ScannerTier = field(
         default_factory=lambda: ScannerTier(tier="A", accuracy_bonus_pp=0.0, missile_tracking_active=False)
@@ -226,6 +239,8 @@ class _CombatantState:
     thruster_stats: ModuleStats | None = None
     # T8: per-combatant HP-percent tracking (post-damage, used for threshold crossing detection)
     prev_hp_pct: float = 1.0  # starts at 100% (§8: Phase-1 always starts at 100%)
+    # T9: EmergencySystem runtime state (None = ES not equipped)
+    es_runtime: _EmergencySystemRuntime | None = None
 
 
 def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState:
@@ -397,6 +412,15 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
     # ------------------------------------------------------------------
     _thruster_equipped = next((m for m in loadout.modules if m.module_type == _THRUSTER_MODULE_TYPE), None)
 
+    # ------------------------------------------------------------------
+    # T9: EmergencySystem runtime state (§7.7)
+    # Inert modules (§7.9 / §7.10) are NOT initialised — they produce no runtime state,
+    # no cooldown, no event emission. The ES is the only consumable in Phase-1.
+    # Multiple ES instances (malformed loadout): first wins; loader must not crash (§10).
+    # ------------------------------------------------------------------
+    _es_equipped = next((m for m in loadout.modules if m.module_type == _EMERGENCY_SYSTEM_MODULE_TYPE), None)
+    _es_runtime: _EmergencySystemRuntime | None = _EmergencySystemRuntime() if _es_equipped is not None else None
+
     return _CombatantState(
         name=loadout.ship_name,
         loadout=loadout,
@@ -426,6 +450,7 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
         booster_runtime=booster_runtime,
         thruster_stats=_thruster_equipped,
         prev_hp_pct=1.0,  # §8: combat starts at 100% HP
+        es_runtime=_es_runtime,
     )
 
 
@@ -646,6 +671,53 @@ def _eval_hp_threshold_modules(
     state.prev_hp_pct = current_pct
 
 
+def _eval_emergency_system(
+    state: _CombatantState,
+    tick: int,
+    events: list[CombatEvent],
+    invuln_ms: int,
+) -> None:
+    """Phase 4a: EmergencySystem evaluation for one combatant (§7.7 / T9).
+
+    Called AFTER all damage events for the tick have been applied (including overkill that pushed
+    hull transiently negative), and BEFORE the phase 4b HP clamp (hull clamped to 0 for display).
+
+    Trigger: ES is equipped, unconsumed, AND hull ≤ 0 after this tick's damage application.
+    Effect: hull clamped to 1, invuln window started (invuln_remaining_ms = invuln_ms).
+    ES is marked consumed (once per fight — §7.7).
+
+    Multiple ES instances from a malformed loadout: _init_combatant grabs the FIRST matching
+    module into es_runtime, so there is only ever one runtime object. The consumed flag prevents
+    a second activation even if somehow called twice.
+
+    Emits: module_activation event with data={module: "emergency_system"}.
+    trigger_hp_pct is intentionally OMITTED for ES (§12 explicit — cloak/booster carry it; ES does not).
+
+    NOT an HP-threshold device (§8). This function must NOT be called from Phase 5.
+    """
+    if state.es_runtime is None:
+        return  # no ES equipped
+    if state.es_runtime.consumed:
+        return  # already fired once this fight (consumable — §7.7)
+    if state.current_hull > 0:
+        return  # hull still positive — not triggered
+
+    # Hull ≤ 0 AND ES available: fire ES
+    state.current_hull = 1  # clamp to 1; overkill discarded (§7.7)
+    state.es_runtime.invuln_remaining_ms = invuln_ms
+    state.es_runtime.consumed = True
+    events.append(
+        CombatEvent(
+            tick=tick,
+            type=CombatEventType.module_activation,
+            actor=state.name,
+            target=None,
+            data={"module": "emergency_system"},
+            # trigger_hp_pct intentionally OMITTED per §12 / locked decision Q5
+        )
+    )
+
+
 def _apply_damage(
     state: _CombatantState,
     raw_damage: float,
@@ -659,7 +731,36 @@ def _apply_damage(
 
     DR is the first scaler (§3). Walks shield → armour → hull with overkill carryover.
     HP may go transiently negative (clamped at step 4b). Emits damage + layer_depleted events.
+
+    T9 — EmergencySystem invuln gate (§7.7 / §12):
+    If the target's ES invuln window is active (invuln_remaining_ms > 0), incoming damage is
+    blocked entirely. We still emit a damage event with amount=0, breakdown omitted, hp_after
+    unchanged, and blocked_by="emergency_system_invuln" — this keeps shot/hit accounting correct
+    for the summary builder (every weapon_fire hit gets a corresponding damage row).
     """
+    # T9: EmergencySystem invuln gate — block all incoming damage during the window (§7.7)
+    if state.es_runtime is not None and state.es_runtime.invuln_remaining_ms > 0:
+        events.append(
+            CombatEvent(
+                tick=tick,
+                type=CombatEventType.damage,
+                actor=None,
+                target=state.name,
+                data={
+                    "amount": 0,
+                    # breakdown OMITTED per §12 damage-row spec for invuln events
+                    "hp_after": {
+                        "shield": state.current_shield,
+                        "armour": state.current_armour,
+                        "hull": state.current_hull,
+                    },
+                    "source": source,
+                    "blocked_by": "emergency_system_invuln",
+                },
+            )
+        )
+        return  # no HP mutation; no layer_depleted possible
+
     # Step (i): PvC DR — first modifier, before stacking (§3 / Appendix B step 4i)
     if state.is_player and pvc_damage_reduction > 0.0:
         applied: int = round(raw_damage * (1.0 - pvc_damage_reduction))
@@ -789,6 +890,127 @@ def _shock_blast_apply(attacker: _CombatantState, current_distance: float) -> fl
     _ = attacker  # name used by caller for event actor; no state mutation
     _ = current_distance  # captured by caller for 'from' field; not used here
     return float(GameConstants.STARTING_DISTANCE_M)
+
+
+def _build_fight_summary(
+    events: list[CombatEvent],
+    c1: _CombatantState,
+    c2: _CombatantState,
+    outcome: str,
+    reason: str,
+    duration_ticks: int,
+    winner_name: str | None,
+) -> dict:
+    """Build the Tier-0 summary dict (§12 data.summary) by scanning the in-memory event list.
+
+    All scans read CombatEvent OBJECT ATTRIBUTES (ev.type, ev.actor, ev.data[...]),
+    NOT dict keys — the timeline holds dataclass instances, not dicts (§12 precision note).
+
+    Per-combatant fields derived from the event scan:
+      shots_fired       — count of weapon_fire events actor==combatant
+      shots_hit         — count of weapon_fire events actor==combatant AND data["hit"]==True
+      accuracy          — shots_hit/shots_fired; 0.0 if no shots
+      module_activations — {module_key: count} SPARSE (cloak/booster/emergency_system only)
+      secondary_fired   — {subtype: count} SPARSE (secondaries only)
+      damage_dealt      — sum of damage event amounts where data["source"]["attacker"]==combatant
+      damage_taken      — sum of damage event amounts where target==combatant
+
+    fight_start event provides start_hp; fight_end event provides final_hp (post-clamp).
+    c1/c2 keys in fight_end.final_hp map to summary combatants "1"/"2" respectively (precision note).
+    """
+    # Extract start_hp and final_hp from fight_start / fight_end events
+    start_hp: dict[str, dict] = {}  # {"1": {shield, armour, hull}, "2": {...}}
+    final_hp: dict[str, dict] = {}
+
+    for ev in events:
+        if ev.type == CombatEventType.fight_start:
+            combatants_data = ev.data.get("combatants", [])
+            for i, cb in enumerate(combatants_data):
+                key = str(i + 1)
+                start_hp[key] = dict(cb.get("hp", {}))
+        elif ev.type == CombatEventType.fight_end:
+            # fight_end.final_hp uses c1/c2 keys; map to "1"/"2" per precision note
+            raw_final = ev.data.get("final_hp", {})
+            final_hp["1"] = dict(raw_final.get("c1", {}))
+            final_hp["2"] = dict(raw_final.get("c2", {}))
+
+    # Per-combatant accumulators
+    # Key: combatant name → values
+    c1_name = c1.name
+    c2_name = c2.name
+
+    shots_fired: dict[str, int] = {c1_name: 0, c2_name: 0}
+    shots_hit: dict[str, int] = {c1_name: 0, c2_name: 0}
+    module_activations: dict[str, dict[str, int]] = {c1_name: {}, c2_name: {}}
+    secondary_fired: dict[str, dict[str, int]] = {c1_name: {}, c2_name: {}}
+    damage_dealt: dict[str, int] = {c1_name: 0, c2_name: 0}
+    damage_taken: dict[str, int] = {c1_name: 0, c2_name: 0}
+
+    # Discrete activation modules tracked in summary (§12 / §13)
+    _ACTIVATION_MODULES = frozenset({"cloak", "booster", "emergency_system"})
+
+    for ev in events:
+        if ev.type == CombatEventType.weapon_fire:
+            actor = ev.actor
+            if actor in shots_fired:
+                shots_fired[actor] += 1
+                if ev.data.get("hit") is True:
+                    shots_hit[actor] += 1
+            # secondary_fired — count by subtype for secondaries (slot == "secondary")
+            if ev.data.get("slot") == "secondary" and actor in secondary_fired:
+                sub = ev.data.get("subtype", "")
+                if sub:
+                    secondary_fired[actor][sub] = secondary_fired[actor].get(sub, 0) + 1
+
+        elif ev.type == CombatEventType.module_activation:
+            actor = ev.actor
+            if actor in module_activations:
+                mod_key = ev.data.get("module", "")
+                if mod_key in _ACTIVATION_MODULES:
+                    module_activations[actor][mod_key] = module_activations[actor].get(mod_key, 0) + 1
+
+        elif ev.type == CombatEventType.damage:
+            # damage_dealt attribution: actor is None on damage events; attacker lives in data.source.attacker
+            # (precision note §12 — do NOT match ev.actor for damage events)
+            amount = ev.data.get("amount", 0)
+            if amount > 0:  # ES-invuln events have amount=0; excluded from damage_dealt/taken
+                source = ev.data.get("source", {})
+                attacker = source.get("attacker")
+                target = ev.target
+                if attacker in damage_dealt:
+                    damage_dealt[attacker] += amount
+                if target in damage_taken:
+                    damage_taken[target] += amount
+
+    def _combatant_block(name: str, key: str) -> dict:
+        """Build per-combatant summary block."""
+        fired = shots_fired[name]
+        hit = shots_hit[name]
+        acc = (hit / fired) if fired > 0 else 0.0
+        return {
+            "name": name,
+            "ship": c1.loadout.ship_name if name == c1_name else c2.loadout.ship_name,
+            "start_hp": start_hp.get(key, {"shield": 0, "armour": 0, "hull": 0}),
+            "final_hp": final_hp.get(key, {"shield": 0, "armour": 0, "hull": 0}),
+            "damage_dealt": damage_dealt[name],
+            "damage_taken": damage_taken[name],
+            "shots_fired": fired,
+            "shots_hit": hit,
+            "accuracy": acc,
+            "module_activations": dict(module_activations[name]),  # sparse — only keys that fired ≥1
+            "secondary_fired": dict(secondary_fired[name]),         # sparse — only subtypes that fired ≥1
+        }
+
+    return {
+        "outcome": outcome,
+        "reason": reason,
+        "duration_ticks": duration_ticks,
+        "winner": winner_name,
+        "combatants": {
+            "1": _combatant_block(c1_name, "1"),
+            "2": _combatant_block(c2_name, "2"),
+        },
+    }
 
 
 class TickResolver:
@@ -995,6 +1217,10 @@ class TickResolver:
                     _cs.module_cooldowns[_m] = max(0, _cs.module_cooldowns[_m] - tick_ms)
                 # T8: tick down cloak/booster effect and cooldown timers (§7.2 / §7.3)
                 _tick_module_effects(_cs, tick, events, tick_ms)
+                # T9: tick down EmergencySystem invuln window (§7.7)
+                # Colocated with cooldown decrements per TASK_0009 §3 (phase 1 choice).
+                if _cs.es_runtime is not None and _cs.es_runtime.invuln_remaining_ms > 0:
+                    _cs.es_runtime.invuln_remaining_ms = max(0, _cs.es_runtime.invuln_remaining_ms - tick_ms)
 
             # ------------------------------------------------------------------
             # Phase 2: Apply regen pulses (C1 then C2; shield + repair bot parallel)
@@ -1397,9 +1623,13 @@ class TickResolver:
                 )
 
             # ------------------------------------------------------------------
-            # Phase 4a: EmergencySystem evaluation — T9: EmergencySystem evaluation
+            # Phase 4a: EmergencySystem evaluation (§7.7 / T9)
+            # AFTER all damage events for this tick have been applied (hull may be transiently negative).
+            # BEFORE phase 4b display clamp. C1 evaluated first, then C2 (Appendix B ordering).
+            # ES is NOT an HP-threshold device (§8) — it lives here, not in Phase 5.
             # ------------------------------------------------------------------
-            # (no-op T3)
+            _eval_emergency_system(c1, tick, events, GameConstants.EMERGENCY_SYSTEM_INVULN_S * 1000)
+            _eval_emergency_system(c2, tick, events, GameConstants.EMERGENCY_SYSTEM_INVULN_S * 1000)
 
             # ------------------------------------------------------------------
             # Phase 4b: HP clamp (C1 then C2; any layer below 0 → 0)
@@ -1465,7 +1695,7 @@ class TickResolver:
                                     type=CombatEventType.distance,
                                     actor=_bcs.name,
                                     target=None,
-                                    data={"from": _old_d_b, "to": current_distance, "cause": "booster"},
+                                    data={"from": _old_d_b, "to": current_distance, "cause": "booster_push"},
                                 )
                             )
                 if not _booster_active_any:
@@ -1553,6 +1783,19 @@ class TickResolver:
             ttk=None,
         )
 
+        # T9: Build Tier-0 summary by scanning the in-memory event list (§12 / §13).
+        # Events are CombatEvent dataclass objects (not dicts); summary scans read attributes.
+        # Serialization to dicts happens at persist time (T10).
+        summary = _build_fight_summary(
+            events=events,
+            c1=c1,
+            c2=c2,
+            outcome=outcome,
+            reason=reason,
+            duration_ticks=ticks_elapsed,
+            winner_name=winner_name,
+        )
+
         return FightResults(
             winner_name=winner_name,
             loser_name=loser_name,
@@ -1562,10 +1805,14 @@ class TickResolver:
             variance_percent=0.0,
             combat_log=events,  # type: ignore[arg-type]  — stores CombatEvent, annotation is list[dict]
             metadata={
-                "tick_ms": tick_ms,
-                "total_ticks": ticks_elapsed,
-                "resolver": "tick_v1",
-                "pvc_damage_reduction": pvc_damage_reduction,
+                "schema_version": 1,
+                "summary": summary,
+                "metadata": {
+                    "tick_ms": tick_ms,
+                    "total_ticks": ticks_elapsed,
+                    "resolver": "tick_v1",
+                    "pvc_damage_reduction": pvc_damage_reduction,
+                },
             },
         )
 

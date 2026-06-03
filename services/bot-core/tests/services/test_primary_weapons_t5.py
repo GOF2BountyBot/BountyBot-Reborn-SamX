@@ -432,7 +432,7 @@ class TestT3Regression:
         l2 = ShipLoadout(ship_name="C2", base_armour=100)
         result = TickResolver(seed=42).resolve(l1, l2)
         assert result.is_stalemate is True
-        assert result.metadata["total_ticks"] == GameConstants.MAX_FIGHT_TICKS
+        assert result.metadata["metadata"]["total_ticks"] == GameConstants.MAX_FIGHT_TICKS
 
 
 # ============================================================================

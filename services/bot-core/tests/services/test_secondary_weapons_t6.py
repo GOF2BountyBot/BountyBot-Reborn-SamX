@@ -835,7 +835,7 @@ class TestCrossSubtype:
         l2 = _loadout(weapons=[gun], base_armour=500, name="C2")
         result = TickResolver(seed=42).resolve(l1, l2)
         # Fight should end with a winner (primaries deal damage)
-        assert not result.is_stalemate or result.metadata["total_ticks"] < GameConstants.MAX_FIGHT_TICKS
+        assert not result.is_stalemate or result.metadata["metadata"]["total_ticks"] < GameConstants.MAX_FIGHT_TICKS
 
     def test_weapon_fire_payloads_conform_to_spec(self):
         """weapon_fire payloads match §12 per-subtype table. Test 27."""

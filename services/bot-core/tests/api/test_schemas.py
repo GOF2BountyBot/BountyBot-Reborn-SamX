@@ -1440,6 +1440,35 @@ class TestShipsShipResponseSchema:
         assert ship.nickname == "My Eagle"
         assert ship.weapons == ["Laser", "Blaster"]
 
+    def test_secondary_weapons_defaults_to_none(self):
+        ship = ShipResponse(
+            id=1,
+            player_id=10,
+            ship_name="Falcon",
+            nickname=None,
+            is_active=True,
+            weapons=None,
+            modules=None,
+            turrets=None,
+            created_at="2026-01-01",
+        )
+        assert ship.secondary_weapons is None
+
+    def test_secondary_weapons_populated(self):
+        ship = ShipResponse(
+            id=3,
+            player_id=10,
+            ship_name="Eagle",
+            nickname=None,
+            is_active=True,
+            weapons=["Laser"],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["AMR Tormentor"],
+            created_at="2026-01-01",
+        )
+        assert ship.secondary_weapons == ["AMR Tormentor"]
+
     def test_missing_required_raises(self):
         with pytest.raises(ValidationError):
             ShipResponse(id=1, player_id=10)
@@ -1463,6 +1492,40 @@ class TestShipLoadoutSummaryResponseSchema:
         )
         assert resp.ship_id == 1
         assert resp.weapons_count == 1
+
+    def test_secondary_weapons_defaults_to_empty_list(self):
+        resp = ShipLoadoutSummaryResponse(
+            ship_id=1,
+            ship_name="Falcon",
+            nickname=None,
+            is_active=True,
+            weapons=["Laser"],
+            modules=[],
+            turrets=[],
+            weapons_count=1,
+            modules_count=0,
+            turrets_count=0,
+        )
+        assert resp.secondary_weapons == []
+        assert resp.secondary_weapons_count == 0
+
+    def test_secondary_weapons_populated(self):
+        resp = ShipLoadoutSummaryResponse(
+            ship_id=2,
+            ship_name="Eagle",
+            nickname=None,
+            is_active=True,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["AMR Tormentor"],
+            weapons_count=0,
+            modules_count=0,
+            turrets_count=0,
+            secondary_weapons_count=1,
+        )
+        assert resp.secondary_weapons == ["AMR Tormentor"]
+        assert resp.secondary_weapons_count == 1
 
     def test_missing_required_raises(self):
         with pytest.raises(ValidationError):

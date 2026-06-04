@@ -605,6 +605,9 @@ class CombatLogService:
                     })
                 continue
 
-        # CI-22: sort all key events by tick so baseline lines aren't starved
-        key_events.sort(key=lambda e: (e["tick"], e["event_type"]))
+        # CI-29: sort by tick only — Python's stable sort preserves insertion order
+        # within the same tick, which equals the resolver's causal emission order
+        # (weapon_fire → damage → layer_depleted → secondary_depleted).  Sorting
+        # on (tick, event_type) re-orders alphabetically and breaks causality.
+        key_events.sort(key=lambda e: e["tick"])
         return key_events

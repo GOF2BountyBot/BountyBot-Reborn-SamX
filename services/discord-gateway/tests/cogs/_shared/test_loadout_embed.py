@@ -1486,3 +1486,192 @@ class TestPalTyyrtA48Regression:
             + sum(len(f.name) + len(f.value) for f in embed.fields)
         )
         assert total <= MAX_EMBED_TOTAL
+
+
+# ===========================================================================
+# CI-28 — Turrets and Secondaries sections
+# ===========================================================================
+
+
+def _make_full_loadout_response(**overrides):
+    """Response with non-empty turrets and secondaries for CI-28 tests."""
+    defaults = {
+        "subject_kind": "criminal",
+        "subject_name": "Pal Tyyrt",
+        "subject_description": "Terran",
+        "tech_level": 10,
+        "ship_name": "Darkzov",
+        "ship_emoji": "<:darkzov:1>",
+        "thumbnail_url": "https://cdn/paltyyrt.png",
+        "ship_stats": {
+            "armour": 200,
+            "cargo": 80,
+            "handling": 50,
+            "hp": 740,
+            "dps": 110.5,
+            "total_value": 80000,
+            "max_primaries": 4,
+            "max_turrets": 2,
+            "max_secondaries": 3,
+            "max_modules": 14,
+        },
+        "weapons": [
+            {"name": "Mimung Blaster", "emoji": "<:m:1>", "dps": 30.0, "value": 1500},
+        ],
+        "turrets": [
+            {"name": "PE Ambipolar-5", "emoji": "<:t:1>", "dps": 18.0, "value": 1100},
+            {"name": "Razor Turret", "emoji": "<:rt:2>", "dps": 22.0, "value": 1300},
+        ],
+        "secondaries": [
+            {"name": "S'koon Rockets", "emoji": "<:sk:1>", "damage": 80, "rounds": 12, "subtype": "rocket"},
+            {"name": "EMP Nuke", "emoji": "<:nuke:2>", "damage": 200, "rounds": 1, "subtype": "nuke"},
+        ],
+        "modules": [
+            {
+                "name": "Targe Shield",
+                "emoji": "<:ts:1>",
+                "type": "ShieldModule",
+                "value": 500,
+                "effects": [{"label": "Shield", "value": "150"}],
+                "combat_tier": "combat",
+            },
+        ],
+        "cargo": [],
+        "cargo_total_count": 0,
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+class TestTurretsAndSecondariesSections:
+    """CI-28: turrets + secondaries sections rendered in criminal/player loadout embeds."""
+
+    def test_turrets_section_present_when_non_empty(self):
+        """Non-empty turrets list → embed has a Turrets <N/M> section field."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        turret_field = next((f for f in embed.fields if f.name.startswith("Turrets")), None)
+        assert turret_field is not None, "Turrets section must appear when turrets list is non-empty"
+        assert turret_field.name == "Turrets <2/2>"
+
+    def test_turrets_items_rendered_with_dps(self):
+        """Each turret renders as ':emoji: Name | DPS: **X**' (reuses _format_weapon_line)."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        turret_field = next(f for f in embed.fields if f.name.startswith("Turrets"))
+        assert "<:t:1> PE Ambipolar-5 | DPS: **18**" in turret_field.value
+        assert "<:rt:2> Razor Turret | DPS: **22**" in turret_field.value
+
+    def test_secondaries_section_present_when_non_empty(self):
+        """Non-empty secondaries list → embed has a Secondaries <N/M> section field."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        sec_field = next((f for f in embed.fields if f.name.startswith("Secondaries")), None)
+        assert sec_field is not None, "Secondaries section must appear when secondaries list is non-empty"
+        assert sec_field.name == "Secondaries <2/3>"
+
+    def test_secondaries_items_rendered_with_rounds(self):
+        """Each secondary renders as ':emoji: Name | ×N' when rounds are present."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        sec_field = next(f for f in embed.fields if f.name.startswith("Secondaries"))
+        assert "<:sk:1> S'koon Rockets | ×12" in sec_field.value
+        assert "<:nuke:2> EMP Nuke | ×1" in sec_field.value
+
+    def test_secondary_without_rounds_renders_name_only(self):
+        """Secondary with no rounds field renders as ':emoji: Name' (no ×N suffix)."""
+        resp = _make_full_loadout_response(
+            secondaries=[
+                {"name": "Shock Blast", "emoji": "<:sb:1>", "damage": 50, "subtype": "shock-blast"},
+            ],
+        )
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        sec_field = next(f for f in embed.fields if f.name.startswith("Secondaries"))
+        assert "<:sb:1> Shock Blast" in sec_field.value
+        assert "×" not in sec_field.value
+
+    def test_turrets_section_absent_when_empty(self):
+        """Empty turrets list → no Turrets section (don't show an empty header)."""
+        resp = _make_full_loadout_response(turrets=[])
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert not any(f.name.startswith("Turrets") for f in embed.fields), (
+            "Turrets section must not appear when turrets list is empty"
+        )
+
+    def test_secondaries_section_absent_when_empty(self):
+        """Empty secondaries list → no Secondaries section."""
+        resp = _make_full_loadout_response(secondaries=[])
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert not any(f.name.startswith("Secondaries") for f in embed.fields), (
+            "Secondaries section must not appear when secondaries list is empty"
+        )
+
+    def test_section_order_primary_turrets_secondaries_modules(self):
+        """Section order must be: Primary Weapons → Turrets → Secondaries → Modules."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=False)
+        names = [f.name for f in embed.fields if not f.name.startswith("‎")]
+        pw_idx = next(i for i, n in enumerate(names) if n.startswith("Primary Weapons"))
+        tu_idx = next(i for i, n in enumerate(names) if n.startswith("Turrets"))
+        sc_idx = next(i for i, n in enumerate(names) if n.startswith("Secondaries"))
+        mo_idx = next(i for i, n in enumerate(names) if n.startswith("Modules"))
+        assert pw_idx < tu_idx < sc_idx < mo_idx, (
+            f"Expected PW < Turrets < Secondaries < Modules but got indices "
+            f"PW={pw_idx}, Tu={tu_idx}, Sc={sc_idx}, Mo={mo_idx}"
+        )
+
+    def test_spacer_before_turrets_section(self):
+        """A spacer field must appear immediately before the Turrets section header."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        names = [f.name for f in embed.fields]
+        tu_idx = next(i for i, n in enumerate(names) if n.startswith("Turrets"))
+        assert names[tu_idx - 1] == SPACER_NAME, "Spacer must precede Turrets header"
+
+    def test_spacer_before_secondaries_section(self):
+        """A spacer field must appear immediately before the Secondaries section header."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        names = [f.name for f in embed.fields]
+        sc_idx = next(i for i, n in enumerate(names) if n.startswith("Secondaries"))
+        assert names[sc_idx - 1] == SPACER_NAME, "Spacer must precede Secondaries header"
+
+    def test_budget_still_respected_with_turrets_and_secondaries(self):
+        """Adding turrets + secondaries must not push total embed over 6000-char ceiling."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        total = (
+            len(embed.title or "")
+            + len(embed.description or "")
+            + sum(len(f.name) + len(f.value) for f in embed.fields)
+        )
+        assert total <= MAX_EMBED_TOTAL
+
+    def test_field_count_respected_with_turrets_and_secondaries(self):
+        """Field count must never exceed MAX_FIELDS=25."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert len(embed.fields) <= MAX_FIELDS
+
+    def test_missing_turrets_key_treated_as_empty(self):
+        """If the response omits 'turrets' entirely, no Turrets section appears (graceful)."""
+        resp = _make_full_loadout_response()
+        resp.pop("turrets", None)
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert not any(f.name.startswith("Turrets") for f in embed.fields)
+
+    def test_missing_secondaries_key_treated_as_empty(self):
+        """If the response omits 'secondaries' entirely, no Secondaries section appears."""
+        resp = _make_full_loadout_response()
+        resp.pop("secondaries", None)
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert not any(f.name.startswith("Secondaries") for f in embed.fields)
+
+    def test_secondary_emoji_fallback_bullet(self):
+        """Secondary with no emoji uses '• ' bullet fallback."""
+        resp = _make_full_loadout_response(
+            secondaries=[{"name": "Mystery Bomb", "emoji": None, "rounds": 5, "subtype": "nuke"}],
+        )
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        sec_field = next(f for f in embed.fields if f.name.startswith("Secondaries"))
+        assert "• Mystery Bomb | ×5" in sec_field.value

@@ -257,6 +257,22 @@ def _format_module_line(module: dict) -> str:
     return line
 
 
+def _format_secondary_line(secondary: dict) -> str:
+    """Format a secondary-weapon line.
+
+    Renders as ':emoji: Name | ×N rounds' when rounds are present, or ':emoji: Name'
+    when the round count is absent. Falls back to '• ' bullet when no emoji.
+    """
+    name = secondary.get("name") or "Unknown"
+    emoji = secondary.get("emoji")
+    rounds = secondary.get("rounds")
+    prefix = f"{emoji} " if emoji else "• "
+    line = f"{prefix}{name}"
+    if rounds is not None:
+        line = f"{line} | ×{rounds}"
+    return line
+
+
 def _format_cargo_line(item: dict) -> str:
     """Format a cargo line as ':emoji: Item Name (xN)' or '• Item Name (xN)'.
 
@@ -300,6 +316,8 @@ def _apply_truncation_strategy(
     Always-keep sections (Active Ship, Ship Stats) are handled outside this
     function. The return order is:
       - Primary Weapons
+      - Turrets (only when non-empty)
+      - Secondaries (only when non-empty)
       - Modules
       - Cargo Hold (only when show_cargo=True)
     """
@@ -307,21 +325,29 @@ def _apply_truncation_strategy(
 
     stats = response.get("ship_stats") or {}
     weapons = response.get("weapons") or []
+    turrets = response.get("turrets") or []
+    secondaries = response.get("secondaries") or []
     modules = response.get("modules") or []
     cargo = response.get("cargo") or []
 
     max_primaries = stats.get("max_primaries") or 0
+    max_turrets = stats.get("max_turrets") or 0
+    max_secondaries = stats.get("max_secondaries") or 0
     max_modules = stats.get("max_modules") or 0
     cargo_capacity = stats.get("cargo") or 0
     cargo_total_count = response.get("cargo_total_count") or 0
 
     # Pre-format candidate lines (full rendering) so we can measure.
     weapon_lines_full = [_format_weapon_line(w) for w in weapons]
+    turret_lines_full = [_format_weapon_line(t) for t in turrets]
+    secondary_lines_full = [_format_secondary_line(s) for s in secondaries]
     module_lines_full = [_format_module_line(m) for m in modules]
     cargo_lines_full = [_format_cargo_line(c) for c in cargo]
 
     # Compute initial total cost (headers + spacers + all lines).
     weapon_header = _build_section_header("Primary Weapons", len(weapons), max_primaries)
+    turret_header = _build_section_header("Turrets", len(turrets), max_turrets)
+    secondary_header = _build_section_header("Secondaries", len(secondaries), max_secondaries)
     module_header = _build_section_header("Modules", len(modules), max_modules)
     cargo_header = _build_section_header("Cargo Hold", cargo_total_count, cargo_capacity)
 
@@ -332,16 +358,22 @@ def _apply_truncation_strategy(
         return 2 + len(header) + value_len
 
     cost_weapons = _section_cost(weapon_header, weapon_lines_full)
+    cost_turrets = _section_cost(turret_header, turret_lines_full) if turrets else 0
+    cost_secondaries = _section_cost(secondary_header, secondary_lines_full) if secondaries else 0
     cost_modules = _section_cost(module_header, module_lines_full)
     cost_cargo = _section_cost(cargo_header, cargo_lines_full or [])
 
-    sections_cost = cost_weapons + cost_modules
+    sections_cost = cost_weapons + cost_turrets + cost_secondaries + cost_modules
     if show_cargo:
         sections_cost += cost_cargo
 
     # If everything fits, emit in full.
     if sections_cost <= budget_remaining:
         sections.append((weapon_header, weapon_lines_full))
+        if turrets:
+            sections.append((turret_header, turret_lines_full))
+        if secondaries:
+            sections.append((secondary_header, secondary_lines_full))
         sections.append((module_header, module_lines_full))
         if show_cargo:
             # Use "Empty" placeholder when cargo is empty, but always show header
@@ -366,6 +398,9 @@ def _apply_truncation_strategy(
 
     def _recompute_cost() -> int:
         w = _section_cost(weapon_header, weapons_out)
+        # Turrets and secondaries are not truncated individually — include their fixed cost.
+        tr = cost_turrets
+        sc = cost_secondaries
         m = _section_cost(module_header, modules_out)
         c = _section_cost(cargo_header, cargo_out or ["Empty"]) if show_cargo else 0
         # Add estimated "… and N more" suffix costs (~20 chars each)
@@ -376,7 +411,7 @@ def _apply_truncation_strategy(
             extra += 20
         if dropped_weapons:
             extra += 20
-        return w + m + c + extra
+        return w + tr + sc + m + c + extra
 
     # Tier 1: drop cargo items oldest-first.
     while show_cargo and cargo_out and _recompute_cost() > budget_remaining:
@@ -418,6 +453,10 @@ def _apply_truncation_strategy(
             weapons_out = [f"… and {dropped_weapons} more"]
 
     sections.append((weapon_header, weapons_out))
+    if turrets:
+        sections.append((turret_header, turret_lines_full))
+    if secondaries:
+        sections.append((secondary_header, secondary_lines_full))
     sections.append((module_header, modules_out))
     if show_cargo:
         sections.append((cargo_header, cargo_out if cargo_out else ["Empty"]))

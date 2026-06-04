@@ -399,6 +399,130 @@ class TestExtractKeyEvents:
         assert result[0]["event_type"] == "Outcome"
         assert "Stalemate" in result[0]["detail"]
 
+    def test_same_tick_causal_order_preserved(self):
+        """CI-29: same-tick events must come out in causal (insertion) order.
+
+        Scenario at tick 1200: the resolver emits in this order:
+          1. weapon_fire (secondary hit) — "Secondary fire (rocket)"
+          2. layer_depleted (armour) — "Armour depleted"
+          3. secondary_depleted — "Secondary depleted"
+          4. damage → crosses the 50% HP milestone — "HP milestone (50%)"
+
+        Old sort key (tick, event_type) would sort alphabetically within the tick:
+          "Armour depleted" < "HP milestone (50%)" < "Secondary depleted" < "Secondary fire (rocket)"
+        This makes "ran out of rockets" appear BEFORE "fired rockets — hit" — backwards.
+
+        Stable tick-only sort must preserve causal emission order.
+        The test is constructed so it FAILS with the old (tick, event_type) key and
+        PASSES with the tick-only key.
+
+        NOTE: side is omitted from the weapon_fire data so "First hit" is not generated
+        (First hit only fires when side is present AND it's the first hit for that side).
+        This isolates the Secondary fire / Secondary depleted ordering bug.
+        """
+        tick = 1200
+        events = [
+            # fight_start at tick 0 to seed HP tracking
+            {
+                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "data": {
+                    "combatants": [
+                        {"name": "Alice", "ship": "Wraith",
+                         "hp": {"hull": 100, "armour": 50, "shield": 0}},  # total = 150
+                        {"name": "Bob", "ship": "Centaur",
+                         "hp": {"hull": 100, "armour": 50, "shield": 0}},
+                    ],
+                    "initial_distance": 3000,
+                },
+            },
+            # 1. secondary weapon_fire hit (causal first) — no side= to avoid First hit branch
+            {
+                "tick": tick, "type": "weapon_fire", "actor": "Alice", "target": "Bob",
+                "data": {
+                    "slot": "secondary", "subtype": "rocket", "weapon": "S'koon",
+                    "hit": True,
+                },
+            },
+            # 2. layer_depleted for the target (armour depleted by that hit)
+            {
+                "tick": tick, "type": "layer_depleted", "actor": "Bob", "target": None,
+                "data": {"layer": "armour", "side": 2},
+            },
+            # 3. secondary_depleted (ran out of ammo after firing)
+            {
+                "tick": tick, "type": "secondary_depleted", "actor": "Alice", "target": None,
+                "data": {"weapon": "S'koon"},
+            },
+            # 4. damage event that crosses 50% HP milestone for side 1
+            {
+                "tick": tick, "type": "damage", "actor": "Bob", "target": "Alice",
+                "data": {
+                    "side": 1,
+                    "hp_after": {"hull": 74, "armour": 0, "shield": 0},  # 74/150 ≈ 49% → crosses 50%
+                },
+            },
+        ]
+
+        result = CombatLogService._extract_key_events(events)
+
+        # Filter to same-tick events only (tick 1200)
+        same_tick = [e for e in result if e["tick"] == tick]
+
+        # Expected causal order: Secondary fire → Armour depleted → Secondary depleted → HP milestone
+        event_types = [e["event_type"] for e in same_tick]
+        expected_order = [
+            "Secondary fire (rocket)",
+            "Armour depleted",
+            "Secondary depleted",
+            "HP milestone (50%)",
+        ]
+        assert event_types == expected_order, (
+            f"Causal order violated. Expected {expected_order}, got {event_types}. "
+            "Hint: was (tick, event_type) alphabetical sort re-applied?"
+        )
+
+        # Global invariant: Engagement is first, Outcome absent (no fight_end here)
+        assert result[0]["event_type"] == "Engagement"
+
+    def test_engagement_first_outcome_last(self):
+        """Engagement (tick 0) must always be first; Outcome (last tick) must be last
+        regardless of what events appear in between.
+
+        This verifies the stable tick-sort doesn't shuffle boundary events.
+        """
+        events = [
+            {
+                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "data": {
+                    "combatants": [
+                        {"name": "A", "ship": "X", "hp": {"hull": 100, "armour": 0, "shield": 0}},
+                        {"name": "B", "ship": "Y", "hp": {"hull": 100, "armour": 0, "shield": 0}},
+                    ],
+                    "initial_distance": 1000,
+                },
+            },
+            # Mid-fight event at tick 500
+            {
+                "tick": 500, "type": "layer_depleted", "actor": "A", "target": None,
+                "data": {"layer": "shield"},
+            },
+            # fight_end at tick 3000 — must be last after stable sort
+            {
+                "tick": 3000, "type": "fight_end", "actor": None, "target": None,
+                "data": {
+                    "winner": "A", "reason": "hp_depleted", "duration_ticks": 3000,
+                    "final_hp": {
+                        "c1": {"hull": 40, "armour": 0, "shield": 0},
+                        "c2": {"hull": 0, "armour": 0, "shield": 0},
+                    },
+                },
+            },
+        ]
+        result = CombatLogService._extract_key_events(events)
+        assert len(result) >= 3
+        assert result[0]["event_type"] == "Engagement"
+        assert result[-1]["event_type"] == "Outcome"
+
 
 # ---------------------------------------------------------------------------
 # Tests: list_for_player (service layer)

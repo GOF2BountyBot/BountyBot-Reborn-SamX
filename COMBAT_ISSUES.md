@@ -13,11 +13,9 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 **CI-16 AND CI-17 are DONE & LIVE-VALIDATED.** Both ran full architect→dev→tester cycles + live
 smoke-tests against the rebuilt stack. **Owner decisions in (2026-06-04):** CI-17 knobs = keep my
 defaults; CI-6 = WONTFIX (keep EMP seed, it's wiki data); CI-11 = YES build it.
-**Next, in order:** **CI-20/21/22** (combat-log UX batch: name-based identity, regen-flapping de-spam,
-baseline events for both sides — architect to scope together, same subsystem; ALSO fold in the CI-19
-health-probe-retry polish since it's the same gateway) → CI-18 (player_inv unique constraint — ⚠ DANGER
-ZONE migration, defer for owner eyes) → CI-4 (live §4/§5/§6 E2E tests).
-**Done & live-validated:** CI-10, CI-11, CI-19 (+CI-23).
+**Next, in order:** CI-18 (player_inv unique constraint — ⚠ DANGER ZONE migration, defer for owner
+eyes) → CI-4 (live §4/§5/§6 E2E tests). That's the last of the tracked combat/shop/UX work.
+**Done & live-validated:** CI-10, CI-11, CI-19 (+CI-23), CI-20, CI-21, CI-22, CI-24.
 
 **CI-17 knobs (owner-confirmed, keep):** `CRIMINAL_SECONDARY_ROUNDS` = nuke 1, missile 5, rocket 5,
 cluster-missile 3, shock-blast 2; `CRIMINAL_SECONDARY_MIN_DAMAGE` = 1. All in `GameConstants` (retune
@@ -32,8 +30,10 @@ Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no
 **CI-17 LIVE-VALIDATED** (combat-log 54): spawned silver criminals carry complete secondary loadouts
 (DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
 Erland fired `missile ×3` and dealt 135 dmg in a real fight.
-**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-23.
-**Open:** CI-20/21/22 (combat-log UX), CI-18 (player_inv constraint), CI-4 (E2E).
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24.
+**Open:** CI-18 (player_inv constraint — danger-zone, owner eyes), CI-4 (E2E §4/§5/§6).
+**Live-validated combat-log (battle 57):** dropdown `General_Failure vs Bartholomeu Drew`; body uses pilot/criminal
+names; Engagement + first-hit-per-side + HP milestones + Outcome; each layer depleted ONCE (no flap); distinct per-side stats.
 **Stack:** full rebuild to migration **0014**, all combat/shop work LIVE & verified (bot-core healthy;
 blender-service unhealthy = pre-existing, irrelevant). **Nothing pushed** — `dev` is ahead of origin.
 
@@ -457,7 +457,14 @@ items load. (Tester-flagged latent issue from CI-19 investigation.)
 
 ---
 
-## CI-20 🔴 `/combat-log` identity/labels unintuitive — use names, not ship  *(owner 2026-06-04)*
+## CI-20 ✅ `/combat-log` name-based identity — DONE & LIVE-VALIDATED  *(2026-06-04, `c99fd3e`+`d1f4e75`)*
+Dropdown now renders full "`<criminal>` vs `<player>`" (battle 57: "General_Failure vs Bartholomeu Drew");
+log body attributes events by pilot/criminal name (readable in same-ship fights); summary shows
+name=pilot, ship=ship. Threaded display names + a per-event `data["side"]` slot discriminator through the
+resolver (actor/name stays = ship name → stats untouched); old rows fall back to ship-name (72h retention,
+no migration). Last-mile fix `d1f4e75`: exposed `combatant1_name`/`combatant2_name` on the list schema
+(Pydantic was dropping them). Part of the combat-log UX batch (`COMBAT_CL_UX_PLAN.md`).
+<details><summary>(original)</summary>
 Two related problems, both about telling combatants apart:
 1. **Dropdown:** a bounty-capture battle shows as e.g. `#1 vs betty` — should use the **bounty
    (criminal) name vs player name**, the SAME style as a PvP duel (`<criminal> vs <player>`).
@@ -465,20 +472,33 @@ Two related problems, both about telling combatants apart:
    impossible to tell who is who — actors are labeled by ship name. Use criminal-name / player-name
    (or otherwise disambiguate) so each line clearly attributes to the right side. (See battle #56
    example below — "Betty (Betty)" + "H'Soc (H'Soc)".) → architect scope w/ CI-21/CI-22 (same subsystem).
+</details>
 
 ---
 
-## CI-21 🔴 `/combat-log` regen-flapping spam ("Shield depleted" repeated)  *(owner 2026-06-04)*
+## CI-21 ✅ `/combat-log` regen-flapping de-spam — DONE & LIVE-VALIDATED  *(2026-06-04, `c99fd3e`)*
+Emission-side recovery latch: a layer re-emits `layer_depleted` only after recovering ≥
+`COMBAT_LAYER_REEMIT_FRACTION` (0.25, env-tunable) of max. Battle 57: each layer (Armour/Shield/Hull)
+depleted exactly ONCE — no flap (vs battle #56's 5×). Safe: `layer_depleted` has no summary consumer
+(stats byte-identical, regression-guarded). Applies to shield regen + repair-bot armour/hull.
+<details><summary>(original)</summary>
 A layer that regenerates a tiny amount (e.g. shield regen ~1 HP) between shots and is then re-depleted
 emits a **`layer_depleted` event every time** → the log shows "Shield depleted" many times in one
 fight (battle #56: 5× "Shield depleted"). Same situation expected for **armour regen when a repair
 bot/repair beam is equipped**. Owner wants these gated behind a **threshold** (don't re-emit a
 layer-depleted unless the layer meaningfully recovered first, or rate-limit/dedupe consecutive
 depletions of the same layer). → architect scope w/ CI-20/CI-22.
+</details>
 
 ---
 
-## CI-22 🔴 `/combat-log` shows NO events for the outmatching/winning side  *(owner 2026-06-04)*
+## CI-22 ✅ `/combat-log` baseline events for both sides — DONE & LIVE-VALIDATED  *(2026-06-04, `c99fd3e`)*
+Display-side synthesis: Engagement line + first-hit-per-side + Outcome line + per-side 50%/25% HP
+milestones (owner chose richer "baseline + milestones"). Battle 57 shows BOTH combatants (first hit
+for each, milestones for each, correct Outcome) — the outmatching/winning side is no longer inert.
+Outcome winner resolved by final-hull SLOT (fixed a same-ship c2-wins mislabel found by d-tester).
+Events tick-sorted before field truncation.
+<details><summary>(original)</summary>
 In battle #56 the criminal **H'Soc has ZERO key events** — it out-matched the player, never had a
 layer depleted, hit no booster/cloak threshold, fired only primaries → nothing surfaced. Owner finds
 this odd from a player's view (looks like one side did nothing). Want some **baseline events for BOTH
@@ -505,16 +525,24 @@ Key Events:
  (CI-22: H'Soc — the winner — has NO events at all)
  (CI-20: both sides labeled "<ship> (<ship>)"; dropdown was "#1 vs betty")
 ```
+</details>
 
 ---
 
-## CI-24 🟢 Fight summary merges per-side stats when both fly the same ship  *(found in CI-20 scoping; owner: FOLD IN 2026-06-04)*
+## CI-24 ✅ Fight summary slot-keying (same-ship stat merge) — DONE & LIVE-VALIDATED  *(2026-06-04, `c99fd3e`)*
+Re-keyed `_build_fight_summary` accumulators on combatant SLOT instead of ship name, so same-ship fights
+no longer merge per-side dmg/accuracy/shots. Different-ship summaries byte-identical (regression-guarded);
+same-ship now distinct. Battle 57 (diff ships) confirmed distinct per-side stats. Folded into the
+combat-log UX batch per owner.
+<details><summary>(original)</summary>
+## CI-24 (original) 🟢 Fight summary merges per-side stats when both fly the same ship  *(found in CI-20 scoping; owner: FOLD IN 2026-06-04)*
 `_build_fight_summary` (`combat_service.py:965-1007`) keys per-combatant accumulators (dmg dealt,
 accuracy, shots) on **ship name** (`c1.name`/`c2.name`). When both combatants fly the SAME ship name
 (e.g. both "Betty"), the dict collapses → both sides' stats merge into one bucket = wrong per-side
 numbers. The win/loss header is unaffected (read path derives it from final HP). Owner chose to FOLD the
 fix into the combat-log UX batch: re-key the summary on combatant **slot** (1/2). Plan: `COMBAT_CL_UX_PLAN.md`.
 Regression guard: single-name fights byte-identical; same-name fights show DISTINCT per-side stats.
+</details>
 
 ## CI-8 🧹 Housekeeping — committed status / nothing pushed
 - ✅ `COMBAT_E2E_TEST_PLAN.md` + `COMBAT_ISSUES.md` committed (`ae157f0`).

@@ -13,11 +13,11 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 **CI-16 AND CI-17 are DONE & LIVE-VALIDATED.** Both ran full architect→dev→tester cycles + live
 smoke-tests against the rebuilt stack. **Owner decisions in (2026-06-04):** CI-17 knobs = keep my
 defaults; CI-6 = WONTFIX (keep EMP seed, it's wiki data); CI-11 = YES build it.
-**Next, in order:** **CI-19** (Discord autocomplete misbehaving on shop/equip/unequip/ship/set-active —
-owner-requested d-architect investigation) → **CI-20/21/22** (combat-log UX batch: name-based identity,
-regen-flapping de-spam, baseline events for both sides — architect to scope together, same subsystem) →
-CI-18 (player_inv unique constraint — ⚠ DANGER ZONE migration, defer for owner eyes) → CI-4 (live
-§4/§5/§6 E2E tests). **CI-10 + CI-11 DONE & live-validated.**
+**Next, in order:** **CI-20/21/22** (combat-log UX batch: name-based identity, regen-flapping de-spam,
+baseline events for both sides — architect to scope together, same subsystem; ALSO fold in the CI-19
+health-probe-retry polish since it's the same gateway) → CI-18 (player_inv unique constraint — ⚠ DANGER
+ZONE migration, defer for owner eyes) → CI-4 (live §4/§5/§6 E2E tests).
+**Done & live-validated:** CI-10, CI-11, CI-19 (+CI-23).
 
 **CI-17 knobs (owner-confirmed, keep):** `CRIMINAL_SECONDARY_ROUNDS` = nuke 1, missile 5, rocket 5,
 cluster-missile 3, shock-blast 2; `CRIMINAL_SECONDARY_MIN_DAMAGE` = 1. All in `GameConstants` (retune
@@ -32,8 +32,8 @@ Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no
 **CI-17 LIVE-VALIDATED** (combat-log 54): spawned silver criminals carry complete secondary loadouts
 (DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
 Erland fired `missile ×3` and dealt 135 dmg in a real fight.
-**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17.
-**New (owner 2026-06-04):** CI-19 (autocomplete), CI-20/21/22 (combat-log UX).
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-23.
+**Open:** CI-20/21/22 (combat-log UX), CI-18 (player_inv constraint), CI-4 (E2E).
 **Stack:** full rebuild to migration **0014**, all combat/shop work LIVE & verified (bot-core healthy;
 blender-service unhealthy = pre-existing, irrelevant). **Nothing pushed** — `dev` is ahead of origin.
 
@@ -432,15 +432,28 @@ choke point (safe ONLY because both legs are cargo-only — must route through i
 
 ---
 
-## CI-19 🔴 Discord command auto-populate (autocomplete) misbehaving  *(owner 2026-06-04)*
-Owner reports the **autocomplete / auto-populate** for shop-related commands AND
-`equip`/`unequip`/`ship`/`set-active`(setactive) commands "is not working right." Workarounds the
-owner found: re-running `/profile` BETWEEN the other commands sometimes fixes it, or manually typing
-the command params by hand. Smells like stale/empty autocomplete choices or a cache/state dependency
-(autocomplete options not refreshing after a state change, or depending on something `/profile`
-populates). **→ d-architect to investigate the shop + equip/unequip/ship/set-active command
-autocomplete handlers in the discord-gateway cogs (and any bot-core endpoints they call for choices),
-find the root cause, design the fix.** Then dev → tester. (Owner explicitly requested this review.)
+## CI-19 ✅ Discord autocomplete misbehaving — FIXED & LIVE-VALIDATED  *(2026-06-04, committed `908440e`)*
+**Root cause (d-architect):** `bot.py:125` initialized the autocomplete-state HTTP client from
+`os.getenv("BOT_CORE_URL", "http://bot-core:8000/api/v1")` — but `BOT_CORE_URL` is NEVER set, so it
+fell back to dead port 8000 (bot-core is on 18000 via `BOT_API_BASE_URL`). Every autocomplete cache
+refresh + warm job failed with ConnectError → player/inventory/ships caches never populated, EXCEPT
+`player_cache` which `/profile` writes via its own working client (→ "rerun /profile to fix it";
+equip/unequip/ship/set-active stayed broken even after, needing inventory/ships caches). **Fix:** read
+`BOT_API_BASE_URL` (canonical var all cogs use) + non-fatal startup health probe + documented in
+cogs/AGENTS.md. **LIVE-VALIDATED:** after rebuild, gateway logs show `_preload_static_catalogs` loaded
+all catalogs and `warm_guild_players: Stage 1+2 complete — players loaded` (no ConnectError) — caches
+populate WITHOUT /profile. d-architect → d-developer.
+**Follow-up (minor, fold into next gateway pass):** the one-shot health probe fires ~3s into startup,
+before bot-core is ready on a full `--force-recreate`, logging a misleading ERROR even though warm jobs
+retry+recover. Make the probe retry (mirror the cog preload retry) so it only ERRORs on genuine
+unreachability. **Cleanup:** junk player id 3 (fake discord_id 421321999791095808) created during
+architect probing — inert but pollutes the dev guild player list; remove via a proper admin path.
+
+## CI-23 ✅ Secondaries missing from `/equip` autocomplete — FIXED  *(folded into CI-19, `908440e`)*
+`_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES` excluded `secondary_weapon`, so the now-buyable/equippable
+secondaries (CI-5/CI-16) never appeared in `/equip` autocomplete. Added `secondary_weapon` to the set
+(equip flow already auto-detects + handles secondaries). Catalog preload confirms 30 secondary_weapon
+items load. (Tester-flagged latent issue from CI-19 investigation.)
 
 ---
 

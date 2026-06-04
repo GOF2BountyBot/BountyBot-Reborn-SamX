@@ -31,6 +31,7 @@ class LoadoutWeaponItem(BaseModel):
     emoji: str | None = None
     dps: float | None = None
     value: int | None = None
+    rounds: int | None = None  # Secondary weapons only — ammo count (None = not applicable)
 
 
 class LoadoutModuleItem(BaseModel):
@@ -106,7 +107,7 @@ class LoadoutResponse(BaseModel):
 
     # Equipped items
     weapons: list[LoadoutWeaponItem] = Field(default_factory=list)
-    secondaries: list[LoadoutWeaponItem] = Field(default_factory=list)  # reserved for future
+    secondaries: list[LoadoutWeaponItem] = Field(default_factory=list)  # populated (CI-28)
     turrets: list[LoadoutWeaponItem] = Field(default_factory=list)  # reserved for future
     modules: list[LoadoutModuleItem] = Field(default_factory=list)
 

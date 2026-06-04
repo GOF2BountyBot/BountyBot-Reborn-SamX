@@ -172,10 +172,13 @@ class LoadoutResponseService:
         equipped_weapons = player_ship.weapons or []
         equipped_modules = player_ship.modules or []
         equipped_turrets = player_ship.turrets or []
+        equipped_secondaries = getattr(player_ship, "secondary_weapons", None) or []
+        secondary_ammo: dict = getattr(player_ship, "secondary_ammo", None) or {}
 
         # Build weapon/turret items (shared helper)
         weapon_items, weapon_dps = await self._build_weapon_items(db, equipped_weapons, "primary_weapon")
         turret_items, turret_dps = await self._build_weapon_items(db, equipped_turrets, "turret_weapon")
+        secondary_items = await self._build_secondary_items(db, equipped_secondaries, secondary_ammo)
         total_dps = round(weapon_dps + turret_dps, 1)
 
         # Build module items (with effects + combat_tier) and compute HP bonuses
@@ -231,6 +234,7 @@ class LoadoutResponseService:
             ship_stats=ship_stats,
             weapons=weapon_items,
             turrets=turret_items,
+            secondaries=secondary_items,
             modules=module_items,
             cargo=cargo_items,
             cargo_total_count=cargo_total_count,
@@ -267,6 +271,38 @@ class LoadoutResponseService:
                 )
             )
         return items, total_dps
+
+    async def _build_secondary_items(
+        self, db: AsyncSession, names: list[str], ammo: dict[str, int]
+    ) -> list[LoadoutWeaponItem]:
+        """Build secondary-weapon items for a player's loadout, attaching ammo counts.
+
+        Args:
+            names: Ordered list of equipped secondary weapon names
+                   (from ``PlayerShip.secondary_weapons``).
+            ammo:  Per-weapon ammo sidecar (``PlayerShip.secondary_ammo``),
+                   mapping weapon name → remaining rounds.  May be empty.
+
+        Returns:
+            List of ``LoadoutWeaponItem`` with ``rounds`` populated from *ammo*
+            (or ``None`` when the weapon is not in the ammo sidecar).
+        """
+        items: list[LoadoutWeaponItem] = []
+        for name in names:
+            item = await self.item_repo.get_by_name(db, name, item_type="secondary_weapon")
+            if item is None:
+                item = await self.item_repo.get_by_name(db, name)
+            rounds = ammo.get(name) if ammo else None
+            items.append(
+                LoadoutWeaponItem(
+                    name=name,
+                    emoji=item.emoji if item else None,
+                    dps=getattr(item, "dps", None) if item else None,
+                    value=item.value if item else None,
+                    rounds=rounds,
+                )
+            )
+        return items
 
     async def _build_player_module_items(
         self, db: AsyncSession, names: list[str]
@@ -395,13 +431,17 @@ class LoadoutResponseService:
             except Exception as e:
                 flogger.debug(f"Ship lookup failed for {ship_name!r}: {e}")
 
-        # Weapons / turrets (already fully formed in the JSON)
+        # Weapons / turrets / secondaries (already fully formed in the JSON)
         weapons_raw = criminal_ship.get("weapons") or []
         turrets_raw = criminal_ship.get("turrets") or []
+        secondaries_raw = criminal_ship.get("secondaries") or []
         modules_raw = criminal_ship.get("modules") or []
 
         weapon_items = [LoadoutWeaponItem(**self._normalize_weapon_dict(w)) for w in weapons_raw]
         turret_items = [LoadoutWeaponItem(**self._normalize_weapon_dict(t)) for t in turrets_raw]
+        secondary_items = [
+            LoadoutWeaponItem(**self._normalize_weapon_dict(s, include_rounds=True)) for s in secondaries_raw
+        ]
 
         module_items: list[LoadoutModuleItem] = []
         compressor_multiplier = 1.0
@@ -492,17 +532,26 @@ class LoadoutResponseService:
             ship_stats=ship_stats,
             weapons=weapon_items,
             turrets=turret_items,
+            secondaries=secondary_items,
             modules=module_items,
             cargo=[],
             cargo_total_count=0,
         )
 
     @staticmethod
-    def _normalize_weapon_dict(raw: dict) -> dict:
-        """Project the fields LoadoutWeaponItem needs out of a criminal_ship JSON weapon dict."""
-        return {
+    def _normalize_weapon_dict(raw: dict, *, include_rounds: bool = False) -> dict:
+        """Project the fields LoadoutWeaponItem needs out of a criminal_ship JSON weapon dict.
+
+        Args:
+            raw:            Raw weapon dict from criminal_ship JSON.
+            include_rounds: When True, also extract the ``rounds`` field (secondary weapons).
+        """
+        result = {
             "name": raw.get("name", "Unknown"),
             "emoji": raw.get("emoji"),
             "dps": raw.get("dps"),
             "value": raw.get("value"),
         }
+        if include_rounds:
+            result["rounds"] = raw.get("rounds")
+        return result

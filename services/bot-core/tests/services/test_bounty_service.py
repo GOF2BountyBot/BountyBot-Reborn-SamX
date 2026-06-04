@@ -6058,3 +6058,23 @@ class TestCi17Helpers:
         assert fields["emp_damage"] == 0
         assert fields["magnitude_m"] == 0.0
         assert fields["steerable"] is False
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_no_turret_slots_skips_turret_selection(service, mock_db):
+    """Ships with max_turrets=0 never enter the turret selection block (no fallback either)."""
+    ship = _make_ship("Betty", value=16038, max_primaries=1, max_modules=2, max_turrets=0)
+
+    async def _get_all_by_tl(db, tl, item_type=None):
+        if item_type == "turret_weapon":
+            # This should never be called for a ship with max_turrets=0
+            raise AssertionError("turret_weapon query must NOT be called when max_turrets=0")
+        return []
+
+    service.item_repo.get_all_by_tech_level = _get_all_by_tl
+
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=-1)):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    assert result["turrets"] == []

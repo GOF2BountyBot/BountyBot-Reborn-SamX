@@ -130,6 +130,8 @@ def _player_ship():
         weapons=["Pulse Laser"],
         modules=["D'iol"],
         turrets=[],
+        secondary_weapons=[],
+        secondary_ammo={},
     )
 
 
@@ -291,6 +293,67 @@ class TestBuildPlayerLoadout:
         assert result is not None
         assert result.cargo == []
         assert result.cargo_total_count == 0
+
+    async def test_player_secondaries_populated_with_rounds(self):
+        """build_player_loadout surfaces secondary_weapons with ammo rounds (CI-28)."""
+        player = _player()
+        user = _user()
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["Edo Torpedo", "S'koon Missile"],
+            secondary_ammo={"Edo Torpedo": 5, "S'koon Missile": 3},
+        )
+        ship = _ship()
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        # Return a stub item for secondaries
+        svc.item_repo.get_by_name = AsyncMock(
+            return_value=SimpleNamespace(emoji="<:edo:1>", dps=None, value=800)
+        )
+        db = _make_db_session(player_ship=ps, ship=ship, module_factory=lambda n: None)
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        assert result is not None
+        assert len(result.secondaries) == 2
+        # First secondary: Edo Torpedo with 5 rounds
+        assert result.secondaries[0].name == "Edo Torpedo"
+        assert result.secondaries[0].rounds == 5
+        # Second secondary: S'koon Missile with 3 rounds
+        assert result.secondaries[1].name == "S'koon Missile"
+        assert result.secondaries[1].rounds == 3
+
+    async def test_player_no_secondaries_returns_empty_list(self):
+        """build_player_loadout returns secondaries=[] when ship has none equipped (CI-28)."""
+        player = _player()
+        user = _user()
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=[],
+            secondary_ammo={},
+        )
+        ship = _ship()
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+        db = _make_db_session(player_ship=ps, ship=ship, module_factory=lambda n: None)
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        assert result is not None
+        assert result.secondaries == []
 
     async def test_compressor_module_multiplies_cargo(self):
         """CompressorModule cargoMultiplier applies to base ship.cargo (spec §2.6 step 9)."""
@@ -456,6 +519,52 @@ class TestBuildBountyLoadout:
         result = await svc.build_bounty_loadout(db, bounty_id=999)
 
         assert result is None
+
+    async def test_bounty_secondaries_populated_with_rounds(self):
+        """build_bounty_loadout surfaces criminal secondaries with rounds count (CI-28)."""
+        criminal_ship = {
+            "ship_name": "Interceptor",
+            "ship_armour": 95,
+            "total_hp": 200,
+            "weapons": [],
+            "turrets": [],
+            "modules": [],
+            "secondaries": [
+                {"name": "Edo Torpedo", "emoji": "<:edo:1>", "dps": 0.0, "value": 800, "rounds": 5},
+                {"name": "S'koon Missile", "emoji": "<:skoon:2>", "dps": 0.0, "value": 600, "rounds": 3},
+            ],
+        }
+        bounty = self._make_bounty(criminal_ship=criminal_ship)
+        ship = _interceptor_ship()
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=5)
+
+        assert result is not None
+        assert len(result.secondaries) == 2
+        # First secondary
+        assert result.secondaries[0].name == "Edo Torpedo"
+        assert result.secondaries[0].emoji == "<:edo:1>"
+        assert result.secondaries[0].rounds == 5
+        # Second secondary
+        assert result.secondaries[1].name == "S'koon Missile"
+        assert result.secondaries[1].rounds == 3
+
+    async def test_bounty_empty_secondaries_returns_empty_list(self):
+        """build_bounty_loadout returns secondaries=[] when criminal_ship has none (CI-28)."""
+        criminal_ship = self._default_criminal_ship()  # contains no 'secondaries' key
+        bounty = self._make_bounty(criminal_ship=criminal_ship)
+        ship = _interceptor_ship()
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=5)
+
+        assert result is not None
+        assert result.secondaries == []
 
     async def test_criminal_compressor_module_multiplies_cargo(self):
         """CompressorModule in criminal_ship multiplies base ship cargo (spec §2.6 step 9)."""

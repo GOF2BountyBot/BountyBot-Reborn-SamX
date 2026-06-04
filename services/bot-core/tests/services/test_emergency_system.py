@@ -739,3 +739,235 @@ class TestInertModules:
         lo2 = _loadout(ship_name="C2", base_armour=200)
         result = TickResolver(seed=42).resolve(lo, lo2)
         assert result.combat_log[-1].type == CombatEventType.fight_end
+
+
+# ---------------------------------------------------------------------------
+# TestCI27ESHullDeathEvent — CI-27: hull layer_depleted timing vs ES
+# ---------------------------------------------------------------------------
+
+
+class TestCI27ESHullDeathEvent:
+    """CI-27: hull layer_depleted must NOT fire on a tick when ES saves the ship.
+
+    The bug: _apply_damage emitted layer_depleted{hull} when hull went ≤ 0, BUT
+    _eval_emergency_system (Phase 4a) then clamps hull back to 1.  Result was
+    a false "Hull depleted (dead)" line on the same tick as "Emergency System
+    activated" — the ship is NOT dead.
+
+    Fix: hull layer_depleted is now emitted only at Phase 8 (post-ES, post-clamp),
+    where c_dead is true only if hull is genuinely ≤ 0 after ES evaluation.
+    """
+
+    def test_es_saves_ship_no_hull_dead_event_on_that_tick(self):
+        """Bug repro (CI-27): ES fires on tick T → no layer_depleted{hull} on tick T.
+
+        Pre-fix this would produce both 'Hull depleted (dead)' AND 'Emergency System
+        activated' on the same tick.  Post-fix the hull-death event must be absent.
+        """
+        es_loadout = _loadout(
+            ship_name="ESShip",
+            base_armour=50,  # low HP — killed by first hit
+            modules=[_es_mod()],
+            weapons=[],
+        )
+        enemy_loadout = _loadout(
+            ship_name="Enemy",
+            base_armour=99999,
+            weapons=[WeaponStats(name="BigGun", dps=10.0, damage_per_shot=500, loading_speed_ms=100, range_m=5000.0)],
+        )
+        result = TickResolver(seed=0).resolve(es_loadout, enemy_loadout)
+        log = result.combat_log
+
+        # ES must fire at least once for this test to be meaningful
+        es_acts = [
+            e for e in log
+            if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
+        ]
+        assert len(es_acts) >= 1, "ES must fire for this regression to be exercised"
+
+        es_tick = es_acts[0].tick
+
+        # No hull layer_depleted should exist on the tick ES fired (ship was saved)
+        hull_dead_on_es_tick = [
+            e for e in log
+            if e.type == CombatEventType.layer_depleted
+            and e.data.get("layer") == "hull"
+            and e.tick == es_tick
+        ]
+        assert hull_dead_on_es_tick == [], (
+            f"CI-27 regression: hull layer_depleted emitted on ES-save tick {es_tick}; "
+            f"ship was saved by ES and must NOT be marked dead. events: {hull_dead_on_es_tick}"
+        )
+
+    def test_true_death_no_es_emits_hull_dead_exactly_once(self):
+        """Ship without ES that dies → exactly one hull layer_depleted event at the death tick."""
+        att = _loadout(
+            ship_name="Att",
+            base_armour=200,
+            weapons=[WeaponStats(name="BigGun", dps=500.0, damage_per_shot=500, loading_speed_ms=100, range_m=5000.0)],
+        )
+        defn = _loadout(ship_name="Def", base_armour=50)  # no ES, dies quickly
+        result = TickResolver(seed=42).resolve(att, defn)
+        log = result.combat_log
+
+        hull_dead_events = [
+            e for e in log
+            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
+        ]
+        assert len(hull_dead_events) == 1, (
+            f"Expected exactly one hull layer_depleted for a true death; got {len(hull_dead_events)}"
+        )
+
+        # Hull-death event must be on the same tick as fight_end
+        fight_end = next(e for e in log if e.type == CombatEventType.fight_end)
+        assert hull_dead_events[0].tick == fight_end.tick, (
+            f"hull layer_depleted tick {hull_dead_events[0].tick} != fight_end tick {fight_end.tick}"
+        )
+
+        # Hull-death must appear BEFORE fight_end in the event list
+        hd_idx = log.index(hull_dead_events[0])
+        fe_idx = log.index(fight_end)
+        assert hd_idx < fe_idx, "hull layer_depleted must precede fight_end in event list"
+
+    def test_es_consumed_then_later_death_hull_dead_only_at_death_tick(self):
+        """ES fires at tick A (saves ship); ship genuinely dies later at tick B.
+
+        Exactly one hull layer_depleted event at tick B; none at tick A.
+        """
+        # ES ship with low HP; enemy has enough firepower to kill it after invuln expires.
+        # The trick: ES invuln is 10s = 1000 ticks.  We need the enemy to keep shooting
+        # after invuln.  Give ESShip a weapon so it runs past time-cap only if enemy
+        # survives; enemy HP is tuned so the fight ends after ES fires + invuln expires.
+        es_loadout = ShipLoadout(
+            ship_name="ESShip",
+            base_armour=10,   # lethal on first hit → ES fires tick ~0
+            modules=[_es_mod()],
+            weapons=[WeaponStats(name="SmallGun", dps=1.0, damage_per_shot=1, loading_speed_ms=100, range_m=5000.0)],
+        )
+        enemy_loadout = ShipLoadout(
+            ship_name="Enemy",
+            base_armour=5000,  # survives easily; keeps shooting after invuln expires
+            weapons=[WeaponStats(name="BigGun", dps=10.0, damage_per_shot=500, loading_speed_ms=100, range_m=5000.0)],
+        )
+        result = TickResolver(seed=0).resolve(es_loadout, enemy_loadout)
+        log = result.combat_log
+
+        es_acts = [
+            e for e in log
+            if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
+        ]
+        assert len(es_acts) == 1, f"Expected ES to fire exactly once; got {len(es_acts)}"
+        es_tick = es_acts[0].tick
+
+        hull_dead_events = [
+            e for e in log
+            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
+        ]
+
+        # No hull-death at the ES-save tick
+        on_es_tick = [e for e in hull_dead_events if e.tick == es_tick]
+        assert on_es_tick == [], (
+            f"Hull-dead event must not appear on ES-save tick {es_tick}; found: {on_es_tick}"
+        )
+
+        # If the ship genuinely dies later, hull-dead must be exactly once
+        if hull_dead_events:
+            assert len(hull_dead_events) == 1, (
+                f"Expected at most one hull layer_depleted after ES; got {len(hull_dead_events)}"
+            )
+            fight_end = next(e for e in log if e.type == CombatEventType.fight_end)
+            assert hull_dead_events[0].tick == fight_end.tick, (
+                f"hull layer_depleted must be on death tick (fight_end tick), "
+                f"got hd={hull_dead_events[0].tick} fe={fight_end.tick}"
+            )
+
+    def test_mutual_death_both_get_hull_dead_event(self):
+        """Both combatants die on the same terminating tick → both get a hull layer_depleted event."""
+        # Make both ships fragile and both armed so they can kill each other on the same tick.
+        att = ShipLoadout(
+            ship_name="C1",
+            base_armour=1,
+            modules=[],
+            weapons=[WeaponStats(name="BigGun", dps=10.0, damage_per_shot=9999, loading_speed_ms=100, range_m=5000.0)],
+        )
+        defn = ShipLoadout(
+            ship_name="C2",
+            base_armour=1,
+            modules=[],
+            weapons=[WeaponStats(name="BigGun", dps=10.0, damage_per_shot=9999, loading_speed_ms=100, range_m=5000.0)],
+        )
+        result = TickResolver(seed=42).resolve(att, defn)
+        log = result.combat_log
+
+        fight_end = next(e for e in log if e.type == CombatEventType.fight_end)
+        hull_dead_events = [
+            e for e in log
+            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
+        ]
+
+        if fight_end.data.get("reason") == "mutual":
+            # Mutual death — both should have hull-death events
+            assert len(hull_dead_events) == 2, (
+                f"Mutual death should produce 2 hull layer_depleted events; got {len(hull_dead_events)}"
+            )
+            sides = {e.data["side"] for e in hull_dead_events}
+            assert sides == {1, 2}, f"Expected hull-dead events for both slots; got sides={sides}"
+        else:
+            # One-sided death — exactly one hull-dead event
+            assert len(hull_dead_events) == 1
+
+    def test_time_cap_stalemate_no_hull_dead_event(self):
+        """Time-cap stalemate (neither dead) → no hull layer_depleted event emitted."""
+        # Both ships with huge HP and tiny weapons so fight runs to max_ticks
+        att = _loadout(
+            ship_name="C1",
+            base_armour=999999,
+            weapons=[WeaponStats(name="TinyGun", dps=0.01, damage_per_shot=1, loading_speed_ms=100, range_m=5000.0)],
+        )
+        defn = _loadout(ship_name="C2", base_armour=999999)
+        result = TickResolver(seed=0).resolve(att, defn)
+        log = result.combat_log
+
+        fight_end = next(e for e in log if e.type == CombatEventType.fight_end)
+        assert fight_end.data.get("reason") == "time_cap", (
+            "This test requires a time-cap stalemate outcome; check the loadout params"
+        )
+
+        hull_dead_events = [
+            e for e in log
+            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
+        ]
+        assert hull_dead_events == [], (
+            f"Time-cap stalemate must NOT emit any hull layer_depleted; got: {hull_dead_events}"
+        )
+
+    def test_extract_key_events_renders_hull_dead_for_true_death(self):
+        """_extract_key_events correctly renders 'Hull depleted (dead)' for a true-death fight."""
+        from src.services.combat_log_service import CombatLogService
+
+        att = _loadout(
+            ship_name="Att",
+            base_armour=200,
+            weapons=[WeaponStats(name="BigGun", dps=500.0, damage_per_shot=500, loading_speed_ms=100, range_m=5000.0)],
+        )
+        defn = _loadout(ship_name="Def", base_armour=50)
+        result = TickResolver(seed=42).resolve(att, defn)
+
+        # Serialize to dict list as _extract_key_events expects
+        timeline = [
+            {
+                "tick": e.tick,
+                "type": e.type,
+                "actor": e.actor,
+                "target": e.target,
+                "data": e.data,
+            }
+            for e in result.combat_log
+        ]
+        key_events = CombatLogService._extract_key_events(timeline)
+
+        hull_dead_labels = [ke for ke in key_events if "Hull depleted (dead)" in ke.get("event_type", "")]
+        assert len(hull_dead_labels) >= 1, (
+            f"_extract_key_events should produce at least one 'Hull depleted (dead)' entry for a true death; "
+            f"got key_events={key_events}"
+        )

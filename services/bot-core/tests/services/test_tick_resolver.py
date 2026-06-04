@@ -192,29 +192,40 @@ class TestDamageHelper:
         assert dmg.data["breakdown"]["hull"] == 550
         assert dmg.data["hp_after"]["hull"] == -450
 
-    def test_layer_depleted_shield_then_armour_then_hull(self):
-        """CI-15: layer_depleted fires for shield, then armour, then hull (on true death)."""
+    def test_layer_depleted_shield_then_armour_but_not_hull(self):
+        """CI-27: layer_depleted fires for shield and armour in _apply_damage; hull is NOT emitted here.
+
+        Hull layer_depleted is moved to Phase 8 (post-ES, post-clamp) so that ES-saved
+        ships never receive a false 'Hull depleted (dead)' event.  Shield and armour
+        layer_depleted remain in _apply_damage (they are not death events).
+        """
         state = _make_state(max_shield=50, max_armour=200, max_hull=100)
         events: list[CombatEvent] = []
         _apply_damage(state, 800.0, tick=0, events=events, source={}, pvc_damage_reduction=0.0)
 
         depleted = [e for e in events if e.type == CombatEventType.layer_depleted]
-        # CI-15: hull layer also emitted when hull goes from positive to ≤0
-        assert len(depleted) == 3
+        # CI-27: hull layer_depleted is now emitted only at Phase 8, NOT in _apply_damage
+        assert len(depleted) == 2, (
+            f"Expected shield + armour layer_depleted only (hull moved to Phase 8); got {[e.data for e in depleted]}"
+        )
         assert depleted[0].data["layer"] == "shield"
         assert depleted[1].data["layer"] == "armour"
-        assert depleted[2].data["layer"] == "hull"
 
-    def test_hull_layer_depleted_event_on_true_death(self):
-        """CI-15: Hull depletion emits layer_depleted when hull goes from positive to ≤0."""
+    def test_hull_layer_depleted_not_emitted_by_apply_damage(self):
+        """CI-27: _apply_damage does NOT emit hull layer_depleted even when hull goes ≤ 0.
+
+        Hull layer_depleted is emitted at Phase 8 (true death, post-ES) instead.
+        """
         state = _make_state(max_hull=100)
         events: list[CombatEvent] = []
         _apply_damage(state, 200.0, tick=0, events=events, source={}, pvc_damage_reduction=0.0)
 
-        assert state.current_hull == -100  # overkill (pre-clamp)
+        assert state.current_hull == -100  # overkill (pre-clamp) — damage math unchanged
         hull_depleted = [e for e in events if e.type == CombatEventType.layer_depleted]
-        assert len(hull_depleted) == 1
-        assert hull_depleted[0].data["layer"] == "hull"
+        # Hull layer_depleted is NOT emitted by _apply_damage (moved to Phase 8)
+        assert hull_depleted == [], (
+            f"CI-27: _apply_damage must NOT emit hull layer_depleted; got {[e.data for e in hull_depleted]}"
+        )
 
     def test_partial_damage_does_not_emit_layer_depleted(self):
         """When a layer survives (HP > 0), no layer_depleted event fires for it."""

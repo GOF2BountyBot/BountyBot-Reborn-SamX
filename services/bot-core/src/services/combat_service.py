@@ -818,7 +818,6 @@ def _apply_damage(
 
     shield_was_positive = state.current_shield > 0
     armour_was_positive = state.current_armour > 0
-    hull_was_positive = state.current_hull > 0  # CI-15: track hull for layer_depleted
 
     # Step (ii): shield → armour → hull with overkill carryover (§3)
     if remaining > 0 and state.current_shield > 0:
@@ -888,17 +887,8 @@ def _apply_damage(
                 data={"layer": "armour", "side": state.slot},
             )
         )
-    # CI-15: hull depletion — only on true death (hull goes from positive to ≤0); emits once
-    if hull_was_positive and state.current_hull <= 0:
-        events.append(
-            CombatEvent(
-                tick=tick,
-                type=CombatEventType.layer_depleted,
-                actor=state.name,
-                target=None,
-                data={"layer": "hull", "side": state.slot},
-            )
-        )
+    # CI-27: hull depletion is NOT emitted here — moved to Phase 8 (post-ES/post-clamp)
+    # so that ES-saved ships never receive a false "hull depleted (dead)" event.
 
 
 def _rocket_accuracy(current_distance: float, range_m: float, min_distance: float) -> float:
@@ -1920,6 +1910,31 @@ class TickResolver:
                 ticks_elapsed = max_ticks
             else:
                 continue  # fight continues — skip fight_end emission
+
+            # CI-27: hull layer_depleted — emitted HERE (post-ES, post-clamp) so that
+            # ES-saved ships (hull clamped to 1, not dead) never receive a false "dead" event.
+            # Only emitted for combatants whose hull is truly ≤ 0 at termination.
+            # time_cap stalemate (neither dead) → no hull-death events.
+            if c2_dead:
+                events.append(
+                    CombatEvent(
+                        tick=tick,
+                        type=CombatEventType.layer_depleted,
+                        actor=c2.name,
+                        target=None,
+                        data={"layer": "hull", "side": c2.slot},
+                    )
+                )
+            if c1_dead:
+                events.append(
+                    CombatEvent(
+                        tick=tick,
+                        type=CombatEventType.layer_depleted,
+                        actor=c1.name,
+                        target=None,
+                        data={"layer": "hull", "side": c1.slot},
+                    )
+                )
 
             events.append(
                 CombatEvent(

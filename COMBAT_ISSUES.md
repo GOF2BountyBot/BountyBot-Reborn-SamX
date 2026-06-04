@@ -11,16 +11,15 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 
 ## ▶ RESUME HERE (2026-06-04, overnight session)
 **CI-16 AND CI-17 are DONE & LIVE-VALIDATED.** Both ran full architect→dev→tester cycles + live
-smoke-tests against the rebuilt stack. **Next, in order:** CI-6 (Shock Blast inert EMP — ⚠ OWNER
-MECHANIC DECISION: remove the stale emp_damage seed, or wire shock-blast to deal EMP someday?) →
-CI-10 (`/shops/refresh` serialization crash — clear engineering, pre-existing) → CI-11 (shop
-weapon-density tuning — ⚠ OWNER TUNING DECISION) → CI-18 (player_inv unique constraint — ⚠ DANGER
-ZONE migration, defer for owner eyes) → CI-4 (live §4/§5/§6 weapon/module/edge E2E tests).
+smoke-tests against the rebuilt stack. **Owner decisions in (2026-06-04):** CI-17 knobs = keep my
+defaults; CI-6 = WONTFIX (keep EMP seed, it's wiki data); CI-11 = YES build it.
+**Next, in order:** CI-11 (secondary_weapon shop-count category — owner-approved, architect→dev→tester)
+→ CI-10 (`/shops/refresh` serialization crash — clear engineering, pre-existing) → CI-18 (player_inv
+unique constraint — ⚠ DANGER ZONE migration, defer for owner eyes) → CI-4 (live §4/§5/§6 E2E tests).
 
-⚠ **OWNER REVIEW — CI-17 balance knobs** (conservative defaults applied; all in `GameConstants`,
-retune in one place): `CRIMINAL_SECONDARY_ROUNDS` = nuke **1**, missile 5, rocket 5, cluster-missile 3,
-shock-blast 2; `CRIMINAL_SECONDARY_MIN_DAMAGE` = 1 (excludes dead-weight); secondary value counted once
-per type. See `COMBAT_CI17_PLAN.md` → "OWNER-DECISION knobs".
+**CI-17 knobs (owner-confirmed, keep):** `CRIMINAL_SECONDARY_ROUNDS` = nuke 1, missile 5, rocket 5,
+cluster-missile 3, shock-blast 2; `CRIMINAL_SECONDARY_MIN_DAMAGE` = 1. All in `GameConstants` (retune
+in one place if balance shifts).
 
 **Dev-guild state note:** `general_failure` (player 2) was promoted Bronze→**Silver** to test silver
 criminals (which carry secondaries); demote is on a 24h tier cooldown (ends 2026-06-05 ~03:14 UTC).
@@ -168,9 +167,10 @@ IS handled; the canonical 5 all work.)
 
 ---
 
-## CI-6 🟡 `Shock Blast` seed carries `emp_damage=80` that is inert  *(LOW)*
-Shock-blast resolves as distance-push only in Phase-1; the 80 EMP value is unused.
-Behaviour matches `COMBAT.md`; just a stale/unused seed value to reconcile.
+## CI-6 ✅ `Shock Blast` inert `emp_damage=80` — WONTFIX (by design)  *(owner 2026-06-04)*
+**Owner decision: leave the EMP damage stat as-is** — it comes from the wiki game data; the fact we
+have no EMP mechanics yet is just happenstance, not a data error. Keep the seed value untouched. No
+code/seed change. (If EMP mechanics are ever added, the value is already correct.)
 
 ---
 
@@ -209,11 +209,12 @@ schema in the endpoint (mirror the admin path). Not started.
 
 ---
 
-## CI-11 ℹ️ Shop is weapon-heavy after enabling secondaries  *(informational / tuning)*
-Secondary weapons reuse the `weapon` count config key, so each shop refresh now generates
-up to **5 primary + 5 secondary = 10 weapons**, skewing the per-tier slot mix weapon-heavy.
-Intentional/expected from CI-5, but flagged for tuning: if undesired, give `secondary_weapon`
-its own quantity range in the shop count config. Owner decision; no action yet.
+## CI-11 🟢 Give `secondary_weapon` its own shop-count category  *(owner APPROVED 2026-06-04)*
+**Owner decision: YES — add a dedicated count category for secondary weapons with its own range,
+exactly like primary / turret / module.** Today secondaries reuse the `weapon` count key (→ up to
+5 primary + 5 secondary = 10 weapons per refresh, skewing weapon-heavy). Fix: a separate
+`secondary_weapon` count range in the shop count config + route secondaries through it in shop
+generation. → d-architect scope (config structure / migration?) → d-developer → d-tester.
 
 ---
 

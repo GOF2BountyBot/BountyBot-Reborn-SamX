@@ -33,7 +33,8 @@ Erland fired `missile ×3` and dealt 135 dmg in a real fight.
 **Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24, CI-25, CI-27, CI-28, CI-29.
 **Open:** CI-18 (player_inv constraint — danger-zone, owner eyes), CI-26 (blender-service infra — owner/host-level), CI-4 (E2E §4/§5/§6).
 **Watching:** `/route` reported broken (owner) — bot-core endpoint + command verified healthy; awaiting exact symptom to diagnose.
-**Pending live-verify (rebuild in progress):** CI-27 (no dead+ES same tick), CI-28 (embed turrets/secondaries), CI-29 (causal log order).
+**Live-verified 2026-06-04:** CI-25 (equip secondaries), CI-27 (no false dead+ES), CI-28 (loadout embed
+secondaries populated+rendered; turrets natural/not-forced), CI-29 (causal combat-log order).
 **Live-validated combat-log (battle 57):** dropdown `General_Failure vs Bartholomeu Drew`; body uses pilot/criminal
 names; Engagement + first-hit-per-side + HP milestones + Outcome; each layer depleted ONCE (no flap); distinct per-side stats.
 **Stack:** full rebuild to migration **0014**, all combat/shop work LIVE & verified (bot-core healthy;

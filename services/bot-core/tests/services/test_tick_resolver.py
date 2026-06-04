@@ -192,25 +192,29 @@ class TestDamageHelper:
         assert dmg.data["breakdown"]["hull"] == 550
         assert dmg.data["hp_after"]["hull"] == -450
 
-    def test_layer_depleted_shield_then_armour(self):
-        """layer_depleted fires for shield first, then armour; never for hull."""
+    def test_layer_depleted_shield_then_armour_then_hull(self):
+        """CI-15: layer_depleted fires for shield, then armour, then hull (on true death)."""
         state = _make_state(max_shield=50, max_armour=200, max_hull=100)
         events: list[CombatEvent] = []
         _apply_damage(state, 800.0, tick=0, events=events, source={}, pvc_damage_reduction=0.0)
 
         depleted = [e for e in events if e.type == CombatEventType.layer_depleted]
-        assert len(depleted) == 2
+        # CI-15: hull layer also emitted when hull goes from positive to ≤0
+        assert len(depleted) == 3
         assert depleted[0].data["layer"] == "shield"
         assert depleted[1].data["layer"] == "armour"
+        assert depleted[2].data["layer"] == "hull"
 
-    def test_no_hull_layer_depleted_event(self):
-        """Hull depletion does not emit layer_depleted — termination step 8 handles it."""
+    def test_hull_layer_depleted_event_on_true_death(self):
+        """CI-15: Hull depletion emits layer_depleted when hull goes from positive to ≤0."""
         state = _make_state(max_hull=100)
         events: list[CombatEvent] = []
         _apply_damage(state, 200.0, tick=0, events=events, source={}, pvc_damage_reduction=0.0)
 
-        assert state.current_hull == -100  # overkill
-        assert not any(e.type == CombatEventType.layer_depleted for e in events)
+        assert state.current_hull == -100  # overkill (pre-clamp)
+        hull_depleted = [e for e in events if e.type == CombatEventType.layer_depleted]
+        assert len(hull_depleted) == 1
+        assert hull_depleted[0].data["layer"] == "hull"
 
     def test_partial_damage_does_not_emit_layer_depleted(self):
         """When a layer survives (HP > 0), no layer_depleted event fires for it."""

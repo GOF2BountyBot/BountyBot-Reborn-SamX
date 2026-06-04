@@ -68,6 +68,8 @@ class WeaponStats:
     steerable: bool = False  # steerable flag — data-only in Phase-1; no behaviour branch (§6.2 D5)
     # T7 discriminator fields — default False/empty so legacy code paths are unaffected
     automatic: bool = False  # turret auto-fire flag: True = auto-turret, False = manual-turret (§6.3)
+    # CI-16: consumable ammo for secondary weapons; None = infinite (back-compat / legacy data)
+    ammo: int | None = None  # remaining rounds at fight start; None = infinite; 0 = depleted
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,6 +320,8 @@ class CombatEventType:
     cooldown_end: Final[str] = "cooldown_end"
     layer_depleted: Final[str] = "layer_depleted"
     distance: Final[str] = "distance"
+    # CI-16: emitted when a secondary weapon exhausts all rounds (post-fight auto-unequip signal)
+    secondary_depleted: Final[str] = "secondary_depleted"
 
 
 # ---------------------------------------------------------------------------

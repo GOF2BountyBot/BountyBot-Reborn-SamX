@@ -100,6 +100,8 @@ class _SecondaryWeaponRuntime:
     steerable: bool  # data-only flag in Phase-1; no behaviour branch
     weapon_stats_ref: WeaponStats  # back-ref for weapon_accuracy() passthrough
     cooldown_remaining_ms: int = 0  # §1: fully ready at tick 0; mutated by Phase 1 each tick
+    # CI-16: remaining rounds (None = infinite); decremented ONCE after the if/elif chain fires
+    remaining_ammo: int | None = None  # None = infinite (back-compat); 0 = depleted (gate blocks fire)
 
 
 @dataclass(slots=True)
@@ -347,6 +349,8 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
                 steerable=sw.steerable,
                 weapon_stats_ref=sw,
                 cooldown_remaining_ms=0,  # §1: fully ready at tick 0
+                # CI-16: bake remaining_ammo from WeaponStats.ammo (None = infinite)
+                remaining_ammo=sw.ammo,
             )
         )
 
@@ -775,6 +779,7 @@ def _apply_damage(
 
     shield_was_positive = state.current_shield > 0
     armour_was_positive = state.current_armour > 0
+    hull_was_positive = state.current_hull > 0  # CI-15: track hull for layer_depleted
 
     # Step (ii): shield → armour → hull with overkill carryover (§3)
     if remaining > 0 and state.current_shield > 0:
@@ -837,6 +842,17 @@ def _apply_damage(
                 actor=state.name,
                 target=None,
                 data={"layer": "armour"},
+            )
+        )
+    # CI-15: hull depletion — only on true death (hull goes from positive to ≤0)
+    if hull_was_positive and state.current_hull <= 0:
+        events.append(
+            CombatEvent(
+                tick=tick,
+                type=CombatEventType.layer_depleted,
+                actor=state.name,
+                target=None,
+                data={"layer": "hull"},
             )
         )
 
@@ -1299,6 +1315,9 @@ class TickResolver:
 
             for _attacker, _target in ((c1, c2), (c2, c1)):
                 for _sw in _attacker.effective_secondaries:
+                    # CI-16 ammo gate (FIRST — before cooldown/range): skip if depleted
+                    if _sw.remaining_ammo is not None and _sw.remaining_ammo <= 0:
+                        continue
                     # D1.1: cooldown gate
                     if _sw.cooldown_remaining_ms > 0:
                         continue
@@ -1487,6 +1506,23 @@ class TickResolver:
                         _sw.cooldown_remaining_ms = _sw.loading_speed_ms
 
                     # else: deferred subtypes (emp-bomb, mine, sentry-gun) — noop; cooldown continues
+
+                    # CI-16: single post-dispatch ammo decrement (covers all 7 fire branches).
+                    # Gated on cooldown_remaining_ms > 0 — every firing branch sets it to loading_speed_ms
+                    # (always > 0 because raw_speed >= tick_ms); the deferred else noop does NOT set it,
+                    # so cooldown_remaining_ms remains 0 and this block is naturally excluded.
+                    if _sw.remaining_ammo is not None and _sw.cooldown_remaining_ms > 0:
+                        _sw.remaining_ammo -= 1
+                        if _sw.remaining_ammo == 0:
+                            events.append(
+                                CombatEvent(
+                                    tick=tick,
+                                    type=CombatEventType.secondary_depleted,
+                                    actor=_attacker.name,
+                                    target=None,
+                                    data={"weapon": _sw.name, "subtype": _sw.subtype},
+                                )
+                            )
 
             # ------------------------------------------------------------------
             # Phase 3 (T7): Evaluate turret weapon firings.
@@ -2178,6 +2214,16 @@ class CombatService:
             guild_id=guild_id,
         )
 
+        # CI-16: secondary ammo write-back — must be AFTER _increment_player_stats,
+        # inside log_result=True branch (sim guard returns at ~line 2137 before this)
+        await self._consume_secondary_ammo(
+            session=session,
+            fight_results=fight_results,
+            combatant1_user_id=combatant1_user_id,
+            combatant2_user_id=combatant2_user_id,
+            guild_id=guild_id,
+        )
+
         flogger.info(
             f"fight_ships: persisted combat_log_id={combat_log_id} "
             f"winner={fight_results.winner_name} stalemate={fight_results.is_stalemate}"
@@ -2263,3 +2309,117 @@ class CombatService:
             except Exception as exc:
                 # Non-fatal — stat increment failure should not abort the fight
                 flogger.error(f"Player stat increment failed: user_id={user_id} guild_id={guild_id}: {exc}")
+
+    async def _consume_secondary_ammo(
+        self,
+        *,
+        session: "AsyncSession",
+        fight_results: FightResults,
+        combatant1_user_id: int | None,
+        combatant2_user_id: int | None,
+        guild_id: int,
+    ) -> None:
+        """Write back per-secondary ammo consumption for human combatants (CI-16).
+
+        Scans the combat_log timeline for weapon_fire events (slot=secondary) per human
+        combatant, counts rounds fired per weapon name, decrements secondary_ammo on the
+        player's active ship, and auto-unequips (removes name + ammo key) if rounds reach 0.
+
+        Criminal side (user_id is None): skip — no cross-fight persistence for NPCs (CI-17 deferred).
+        Mirrors the non-fatal try/except style of _increment_player_stats.
+        """
+        from persist.repositories.player_repository import PlayerRepository
+        from persist.repositories.player_ship_repository import PlayerShipRepository
+
+        player_repo = PlayerRepository()
+        player_ship_repo = PlayerShipRepository()
+
+        summary = fight_results.metadata.get("summary", {})
+        combatants_summary = summary.get("combatants", {})
+
+        slot_map: list[tuple[str, int | None]] = [
+            ("1", combatant1_user_id),
+            ("2", combatant2_user_id),
+        ]
+
+        for slot_key, user_id in slot_map:
+            if user_id is None:
+                continue  # NPC side — no cross-fight ammo persistence
+
+            cb_block = combatants_summary.get(slot_key, {})
+            combatant_name = cb_block.get("name", "")
+
+            # Count rounds fired per weapon name from combat_log timeline
+            rounds_fired: dict[str, int] = {}
+            for ev in fight_results.combat_log:
+                # combat_log holds CombatEvent dataclass objects — use attribute access
+                if hasattr(ev, "type") and hasattr(ev, "actor"):
+                    ev_actor = ev.actor
+                    ev_type = ev.type
+                    ev_data = ev.data if hasattr(ev, "data") else {}
+                else:
+                    ev_actor = ev.get("actor") if isinstance(ev, dict) else None
+                    ev_type = ev.get("type") if isinstance(ev, dict) else None
+                    ev_data = ev.get("data", {}) if isinstance(ev, dict) else {}
+
+                if ev_actor != combatant_name:
+                    continue
+                if ev_type == CombatEventType.weapon_fire and ev_data.get("slot") == "secondary":
+                    w_name = ev_data.get("weapon", "")
+                    if w_name:
+                        rounds_fired[w_name] = rounds_fired.get(w_name, 0) + 1
+
+            if not rounds_fired:
+                continue  # no secondary fires — nothing to write back
+
+            try:
+                player = await player_repo.get_by_user_and_guild(session, user_id, guild_id)
+                if player is None:
+                    flogger.warning(
+                        f"_consume_secondary_ammo: player not found user_id={user_id} guild_id={guild_id} — skipping"
+                    )
+                    continue
+
+                ship = await player_ship_repo.get_active_ship(session, player.id)
+                if ship is None:
+                    flogger.warning(
+                        f"_consume_secondary_ammo: no active ship for player_id={player.id} — skipping"
+                    )
+                    continue
+
+                # Read current ammo dict; never mutate in-place (JSON SQLAlchemy gotcha — must reassign)
+                ammo: dict[str, int] = dict(ship.secondary_ammo or {})
+                sw_names: list[str] = list(ship.secondary_weapons or [])
+
+                for w_name, fired in rounds_fired.items():
+                    if w_name not in ammo:
+                        flogger.debug(
+                            f"_consume_secondary_ammo: weapon {w_name!r} not in ammo dict for ship {ship.id} — skip"
+                        )
+                        continue
+                    new_qty = max(0, ammo[w_name] - fired)
+                    ammo[w_name] = new_qty
+                    if new_qty == 0:
+                        # Auto-unequip: remove name from secondary_weapons and del from ammo
+                        sw_names = [n for n in sw_names if n != w_name]
+                        del ammo[w_name]
+                        flogger.info(
+                            f"_consume_secondary_ammo: {w_name!r} depleted — auto-unequipped "
+                            f"from ship {ship.id} (player_id={player.id})"
+                        )
+
+                # Reassign both JSON columns (never in-place mutation — SQLAlchemy JSON gotcha)
+                ship.secondary_ammo = ammo
+                ship.secondary_weapons = sw_names
+                await session.flush()
+
+                flogger.debug(
+                    f"_consume_secondary_ammo: ship {ship.id} ammo updated: {ammo!r}, "
+                    f"secondary_weapons={sw_names!r}"
+                )
+
+            except Exception as exc:
+                # Non-fatal — ammo write-back failure should not abort the fight record
+                flogger.error(
+                    f"_consume_secondary_ammo failed: user_id={user_id} guild_id={guild_id}: {exc}"
+                )

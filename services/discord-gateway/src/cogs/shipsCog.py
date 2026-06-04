@@ -279,6 +279,25 @@ class ShipsCog(commands.Cog):
                     name=f"🎯 Turrets ({loadout['turrets_count']})", value=turrets_text or "None", inline=False
                 )
 
+            # CI-16: render secondary weapons with ammo counts
+            if loadout.get("secondary_weapons"):
+                _sec_ammo: dict = loadout.get("secondary_ammo") or {}
+                sec_lines = []
+                for sw_name in loadout["secondary_weapons"][:10]:
+                    rounds = _sec_ammo.get(sw_name)
+                    if rounds is not None:
+                        sec_lines.append(f"• {sw_name} ×{rounds}")
+                    else:
+                        sec_lines.append(f"• {sw_name}")
+                if len(loadout["secondary_weapons"]) > 10:
+                    sec_lines.append(f"... and {len(loadout['secondary_weapons']) - 10} more")
+                secondary_text = "\n".join(sec_lines)
+                embed.add_field(
+                    name=f"\U0001f4a5 Secondaries ({loadout['secondary_weapons_count']})",
+                    value=secondary_text or "None",
+                    inline=False,
+                )
+
             embed.set_footer(
                 text="Use /setactive <ship_id> to set as active ship | /nickname <ship_id> <name> to set nickname"
             )

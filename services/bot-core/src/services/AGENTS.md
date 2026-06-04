@@ -94,21 +94,37 @@ modules, turrets}`.
 > that inserts inventory rows directly **must** preserve this, or duplicate rows
 > will appear and `sell_item`'s "should be exactly 1 row" assumption breaks.
 
-### Incoming: `secondary_ammo` sidecar (CI-16 — NOT YET BUILT)
+### `secondary_ammo` sidecar — CI-16 (BUILT, 2026-06-03)
 
-Consumable secondary-weapon ammo is the next feature to land in this subsystem.
-As of this writing **nothing named `secondary_ammo` / CI-16 exists in the code**
-— there is no column, table, model, or migration. (The only "consumable" in the
-codebase today is the per-fight EMP Shockwave in `combat_service.py`, which is
-combat-state only and is **not** inventory-backed.) **Intent:** ammo will be a
-*sidecar* count attached to an equipped secondary weapon — i.e. a consumable
-quantity that depletes as the weapon fires, distinct from both the cargo
-`quantity` (number of weapon copies owned) and the equipped slot entry (the
-weapon itself). When CI-16 is designed, decide explicitly whether ammo lives as
-(a) a new JSON sidecar column on `player_ships`, (b) a new `player_inventories`
-`item_type`, or (c) its own table — and document the chosen invariant here
-**before** writing code. Whatever the choice, it must not break the
-"Total owned = cargo + equipped" conservation rule for the *weapon* itself.
+Secondary weapons are now consumable (ammo-limited). The chosen storage model is
+a **JSON sidecar column** on `player_ships.secondary_ammo: dict[str, int]`.
+
+**Conservation model (CI-16 canonical):**
+```
+owned(S) = cargo.quantity(S) + Σ_ships secondary_ammo[S]
+```
+The `secondary_weapons` slot-list entry is **pure slot occupancy — NOT a counted
+copy** (deliberate divergence from primaries/turrets/modules where each slot
+entry = 1 copy). `secondary_ammo[name]` = remaining rounds for that equipped
+type. Key invariants:
+
+- **Equip (new type):** whole cargo stack → `secondary_ammo[name]`; one slot
+  entry appended; cargo quantity drops to 0.
+- **Equip (already equipped, top-up):** whole cargo stack → `secondary_ammo[name]`
+  increment; NO new slot entry; cargo quantity drops to 0.
+- **Unequip:** whole remaining `secondary_ammo[name]` → cargo; slot entry removed;
+  `secondary_ammo` key deleted.
+- **Ship transfer (R1):** fitting secondaries move `secondary_ammo[S]` src→dst;
+  overflow secondaries return `secondary_ammo[S]` rounds to cargo.
+- **Evacuate (R2):** each secondary returns `secondary_ammo[S]` rounds to cargo.
+- **Shop buy (equipped):** rounds added to `secondary_ammo[name]`; no cargo add.
+- **Shop buy (not equipped):** rounds added to cargo (normal path).
+- **Post-fight:** resolver decrements `secondary_ammo[S]` per fire trigger;
+  write-back in `_consume_secondary_ammo`; auto-unequip when rounds reach 0.
+- **`ammo=None`:** infinite (back-compat for criminal/legacy paths — no write-back).
+
+SQLAlchemy JSON: **MUST reassign the whole dict**, never mutate in place, or writes
+are silently lost. Migration: `0013_secondary_ammo.py` (`down_revision="0012"`).
 
 ### Two Separate Pools
 
@@ -197,9 +213,9 @@ regardless of whether tests are green.
    this is enforced — it is structural, not a guard you can grep for.
 7. **Surface gating.** `GameConstants.CURRENTLY_ENABLED_TYPES` is the single
    lever that exposes a concrete item type to playable surfaces.
-   `secondary_weapon` is currently **off**; `equip_one` and the type normalizer
-   both refuse to equip/expose it until it is added to that frozenset. Honour
-   this gate in any new flow (CI-16 will flip it).
+   `secondary_weapon` is **already enabled** (added prior to CI-16); `equip_one`
+   and the type normalizer will correctly handle secondary weapons. Honour this
+   gate in any new flow.
 
 ### Unequip-before-sell — how it is actually enforced
 
@@ -719,4 +735,4 @@ cross-table invariants. That is the choke-point's job.
 
 ---
 
-*Last updated: 2026-06-03 — Loadout & Inventory system scoped + documented authoritatively ahead of CI-16 (consumable secondary-weapon ammo).*
+*Last updated: 2026-06-03 — CI-16: secondary_ammo sidecar built + both BLOCKER paths (R1/R2) fixed; INVARIANT #7 corrected (secondary_weapon already enabled); conservation model documented.*

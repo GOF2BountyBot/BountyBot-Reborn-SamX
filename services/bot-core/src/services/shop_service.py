@@ -202,14 +202,33 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     f"cancel_underfunded_duels failed after buy_item for player_id={player_id}: {_duel_exc}"
                 )
 
-            # Add item to player inventory (commit=False — this service owns the
-            # explicit single commit below). B.34 closeout: previously this used
-            # the default commit=True, which committed the credit deduction
-            # mid-flow and left a window where the shop-quantity update could
-            # fail and leave player credit-deducted-with-item but shop unchanged.
-            await self.inventory_repo.add_item(
-                db, player_id, shop_item.item_type, shop_item.item_name, quantity, commit=False
-            )
+            # CI-16: secondary_weapon top-up — if name is already equipped on the active ship,
+            # add rounds directly to secondary_ammo instead of cargo.
+            # Keep atomic: all mutations are commit=False; single db.commit() below covers all.
+            _topped_up_ammo = False
+            if shop_item.item_type == "secondary_weapon":
+                active_ship = await self.player_ship_repo.get_active_ship(db, player_id)
+                if active_ship is not None and shop_item.item_name in (active_ship.secondary_weapons or []):
+                    # Top up ammo sidecar (reassign — never mutate in place)
+                    _ship_ammo: dict[str, int] = dict(getattr(active_ship, "secondary_ammo", None) or {})
+                    _ship_ammo[shop_item.item_name] = _ship_ammo.get(shop_item.item_name, 0) + quantity
+                    active_ship.secondary_ammo = _ship_ammo
+                    await db.flush()
+                    flogger.info(
+                        f"Player {player_id} top-up secondary '{shop_item.item_name}' +{quantity} rounds "
+                        f"on ship {active_ship.id} (ammo now {_ship_ammo[shop_item.item_name]})"
+                    )
+                    _topped_up_ammo = True
+
+            if not _topped_up_ammo:
+                # Add item to player inventory (commit=False — this service owns the
+                # explicit single commit below). B.34 closeout: previously this used
+                # the default commit=True, which committed the credit deduction
+                # mid-flow and left a window where the shop-quantity update could
+                # fail and leave player credit-deducted-with-item but shop unchanged.
+                await self.inventory_repo.add_item(
+                    db, player_id, shop_item.item_type, shop_item.item_name, quantity, commit=False
+                )
 
             # Remove item from shop
             new_shop_quantity = shop_item.quantity - quantity

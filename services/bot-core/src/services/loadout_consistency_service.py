@@ -200,6 +200,13 @@ class LoadoutConsistencyService:
             if item_name in current:
                 current.remove(item_name)
                 self._set_slot(other, kind, current)
+                # CI-16 (R3): also remove any orphaned ammo from the other ship's sidecar
+                # (the duplicate slot is being silently dropped; its ammo must not linger)
+                if kind == "secondary_weapons":
+                    other_ammo = dict(getattr(other, "secondary_ammo", None) or {})
+                    if item_name in other_ammo:
+                        del other_ammo[item_name]
+                        other.secondary_ammo = other_ammo  # reassign — never mutate in place
                 flogger.warning(
                     "B.19 anti-duplication guard: removed phantom %s '%s' from player_ship %d "
                     "(player %d, kept on ship %d)",
@@ -310,6 +317,37 @@ class LoadoutConsistencyService:
         caps = await self._get_static_ship_caps(db, ship)
         current_slot = self._get_slot(ship, equipment_type)
 
+        # CI-16 (BUG-3 fix): secondary_weapons top-up path MUST come BEFORE the slot-cap
+        # guard.  A player with both secondary slots full who re-equips an already-equipped
+        # type should get a top-up, not a "No available slots" error.  The slot-cap guard
+        # only applies when equipping a NEW (not-yet-equipped) weapon type.
+        if equipment_type == "secondary_weapons" and item_name in current_slot:
+            # Top-up: all cargo copies → ammo stack (no slot mutation needed)
+            cargo_qty = inv_item.quantity
+            if cargo_qty > 0:
+                await self.inventory_repo.remove_item(
+                    db, player_id, inventory_type, item_name, quantity=cargo_qty, commit=False
+                )
+                current_ammo: dict = dict(getattr(ship, "secondary_ammo", None) or {})
+                current_ammo[item_name] = current_ammo.get(item_name, 0) + cargo_qty
+                ship.secondary_ammo = current_ammo  # reassign — never mutate in place
+                await db.flush()
+                flogger.info(
+                    "Player %d topped up secondary '%s' on ship %d: +%d rounds (ammo now %d)",
+                    player_id,
+                    item_name,
+                    ship_id,
+                    cargo_qty,
+                    current_ammo[item_name],
+                )
+            ship = await self.player_ship_repo.get_by_id(db, ship_id)
+            return {
+                "success": True,
+                "ship": ship,
+                "message": f"Topped up '{item_name}' ammo on ship {ship_id}",
+                "equipment_type": equipment_type,
+            }
+
         # 4b. B.41 — guard against equipping when no cargo copies remain.
         # Only runs when there IS a free slot available.  When slots are full, the
         # slot-full path below fires instead, and the swap flow (unequip-then-equip)
@@ -339,10 +377,27 @@ class LoadoutConsistencyService:
             await self._validate_module_equip_limit(db, ship, item_name)
 
         # 7. Decrement inventory (commit=False)
-        await self.inventory_repo.remove_item(db, player_id, inventory_type, item_name, quantity=1, commit=False)
+        # For secondary_weapons: decrement the WHOLE cargo stack (all rounds move to ammo sidecar)
+        if equipment_type == "secondary_weapons":
+            cargo_qty_to_move = inv_item.quantity
+            await self.inventory_repo.remove_item(
+                db, player_id, inventory_type, item_name, quantity=cargo_qty_to_move, commit=False
+            )
+        else:
+            cargo_qty_to_move = 1
+            await self.inventory_repo.remove_item(db, player_id, inventory_type, item_name, quantity=1, commit=False)
 
         # 8. Append to ship slot (commit=False)
         await self.player_ship_repo.add_equipment(db, ship_id, equipment_type, item_name, commit=False)
+
+        # CI-16: for secondary_weapons, seed the ammo sidecar with the moved cargo quantity
+        if equipment_type == "secondary_weapons":
+            # Re-fetch ship to get the current secondary_ammo after add_equipment flush
+            ship = await self.player_ship_repo.get_by_id(db, ship_id)
+            current_ammo_new: dict = dict(getattr(ship, "secondary_ammo", None) or {})
+            current_ammo_new[item_name] = current_ammo_new.get(item_name, 0) + cargo_qty_to_move
+            ship.secondary_ammo = current_ammo_new  # reassign — never mutate in place
+            await db.flush()
 
         flogger.info(
             "Player %d equipped '%s' (%s) on ship %d via consistency service",
@@ -416,19 +471,35 @@ class LoadoutConsistencyService:
         if item_name not in equipped:
             raise ValueError(f"Item '{item_name}' is not equipped in {equipment_type} on ship {ship_id}")
 
+        # CI-16: for secondary_weapons, read remaining ammo BEFORE removing from slot
+        # (we need to know how many rounds to return to cargo)
+        rounds_to_return: int = 1  # default for primaries/turrets/modules
+        if equipment_type == "secondary_weapons":
+            current_ammo_unequip: dict = dict(getattr(ship, "secondary_ammo", None) or {})
+            rounds_to_return = current_ammo_unequip.pop(item_name, 0)
+            # Reassign sidecar with key removed (never mutate in place)
+            ship.secondary_ammo = current_ammo_unequip
+            await db.flush()
+
         # Remove from ship slot (commit=False)
         await self.player_ship_repo.remove_equipment(db, ship_id, equipment_type, item_name, commit=False)
 
         # Add to inventory using concrete type (commit=False)
+        # For secondary_weapons: return the WHOLE remaining ammo stack (rounds_to_return rounds)
         inventory_type = await self._resolve_concrete_type(db, item_name, fallback_kind=equipment_type)
-        await self.inventory_repo.add_item(db, player_id, inventory_type, item_name, quantity=1, commit=False)
+        qty_to_cargo = rounds_to_return if equipment_type == "secondary_weapons" else 1
+        if qty_to_cargo > 0:
+            await self.inventory_repo.add_item(
+                db, player_id, inventory_type, item_name, quantity=qty_to_cargo, commit=False
+            )
 
         flogger.info(
-            "Player %d unequipped '%s' (%s) from ship %d via consistency service",
+            "Player %d unequipped '%s' (%s) from ship %d via consistency service (returned %d to cargo)",
             player_id,
             item_name,
             equipment_type,
             ship_id,
+            qty_to_cargo,
         )
         ship = await self.player_ship_repo.get_by_id(db, ship_id)
         return {
@@ -472,6 +543,10 @@ class LoadoutConsistencyService:
         if src_ship is None:
             return {"transferred": 0, "overflowed": 0, "breakdown": breakdown}
 
+        # CI-16 (R1): read secondary_ammo from src before slot mutations
+        src_ammo: dict[str, int] = dict(getattr(src_ship, "secondary_ammo", None) or {})
+        dst_ammo: dict[str, int] = dict(getattr(dst_ship, "secondary_ammo", None) or {})
+
         for kind in _SLOT_KINDS:
             src_items = self._get_slot(src_ship, kind)
             dst_existing = self._get_slot(dst_ship, kind)
@@ -486,14 +561,34 @@ class LoadoutConsistencyService:
             # Push overflow to inventory (concrete type via STI discriminator)
             for name in overflow_from_src:
                 concrete = await self._resolve_concrete_type(db, name, fallback_kind=kind)
-                await self.inventory_repo.add_item(db, player_id, concrete, name, 1, commit=False)
+                if kind == "secondary_weapons":
+                    # CI-16 (R1): overflow → cargo: return WHOLE ammo stack, not 1 copy.
+                    # BUG-2 fix: use plain rounds (not max(1, rounds)) — a depleted (0-round)
+                    # secondary must return 0 copies to cargo, not invent a round.
+                    rounds = src_ammo.pop(name, 0)
+                    if rounds > 0:
+                        await self.inventory_repo.add_item(
+                            db, player_id, concrete, name, rounds, commit=False
+                        )
+                else:
+                    await self.inventory_repo.add_item(db, player_id, concrete, name, 1, commit=False)
 
             # Merge src fitting items into dst, clear src
             self._set_slot(dst_ship, kind, dst_existing + fitting_from_src)
             self._set_slot(src_ship, kind, [])
 
+            # CI-16 (R1): for fitting secondaries, move ammo src→dst (add to existing dst ammo)
+            if kind == "secondary_weapons":
+                for name in fitting_from_src:
+                    rounds = src_ammo.pop(name, 0)
+                    dst_ammo[name] = dst_ammo.get(name, 0) + rounds
+
             breakdown[kind]["transferred"] = list(fitting_from_src)
             breakdown[kind]["overflowed"] = list(overflow_from_src)
+
+        # CI-16 (R1): reassign secondary_ammo on both ships (never mutate in place)
+        src_ship.secondary_ammo = src_ammo
+        dst_ship.secondary_ammo = dst_ammo
 
         await db.flush()
 
@@ -537,6 +632,9 @@ class LoadoutConsistencyService:
         items_returned_detail: dict[str, list[str]] = {kind: [] for kind in _SLOT_KINDS}
         duplicates_dropped = 0
 
+        # CI-16 (R2): read secondary_ammo before clearing slots
+        ship_ammo: dict[str, int] = dict(getattr(ship, "secondary_ammo", None) or {})
+
         for kind in _SLOT_KINDS:
             equipped = self._get_slot(ship, kind)
             for name in equipped:
@@ -554,11 +652,24 @@ class LoadoutConsistencyService:
                     duplicates_dropped += removed_other
                 # Add the legitimate copy to inventory
                 concrete = await self._resolve_concrete_type(db, name, fallback_kind=kind)
-                await self.inventory_repo.add_item(db, ship.player_id, concrete, name, 1, commit=False)
+                if kind == "secondary_weapons":
+                    # CI-16 (R2): return WHOLE remaining ammo stack, not 1 copy.
+                    # BUG-2 fix: use plain rounds (not max(1, rounds)) — a depleted (0-round)
+                    # secondary must return 0 copies to cargo, not invent a round.
+                    rounds = ship_ammo.pop(name, 0)
+                    if rounds > 0:
+                        await self.inventory_repo.add_item(
+                            db, ship.player_id, concrete, name, rounds, commit=False
+                        )
+                else:
+                    await self.inventory_repo.add_item(db, ship.player_id, concrete, name, 1, commit=False)
                 items_returned.append(name)
                 items_returned_detail[kind].append(name)
             # Clear this ship's slot
             self._set_slot(ship, kind, [])
+
+        # CI-16 (R2): clear secondary_ammo sidecar (reassign — never mutate in place)
+        ship.secondary_ammo = {}
 
         await db.flush()
 
@@ -600,6 +711,11 @@ class LoadoutConsistencyService:
         evacuated: dict[str, list[str]] = {kind: [] for kind in _SLOT_KINDS}
         any_evacuated = False
 
+        # CI-16 (BUG-1 fix): read secondary_ammo before slot mutations so we can return
+        # the correct round count (not hard-coded 1) for any overflowing secondary weapon.
+        ship_ammo: dict[str, int] = dict(getattr(ship, "secondary_ammo", None) or {})
+        ammo_dirty = False
+
         for kind in _SLOT_KINDS:
             current = self._get_slot(ship, kind)
             cap = caps[kind]
@@ -609,9 +725,23 @@ class LoadoutConsistencyService:
                 self._set_slot(ship, kind, keep)
                 for name in overflow:
                     concrete = await self._resolve_concrete_type(db, name, fallback_kind=kind)
-                    await self.inventory_repo.add_item(db, player_id, concrete, name, 1, commit=False)
+                    if kind == "secondary_weapons":
+                        # BUG-1 fix: return the WHOLE ammo stack, not 1 round.
+                        # BUG-2 guard: skip add_item for depleted (0-round) secondaries.
+                        rounds = ship_ammo.pop(name, 0)
+                        ammo_dirty = True
+                        if rounds > 0:
+                            await self.inventory_repo.add_item(
+                                db, player_id, concrete, name, rounds, commit=False
+                            )
+                    else:
+                        await self.inventory_repo.add_item(db, player_id, concrete, name, 1, commit=False)
                 evacuated[kind] = list(overflow)
                 any_evacuated = True
+
+        # CI-16 (BUG-1 fix): reassign ammo sidecar if any overflow secondaries were popped
+        if ammo_dirty:
+            ship.secondary_ammo = ship_ammo  # reassign — never mutate in place
 
         if any_evacuated:
             await db.flush()
@@ -753,6 +883,10 @@ class LoadoutConsistencyService:
         ships_modified: set[int] = set()
 
         for ship in ships:
+            # CI-16 (repair_player): track ammo mutations per ship for secondary_weapons
+            ship_ammo_dirty = False
+            ship_ammo: dict[str, int] = dict(getattr(ship, "secondary_ammo", None) or {})
+
             for kind in _SLOT_KINDS:
                 current = self._get_slot(ship, kind)
                 cleaned: list[str] = []
@@ -772,8 +906,16 @@ class LoadoutConsistencyService:
                             ship.id,
                             seen[key],
                         )
+                        # CI-16: also remove orphaned ammo for dropped secondary duplicate
+                        if kind == "secondary_weapons" and name in ship_ammo:
+                            del ship_ammo[name]
+                            ship_ammo_dirty = True
                 if len(cleaned) != len(current) and not dry_run:
                     self._set_slot(ship, kind, cleaned)
+
+            # CI-16: reassign secondary_ammo if we removed any orphaned entries
+            if ship_ammo_dirty and not dry_run:
+                ship.secondary_ammo = ship_ammo
 
         if not dry_run and ships_modified:
             await db.flush()

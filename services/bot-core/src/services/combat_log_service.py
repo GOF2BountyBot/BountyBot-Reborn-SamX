@@ -33,8 +33,9 @@ _VALID_CONTEXTS: frozenset[str] = frozenset({"duel", "bounty_pvc", "bounty_bonus
 _TICK_MS: int = 10
 
 # Secondary weapon subtypes that count as "notable" fires for key-events.
+# CI-16/CI-13: added "ionizing-missile" (was missing; it fires and should log); "emp-bomb" is deferred but kept.
 _SECONDARY_SUBTYPES: frozenset[str] = frozenset(
-    {"rocket", "missile", "cluster-missile", "nuke", "shock-blast", "emp-bomb"}
+    {"rocket", "missile", "cluster-missile", "nuke", "shock-blast", "emp-bomb", "ionizing-missile"}
 )
 
 # Module types that count as "notable" activations.
@@ -43,6 +44,7 @@ _NOTABLE_MODULE_TYPES: frozenset[str] = frozenset(
 )
 
 # HP layer labels (used for layer_depleted event detail)
+# CI-15: "hull" added to match the new layer_depleted/hull event emitted by _apply_damage.
 _LAYER_LABELS: dict[str, str] = {
     "shield": "Shield depleted",
     "armour": "Armour depleted",
@@ -384,8 +386,16 @@ class CombatLogService:
                 subtype = data.get("subtype", "")
                 if slot != "primary" and subtype in _SECONDARY_SUBTYPES:
                     weapon = data.get("weapon", "unknown weapon")
-                    hit = data.get("hit", False)
-                    hit_str = "hit" if hit else "miss"
+                    # CI-13: subtype-aware hit label (nuke → "detonated", shock-blast → "distance reset")
+                    if subtype == "nuke":
+                        opp_dmg = data.get("opponent_damage", 0)
+                        self_dmg = data.get("self_damage", 0)
+                        hit_str = f"detonated (opp: {opp_dmg}, self: {self_dmg})"
+                    elif subtype == "shock-blast":
+                        hit_str = "distance reset"
+                    else:
+                        hit = data.get("hit", False)
+                        hit_str = "hit" if hit else "miss"
                     key_events.append(
                         {
                             "tick": tick,
@@ -395,6 +405,19 @@ class CombatLogService:
                             "detail": f"{actor} fired {weapon} — {hit_str}",
                         }
                     )
+
+            elif ev_type == "secondary_depleted":
+                # CI-16: secondary weapon ran out of ammo
+                weapon = data.get("weapon", "unknown weapon")
+                key_events.append(
+                    {
+                        "tick": tick,
+                        "time_s": time_s,
+                        "actor": actor,
+                        "event_type": "Secondary depleted",
+                        "detail": f"{actor} ran out of {weapon}",
+                    }
+                )
 
             elif ev_type == "module_activation":
                 module_name = data.get("module", data.get("name", "module"))

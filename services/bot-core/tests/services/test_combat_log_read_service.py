@@ -227,13 +227,22 @@ class TestExtractKeyEvents:
     def test_secondary_fires_included(self):
         events = [
             self._make_weapon_fire_event(100, "Betty", "secondary", "rocket", "Rockets MK1"),
-            self._make_weapon_fire_event(200, "Betty", "secondary", "nuke", "Nuke", hit=False),
+            # CI-13: nuke events now show "detonated (opp: N, self: M)" not hit/miss
+            {
+                "tick": 200, "type": "weapon_fire", "actor": "Betty", "target": "Opponent",
+                "data": {
+                    "slot": "secondary", "subtype": "nuke", "weapon": "Nuke",
+                    "opponent_damage": 80, "self_damage": 5,
+                },
+            },
         ]
         result = CombatLogService._extract_key_events(events)
         assert len(result) == 2
         assert result[0]["event_type"] == "Secondary fire (rocket)"
         assert "hit" in result[0]["detail"]
-        assert "miss" in result[1]["detail"]
+        # CI-13: nuke shows "detonated" not "miss"
+        assert "detonated" in result[1]["detail"]
+        assert "80" in result[1]["detail"]  # opponent damage shown
 
     def test_primary_fires_excluded(self):
         events = [

@@ -113,6 +113,7 @@ async def get_player_ships(
                     modules=ship.modules,
                     turrets=ship.turrets,
                     secondary_weapons=ship.secondary_weapons,
+                    secondary_ammo=ship.secondary_ammo,
                     created_at=ship.created_at.isoformat(),
                 )
                 for ship in ships
@@ -149,6 +150,7 @@ async def get_ship(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -191,6 +193,7 @@ async def create_ship(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -226,6 +229,7 @@ async def get_active_ship(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -278,6 +282,7 @@ async def set_active_ship(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
                 evacuated_items=result["evacuated_items"],
                 any_evacuated=result["any_evacuated"],
@@ -324,6 +329,7 @@ async def update_ship_loadout(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -359,6 +365,7 @@ async def update_ship_nickname(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -445,6 +452,7 @@ async def equip_item(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -499,6 +507,7 @@ async def unequip_item(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -536,6 +545,7 @@ async def get_ship_loadout(
                 modules=loadout["modules"],
                 turrets=loadout["turrets"],
                 secondary_weapons=loadout["secondary_weapons"],
+                secondary_ammo=loadout["secondary_ammo"],
                 weapons_count=loadout["weapons_count"],
                 modules_count=loadout["modules_count"],
                 turrets_count=loadout["turrets_count"],

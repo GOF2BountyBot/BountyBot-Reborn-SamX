@@ -289,6 +289,9 @@ class LoadoutBuilder:
         # all ORM model imports are kept function-local to avoid SQLAlchemy setup ordering issues.
         from persist.models.secondary_weapon import SecondaryWeapon
 
+        # CI-16: read secondary_ammo sidecar dict (ship-level rounds per weapon name)
+        _secondary_ammo_map: dict[str, int] = dict(getattr(player_ship, "secondary_ammo", None) or {})
+
         secondary_weapons: list[WeaponStats] = []
         for sw_name in getattr(player_ship, "secondary_weapons", None) or []:
             sw_result = await db.execute(select(SecondaryWeapon).where(SecondaryWeapon.name == sw_name))
@@ -309,6 +312,8 @@ class LoadoutBuilder:
             sw_emp = int(sw_extra.get("emp_damage", 0) or 0)
             sw_mag = float(sw_extra.get("magnitude_m", 0.0) or 0.0)
             sw_steer = bool(sw_extra.get("steerable", False))
+            # CI-16: look up ammo from sidecar; None = infinite (weapon not in map or map absent)
+            sw_ammo: int | None = _secondary_ammo_map.get(sw_name)
             secondary_weapons.append(
                 WeaponStats(
                     name=sw_name,
@@ -321,11 +326,12 @@ class LoadoutBuilder:
                     emp_damage=sw_emp,
                     magnitude_m=sw_mag,
                     steerable=sw_steer,
+                    ammo=sw_ammo,
                 )
             )
             flogger.trace(
                 f"Secondary {sw_name!r} subtype={sw_subtype!r} damage={sw_damage} "
-                f"loading_speed_ms={sw_spd} range_m={sw_rng}"
+                f"loading_speed_ms={sw_spd} range_m={sw_rng} ammo={sw_ammo!r}"
             )
 
         # T8: Read ship's built-in modules (e.g. U'tool for Scimitar/Specter) for §10 supersession

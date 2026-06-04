@@ -49,6 +49,7 @@ def make_mock_ship(**overrides):
         modules=["Shield Generator"],
         turrets=[],
         secondary_weapons=[],
+        secondary_ammo={},  # CI-16: ammo sidecar
         created_at=datetime(2026, 1, 1),
     )
     defaults.update(overrides)
@@ -90,6 +91,7 @@ def mock_ship_repo():
             "modules": ["Shield Generator"],
             "turrets": [],
             "secondary_weapons": [],
+            "secondary_ammo": {},  # CI-16: ammo sidecar
             "weapons_count": 1,
             "modules_count": 1,
             "turrets_count": 0,
@@ -723,6 +725,7 @@ class TestGetShipLoadout:
                 "modules": ["Shield Cell Bank", "Fuel Scoop"],
                 "turrets": ["Turreted Beam"],
                 "secondary_weapons": [],
+                "secondary_ammo": {},
                 "weapons_count": 2,
                 "modules_count": 2,
                 "turrets_count": 1,
@@ -1295,6 +1298,7 @@ class TestA28PlayerShipShape:
                 "modules": real_ship.modules,
                 "turrets": real_ship.turrets,
                 "secondary_weapons": real_ship.secondary_weapons,
+                "secondary_ammo": dict(real_ship.secondary_ammo or {}),
                 "weapons_count": len(real_ship.weapons),
                 "modules_count": len(real_ship.modules),
                 "turrets_count": len(real_ship.turrets),
@@ -1385,6 +1389,7 @@ class TestSecondaryWeaponsInLoadoutSummary:
                 "modules": [],
                 "turrets": [],
                 "secondary_weapons": ["AMR Tormentor"],
+                "secondary_ammo": {"AMR Tormentor": 5},
                 "weapons_count": 1,
                 "modules_count": 0,
                 "turrets_count": 0,
@@ -1411,6 +1416,7 @@ class TestSecondaryWeaponsInLoadoutSummary:
                 "modules": [],
                 "turrets": [],
                 "secondary_weapons": ["AMR Tormentor", "Seeker Missile"],
+                "secondary_ammo": {"AMR Tormentor": 3, "Seeker Missile": 7},
                 "weapons_count": 0,
                 "modules_count": 0,
                 "turrets_count": 0,

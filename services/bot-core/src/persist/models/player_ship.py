@@ -32,6 +32,11 @@ class PlayerShip(Base):
     # Manual turret mode: True = player controls aim; False = auto-aim (§6.3 / §10)
     manual_turret_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
+    # CI-16: per-equipped-secondary ammo sidecar — {weapon_name: remaining_rounds}
+    # None/absent = no ammo tracking (back-compat); {} = has slot(s) but all infinite or fresh equip
+    # SQLAlchemy JSON: MUST reassign the whole dict, never mutate in place, or writes are silently lost.
+    secondary_ammo: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     # Relationships

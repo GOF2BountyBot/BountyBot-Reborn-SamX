@@ -247,6 +247,24 @@ Pure distance-reset utility (§2). No damage. 100 % guaranteed. Fires on cooldow
 
 Weapons and modules are independent subsystems: firing shock-blast resets `current_distance` only — active cloak / booster effects continue running on their own `duration_ms`, and module cooldowns are unaffected.
 
+#### Secondary ammunition (consumable) — CI-16
+
+Secondary weapons are **ammo-limited consumables** as of CI-16. Key rules:
+
+- **1 round per fire trigger**, regardless of subtype (including cluster-missile — burst/N munitions count as 1 trigger, 1 round).
+- **Ammo gate** — evaluated FIRST, before cooldown/range. When `remaining_ammo == 0`, weapon is silently skipped.
+- **`secondary_depleted` event** — emitted at the same tick the last round fires (when `remaining_ammo` transitions to 0).
+- **`ammo=None`** → infinite (back-compat for legacy paths and criminal ships — CI-17 arms criminals).
+- **Player ammo persists cross-battle** in `player_ships.secondary_ammo` (JSON sidecar `{name: rounds}`); written back by `_consume_secondary_ammo` after fight.
+- **Auto-unequip at 0** — post-fight only. Mid-fight just stops firing; never a live mid-tick slot mutation.
+- **Criminal side** — in-fight only (no `secondary_ammo` column on criminal JSON); no cross-fight persistence until CI-17.
+- **Future per-battle-cap extension point** — limit is qty + cooldown only; no hard 1/battle rule in Phase-1.
+
+Conservation model (loadout subsystem): `owned(S) = cargo.quantity(S) + Σ_ships secondary_ammo[S]`.
+The `secondary_weapons` slot-list entry is **pure slot occupancy — NOT a counted copy** (see `services/AGENTS.md`).
+
+Cross-references: §7.7 (EmergencySystem — generalized consumable pattern) · §0.2 (item vocabulary).
+
 ### 6.3 Turret weapons
 
 Three subtypes exist; two are combat-relevant. Discriminate using the `automatic: bool` field (auto/manual turrets carry no explicit `subtype` field; only plasma-collectors do).

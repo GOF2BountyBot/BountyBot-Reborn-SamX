@@ -14,6 +14,7 @@ class ShipResponse(BaseModel):
     modules: list[str] | None
     turrets: list[str] | None
     secondary_weapons: list[str] | None = None
+    secondary_ammo: dict[str, int] | None = None  # CI-16: {weapon_name: rounds}
     created_at: str
     # Package G B.19: optional structured report from set_active_ship when
     # switching to a ship whose loadout exceeds its slot caps.  Pydantic
@@ -31,6 +32,7 @@ class ShipLoadoutSummaryResponse(BaseModel):
     modules: list[str]
     turrets: list[str]
     secondary_weapons: list[str] = []
+    secondary_ammo: dict[str, int] = {}  # CI-16: {weapon_name: rounds}
     weapons_count: int
     modules_count: int
     turrets_count: int

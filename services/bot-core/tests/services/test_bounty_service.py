@@ -36,7 +36,7 @@ if "shared" not in sys.modules:
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
 
-from services.bounty_service import BountyService, CheckResult
+from services.bounty_service import BountyService, CheckResult, _extract_secondary_combat_fields, get_secondary_subtype
 
 # ---------------------------------------------------------------------------
 # Module-level autouse fixture: patch LoadoutBuilder.from_player
@@ -88,6 +88,7 @@ def _make_ship(
     max_primaries: int = 1,
     max_modules: int = 3,
     max_turrets: int = 0,
+    max_secondaries: int = 0,
 ) -> SimpleNamespace:
     """Return a Ship-like SimpleNamespace."""
     return SimpleNamespace(
@@ -96,6 +97,7 @@ def _make_ship(
         max_primaries=max_primaries,
         max_modules=max_modules,
         max_turrets=max_turrets,
+        max_secondaries=max_secondaries,
     )
 
 
@@ -118,6 +120,45 @@ def _make_module(
 ) -> SimpleNamespace:
     """Return a Module-like SimpleNamespace."""
     return SimpleNamespace(name=name, value=value, tech_level=tech_level, type=type, extra_atts=extra_atts)
+
+
+def _make_secondary(
+    name: str = "Nuke",
+    value: int = 10000,
+    dps: float = 0.0,
+    tech_level: int = 1,
+    damage: int = 800,
+    subtype: str = "nuke",
+    loading_speed_ms: int = 3000,
+    range_m: float = 2000.0,
+    burst_count: int = 0,
+    emp_damage: int = 0,
+    magnitude_m: float = 500.0,
+    steerable: bool = True,
+) -> SimpleNamespace:
+    """Return a SecondaryWeapon-like SimpleNamespace for CI-17 tests.
+
+    The extra_atts dict uses the DB nesting pattern: combat-relevant fields
+    live in the inner extra_atts dict.
+    """
+    inner = {
+        "subtype": subtype,
+        "loading_speed_ms": loading_speed_ms,
+        "range_m": range_m,
+        "burst_count": burst_count,
+        "emp_damage": emp_damage,
+        "magnitude_m": magnitude_m,
+        "steerable": steerable,
+    }
+    return SimpleNamespace(
+        name=name,
+        value=value,
+        dps=dps,
+        tech_level=tech_level,
+        damage=damage,
+        emoji=None,
+        extra_atts={"extra_atts": inner},
+    )
 
 
 def _setup_mock_db_query(mock_db, return_value):
@@ -432,9 +473,11 @@ async def test_generate_loadout_returns_valid_dict(service, mock_db):
         "ship_max_primaries",
         "ship_max_modules",
         "ship_max_turrets",
+        "ship_max_secondaries",
         "weapons",
         "modules",
         "turrets",
+        "secondaries",
         "total_value",
     }
     assert expected_keys == set(result.keys())
@@ -5639,3 +5682,379 @@ class TestBuildPayoutBreakdown:
         assert "player_display_name" in entry
         assert "role" in entry
         assert "amount" in entry
+
+
+# ===========================================================================
+# Tests: CI-17 — Criminal secondary weapon generation
+# ===========================================================================
+
+
+def _make_loadout_for_secondary_test(
+    db,
+    service,
+    ship,
+    all_secondaries: list,
+    *,
+    tech_level: int = 3,
+):
+    """Shared async helper factory — call inside an async test body.
+
+    Returns an awaitable calling service.generate_loadout with:
+    - ship selection mocked to return ``ship``
+    - SecondaryWeaponRepository.list_all mocked to return ``all_secondaries``
+    - item_repo returning empty lists (no primaries/turrets needed)
+    - _find_typed_module returning None (no modules needed)
+    """
+
+    async def _run():
+        with (
+            patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+            patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
+            patch(
+                "services.bounty_service.SecondaryWeaponRepository",
+                return_value=MagicMock(list_all=AsyncMock(return_value=all_secondaries)),
+            ),
+        ):
+            service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+            _setup_mock_db_query(db, [ship])
+            return await service.generate_loadout(db, tech_level=tech_level)
+
+    return _run()
+
+
+class TestCi17SecondaryGeneration:
+    """CI-17: criminal secondary weapon generation in generate_loadout."""
+
+    # -----------------------------------------------------------------------
+    # Helpers
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _make_db():
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        db.refresh = AsyncMock()
+        return db
+
+    # -----------------------------------------------------------------------
+    # TL0 Betty unchanged
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_tl0_betty_unchanged_secondaries_empty(self, service):
+        """TL0 Betty path returns empty secondaries (no generation, no crash)."""
+        result = await service.generate_loadout(self._make_db(), tech_level=0)
+        assert result["secondaries"] == []
+        assert result["ship_max_secondaries"] == 0
+
+    # -----------------------------------------------------------------------
+    # Edge: max_secondaries=0
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_max_secondaries_zero_returns_empty(self, service):
+        """Ship with max_secondaries=0 → secondaries=[] (block skipped, no crash)."""
+        ship = _make_ship("Scout", value=50000, max_primaries=1, max_secondaries=0)
+        db = self._make_db()
+        secondary = _make_secondary("Nuclear Nuke", tech_level=1, subtype="nuke", damage=800)
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, [secondary])
+
+        assert result["secondaries"] == []
+        assert result["ship_max_secondaries"] == 0
+
+    # -----------------------------------------------------------------------
+    # Edge: deferred-only pool → empty, no crash
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_deferred_only_pool_returns_empty(self, service):
+        """TL whose only secondaries are deferred subtypes → secondaries=[] no crash."""
+        ship = _make_ship("Warrior", value=200000, max_primaries=2, max_secondaries=3)
+        db = self._make_db()
+        # All deferred subtypes
+        deferred_weapons = [
+            _make_secondary("EMP Bomb", tech_level=1, subtype="emp-bomb", damage=500),
+            _make_secondary("Land Mine", tech_level=1, subtype="mine", damage=300),
+            _make_secondary("Sentry Gun", tech_level=1, subtype="sentry-gun", damage=200),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, deferred_weapons)
+
+        assert result["secondaries"] == []
+
+    # -----------------------------------------------------------------------
+    # Edge: dead-weight exclusion (damage ≤ threshold)
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_dead_weight_damage_excluded(self, service):
+        """Secondaries with damage ≤ CRIMINAL_SECONDARY_MIN_DAMAGE are excluded."""
+        from services.game_constants import GameConstants
+
+        ship = _make_ship("Warrior", value=200000, max_primaries=2, max_secondaries=3)
+        db = self._make_db()
+        # damage=0 and damage=1 should be excluded (default threshold=1)
+        zero_dmg = _make_secondary("Zero Dmg", tech_level=1, subtype="missile", damage=0)
+        one_dmg = _make_secondary("One Dmg", tech_level=1, subtype="missile", damage=1)
+        good = _make_secondary("Good Missile", tech_level=1, subtype="missile", damage=100)
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, [zero_dmg, one_dmg, good])
+
+        names = [s["name"] for s in result["secondaries"]]
+        assert "Zero Dmg" not in names
+        assert "One Dmg" not in names
+        assert "Good Missile" in names
+
+    # -----------------------------------------------------------------------
+    # Generation: length ≤ max_secondaries
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondaries_count_respects_max_secondaries(self, service):
+        """Generated secondaries count never exceeds ship.max_secondaries."""
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=2)
+        db = self._make_db()
+        pool = [
+            _make_secondary("Rocket A", tech_level=1, subtype="rocket", damage=200),
+            _make_secondary("Missile B", tech_level=1, subtype="missile", damage=300),
+            _make_secondary("Nuke C", tech_level=1, subtype="nuke", damage=800),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        assert len(result["secondaries"]) <= ship.max_secondaries
+
+    # -----------------------------------------------------------------------
+    # Generation: distinct names (no duplicates)
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondaries_names_are_distinct(self, service):
+        """Sampled secondaries have no duplicate names (slot=type model)."""
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=3)
+        db = self._make_db()
+        pool = [
+            _make_secondary("Rocket A", tech_level=1, subtype="rocket", damage=200),
+            _make_secondary("Missile B", tech_level=1, subtype="missile", damage=300),
+            _make_secondary("Nuke C", tech_level=1, subtype="nuke", damage=800),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        names = [s["name"] for s in result["secondaries"]]
+        assert len(names) == len(set(names)), f"Duplicate secondary names found: {names}"
+
+    # -----------------------------------------------------------------------
+    # Generation: no deferred subtypes in output
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_deferred_subtypes_never_in_output(self, service):
+        """Deferred subtypes (emp-bomb/mine/sentry-gun) never appear in output."""
+        from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
+
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=3)
+        db = self._make_db()
+        pool = [
+            _make_secondary("EMP Bomb", tech_level=1, subtype="emp-bomb", damage=500),
+            _make_secondary("Good Nuke", tech_level=1, subtype="nuke", damage=800),
+            _make_secondary("Mine", tech_level=1, subtype="mine", damage=300),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        subtypes = [s["subtype"] for s in result["secondaries"]]
+        for st in subtypes:
+            assert st not in DEFERRED_SECONDARY_SUBTYPES, f"Deferred subtype {st!r} found in output"
+
+    # -----------------------------------------------------------------------
+    # Generation: all combat fields present
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondaries_carry_all_combat_fields(self, service):
+        """Each secondary dict carries the full set of combat fields."""
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=2)
+        db = self._make_db()
+        pool = [
+            _make_secondary(
+                "Nuke Alpha", tech_level=1, subtype="nuke", damage=800,
+                loading_speed_ms=3000, range_m=2000.0,
+                burst_count=0, emp_damage=0, magnitude_m=500.0, steerable=True,
+            ),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        assert len(result["secondaries"]) == 1
+        s = result["secondaries"][0]
+        required_fields = {
+            "name", "emoji", "value", "dps", "rounds",
+            "damage", "loading_speed_ms", "range_m", "subtype",
+            "burst_count", "emp_damage", "magnitude_m", "steerable",
+        }
+        assert required_fields.issubset(set(s.keys())), f"Missing fields: {required_fields - set(s.keys())}"
+
+    # -----------------------------------------------------------------------
+    # Generation: rounds ≥ 1
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondaries_rounds_at_least_1(self, service):
+        """All generated secondaries have rounds ≥ 1 (floor applied)."""
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=3)
+        db = self._make_db()
+        pool = [
+            _make_secondary("Rocket X", tech_level=1, subtype="rocket", damage=200),
+            _make_secondary("Shock Y", tech_level=1, subtype="shock-blast", damage=150),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        for s in result["secondaries"]:
+            assert s["rounds"] >= 1, f"rounds < 1 for {s['name']!r}: {s['rounds']}"
+
+    # -----------------------------------------------------------------------
+    # Knob #1: nuke rounds == configured cap
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_nuke_rounds_equal_configured_cap(self, service):
+        """Nuke secondaries get exactly CRIMINAL_SECONDARY_ROUNDS['nuke'] rounds."""
+        from services.game_constants import GameConstants
+
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=2)
+        db = self._make_db()
+        pool = [_make_secondary("Nuke X", tech_level=1, subtype="nuke", damage=800)]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        nuke_entries = [s for s in result["secondaries"] if s["subtype"] == "nuke"]
+        assert len(nuke_entries) == 1
+        assert nuke_entries[0]["rounds"] == GameConstants.CRIMINAL_SECONDARY_ROUNDS["nuke"]
+
+    # -----------------------------------------------------------------------
+    # Knob #4: value counted once per type
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondary_value_added_once_per_type(self, service):
+        """total_value includes each secondary's value exactly once."""
+        ship = _make_ship("Groza", value=100000, max_primaries=0, max_secondaries=2)
+        db = self._make_db()
+        pool = [
+            _make_secondary("Nuke X", tech_level=1, subtype="nuke", damage=800, value=5000),
+            _make_secondary("Missile Y", tech_level=1, subtype="missile", damage=200, value=3000),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        secondary_values = sum(s["value"] for s in result["secondaries"])
+        assert result["total_value"] == ship.value + secondary_values
+
+    # -----------------------------------------------------------------------
+    # Multiple TLs (TLs 1/3/4/5/9)
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tl", [1, 3, 4, 5, 9])
+    async def test_generation_across_tls_stable(self, service, tl):
+        """Generation at various TLs produces valid secondaries (distinct, no deferred, rounds≥1)."""
+        from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
+
+        ship = _make_ship("Warship", value=500000, max_primaries=2, max_secondaries=2)
+        db = self._make_db()
+        item_tl = max(1, tl - 1)
+        pool = [
+            _make_secondary("Missile A", tech_level=item_tl, subtype="missile", damage=200),
+            _make_secondary("Rocket B", tech_level=item_tl, subtype="rocket", damage=300),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool, tech_level=tl)
+
+        secondaries = result["secondaries"]
+        assert len(secondaries) <= ship.max_secondaries
+        names = [s["name"] for s in secondaries]
+        assert len(names) == len(set(names)), "Duplicate names"
+        for s in secondaries:
+            assert s["subtype"] not in DEFERRED_SECONDARY_SUBTYPES
+            assert s["rounds"] >= 1
+
+    # -----------------------------------------------------------------------
+    # ship_max_secondaries key is present
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ship_max_secondaries_key_present(self, service):
+        """generate_loadout always includes ship_max_secondaries in the return dict."""
+        ship = _make_ship("Scout", value=50000, max_primaries=1, max_secondaries=2)
+        db = self._make_db()
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, [])
+
+        assert "ship_max_secondaries" in result
+        assert result["ship_max_secondaries"] == 2
+
+
+# ===========================================================================
+# Tests: CI-17 — helper functions
+# ===========================================================================
+
+
+class TestCi17Helpers:
+    """Unit tests for the module-level helper functions added in CI-17."""
+
+    def test_get_secondary_subtype_unwraps_inner_extra_atts(self):
+        """get_secondary_subtype reads subtype from the inner extra_atts dict."""
+        item = SimpleNamespace(extra_atts={"extra_atts": {"subtype": "nuke"}})
+        assert get_secondary_subtype(item) == "nuke"
+
+    def test_get_secondary_subtype_missing_returns_empty(self):
+        """get_secondary_subtype returns '' when extra_atts is absent/empty."""
+        item = SimpleNamespace(extra_atts={})
+        assert get_secondary_subtype(item) == ""
+
+    def test_get_secondary_subtype_flat_fallback(self):
+        """get_secondary_subtype falls back to outer dict for flat seeds."""
+        item = SimpleNamespace(extra_atts={"subtype": "missile"})
+        assert get_secondary_subtype(item) == "missile"
+
+    def test_extract_secondary_combat_fields_all_fields(self):
+        """_extract_secondary_combat_fields returns all required combat fields."""
+        item = SimpleNamespace(
+            damage=800,
+            extra_atts={
+                "extra_atts": {
+                    "loading_speed_ms": 3000,
+                    "range_m": 2000.0,
+                    "subtype": "nuke",
+                    "burst_count": 0,
+                    "emp_damage": 50,
+                    "magnitude_m": 500.0,
+                    "steerable": True,
+                }
+            },
+        )
+        fields = _extract_secondary_combat_fields(item)
+        assert fields["damage"] == 800
+        assert fields["loading_speed_ms"] == 3000
+        assert fields["range_m"] == 2000.0
+        assert fields["subtype"] == "nuke"
+        assert fields["burst_count"] == 0
+        assert fields["emp_damage"] == 50
+        assert fields["magnitude_m"] == 500.0
+        assert fields["steerable"] is True
+
+    def test_extract_secondary_combat_fields_defaults(self):
+        """_extract_secondary_combat_fields provides safe defaults for missing fields."""
+        item = SimpleNamespace(damage=0, extra_atts={})
+        fields = _extract_secondary_combat_fields(item)
+        assert fields["damage"] == 0
+        assert fields["loading_speed_ms"] == 0
+        assert fields["range_m"] == 0.0
+        assert fields["subtype"] == ""
+        assert fields["burst_count"] == 0
+        assert fields["emp_damage"] == 0
+        assert fields["magnitude_m"] == 0.0
+        assert fields["steerable"] is False

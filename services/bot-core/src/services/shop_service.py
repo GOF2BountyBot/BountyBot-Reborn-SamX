@@ -29,6 +29,7 @@ from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services._item_type_normalizer import expand_item_type_to_concrete
+from services.bounty_service import get_secondary_subtype
 from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants
@@ -820,17 +821,12 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             )
 
             # Filter by tech level and exclude deferred subtypes (emp-bomb, mine, sentry-gun).
-            # Subtype lives in the inner extra_atts dict (DB nesting: outer["extra_atts"]["subtype"]).
-            # Cross-reference: DEFERRED_SECONDARY_SUBTYPES in combat_models.py.
-            def _sw_subtype(sw: object) -> str:
-                outer = getattr(sw, "extra_atts", None) or {}
-                inner = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
-                return inner.get("subtype", "") if isinstance(inner, dict) else ""
-
+            # Subtype unwrap is single-sourced from bounty_service.get_secondary_subtype
+            # (avoids drift between generation and shop filtering).
             items = [
                 sw
                 for sw in all_secondary
-                if sw.tech_level == tech_level and _sw_subtype(sw) not in DEFERRED_SECONDARY_SUBTYPES
+                if sw.tech_level == tech_level and get_secondary_subtype(sw) not in DEFERRED_SECONDARY_SUBTYPES
             ]
             return random.choice(items).name if items else None
 

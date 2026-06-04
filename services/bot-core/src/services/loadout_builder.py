@@ -389,6 +389,16 @@ class LoadoutBuilder:
                     "extra_atts": {"armour": 40, ...},
                 }
             ],
+            "secondaries": [
+                {
+                    "name": "...", "emoji": "...", "dps": 0.0, "value": 5000,
+                    "damage": 800, "loading_speed_ms": 3000,
+                    "range_m": 2000.0, "subtype": "nuke",
+                    "burst_count": 0, "emp_damage": 0,
+                    "magnitude_m": 500.0, "steerable": True,
+                    "rounds": 1,
+                }
+            ],
         }
 
         Steps:
@@ -396,7 +406,8 @@ class LoadoutBuilder:
         2. For each weapon dict → create WeaponStats(name, dps)
         3. For each turret dict → create WeaponStats(name, dps)
         4. For each module dict → create ModuleStats from extra_atts
-        5. Return ShipLoadout
+        5. For each secondary dict → create WeaponStats with full combat fields
+        6. Return ShipLoadout
 
         Args:
             criminal_ship: Dict from Bounty.criminal_ship JSONB column.
@@ -482,13 +493,56 @@ class LoadoutBuilder:
             mod_type = m.get("type", "") or ""
             modules.append(_module_stats_from_extra(m["name"], extra, module_type=mod_type))
 
+        # Secondaries (CI-17): read loop mirroring the player block in from_player.
+        # Each dict carries the full combat-field set (damage, loading_speed_ms, range_m,
+        # subtype, burst_count, emp_damage, magnitude_m, steerable) plus rounds (ammo).
+        # damage_per_shot is set from the stored "damage" field (NOT "dps"), because
+        # secondary weapons carry per-shot damage in that column.
+        secondary_weapons: list[WeaponStats] = []
+        for sw in criminal_ship.get("secondaries", []):
+            sw_name = sw.get("name", "")
+            if not sw_name:
+                continue
+            sw_dps = float(sw.get("dps", 0) or 0)
+            # "damage" carries per-shot damage for secondaries (NOT damage_per_shot)
+            sw_damage = int(sw.get("damage", 0) or 0)
+            sw_spd = int(sw.get("loading_speed_ms", 0) or 0)
+            sw_rng = float(sw.get("range_m", 0.0) or 0.0)
+            sw_subtype = sw.get("subtype", "") or ""
+            sw_burst = int(sw.get("burst_count", 0) or 0)
+            sw_emp = int(sw.get("emp_damage", 0) or 0)
+            sw_mag = float(sw.get("magnitude_m", 0.0) or 0.0)
+            sw_steer = bool(sw.get("steerable", False))
+            # CI-17: rounds from the stored "rounds" field; floor at 1 so it always fires
+            sw_rounds = int(sw.get("rounds", 1) or 1)
+            sw_rounds = max(1, sw_rounds)
+            secondary_weapons.append(
+                WeaponStats(
+                    name=sw_name,
+                    dps=sw_dps,
+                    damage_per_shot=float(sw_damage),
+                    loading_speed_ms=sw_spd,
+                    range_m=sw_rng,
+                    subtype=sw_subtype,
+                    burst_count=sw_burst,
+                    emp_damage=sw_emp,
+                    magnitude_m=sw_mag,
+                    steerable=sw_steer,
+                    ammo=sw_rounds,
+                )
+            )
+            flogger.trace(
+                f"Criminal secondary {sw_name!r} subtype={sw_subtype!r} damage={sw_damage} "
+                f"loading_speed_ms={sw_spd} range_m={sw_rng} rounds={sw_rounds}"
+            )
+
         # T8: built-in modules from criminal_ship dict (e.g. Scimitar has U'tool built-in)
         criminal_builtin_modules: list[str] = list(criminal_ship.get("builtin_modules") or [])
 
         flogger.debug(
             f"Criminal loadout built: ship={ship_name!r}, base_armour={base_armour}, "
             f"weapons={len(weapons)}, turrets={len(turrets)}, modules={len(modules)}, "
-            f"builtin_modules={criminal_builtin_modules}"
+            f"secondary_weapons={len(secondary_weapons)}, builtin_modules={criminal_builtin_modules}"
         )
 
         return ShipLoadout(
@@ -498,5 +552,6 @@ class LoadoutBuilder:
             weapons=weapons,
             turrets=turrets,
             modules=modules,
+            secondary_weapons=secondary_weapons,
             builtin_modules=criminal_builtin_modules,
         )

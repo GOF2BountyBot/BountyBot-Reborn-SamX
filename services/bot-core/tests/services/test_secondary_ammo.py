@@ -1221,3 +1221,292 @@ class TestConservationInvariantAcrossAllPaths:
         assert cargo_total == 5, f"Conservation: expected 5 rounds in cargo, got {cargo_total}"
         # ammo sidecar cleared for Rocket
         assert ship.secondary_ammo.get("Rocket", 0) == 0 or "Rocket" not in ship.secondary_ammo
+
+
+# ===========================================================================
+# Section I: CI-17 — criminal secondaries from_criminal_ship integration
+# ===========================================================================
+
+
+class TestCi17CriminalSecondaryIntegration:
+    """CI-17 integration: criminal loaded via from_criminal_ship fires secondaries
+    correctly in the tick resolver — ammo gate, depletion event, and damage dealt.
+
+    These tests use real TickResolver with deterministic RNG (no mocks of resolve).
+    Max 2 mocks per test (project rule).
+    """
+
+    # -----------------------------------------------------------------------
+    # Helpers
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _criminal_ship_with_rocket(rounds: int) -> dict:
+        """Build a criminal_ship dict with a single rocket secondary.
+
+        Uses rocket (not nuke) for simpler fire mechanics: damage is
+        stored directly in the weapon_fire event's "hit" bool, and the
+        damage event confirms actual HP reduction.
+        """
+        return {
+            "ship_name": "Criminal Warship",
+            "ship_armour": 100,
+            "armor_hp": 100,
+            "shield_hp": 0,
+            "total_hp": 100,
+            "weapons": [],
+            "turrets": [],
+            "modules": [],
+            "secondaries": [
+                {
+                    "name": "Test Rocket",
+                    "emoji": None,
+                    "dps": 0.0,
+                    "value": 5000,
+                    "damage": 500,  # hits deal 500 damage
+                    "loading_speed_ms": 500,  # fast: 50 ticks
+                    "range_m": 9999.0,  # always in range
+                    "subtype": "rocket",
+                    "burst_count": 0,
+                    "emp_damage": 0,
+                    "magnitude_m": 0.0,
+                    "steerable": False,
+                    "rounds": rounds,
+                }
+            ],
+        }
+
+    # Keep nuke variant for nuke-specific tests
+    @staticmethod
+    def _criminal_ship_with_nuke(rounds: int) -> dict:
+        """Build a criminal_ship dict with a single nuke secondary."""
+        return {
+            "ship_name": "Criminal Warship",
+            "ship_armour": 100,
+            "armor_hp": 100,
+            "shield_hp": 0,
+            "total_hp": 100,
+            "weapons": [],
+            "turrets": [],
+            "modules": [],
+            "secondaries": [
+                {
+                    "name": "Annihilator Nuke",
+                    "emoji": None,
+                    "dps": 0.0,
+                    "value": 10000,
+                    "damage": 9999,  # huge damage so we can detect a hit
+                    "loading_speed_ms": 500,  # fast: 50 ticks
+                    "range_m": 9999.0,
+                    "subtype": "nuke",
+                    "burst_count": 0,
+                    "emp_damage": 0,
+                    "magnitude_m": 50000.0,  # large so any distance deals damage
+                    "steerable": False,
+                    "rounds": rounds,
+                }
+            ],
+        }
+
+    @staticmethod
+    def _resolve_criminal_vs_player(criminal_ship_dict: dict) -> list:
+        """Build criminal loadout, resolve vs a durable player, return combat log."""
+        from src.services.loadout_builder import LoadoutBuilder
+
+        criminal_loadout = LoadoutBuilder.from_criminal_ship(criminal_ship_dict)
+        # Durable player with high HP, no weapons (so fight ends by ammo exhaustion or tick limit)
+        player_loadout = ShipLoadout(
+            ship_name="Durable Player",
+            base_armour=999_999,
+            weapons=[WeaponStats(name="No-dmg Gun", dps=0.0, damage_per_shot=0.0, loading_speed_ms=1000, range_m=9999.0)],
+        )
+        resolver = TickResolver()
+        result = resolver.resolve(criminal_loadout, player_loadout, pvc_damage_reduction=0.0, rng=_AlwaysHit())
+        return result.combat_log
+
+    def test_criminal_rocket_fires_at_most_n_times(self):
+        """Criminal rocket with rounds=N fires ≤N times in a resolved fight."""
+        n = 3
+        criminal_ship = self._criminal_ship_with_rocket(rounds=n)
+        log = self._resolve_criminal_vs_player(criminal_ship)
+
+        fires = [
+            e for e in log
+            if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "Test Rocket"
+        ]
+        assert len(fires) <= n, f"Expected ≤{n} fires, got {len(fires)}"
+
+    def test_criminal_rocket_rounds_1_fires_exactly_once(self):
+        """Criminal rocket with rounds=1 fires exactly once (ammo gate respected)."""
+        criminal_ship = self._criminal_ship_with_rocket(rounds=1)
+        log = self._resolve_criminal_vs_player(criminal_ship)
+
+        fires = [
+            e for e in log
+            if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "Test Rocket"
+        ]
+        assert len(fires) == 1, f"Expected exactly 1 fire, got {len(fires)}"
+
+    def test_criminal_secondary_depleted_event_emitted(self):
+        """secondary_depleted event is emitted after criminal's ammo reaches 0."""
+        criminal_ship = self._criminal_ship_with_rocket(rounds=1)
+        log = self._resolve_criminal_vs_player(criminal_ship)
+
+        depleted = [e for e in log if e.type == CombatEventType.secondary_depleted]
+        assert len(depleted) >= 1, "Expected at least one secondary_depleted event"
+        assert any(e.data.get("weapon") == "Test Rocket" for e in depleted)
+
+    def test_criminal_secondary_deals_damage(self):
+        """Criminal rocket with damage>0 inflicts HP on the target (damage event absorbed>0)."""
+        criminal_ship = self._criminal_ship_with_rocket(rounds=3)
+        log = self._resolve_criminal_vs_player(criminal_ship)
+
+        # Rockets that hit emit a damage event with absorbed > 0 (actual HP removed)
+        damage_events_from_rocket = [
+            e for e in log
+            if e.type == CombatEventType.damage
+            and isinstance(e.data.get("source"), dict)
+            and e.data["source"].get("weapon") == "Test Rocket"
+        ]
+        # At least one hit should deal some damage (we always-hit RNG)
+        total_absorbed = sum(e.data.get("absorbed", 0) for e in damage_events_from_rocket)
+        assert total_absorbed > 0, (
+            f"Expected absorbed damage > 0 from rocket hits, got {total_absorbed}. "
+            f"damage events: {damage_events_from_rocket}"
+        )
+
+    def test_criminal_secondaries_absent_in_criminal_ship_gives_empty_list(self):
+        """from_criminal_ship with no 'secondaries' key → secondary_weapons=[] (no crash)."""
+        from src.services.loadout_builder import LoadoutBuilder
+
+        criminal_ship = {
+            "ship_name": "Criminal Scout",
+            "ship_armour": 100,
+            "weapons": [],
+            "turrets": [],
+            "modules": [],
+            # No 'secondaries' key — backward-compat test
+        }
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        assert loadout.secondary_weapons == []
+
+    def test_end_to_end_criminal_with_primary_and_nuke_fires_deals_damage_and_depletes(self):
+        """End-to-end guard: criminal built via from_criminal_ship (with primary + nuke secondary,
+        rounds=1) resolves in TickResolver and BOTH fires the secondary AND deals nonzero damage
+        to the opponent AND emits secondary_depleted.
+
+        This is the CI-17 regression guard for the class of bug CI-1 fixed for primaries:
+        a field dropped at generation or not read back produces a secondary that loads but
+        fires 0 damage or never fires.  The criminal has a real primary so the fight is
+        realistic (opponent can take primary hits while the nuke resolves).
+
+        Nuke is chosen because:
+          - It is the highest-risk capped case (rounds=1).
+          - Nuke damage is distance-based (magnitude_m) — no accuracy roll — so the
+            assertion on ``opponent_damage > 0`` is deterministic regardless of RNG.
+          - The fire event carries ``opponent_damage`` directly, giving a single
+            field to inspect without chasing a separate damage event.
+        """
+        from src.services.loadout_builder import LoadoutBuilder
+
+        criminal_ship = {
+            "ship_name": "CI-17 Guard Criminal",
+            "ship_armour": 500,
+            "armor_hp": 500,
+            "shield_hp": 0,
+            "total_hp": 500,
+            # Primary weapon so the fight is realistic (criminal fires on both slots)
+            "weapons": [
+                {
+                    "name": "Guard Blaster",
+                    "emoji": None,
+                    "dps": 10.0,
+                    "value": 1000,
+                    "damage_per_shot": 100.0,
+                    "loading_speed_ms": 500,
+                    "range_m": 9999.0,
+                    "subtype": "blaster",
+                }
+            ],
+            "turrets": [],
+            "modules": [],
+            "secondaries": [
+                {
+                    "name": "CI-17 Annihilator",
+                    "emoji": None,
+                    "dps": 0.0,
+                    "value": 10000,
+                    # Large per-shot damage so any HP reduction is unmistakable
+                    "damage": 8000,
+                    # Fast cooldown so it fires before the fight ends
+                    "loading_speed_ms": 200,
+                    # Range large enough that the nuke is always in-range
+                    "range_m": 99999.0,
+                    "subtype": "nuke",
+                    "burst_count": 0,
+                    "emp_damage": 0,
+                    # Large blast radius guarantees nonzero opponent_damage at any distance
+                    "magnitude_m": 999999.0,
+                    "steerable": False,
+                    # rounds=1 — the capped/highest-risk case
+                    "rounds": 1,
+                }
+            ],
+        }
+
+        criminal_loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        # Opponent: high HP so it survives primary fire while the nuke resolves;
+        # zero-damage primary so only the criminal's secondary contributes damage.
+        opponent_loadout = ShipLoadout(
+            ship_name="Durable Bounty Hunter",
+            base_armour=999_999,
+            weapons=[
+                WeaponStats(
+                    name="Placeholder Gun",
+                    dps=0.0,
+                    damage_per_shot=0.0,
+                    loading_speed_ms=1000,
+                    range_m=9999.0,
+                )
+            ],
+        )
+        resolver = TickResolver()
+        result = resolver.resolve(
+            criminal_loadout, opponent_loadout, pvc_damage_reduction=0.0, rng=_AlwaysHit()
+        )
+        log = result.combat_log
+
+        # 1. Secondary FIRED: at least one weapon_fire with slot=="secondary" for this weapon
+        secondary_fires = [
+            e for e in log
+            if e.type == CombatEventType.weapon_fire
+            and e.data.get("slot") == "secondary"
+            and e.data.get("weapon") == "CI-17 Annihilator"
+        ]
+        assert len(secondary_fires) == 1, (
+            f"Expected exactly 1 secondary fire (rounds=1), got {len(secondary_fires)}. "
+            "CI-17 regression: damage or field was dropped — secondary never fired."
+        )
+
+        # 2. Nonzero damage on the opponent: nuke fire event carries opponent_damage directly
+        nuke_fire = secondary_fires[0]
+        opponent_damage = nuke_fire.data.get("opponent_damage", 0)
+        assert opponent_damage > 0, (
+            f"Nuke opponent_damage must be > 0, got {opponent_damage}. "
+            "CI-17 regression: damage field dropped at generation or not read back from from_criminal_ship."
+        )
+
+        # 3. Ammo depleted: secondary_depleted event emitted after the single round fires
+        depleted_events = [
+            e for e in log
+            if e.type == CombatEventType.secondary_depleted
+            and e.data.get("weapon") == "CI-17 Annihilator"
+        ]
+        assert len(depleted_events) == 1, (
+            f"Expected 1 secondary_depleted event (rounds=1), got {len(depleted_events)}. "
+            "CI-17 regression: ammo decrement not applied."
+        )
+        # Depleted event must be on the same tick as the fire
+        assert depleted_events[0].tick == nuke_fire.tick, (
+            f"secondary_depleted tick {depleted_events[0].tick} != fire tick {nuke_fire.tick}"
+        )

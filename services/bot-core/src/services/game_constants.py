@@ -123,6 +123,27 @@ class GameConstants:
     MAX_ROUTE_LENGTH: int = 50  # A* pathfinding limit
 
     # ------------------------------------------------------------------
+    # CI-17: Criminal secondary weapons (owner-decision knobs #1–#3)
+    # All four constants are tunable here; nowhere else.
+    # ------------------------------------------------------------------
+
+    # Knob #1 / #2 — rounds granted per subtype for criminal secondaries.
+    # nuke=1 prevents unwinnable alpha-strikes; other subtypes use flat counts.
+    CRIMINAL_SECONDARY_ROUNDS: dict[str, int] = {
+        "nuke": 1,
+        "missile": 5,
+        "rocket": 5,
+        "cluster-missile": 3,
+        "shock-blast": 2,
+    }
+
+    # Knob #3 — exclude secondary weapons whose damage column is ≤ this value.
+    # Default 1 drops damage==0 (zero-damage, never fires) AND damage==1 (dmg=1
+    # Fireworks — a 1-dmg nuke is pure dead weight; owner may lower to 0 to
+    # include it).
+    CRIMINAL_SECONDARY_MIN_DAMAGE: int = 1
+
+    # ------------------------------------------------------------------
     # Activity / Temperature
     # ------------------------------------------------------------------
 

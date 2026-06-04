@@ -45,6 +45,7 @@ def make_criminal_ship(
     weapons: list[dict] | None = None,
     turrets: list[dict] | None = None,
     modules: list[dict] | None = None,
+    secondaries: list[dict] | None = None,
 ) -> dict:
     """Create a criminal_ship dict matching the format from BountyService."""
     return {
@@ -57,6 +58,39 @@ def make_criminal_ship(
         "weapons": weapons or [],
         "turrets": turrets or [],
         "modules": modules or [],
+        "secondaries": secondaries or [],
+    }
+
+
+def make_secondary_dict(
+    name: str = "Nuke X",
+    dps: float = 0.0,
+    value: int = 5000,
+    damage: int = 800,
+    subtype: str = "nuke",
+    loading_speed_ms: int = 3000,
+    range_m: float = 2000.0,
+    burst_count: int = 0,
+    emp_damage: int = 0,
+    magnitude_m: float = 500.0,
+    steerable: bool = True,
+    rounds: int = 1,
+) -> dict:
+    """Create a secondary weapon dict matching the CI-17 generate_loadout format."""
+    return {
+        "name": name,
+        "emoji": None,
+        "dps": dps,
+        "value": value,
+        "damage": damage,
+        "loading_speed_ms": loading_speed_ms,
+        "range_m": range_m,
+        "subtype": subtype,
+        "burst_count": burst_count,
+        "emp_damage": emp_damage,
+        "magnitude_m": magnitude_m,
+        "steerable": steerable,
+        "rounds": rounds,
     }
 
 
@@ -1212,3 +1246,130 @@ class TestExtractWeaponCombatFields:
         assert "subtype" in weapon_dict
         assert weapon_dict["damage_per_shot"] == 8
         assert weapon_dict["range_m"] == pytest.approx(1400.0)
+
+
+# ===========================================================================
+# Tests: CI-17 — from_criminal_ship secondaries round-trip
+# ===========================================================================
+
+
+class TestFromCriminalShipSecondaries:
+    """CI-17: from_criminal_ship reads 'secondaries' list and builds WeaponStats correctly.
+
+    Secondary slot model: slot=TYPE, quantity=ammo (rounds), NOT repeated entries.
+    damage_per_shot is populated from the 'damage' field (NOT 'dps').
+    """
+
+    def test_secondaries_absent_produces_empty_list(self):
+        """criminal_ship dict without 'secondaries' key → secondary_weapons=[]."""
+        criminal_ship = make_criminal_ship()  # no secondaries key
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        assert loadout.secondary_weapons == []
+
+    def test_secondaries_empty_list_produces_empty_list(self):
+        """criminal_ship with secondaries=[] → secondary_weapons=[]."""
+        criminal_ship = make_criminal_ship(secondaries=[])
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        assert loadout.secondary_weapons == []
+
+    def test_single_secondary_round_trips_name(self):
+        """Single secondary → WeaponStats with correct name."""
+        sw = make_secondary_dict(name="Nuke X", subtype="nuke", damage=800, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert len(loadout.secondary_weapons) == 1
+        assert loadout.secondary_weapons[0].name == "Nuke X"
+
+    def test_damage_maps_to_damage_per_shot(self):
+        """'damage' field maps to WeaponStats.damage_per_shot (not dps)."""
+        sw = make_secondary_dict(name="Nuke X", dps=0.0, damage=800, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].damage_per_shot == pytest.approx(800.0)
+
+    def test_dps_field_preserved(self):
+        """dps field is preserved as WeaponStats.dps."""
+        sw = make_secondary_dict(name="Nuke X", dps=2.5, damage=800, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].dps == pytest.approx(2.5)
+
+    def test_subtype_round_trips(self):
+        """subtype field round-trips correctly."""
+        sw = make_secondary_dict(name="Rocket A", subtype="rocket", damage=200, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].subtype == "rocket"
+
+    def test_rounds_maps_to_ammo(self):
+        """'rounds' field maps to WeaponStats.ammo."""
+        sw = make_secondary_dict(name="Missile B", subtype="missile", damage=200, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].ammo == 5
+
+    def test_rounds_floored_at_1(self):
+        """rounds=0 is floored to 1 so the weapon always fires at least once."""
+        sw = make_secondary_dict(name="Missile B", subtype="missile", damage=200, rounds=0)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].ammo >= 1
+
+    def test_burst_count_round_trips(self):
+        """burst_count field round-trips correctly."""
+        sw = make_secondary_dict(name="Cluster", subtype="cluster-missile", damage=150, burst_count=4, rounds=3)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].burst_count == 4
+
+    def test_emp_damage_round_trips(self):
+        """emp_damage field round-trips correctly."""
+        sw = make_secondary_dict(name="EMP Weapon", subtype="missile", damage=100, emp_damage=50, rounds=2)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].emp_damage == 50
+
+    def test_magnitude_m_round_trips(self):
+        """magnitude_m field round-trips correctly (nuke blast radius)."""
+        sw = make_secondary_dict(name="Nuke X", subtype="nuke", damage=800, magnitude_m=500.0, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].magnitude_m == pytest.approx(500.0)
+
+    def test_steerable_round_trips(self):
+        """steerable field round-trips correctly."""
+        sw = make_secondary_dict(name="Steerable Nuke", subtype="nuke", damage=800, steerable=True, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].steerable is True
+
+    def test_loading_speed_ms_round_trips(self):
+        """loading_speed_ms field round-trips correctly."""
+        sw = make_secondary_dict(name="Slow Nuke", subtype="nuke", damage=800, loading_speed_ms=4500, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].loading_speed_ms == 4500
+
+    def test_range_m_round_trips(self):
+        """range_m field round-trips correctly."""
+        sw = make_secondary_dict(name="Short Rocket", subtype="rocket", damage=200, range_m=1500.0, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].range_m == pytest.approx(1500.0)
+
+    def test_multiple_secondaries_all_round_trip(self):
+        """Multiple secondaries all produce distinct WeaponStats entries."""
+        sw1 = make_secondary_dict(name="Nuke X", subtype="nuke", damage=800, rounds=1)
+        sw2 = make_secondary_dict(name="Rocket A", subtype="rocket", damage=200, rounds=5)
+        sw3 = make_secondary_dict(name="Missile B", subtype="missile", damage=300, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw1, sw2, sw3]))
+        assert len(loadout.secondary_weapons) == 3
+        names = [sw.name for sw in loadout.secondary_weapons]
+        assert "Nuke X" in names
+        assert "Rocket A" in names
+        assert "Missile B" in names
+
+    def test_existing_weapons_turrets_unaffected_by_secondaries(self):
+        """Adding secondaries does not affect primary weapons or turrets in the loadout."""
+        weapon = {"name": "Rail Gun", "dps": 30.0, "emoji": None, "value": 5000}
+        sw = make_secondary_dict(name="Nuke X", subtype="nuke", damage=800, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(weapons=[weapon], secondaries=[sw]))
+        assert len(loadout.weapons) == 1
+        assert loadout.weapons[0].name == "Rail Gun"
+        assert len(loadout.secondary_weapons) == 1
+        assert loadout.secondary_weapons[0].name == "Nuke X"
+
+    def test_secondary_dps_preserved_in_weapon_stats(self):
+        """Secondary dps field is preserved in the WeaponStats object."""
+        sw = make_secondary_dict(name="Damage Missile", subtype="missile", dps=5.0, damage=200, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert len(loadout.secondary_weapons) == 1
+        assert loadout.secondary_weapons[0].dps == pytest.approx(5.0)

@@ -22,10 +22,11 @@ from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.criminal_repository import CriminalRepository
 from persist.repositories.item_repository import ItemRepository
 from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.combat_models import ShipLoadout
+from services.combat_models import DEFERRED_SECONDARY_SUBTYPES, ShipLoadout
 from services.combat_service import CombatService
 from services.game_constants import GameConstants, resolve_constant
 from services.game_maths import (
@@ -58,6 +59,62 @@ def _extract_weapon_combat_fields(item) -> dict:
         "loading_speed_ms": int(inner.get("loading_speed_ms", 0) or 0),
         "range_m": float(inner.get("range_m", 0.0) or 0.0),
         "subtype": inner.get("subtype", "") or "",
+    }
+
+
+def get_secondary_subtype(item) -> str:
+    """Unwrap the secondary-weapon subtype from an ORM object's extra_atts.
+
+    The subtype lives in the INNER extra_atts dict (DB nesting pattern).
+    This is the single-source implementation; shop_service imports this
+    function to avoid duplicating the unwrap logic (drift risk).
+
+    Args:
+        item: Any object with an ``extra_atts`` attribute (SecondaryWeapon ORM
+              instance, SimpleNamespace, or similar).
+
+    Returns:
+        Subtype string (e.g. ``"nuke"``, ``"missile"``), or empty string if absent.
+    """
+    outer: dict = getattr(item, "extra_atts", None) or {}
+    inner: dict = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+    return inner.get("subtype", "") if isinstance(inner, dict) else ""
+
+
+def _extract_secondary_combat_fields(item) -> dict:
+    """Extract ALL combat fields from a secondary-weapon ORM object.
+
+    Unlike ``_extract_weapon_combat_fields`` (which omits secondary-specific
+    fields and reads ``damage_per_shot``), this helper reads the ``damage``
+    column (the secondary weapon's explosion/hit damage) and also extracts
+    ``burst_count``, ``emp_damage``, ``magnitude_m``, and ``steerable`` which
+    are required for the tick resolver to fire the weapon correctly.
+
+    DB nesting pattern identical to primaries/turrets:
+        outer = item.extra_atts  (e.g. ``{"loading speed": ..., "extra_atts": {...}}``)
+        inner = outer["extra_atts"]  (snake_case combat fields live here)
+
+    Args:
+        item: SecondaryWeapon ORM instance (or SimpleNamespace with matching attrs).
+
+    Returns:
+        Dict with keys: ``damage``, ``loading_speed_ms``, ``range_m``, ``subtype``,
+        ``burst_count``, ``emp_damage``, ``magnitude_m``, ``steerable``.
+        All default to safe zero/empty values.
+    """
+    outer: dict = getattr(item, "extra_atts", None) or {}
+    inner: dict = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+    # ``damage`` comes from the ORM column (item.damage), NOT from extra_atts.
+    damage = int(getattr(item, "damage", 0) or 0)
+    return {
+        "damage": damage,
+        "loading_speed_ms": int(inner.get("loading_speed_ms", 0) or 0),
+        "range_m": float(inner.get("range_m", 0.0) or 0.0),
+        "subtype": inner.get("subtype", "") or "",
+        "burst_count": int(inner.get("burst_count", 0) or 0),
+        "emp_damage": int(inner.get("emp_damage", 0) or 0),
+        "magnitude_m": float(inner.get("magnitude_m", 0.0) or 0.0),
+        "steerable": bool(inner.get("steerable", False)),
     }
 
 
@@ -431,9 +488,11 @@ class BountyService:
                 "ship_max_primaries": 0,
                 "ship_max_modules": 0,
                 "ship_max_turrets": 0,
+                "ship_max_secondaries": 0,
                 "weapons": [],
                 "modules": [],
                 "turrets": [],
+                "secondaries": [],
                 "total_value": 0,
             }
 
@@ -490,9 +549,11 @@ class BountyService:
                 "ship_max_primaries": 0,
                 "ship_max_modules": 0,
                 "ship_max_turrets": 0,
+                "ship_max_secondaries": 0,
                 "weapons": [],
                 "modules": [],
                 "turrets": [],
+                "secondaries": [],
                 "total_value": 0,
             }
 
@@ -595,7 +656,50 @@ class BountyService:
                         equipped_turrets.append(random.choice(all_turrets))
 
         turret_value = sum(getattr(t, "value", 0) for t in equipped_turrets)
-        total_value = ship.value + weapon_value + module_value + turret_value
+
+        # ----------------------------------------------------------------
+        # Secondary weapon selection (CI-17)
+        # Subtype-aware pool: never hand out deferred subtypes or dead-weight
+        # (zero-damage) items.  Sample distinct-by-name WITHOUT replacement.
+        # Graceful empty: max_secondaries==0 or empty pool → secondaries=[]
+        # ----------------------------------------------------------------
+        equipped_secondaries: list = []
+        if getattr(ship, "max_secondaries", 0) > 0:
+            # Build candidate pool across a TL window, mirroring find_item_tl's
+            # bidirectional intent without calling it (that can return a TL
+            # populated only by deferred/dead-weight items with no fallback).
+            _sw_repo = SecondaryWeaponRepository()
+            _all_secondary = await _sw_repo.list_all(db)
+
+            # Compute TL window: prefer item_tl, search down to MIN_TECH_LEVEL
+            # then up by criminal_max_gear_upgrade (mirrors primary/turret logic).
+            _tl_candidates: list[int] = list(range(item_tl, GameConstants.MIN_TECH_LEVEL - 1, -1)) + list(
+                range(item_tl + 1, min(GameConstants.MAX_TECH_LEVEL, item_tl + _criminal_max_gear_upgrade) + 1)
+            )
+            _seen_names: set[str] = set()
+            for _sw in _all_secondary:
+                if getattr(_sw, "tech_level", -1) not in _tl_candidates:
+                    continue
+                _subtype = get_secondary_subtype(_sw)
+                if _subtype in DEFERRED_SECONDARY_SUBTYPES:
+                    continue
+                _sw_damage = int(getattr(_sw, "damage", 0) or 0)
+                if _sw_damage <= GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE:
+                    continue
+                if _sw.name not in _seen_names:
+                    _seen_names.add(_sw.name)
+                    equipped_secondaries.append(_sw)
+
+            # Sample min(max_secondaries, pool_size) distinct items WITHOUT replacement
+            n_pick = min(ship.max_secondaries, len(equipped_secondaries))
+            if n_pick > 0:
+                equipped_secondaries = random.sample(equipped_secondaries, n_pick)
+            else:
+                equipped_secondaries = []
+
+        # Knob #4: count each secondary's value ONCE per equipped type (not scaled by rounds).
+        secondary_value = sum(getattr(sw, "value", 0) for sw in equipped_secondaries)
+        total_value = ship.value + weapon_value + module_value + turret_value + secondary_value
 
         # ----------------------------------------------------------------
         # Calculate HP from base ship + modules
@@ -625,6 +729,7 @@ class BountyService:
             "ship_max_primaries": ship.max_primaries,
             "ship_max_modules": ship.max_modules,
             "ship_max_turrets": ship.max_turrets,
+            "ship_max_secondaries": getattr(ship, "max_secondaries", 0),
             "weapons": [
                 {
                     "name": w.name,
@@ -655,6 +760,17 @@ class BountyService:
                     **_extract_weapon_combat_fields(t),
                 }
                 for t in equipped_turrets
+            ],
+            "secondaries": [
+                {
+                    "name": sw.name,
+                    "emoji": getattr(sw, "emoji", None),
+                    "value": sw.value,
+                    "dps": float(getattr(sw, "dps", 0) or 0),
+                    "rounds": max(1, GameConstants.CRIMINAL_SECONDARY_ROUNDS.get(get_secondary_subtype(sw), 1)),
+                    **_extract_secondary_combat_fields(sw),
+                }
+                for sw in equipped_secondaries
             ],
             "total_value": total_value,
         }

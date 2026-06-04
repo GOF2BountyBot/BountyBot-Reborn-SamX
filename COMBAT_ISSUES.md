@@ -9,17 +9,17 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 
 ---
 
-## ▶ RESUME HERE (post-compaction 2026-06-03)
-**Next major phase = build CI-16 (consumable secondary weapons).** Full ready-to-execute dev brief:
-**[`COMBAT_CI16_PLAN.md`](COMBAT_CI16_PLAN.md)**. Run d-developer → d-tester (one subagent at a
-time). ⚠ It's in the loadout/inventory **danger zone** — dev+tester MUST read
-`services/bot-core/src/services/AGENTS.md` → "Loadout & Inventory system" and test invariants
-exhaustively ([[feedback_loadout_inventory_fragile]] in memory).
-**Then, in order:** CI-17 (criminal complete loadouts — needs architect first) → CI-6 (Shock Blast
-inert EMP) → CI-10 (`/shops/refresh` crash) → CI-11 (shop weapon-density tuning) → CI-18 (player_inv
-unique constraint) → CI-4 (live §4/§5/§6 weapon/module/edge E2E tests).
-**Closed this session:** CI-1, CI-2/9, CI-3, CI-5, CI-7, CI-12, CI-14.
-**Stack:** rebuilt & healthy (combat fixes live). **Nothing pushed** — `dev` is ~30 commits ahead.
+## ▶ RESUME HERE (2026-06-04)
+**CI-16 (consumable secondary weapons) is DONE** — architect design-lock → dev → tester (PASS),
+committed `e1b8f65` (folds in CI-13 + CI-15). **Next, in order:** CI-17 (criminal complete
+loadouts — needs architect first) → CI-6 (Shock Blast inert EMP) → CI-10 (`/shops/refresh` crash)
+→ CI-11 (shop weapon-density tuning) → CI-18 (player_inv unique constraint) → CI-4 (live §4/§5/§6
+weapon/module/edge E2E tests). ⚠ CI-17 is in the loadout/inventory **danger zone** — read
+`services/bot-core/src/services/AGENTS.md` → "Loadout & Inventory system" ([[feedback_loadout_inventory_fragile]]).
+**Not yet live-tested:** CI-16 was committed but the stack has NOT been rebuilt/redeployed since —
+rebuild + smoke-test (buy→equip→fire→deplete→/loadout shows ×N) before relying on it in Discord.
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-7, CI-12, CI-13, CI-14, CI-15, CI-16.
+**Stack:** healthy but pre-CI-16 (needs rebuild). **Nothing pushed** — `dev` is ahead of origin.
 
 ---
 
@@ -228,7 +228,14 @@ winner bug. **Also confirm w/ owner:** is Bronze guaranteed-capture-on-loss inte
 
 ---
 
-## CI-13 🔴 Nuke mechanics broken / mismatch intended design  *(found in retest 2026-06-03)*
+## CI-13 ✅ Nuke key-event label fix — DONE  *(folded into CI-16, committed `e1b8f65` 2026-06-04)*
+**Resolved:** the remaining actionable bit (the "miss" mislabel) is fixed — nuke/shock-blast key
+events are now damage-aware (detonation/damage, not "miss"). Epicenter/damage/formula were all
+confirmed correct/intended (no change). The 1-per-battle concern is subsumed by CI-16's consumable
++ cooldown model. (Full historical analysis below.)
+<details><summary>(original analysis)</summary>
+
+## CI-13 (original) 🔴 Nuke mechanics broken / mismatch intended design  *(found in retest 2026-06-03)*
 Owner spec: nukes are **AoE, guaranteed-hit, inverse-square damage from epicenter, reduced
 self-damage, ~1 use per battle.** Current state (resolver `combat_service.py:1400-1432`,
 `_nuke_dmg` line 865, seed `AMR Tormentor`):
@@ -254,6 +261,7 @@ self-damage, ~1 use per battle.** Current state (resolver `combat_service.py:140
 **Net remaining fixes (no architect needed — epicenter/damage/formula all OK):**
 (1) cooldown → 1 per battle; (2) nuke "miss" label → damage-aware ("detonated — N dmg" / "out of
 range"). dev → tester. Owner decision: 1-per-battle via long cooldown vs ammo/charges.
+</details>
 
 ---
 
@@ -265,7 +273,24 @@ tests on general_failure / a disposable player, never samx.**
 
 ---
 
-## CI-16 🔴 Secondary weapons are not CONSUMABLE  *(net-new mechanic — owner intent 2026-06-03)*
+## CI-16 ✅ Secondary weapons are CONSUMABLE — DONE & VERIFIED  *(2026-06-04)*
+**Resolved 2026-06-04; committed `e1b8f65`.** Sidecar `player_ships.secondary_ammo` JSON map
+(migration 0013, no backfill); `ammo=None`=infinite back-compat. Single post-dispatch resolver
+decrement across all 7 fire branches; `secondary_depleted` event; post-fight write-back (player
+persists + auto-unequip at 0; criminal in-fight only); preflight sims never persist. Conservation
+`owned = cargo + Σ secondary_ammo` upheld across equip/unequip/transfer/evacuate/reconcile/shop.
+**Folds in CI-13 (nuke labels damage-aware) + CI-15 (hull layer event).** Built via d-architect
+design-lock (caught 2 conservation BLOCKERs the stale plan missed — R1 ship transfer, R2 ship
+sell/evacuate) → d-developer → d-tester. Tester's 1st pass found 4 defects (reconcile/transfer/
+evacuate ammo-loss, slot-full top-up block, missing router wire-up); all fixed; 2nd pass PASS.
+Full bot-core suite green (4127 passed); 41 secondary-ammo tests incl. paranoid conservation.
+⚠ **Not yet live-tested** — committed but stack not rebuilt since; smoke-test post-rebuild.
+**LOW follow-up (tester-noted, no fix yet):** `/equip` of an already-equipped secondary with 0
+cargo returns success as a silent no-op (conserves invariant; just a misleading "success"). Spec
+clarification only — decide if it should error/no-op distinctly.
+<details><summary>(historical — owner intent + locked design)</summary>
+
+## CI-16 (original) 🔴 Secondary weapons are not CONSUMABLE  *(net-new mechanic — owner intent 2026-06-03)*
 **Owner intent:** ALL secondary weapons are consumable — firing/using one drops the equipped
 count by 1 (floor 0; "all used up"), like the EmergencySystem module. Cooldown/loading-speed
 governs cadence consistently across ALL weapons. Nukes end up ~1/battle because their cooldown
@@ -322,6 +347,7 @@ hull-depleted key event.
 📄 **Full ready-to-execute dev brief: [`COMBAT_CI16_PLAN.md`](COMBAT_CI16_PLAN.md)** (architect plan +
 file checklist + test plan). ⚠ DANGER ZONE — dev/tester MUST read
 `services/bot-core/src/services/AGENTS.md` → "Loadout & Inventory system" first.
+</details>
 
 ---
 
@@ -337,7 +363,11 @@ appropriate item selection within slot + uniqueness constraints) → architect �
 
 ---
 
-## CI-15 🟡 `/combat-log` key events miss "Hull depleted" (death)  *(found in retest)*
+## CI-15 ✅ `/combat-log` "Hull depleted" (death) event — DONE  *(folded into CI-16, committed `e1b8f65` 2026-06-04)*
+**Resolved:** added the hull branch in the resolver (emits `layer_depleted{layer:hull}` when
+`hull_was_positive and current_hull <= 0`, on true death after ES/clamp). The extractor's
+"Hull depleted (dead)" label now receives its event, so death shows in `/combat-log` key events.
+<details><summary>(original)</summary>
 The resolver (`combat_service.py:821-840`) emits `layer_depleted` events for **shield** and
 **armour** only — hull-zero terminates the fight (fight_end) without a `layer_depleted{layer:hull}`
 event. The extractor is already ready (`combat_log_service.py:49` has `"hull": "Hull depleted (dead)"`)
@@ -345,6 +375,7 @@ but never receives one, so the death milestone is absent from `/combat-log` key 
 showed only "Armour depleted", not the hull death). Fix: add a hull branch in `_apply_damage`
 mirroring the shield/armour emission (emit when `hull_was_positive and current_hull <= 0`).
 (Shield-absence for a no-shield ship is correct; armour-depleted already works.)
+</details>
 
 ---
 

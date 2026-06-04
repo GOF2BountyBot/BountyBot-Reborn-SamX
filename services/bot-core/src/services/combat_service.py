@@ -195,7 +195,7 @@ class _EmergencySystemRuntime:
 class _CombatantState:
     """Per-side mutable runtime state for TickResolver. Not frozen — mutated every tick."""
 
-    name: str
+    name: str  # ship_name byte-for-byte — used for stats/damage attribution (DO NOT change)
     loadout: ShipLoadout
     is_player: bool
     # HP layers (integer storage; overkill may go transiently negative before step 4b clamp)
@@ -218,6 +218,12 @@ class _CombatantState:
     # Carry-forward state for T7
     manual_turret_mode: bool
     emergency_system_consumed: bool  # legacy field — superseded by es_runtime; kept for compat
+    # CI-20: slot (1|2) + pilot/criminal display label for thread/embed naming.
+    # display_name defaults to ship_name so preflight/sim callers are unchanged.
+    slot: int = 1
+    display_name: str = ""  # populated by _init_combatant (defaults to ship_name)
+    # CI-21: tracks which layers have fired layer_depleted since last meaningful recovery.
+    depleted_layers: set = field(default_factory=set)
     # T4: scanner tier precomputed at combatant init; pilot accuracy recomputed every tick
     scanner_tier: ScannerTier = field(
         default_factory=lambda: ScannerTier(tier="A", accuracy_bonus_pp=0.0, missile_tracking_active=False)
@@ -244,12 +250,22 @@ class _CombatantState:
     es_runtime: _EmergencySystemRuntime | None = None
 
 
-def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState:
+def _init_combatant(
+    loadout: ShipLoadout,
+    *,
+    is_player: bool,
+    slot: int = 1,
+    display_name: str = "",
+) -> _CombatantState:
     """Build combatant runtime state from a ShipLoadout.
 
     Called once before the tick loop begins (§1 implementation note).
     All weapons enter at cooldown_remaining = 0; all HP layers start at max;
     all regen accumulators are dormant (layers at max).
+
+    CI-20: ``slot`` (1|2) and ``display_name`` (pilot/criminal label) are threaded
+    through as new fields. ``name`` remains = ship_name byte-for-byte.
+    ``display_name`` defaults to ``loadout.ship_name`` if not provided.
     """
     tick_ms = GameConstants.TICK_MS
 
@@ -428,6 +444,8 @@ def _init_combatant(loadout: ShipLoadout, *, is_player: bool) -> _CombatantState
         name=loadout.ship_name,
         loadout=loadout,
         is_player=is_player,
+        slot=slot,
+        display_name=display_name if display_name else loadout.ship_name,
         max_shield=max_shield,
         current_shield=max_shield,
         max_armour=max_armour,
@@ -478,13 +496,19 @@ def _tick_shield_regen(state: _CombatantState, tick: int, events: list[CombatEve
                         type=CombatEventType.regen,
                         actor=state.name,
                         target=None,
-                        data={"layer": "shield", "amount": 1, "hp_after": state.current_shield},
+                        data={"layer": "shield", "amount": 1, "hp_after": state.current_shield, "side": state.slot},
                     )
                 )
 
     # Discard partial accumulation when shield returns to max
     if state.current_shield >= state.max_shield:
         state.shield_regen_accumulators = [0] * len(state.shield_regen_schedules)
+
+    # CI-21: clear depleted_layers latch for shield when meaningful recovery achieved
+    if state.max_shield > 0 and "shield" in state.depleted_layers and (
+        state.current_shield >= math.ceil(state.max_shield * GameConstants.COMBAT_LAYER_REEMIT_FRACTION)
+    ):
+        state.depleted_layers.discard("shield")
 
 
 def _tick_repair_bot_regen(state: _CombatantState, tick: int, events: list[CombatEvent]) -> None:
@@ -518,7 +542,7 @@ def _tick_repair_bot_regen(state: _CombatantState, tick: int, events: list[Comba
                     type=CombatEventType.regen,
                     actor=state.name,
                     target=None,
-                    data={"layer": "hull", "amount": hull_add, "hp_after": state.current_hull},
+                    data={"layer": "hull", "amount": hull_add, "hp_after": state.current_hull, "side": state.slot},
                 )
             )
 
@@ -534,13 +558,27 @@ def _tick_repair_bot_regen(state: _CombatantState, tick: int, events: list[Comba
                         type=CombatEventType.regen,
                         actor=state.name,
                         target=None,
-                        data={"layer": "armour", "amount": armour_add, "hp_after": state.current_armour},
+                        data={
+                            "layer": "armour", "amount": armour_add,
+                            "hp_after": state.current_armour, "side": state.slot,
+                        },
                     )
                 )
 
     # Discard partial when both layers are back at max
     if state.current_hull >= state.max_hull and state.current_armour >= state.max_armour:
         state.repair_bot_regen_accumulator = 0.0
+
+    # CI-21: clear depleted_layers latch for hull/armour when meaningful recovery achieved
+    _reemit_frac = GameConstants.COMBAT_LAYER_REEMIT_FRACTION
+    if state.max_hull > 0 and "hull" in state.depleted_layers and (
+        state.current_hull >= math.ceil(state.max_hull * _reemit_frac)
+    ):
+        state.depleted_layers.discard("hull")
+    if state.max_armour > 0 and "armour" in state.depleted_layers and (
+        state.current_armour >= math.ceil(state.max_armour * _reemit_frac)
+    ):
+        state.depleted_layers.discard("armour")
 
 
 def _compute_hp_pct(state: _CombatantState) -> float:
@@ -595,7 +633,7 @@ def _tick_module_effects(state: _CombatantState, tick: int, events: list[CombatE
                         type=CombatEventType.cooldown_end,
                         actor=state.name,
                         target=None,
-                        data={"system": mod_rt.stats.name},
+                        data={"system": mod_rt.stats.name, "side": state.slot},
                     )
                 )
 
@@ -635,7 +673,7 @@ def _eval_hp_threshold_modules(
                             type=CombatEventType.module_activation,
                             actor=state.name,
                             target=None,
-                            data={"module": "cloak", "trigger_hp_pct": threshold},
+                            data={"module": "cloak", "trigger_hp_pct": threshold, "side": state.slot},
                         )
                     )
                 # else: threshold consumed but not activated (cooling or active or count cap)
@@ -658,7 +696,7 @@ def _eval_hp_threshold_modules(
                             type=CombatEventType.module_activation,
                             actor=state.name,
                             target=None,
-                            data={"module": "booster", "trigger_hp_pct": threshold},
+                            data={"module": "booster", "trigger_hp_pct": threshold, "side": state.slot},
                         )
                     )
 
@@ -707,7 +745,7 @@ def _eval_emergency_system(
             type=CombatEventType.module_activation,
             actor=state.name,
             target=None,
-            data={"module": "emergency_system"},
+            data={"module": "emergency_system", "side": state.slot},
             # trigger_hp_pct intentionally OMITTED per §12 / locked decision Q5
         )
     )
@@ -758,6 +796,7 @@ def _apply_damage(
                     },
                     "source": source,
                     "blocked_by": "emergency_system_invuln",
+                    "side": state.slot,  # CI-20: target slot for unambiguous display
                 },
             )
         )
@@ -819,32 +858,37 @@ def _apply_damage(
                     "hull": state.current_hull,
                 },
                 "source": source,
+                "side": state.slot,  # CI-20: target slot for HP-milestone synthesis (CI-22)
             },
         )
     )
 
     # layer_depleted — shield first, then armour (hull depletion → termination at step 8)
-    if shield_was_positive and state.current_shield <= 0:
+    # CI-21: emit only if NOT already in depleted_layers (emission-side latch).
+    # Hull is terminal (emits once on death) — not latched; it can only deplete once per fight.
+    if shield_was_positive and state.current_shield <= 0 and "shield" not in state.depleted_layers:
+        state.depleted_layers.add("shield")
         events.append(
             CombatEvent(
                 tick=tick,
                 type=CombatEventType.layer_depleted,
                 actor=state.name,
                 target=None,
-                data={"layer": "shield"},
+                data={"layer": "shield", "side": state.slot},
             )
         )
-    if armour_was_positive and state.current_armour <= 0:
+    if armour_was_positive and state.current_armour <= 0 and "armour" not in state.depleted_layers:
+        state.depleted_layers.add("armour")
         events.append(
             CombatEvent(
                 tick=tick,
                 type=CombatEventType.layer_depleted,
                 actor=state.name,
                 target=None,
-                data={"layer": "armour"},
+                data={"layer": "armour", "side": state.slot},
             )
         )
-    # CI-15: hull depletion — only on true death (hull goes from positive to ≤0)
+    # CI-15: hull depletion — only on true death (hull goes from positive to ≤0); emits once
     if hull_was_positive and state.current_hull <= 0:
         events.append(
             CombatEvent(
@@ -852,7 +896,7 @@ def _apply_damage(
                 type=CombatEventType.layer_depleted,
                 actor=state.name,
                 target=None,
-                data={"layer": "hull"},
+                data={"layer": "hull", "side": state.slot},
             )
         )
 
@@ -957,40 +1001,59 @@ def _build_fight_summary(
             final_hp["1"] = dict(raw_final.get("c1", {}))
             final_hp["2"] = dict(raw_final.get("c2", {}))
 
-    # Per-combatant accumulators
-    # Key: combatant name → values
-    c1_name = c1.name
-    c2_name = c2.name
+    # Per-combatant accumulators — CI-24: keyed on SLOT (1/2) not ship name so same-ship
+    # fights accumulate stats per-side correctly. Ship name is still stored for display.
+    # Build a name→slot map for attacker/target lookups (still ship_name in events).
+    _name_to_slot: dict[str, int] = {}
+    # When both ships share a name, the map would collide; we handle that by using
+    # data["side"] directly when available, falling back to name-match.
+    # For the accumulators themselves we always key on slot ("1"/"2").
+    c1_slot = "1"
+    c2_slot = "2"
+    _name_to_slot[c1.name] = 1
+    if c2.name != c1.name:
+        _name_to_slot[c2.name] = 2
 
-    shots_fired: dict[str, int] = {c1_name: 0, c2_name: 0}
-    shots_hit: dict[str, int] = {c1_name: 0, c2_name: 0}
-    module_activations: dict[str, dict[str, int]] = {c1_name: {}, c2_name: {}}
-    secondary_fired: dict[str, dict[str, int]] = {c1_name: {}, c2_name: {}}
-    damage_dealt: dict[str, int] = {c1_name: 0, c2_name: 0}
-    damage_taken: dict[str, int] = {c1_name: 0, c2_name: 0}
+    shots_fired: dict[str, int] = {c1_slot: 0, c2_slot: 0}
+    shots_hit: dict[str, int] = {c1_slot: 0, c2_slot: 0}
+    module_activations: dict[str, dict[str, int]] = {c1_slot: {}, c2_slot: {}}
+    secondary_fired: dict[str, dict[str, int]] = {c1_slot: {}, c2_slot: {}}
+    damage_dealt: dict[str, int] = {c1_slot: 0, c2_slot: 0}
+    damage_taken: dict[str, int] = {c1_slot: 0, c2_slot: 0}
+
+    def _slot_from_event(ev: CombatEvent) -> str | None:
+        """Resolve actor's slot from event. Prefers data['side']; falls back to name→slot."""
+        side = ev.data.get("side") if ev.data else None
+        if side is not None:
+            return str(side)
+        actor = ev.actor
+        if actor is None:
+            return None
+        slot = _name_to_slot.get(actor)
+        return str(slot) if slot is not None else None
 
     # Discrete activation modules tracked in summary (§12 / §13)
     _ACTIVATION_MODULES = frozenset({"cloak", "booster", "emergency_system"})
 
     for ev in events:
         if ev.type == CombatEventType.weapon_fire:
-            actor = ev.actor
-            if actor in shots_fired:
-                shots_fired[actor] += 1
+            ev_slot = _slot_from_event(ev)
+            if ev_slot in shots_fired:
+                shots_fired[ev_slot] += 1
                 if ev.data.get("hit") is True:
-                    shots_hit[actor] += 1
-            # secondary_fired — count by subtype for secondaries (slot == "secondary")
-            if ev.data.get("slot") == "secondary" and actor in secondary_fired:
+                    shots_hit[ev_slot] += 1
+            # secondary_fired — count by subtype for secondaries (data["slot"] == "secondary")
+            if ev.data.get("slot") == "secondary" and ev_slot in secondary_fired:
                 sub = ev.data.get("subtype", "")
                 if sub:
-                    secondary_fired[actor][sub] = secondary_fired[actor].get(sub, 0) + 1
+                    secondary_fired[ev_slot][sub] = secondary_fired[ev_slot].get(sub, 0) + 1
 
         elif ev.type == CombatEventType.module_activation:
-            actor = ev.actor
-            if actor in module_activations:
+            ev_slot = _slot_from_event(ev)
+            if ev_slot in module_activations:
                 mod_key = ev.data.get("module", "")
                 if mod_key in _ACTIVATION_MODULES:
-                    module_activations[actor][mod_key] = module_activations[actor].get(mod_key, 0) + 1
+                    module_activations[ev_slot][mod_key] = module_activations[ev_slot].get(mod_key, 0) + 1
 
         elif ev.type == CombatEventType.damage:
             # damage_dealt attribution: actor is None on damage events; attacker lives in data.source.attacker
@@ -1000,30 +1063,44 @@ def _build_fight_summary(
             absorbed_hp = ev.data.get("absorbed", 0)
             if absorbed_hp > 0:
                 source = ev.data.get("source", {})
-                attacker = source.get("attacker")
-                target = ev.target
-                if attacker in damage_dealt:
-                    damage_dealt[attacker] += absorbed_hp
-                if target in damage_taken:
-                    damage_taken[target] += absorbed_hp
+                attacker_name = source.get("attacker")
+                # Resolve attacker slot from data["side"] (target) then name fallback for attacker
+                # damage events have data["side"] = target's slot; attacker slot = the other one
+                target_side = ev.data.get("side")
+                if target_side is not None:
+                    att_slot = c2_slot if str(target_side) == c1_slot else c1_slot
+                elif attacker_name is not None:
+                    _raw = _name_to_slot.get(attacker_name)
+                    att_slot = str(_raw) if _raw is not None else None
+                else:
+                    att_slot = None
+                # target slot from data["side"]
+                tgt_slot = str(target_side) if target_side is not None else None
+                if tgt_slot is None and ev.target is not None:
+                    _raw_t = _name_to_slot.get(ev.target)
+                    tgt_slot = str(_raw_t) if _raw_t is not None else None
+                if att_slot in damage_dealt:
+                    damage_dealt[att_slot] += absorbed_hp
+                if tgt_slot in damage_taken:
+                    damage_taken[tgt_slot] += absorbed_hp
 
-    def _combatant_block(name: str, key: str) -> dict:
-        """Build per-combatant summary block."""
-        fired = shots_fired[name]
-        hit = shots_hit[name]
+    def _combatant_block(cx: _CombatantState, slot_key: str) -> dict:
+        """Build per-combatant summary block (CI-24: keyed on slot, not name)."""
+        fired = shots_fired[slot_key]
+        hit = shots_hit[slot_key]
         acc = (hit / fired) if fired > 0 else 0.0
         return {
-            "name": name,
-            "ship": c1.loadout.ship_name if name == c1_name else c2.loadout.ship_name,
-            "start_hp": start_hp.get(key, {"shield": 0, "armour": 0, "hull": 0}),
-            "final_hp": final_hp.get(key, {"shield": 0, "armour": 0, "hull": 0}),
-            "damage_dealt": damage_dealt[name],
-            "damage_taken": damage_taken[name],
+            "name": cx.display_name,   # CI-20: pilot/criminal label (defaults to ship_name)
+            "ship": cx.loadout.ship_name,
+            "start_hp": start_hp.get(slot_key, {"shield": 0, "armour": 0, "hull": 0}),
+            "final_hp": final_hp.get(slot_key, {"shield": 0, "armour": 0, "hull": 0}),
+            "damage_dealt": damage_dealt[slot_key],
+            "damage_taken": damage_taken[slot_key],
             "shots_fired": fired,
             "shots_hit": hit,
             "accuracy": acc,
-            "module_activations": dict(module_activations[name]),  # sparse — only keys that fired ≥1
-            "secondary_fired": dict(secondary_fired[name]),  # sparse — only subtypes that fired ≥1
+            "module_activations": dict(module_activations[slot_key]),  # sparse — only keys that fired ≥1
+            "secondary_fired": dict(secondary_fired[slot_key]),  # sparse — only subtypes that fired ≥1
         }
 
     return {
@@ -1032,8 +1109,8 @@ def _build_fight_summary(
         "duration_ticks": duration_ticks,
         "winner": winner_name,
         "combatants": {
-            "1": _combatant_block(c1_name, "1"),
-            "2": _combatant_block(c2_name, "2"),
+            "1": _combatant_block(c1, c1_slot),
+            "2": _combatant_block(c2, c2_slot),
         },
     }
 
@@ -1068,6 +1145,8 @@ class TickResolver:
         pvc_damage_reduction: float = 0.0,
         guild_config=None,
         rng: random.Random | None = None,
+        combatant1_label: str = "",
+        combatant2_label: str = "",
     ) -> FightResults:
         """Run a full tick-based fight between two ShipLoadouts.
 
@@ -1080,6 +1159,9 @@ class TickResolver:
                  precedence over any seed passed to the constructor. Pass exactly one;
                  passing both is allowed but rng= wins. None (default) falls back to
                  the constructor's self._rng (seeded via TickResolver(seed=...)).
+            combatant1_label: CI-20 display label for C1 (pilot/player name). Defaults
+                              to ship_name when empty — preflight/sim paths unchanged.
+            combatant2_label: CI-20 display label for C2 (criminal/opponent name). Same default.
 
         Returns:
             FightResults with combat_log timeline and metadata block.
@@ -1108,8 +1190,10 @@ class TickResolver:
         _base_speed_mps = float(GameConstants.BASE_SHIP_SPEED_MPS)
 
         # --- Combatant init (§1: separate from tick loop) ---
-        c1 = _init_combatant(loadout1, is_player=(pvc_damage_reduction > 0.0))
-        c2 = _init_combatant(loadout2, is_player=False)
+        c1 = _init_combatant(
+            loadout1, is_player=(pvc_damage_reduction > 0.0), slot=1, display_name=combatant1_label
+        )
+        c2 = _init_combatant(loadout2, is_player=False, slot=2, display_name=combatant2_label)
 
         current_distance = float(GameConstants.STARTING_DISTANCE_M)
         events: list[CombatEvent] = []
@@ -1124,13 +1208,17 @@ class TickResolver:
                 data={
                     "combatants": [
                         {
-                            "name": c1.name,
+                            "name": c1.name,           # ship_name byte-for-byte
+                            "display_name": c1.display_name,  # CI-20: pilot/player label
                             "ship": c1.loadout.ship_name,
+                            "slot": c1.slot,
                             "hp": {"shield": c1.current_shield, "armour": c1.current_armour, "hull": c1.current_hull},
                         },
                         {
                             "name": c2.name,
+                            "display_name": c2.display_name,
                             "ship": c2.loadout.ship_name,
+                            "slot": c2.slot,
                             "hp": {"shield": c2.current_shield, "armour": c2.current_armour, "hull": c2.current_hull},
                         },
                     ],
@@ -1199,7 +1287,7 @@ class TickResolver:
                                 type=CombatEventType.cooldown_end,
                                 actor=_cs.name,
                                 target=None,
-                                data={"system": _pw.name},
+                                data={"system": _pw.name, "side": _cs.slot},
                             )
                         )
                 # T6: secondary weapon cooldowns (mirror of primary path above)
@@ -1213,7 +1301,7 @@ class TickResolver:
                                 type=CombatEventType.cooldown_end,
                                 actor=_cs.name,
                                 target=None,
-                                data={"system": _sw.name},
+                                data={"system": _sw.name, "side": _cs.slot},
                             )
                         )
                 # T7: turret cooldowns (non-plasma only — plasma-collectors not in effective_turrets)
@@ -1228,7 +1316,7 @@ class TickResolver:
                                 type=CombatEventType.cooldown_end,
                                 actor=_cs.name,
                                 target=None,
-                                data={"system": _tw.name},
+                                data={"system": _tw.name, "side": _cs.slot},
                             )
                         )
                 # weapon_cooldowns is now empty (turrets moved to effective_turrets in T7).
@@ -1291,6 +1379,7 @@ class TickResolver:
                                     "weapon": _pw.name,
                                     "hit": _hit,
                                     "accuracy": _acc,
+                                    "side": _attacker.slot,  # CI-20: attacker slot
                                 },
                             )
                         )
@@ -1344,6 +1433,7 @@ class TickResolver:
                                     "weapon": _sw.name,
                                     "hit": _hit_r,
                                     "accuracy": _acc_r,
+                                    "side": _attacker.slot,  # CI-20
                                 },
                             )
                         )
@@ -1374,6 +1464,7 @@ class TickResolver:
                                     "hit": _hit_m,
                                     "accuracy": _acc_m,
                                     "branch": _branch,
+                                    "side": _attacker.slot,  # CI-20
                                 },
                             )
                         )
@@ -1410,6 +1501,7 @@ class TickResolver:
                                     "total_damage": _k * _sw.damage_per_shot,
                                     "branch": _cbranch,
                                     "accuracy": _acc_c,
+                                    "side": _attacker.slot,  # CI-20
                                 },
                             )
                         )
@@ -1443,6 +1535,7 @@ class TickResolver:
                                     "d_opponent": _d_opp,
                                     "opponent_damage": _opp_dmg_int,
                                     "self_damage": _self_dmg_int,
+                                    "side": _attacker.slot,  # CI-20
                                 },
                             )
                         )
@@ -1467,6 +1560,7 @@ class TickResolver:
                                     "hit": True,
                                     "accuracy": 1.0,
                                     "damage": 0,
+                                    "side": _attacker.slot,  # CI-20
                                 },
                             )
                         )
@@ -1497,6 +1591,7 @@ class TickResolver:
                                     "hit": _hit_ion,
                                     "accuracy": _acc_ion,
                                     "branch": _branch_ion,
+                                    "side": _attacker.slot,  # CI-20
                                 },
                             )
                         )
@@ -1520,7 +1615,7 @@ class TickResolver:
                                     type=CombatEventType.secondary_depleted,
                                     actor=_attacker.name,
                                     target=None,
-                                    data={"weapon": _sw.name, "subtype": _sw.subtype},
+                                    data={"weapon": _sw.name, "subtype": _sw.subtype, "side": _attacker.slot},
                                 )
                             )
 
@@ -1566,6 +1661,7 @@ class TickResolver:
                                 "weapon": _tw.name,
                                 "hit": _tw_hit,
                                 "accuracy": _tw_acc,
+                                "side": _attacker.slot,  # CI-20
                             },
                         )
                     )
@@ -1602,6 +1698,7 @@ class TickResolver:
                                 "weapon": _tw.name,
                                 "hit": _mt_hit,
                                 "accuracy": _mt_acc,
+                                "side": _attacker.slot,  # CI-20
                             },
                         )
                     )
@@ -1750,7 +1847,7 @@ class TickResolver:
                             type=CombatEventType.distance,
                             actor=_sb_att.name,
                             target=None,
-                            data={"from": _sb_from, "to": _sb_new_dist, "cause": "shock_blast"},
+                            data={"from": _sb_from, "to": _sb_new_dist, "cause": "shock_blast", "side": _sb_att.slot},
                         )
                     )
             else:
@@ -1772,7 +1869,12 @@ class TickResolver:
                                     type=CombatEventType.distance,
                                     actor=_bcs.name,
                                     target=None,
-                                    data={"from": _old_d_b, "to": current_distance, "cause": "booster_push"},
+                                    data={
+                                        "from": _old_d_b,
+                                        "to": current_distance,
+                                        "cause": "booster_push",
+                                        "side": _bcs.slot,
+                                    },
                                 )
                             )
                 if not _booster_active_any:
@@ -2125,6 +2227,9 @@ class CombatService:
         guild_id: int | None = None,
         combatant1_user_id: int | None = None,
         combatant2_user_id: int | None = None,
+        # CI-20: display labels for thread naming / dropdown
+        combatant1_label: str = "",
+        combatant2_label: str = "",
     ) -> FightResults:
         """Simulate a fight between two ship loadouts via TickResolver.
 
@@ -2162,6 +2267,8 @@ class CombatService:
             loadout2,
             pvc_damage_reduction=pvc_damage_reduction,
             guild_config=guild_config,
+            combatant1_label=combatant1_label,
+            combatant2_label=combatant2_label,
         )
 
         if not log_result:

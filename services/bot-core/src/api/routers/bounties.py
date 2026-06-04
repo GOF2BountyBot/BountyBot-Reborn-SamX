@@ -219,6 +219,12 @@ async def combat_bonus(
             player_loadout = await LoadoutBuilder.from_player(db, request.player_id)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(request.criminal_ship)
 
+            # CI-20: resolve display labels for combat-log thread naming
+            from services.bounty_service import _resolve_combat_label
+
+            _player_label = await _resolve_combat_label(db, player)
+            _criminal_label = request.criminal_ship.get("criminal_name") or criminal_loadout.ship_name
+
             # Run combat via TickResolver (T10: async, persists combat_log, increments Player stats)
             combat_svc = CombatService()
             fight_results = await combat_svc.fight_ships(  # noqa: TRANSACTION_DISCIPLINE — fight_ships owns its commit via CombatLogService.persist
@@ -231,6 +237,8 @@ async def combat_bonus(
                 guild_id=player.guild_id,
                 combatant1_user_id=player.user_id,
                 combatant2_user_id=None,  # NPC side
+                combatant1_label=_player_label,
+                combatant2_label=_criminal_label,
             )
 
             # Determine outcome (stalemate = player wins for bounties)

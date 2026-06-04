@@ -242,6 +242,32 @@ class TestBattleAutocomplete:
         choices = await cog.battle_autocomplete(interaction, current="")
         assert len(choices) <= 25
 
+    async def test_choice_label_full_x_vs_y_format(self, cog):
+        """CI-20: when combatant1_name and combatant2_name are both present the label
+        uses the full 'SamX vs H'Soc' format rather than the old 'vs <opponent>' fallback.
+        """
+        item = {
+            "id": 42,
+            "guild_id": 699744305274945650,
+            "context": "duel",
+            "opponent_name": "H'Soc",
+            "combatant1_name": "SamX",
+            "combatant2_name": "H'Soc",
+            "outcome": "won",
+            "created_at": "2026-06-03T12:00:00+00:00",
+            "ordinal": 1,
+        }
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response([item]))
+        interaction = _create_interaction()
+
+        choices = await cog.battle_autocomplete(interaction, current="")
+        assert len(choices) == 1
+        label = choices[0].name
+        # Full format must include both combatant names separated by " vs "
+        assert "SamX vs H'Soc" in label, (
+            f"Expected 'SamX vs H\\'Soc' in label but got: {label!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests: /combat-log command

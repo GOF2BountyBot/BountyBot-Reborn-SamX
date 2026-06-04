@@ -182,12 +182,15 @@ class CombatLogService:
         result: list[dict] = []
         for row in rows:
             opponent_name, outcome = self._pov_outcome(row, user_id)
+            # CI-20: include both combatant names so the cog can render "X vs Y" format
             result.append(
                 {
                     "id": row.id,
                     "guild_id": row.guild_id,
                     "context": row.context,
                     "opponent_name": opponent_name,
+                    "combatant1_name": row.combatant1_name,
+                    "combatant2_name": row.combatant2_name,
                     "outcome": outcome,
                     "created_at": row.created_at,
                     "ordinal": 1,  # filled in below
@@ -253,7 +256,7 @@ class CombatLogService:
         c1 = self._parse_combatant(combatants_map.get("1", {}))
         c2 = self._parse_combatant(combatants_map.get("2", {}))
 
-        key_events = self._extract_key_events(timeline, tick_ms)
+        key_events = self._extract_key_events(timeline, tick_ms, combatants_map=combatants_map)
 
         flogger.info(f"get_detail: battle_id={battle_id} user_id={user_id} outcome={outcome!r}")
         return {
@@ -284,9 +287,9 @@ class CombatLogService:
     def _pov_outcome(row: CombatLog, user_id: int) -> tuple[str, str]:
         """Return (opponent_name, outcome) from a given user's point of view.
 
-        Determines which slot the user occupies (c1 or c2), then reads the
-        structured data.summary.winner key to decide outcome.  Never relies on
-        string-matching winner_name against ship names (both ships can share a name).
+        Determines which slot the user occupies (c1 or c2), then reads
+        final_hp from summary.combatants to unambiguously determine the winner
+        even when both ships share a name.
 
         Returns:
             opponent_name: the OTHER combatant's ship name.
@@ -307,20 +310,13 @@ class CombatLogService:
             user_slot = "2"
             opponent_name = row.combatant1_name
 
-        # Read the structured winner from data.summary.combatants
-        # The "winner" key in summary is a ship NAME (ambiguous when both ships share a name).
-        # Instead use summary.combatants[slot] to find who won via process-of-elimination:
-        # if summary.winner == c1.name, slot "1" won; else slot "2" won.
+        # Use final_hp stored in summary.combatants to unambiguously determine
+        # which slot died.  String-matching winner against ship names is unreliable
+        # when both ships share a name — the hull-based check is authoritative.
         data = row.data or {}
         summary = data.get("summary", {})
         combatants_map = summary.get("combatants", {})
-        c1_name = combatants_map.get("1", {}).get("name", "")
-        c2_name = combatants_map.get("2", {}).get("name", "")
-        winner_ship = summary.get("winner", "")
 
-        # Determine which slot is the winner
-        # "winner" in summary is the ship name of the winner.
-        # Use final_hp to unambiguously determine which slot died:
         c1_hull = combatants_map.get("1", {}).get("final_hp", {}).get("hull", 1)
         c2_hull = combatants_map.get("2", {}).get("final_hp", {}).get("hull", 1)
 
@@ -329,17 +325,9 @@ class CombatLogService:
         elif c2_hull <= 0 and c1_hull > 0:
             winner_slot = "1"
         else:
-            # Fallback: compare winner_ship name to slot names
-            # This handles the case where both ships survive (time cap / draw handled by is_stalemate)
-            # or when final_hp is not populated.
-            if winner_ship == c1_name and winner_ship != c2_name:
-                winner_slot = "1"
-            elif winner_ship == c2_name and winner_ship != c1_name:
-                winner_slot = "2"
-            else:
-                # Ambiguous: fall back to row.winner_name matching slot names isn't reliable.
-                # Use c1_hull vs c2_hull as a tiebreaker — higher surviving hull wins.
-                winner_slot = "1" if c1_hull >= c2_hull else "2"
+            # Both hulls positive (or final_hp absent): use c1_hull vs c2_hull
+            # as a tiebreaker — higher surviving hull wins.
+            winner_slot = "1" if c1_hull >= c2_hull else "2"
 
         outcome = "won" if winner_slot == user_slot else "lost"
         return opponent_name, outcome
@@ -363,17 +351,58 @@ class CombatLogService:
         }
 
     @staticmethod
-    def _extract_key_events(timeline: list[dict], tick_ms: int = _TICK_MS) -> list[dict]:
+    def _extract_key_events(
+        timeline: list[dict],
+        tick_ms: int = _TICK_MS,
+        combatants_map: dict | None = None,
+    ) -> list[dict]:
         """Condense the full timeline into notable highlight events.
 
-        Included events:
-          - weapon_fire where data.slot != "primary" (secondary weapons)
-          - module_activation events
-          - layer_depleted events (shield/armour/hull per combatant)
+        CI-22: Now includes Tier-A baseline lines (engagement, first-hit per side, outcome)
+        and Tier-C HP-milestone lines (50%/25% per side), synthesised from fight_start,
+        weapon_fire, damage and fight_end events — no new resolver event types needed.
 
-        Primary weapon fires (~1800 events) are deliberately excluded.
+        CI-20: Uses data["side"] → combatants_map to resolve actor labels. Falls back to
+        raw actor string when side is absent (old rows / no combatants_map).
+
+        Included events (in tick order):
+          - fight_start → Engagement line (Tier A baseline)
+          - first weapon_fire hit per side → First-hit line (Tier A baseline)
+          - damage → per-side 50%/25% HP milestone lines (Tier C) — crossed only once each
+          - secondary weapon_fire events
+          - module_activation events
+          - layer_depleted events
+          - secondary_depleted events
+          - fight_end → Outcome line (Tier A baseline)
+
+        All events are sorted by tick before the caller's 1024-char truncation so baseline
+        lines are not starved by heavy secondary/module event volume.
         """
+        _cmap = combatants_map or {}
+
+        def _label_for_side(side_val) -> str | None:
+            """Resolve display label from slot number via combatants_map."""
+            if side_val is None:
+                return None
+            return _cmap.get(str(side_val), {}).get("name")
+
+        def _actor_label(actor: str | None, data: dict) -> str:
+            """Resolve the best display label for an actor."""
+            side = data.get("side")
+            label = _label_for_side(side)
+            return label if label else (actor or "?")
+
         key_events: list[dict] = []
+
+        # --- Per-side HP tracking for milestones (Tier C) ---
+        # Each side starts at None (not-yet-seen); once start_hp is known from fight_start,
+        # we track per-side total HP and milestone crossing.
+        _start_total: dict[str, int] = {}     # slot str → total start HP
+        _milestone_fired: dict[str, set] = {"1": set(), "2": set()}  # slot → {50, 25}
+
+        # --- First-hit-per-side tracking (Tier A) ---
+        _first_hit_done: set[str] = set()     # set of slot strs that have had first hit
+
         for ev in timeline:
             ev_type = ev.get("type", "")
             tick = int(ev.get("tick", 0))
@@ -381,12 +410,60 @@ class CombatLogService:
             actor = ev.get("actor")
             data = ev.get("data", {}) or {}
 
+            # ----------------------------------------------------------------
+            # Tier A: fight_start → Engagement line
+            # ----------------------------------------------------------------
+            if ev_type == "fight_start":
+                combatants_data = data.get("combatants", [])
+                if len(combatants_data) >= 2:
+                    c1d = combatants_data[0]
+                    c2d = combatants_data[1]
+                    c1_label = c1d.get("display_name") or c1d.get("name", "?")
+                    c2_label = c2d.get("display_name") or c2d.get("name", "?")
+                    c1_ship = c1d.get("ship", c1d.get("name", "?"))
+                    c2_ship = c2d.get("ship", c2d.get("name", "?"))
+                    dist_m = data.get("initial_distance", 0)
+                    # Pre-populate start_hp for milestone tracking
+                    for i, cbd in enumerate(combatants_data):
+                        s_key = str(i + 1)
+                        hp = cbd.get("hp", {})
+                        total = hp.get("hull", 0) + hp.get("armour", 0) + hp.get("shield", 0)
+                        _start_total[s_key] = total
+                    key_events.append({
+                        "tick": tick,
+                        "time_s": time_s,
+                        "actor": None,
+                        "event_type": "Engagement",
+                        "detail": (
+                            f"Engagement: {c1_label} ({c1_ship}) vs {c2_label} ({c2_ship}) — {int(dist_m)}m"
+                        ),
+                    })
+                continue  # don't fall through to other branches
+
+            # ----------------------------------------------------------------
+            # Tier A: weapon_fire hit → first-hit per side (primary OR secondary)
+            # ----------------------------------------------------------------
             if ev_type == "weapon_fire":
-                slot = data.get("slot", "")
+                side_val = data.get("side")
+                slot_str = str(side_val) if side_val is not None else None
+                if slot_str and slot_str not in _first_hit_done and data.get("hit") is True:
+                    _first_hit_done.add(slot_str)
+                    a_label = _actor_label(actor, data)
+                    weapon_name = data.get("weapon", "weapon")
+                    key_events.append({
+                        "tick": tick,
+                        "time_s": time_s,
+                        "actor": actor,
+                        "event_type": "First hit",
+                        "detail": f"{a_label} scores first hit with {weapon_name}",
+                    })
+
+                # Secondary weapon fire events (existing logic)
+                slot_field = data.get("slot", "")
                 subtype = data.get("subtype", "")
-                if slot != "primary" and subtype in _SECONDARY_SUBTYPES:
+                if slot_field != "primary" and subtype in _SECONDARY_SUBTYPES:
+                    a_label = _actor_label(actor, data)
                     weapon = data.get("weapon", "unknown weapon")
-                    # CI-13: subtype-aware hit label (nuke → "detonated", shock-blast → "distance reset")
                     if subtype == "nuke":
                         opp_dmg = data.get("opponent_damage", 0)
                         self_dmg = data.get("self_damage", 0)
@@ -396,55 +473,138 @@ class CombatLogService:
                     else:
                         hit = data.get("hit", False)
                         hit_str = "hit" if hit else "miss"
-                    key_events.append(
-                        {
-                            "tick": tick,
-                            "time_s": time_s,
-                            "actor": actor,
-                            "event_type": f"Secondary fire ({subtype})",
-                            "detail": f"{actor} fired {weapon} — {hit_str}",
-                        }
-                    )
-
-            elif ev_type == "secondary_depleted":
-                # CI-16: secondary weapon ran out of ammo
-                weapon = data.get("weapon", "unknown weapon")
-                key_events.append(
-                    {
+                    key_events.append({
                         "tick": tick,
                         "time_s": time_s,
                         "actor": actor,
-                        "event_type": "Secondary depleted",
-                        "detail": f"{actor} ran out of {weapon}",
-                    }
-                )
+                        "event_type": f"Secondary fire ({subtype})",
+                        "detail": f"{a_label} fired {weapon} — {hit_str}",
+                    })
+                continue
 
-            elif ev_type == "module_activation":
+            # ----------------------------------------------------------------
+            # Tier C: damage → per-side 50%/25% HP milestones
+            # ----------------------------------------------------------------
+            if ev_type == "damage":
+                side_val = data.get("side")
+                if side_val is not None:
+                    slot_str = str(side_val)
+                    start_hp_total = _start_total.get(slot_str, 0)
+                    if start_hp_total > 0:
+                        hp_after = data.get("hp_after", {})
+                        current_total = (
+                            hp_after.get("hull", 0)
+                            + hp_after.get("armour", 0)
+                            + hp_after.get("shield", 0)
+                        )
+                        current_pct = current_total / start_hp_total
+                        side_label = _label_for_side(side_val) or slot_str
+                        for milestone in (50, 25):
+                            if milestone not in _milestone_fired[slot_str] and current_pct <= milestone / 100:
+                                _milestone_fired[slot_str].add(milestone)
+                                key_events.append({
+                                    "tick": tick,
+                                    "time_s": time_s,
+                                    "actor": None,
+                                    "event_type": f"HP milestone ({milestone}%)",
+                                    "detail": f"{side_label} dropped to ≤{milestone}% HP",
+                                })
+                continue
+
+            # ----------------------------------------------------------------
+            # Secondary depleted (CI-16)
+            # ----------------------------------------------------------------
+            if ev_type == "secondary_depleted":
+                a_label = _actor_label(actor, data)
+                weapon = data.get("weapon", "unknown weapon")
+                key_events.append({
+                    "tick": tick,
+                    "time_s": time_s,
+                    "actor": actor,
+                    "event_type": "Secondary depleted",
+                    "detail": f"{a_label} ran out of {weapon}",
+                })
+                continue
+
+            # ----------------------------------------------------------------
+            # Module activation
+            # ----------------------------------------------------------------
+            if ev_type == "module_activation":
+                a_label = _actor_label(actor, data)
                 module_name = data.get("module", data.get("name", "module"))
                 module_type = data.get("module_type", "")
-                key_events.append(
-                    {
-                        "tick": tick,
-                        "time_s": time_s,
-                        "actor": actor,
-                        "event_type": "Module activated",
-                        "detail": f"{actor} activated {module_name}",
-                    }
-                )
+                key_events.append({
+                    "tick": tick,
+                    "time_s": time_s,
+                    "actor": actor,
+                    "event_type": "Module activated",
+                    "detail": f"{a_label} activated {module_name}",
+                })
                 _ = module_type  # available for future filtering
+                continue
 
-            elif ev_type == "layer_depleted":
+            # ----------------------------------------------------------------
+            # Layer depleted
+            # ----------------------------------------------------------------
+            if ev_type == "layer_depleted":
                 layer = data.get("layer", "")
                 label = _LAYER_LABELS.get(layer, f"{layer} depleted")
-                target = ev.get("target") or actor
-                key_events.append(
-                    {
+                a_label = _actor_label(actor, data)
+                target = ev.get("target") or a_label
+                key_events.append({
+                    "tick": tick,
+                    "time_s": time_s,
+                    "actor": actor,
+                    "event_type": label,
+                    "detail": f"{target}: {label}",
+                })
+                continue
+
+            # ----------------------------------------------------------------
+            # Tier A: fight_end → Outcome line
+            # ----------------------------------------------------------------
+            if ev_type == "fight_end":
+                winner = data.get("winner")
+                dur_ticks = int(data.get("duration_ticks", 0))
+                dur_s = _ticks_to_seconds(dur_ticks, tick_ms)
+                if winner:
+                    # Resolve winner SLOT from final_hp to avoid same-ship-name ambiguity.
+                    # fight_end.data["final_hp"] has keys "c1" and "c2" (matching combat_service emit).
+                    final_hp_data = data.get("final_hp", {})
+                    c1_hull = final_hp_data.get("c1", {}).get("hull", 1)
+                    c2_hull = final_hp_data.get("c2", {}).get("hull", 1)
+                    if c1_hull <= 0 and c2_hull > 0:
+                        winner_slot, loser_slot = "2", "1"  # c1 died → c2 won
+                    elif c2_hull <= 0 and c1_hull > 0:
+                        winner_slot, loser_slot = "1", "2"  # c2 died → c1 won
+                    else:
+                        # final_hp absent or both alive — stalemate handled below; here
+                        # fall back to slot "1" only if combatants_map is available, else
+                        # use the raw winner string.
+                        winner_slot, loser_slot = None, None
+                    if winner_slot is not None:
+                        winner_label = _cmap.get(winner_slot, {}).get("name", winner)
+                        loser_label = _cmap.get(loser_slot, {}).get("name", "opponent")
+                    else:
+                        winner_label = winner
+                        loser_label = "opponent"
+                    key_events.append({
                         "tick": tick,
                         "time_s": time_s,
-                        "actor": actor,
-                        "event_type": label,
-                        "detail": f"{target}: {label}",
-                    }
-                )
+                        "actor": None,
+                        "event_type": "Outcome",
+                        "detail": f"{winner_label} wins — {loser_label} destroyed ({dur_s:.1f}s)",
+                    })
+                else:
+                    key_events.append({
+                        "tick": tick,
+                        "time_s": time_s,
+                        "actor": None,
+                        "event_type": "Outcome",
+                        "detail": f"Stalemate (time cap — {dur_s:.1f}s)",
+                    })
+                continue
 
+        # CI-22: sort all key events by tick so baseline lines aren't starved
+        key_events.sort(key=lambda e: (e["tick"], e["event_type"]))
         return key_events

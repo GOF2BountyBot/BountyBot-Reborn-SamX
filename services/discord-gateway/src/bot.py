@@ -133,18 +133,37 @@ async def lifespan(app: FastAPI):
     init_autocomplete_state(autocomplete_http, api_base)
     flogger.info("Autocomplete state initialized with bot-owned HTTP client")
 
-    # One-shot health probe — surface misconfigured api_base at startup rather
-    # than silently degrading to empty autocomplete caches.  Non-fatal: the bot
-    # starts regardless so Discord commands still work; only autocomplete warm
-    # jobs will fail if bot-core is unreachable.
-    try:
-        probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
-        probe_resp.raise_for_status()
-        flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
-    except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
+    # CI-19: Startup health probe with retry — surface misconfigured api_base at startup
+    # rather than silently degrading to empty autocomplete caches.  Non-fatal: the bot
+    # starts regardless so Discord commands still work; only autocomplete warm jobs will
+    # fail if bot-core is unreachable.
+    # Retries mirror the cog preload retry pattern: a few attempts with backoff so a
+    # normal full --force-recreate cold start doesn't log a false alarm.
+    _probe_attempts = 3
+    _probe_backoff_s = (1.0, 2.0)  # per-attempt wait BEFORE retry (used for attempts 1 and 2 only)
+    _probe_ok = False
+    _last_probe_exc: Exception | None = None
+    for _attempt in range(1, _probe_attempts + 1):
+        try:
+            probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
+            probe_resp.raise_for_status()
+            flogger.info(f"Autocomplete health probe OK (attempt {_attempt}): api_base={api_base}")
+            _probe_ok = True
+            break
+        except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
+            _last_probe_exc = _probe_exc
+            if _attempt < _probe_attempts:
+                _wait = _probe_backoff_s[_attempt - 1]
+                flogger.info(
+                    f"Autocomplete health probe attempt {_attempt}/{_probe_attempts} failed "
+                    f"(api_base={api_base!r}): {_probe_exc!r}. Retrying in {_wait:.0f}s…"
+                )
+                await asyncio.sleep(_wait)
+    if not _probe_ok:
         flogger.error(
-            f"Autocomplete health probe FAILED — autocomplete warm jobs will not reach bot-core. "
-            f"api_base={api_base!r} error={_probe_exc!r}. "
+            f"Autocomplete health probe FAILED after {_probe_attempts} attempts — "
+            f"autocomplete warm jobs will not reach bot-core. "
+            f"api_base={api_base!r} last_error={_last_probe_exc!r}. "
             "Check BOT_API_BASE_URL env var."
         )
 

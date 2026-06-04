@@ -370,6 +370,10 @@ class GameConstants:
     # Combat log retention (§12)
     COMBAT_LOG_RETENTION_HOURS: int = 72
 
+    # CI-21: layer_depleted re-emit fraction (latch clears when layer recovers ≥ this fraction of max).
+    # Override via: BOUNTYBOT_COMBAT_LAYER_REEMIT_FRACTION=0.25
+    COMBAT_LAYER_REEMIT_FRACTION: float = 0.25
+
     # ------------------------------------------------------------------
     # Environment variable overrides (operational constants only)
     # ------------------------------------------------------------------
@@ -487,6 +491,7 @@ class GameConstants:
         cls.NUKE_FRIENDLY_FACTOR = _track_float("NUKE_FRIENDLY_FACTOR", 0.25)
         cls.PVC_DAMAGE_REDUCTION = _track_float("PVC_DAMAGE_REDUCTION", 0.33)
         cls.COMBAT_LOG_RETENTION_HOURS = _track_int("COMBAT_LOG_RETENTION_HOURS", 72)
+        cls.COMBAT_LAYER_REEMIT_FRACTION = _track_float("COMBAT_LAYER_REEMIT_FRACTION", 0.25)
 
         if _overrides:
             _flogger.info(f"GameConstants env overrides detected: {', '.join(_overrides)}")

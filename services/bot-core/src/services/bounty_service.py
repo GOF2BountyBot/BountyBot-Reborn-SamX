@@ -40,6 +40,32 @@ from services.system_graph_service import SystemGraphService
 flogger = bblogger.get_logger("bounty-service")
 
 
+async def _resolve_combat_label(db, player, user_repo=None) -> str:
+    """CI-20: Resolve a player to a display label for combat-log thread naming.
+
+    Preference order: player.display_name → user.discord_username → "Player {id}".
+    Always returns a string — never raises.
+
+    NOTE: duel_service.DuelService._resolve_player_label is a near-identical copy.
+    A shared extraction was deferred because bounty_service is a module-level function
+    while duel_service uses a method (accesses self.user_repo).  If a third caller
+    appears, extract to services/combat_label_utils.py.
+    """
+    try:
+        if getattr(player, "display_name", None):
+            return player.display_name
+        if user_repo is None:
+            from persist.repositories.user_repository import UserRepository
+
+            user_repo = UserRepository()
+        user = await user_repo.get_by_id(db, player.user_id)
+        if user and user.discord_username:
+            return user.discord_username
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.debug(f"Could not resolve combat label for player_id={getattr(player, 'id', '?')}: {exc}")
+    return f"Player {getattr(player, 'id', '?')}"
+
+
 def _extract_weapon_combat_fields(item) -> dict:
     """Extract combat fields from a weapon ORM object's extra_atts.
 
@@ -1479,6 +1505,10 @@ class BountyService:
             player_loadout = await LoadoutBuilder.from_player(db, player_id)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
 
+            # CI-20: resolve display labels for combat-log thread naming
+            _player_label = await _resolve_combat_label(db, player)
+            _criminal_label = bounty.criminal_name or criminal_loadout.ship_name
+
             if is_bronze:
                 # BRONZE: Auto-capture always succeeds. Optional combat bonus.
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)
@@ -1501,6 +1531,8 @@ class BountyService:
                         guild_id=player.guild_id,
                         combatant1_user_id=player.user_id,
                         combatant2_user_id=None,  # NPC side
+                        combatant1_label=_player_label,
+                        combatant2_label=_criminal_label,
                     )
                     combat_player_won = (
                         fight_results.winner_name == player_loadout.ship_name
@@ -1547,6 +1579,8 @@ class BountyService:
                     guild_id=player.guild_id,
                     combatant1_user_id=player.user_id,
                     combatant2_user_id=None,  # NPC side
+                    combatant1_label=_player_label,
+                    combatant2_label=_criminal_label,
                 )
                 duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
 

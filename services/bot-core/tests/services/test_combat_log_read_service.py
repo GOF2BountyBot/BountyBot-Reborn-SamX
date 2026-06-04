@@ -244,12 +244,34 @@ class TestExtractKeyEvents:
         assert "detonated" in result[1]["detail"]
         assert "80" in result[1]["detail"]  # opponent damage shown
 
-    def test_primary_fires_excluded(self):
+    def test_primary_fires_excluded_no_side(self):
+        """Primary weapon_fire event WITHOUT side= produces no key events (no First-hit line)."""
         events = [
             self._make_weapon_fire_event(100, "Betty", "primary", "primary", "Nirai Impulse EX 1"),
         ]
         result = CombatLogService._extract_key_events(events)
         assert len(result) == 0
+
+    def test_primary_fires_with_side_and_hit_produces_first_hit(self):
+        """Primary weapon_fire WITH side=1, hit=True produces exactly one 'First hit' event."""
+        events = [
+            {
+                "tick": 100,
+                "type": "weapon_fire",
+                "actor": "Betty",
+                "target": "Opponent",
+                "data": {
+                    "slot": "primary",
+                    "subtype": "primary",
+                    "weapon": "Nirai Impulse EX 1",
+                    "hit": True,
+                    "side": 1,
+                },
+            },
+        ]
+        result = CombatLogService._extract_key_events(events)
+        first_hits = [e for e in result if e["event_type"] == "First hit"]
+        assert len(first_hits) == 1
 
     def test_module_activations_included(self):
         events = [self._make_module_event(500, "Betty", "U'tool")]
@@ -281,15 +303,101 @@ class TestExtractKeyEvents:
         assert result[0]["time_s"] == 1.0
 
     def test_non_notable_events_ignored(self):
-        """damage, distance, regen, fight_start, fight_end are not key events."""
+        """distance and regen are not key events; fight_start/fight_end generate baseline lines."""
         events = [
-            {"tick": 1, "type": "fight_start", "actor": None, "target": None, "data": {}},
             {"tick": 50, "type": "distance", "actor": None, "target": None, "data": {}},
-            {"tick": 100, "type": "damage", "actor": None, "target": "Betty", "data": {"amount": 5}},
-            {"tick": 3488, "type": "fight_end", "actor": None, "target": None, "data": {}},
+            {"tick": 100, "type": "regen", "actor": "Betty", "target": None, "data": {"layer": "shield"}},
         ]
         result = CombatLogService._extract_key_events(events)
         assert len(result) == 0
+
+    def test_fight_start_generates_engagement_line(self):
+        """fight_start → Engagement baseline line (CI-22 Tier A)."""
+        events = [
+            {
+                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "data": {
+                    "combatants": [
+                        {"name": "Betty", "display_name": "SamX", "ship": "Betty",
+                         "hp": {"hull": 100, "armour": 50, "shield": 0}},
+                        {"name": "Vossk", "display_name": "H'Soc", "ship": "Vossk",
+                         "hp": {"hull": 80, "armour": 30, "shield": 20}},
+                    ],
+                    "initial_distance": 5000,
+                },
+            },
+        ]
+        result = CombatLogService._extract_key_events(events)
+        assert len(result) == 1
+        assert result[0]["event_type"] == "Engagement"
+        assert "SamX" in result[0]["detail"]
+        assert "H'Soc" in result[0]["detail"]
+
+    def test_fight_end_generates_outcome_line(self):
+        """fight_end → Outcome baseline line (CI-22 Tier A)."""
+        events = [
+            {
+                "tick": 3488, "type": "fight_end", "actor": None, "target": None,
+                "data": {"winner": "Betty", "reason": "hp_depleted", "duration_ticks": 3488},
+            },
+        ]
+        result = CombatLogService._extract_key_events(events)
+        assert len(result) == 1
+        assert result[0]["event_type"] == "Outcome"
+        assert "Betty" in result[0]["detail"]
+
+    def test_fight_end_same_ship_name_c2_wins_correct_label(self):
+        """CI-22 regression: same-ship-name fight where c2 wins must show c2's display name.
+
+        Both ships are named 'Betty'; winner string is ambiguous.  The fix resolves
+        the winner slot from final_hp (c1.hull=0, c2.hull=95) → c2 won → 'H'Soc wins'.
+        Pre-fix this always picked c1's label ('SamX wins') — wrong when c2 won.
+        """
+        combatants_map = {
+            "1": {"name": "SamX", "ship": "Betty"},
+            "2": {"name": "H'Soc", "ship": "Betty"},
+        }
+        events = [
+            {
+                "tick": 3488,
+                "type": "fight_end",
+                "actor": None,
+                "target": None,
+                "data": {
+                    "winner": "Betty",  # ambiguous — both ships named Betty
+                    "reason": "hp_depleted",
+                    "duration_ticks": 3488,
+                    "final_hp": {
+                        "c1": {"hull": 0, "armour": 0, "shield": 0},   # c1 (SamX) died
+                        "c2": {"hull": 95, "armour": 20, "shield": 0}, # c2 (H'Soc) survived
+                    },
+                },
+            },
+        ]
+        result = CombatLogService._extract_key_events(events, combatants_map=combatants_map)
+        assert len(result) == 1
+        outcome = result[0]
+        assert outcome["event_type"] == "Outcome"
+        # H'Soc (slot 2) won; SamX (slot 1) lost — label must reflect this
+        assert "H'Soc wins" in outcome["detail"], (
+            f"Expected \"H'Soc wins\" in outcome but got: {outcome['detail']!r}"
+        )
+        assert "SamX" in outcome["detail"], (
+            f"Expected 'SamX' (the loser) in outcome but got: {outcome['detail']!r}"
+        )
+
+    def test_fight_end_stalemate_outcome_line(self):
+        """fight_end with no winner → Stalemate outcome line."""
+        events = [
+            {
+                "tick": 18000, "type": "fight_end", "actor": None, "target": None,
+                "data": {"winner": None, "reason": "time_cap", "duration_ticks": 18000},
+            },
+        ]
+        result = CombatLogService._extract_key_events(events)
+        assert len(result) == 1
+        assert result[0]["event_type"] == "Outcome"
+        assert "Stalemate" in result[0]["detail"]
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,11 @@ class DuelService:
 
         Preference order: player.display_name → user.discord_username → "Player {id}".
         Always returns a string — never raises.
+
+        NOTE: bounty_service._resolve_combat_label is a near-identical copy.
+        A shared extraction was deferred because this method accesses self.user_repo
+        while the bounty version is a module-level function with an optional user_repo
+        arg.  If a third caller appears, extract to services/combat_label_utils.py.
         """
         try:
             if getattr(player, "display_name", None):
@@ -277,6 +282,10 @@ class DuelService:
         challenger_loadout = await LoadoutBuilder.from_player(db, challenger.id)
         target_loadout = await LoadoutBuilder.from_player(db, target.id)
 
+        # CI-20: resolve display labels for combat-log thread naming
+        _c1_label = await self._resolve_player_label(db, challenger)
+        _c2_label = await self._resolve_player_label(db, target)
+
         # Resolve combat via TickResolver (T10: async, routes through persist + stat increment)
         fight_results = await self.combat_service.fight_ships(
             challenger_loadout,
@@ -288,6 +297,8 @@ class DuelService:
             guild_id=duel.guild_id,
             combatant1_user_id=challenger.user_id,
             combatant2_user_id=target.user_id,
+            combatant1_label=_c1_label,
+            combatant2_label=_c2_label,
         )
 
         credits_transferred = 0

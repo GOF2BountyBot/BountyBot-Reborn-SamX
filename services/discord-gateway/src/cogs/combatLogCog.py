@@ -50,16 +50,25 @@ def _format_date(dt_str: str) -> str:
 def _make_choice_label(item: dict) -> str:
     """Build the autocomplete choice label for one fight.
 
-    Format: "#<ordinal> vs <opponent> · <Context> · <date> · <OUTCOME>"
-    e.g.    "#2 vs General_Failure · Duel · 2026-06-03 · WON"
+    CI-20: Full two-name format "C1 vs C2" (mirrors duel style).
+    Format: "#<ordinal> <c1> vs <c2> · <Context> · <date> · <OUTCOME>"
+    e.g.    "#2 H'Soc vs SamX · Duel · 2026-06-03 · WON"
+    Falls back to "vs <opponent>" when combatant1/2 names are absent (old rows).
     Truncated to 100 chars (Discord limit).
     """
     ordinal = item.get("ordinal", 1)
-    opponent = item.get("opponent_name", "Unknown")
+    c1_name = item.get("combatant1_name", "")
+    c2_name = item.get("combatant2_name", "")
+    if c1_name and c2_name:
+        vs_str = f"{c1_name} vs {c2_name}"
+    else:
+        # Old-row fallback: opponent_name only
+        opponent = item.get("opponent_name", "Unknown")
+        vs_str = f"vs {opponent}"
     context_label = _CONTEXT_LABELS.get(item.get("context", ""), item.get("context", "?"))
     date_str = _format_date(str(item.get("created_at", "")))
     outcome_str = _OUTCOME_EMOJI.get(item.get("outcome", ""), item.get("outcome", "?").upper())
-    label = f"#{ordinal} vs {opponent} · {context_label} · {date_str} · {outcome_str}"
+    label = f"#{ordinal} {vs_str} · {context_label} · {date_str} · {outcome_str}"
     return label[:100]
 
 

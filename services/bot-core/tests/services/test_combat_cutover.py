@@ -215,7 +215,7 @@ class TestFightShipsLogResultTrue:
 
         captured_pvc_dr = None
 
-        def _spy_resolve(loadout1, loadout2, *, pvc_damage_reduction=0.0, guild_config=None, rng=None):
+        def _spy_resolve(loadout1, loadout2, *, pvc_damage_reduction=0.0, guild_config=None, rng=None, **_kwargs):
             nonlocal captured_pvc_dr
             captured_pvc_dr = pvc_damage_reduction
             # Return a minimal FightResults

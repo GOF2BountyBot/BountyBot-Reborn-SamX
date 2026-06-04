@@ -30,8 +30,9 @@ Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no
 **CI-17 LIVE-VALIDATED** (combat-log 54): spawned silver criminals carry complete secondary loadouts
 (DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
 Erland fired `missile ×3` and dealt 135 dmg in a real fight.
-**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24.
-**Open:** CI-18 (player_inv constraint — danger-zone, owner eyes), CI-4 (E2E §4/§5/§6).
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24, CI-25.
+**Open:** CI-18 (player_inv constraint — danger-zone, owner eyes), CI-26 (blender-service infra — owner/host-level), CI-4 (E2E §4/§5/§6).
+**Watching:** `/route` reported broken (owner) — bot-core endpoint + command verified healthy; awaiting exact symptom to diagnose.
 **Live-validated combat-log (battle 57):** dropdown `General_Failure vs Bartholomeu Drew`; body uses pilot/criminal
 names; Engagement + first-hit-per-side + HP milestones + Outcome; each layer depleted ONCE (no flap); distinct per-side stats.
 **Stack:** full rebuild to migration **0014**, all combat/shop work LIVE & verified (bot-core healthy;
@@ -543,6 +544,23 @@ numbers. The win/loss header is unaffected (read path derives it from final HP).
 fix into the combat-log UX batch: re-key the summary on combatant **slot** (1/2). Plan: `COMBAT_CL_UX_PLAN.md`.
 Regression guard: single-name fights byte-identical; same-name fights show DISTINCT per-side stats.
 </details>
+
+## CI-25 ✅ Equip/unequip of a SECONDARY rejected by schema regex — FIXED & LIVE  *(owner-reported 2026-06-04, `7b54702`)*
+Equipping a secondary via Discord failed: `equipment_type: String should match pattern
+'^(weapons|modules|turrets)$'`. The service layer already supported `secondary_weapons`
+(`equipment_service.VALID_EQUIPMENT_TYPES` + slot/item-type maps), but the `EquipItemRequest` /
+`UnequipItemRequest` Pydantic patterns were stricter and rejected it before reaching the service —
+exposed once CI-23 surfaced secondaries in `/equip` autocomplete. Added `secondary_weapons` to both
+patterns (still enumerated; invalid values still 422). **LIVE-VERIFIED:** equip w/ equipment_type=
+secondary_weapons → 200 (ammo seeded); invalid value → 422. Regression tests added (4237 green).
+
+## CI-26 🔵 blender-service down — data-dir mount permission (pre-existing infra)  *(found 2026-06-04)*
+blender-service is unhealthy: at startup it can't create `/app/data/game-objects` — `mkdir: Permission
+denied` — on the mounted host dir `/proj/mappings/blender-renderer` (container uid 1001/botuser). The
+host dir is `drwxrwxrwt 1001` and game-objects exists+empty, yet the container reports it missing AND
+unwritable → a WSL2 bind-mount/uid-mapping quirk; broken since before this session (dir mtimes May 27).
+**Impact: SHIP SKIN RENDERS only** (blender-service); does NOT affect `/route` (route maps come from
+bot-core `map_renderer.py`) or combat/shop. Likely needs host-level attention. Low priority / owner infra.
 
 ## CI-8 🧹 Housekeeping — committed status / nothing pushed
 - ✅ `COMBAT_E2E_TEST_PLAN.md` + `COMBAT_ISSUES.md` committed (`ae157f0`).

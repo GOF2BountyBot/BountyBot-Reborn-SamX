@@ -30,9 +30,10 @@ Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no
 **CI-17 LIVE-VALIDATED** (combat-log 54): spawned silver criminals carry complete secondary loadouts
 (DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
 Erland fired `missile ×3` and dealt 135 dmg in a real fight.
-**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24, CI-25.
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24, CI-25, CI-27, CI-28, CI-29.
 **Open:** CI-18 (player_inv constraint — danger-zone, owner eyes), CI-26 (blender-service infra — owner/host-level), CI-4 (E2E §4/§5/§6).
 **Watching:** `/route` reported broken (owner) — bot-core endpoint + command verified healthy; awaiting exact symptom to diagnose.
+**Pending live-verify (rebuild in progress):** CI-27 (no dead+ES same tick), CI-28 (embed turrets/secondaries), CI-29 (causal log order).
 **Live-validated combat-log (battle 57):** dropdown `General_Failure vs Bartholomeu Drew`; body uses pilot/criminal
 names; Engagement + first-hit-per-side + HP milestones + Outcome; each layer depleted ONCE (no flap); distinct per-side stats.
 **Stack:** full rebuild to migration **0014**, all combat/shop work LIVE & verified (bot-core healthy;
@@ -561,6 +562,26 @@ host dir is `drwxrwxrwt 1001` and game-objects exists+empty, yet the container r
 unwritable → a WSL2 bind-mount/uid-mapping quirk; broken since before this session (dir mtimes May 27).
 **Impact: SHIP SKIN RENDERS only** (blender-service); does NOT affect `/route` (route maps come from
 bot-core `map_renderer.py`) or combat/shop. Likely needs host-level attention. Low priority / owner infra.
+
+## CI-27 ✅ "Hull depleted (dead)" + Emergency System on same tick — FIXED  *(owner 2026-06-04, `5b4501c`)*
+The CI-15 hull `layer_depleted` ("dead") event was emitted inside `_apply_damage` (Phase 3) the moment
+hull hit ≤0, BEFORE `_eval_emergency_system` (Phase 4a) clamps hull→1 to cheat death → an ES-saved ship
+still logged "dead" + "Emergency System activated" same tick. Moved the hull-death emit to Phase 8
+termination (true death, post-ES; ES-saved ships have hull=1 so are never `c_dead`). Shield/armour emits
++ ES/clamp/termination logic untouched. 6 new tests incl. the ES-saves-no-dead repro. 4243 green.
+
+## CI-28 ✅ Criminal-loadout embed missing turrets + secondaries — FIXED  *(owner 2026-06-04, `3bac5dc`)*
+`/bounties/{id}/loadout` response carries `turrets` + `secondaries` (key is `secondaries`), but
+`build_loadout_embed` only rendered Primary Weapons + Modules. Added Turrets + Secondaries sections
+(N/M headers, secondary round counts ×N), integrated into the truncation budget, suppressed when empty.
+15 new tests. (Gateway-only; backend response already had the data.)
+
+## CI-29 ✅ Combat-log key events out of causal order — FIXED  *(owner 2026-06-04, `3bac5dc`)*
+`_extract_key_events` sorted same-tick events by `(tick, event_type)` — the alphabetical event_type
+secondary key scrambled causal order (e.g. "Secondary depleted" before "Secondary fire" → ran-out
+printed before the shot that depleted it; whole tick looked ~inverted). Fixed to sort by tick ONLY
+(stable sort preserves the resolver's causal inline emission order). Engagement stays first, Outcome
+last. Regression test fails pre-fix / passes post-fix.
 
 ## CI-8 🧹 Housekeeping — committed status / nothing pushed
 - ✅ `COMBAT_E2E_TEST_PLAN.md` + `COMBAT_ISSUES.md` committed (`ae157f0`).

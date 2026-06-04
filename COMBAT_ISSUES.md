@@ -16,10 +16,11 @@ loadouts — needs architect first) → CI-6 (Shock Blast inert EMP) → CI-10 (
 → CI-11 (shop weapon-density tuning) → CI-18 (player_inv unique constraint) → CI-4 (live §4/§5/§6
 weapon/module/edge E2E tests). ⚠ CI-17 is in the loadout/inventory **danger zone** — read
 `services/bot-core/src/services/AGENTS.md` → "Loadout & Inventory system" ([[feedback_loadout_inventory_fragile]]).
-**Not yet live-tested:** CI-16 was committed but the stack has NOT been rebuilt/redeployed since —
-rebuild + smoke-test (buy→equip→fire→deplete→/loadout shows ×N) before relying on it in Discord.
+**CI-16 LIVE-VALIDATED 2026-06-04** (stack rebuilt to migration 0013): grant→equip (whole stack
+cargo→ammo)→combat (Jet Rocket fired 3×, 1 round each)→depleted→auto-unequipped post-fight; DB
+persisted; `secondary_depleted` + CI-15 "Hull depleted (dead)" key events confirmed in combat-log 51.
 **Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-7, CI-12, CI-13, CI-14, CI-15, CI-16.
-**Stack:** healthy but pre-CI-16 (needs rebuild). **Nothing pushed** — `dev` is ahead of origin.
+**Stack:** rebuilt to migration 0013, CI-16 live & verified. **Nothing pushed** — `dev` is ahead of origin.
 
 ---
 
@@ -284,7 +285,8 @@ design-lock (caught 2 conservation BLOCKERs the stale plan missed — R1 ship tr
 sell/evacuate) → d-developer → d-tester. Tester's 1st pass found 4 defects (reconcile/transfer/
 evacuate ammo-loss, slot-full top-up block, missing router wire-up); all fixed; 2nd pass PASS.
 Full bot-core suite green (4127 passed); 41 secondary-ammo tests incl. paranoid conservation.
-⚠ **Not yet live-tested** — committed but stack not rebuilt since; smoke-test post-rebuild.
+✅ **Live-validated 2026-06-04** (combat-log 51: fired 3×→depleted→auto-unequipped; CI-15 hull
+event + secondary_depleted confirmed).
 **LOW follow-up (tester-noted, no fix yet):** `/equip` of an already-equipped secondary with 0
 cargo returns success as a silent no-op (conserves invariant; just a misleading "success"). Spec
 clarification only — decide if it should error/no-op distinctly.

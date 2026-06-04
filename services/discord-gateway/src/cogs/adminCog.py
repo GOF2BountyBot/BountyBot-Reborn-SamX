@@ -953,8 +953,10 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     @app_commands.describe(
         ship_count_min="Minimum number of ship types in shop",
         ship_count_max="Maximum number of ship types in shop",
-        weapon_count_min="Minimum number of weapon types in shop",
-        weapon_count_max="Maximum number of weapon types in shop",
+        weapon_count_min="Minimum number of primary weapon types in shop",
+        weapon_count_max="Maximum number of primary weapon types in shop",
+        secondary_weapon_count_min="Minimum number of secondary weapon types in shop",
+        secondary_weapon_count_max="Maximum number of secondary weapon types in shop",
         module_count_min="Minimum number of module types in shop",
         module_count_max="Maximum number of module types in shop",
         turret_count_min="Minimum number of turret types in shop",
@@ -968,6 +970,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         ship_count_max: int | None = None,
         weapon_count_min: int | None = None,
         weapon_count_max: int | None = None,
+        secondary_weapon_count_min: int | None = None,
+        secondary_weapon_count_max: int | None = None,
         module_count_min: int | None = None,
         module_count_max: int | None = None,
         turret_count_min: int | None = None,
@@ -988,6 +992,11 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             item_count_ranges["ships"] = {"min": ship_count_min, "max": ship_count_max}
         if weapon_count_min is not None and weapon_count_max is not None:
             item_count_ranges["weapons"] = {"min": weapon_count_min, "max": weapon_count_max}
+        if secondary_weapon_count_min is not None and secondary_weapon_count_max is not None:
+            item_count_ranges["secondary_weapons"] = {
+                "min": secondary_weapon_count_min,
+                "max": secondary_weapon_count_max,
+            }
         if module_count_min is not None and module_count_max is not None:
             item_count_ranges["modules"] = {"min": module_count_min, "max": module_count_max}
         if turret_count_min is not None and turret_count_max is not None:
@@ -1039,6 +1048,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
             embed.add_field(name="Ships", value=_range_str("ships"), inline=True)
             embed.add_field(name="Weapons", value=_range_str("weapons"), inline=True)
+            embed.add_field(name="Secondary Weapons", value=_range_str("secondary_weapons"), inline=True)
             embed.add_field(name="Modules", value=_range_str("modules"), inline=True)
             embed.add_field(name="Turrets", value=_range_str("turrets"), inline=True)
             sale_pf = cfg.get("sale_price_factor")

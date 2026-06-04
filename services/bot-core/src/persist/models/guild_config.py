@@ -43,12 +43,14 @@ class GuildConfig(Base):
     # Shop inventory size ranges (JSON objects with min/max values)
     ship_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
     weapon_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
+    secondary_weapon_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
     module_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
     turret_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
 
     # Quantity ranges for each item type
     ship_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 1, "max": 1})
     weapon_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
+    secondary_weapon_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
     module_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
     turret_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
 
@@ -202,6 +204,7 @@ class GuildConfig(Base):
         range_map = {
             "ship": self.ship_count_range,
             "weapon": self.weapon_count_range,
+            "secondary_weapon": self.secondary_weapon_count_range,
             "module": self.module_count_range,
             "turret": self.turret_count_range,
         }
@@ -212,6 +215,7 @@ class GuildConfig(Base):
         range_map = {
             "ship": self.ship_quantity_range,
             "weapon": self.weapon_quantity_range,
+            "secondary_weapon": self.secondary_weapon_quantity_range,
             "module": self.module_quantity_range,
             "turret": self.turret_quantity_range,
         }

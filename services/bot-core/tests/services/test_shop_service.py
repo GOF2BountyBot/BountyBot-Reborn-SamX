@@ -1738,3 +1738,228 @@ class TestShopExcludesDeferredSecondarySubtypes:
             "generic alias 'weapon' must NOT be written to guild_shops.item_type (A.36 regression)"
         )
         assert result["items_generated"] >= 1
+
+
+# ===========================================================================
+# Tests: CI-11 — secondary_weapon gets its own shop-count range
+# ===========================================================================
+
+
+def _make_config_with_separate_ranges(
+    primary_count_range: dict | None = None,
+    secondary_count_range: dict | None = None,
+    primary_qty_range: dict | None = None,
+    secondary_qty_range: dict | None = None,
+) -> MagicMock:
+    """Build a mock GuildConfig whose get_count_range/get_quantity_range dispatch correctly.
+
+    Simulates the real GuildConfig.get_count_range() which now looks up
+    'weapon' for primary_weapon and 'secondary_weapon' for secondary_weapon.
+    """
+    primary_count = primary_count_range or {"min": 3, "max": 5}
+    secondary_count = secondary_count_range or {"min": 3, "max": 5}
+    primary_qty = primary_qty_range or {"min": 2, "max": 4}
+    secondary_qty = secondary_qty_range or {"min": 2, "max": 4}
+
+    count_map = {
+        "ship": {"min": 3, "max": 5},
+        "weapon": primary_count,
+        "secondary_weapon": secondary_count,
+        "module": {"min": 3, "max": 5},
+        "turret": {"min": 3, "max": 5},
+    }
+    qty_map = {
+        "ship": {"min": 1, "max": 1},
+        "weapon": primary_qty,
+        "secondary_weapon": secondary_qty,
+        "module": {"min": 2, "max": 4},
+        "turret": {"min": 2, "max": 4},
+    }
+
+    config = MagicMock()
+    config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+    config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 1, "max": 1}))
+    config.get_quantity_range = MagicMock(side_effect=lambda k: qty_map.get(k, {"min": 1, "max": 1}))
+    return config
+
+
+class TestCI11SecondaryWeaponOwnRange:
+    """CI-11: secondary_weapon draws from its own count/quantity range, not from 'weapon'."""
+
+    def test_concrete_to_config_key_maps_secondary_to_own_key(self):
+        """_CONCRETE_TO_CONFIG_KEY now maps secondary_weapon → 'secondary_weapon', not 'weapon'."""
+        from services.shop_service import _CONCRETE_TO_CONFIG_KEY
+
+        assert _CONCRETE_TO_CONFIG_KEY["secondary_weapon"] == "secondary_weapon", (
+            "secondary_weapon must map to its own config key 'secondary_weapon' (CI-11)"
+        )
+        assert _CONCRETE_TO_CONFIG_KEY["primary_weapon"] == "weapon", (
+            "primary_weapon must still map to 'weapon' config key"
+        )
+
+    def test_concrete_to_config_key_all_expected_entries(self):
+        """_CONCRETE_TO_CONFIG_KEY contains all 5 expected concrete types."""
+        from services.shop_service import _CONCRETE_TO_CONFIG_KEY
+
+        assert set(_CONCRETE_TO_CONFIG_KEY.keys()) == {
+            "ship",
+            "primary_weapon",
+            "secondary_weapon",
+            "module",
+            "turret_weapon",
+        }
+
+    @pytest.mark.asyncio
+    async def test_secondary_draws_from_own_range_not_weapon_range(
+        self, service, mock_db, mock_config_repo, mock_shop_repo
+    ):
+        """With secondary_weapon_count_range={min:1,max:1}, exactly 1 secondary is generated.
+
+        If secondary piggybacked on the weapon range ({min:3,max:5}), we'd expect 3-5
+        secondaries; with its own range {min:1,max:1} we expect exactly 1.
+        Meanwhile primary_weapon range is {min:3,max:5} → still generates primaries.
+        """
+        config = _make_config_with_separate_ranges(
+            primary_count_range={"min": 3, "max": 5},
+            secondary_count_range={"min": 1, "max": 1},  # hard limit: exactly 1 secondary
+            primary_qty_range={"min": 1, "max": 1},
+            secondary_qty_range={"min": 1, "max": 1},
+        )
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        # Track per-type counts
+        type_counts: dict[str, int] = {}
+
+        async def _fake_create_or_update(db, item_data):
+            t = item_data["item_type"]
+            type_counts[t] = type_counts.get(t, 0) + 1
+            return _make_shop_item(item_name=item_data["item_name"], item_type=t)
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        async def _fake_get_random(db, item_type, tech_level):
+            return f"Fake_{item_type}"
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        secondary_count = type_counts.get("secondary_weapon", 0)
+        assert secondary_count == 1, (
+            f"With secondary_weapon_count_range={{min:1,max:1}}, expected exactly 1 secondary, "
+            f"got {secondary_count}. This indicates secondary still draws from weapon range."
+        )
+
+        primary_count = type_counts.get("primary_weapon", 0)
+        assert primary_count >= 3, (
+            f"primary_weapon range {{min:3,max:5}} should still yield ≥3 primaries, got {primary_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_primary_and_secondary_draw_from_independent_ranges(
+        self, service, mock_db, mock_config_repo, mock_shop_repo
+    ):
+        """Primary and secondary draw from completely independent ranges (CI-11 core invariant).
+
+        Set secondary to {min:0,max:0} (no secondaries) while primary is {min:2,max:2}.
+        Expect: exactly 2 primaries, 0 secondaries.
+        """
+        # Note: GuildConfig.get_count_range fallback for unknown keys is {"min":1,"max":1},
+        # so we use min:2 for primary and a custom config with 0 for secondary.
+        count_map = {
+            "ship": {"min": 0, "max": 0},
+            "weapon": {"min": 2, "max": 2},
+            "secondary_weapon": {"min": 0, "max": 0},
+            "module": {"min": 0, "max": 0},
+            "turret": {"min": 0, "max": 0},
+        }
+        qty_map: dict[str, dict] = {}
+
+        config = MagicMock()
+        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+        config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
+        config.get_quantity_range = MagicMock(side_effect=lambda k: qty_map.get(k, {"min": 1, "max": 1}))
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        type_counts: dict[str, int] = {}
+
+        async def _fake_create_or_update(db, item_data):
+            t = item_data["item_type"]
+            type_counts[t] = type_counts.get(t, 0) + 1
+            return _make_shop_item(item_name=item_data["item_name"], item_type=t)
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        async def _fake_get_random(db, item_type, tech_level):
+            return f"Fake_{item_type}"
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert type_counts.get("secondary_weapon", 0) == 0, (
+            "secondary_weapon_count_range {min:0,max:0} must produce 0 secondaries"
+        )
+        assert type_counts.get("primary_weapon", 0) == 2, (
+            f"weapon count range {{min:2,max:2}} must produce exactly 2 primaries, "
+            f"got {type_counts.get('primary_weapon', 0)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_deferred_subtype_regression_with_secondary_count_greater_than_zero(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo
+    ):
+        """Many-iteration refresh with secondary count>0 → zero emp-bomb/mine/sentry-gun in shop.
+
+        Even when secondaries are actively being generated (count=2), the deferred
+        subtype filter must hold and never allow emp-bomb, mine, or sentry-gun through.
+        Uses a config where only secondaries are generated (count=2), all other types=0,
+        so the ship_repo empty list error is avoided.
+        """
+        # Canonical secondary + all three deferred subtypes
+        canonical = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype="rocket")
+        deferred = [
+            _make_secondary_weapon("EMP GL I", tech_level=1, subtype="emp-bomb"),
+            _make_secondary_weapon("Ksann'k", tech_level=1, subtype="mine"),
+            _make_secondary_weapon("Berger SG-100", tech_level=1, subtype="sentry-gun"),
+        ]
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=[canonical, *deferred])
+
+        # Config: only secondary_weapon generates items (all other counts = 0)
+        count_map = {
+            "ship": {"min": 0, "max": 0},
+            "weapon": {"min": 0, "max": 0},
+            "secondary_weapon": {"min": 2, "max": 2},
+            "module": {"min": 0, "max": 0},
+            "turret": {"min": 0, "max": 0},
+        }
+        config = MagicMock()
+        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+        config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
+        config.get_quantity_range = MagicMock(return_value={"min": 1, "max": 1})
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        names_generated: list[str] = []
+        deferred_names = {"EMP GL I", "Ksann'k", "Berger SG-100"}
+
+        async def _fake_create_or_update(db, item_data):
+            if item_data["item_type"] == "secondary_weapon":
+                names_generated.append(item_data["item_name"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        # Run 10 iterations; each should generate 2 secondaries, all must be canonical
+        for _ in range(10):
+            names_generated.clear()
+            # Reset the static cache so real DB call goes through secondary_weapon_repo
+            service._static_cache = None
+            await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+            for name in names_generated:
+                assert name not in deferred_names, (
+                    f"Deferred subtype weapon '{name}' must never appear in shop (deferred-subtype regression)"
+                )

@@ -434,15 +434,17 @@ class TestAdminConfigShop:
             mock_admin_cog.admin_config_shop.callback(
                 mock_admin_cog,
                 interaction,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                None,  # ship_count_min
+                None,  # ship_count_max
+                None,  # weapon_count_min
+                None,  # weapon_count_max
+                None,  # secondary_weapon_count_min
+                None,  # secondary_weapon_count_max
+                None,  # module_count_min
+                None,  # module_count_max
+                None,  # turret_count_min
+                None,  # turret_count_max
+                None,  # sale_factor
             )
         )
 
@@ -464,15 +466,17 @@ class TestAdminConfigShop:
             mock_admin_cog.admin_config_shop.callback(
                 mock_admin_cog,
                 interaction,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                None,  # ship_count_min
+                None,  # ship_count_max
+                None,  # weapon_count_min
+                None,  # weapon_count_max
+                None,  # secondary_weapon_count_min
+                None,  # secondary_weapon_count_max
+                None,  # module_count_min
+                None,  # module_count_max
+                None,  # turret_count_min
+                None,  # turret_count_max
+                None,  # sale_factor
             )
         )
 
@@ -492,21 +496,92 @@ class TestAdminConfigShop:
             mock_admin_cog.admin_config_shop.callback(
                 mock_admin_cog,
                 interaction,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                None,  # ship_count_min
+                None,  # ship_count_max
+                None,  # weapon_count_min
+                None,  # weapon_count_max
+                None,  # secondary_weapon_count_min
+                None,  # secondary_weapon_count_max
+                None,  # module_count_min
+                None,  # module_count_max
+                None,  # turret_count_min
+                None,  # turret_count_max
+                None,  # sale_factor
             )
         )
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
         assert "⚠️" in call_args
+
+    def test_admin_config_shop_sends_secondary_weapon_count_ranges(self, mock_admin_cog):
+        """/admin_config_shop with secondary_weapon_count params sends secondary_weapons in item_count_ranges.
+
+        CI-11: secondary_weapon now has its own dedicated count range separate from primary weapons.
+        Both min and max must be provided before the range is included.
+        """
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user()
+
+        mock_admin_cog.http_client.put = AsyncMock(return_value=self._make_shop_cfg_response())
+
+        asyncio.run(
+            mock_admin_cog.admin_config_shop.callback(
+                mock_admin_cog,
+                interaction,
+                ship_count_min=None,
+                ship_count_max=None,
+                weapon_count_min=None,
+                weapon_count_max=None,
+                secondary_weapon_count_min=1,
+                secondary_weapon_count_max=3,
+                module_count_min=None,
+                module_count_max=None,
+                turret_count_min=None,
+                turret_count_max=None,
+                sale_factor=None,
+            )
+        )
+
+        mock_admin_cog.http_client.put.assert_called_once()
+        shop_call_json = mock_admin_cog.http_client.put.call_args[1]["json"]
+        assert "item_count_ranges" in shop_call_json
+        assert shop_call_json["item_count_ranges"]["secondary_weapons"] == {"min": 1, "max": 3}
+        # Primary weapons were not provided, must be absent
+        assert "weapons" not in shop_call_json["item_count_ranges"]
+        # Ships were not provided, must be absent
+        assert "ships" not in shop_call_json["item_count_ranges"]
+
+    def test_admin_config_shop_secondary_weapon_only_included_when_both_bounds_provided(self, mock_admin_cog):
+        """secondary_weapons range is omitted when only one bound is given."""
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user()
+
+        mock_admin_cog.http_client.put = AsyncMock(return_value=self._make_shop_cfg_response())
+
+        asyncio.run(
+            mock_admin_cog.admin_config_shop.callback(
+                mock_admin_cog,
+                interaction,
+                ship_count_min=None,
+                ship_count_max=None,
+                weapon_count_min=None,
+                weapon_count_max=None,
+                secondary_weapon_count_min=2,  # only min, no max
+                secondary_weapon_count_max=None,
+                module_count_min=None,
+                module_count_max=None,
+                turret_count_min=None,
+                turret_count_max=None,
+                sale_factor=None,
+            )
+        )
+
+        shop_call_json = mock_admin_cog.http_client.put.call_args[1]["json"]
+        ranges = shop_call_json.get("item_count_ranges", {})
+        assert "secondary_weapons" not in ranges, (
+            "secondary_weapons range must be omitted when only min is provided (no max)"
+        )
 
 
 # -------------------------------------------------------------------------

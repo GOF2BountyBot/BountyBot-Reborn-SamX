@@ -271,7 +271,7 @@ class ConfigService:
                 errors.append("Sale price factor must be between 0 and 1")
 
             # Validate item count ranges
-            for item_type in ["ship", "weapon", "module", "turret"]:
+            for item_type in ["ship", "weapon", "module", "turret", "secondary_weapon"]:
                 count_range = config.get_count_range(item_type)
                 if count_range["min"] > count_range["max"]:
                     errors.append(f"{item_type} count range min > max")
@@ -467,10 +467,12 @@ class ConfigService:
         # ------------------------------------------------------------------
 
         # item_count_ranges: {"ships": {"min": 3, "max": 5}, ...}
-        # → ship_count_range, weapon_count_range, module_count_range, turret_count_range
+        # → ship_count_range, weapon_count_range, secondary_weapon_count_range,
+        #   module_count_range, turret_count_range
         _item_key_map = {
             "ships": "ship_count_range",
             "weapons": "weapon_count_range",
+            "secondary_weapons": "secondary_weapon_count_range",
             "modules": "module_count_range",
             "turrets": "turret_count_range",
         }
@@ -481,10 +483,12 @@ class ConfigService:
                     validated_updates[orm_field] = item_ranges[schema_key]
 
         # quantity_ranges: {"ships": {"min": 1, "max": 1}, ...}
-        # → ship_quantity_range, weapon_quantity_range, module_quantity_range, turret_quantity_range
+        # → ship_quantity_range, weapon_quantity_range, secondary_weapon_quantity_range,
+        #   module_quantity_range, turret_quantity_range
         _qty_key_map = {
             "ships": "ship_quantity_range",
             "weapons": "weapon_quantity_range",
+            "secondary_weapons": "secondary_weapon_quantity_range",
             "modules": "module_quantity_range",
             "turrets": "turret_quantity_range",
         }
@@ -517,10 +521,12 @@ class ConfigService:
         range_fields = [
             "ship_count_range",
             "weapon_count_range",
+            "secondary_weapon_count_range",
             "module_count_range",
             "turret_count_range",
             "ship_quantity_range",
             "weapon_quantity_range",
+            "secondary_weapon_quantity_range",
             "module_quantity_range",
             "turret_quantity_range",
         ]

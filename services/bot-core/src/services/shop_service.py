@@ -37,12 +37,11 @@ from services.game_constants import GameConstants
 flogger = bblogger.get_logger("shop-service")
 
 # Map concrete item_type → GuildConfig key used by get_count_range() / get_quantity_range().
-# These config keys are generic (legacy) and GuildConfig hasn't been updated yet.
-# secondary_weapon reuses the "weapon" count/quantity ranges until GuildConfig gains its own key.
+# Each type has its own dedicated key so primaries and secondaries draw from independent ranges.
 _CONCRETE_TO_CONFIG_KEY: dict[str, str] = {
     "ship": "ship",
     "primary_weapon": "weapon",
-    "secondary_weapon": "weapon",  # reuses weapon ranges until a dedicated config key is added
+    "secondary_weapon": "secondary_weapon",  # dedicated key — mirrors weapon range (min:3/max:5)
     "module": "module",
     "turret_weapon": "turret",
 }

@@ -1,6 +1,65 @@
 from pydantic import BaseModel, Field
 
 
+def _guild_shop_to_response(item: object) -> "ShopItemResponse":
+    """Convert a GuildShop ORM object (or dict) to a ShopItemResponse.
+
+    This mirrors the construction used by the GET tier / tech-level / single-item
+    endpoints so that ``/refresh`` returns the SAME item shape as those GETs.
+
+    Enrichment fields (``emoji``, ``dps``, ``shield``, ``armour``, ``hull_hp``)
+    are not available at refresh time without an extra DB round-trip, so they
+    are left as their ``None`` defaults — matching the nullable schema fields.
+    """
+    if isinstance(item, dict):
+        src = item
+        get = lambda field, default=None: src.get(field, default)  # noqa: E731
+    else:
+        get = lambda field, default=None: getattr(item, field, default)  # noqa: E731
+
+    last_restocked = get("last_restocked")
+    if hasattr(last_restocked, "isoformat"):
+        last_restocked_str: str = last_restocked.isoformat()
+    else:
+        last_restocked_str = str(last_restocked) if last_restocked is not None else ""
+
+    return ShopItemResponse(
+        id=get("id"),
+        guild_id=get("guild_id"),
+        tier=get("tier"),
+        tech_level=get("tech_level"),
+        item_type=get("item_type"),
+        item_name=get("item_name"),
+        quantity=get("quantity"),
+        price=get("price"),
+        last_restocked=last_restocked_str,
+        refresh_interval_hours=get("refresh_interval_hours"),
+        # Enrichment fields not populated at refresh time — consistent with schema defaults
+        emoji=get("emoji"),
+        dps=get("dps"),
+        shield=get("shield"),
+        armour=get("armour"),
+        hull_hp=get("hull_hp"),
+    )
+
+
+def serialize_refresh_response(refresh_details: dict) -> dict:
+    """Serialize refresh_shop() result to a JSON-safe dict.
+
+    ``refresh_shop()`` returns ``{"items": [GuildShop, ...], ...}`` where the
+    list contains raw SQLAlchemy ORM objects.  FastAPI cannot serialize those
+    directly (PydanticSerializationError: Unable to serialize unknown type:
+    GuildShop).  This helper replaces the ``"items"`` value with dicts produced
+    by ``ShopItemResponse.model_dump(mode="json")`` so that the shape is
+    identical to what the GET tier/tech-level/single-item endpoints return.
+    """
+    serialized = dict(refresh_details)
+    raw_items = serialized.get("items")
+    if raw_items is not None:
+        serialized["items"] = [_guild_shop_to_response(item).model_dump(mode="json") for item in raw_items]
+    return serialized
+
+
 # Response Models
 class ShopItemResponse(BaseModel):
     id: int

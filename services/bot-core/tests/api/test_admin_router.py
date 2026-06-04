@@ -4,6 +4,8 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1468,6 +1470,69 @@ class TestRefreshShop:
         # The warning surfaces in the response body
         data = response.json()
         assert "announcement_warning" in data
+
+    @patch("api.routers.admin.get_db_session")
+    def test_refresh_shop_orm_items_are_serialized(self, mock_get_db, client, mock_shop_service):
+        """Returns 200 with serializable body when service returns ORM-like objects in 'items'.
+
+        Regression test for CI-10 (admin endpoint): the endpoint crashed with
+        PydanticSerializationError when refresh_shop() returned a dict whose
+        'items' key contained raw GuildShop ORM objects rather than plain dicts.
+        Verifies that the admin path uses ShopItemResponse serialization and
+        returns the same item shape as the public GET endpoints.
+        """
+        _configure_db_mock(mock_get_db)
+        # Simulate what the real ShopService.refresh_shop() returns:
+        # a dict with 'items' being a list of ORM-like objects (not plain dicts).
+        orm_item = SimpleNamespace(
+            id=2,
+            guild_id=67890,
+            tier="Silver",
+            tech_level=5,
+            item_type="module",
+            item_name="Shield Booster",
+            quantity=3,
+            price=500,
+            last_restocked=datetime(2026, 3, 10, 9, 30, 0, tzinfo=UTC),
+            refresh_interval_hours=24,
+            # Enrichment fields absent on real GuildShop ORM object (no attr → None)
+        )
+        mock_shop_service.refresh_shop = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "tier": "Silver",
+                "tech_level": 5,
+                "items_generated": 1,
+                "items": [orm_item],  # ORM-like object — would cause PydanticSerializationError without the fix
+                "refresh_time": "2026-03-10T09:30:00+00:00",
+            }
+        )
+        payload = {"guild_id": 67890, "tier": "Silver"}
+
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["guild_id"] == 67890
+        assert data["tier"] == "Silver"
+        assert data["items_generated"] == 1
+        assert "message" in data  # admin endpoint adds this field
+        items = data["items"]
+        assert isinstance(items, list)
+        assert len(items) == 1
+        item = items[0]
+        assert item["item_name"] == "Shield Booster"
+        assert item["price"] == 500
+        # Timezone-aware datetime serializes with +00:00 offset
+        assert item["last_restocked"] == "2026-03-10T09:30:00+00:00"
+        # ShopItemResponse shape: optional enrichment fields present as null
+        assert "emoji" in item
+        assert "dps" in item
+        assert "shield" in item
+        assert "armour" in item
+        assert "hull_hp" in item
+        assert item["emoji"] is None
+        assert item["dps"] is None
 
 
 # ===========================================================================

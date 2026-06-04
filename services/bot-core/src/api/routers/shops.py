@@ -30,6 +30,7 @@ from api.schemas.shops_schema import (
     ShopItemResponse,
     ShopSummaryResponse,
     TransactionResponse,
+    serialize_refresh_response,
 )
 
 flogger = bblogger.get_logger("shops-api-router")
@@ -317,7 +318,7 @@ async def refresh_shop(request: RefreshShopRequest, shop_service: ShopService = 
                 db, request.guild_id, request.tier, request.force_tech_level
             )
 
-            return refresh_details
+            return serialize_refresh_response(refresh_details)
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

@@ -40,6 +40,7 @@ from api.schemas.admin_schema import (
     UpdatePlayerXPRequest,
     UpdateShopConfigRequest,
 )
+from api.schemas.shops_schema import serialize_refresh_response
 
 flogger = bblogger.get_logger("admin-api-router")
 
@@ -798,7 +799,7 @@ async def refresh_shop(
             )
 
         response: dict = {
-            **refresh_details,
+            **serialize_refresh_response(refresh_details),
             "message": f"Successfully refreshed {request.tier} shop for guild {request.guild_id}",
         }
         if announcement_warning:

@@ -570,11 +570,17 @@ still logged "dead" + "Emergency System activated" same tick. Moved the hull-dea
 termination (true death, post-ES; ES-saved ships have hull=1 so are never `c_dead`). Shield/armour emits
 + ES/clamp/termination logic untouched. 6 new tests incl. the ES-saves-no-dead repro. 4243 green.
 
-## CI-28 ✅ Criminal-loadout embed missing turrets + secondaries — FIXED  *(owner 2026-06-04, `3bac5dc`)*
-`/bounties/{id}/loadout` response carries `turrets` + `secondaries` (key is `secondaries`), but
-`build_loadout_embed` only rendered Primary Weapons + Modules. Added Turrets + Secondaries sections
-(N/M headers, secondary round counts ×N), integrated into the truncation budget, suppressed when empty.
-15 new tests. (Gateway-only; backend response already had the data.)
+## CI-28 ✅ Criminal-loadout embed missing turrets + secondaries — FIXED  *(owner 2026-06-04, `3bac5dc`+`5dc4bf9`)*
+TWO bugs: (1) the gateway `build_loadout_embed` only rendered Primary Weapons + Modules → added
+**Turrets + Secondaries sections** (N/M headers, secondary ×N round counts, truncation-budget aware,
+suppressed when empty; 15 tests; `3bac5dc`). (2) the bot-core `/bounties/{id}/loadout` response never
+**populated** `secondaries` (`build_bounty_loadout`/`build_player_loadout` set weapons/turrets/modules
+but not secondaries) → response returned `secondaries:[]` even when present, so the embed had nothing
+to show → fixed to populate secondaries from `criminal_ship["secondaries"]` (criminal) and
+`secondary_weapons`+`secondary_ammo` (player), with `rounds` on `LoadoutWeaponItem`; 4 tests; `5dc4bf9`.
+**Turrets NOT forced** (owner 2026-06-04): a turret-capable ship with no turret due to TL-gating is
+correct — turrets appear only when tier + availability (turret items are TL5+) + the stock RNG selection
+naturally align (high-tier bounties). An interim forced-fill fallback was built then REVERTED per owner.
 
 ## CI-29 ✅ Combat-log key events out of causal order — FIXED  *(owner 2026-06-04, `3bac5dc`)*
 `_extract_key_events` sorted same-tick events by `(tick, event_type)` — the alphabetical event_type

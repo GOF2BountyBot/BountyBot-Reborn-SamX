@@ -508,6 +508,14 @@ Key Events:
 
 ---
 
+## CI-24 🟢 Fight summary merges per-side stats when both fly the same ship  *(found in CI-20 scoping; owner: FOLD IN 2026-06-04)*
+`_build_fight_summary` (`combat_service.py:965-1007`) keys per-combatant accumulators (dmg dealt,
+accuracy, shots) on **ship name** (`c1.name`/`c2.name`). When both combatants fly the SAME ship name
+(e.g. both "Betty"), the dict collapses → both sides' stats merge into one bucket = wrong per-side
+numbers. The win/loss header is unaffected (read path derives it from final HP). Owner chose to FOLD the
+fix into the combat-log UX batch: re-key the summary on combatant **slot** (1/2). Plan: `COMBAT_CL_UX_PLAN.md`.
+Regression guard: single-name fights byte-identical; same-name fights show DISTINCT per-side stats.
+
 ## CI-8 🧹 Housekeeping — committed status / nothing pushed
 - ✅ `COMBAT_E2E_TEST_PLAN.md` + `COMBAT_ISSUES.md` committed (`ae157f0`).
 - ✅ `/combat-log` feature fully committed (backend router/schema/service + tests were

@@ -472,6 +472,79 @@ class TestListForPlayer:
         items = await svc.list_for_player(MagicMock(), user_id=999, guild_id=9999)
         assert items == []
 
+    async def test_list_items_include_combatant_names(self):
+        """CI-20: each list item must contain combatant1_name and combatant2_name from the row.
+
+        This is the regression test for the gap: the schema was stripping these fields
+        because they were absent from CombatLogListItem. The service has always emitted
+        them; the schema fix now preserves them end-to-end.
+        """
+        svc = CombatLogService()
+        row = _make_row(
+            row_id=57,
+            c1_name="General_Failure",
+            c2_name="Bartholomeu Drew",
+            c1_user_id=100,
+            c2_user_id=200,
+        )
+
+        mock_repo = AsyncMock()
+        mock_repo.list_for_player = AsyncMock(return_value=[row])
+        svc._repo = mock_repo
+
+        items = await svc.list_for_player(MagicMock(), user_id=100, guild_id=9999)
+        assert len(items) == 1
+        item = items[0]
+        # Both names must be present and match the stored row values
+        assert item["combatant1_name"] == "General_Failure"
+        assert item["combatant2_name"] == "Bartholomeu Drew"
+
+    async def test_list_item_combatant_names_survive_schema_validation(self):
+        """CI-20: CombatLogListItem schema must NOT strip combatant1_name/combatant2_name.
+
+        This tests the exact failure mode: if the schema omits the fields, Pydantic
+        would silently drop them and the gateway would fall back to the old 'vs <opponent>'
+        label format.
+        """
+        from datetime import UTC, datetime
+
+        from api.schemas.combat_log_schema import CombatLogListItem
+
+        raw = {
+            "id": 57,
+            "guild_id": 699744305274945650,
+            "context": "duel",
+            "opponent_name": "Bartholomeu Drew",
+            "combatant1_name": "General_Failure",
+            "combatant2_name": "Bartholomeu Drew",
+            "outcome": "won",
+            "created_at": datetime(2026, 6, 3, 12, 0, 0, tzinfo=UTC),
+            "ordinal": 1,
+        }
+        item = CombatLogListItem(**raw)
+        assert item.combatant1_name == "General_Failure"
+        assert item.combatant2_name == "Bartholomeu Drew"
+
+    async def test_list_item_schema_allows_none_combatant_names(self):
+        """CI-20: old rows without combatant names → fields are None, gateway falls back gracefully."""
+        from datetime import UTC, datetime
+
+        from api.schemas.combat_log_schema import CombatLogListItem
+
+        raw = {
+            "id": 1,
+            "guild_id": 699744305274945650,
+            "context": "duel",
+            "opponent_name": "SomeFoe",
+            "outcome": "lost",
+            "created_at": datetime(2026, 6, 3, 12, 0, 0, tzinfo=UTC),
+            "ordinal": 1,
+            # combatant1_name and combatant2_name intentionally absent (legacy row)
+        }
+        item = CombatLogListItem(**raw)
+        assert item.combatant1_name is None
+        assert item.combatant2_name is None
+
 
 # ---------------------------------------------------------------------------
 # Tests: get_detail

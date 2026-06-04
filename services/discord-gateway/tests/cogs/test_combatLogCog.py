@@ -70,8 +70,10 @@ def _make_list_item(
     opponent_name: str = "General_Failure",
     outcome: str = "won",
     ordinal: int = 1,
+    combatant1_name: str | None = None,
+    combatant2_name: str | None = None,
 ) -> dict:
-    return {
+    item: dict = {
         "id": row_id,
         "guild_id": 699744305274945650,
         "context": context,
@@ -80,6 +82,11 @@ def _make_list_item(
         "created_at": "2026-06-03T12:00:00+00:00",
         "ordinal": ordinal,
     }
+    if combatant1_name is not None:
+        item["combatant1_name"] = combatant1_name
+    if combatant2_name is not None:
+        item["combatant2_name"] = combatant2_name
+    return item
 
 
 def _make_detail(
@@ -267,6 +274,23 @@ class TestBattleAutocomplete:
         assert "SamX vs H'Soc" in label, (
             f"Expected 'SamX vs H\\'Soc' in label but got: {label!r}"
         )
+
+    async def test_choice_label_fallback_when_names_absent(self, cog):
+        """CI-20: when combatant names are absent (None / missing keys) the label falls back
+        to 'vs <opponent_name>' — backward-compat for old rows.
+        """
+        item = _make_list_item(row_id=99, opponent_name="OldFoe")
+        # combatant1_name / combatant2_name intentionally absent (old row simulation)
+        assert "combatant1_name" not in item
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response([item]))
+        interaction = _create_interaction()
+
+        choices = await cog.battle_autocomplete(interaction, current="")
+        assert len(choices) == 1
+        label = choices[0].name
+        assert "vs OldFoe" in label, f"Expected 'vs OldFoe' fallback in label but got: {label!r}"
+        # Must NOT contain "SamX vs" or any full-name format
+        assert "SamX vs" not in label
 
 
 # ---------------------------------------------------------------------------

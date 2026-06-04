@@ -18,6 +18,10 @@ class CombatLogListItem(BaseModel):
     Ordinal disambiguates multiple fights vs. the same opponent on the same day
     (most-recent = highest ordinal).  E.g. ordinal=2 means "second duel today".
     outcome is from the requesting user's point of view: "won", "lost", or "stalemate".
+
+    CI-20: combatant1_name / combatant2_name are included so the gateway can render
+    the full "C1 vs C2" dropdown label.  opponent_name is kept for backward-compat
+    and as the NPC-friendly fallback.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -26,6 +30,8 @@ class CombatLogListItem(BaseModel):
     guild_id: int
     context: str
     opponent_name: str
+    combatant1_name: str | None = None  # CI-20: full label support; None on legacy rows
+    combatant2_name: str | None = None  # CI-20: full label support; None on legacy rows
     outcome: str  # "won" | "lost" | "stalemate"
     created_at: datetime
     ordinal: int = 1  # disambiguation counter (same opponent, same day)

@@ -13,9 +13,9 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 **CI-16 AND CI-17 are DONE & LIVE-VALIDATED.** Both ran full architect→dev→tester cycles + live
 smoke-tests against the rebuilt stack. **Owner decisions in (2026-06-04):** CI-17 knobs = keep my
 defaults; CI-6 = WONTFIX (keep EMP seed, it's wiki data); CI-11 = YES build it.
-**Next, in order:** CI-11 (secondary_weapon shop-count category — owner-approved, architect→dev→tester)
-→ CI-10 (`/shops/refresh` serialization crash — clear engineering, pre-existing) → CI-18 (player_inv
-unique constraint — ⚠ DANGER ZONE migration, defer for owner eyes) → CI-4 (live §4/§5/§6 E2E tests).
+**Next, in order:** CI-10 (`/shops/refresh` serialization crash — clear engineering, pre-existing) →
+CI-18 (player_inv unique constraint — ⚠ DANGER ZONE migration, defer for owner eyes) → CI-4 (live
+§4/§5/§6 E2E tests). **CI-11 DONE & live-validated** (committed `aca3079` + migration fix `6018b1c`).
 
 **CI-17 knobs (owner-confirmed, keep):** `CRIMINAL_SECONDARY_ROUNDS` = nuke 1, missile 5, rocket 5,
 cluster-missile 3, shock-blast 2; `CRIMINAL_SECONDARY_MIN_DAMAGE` = 1. All in `GameConstants` (retune
@@ -30,8 +30,9 @@ Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no
 **CI-17 LIVE-VALIDATED** (combat-log 54): spawned silver criminals carry complete secondary loadouts
 (DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
 Erland fired `missile ×3` and dealt 135 dmg in a real fight.
-**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-7, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17.
-**Stack:** bot-core rebuilt with CI-16+CI-17 (migration 0013). **Nothing pushed** — `dev` is ahead of origin.
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17.
+**Stack:** full rebuild to migration **0014**, all combat/shop work LIVE & verified (bot-core healthy;
+blender-service unhealthy = pre-existing, irrelevant). **Nothing pushed** — `dev` is ahead of origin.
 
 ---
 
@@ -209,12 +210,18 @@ schema in the endpoint (mirror the admin path). Not started.
 
 ---
 
-## CI-11 🟢 Give `secondary_weapon` its own shop-count category  *(owner APPROVED 2026-06-04)*
-**Owner decision: YES — add a dedicated count category for secondary weapons with its own range,
-exactly like primary / turret / module.** Today secondaries reuse the `weapon` count key (→ up to
-5 primary + 5 secondary = 10 weapons per refresh, skewing weapon-heavy). Fix: a separate
-`secondary_weapon` count range in the shop count config + route secondaries through it in shop
-generation. → d-architect scope (config structure / migration?) → d-developer → d-tester.
+## CI-11 ✅ Dedicated `secondary_weapon` shop-count category — DONE & LIVE-VALIDATED  *(2026-06-04)*
+**Resolved 2026-06-04; committed `aca3079` + fix `6018b1c`.** Secondaries now draw from their own
+`secondary_weapon_count_range` (default {3,5}) / `secondary_weapon_quantity_range` ({2,4}) instead of
+sharing the primary `weapon` key. Mirrored across all layers (GuildConfig columns + getters, migration
+0014, shop_service key routing, config_service validate/unpack + compat loop, config_repository
+whitelist + summary, gateway admin_config_shop params + embed). Built d-architect scope → d-developer →
+d-tester (PASS: independent-range draw, deferred filter holds, both config endpoints round-trip,
+no-clobber backward-compat). **⚠ Migration 0014 had a deploy-blocking bug** (JSON literal colons parsed
+as bind params → `StatementError` on startup → stack stuck unhealthy at 0013) — FIXED (`6018b1c`: bind
+JSON via `CAST(:val AS jsonb)`; hardened the test to drive the real `upgrade()`; SQLite tests had missed
+it). **LIVE:** stack rebuilt to 0014, dev-guild row backfilled non-NULL on real PG, Silver refresh now
+yields 2 primary + 2 secondary (own counts), no deferred subtypes, no crash.
 
 ---
 

@@ -13,9 +13,11 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 **CI-16 AND CI-17 are DONE & LIVE-VALIDATED.** Both ran full architect→dev→tester cycles + live
 smoke-tests against the rebuilt stack. **Owner decisions in (2026-06-04):** CI-17 knobs = keep my
 defaults; CI-6 = WONTFIX (keep EMP seed, it's wiki data); CI-11 = YES build it.
-**Next, in order:** CI-10 (`/shops/refresh` serialization crash — clear engineering, pre-existing) →
+**Next, in order:** **CI-19** (Discord autocomplete misbehaving on shop/equip/unequip/ship/set-active —
+owner-requested d-architect investigation) → **CI-20/21/22** (combat-log UX batch: name-based identity,
+regen-flapping de-spam, baseline events for both sides — architect to scope together, same subsystem) →
 CI-18 (player_inv unique constraint — ⚠ DANGER ZONE migration, defer for owner eyes) → CI-4 (live
-§4/§5/§6 E2E tests). **CI-11 DONE & live-validated** (committed `aca3079` + migration fix `6018b1c`).
+§4/§5/§6 E2E tests). **CI-10 + CI-11 DONE & live-validated.**
 
 **CI-17 knobs (owner-confirmed, keep):** `CRIMINAL_SECONDARY_ROUNDS` = nuke 1, missile 5, rocket 5,
 cluster-missile 3, shock-blast 2; `CRIMINAL_SECONDARY_MIN_DAMAGE` = 1. All in `GameConstants` (retune
@@ -30,7 +32,8 @@ Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no
 **CI-17 LIVE-VALIDATED** (combat-log 54): spawned silver criminals carry complete secondary loadouts
 (DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
 Erland fired `missile ×3` and dealt 135 dmg in a real fight.
-**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17.
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17.
+**New (owner 2026-06-04):** CI-19 (autocomplete), CI-20/21/22 (combat-log UX).
 **Stack:** full rebuild to migration **0014**, all combat/shop work LIVE & verified (bot-core healthy;
 blender-service unhealthy = pre-existing, irrelevant). **Nothing pushed** — `dev` is ahead of origin.
 
@@ -200,13 +203,14 @@ cleanup-cascade gap. (Not a rebuild/persistence bug — volume persists fine.)
 
 ---
 
-## CI-10 🟡 `POST /api/v1/shops/refresh` serialization crash  *(pre-existing, not from this work)*
-Surfaced by the CI-5 tester. `refresh_shop()` returns a dict containing ORM `GuildShop`
-objects under `"items"`, so the public `POST /api/v1/shops/refresh` endpoint throws
-`PydanticSerializationError: Unable to serialize unknown type: GuildShop`. **Pre-existing**
-(confirmed in git history before CI-5) — NOT a regression. The **admin** refresh path
-(`POST /api/v1/admin/shops/refresh`) works correctly. Fix: serialize items to the response
-schema in the endpoint (mirror the admin path). Not started.
+## CI-10 ✅ `POST /api/v1/shops/refresh` serialization crash — FIXED  *(2026-06-04, committed `8049497`)*
+`refresh_shop()` returns a dict with raw ORM `GuildShop` objects under `"items"` → the public
+endpoint threw `PydanticSerializationError`. The admin path had the SAME latent bug (tests mocked
+`refresh_shop()`, never serializing real items). Fix: `serialize_refresh_response()` now builds each
+item via the canonical `ShopItemResponse` (same schema the GET shop endpoints use) so `/refresh`
+returns the SAME shape as GET; applied to both public + admin endpoints. Added ORM-serialization
+regression tests for both. d-developer → d-tester (PASS-w-notes) → dev follow-up (canonical serializer
++ admin test + tz-aware datetimes). Suite green (4195).
 
 ---
 
@@ -425,6 +429,69 @@ increment). Concurrent/direct inserts could create duplicate rows; `sell_item` e
 be exactly 1 row." Consider a `UniqueConstraint` migration to harden it. Low urgency; documented in
 `services/AGENTS.md`. Also noted: `transfer_item_between_players` bypasses the LoadoutConsistency
 choke point (safe ONLY because both legs are cargo-only — must route through it if extended to equipped gear).
+
+---
+
+## CI-19 🔴 Discord command auto-populate (autocomplete) misbehaving  *(owner 2026-06-04)*
+Owner reports the **autocomplete / auto-populate** for shop-related commands AND
+`equip`/`unequip`/`ship`/`set-active`(setactive) commands "is not working right." Workarounds the
+owner found: re-running `/profile` BETWEEN the other commands sometimes fixes it, or manually typing
+the command params by hand. Smells like stale/empty autocomplete choices or a cache/state dependency
+(autocomplete options not refreshing after a state change, or depending on something `/profile`
+populates). **→ d-architect to investigate the shop + equip/unequip/ship/set-active command
+autocomplete handlers in the discord-gateway cogs (and any bot-core endpoints they call for choices),
+find the root cause, design the fix.** Then dev → tester. (Owner explicitly requested this review.)
+
+---
+
+## CI-20 🔴 `/combat-log` identity/labels unintuitive — use names, not ship  *(owner 2026-06-04)*
+Two related problems, both about telling combatants apart:
+1. **Dropdown:** a bounty-capture battle shows as e.g. `#1 vs betty` — should use the **bounty
+   (criminal) name vs player name**, the SAME style as a PvP duel (`<criminal> vs <player>`).
+2. **The log body itself:** when both combatants fly the SAME ship (e.g. both "Betty"), it's
+   impossible to tell who is who — actors are labeled by ship name. Use criminal-name / player-name
+   (or otherwise disambiguate) so each line clearly attributes to the right side. (See battle #56
+   example below — "Betty (Betty)" + "H'Soc (H'Soc)".) → architect scope w/ CI-21/CI-22 (same subsystem).
+
+---
+
+## CI-21 🔴 `/combat-log` regen-flapping spam ("Shield depleted" repeated)  *(owner 2026-06-04)*
+A layer that regenerates a tiny amount (e.g. shield regen ~1 HP) between shots and is then re-depleted
+emits a **`layer_depleted` event every time** → the log shows "Shield depleted" many times in one
+fight (battle #56: 5× "Shield depleted"). Same situation expected for **armour regen when a repair
+bot/repair beam is equipped**. Owner wants these gated behind a **threshold** (don't re-emit a
+layer-depleted unless the layer meaningfully recovered first, or rate-limit/dedupe consecutive
+depletions of the same layer). → architect scope w/ CI-20/CI-22.
+
+---
+
+## CI-22 🔴 `/combat-log` shows NO events for the outmatching/winning side  *(owner 2026-06-04)*
+In battle #56 the criminal **H'Soc has ZERO key events** — it out-matched the player, never had a
+layer depleted, hit no booster/cloak threshold, fired only primaries → nothing surfaced. Owner finds
+this odd from a player's view (looks like one side did nothing). Want some **baseline events for BOTH
+combatants** even absent threshold hits — e.g. an opening/first-blood/engagement line, periodic
+status, or a per-side summary line — so both sides are represented in the timeline. → architect to
+design what baseline events make sense (balance signal-vs-noise with CI-21's de-spam goal).
+
+### Battle #56 reference (owner-pasted) — illustrates CI-20/21/22
+```
+Battle #56 — Bounty — WON   |   H'Soc (H'Soc) HP 400→356, acc 67%, dmg 200 (PvC DR 33%)
+                                Betty (Betty) HP 185→0, acc 33%, dmg 47   |  Dur 10.7s, Winner H'Soc
+Key Events:
+ 5.7s Betty fired Edo — miss
+ 6.2s Betty: Shield depleted   } 
+ 6.9s Betty: Shield depleted   }  CI-21: regen-flapping spam
+ 6.9s Betty: Armour depleted
+ 7.7s Betty fired Edo — miss
+ 7.7s Betty: Shield depleted   }
+ 8.4s Betty: Shield depleted   }
+ 9.2s Betty: Shield depleted   }
+ 9.7s Betty fired Edo — hit
+10.7s Betty: Shield depleted   }
+10.7s Betty: Hull depleted (dead)
+ (CI-22: H'Soc — the winner — has NO events at all)
+ (CI-20: both sides labeled "<ship> (<ship>)"; dropdown was "#1 vs betty")
+```
 
 ---
 

@@ -9,18 +9,30 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 
 ---
 
-## ▶ RESUME HERE (2026-06-04)
-**CI-16 (consumable secondary weapons) is DONE** — architect design-lock → dev → tester (PASS),
-committed `e1b8f65` (folds in CI-13 + CI-15). **Next, in order:** CI-17 (criminal complete
-loadouts — needs architect first) → CI-6 (Shock Blast inert EMP) → CI-10 (`/shops/refresh` crash)
-→ CI-11 (shop weapon-density tuning) → CI-18 (player_inv unique constraint) → CI-4 (live §4/§5/§6
-weapon/module/edge E2E tests). ⚠ CI-17 is in the loadout/inventory **danger zone** — read
-`services/bot-core/src/services/AGENTS.md` → "Loadout & Inventory system" ([[feedback_loadout_inventory_fragile]]).
-**CI-16 LIVE-VALIDATED 2026-06-04** (stack rebuilt to migration 0013): grant→equip (whole stack
-cargo→ammo)→combat (Jet Rocket fired 3×, 1 round each)→depleted→auto-unequipped post-fight; DB
-persisted; `secondary_depleted` + CI-15 "Hull depleted (dead)" key events confirmed in combat-log 51.
-**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-7, CI-12, CI-13, CI-14, CI-15, CI-16.
-**Stack:** rebuilt to migration 0013, CI-16 live & verified. **Nothing pushed** — `dev` is ahead of origin.
+## ▶ RESUME HERE (2026-06-04, overnight session)
+**CI-16 AND CI-17 are DONE & LIVE-VALIDATED.** Both ran full architect→dev→tester cycles + live
+smoke-tests against the rebuilt stack. **Next, in order:** CI-6 (Shock Blast inert EMP — ⚠ OWNER
+MECHANIC DECISION: remove the stale emp_damage seed, or wire shock-blast to deal EMP someday?) →
+CI-10 (`/shops/refresh` serialization crash — clear engineering, pre-existing) → CI-11 (shop
+weapon-density tuning — ⚠ OWNER TUNING DECISION) → CI-18 (player_inv unique constraint — ⚠ DANGER
+ZONE migration, defer for owner eyes) → CI-4 (live §4/§5/§6 weapon/module/edge E2E tests).
+
+⚠ **OWNER REVIEW — CI-17 balance knobs** (conservative defaults applied; all in `GameConstants`,
+retune in one place): `CRIMINAL_SECONDARY_ROUNDS` = nuke **1**, missile 5, rocket 5, cluster-missile 3,
+shock-blast 2; `CRIMINAL_SECONDARY_MIN_DAMAGE` = 1 (excludes dead-weight); secondary value counted once
+per type. See `COMBAT_CI17_PLAN.md` → "OWNER-DECISION knobs".
+
+**Dev-guild state note:** `general_failure` (player 2) was promoted Bronze→**Silver** to test silver
+criminals (which carry secondaries); demote is on a 24h tier cooldown (ends 2026-06-05 ~03:14 UTC).
+Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no secondaries).
+
+**CI-16 LIVE-VALIDATED** (combat-log 51): grant→equip (whole stack cargo→ammo)→combat (fired 3×,
+1 round each)→depleted→auto-unequipped; `secondary_depleted` + CI-15 "Hull depleted" events confirmed.
+**CI-17 LIVE-VALIDATED** (combat-log 54): spawned silver criminals carry complete secondary loadouts
+(DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
+Erland fired `missile ×3` and dealt 135 dmg in a real fight.
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-7, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17.
+**Stack:** bot-core rebuilt with CI-16+CI-17 (migration 0013). **Nothing pushed** — `dev` is ahead of origin.
 
 ---
 
@@ -353,7 +365,23 @@ file checklist + test plan). ⚠ DANGER ZONE — dev/tester MUST read
 
 ---
 
-## CI-17 🔵 Criminals should get COMPLETE auto-generated loadouts  *(owner 2026-06-03)*
+## CI-17 ✅ Criminals get COMPLETE auto-generated loadouts — DONE & LIVE-VALIDATED  *(2026-06-04)*
+**Resolved 2026-06-04; committed `78f9f6a`.** Purely additive (no resolver/schema/migration change).
+`bounty_service.generate_loadout` now generates tier-appropriate secondaries via a subtype-aware pool
+(excludes deferred subtypes + dead-weight `damage<=1`), distinct-by-name without replacement up to the
+ship's `max_secondaries`, with full combat-field persistence so they fire+damage in the resolver;
+`loadout_builder.from_criminal_ship` reads them back into `WeaponStats` (`damage`→`damage_per_shot`,
+`rounds`→`ammo`). 4 owner-tunable balance knobs as `GameConstants` (nuke=1, missile/rocket=5,
+cluster=3, shock-blast=2; min-damage=1; value once/type) — ⚠ flagged for owner review (`COMBAT_CI17_PLAN.md`).
+Built d-architect (design-lock: purely additive verdict) → d-developer → d-tester (PASS: criminal
+secondaries deal real damage end-to-end, no junk-subtype leakage over 500 RNG iterations, distinct
+names, graceful empty, nuke cap, no reward inflation) + an added `from_criminal_ship`→`TickResolver`
+regression test. Full suite green (4172). **LIVE:** combat-log 54 — criminal Oluchi Erland (Hatsuyuki)
+fired `missile ×3`, dealt 135 dmg; DB-verified criminals carry Jet Rocket + nuke (capped 1 round).
+Criminal cross-fight ammo persistence deferred to Phase-2 (respawn fresh; in-fight-only is correct).
+<details><summary>(original intent)</summary>
+
+## CI-17 (original) 🔵 Criminals should get COMPLETE auto-generated loadouts  *(owner 2026-06-03)*
 Today the bounty criminal generator (`bounty_service.generate_loadout` + `loadout_builder.from_criminal_ship`)
 produces primaries/turrets/modules but **NO secondaries**. Owner wants criminal loadouts auto-generated
 as **complete** loadouts — modules, primaries, **secondaries**, turrets — bound by the ship's slot limits
@@ -362,6 +390,7 @@ they have 5 nukes"). In-fight consumption applies (uniform CI-16 resolver gate);
 for criminals is **deferred to Phase-2** (pre-damaged combat states). **Separate task** — sequence AFTER
 CI-16 lands so the consumable mechanic exists first. Needs design (generation algorithm: tier/tech-level-
 appropriate item selection within slot + uniqueness constraints) → architect → dev → tester.
+</details>
 
 ---
 

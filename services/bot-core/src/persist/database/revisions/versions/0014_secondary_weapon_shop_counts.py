@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import text
 
 revision: str = "0014"
 down_revision: str | None = "0013"
@@ -51,17 +52,23 @@ def upgrade() -> None:
 
     # R1 backfill: pre-existing rows get NULL from add_column; backfill to defaults so
     # random.randint(count_range["min"], ...) never raises TypeError on None["min"].
+    #
+    # IMPORTANT: do NOT embed the JSON literal directly in the SQL string — SQLAlchemy's
+    # text() parser would interpret the colons in "min":3 and "max":5 as named bind
+    # parameters (:3, :5), raising StatementError at compile time.  Bind the value as
+    # a real parameter and cast it explicitly with CAST(...AS jsonb) to avoid both the
+    # colon-parse issue and any ::jsonb ambiguity.
     op.execute(
-        sa.text(
-            f"UPDATE {_TABLE} SET {_COUNT_COL} = '{{\"min\":3,\"max\":5}}'::jsonb "
+        text(
+            f"UPDATE {_TABLE} SET {_COUNT_COL} = CAST(:val AS jsonb) "
             f"WHERE {_COUNT_COL} IS NULL"
-        )
+        ).bindparams(val='{"min": 3, "max": 5}')
     )
     op.execute(
-        sa.text(
-            f"UPDATE {_TABLE} SET {_QTY_COL} = '{{\"min\":2,\"max\":4}}'::jsonb "
+        text(
+            f"UPDATE {_TABLE} SET {_QTY_COL} = CAST(:val AS jsonb) "
             f"WHERE {_QTY_COL} IS NULL"
-        )
+        ).bindparams(val='{"min": 2, "max": 4}')
     )
 
 

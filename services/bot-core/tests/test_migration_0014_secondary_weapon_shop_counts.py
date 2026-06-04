@@ -6,13 +6,19 @@ Verifies that:
 - pre-existing NULL rows are backfilled to the defaults (R1 guard)
 - downgrade() drops both columns (idempotent)
 - idempotent re-run of upgrade() on an already-upgraded schema is safe
+- the REAL upgrade() function (not a re-implementation) runs without a
+  bind-parameter StatementError (regression guard for the colon-in-literal bug)
 """
 
+import importlib
+import importlib.util
 import json
+import os
 import sys
 import types
 from unittest.mock import MagicMock
 
+import pytest
 import sqlalchemy as sa
 
 # ---------------------------------------------------------------------------
@@ -258,3 +264,117 @@ class TestMigration0014:
         qty = random.randint(qty_range["min"], qty_range["max"])
         assert 3 <= count <= 5
         assert 2 <= qty <= 4
+
+
+# ---------------------------------------------------------------------------
+# Hardening: call the REAL upgrade() to catch bind-parameter / SQL-literal bugs
+# ---------------------------------------------------------------------------
+
+_MIGRATION_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "src",
+    "persist",
+    "database",
+    "revisions",
+    "versions",
+    "0014_secondary_weapon_shop_counts.py",
+)
+
+
+def _load_migration_module():
+    """Load the real migration module via importlib (avoids Alembic env)."""
+    spec = importlib.util.spec_from_file_location("migration_0014_real", _MIGRATION_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _build_mock_op(engine: sa.engine.Engine, conn: sa.engine.Connection):
+    """Build a MagicMock that stands in for ``alembic.op``, wired to *engine*/*conn*.
+
+    - ``get_bind()`` returns the live connection so ``sa.inspect(bind)`` works.
+    - ``add_column()`` executes a real ALTER TABLE on *engine*.
+    - ``execute()`` forwards the SQLAlchemy ``text()`` object to *conn*.
+
+    Critically, ``execute()`` receives the *exact* ``text()`` / ``TextClause``
+    object that the real ``upgrade()`` constructs — so any colon-parsing bug in
+    the SQL literal is caught here (StatementError is raised by SQLAlchemy before
+    the dialect ever touches the query).
+    """
+    mock_op = MagicMock()
+    mock_op.get_bind.return_value = conn
+
+    def _add_column(table: str, column: sa.Column, **_kwargs):
+        with engine.begin() as c:
+            c.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {column.name} TEXT"))
+
+    def _execute(stmt):
+        # Forward directly to the live connection — this is where broken SQL would fail.
+        conn.execute(stmt)
+
+    mock_op.add_column.side_effect = _add_column
+    mock_op.execute.side_effect = _execute
+    return mock_op
+
+
+class TestMigration0014RealUpgradeSQLParsing:
+    """Drive the REAL upgrade() function to catch SQL-literal / bind-param regressions.
+
+    These tests exercise the *actual* ``upgrade()`` code path (not a
+    reimplementation), so any re-introduction of a colon-in-literal bug
+    (e.g. ``'{"min":3}'::jsonb`` without binding) causes a ``StatementError``
+    at SQLAlchemy compile time — visible on SQLite, before any dialect execution.
+    """
+
+    def test_real_upgrade_does_not_raise_statmenterror(self):
+        """The real upgrade() must not raise StatementError (bind-param parse bug guard).
+
+        This is the primary regression test: if someone re-introduces an unbound
+        JSON literal like ``'{"min":3,"max":5}'::jsonb`` in the SQL string, SQLAlchemy
+        interprets ``:3`` and ``:5`` as named bind parameters and raises
+        ``StatementError`` (InvalidRequestError) at compile time — even on SQLite.
+        """
+        engine = sa.create_engine("sqlite:///:memory:")
+        _create_guild_configs_table(engine)
+        _insert_guild(engine, guild_id=2001)
+
+        mod = _load_migration_module()
+
+        with engine.connect() as conn:
+            mock_op = _build_mock_op(engine, conn)
+            # Patch the migration module's reference to alembic.op
+            mod.op = mock_op
+            # Must not raise — StatementError would fire here if colon bug is present
+            mod.upgrade()
+
+    def test_real_upgrade_idempotent_on_second_call(self):
+        """The real upgrade() can be called twice without raising (idempotency guard)."""
+        engine = sa.create_engine("sqlite:///:memory:")
+        _create_guild_configs_table(engine)
+        _insert_guild(engine, guild_id=2002)
+
+        mod = _load_migration_module()
+
+        with engine.connect() as conn:
+            mock_op = _build_mock_op(engine, conn)
+            mod.op = mock_op
+            mod.upgrade()  # first run adds columns + backfills
+            mod.upgrade()  # second run: inspector sees cols exist, skips add_column; backfill WHERE IS NULL is a no-op
+
+    def test_broken_literal_sql_raises_statmenterror(self):
+        """Regression-canary: confirm the OLD broken SQL pattern raises the expected error.
+
+        This documents WHY the parameterised form is required. If this test starts
+        passing unexpectedly (no error from the bad SQL) it means the SA text-parse
+        behaviour changed and this whole guard needs revisiting.
+        """
+        engine = sa.create_engine("sqlite:///:memory:")
+        with engine.connect() as conn:
+            broken_sql = sa.text(
+                "UPDATE guild_configs "
+                "SET secondary_weapon_count_range = '{\"min\":3,\"max\":5}'::jsonb "
+                "WHERE secondary_weapon_count_range IS NULL"
+            )
+            with pytest.raises(sa.exc.StatementError):
+                conn.execute(broken_sql)

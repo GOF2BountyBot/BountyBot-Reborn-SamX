@@ -23,9 +23,10 @@ Actual HTTP is performed by the bot-owned client via ``autocomplete_state``.
 A.38 surface gating:
     ``_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`` mirrors
     ``GameConstants.CURRENTLY_ENABLED_TYPES`` (minus "ship") from bot-core.
-    Both must be updated together when secondary weapons are enabled.
+    Both must be updated together when new item types are enabled.
     Cross-reference: services/bot-core/src/services/game_constants.py
         GameConstants.CURRENTLY_ENABLED_TYPES
+    secondary_weapon is now included (CI-5/CI-16).
 """
 
 from __future__ import annotations
@@ -46,8 +47,10 @@ _MAX_CHOICES = 25
 # Concrete item types that can be equipped via the user-facing /equip surface TODAY.
 # Mirrors bot-core GameConstants.CURRENTLY_ENABLED_TYPES minus "ship".
 # Cross-reference: services/bot-core/src/services/game_constants.py
-# When secondary weapons ship: add "secondary_weapon" here AND update bot-core's constant.
-_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES: frozenset[str] = frozenset({"primary_weapon", "turret_weapon", "module"})
+# secondary_weapon enabled here (CI-5/CI-16): secondaries are now buyable and equippable.
+_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES: frozenset[str] = frozenset(
+    {"primary_weapon", "turret_weapon", "module", "secondary_weapon"}
+)
 
 
 async def resolve_player_id(
@@ -302,7 +305,7 @@ async def player_equippable_autocomplete(
 
     An item is "equippable" if:
     - Its ``item_type`` is in ``_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`` (i.e.
-      primary_weapon, turret_weapon, or module — NOT secondary_weapon or ship today).
+      primary_weapon, turret_weapon, module, or secondary_weapon — NOT ship).
     - Its ``quantity`` (cargo copies) is > 0.  ``player_inventories.quantity`` is
       CARGO-ONLY — equipped copies are stored in the ship loadout JSON and do NOT
       reduce the cargo quantity.  A player with 1 cargo copy AND 1 equipped copy

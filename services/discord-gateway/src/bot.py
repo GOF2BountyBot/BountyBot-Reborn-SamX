@@ -122,7 +122,9 @@ async def lifespan(app: FastAPI):
         os._exit(1)
 
     # Bot-owned HTTP client (lifecycle tied to bot process, not any cog)
-    api_base = os.getenv("BOT_CORE_URL", "http://bot-core:8000/api/v1")
+    # BOT_API_BASE_URL is the single canonical env var for reaching bot-core.
+    # All cogs use BOT_API_BASE_URL; this lifespan must match.
+    api_base = os.getenv("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
     autocomplete_http = httpx.AsyncClient(
         timeout=httpx.Timeout(10.0, connect=3.0),
         headers={"Content-Type": "application/json"},
@@ -130,6 +132,21 @@ async def lifespan(app: FastAPI):
     app.state.autocomplete_http = autocomplete_http
     init_autocomplete_state(autocomplete_http, api_base)
     flogger.info("Autocomplete state initialized with bot-owned HTTP client")
+
+    # One-shot health probe — surface misconfigured api_base at startup rather
+    # than silently degrading to empty autocomplete caches.  Non-fatal: the bot
+    # starts regardless so Discord commands still work; only autocomplete warm
+    # jobs will fail if bot-core is unreachable.
+    try:
+        probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
+        probe_resp.raise_for_status()
+        flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
+    except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
+        flogger.error(
+            f"Autocomplete health probe FAILED — autocomplete warm jobs will not reach bot-core. "
+            f"api_base={api_base!r} error={_probe_exc!r}. "
+            "Check BOT_API_BASE_URL env var."
+        )
 
     # In-process APScheduler (MemoryJobStore — no persistence needed for warm jobs)
     scheduler = AsyncIOScheduler(

@@ -71,10 +71,26 @@ or partial API responses. Do NOT read `summary["weapon"]` or `summary["turret"]`
 
 ### Surface gating principle
 
-Cogs must gate secondary weapons using `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`
+Cogs must gate equippable item types using `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`
 from `utils/autocomplete_helpers.py`. This constant mirrors
 `GameConstants.CURRENTLY_ENABLED_TYPES` (minus "ship") in bot-core.
-Both must be updated together when secondary weapons are enabled.
+Both must be updated together when new item types are enabled.
+
+As of CI-5/CI-16, `secondary_weapon` is included in `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`.
+
+### Canonical env var for bot-core URL
+
+`BOT_API_BASE_URL` is the **single canonical environment variable** for the bot-core
+API base URL across ALL cogs AND the lifespan in `bot.py`. The dev stack sets this to
+`http://bot-core:18000/api/v1` via `.env.dev`.
+
+**Never use `BOT_CORE_URL`** — that variable is not set anywhere in the stack and will
+cause autocomplete warm jobs and cache refreshes to silently fail (CI-19 root cause).
+
+The pattern used everywhere:
+```python
+api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+```
 
 ---
 

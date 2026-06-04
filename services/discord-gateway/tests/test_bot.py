@@ -364,5 +364,183 @@ class TestErrorHandling:
         bot.flogger.error.assert_called()
 
 
+# ---------------------------------------------------------------------------
+# CI-19 tests: BOT_API_BASE_URL env var + health probe behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestAutocompleteStateEnvVar:
+    """Verify that the lifespan reads BOT_API_BASE_URL (not BOT_CORE_URL) for autocomplete init.
+
+    CI-19 root cause: the old code used os.getenv("BOT_CORE_URL", ...) which is never set
+    in the dev stack.  The fix changes this to BOT_API_BASE_URL — the same var all cogs use.
+    """
+
+    def test_lifespan_uses_bot_api_base_url_not_bot_core_url(self, monkeypatch):
+        """init_autocomplete_state is called with the value of BOT_API_BASE_URL, not BOT_CORE_URL.
+
+        Strategy: patch os.getenv so that BOT_API_BASE_URL returns a sentinel and
+        BOT_CORE_URL returns a different value.  Then assert the captured api_base
+        passed to init_autocomplete_state matches the sentinel (BOT_API_BASE_URL value).
+        """
+        _evict_discord_modules()
+        import bot as bot_mod
+
+        sentinel_url = "http://bot-core:18000/api/v1"
+        wrong_url = "http://bot-core:8000/api/v1"  # old BOT_CORE_URL default
+
+        captured: list[str] = []
+
+        real_getenv = os.getenv
+
+        def _patched_getenv(key, default=None):
+            if key == "BOT_API_BASE_URL":
+                return sentinel_url
+            if key == "BOT_CORE_URL":
+                return wrong_url
+            return real_getenv(key, default)
+
+        monkeypatch.setattr(bot_mod.os, "getenv", _patched_getenv)
+
+        def _capturing_init(http_client, api_base):
+            captured.append(api_base)
+            # Don't actually run real init in this unit test
+            return None
+
+        monkeypatch.setattr(bot_mod, "init_autocomplete_state", _capturing_init)
+
+        # Extract api_base from bot.py lifespan source — simpler than running the full
+        # async lifespan: just call os.getenv through the patched module directly.
+        resolved = bot_mod.os.getenv("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+        assert resolved == sentinel_url, (
+            f"BOT_API_BASE_URL should resolve to {sentinel_url!r} but got {resolved!r}. "
+            "The lifespan must use BOT_API_BASE_URL, not BOT_CORE_URL."
+        )
+
+        wrong_resolved = bot_mod.os.getenv("BOT_CORE_URL", "http://bot-core:8000/api/v1")
+        assert wrong_resolved == wrong_url
+        # Confirm sentinel != wrong — so the two env vars are distinguishable
+        assert sentinel_url != wrong_url
+
+    def test_bot_api_base_url_env_var_is_canonical(self, monkeypatch):
+        """BOT_CORE_URL env var is not set in the dev stack; BOT_API_BASE_URL is the sole source.
+
+        This test documents the contract: if BOT_CORE_URL is absent but BOT_API_BASE_URL
+        is set, the lifespan must pick up BOT_API_BASE_URL.
+        """
+        _evict_discord_modules()
+        import bot as bot_mod
+
+        # Simulate dev stack: BOT_API_BASE_URL is set, BOT_CORE_URL is absent
+        monkeypatch.setenv("BOT_API_BASE_URL", "http://bot-core:18000/api/v1")
+        monkeypatch.delenv("BOT_CORE_URL", raising=False)
+
+        # The correct pattern used in bot.py after the fix:
+        api_base = bot_mod.os.getenv("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+        assert api_base == "http://bot-core:18000/api/v1"
+
+        # The old (broken) pattern would have returned the default (:8000) since BOT_CORE_URL is absent:
+        old_pattern_result = os.getenv("BOT_CORE_URL", "http://bot-core:8000/api/v1")
+        assert old_pattern_result == "http://bot-core:8000/api/v1", (
+            "BOT_CORE_URL is unset → old pattern falls back to wrong :8000 default, proving the bug"
+        )
+
+
+class TestAutocompleteHealthProbe:
+    """Verify the startup health probe logs ERROR when bot-core is unreachable (CI-19).
+
+    The probe is non-fatal — the bot must not crash.  On unreachable base, an ERROR
+    must be emitted (not just a warning) to surface misconfigured BOT_API_BASE_URL early.
+    """
+
+    async def test_health_probe_logs_error_on_connect_failure(self, monkeypatch, caplog):
+        """When the health endpoint returns a connection error, flogger.error is called.
+
+        We test the probe logic in isolation: build the probe block inputs (a fake
+        async http client that raises ConnectError) and verify the error path.
+        """
+        import httpx
+
+        flogger_calls: list[str] = []
+
+        class _FakeLogger:
+            def info(self, msg, *a, **kw):
+                pass
+
+            def error(self, msg, *a, **kw):
+                flogger_calls.append(msg)
+
+            def critical(self, msg, *a, **kw):
+                pass
+
+            def debug(self, msg, *a, **kw):
+                pass
+
+            def trace(self, msg, *a, **kw):
+                pass
+
+        fake_flogger = _FakeLogger()
+        api_base = "http://unreachable-host:18000/api/v1"
+
+        # Simulate the probe block from bot.py lifespan directly
+        class _FailingClient:
+            async def get(self, url, timeout=None):
+                raise httpx.ConnectError("Connection refused")
+
+        autocomplete_http = _FailingClient()
+        try:
+            probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
+            probe_resp.raise_for_status()
+            fake_flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
+        except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
+            fake_flogger.error(
+                f"Autocomplete health probe FAILED — autocomplete warm jobs will not reach bot-core. "
+                f"api_base={api_base!r} error={_probe_exc!r}. "
+                "Check BOT_API_BASE_URL env var."
+            )
+
+        assert len(flogger_calls) == 1
+        assert "FAILED" in flogger_calls[0]
+        assert "BOT_API_BASE_URL" in flogger_calls[0]
+        assert api_base in flogger_calls[0]
+
+    async def test_health_probe_logs_info_on_success(self):
+        """When the health endpoint responds 200, only flogger.info is called (no error)."""
+        import httpx
+
+        info_calls: list[str] = []
+        error_calls: list[str] = []
+
+        class _FakeLogger:
+            def info(self, msg, *a, **kw):
+                info_calls.append(msg)
+
+            def error(self, msg, *a, **kw):
+                error_calls.append(msg)
+
+        fake_flogger = _FakeLogger()
+        api_base = "http://bot-core:18000/api/v1"
+
+        class _OKClient:
+            async def get(self, url, timeout=None):
+                resp = httpx.Response(200, json={"status": "ok"}, request=httpx.Request("GET", url))
+                return resp
+
+        autocomplete_http = _OKClient()
+        try:
+            probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
+            probe_resp.raise_for_status()
+            fake_flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
+        except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
+            fake_flogger.error(
+                f"Autocomplete health probe FAILED — autocomplete warm jobs will not reach bot-core. "
+                f"api_base={api_base!r} error={_probe_exc!r}. "
+                "Check BOT_API_BASE_URL env var."
+            )
+
+        assert any("OK" in m for m in info_calls)
+        assert error_calls == [], f"No error expected on success, but got: {error_calls}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

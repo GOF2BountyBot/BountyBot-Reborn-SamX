@@ -6,7 +6,7 @@ Represents items owned by a player that are not currently equipped to ships.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from persist.database.tablenames import TableNames
@@ -15,6 +15,9 @@ from persist.models.base import Base
 
 class PlayerInventory(Base):
     __tablename__ = TableNames.PlayerInventories.value
+    __table_args__ = (
+        UniqueConstraint("player_id", "item_type", "item_name", name="uq_player_inventories_player_item"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     player_id: Mapped[int] = mapped_column(Integer, ForeignKey(f"{TableNames.Players.value}.id"), nullable=False)

@@ -31,8 +31,9 @@ Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no
 **CI-17 LIVE-VALIDATED** (combat-log 54): spawned silver criminals carry complete secondary loadouts
 (DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
 Erland fired `missile ×3` and dealt 135 dmg in a real fight.
-**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-18, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24, CI-25, CI-26, CI-27, CI-28, CI-29.
-**Open:** CI-4 (full E2E re-run §0–§8), CI-30 (add_item insert not race-safe vs new constraint — deferred).
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-18, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24, CI-25, CI-26, CI-27, CI-28, CI-29, CI-31, CI-32.
+**Open:** CI-4 (full E2E re-run §0–§8 — DONE except R1/R2 followups: R1→CI-31 ✅, R2 false-alarm; visual/manual items remain owner's pass), CI-30 (add_item insert not race-safe vs new constraint — deferred).
+**CI-4 re-run (2026-06-05) outcome:** core resolver/persistence/PvC/PvP/edge all PASS, no regressions; spawned CI-31 (repair bot, FIXED) + CI-32 (shock-blast, FIXED). R2 (claimed migration-0015 constraint absent) investigated → FALSE ALARM (constraint present continuously; migration + ORM model + 0001-metadata-build all correct; CI-18 test (a) proves upgrade() creates it).
 **Watching:** `/route` reported broken (owner) — bot-core endpoint + command verified healthy; awaiting exact symptom to diagnose.
 **Live-verified 2026-06-04:** CI-25 (equip secondaries), CI-27 (no false dead+ES), CI-28 (loadout embed
 secondaries populated+rendered; turrets natural/not-forced), CI-29 (causal combat-log order).
@@ -462,6 +463,35 @@ handler. With CI-18's constraint live, two concurrent callers for the same
 probability (requires true concurrent same-key inserts). Fix: `ON CONFLICT DO UPDATE SET quantity =
 quantity + EXCLUDED.quantity` (upsert) or catch `IntegrityError` → re-get → increment, plus a
 concurrent-insert test. Deferred; not blocking.
+
+---
+
+## CI-31 ✅ Repair Bot regen silently inert (base bot) — FIXED & LIVE-VALIDATED  *(2026-06-05, found in CI-4 re-run; committed `2e8d8c3` + `64f9a70` + `26872cf`)*
+The base `Ketar Repair Bot` granted ZERO regen in combat: `combat_service.py` name-matched
+`"Ketar Repair Bot I"` but the seeded item is `Ketar Repair Bot` (no "I") → substring miss → rate 0.0.
+`Ketar Repair Bot II` worked (separate constant). **Owner decisions:** detect by module SUBCLASS
+(`module_type == "RepairBotModule"`), make the rate a PROPERTY on the module object
+(`ModuleStats.repair_rate`), and KEEP the percent-of-max-HP model (base 2.5%/sec, II 5.0%/sec) — NOT
+absolute HPps. Fix: `_init_combatant` now iterates modules and takes `max(repair_rate)` over any
+`RepairBotModule` (name constants deleted); `loadout_builder._module_stats_from_extra` reads an explicit
+`repair_pct_per_sec` seed key FIRST (now added to the 2 repair-bot import_data JSONs = 0.025/0.05,
+data-authoritative per owner), falling back to an HPps selector (`>=15 → II`, else base — never inert
+again) when absent. Shock-blast-unrelated. architect→dev→tester full cycle. **Live PASS:** combat-log
+**#75** = 174 player-side regen events (102 hull + 72 armour) at ~4.9 HP/s = (156+40)×0.025; ZERO in all
+pre-fix fights. Edge cases verified: explicit key wins over HPps, explicit 0.0 honored, type-guard
+rejects non-repair modules. 1690 tests green.
+
+---
+
+## CI-32 ✅ Shock-blast fired uselessly at tick 0 — FIXED  *(2026-06-05, found in CI-4 re-run; committed `2e8d8c3` + `26872cf`)*
+Shock-blast has `range_m=0` so the shared secondary range gate was skipped → it fired at tick 0 from
+`STARTING_DISTANCE_M=5000`, resetting distance 5000→5000 (pointless, burned a fire/cooldown). **Owner
+decision:** fire ONLY when `current_distance < 500m`. Fix: new `GameConstants.SHOCK_BLAST_TRIGGER_RANGE_M
+= 500` (env-tunable); a dedicated guard at the top of the shock-blast branch `continue`s (skipping fire
+AND cooldown) when distance ≥ 500 — so no tick-0 fire, and cooldown is consumed only on a real fire once
+ships close inside 500m. Shared range gate (range_m path) untouched; other secondaries unaffected; Phase-6
+distance-reset unchanged. **Verified:** `TestShockBlastRangeGuard` (4 tests) + pre-fix combat-log #69
+showed the tick-0 fire; post-fix unit tests confirm suppression + in-range firing + cooldown integrity.
 
 ---
 

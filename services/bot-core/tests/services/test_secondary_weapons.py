@@ -1621,8 +1621,7 @@ class TestShockBlastRangeGuard:
         sb = _secondary(name="Shock Blast", subtype="shock-blast", damage=0.0, speed_ms=self.SPEED_MS, range_m=0.0)
         return _loadout(secondary_weapons=[sb], base_armour=5000, name=name)
 
-    def _run_fight(self) -> "FightResults":  # type: ignore[name-defined]
-        from src.services.combat_models import FightResults  # noqa: F401
+    def _run_fight(self):
         l1 = self._sb_loadout("Attacker")
         l2 = _loadout(base_armour=5000, name="Target")
         return TickResolver(seed=0).resolve(l1, l2, rng=_AlwaysHit())

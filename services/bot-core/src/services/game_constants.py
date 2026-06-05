@@ -352,6 +352,7 @@ class GameConstants:
     BASE_SHIP_SPEED_MPS: int = 150
     MIN_DISTANCE_M: int = 300
     THRUSTER_WINDOW_M: int = 750
+    SHOCK_BLAST_TRIGGER_RANGE_M: int = 500  # shock-blast only fires inside this range (m)
 
     # HP-threshold activation lists (§7.2 / §7.3 / §8)
     CLOAK_HP_THRESHOLDS_PCT: list[int] = [66, 33]
@@ -484,6 +485,7 @@ class GameConstants:
         cls.BASE_SHIP_SPEED_MPS = _track_int("BASE_SHIP_SPEED_MPS", 150)
         cls.MIN_DISTANCE_M = _track_int("MIN_DISTANCE_M", 300)
         cls.THRUSTER_WINDOW_M = _track_int("THRUSTER_WINDOW_M", 750)
+        cls.SHOCK_BLAST_TRIGGER_RANGE_M = _track_int("SHOCK_BLAST_TRIGGER_RANGE_M", 500)
         cls.CLOAK_HP_THRESHOLDS_PCT = _track_int_list("CLOAK_HP_THRESHOLDS_PCT", [66, 33])
         cls.BOOSTER_HP_THRESHOLDS_PCT = _track_int_list("BOOSTER_HP_THRESHOLDS_PCT", [80, 60, 40, 20])
         cls.EMERGENCY_SYSTEM_INVULN_S = _track_int("EMERGENCY_SYSTEM_INVULN_S", 10)

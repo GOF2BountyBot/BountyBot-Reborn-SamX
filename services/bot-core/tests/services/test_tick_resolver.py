@@ -331,23 +331,42 @@ class TestShieldRegenCadence:
 
 
 class TestRepairBotRegen:
-    def test_ketar1_rate_from_module_name(self):
-        """_init_combatant picks Ketar I rate from module name."""
-        mod = ModuleStats(name="Ketar Repair Bot I")
+    def test_ketar1_rate_from_module_subclass(self):
+        """_init_combatant propagates Ketar I rate from module_type + repair_rate property."""
+        mod = ModuleStats(
+            name="Ketar Repair Bot",
+            module_type="RepairBotModule",
+            repair_rate=GameConstants.KETAR_I_REPAIR_PCT_PER_SEC,
+        )
         loadout = ShipLoadout(ship_name="S", base_armour=100, modules=[mod])
         state = _init_combatant(loadout, is_player=False)
         assert state.repair_bot_rate_per_sec == GameConstants.KETAR_I_REPAIR_PCT_PER_SEC
 
-    def test_ketar2_rate_from_module_name(self):
-        """_init_combatant picks Ketar II rate from module name."""
-        mod = ModuleStats(name="Ketar Repair Bot II")
+    def test_ketar2_rate_from_module_subclass(self):
+        """_init_combatant propagates Ketar II rate from module_type + repair_rate property."""
+        mod = ModuleStats(
+            name="Ketar Repair Bot II",
+            module_type="RepairBotModule",
+            repair_rate=GameConstants.KETAR_II_REPAIR_PCT_PER_SEC,
+        )
         loadout = ShipLoadout(ship_name="S", base_armour=100, modules=[mod])
         state = _init_combatant(loadout, is_player=False)
         assert state.repair_bot_rate_per_sec == GameConstants.KETAR_II_REPAIR_PCT_PER_SEC
 
     def test_ketar2_wins_over_ketar1(self):
         """When both equipped, highest rate (Ketar II) wins."""
-        mods = [ModuleStats(name="Ketar Repair Bot I"), ModuleStats(name="Ketar Repair Bot II")]
+        mods = [
+            ModuleStats(
+                name="Ketar Repair Bot",
+                module_type="RepairBotModule",
+                repair_rate=GameConstants.KETAR_I_REPAIR_PCT_PER_SEC,
+            ),
+            ModuleStats(
+                name="Ketar Repair Bot II",
+                module_type="RepairBotModule",
+                repair_rate=GameConstants.KETAR_II_REPAIR_PCT_PER_SEC,
+            ),
+        ]
         loadout = ShipLoadout(ship_name="S", base_armour=100, modules=mods)
         state = _init_combatant(loadout, is_player=False)
         assert state.repair_bot_rate_per_sec == GameConstants.KETAR_II_REPAIR_PCT_PER_SEC

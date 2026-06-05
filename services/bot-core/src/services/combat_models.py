@@ -93,7 +93,7 @@ class ModuleStats:
         evasion_modifier: Effect on owner's evasion (e.g., thruster +0.1).
         enemy_accuracy_modifier: Effect on enemy's accuracy (e.g., cloak -0.2).
         shield_recharge_rate: Shield HP recovered per second (for tick sim).
-        repair_rate: Hull HP recovered per second (for repair bots).
+        repair_rate: Repair-bot regen as fraction of (max_hull+max_armour) per second (pct/sec); 0.0 = no repair bot.
     """
 
     name: str

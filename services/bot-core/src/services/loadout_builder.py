@@ -15,6 +15,7 @@ from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.combat_models import ModuleStats, ShipLoadout, WeaponStats
+from services.game_constants import GameConstants
 
 flogger = bblogger.get_logger("loadout-builder")
 
@@ -98,6 +99,20 @@ def _module_stats_from_extra(name: str, extra: dict, *, module_type: str = "") -
     shield_recharge_ms = int(_get_extra(inner, "shield_recharge_ms", "shieldRechargeMs", 0))
     shield_recharge_rate = float(_get_extra(inner, "shield_recharge_rate", "shieldRechargeRate", 0.0))
     repair_rate = float(_get_extra(inner, "repair_rate", "repairRate", 0.0))
+
+    # RepairBotModule override: map seed HPps → locked pct constants.
+    # Prefer an explicit repair_pct_per_sec seed key (future-proof); fall back to
+    # HPps thresholding (>=15 → II, else → I — never inert even for unknown future bots).
+    if module_type == "RepairBotModule":
+        explicit = _get_extra(inner, "repair_pct_per_sec", "repairPctPerSec", None)
+        if explicit is not None:
+            repair_rate = float(explicit)  # future authoritative seed key (zero code edit)
+        else:
+            hpps = int(_get_extra(inner, "HPps", "HPps", 0) or 0)
+            if hpps >= 15:
+                repair_rate = GameConstants.KETAR_II_REPAIR_PCT_PER_SEC  # id129 HPps=15
+            else:
+                repair_rate = GameConstants.KETAR_I_REPAIR_PCT_PER_SEC  # id122 HPps=7 + safe default
 
     # T8 activation-rule fields — all in inner extra_atts
     effect_pct = float(_get_extra(inner, "effect_pct", "effectPct", 0.0))

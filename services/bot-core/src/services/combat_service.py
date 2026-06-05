@@ -45,12 +45,11 @@ flogger = bblogger.get_logger(__name__)
 # TickResolver — tick-based combat simulation (T3 skeleton)
 # ---------------------------------------------------------------------------
 
-# Ketar Repair Bot module name constants (used for rate detection in _init_combatant)
-_KETAR_II_NAME = "Ketar Repair Bot II"
-_KETAR_I_NAME = "Ketar Repair Bot I"
-
 # STI discriminator for the PrimaryWeaponMod module class (§10)
 _PRIMARY_WEAPON_MOD_TYPE = "PrimaryWeaponModModule"
+
+# STI discriminator for RepairBot modules (used for rate detection in _init_combatant)
+_REPAIR_BOT_MODULE_TYPE = "RepairBotModule"
 
 
 @dataclass(slots=True)
@@ -282,14 +281,12 @@ def _init_combatant(
             shield_schedules.append((mod.shield, period))
     shield_accumulators = [0] * len(shield_schedules)
 
-    # Repair Bot rate — pick highest Ketar rate equipped; ignore stale seed HPps values (§3)
+    # Repair Bot rate — any RepairBotModule contributes; pick the highest equipped (§3).
+    # Rate is a property on the module object (set by loadout_builder via HPps→pct mapping).
     repair_rate = 0.0
     for mod in loadout.modules:
-        # Check II before I to avoid substring collision ("Ketar Repair Bot I" ⊂ "Ketar Repair Bot II")
-        if _KETAR_II_NAME in mod.name:
-            repair_rate = max(repair_rate, GameConstants.KETAR_II_REPAIR_PCT_PER_SEC)
-        elif _KETAR_I_NAME in mod.name:
-            repair_rate = max(repair_rate, GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)
+        if mod.module_type == _REPAIR_BOT_MODULE_TYPE:
+            repair_rate = max(repair_rate, mod.repair_rate)
 
     # All cooldowns start at 0 — weapons fully ready at tick 0 (§1)
     # Primary weapon cooldowns are tracked in effective_primaries (T5).
@@ -1535,6 +1532,10 @@ class TickResolver:
                         _sw.cooldown_remaining_ms = _sw.loading_speed_ms
 
                     elif _sub == "shock-blast":
+                        # Only fire when the enemy is close; at long range the distance-reset is pointless
+                        # (resets to STARTING_DISTANCE_M) and would waste a cooldown.
+                        if current_distance >= GameConstants.SHOCK_BLAST_TRIGGER_RANGE_M:
+                            continue
                         # D6: 100% guaranteed distance reset — no RNG draw, no damage
                         _prev_dist = current_distance
                         events.append(

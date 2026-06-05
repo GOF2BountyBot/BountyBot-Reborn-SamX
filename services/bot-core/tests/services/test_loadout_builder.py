@@ -1373,3 +1373,58 @@ class TestFromCriminalShipSecondaries:
         loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
         assert len(loadout.secondary_weapons) == 1
         assert loadout.secondary_weapons[0].dps == pytest.approx(5.0)
+
+
+# ---------------------------------------------------------------------------
+# FIX 1 — RepairBotModule HPps → pct mapping (_module_stats_from_extra)
+# ---------------------------------------------------------------------------
+
+
+class TestRepairBotModuleMapping:
+    """_module_stats_from_extra maps seed HPps to locked pct constants for RepairBotModules."""
+
+    def _make_extra(self, hpps: int) -> dict:
+        """Build an outer extra_atts dict matching the DB nesting pattern."""
+        return {"extra_atts": {"HPps": hpps}}
+
+    def test_hpps_7_maps_to_ketar_i(self):
+        """HPps=7 (id122 Ketar I) → KETAR_I_REPAIR_PCT_PER_SEC."""
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Ketar Repair Bot", self._make_extra(7), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)
+
+    def test_hpps_15_maps_to_ketar_ii(self):
+        """HPps=15 (id129 Ketar II) → KETAR_II_REPAIR_PCT_PER_SEC."""
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Ketar Repair Bot II", self._make_extra(15), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_II_REPAIR_PCT_PER_SEC)
+
+    def test_hpps_99_maps_to_ketar_ii(self):
+        """HPps=99 (any future high-value bot) → KETAR_II_REPAIR_PCT_PER_SEC (>=15 path)."""
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Future Repair Bot", self._make_extra(99), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_II_REPAIR_PCT_PER_SEC)
+
+    def test_hpps_0_maps_to_ketar_i(self):
+        """HPps=0 (unknown/missing) → KETAR_I_REPAIR_PCT_PER_SEC (safe base default, never 0.0)."""
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Unknown Bot", self._make_extra(0), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)
+
+    def test_explicit_repair_pct_per_sec_wins(self):
+        """repair_pct_per_sec in inner extra_atts overrides HPps threshold logic."""
+        explicit_rate = 0.075
+        extra = {"extra_atts": {"HPps": 7, "repair_pct_per_sec": explicit_rate}}
+        stats = _module_stats_from_extra("Custom Bot", extra, module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(explicit_rate)
+
+    def test_non_repair_bot_module_unaffected(self):
+        """Non-RepairBotModule with HPps in extra is NOT mapped to pct constants."""
+        # HPps present but module_type != RepairBotModule → repair_rate stays 0.0 (generic path)
+        extra = {"extra_atts": {"HPps": 7}}
+        stats = _module_stats_from_extra("Some Other Module", extra, module_type="CloakModule")
+        assert stats.repair_rate == pytest.approx(0.0)

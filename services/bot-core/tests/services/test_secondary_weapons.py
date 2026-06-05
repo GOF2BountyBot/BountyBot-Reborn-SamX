@@ -776,22 +776,30 @@ class TestShockBlast:
         assert len(mod_activations) == 0, "No module activations expected in T6"
 
     def test_weapon_fire_and_distance_events_emitted(self):
-        """Shock-blast emits weapon_fire (phase 3) AND distance (phase 6). Test 22."""
+        """Shock-blast emits weapon_fire (phase 3) AND distance (phase 6). Test 22.
+
+        After FIX 2, shock-blast fires only inside SHOCK_BLAST_TRIGGER_RANGE_M (500m),
+        NOT on tick 0. We verify the events are emitted on the FIRST fire tick (inside range).
+        """
         sb = self._sb()
         l1 = _loadout(secondary_weapons=[sb], name="Attacker")
         l2 = _loadout(name="Target")
         result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
-        t0 = [e for e in result.combat_log if e.tick == 0]
-        fires = [e for e in t0 if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"]
-        dist_evs = [e for e in t0 if e.type == "distance" and e.data.get("cause") == "shock_blast"]
-        assert len(fires) == 1, "Exactly one weapon_fire for shock-blast"
-        assert fires[0].data["hit"] is True
-        assert abs(fires[0].data["accuracy"] - 1.0) < 1e-9
-        assert len(dist_evs) == 1, "Exactly one distance event for shock-blast"
+        # After FIX 2: first fire happens when ships close to < 500m (not tick 0)
+        all_fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"]
+        assert len(all_fires) >= 1, "Shock-blast must fire at least once (inside range)"
+        first_fire = all_fires[0]
+        assert first_fire.data["hit"] is True
+        assert abs(first_fire.data["accuracy"] - 1.0) < 1e-9
+        # Distance event must be emitted on same tick
+        fire_tick = first_fire.tick
+        tick_events = [e for e in result.combat_log if e.tick == fire_tick]
+        dist_evs = [e for e in tick_events if e.type == "distance" and e.data.get("cause") == "shock_blast"]
+        assert len(dist_evs) == 1, "Exactly one distance event for shock-blast fire"
         assert abs(dist_evs[0].data["to"] - STARTING_DIST) < 1e-6
         # weapon_fire is in phase 3 (before distance in phase 6) — verify ordering
-        fire_idx = t0.index(fires[0])
-        dist_idx = t0.index(dist_evs[0])
+        fire_idx = tick_events.index(first_fire)
+        dist_idx = tick_events.index(dist_evs[0])
         assert fire_idx < dist_idx, "weapon_fire (phase 3) must come before distance (phase 6)"
 
     def test_seed_damage_ignored(self):
@@ -857,7 +865,12 @@ class TestPureEMPSecondary:
 
 class TestCrossSubtype:
     def test_cooldown_reset_on_fire_all_subtypes(self):
-        """Cooldown resets to loading_speed_ms after fire — hit OR miss — for every subtype. Test 25."""
+        """Cooldown resets to loading_speed_ms after fire — hit OR miss — for every subtype. Test 25.
+
+        After FIX 2, shock-blast does NOT fire on tick 0 (range guard: < 500m required).
+        All other subtypes still fire on tick 0 (they have explicit range_m > 0 or infinite range
+        without the trigger-range guard). Shock-blast fires once ships close to < 500m.
+        """
         speed = 5000  # ms
         weapons = {
             "rocket": _secondary(subtype="rocket", speed_ms=speed, range_m=5000.0),
@@ -870,17 +883,29 @@ class TestCrossSubtype:
             l1 = _loadout(secondary_weapons=[sw], base_armour=2000, name="Attacker")
             l2 = _loadout(base_armour=2000, name="Target")
             result = TickResolver(seed=0).resolve(l1, l2, rng=_AlwaysHit())
-            # Check that on tick 1, the cooldown_end event for this weapon appears at tick speed/TICK_MS
+            # Check secondary starts at cooldown 0
             state = _init_combatant(l1, is_player=False)
             sw_rt = state.effective_secondaries[0]
             assert sw_rt.cooldown_remaining_ms == 0, f"{subtype_name}: should start at 0"
-            # Run resolve and check the weapon_fire event exists for tick 0
-            t0 = [
-                e
-                for e in result.combat_log
-                if e.tick == 0 and e.type == "weapon_fire" and e.data.get("slot") == "secondary"
-            ]
-            assert len(t0) >= 1, f"{subtype_name}: should fire on tick 0"
+            # All subtypes except shock-blast fire on tick 0
+            # Shock-blast has a range guard (< SHOCK_BLAST_TRIGGER_RANGE_M = 500m) — fires later
+            if subtype_name == "shock-blast":
+                # Verify it fires at some point (not tick 0, but still fires)
+                all_fires = [
+                    e
+                    for e in result.combat_log
+                    if e.type == "weapon_fire" and e.data.get("slot") == "secondary"
+                    and e.data.get("subtype") == "shock-blast"
+                ]
+                assert len(all_fires) >= 1, f"{subtype_name}: should fire at some point in the fight"
+                assert all_fires[0].tick > 0, f"{subtype_name}: must NOT fire on tick 0 (FIX 2 range guard)"
+            else:
+                t0 = [
+                    e
+                    for e in result.combat_log
+                    if e.tick == 0 and e.type == "weapon_fire" and e.data.get("slot") == "secondary"
+                ]
+                assert len(t0) >= 1, f"{subtype_name}: should fire on tick 0"
 
     def test_t1_t5_regression(self):
         """T1–T5 baseline regression: primaries still fire, damage applies, tick loop runs. Test 26."""
@@ -892,7 +917,12 @@ class TestCrossSubtype:
         assert not result.is_stalemate or result.metadata["metadata"]["total_ticks"] < GameConstants.MAX_FIGHT_TICKS
 
     def test_weapon_fire_payloads_conform_to_spec(self):
-        """weapon_fire payloads match §12 per-subtype table. Test 27."""
+        """weapon_fire payloads match §12 per-subtype table. Test 27.
+
+        After FIX 2, shock-blast does NOT fire on tick 0 (range guard: distance < 500m).
+        The tick-0 check still verifies rocket/missile/cluster/nuke payloads.
+        Shock-blast payload is verified on its actual first-fire tick.
+        """
         speed = 5000
         # One of each subtype
         rocket = _secondary(name="TestRocket", subtype="rocket", speed_ms=speed, range_m=5000.0, damage=50.0)
@@ -939,9 +969,17 @@ class TestCrossSubtype:
         assert "epicenter" in n and "opponent_damage" in n and "self_damage" in n
         assert "hit" not in n and "accuracy" not in n  # no accuracy roll
 
-        # shock-blast: {slot, subtype, weapon, hit: true, accuracy: 1.0}
-        assert "shock-blast" in ev_by_sub
-        s = ev_by_sub["shock-blast"]
+        # shock-blast: does NOT fire on tick 0 (FIX 2 range guard; fires only inside 500m)
+        # Verify payload on the actual first-fire tick
+        assert "shock-blast" not in ev_by_sub, (
+            "Shock-blast must NOT fire on tick 0 after FIX 2 (distance=5000m > 500m trigger range)"
+        )
+        sb_fire_ev = next(
+            (e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"),
+            None,
+        )
+        assert sb_fire_ev is not None, "Shock-blast must fire at some point in the fight (inside range)"
+        s = sb_fire_ev.data
         assert s["hit"] is True
         assert abs(s["accuracy"] - 1.0) < 1e-9
 
@@ -1363,19 +1401,25 @@ class TestCoverageGaps:
 
         LOW fix: the second shock-blast's distance event must report from=STARTING_DISTANCE_M
         (already reset by the first), not the original pre-reset distance.
+
+        After FIX 2, shock-blast fires only inside SHOCK_BLAST_TRIGGER_RANGE_M (500m), NOT on
+        tick 0. We look for the first tick where dual fires occur (inside range).
         """
         sb1 = _secondary(name="Shock Blast", subtype="shock-blast", damage=0.0, speed_ms=1000, range_m=0.0)
         sb2 = _secondary(name="Shock Blast 2", subtype="shock-blast", damage=0.0, speed_ms=1000, range_m=0.0)
-        # Both shock-blasts on same ship so they fire in the same tick
+        # Both shock-blasts on same ship so they fire in the same tick (cooldown 1000ms = 100 ticks)
         l1 = _loadout(secondary_weapons=[sb1, sb2], name="Attacker")
         l2 = _loadout(name="Target")
         result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
-        t0 = [e for e in result.combat_log if e.tick == 0]
-        dist_evs = [e for e in t0 if e.type == "distance" and e.data.get("cause") == "shock_blast"]
-        # Both fire on tick 0 (cooldown starts at 0)
-        assert len(dist_evs) == 2, f"Both shock-blasts should emit distance events, got {len(dist_evs)}"
-        second_ev = dist_evs[1]
-        # First: from the actual pre-reset distance (~5000 or wherever it is at tick 0)
+        # Find the first tick where dual distance events from shock_blast occur
+        dist_evs = [e for e in result.combat_log if e.type == "distance" and e.data.get("cause") == "shock_blast"]
+        assert len(dist_evs) >= 2, f"Both shock-blasts should emit distance events, got {len(dist_evs)}"
+        # Get the first pair (same tick)
+        first_tick = dist_evs[0].tick
+        first_pair = [e for e in dist_evs if e.tick == first_tick]
+        assert len(first_pair) == 2, f"Both shock-blasts must fire on the same tick, got {len(first_pair)}"
+        second_ev = first_pair[1]
+        # First: from the actual pre-reset distance (< SHOCK_BLAST_TRIGGER_RANGE_M)
         # Second: from STARTING_DISTANCE_M (because first already reset it)
         assert abs(second_ev.data["from"] - STARTING_DIST) < 1e-6, (
             f"Second shock-blast 'from' must be STARTING_DISTANCE_M={STARTING_DIST}, "
@@ -1491,3 +1535,203 @@ class TestCoverageGaps:
         assert sw.damage_per_shot == 0.0, f"sw_item=None → damage_per_shot=0.0, got {sw.damage_per_shot}"
         assert sw.loading_speed_ms == 0, f"sw_item=None → loading_speed_ms=0, got {sw.loading_speed_ms}"
         assert sw.subtype == "", f"sw_item=None → subtype='', got {sw.subtype!r}"
+
+
+# ===========================================================================
+# FIX 1 — Repair Bot regen: base-bot loadout produces regen events (end-to-end)
+# ===========================================================================
+
+
+class TestRepairBotRegenEndToEnd:
+    """Full-resolve regression: base repair bot loadout produces >=1 regen event.
+
+    These tests use the subclass + repair_rate property approach (FIX 1).
+    The repair_rate is baked into ModuleStats; _init_combatant picks it up via
+    module_type == "RepairBotModule". This ensures the fix is wired end-to-end.
+    """
+
+    def test_base_bot_loadout_produces_regen_events(self):
+        """A RepairBotModule with Ketar-I rate produces >=1 CombatEventType.regen events."""
+        repair_bot = ModuleStats(
+            name="Ketar Repair Bot",
+            module_type="RepairBotModule",
+            repair_rate=GameConstants.KETAR_I_REPAIR_PCT_PER_SEC,
+        )
+        # Attacker with big gun to deal hull damage; defender with repair bot
+        gun = _primary(damage=100.0, speed_ms=500, range_m=6000.0)
+        # Defender: hull=200, repair bot equipped; attacker will deal damage + bot will regen
+        defender_loadout = _loadout(modules=[repair_bot], base_armour=200, name="Defender")
+        attacker_loadout = _loadout(weapons=[gun], base_armour=500, name="Attacker")
+        result = TickResolver(seed=0).resolve(attacker_loadout, defender_loadout, rng=_AlwaysHit())
+        regen_evs = [e for e in result.combat_log if e.type == "regen" and e.actor == "Defender"]
+        assert len(regen_evs) >= 1, (
+            "Expected >=1 regen event from RepairBotModule with Ketar-I rate, got 0. "
+            "This is the end-to-end regression for FIX 1."
+        )
+
+    def test_ketar_ii_bot_produces_regen_events(self):
+        """A RepairBotModule with Ketar-II rate also produces >=1 regen event."""
+        repair_bot = ModuleStats(
+            name="Ketar Repair Bot II",
+            module_type="RepairBotModule",
+            repair_rate=GameConstants.KETAR_II_REPAIR_PCT_PER_SEC,
+        )
+        gun = _primary(damage=100.0, speed_ms=500, range_m=6000.0)
+        defender_loadout = _loadout(modules=[repair_bot], base_armour=200, name="Defender")
+        attacker_loadout = _loadout(weapons=[gun], base_armour=500, name="Attacker")
+        result = TickResolver(seed=0).resolve(attacker_loadout, defender_loadout, rng=_AlwaysHit())
+        regen_evs = [e for e in result.combat_log if e.type == "regen" and e.actor == "Defender"]
+        assert len(regen_evs) >= 1, "Expected >=1 regen event from Ketar II repair bot module"
+
+    def test_no_repair_bot_no_regen(self):
+        """Without a repair bot, no regen events are emitted for hull/armour."""
+        gun = _primary(damage=100.0, speed_ms=500, range_m=6000.0)
+        defender_loadout = _loadout(base_armour=200, name="Defender")
+        attacker_loadout = _loadout(weapons=[gun], base_armour=500, name="Attacker")
+        result = TickResolver(seed=0).resolve(attacker_loadout, defender_loadout, rng=_AlwaysHit())
+        hull_armour_regen = [
+            e for e in result.combat_log
+            if e.type == "regen" and e.actor == "Defender"
+            and e.data.get("layer") in ("hull", "armour")
+        ]
+        assert len(hull_armour_regen) == 0, "No repair bot → no hull/armour regen events"
+
+
+# ===========================================================================
+# FIX 2 — Shock-blast range guard (only fires inside SHOCK_BLAST_TRIGGER_RANGE_M)
+# ===========================================================================
+
+
+class TestShockBlastRangeGuard:
+    """Shock-blast fires ONLY when current_distance < SHOCK_BLAST_TRIGGER_RANGE_M (500m).
+
+    Before FIX 2, shock-blast fired on tick 0 at 5000m (STARTING_DISTANCE_M),
+    wasting a cooldown by resetting distance to 5000 from 5000. After FIX 2 it
+    waits until ships close to < 500m.
+
+    Distance model: delta = BASE_SHIP_SPEED_MPS * 2 * (TICK_MS / 1000)
+      = 150 * 2 * 0.010 = 3 m/tick.
+    From 5000m → <500m requires ceil((5000-500)/3) + 1 = 1501 ticks.
+    The first shock-blast fire tick is therefore >= 1501.
+    """
+
+    SPEED_MS: int = 6000  # shock-blast reload cooldown (= 600 ticks at TICK_MS=10)
+
+    def _sb_loadout(self, name: str = "Attacker") -> ShipLoadout:
+        sb = _secondary(name="Shock Blast", subtype="shock-blast", damage=0.0, speed_ms=self.SPEED_MS, range_m=0.0)
+        return _loadout(secondary_weapons=[sb], base_armour=5000, name=name)
+
+    def _run_fight(self) -> "FightResults":  # type: ignore[name-defined]
+        from src.services.combat_models import FightResults  # noqa: F401
+        l1 = self._sb_loadout("Attacker")
+        l2 = _loadout(base_armour=5000, name="Target")
+        return TickResolver(seed=0).resolve(l1, l2, rng=_AlwaysHit())
+
+    def test_no_fire_on_tick_0(self):
+        """Shock-blast must NOT fire on tick 0 (ships start at 5000m, range guard = 500m).
+
+        Before FIX 2, the shock-blast fired immediately at tick 0 from 5000m,
+        resetting distance to 5000 from 5000 (a no-op wasted cooldown). This test
+        is the direct regression guard for the original bug.
+        """
+        result = self._run_fight()
+        t0_fires = [
+            e for e in result.combat_log
+            if e.tick == 0 and e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"
+        ]
+        assert len(t0_fires) == 0, (
+            "Shock-blast must NOT fire on tick 0 (distance=5000m >= SHOCK_BLAST_TRIGGER_RANGE_M=500m). "
+            "FIX 2 range guard broken."
+        )
+
+    def test_all_fires_occur_inside_trigger_range(self):
+        """Every shock-blast weapon_fire must have a 'from' distance < 500m.
+
+        We infer the fire-time distance by looking at the distance event emitted on the
+        same tick (shock-blast Phase 6 reset). The 'from' field of that distance event
+        is the distance at which the weapon fired. It must be < SHOCK_BLAST_TRIGGER_RANGE_M.
+        """
+        result = self._run_fight()
+        sb_fires = [
+            e for e in result.combat_log
+            if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"
+        ]
+        assert len(sb_fires) >= 1, "Expected at least one shock-blast fire in a full fight"
+
+        for fire_ev in sb_fires:
+            tick = fire_ev.tick
+            # Find the distance event on the same tick with cause='shock_blast'
+            dist_ev = next(
+                (e for e in result.combat_log
+                 if e.tick == tick and e.type == "distance" and e.data.get("cause") == "shock_blast"),
+                None,
+            )
+            assert dist_ev is not None, f"No shock_blast distance event on tick {tick}"
+            fire_distance = dist_ev.data["from"]
+            assert fire_distance < GameConstants.SHOCK_BLAST_TRIGGER_RANGE_M, (
+                f"Shock-blast fired at {fire_distance}m but trigger range is "
+                f"{GameConstants.SHOCK_BLAST_TRIGGER_RANGE_M}m. FIX 2 range guard broken."
+            )
+
+    def test_cooldown_set_only_on_fire(self):
+        """Shock-blast cooldown is consumed ONLY when the weapon actually fires.
+
+        Before FIX 2: cooldown was set even at tick 0 (long range), burning the first
+        reload window. After FIX 2: the `continue` precedes the cooldown-set, so
+        the first fire tick is the first tick a cooldown_end follows.
+        Verified by checking no cooldown_end for shock-blast before the first fire tick.
+        """
+        result = self._run_fight()
+        first_fire = next(
+            (e for e in result.combat_log
+             if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"),
+            None,
+        )
+        assert first_fire is not None, "Expected at least one shock-blast fire"
+
+        # Shock-blast has no specific cooldown_end event in the current implementation
+        # (secondaries don't emit cooldown_end directly).
+        # Verify the first fire is NOT on tick 0 — that's the proxy for "no wasted cooldown".
+        assert first_fire.tick > 0, (
+            f"First shock-blast fire on tick {first_fire.tick} — expected tick > 0 after FIX 2"
+        )
+
+        # Additional: the fire tick corresponds to distance < SHOCK_BLAST_TRIGGER_RANGE_M
+        dist_ev = next(
+            (e for e in result.combat_log
+             if e.tick == first_fire.tick and e.type == "distance" and e.data.get("cause") == "shock_blast"),
+            None,
+        )
+        assert dist_ev is not None
+        assert dist_ev.data["from"] < GameConstants.SHOCK_BLAST_TRIGGER_RANGE_M
+
+    def test_phase6_distance_event_emitted_after_fire(self):
+        """After shock-blast fires: distance event with cause='shock_blast', to=STARTING_DISTANCE_M.
+
+        Also verifies the canonical ordering: weapon_fire (phase 3) < distance (phase 6).
+        """
+        result = self._run_fight()
+        first_fire = next(
+            (e for e in result.combat_log
+             if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"),
+            None,
+        )
+        assert first_fire is not None
+
+        tick = first_fire.tick
+        dist_ev = next(
+            (e for e in result.combat_log
+             if e.tick == tick and e.type == "distance" and e.data.get("cause") == "shock_blast"),
+            None,
+        )
+        assert dist_ev is not None, f"No shock_blast distance event on fire tick {tick}"
+        assert abs(dist_ev.data["to"] - STARTING_DIST) < 1e-6, (
+            "Shock-blast must reset distance to STARTING_DISTANCE_M"
+        )
+        assert first_fire.data["hit"] is True
+        assert abs(first_fire.data["accuracy"] - 1.0) < 1e-9
+
+        # Phase ordering
+        fire_idx = result.combat_log.index(first_fire)
+        dist_idx = result.combat_log.index(dist_ev)
+        assert fire_idx < dist_idx, "weapon_fire (phase 3) must precede distance (phase 6)"

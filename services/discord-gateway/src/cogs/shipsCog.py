@@ -331,7 +331,7 @@ class ShipsCog(commands.Cog):
     async def setactive(self, interaction: discord.Interaction, ship_id: str):
         """Set active ship."""
         flogger.info(f"/setactive: guild={interaction.guild_id}, user={interaction.user.id}, ship_id={ship_id}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         # Validate that ship_id is a valid integer (user may type freeform or pick from autocomplete)
         try:

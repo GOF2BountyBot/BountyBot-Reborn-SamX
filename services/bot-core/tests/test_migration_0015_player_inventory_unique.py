@@ -246,10 +246,9 @@ class TestMigration0015PlayerInventoryUnique:
             _disable_fk(conn)
             _raw_insert(conn, _TEST_PLAYER_ID, "primary_weapon", "Laser", 1)
 
-        with pytest.raises(sa.exc.IntegrityError):
-            with pg_sync_engine.begin() as conn:
-                _disable_fk(conn)
-                _raw_insert(conn, _TEST_PLAYER_ID, "primary_weapon", "Laser", 1)
+        with pytest.raises(sa.exc.IntegrityError), pg_sync_engine.begin() as conn:
+            _disable_fk(conn)
+            _raw_insert(conn, _TEST_PLAYER_ID, "primary_weapon", "Laser", 1)
 
         # Cleanup
         with pg_sync_engine.begin() as conn:

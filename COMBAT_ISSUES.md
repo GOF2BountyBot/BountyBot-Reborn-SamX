@@ -31,10 +31,11 @@ Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no
 (DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
 Erland fired `missile ×3` and dealt 135 dmg in a real fight.
 **Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24, CI-25, CI-27, CI-28, CI-29.
-**Open:** CI-18 (player_inv constraint — danger-zone, owner eyes), CI-26 (blender-service infra — owner/host-level), CI-4 (E2E §4/§5/§6).
+**Open:** CI-18 (player_inv constraint — safe to add now, no dupes exist), CI-4 (E2E §4/§5/§6).
 **Watching:** `/route` reported broken (owner) — bot-core endpoint + command verified healthy; awaiting exact symptom to diagnose.
 **Live-verified 2026-06-04:** CI-25 (equip secondaries), CI-27 (no false dead+ES), CI-28 (loadout embed
 secondaries populated+rendered; turrets natural/not-forced), CI-29 (causal combat-log order).
+**Live-verified 2026-06-05:** CI-26 (blender-service perms fixed → 15 GB assets downloaded → healthy, render API 200).
 **Live-validated combat-log (battle 57):** dropdown `General_Failure vs Bartholomeu Drew`; body uses pilot/criminal
 names; Engagement + first-hit-per-side + HP milestones + Outcome; each layer depleted ONCE (no flap); distinct per-side stats.
 **Stack:** full rebuild to migration **0014**, all combat/shop work LIVE & verified (bot-core healthy;
@@ -556,13 +557,19 @@ exposed once CI-23 surfaced secondaries in `/equip` autocomplete. Added `seconda
 patterns (still enumerated; invalid values still 422). **LIVE-VERIFIED:** equip w/ equipment_type=
 secondary_weapons → 200 (ammo seeded); invalid value → 422. Regression tests added (4237 green).
 
-## CI-26 🔵 blender-service down — data-dir mount permission (pre-existing infra)  *(found 2026-06-04)*
-blender-service is unhealthy: at startup it can't create `/app/data/game-objects` — `mkdir: Permission
-denied` — on the mounted host dir `/proj/mappings/blender-renderer` (container uid 1001/botuser). The
-host dir is `drwxrwxrwt 1001` and game-objects exists+empty, yet the container reports it missing AND
-unwritable → a WSL2 bind-mount/uid-mapping quirk; broken since before this session (dir mtimes May 27).
-**Impact: SHIP SKIN RENDERS only** (blender-service); does NOT affect `/route` (route maps come from
-bot-core `map_renderer.py`) or combat/shop. Likely needs host-level attention. Low priority / owner infra.
+## CI-26 ✅ blender-service down — data-dir mount permission — FIXED & LIVE  *(2026-06-05)*
+**Root cause:** the bind-mounted `/app/data` was owned `root:root` 0755 from the blender container's
+view (its mount namespace ≠ this admin container's `/proj` view — a marker written to my
+`/proj/mappings/blender-renderer` did NOT appear in the container), so `botuser` (uid 1001) couldn't
+`mkdir /app/data/game-objects` → startup aborted before any download.
+**Fix:** `sudo docker exec -u 0 bountydev-blender-service chown -R 1001:1002 /app/data && chmod -R 0775
+/app/data` (chowning the bind mount from inside as root changes the underlying dir; PERSISTS across
+`--force-recreate`). Then full redeploy. After the fix, blender proceeded to download its one-time
+**15.2 GB** game-objects archive from Google Drive via gdown (~7–8 min; lands in `/tmp/...7z.part` then
+extracts to 309 textures / 15 GB), launched, and is now **healthy** — render API serves 200
+(`/api/v1/config/render`, `/docs`, `/openapi.json`), reachable from bot-core on `:18001`.
+**Recurrence note:** if the blender data volume is ever wiped or its ownership reverts to root, repeat
+the `chown` and expect the 15 GB re-download. Affects ship-skin renders only.
 
 ## CI-27 ✅ "Hull depleted (dead)" + Emergency System on same tick — FIXED  *(owner 2026-06-04, `5b4501c`)*
 The CI-15 hull `layer_depleted` ("dead") event was emitted inside `_apply_damage` (Phase 3) the moment

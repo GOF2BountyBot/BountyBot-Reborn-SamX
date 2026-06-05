@@ -13,9 +13,10 @@ gateway API (`docker exec bountydev-discord-gateway curl localhost:17999/api/v1/
 **CI-16 AND CI-17 are DONE & LIVE-VALIDATED.** Both ran full architect→dev→tester cycles + live
 smoke-tests against the rebuilt stack. **Owner decisions in (2026-06-04):** CI-17 knobs = keep my
 defaults; CI-6 = WONTFIX (keep EMP seed, it's wiki data); CI-11 = YES build it.
-**Next, in order:** CI-18 (player_inv unique constraint — ⚠ DANGER ZONE migration, defer for owner
-eyes) → CI-4 (live §4/§5/§6 E2E tests). That's the last of the tracked combat/shop/UX work.
-**Done & live-validated:** CI-10, CI-11, CI-19 (+CI-23), CI-20, CI-21, CI-22, CI-24.
+**Next, in order:** CI-18 ✅ DONE (migration 0015, owner-approved 2026-06-05) → **CI-4 = full E2E
+re-run** (owner 2026-06-05: re-run the WHOLE plan §0–§8, not just §4/§5/§6, since we found-and-fixed
+a lot; owner will also do a manual run-through separately). CI-30 (add_item race) deferred, not blocking.
+**Done & live-validated:** CI-10, CI-11, CI-18, CI-19 (+CI-23), CI-20, CI-21, CI-22, CI-24.
 
 **CI-17 knobs (owner-confirmed, keep):** `CRIMINAL_SECONDARY_ROUNDS` = nuke 1, missile 5, rocket 5,
 cluster-missile 3, shock-blast 2; `CRIMINAL_SECONDARY_MIN_DAMAGE` = 1. All in `GameConstants` (retune
@@ -30,16 +31,18 @@ Harmless (disposable alt). samx untouched (verified baseline: Micro Gun MK I, no
 **CI-17 LIVE-VALIDATED** (combat-log 54): spawned silver criminals carry complete secondary loadouts
 (DB-verified: Jet Rocket + AMR Tormentor nuke capped at 1 round, full combat fields); criminal Oluchi
 Erland fired `missile ×3` and dealt 135 dmg in a real fight.
-**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24, CI-25, CI-27, CI-28, CI-29.
-**Open:** CI-18 (player_inv constraint — safe to add now, no dupes exist), CI-4 (E2E §4/§5/§6).
+**Closed:** CI-1, CI-2/9, CI-3, CI-5, CI-6, CI-7, CI-10, CI-11, CI-12, CI-13, CI-14, CI-15, CI-16, CI-17, CI-18, CI-19, CI-20, CI-21, CI-22, CI-23, CI-24, CI-25, CI-26, CI-27, CI-28, CI-29.
+**Open:** CI-4 (full E2E re-run §0–§8), CI-30 (add_item insert not race-safe vs new constraint — deferred).
 **Watching:** `/route` reported broken (owner) — bot-core endpoint + command verified healthy; awaiting exact symptom to diagnose.
 **Live-verified 2026-06-04:** CI-25 (equip secondaries), CI-27 (no false dead+ES), CI-28 (loadout embed
 secondaries populated+rendered; turrets natural/not-forced), CI-29 (causal combat-log order).
 **Live-verified 2026-06-05:** CI-26 (blender-service perms fixed → 15 GB assets downloaded → healthy, render API 200).
 **Live-validated combat-log (battle 57):** dropdown `General_Failure vs Bartholomeu Drew`; body uses pilot/criminal
 names; Engagement + first-hit-per-side + HP milestones + Outcome; each layer depleted ONCE (no flap); distinct per-side stats.
-**Stack:** full rebuild to migration **0014**, all combat/shop work LIVE & verified (bot-core healthy;
-blender-service unhealthy = pre-existing, irrelevant). **Nothing pushed** — `dev` is ahead of origin.
+**Live-verified 2026-06-05:** CI-18 (unique constraint `uq_player_inventories_player_item` on
+`player_inventories`; migration 0015; dup INSERT rejected; add_item increment path intact; full suite 4250✓).
+**Stack:** full rebuild to migration **0015**, all combat/shop work LIVE & verified (all 4 containers
+healthy incl. blender). **Nothing pushed** — `dev` is ahead of origin.
 
 ---
 
@@ -140,11 +143,14 @@ gate (404 for non-combatant) verified live. **Uncommitted.**
 
 ---
 
-## CI-4 🟢 E2E validation — §4/§5/§6 not yet run
-§0–§3 + §8 complete (PvC/PvP/persistence/data all ✅, see `COMBAT_E2E_TEST_PLAN.md`).
-Remaining: per-weapon equip-and-fight (§4), modules (§5), edge cases (§6). Runnable
-now that the env is restored. Can be driven via bot-core API for mechanics; embed
-rendering needs Discord.
+## CI-4 🟢 E2E validation — FULL re-run §0–§8  *(scope widened by owner 2026-06-05)*
+Owner directive 2026-06-05: re-run the **entire** `COMBAT_E2E_TEST_PLAN.md` (§0–§8), not just the
+remaining §4/§5/§6 — because we found-and-fixed a lot of issues (CI-1..CI-30) since §0–§3/§8 were last
+validated, so prior green sections may have regressed/changed. Owner will ALSO do a manual full
+run-through separately at some point (this automated pass is complementary, not a substitute).
+Drivable via bot-core API for mechanics (exec-into-container, division-gated bounty-check — see
+[[reference-combat-live-test-recipe]]); embed rendering needs Discord (gateway API for read-back).
+Stack now at migration 0015, all 4 containers healthy.
 
 ---
 
@@ -426,13 +432,36 @@ mirroring the shield/armour emission (emit when `hull_was_positive and current_h
 
 ---
 
-## CI-18 🔵 No DB unique constraint on `player_inventories` (latent fragility)  *(architect-flagged 2026-06-03)*
-There is NO `UniqueConstraint(player_id, item_type, item_name)` on `player_inventories` — the
-one-row-per-item property is upheld solely by `InventoryRepository.add_item` (`get_player_item` →
-increment). Concurrent/direct inserts could create duplicate rows; `sell_item` even comments "should
-be exactly 1 row." Consider a `UniqueConstraint` migration to harden it. Low urgency; documented in
-`services/AGENTS.md`. Also noted: `transfer_item_between_players` bypasses the LoadoutConsistency
-choke point (safe ONLY because both legs are cargo-only — must route through it if extended to equipped gear).
+## CI-18 ✅ DB unique constraint on `player_inventories` — DONE & LIVE-VALIDATED  *(2026-06-05, committed `c837fe3` + `0b06446`)*
+Added `UniqueConstraint(player_id, item_type, item_name)` named `uq_player_inventories_player_item`
+via **both** ORM model `__table_args__` (`player_inventory.py`) **and** Alembic migration **0015**
+(`0015_ci18_player_inventory_unique.py`) — both required because fresh installs build tables from
+`Base.metadata` (ORM-driven), not `op.create_table`; model-only or migration-only → schema drift.
+Migration is inspector-guarded (no-ops if constraint already present, e.g. fresh DB) and includes a
+defensive merge-quantities dedup (keep lowest id, SUM quantities, delete rest) BEFORE creating the
+constraint so it can never crash a boot-loop on a dirty DB. App-code (`add_item` get-then-increment)
+left unchanged per scope. architect→dev→tester full cycle. Tester PASS: live `\d` shows the
+constraint, raw dup INSERT rejected, dedup SQL traced correct on a 3-row case, normal `add_item`
+increment path still works end-to-end on the constrained DB (no regression), full suite **4250
+passed / 1 skipped**. Deployed: `alembic_version` = **0015**. 6 Postgres-backed migration tests (real
+`upgrade()`/`downgrade()` via importlib — NOT re-implemented inline; runs on PG, not SQLite).
+
+**Follow-up logged → CI-30** (out of scope here): now that the constraint exists, the pre-existing
+`add_item` get-then-increment TOCTOU race fails *loudly* (`IntegrityError`) under truly concurrent
+same-key inserts instead of silently duplicating — harden with `ON CONFLICT DO UPDATE` / catch +
+retry. Also still noted: `transfer_item_between_players` bypasses the LoadoutConsistency choke point
+(safe ONLY because both legs are cargo-only).
+
+---
+
+## CI-30 🔵 `add_item` insert path not race-safe against the new unique constraint  *(tester-flagged 2026-06-05)*
+`InventoryRepository.add_item` / `create_or_update` do get-then-increment with no `IntegrityError`
+handler. With CI-18's constraint live, two concurrent callers for the same
+`(player_id, item_type, item_name)` that both read `None` will have the 2nd insert raise
+`IntegrityError` and propagate to the caller (previously: silent duplicate — worse, but quiet). Low
+probability (requires true concurrent same-key inserts). Fix: `ON CONFLICT DO UPDATE SET quantity =
+quantity + EXCLUDED.quantity` (upsert) or catch `IntegrityError` → re-get → increment, plus a
+concurrent-insert test. Deferred; not blocking.
 
 ---
 

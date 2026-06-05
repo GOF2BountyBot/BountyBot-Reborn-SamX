@@ -309,13 +309,14 @@ class TestCI21Despam:
         Mirror of test_shield_depleted_only_once_with_sliver_regen for the armour layer.
         The spec required 'armour+repair-bot same' behaviour (CI-21).
 
-        Setup: defender has very high armour and a Ketar Repair Bot I (2.5%/s regen),
+        Setup: defender has very high armour and a Ketar Repair Bot (2.5%/s regen),
         but the attacker fires fast enough that the armour never recovers ≥25% before
         it's re-depleted → layer_depleted('armour') should emit at most once.
         """
         repair_bot = ModuleStats(
-            name="Ketar Repair Bot I",
+            name="Ketar Repair Bot",
             module_type="RepairBotModule",
+            repair_rate=GameConstants.KETAR_I_REPAIR_PCT_PER_SEC,  # actually regen the sliver (2.5%/s)
             armour=0,  # no extra armour
         )
         # Attacker fires very fast heavy shots; defender has small armour but repair bot

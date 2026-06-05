@@ -1428,3 +1428,25 @@ class TestRepairBotModuleMapping:
         extra = {"extra_atts": {"HPps": 7}}
         stats = _module_stats_from_extra("Some Other Module", extra, module_type="CloakModule")
         assert stats.repair_rate == pytest.approx(0.0)
+
+    def test_explicit_zero_repair_pct_honored(self):
+        """An explicit repair_pct_per_sec of 0.0 is honored (NOT treated as absent).
+
+        Guards the `is not None` precedence: a seed author who writes 0.0 means
+        "no regen", which must win over the HPps fallback (here HPps=99 would
+        otherwise map to the II rate).
+        """
+        extra = {"extra_atts": {"HPps": 99, "repair_pct_per_sec": 0.0}}
+        stats = _module_stats_from_extra("Deliberately Inert Bot", extra, module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(0.0)
+
+    def test_detected_by_subclass_not_name(self):
+        """Detection keys on module_type, NOT the item name (the original bug was name-matching).
+
+        A RepairBotModule whose name contains no "Ketar"/"Repair" token still gets
+        a regen rate purely from its subclass.
+        """
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Zzz Gadget 9000", self._make_extra(7), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)

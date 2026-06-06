@@ -251,6 +251,10 @@ class FightResults:
         is_stalemate: True if neither ship can defeat the other.
         ship1_stats: Detailed combat stats for the first ship.
         ship2_stats: Detailed combat stats for the second ship.
+        winner_side: Side index of the winner (1 = combatant1/challenger, 2 = combatant2/target,
+                     None = stalemate).  Derived from the death-branch termination logic —
+                     NOT from winner_name — so it is correct even when both combatants share
+                     an identical name.
         combat_log_id: The combat_log row id (non-NULL when log_result=True; T10).
         combat_log: Ordered list of combat events (for tick-based sim).
         metadata: Arbitrary key-value data for extensibility.
@@ -261,6 +265,9 @@ class FightResults:
     is_stalemate: bool
     ship1_stats: FightStats
     ship2_stats: FightStats
+    # P2-T0b: side of winner (1/2/None); defaults to None so all existing construction sites
+    # that predate this field remain valid without modification.
+    winner_side: int | None = None
     # T10: combat_log row id (populated by CombatLogService.persist; None when log_result=False)
     combat_log_id: int | None = None
     # Future fields

@@ -344,3 +344,48 @@ class TestCombatServiceT10:
         l2 = ShipLoadout(ship_name="B", base_armour=100)
         with pytest.raises(ValueError, match="context is required"):
             await service.fight_ships(l1, l2, log_result=True, context=None)
+
+    @pytest.mark.asyncio
+    async def test_winner_side_rebuild_path_retains_winner_side(self):
+        """log_result=True REBUILD path must carry winner_side into the returned FightResults.
+
+        CombatService constructs a fresh FightResults (frozen dataclass) after persist(),
+        passing combat_log_id.  A future regression dropping winner_side= from that
+        constructor call would leave winner_side=None.  This test catches that.
+
+        CombatLogService.persist is mocked to avoid a real DB; everything else runs real.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from src.services.combat_models import ShipLoadout
+
+        # C1 survives (armour=100), C2 dies (armour=0) → decisive outcome, winner_side must be 1
+        l1 = ShipLoadout(ship_name="Winner", base_armour=100)
+        l2 = ShipLoadout(ship_name="Loser", base_armour=0)
+
+        fake_log_id = 9999
+        mock_session = MagicMock()
+
+        service = CombatService()
+
+        with patch(
+            "services.combat_log_service.CombatLogService.persist",
+            new=AsyncMock(return_value=fake_log_id),
+        ):
+            result = await service.fight_ships(
+                l1,
+                l2,
+                log_result=True,
+                context="duel",
+                session=mock_session,
+                guild_id=1,
+            )
+
+        # Rebuild path must have set combat_log_id
+        assert result.combat_log_id == fake_log_id, (
+            f"combat_log_id expected {fake_log_id}, got {result.combat_log_id}"
+        )
+        # And winner_side must survive the rebuild — not be reset to None
+        assert result.winner_side == 1, (
+            f"winner_side expected 1 after log_result=True rebuild, got {result.winner_side}"
+        )

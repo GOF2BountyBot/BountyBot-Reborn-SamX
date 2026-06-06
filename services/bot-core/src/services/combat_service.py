@@ -502,8 +502,10 @@ def _tick_shield_regen(state: _CombatantState, tick: int, events: list[CombatEve
         state.shield_regen_accumulators = [0] * len(state.shield_regen_schedules)
 
     # CI-21: clear depleted_layers latch for shield when meaningful recovery achieved
-    if state.max_shield > 0 and "shield" in state.depleted_layers and (
-        state.current_shield >= math.ceil(state.max_shield * GameConstants.COMBAT_LAYER_REEMIT_FRACTION)
+    if (
+        state.max_shield > 0
+        and "shield" in state.depleted_layers
+        and (state.current_shield >= math.ceil(state.max_shield * GameConstants.COMBAT_LAYER_REEMIT_FRACTION))
     ):
         state.depleted_layers.discard("shield")
 
@@ -556,8 +558,10 @@ def _tick_repair_bot_regen(state: _CombatantState, tick: int, events: list[Comba
                         actor=state.name,
                         target=None,
                         data={
-                            "layer": "armour", "amount": armour_add,
-                            "hp_after": state.current_armour, "side": state.slot,
+                            "layer": "armour",
+                            "amount": armour_add,
+                            "hp_after": state.current_armour,
+                            "side": state.slot,
                         },
                     )
                 )
@@ -568,12 +572,16 @@ def _tick_repair_bot_regen(state: _CombatantState, tick: int, events: list[Comba
 
     # CI-21: clear depleted_layers latch for hull/armour when meaningful recovery achieved
     _reemit_frac = GameConstants.COMBAT_LAYER_REEMIT_FRACTION
-    if state.max_hull > 0 and "hull" in state.depleted_layers and (
-        state.current_hull >= math.ceil(state.max_hull * _reemit_frac)
+    if (
+        state.max_hull > 0
+        and "hull" in state.depleted_layers
+        and (state.current_hull >= math.ceil(state.max_hull * _reemit_frac))
     ):
         state.depleted_layers.discard("hull")
-    if state.max_armour > 0 and "armour" in state.depleted_layers and (
-        state.current_armour >= math.ceil(state.max_armour * _reemit_frac)
+    if (
+        state.max_armour > 0
+        and "armour" in state.depleted_layers
+        and (state.current_armour >= math.ceil(state.max_armour * _reemit_frac))
     ):
         state.depleted_layers.discard("armour")
 
@@ -1077,7 +1085,7 @@ def _build_fight_summary(
         hit = shots_hit[slot_key]
         acc = (hit / fired) if fired > 0 else 0.0
         return {
-            "name": cx.display_name,   # CI-20: pilot/criminal label (defaults to ship_name)
+            "name": cx.display_name,  # CI-20: pilot/criminal label (defaults to ship_name)
             "ship": cx.loadout.ship_name,
             "start_hp": start_hp.get(slot_key, {"shield": 0, "armour": 0, "hull": 0}),
             "final_hp": final_hp.get(slot_key, {"shield": 0, "armour": 0, "hull": 0}),
@@ -1177,9 +1185,7 @@ class TickResolver:
         _base_speed_mps = float(GameConstants.BASE_SHIP_SPEED_MPS)
 
         # --- Combatant init (§1: separate from tick loop) ---
-        c1 = _init_combatant(
-            loadout1, is_player=(pvc_damage_reduction > 0.0), slot=1, display_name=combatant1_label
-        )
+        c1 = _init_combatant(loadout1, is_player=(pvc_damage_reduction > 0.0), slot=1, display_name=combatant1_label)
         c2 = _init_combatant(loadout2, is_player=False, slot=2, display_name=combatant2_label)
 
         current_distance = float(GameConstants.STARTING_DISTANCE_M)
@@ -1195,7 +1201,7 @@ class TickResolver:
                 data={
                     "combatants": [
                         {
-                            "name": c1.name,           # ship_name byte-for-byte
+                            "name": c1.name,  # ship_name byte-for-byte
                             "display_name": c1.display_name,  # CI-20: pilot/player label
                             "ship": c1.loadout.ship_name,
                             "slot": c1.slot,
@@ -1218,6 +1224,9 @@ class TickResolver:
         reason = "time_cap"
         winner_name: str | None = None
         loser_name: str | None = None
+        # P2-T0b: side of winner — derived from death-branch, NOT from winner_name.
+        # 1 = c1 (challenger) wins; 2 = c2 (target/criminal) wins; None = stalemate/timeout.
+        winner_side: int | None = None
         ticks_elapsed = max_ticks
 
         for tick in range(max_ticks):
@@ -1896,18 +1905,24 @@ class TickResolver:
             if c1_dead and c2_dead:
                 outcome, reason = "stalemate", "mutual"
                 winner_name, loser_name = None, None
+                winner_side = None
                 ticks_elapsed = tick + 1
             elif c2_dead:
+                # c2 hull depleted → c1 (challenger/side-1) wins
                 outcome, reason = "win", "hp_depleted"
                 winner_name, loser_name = c1.name, c2.name
+                winner_side = 1
                 ticks_elapsed = tick + 1
             elif c1_dead:
+                # c1 hull depleted → c2 (target/criminal/side-2) wins
                 outcome, reason = "win", "hp_depleted"
                 winner_name, loser_name = c2.name, c1.name
+                winner_side = 2
                 ticks_elapsed = tick + 1
             elif is_last_tick:
                 outcome, reason = "stalemate", "time_cap"
                 winner_name, loser_name = None, None
+                winner_side = None
                 ticks_elapsed = max_ticks
             else:
                 continue  # fight continues — skip fight_end emission
@@ -2021,6 +2036,8 @@ class TickResolver:
             is_stalemate=is_stalemate,
             ship1_stats=ship1_stats,
             ship2_stats=ship2_stats,
+            # P2-T0b: populated from death-branch c1_dead/c2_dead logic, NOT from winner_name.
+            winner_side=winner_side,
             combat_log=events,  # type: ignore[arg-type]  — stores CombatEvent, annotation is list[dict]
             metadata={
                 "schema_version": 1,
@@ -2323,6 +2340,7 @@ class CombatService:
             is_stalemate=fight_results.is_stalemate,
             ship1_stats=fight_results.ship1_stats,
             ship2_stats=fight_results.ship2_stats,
+            winner_side=fight_results.winner_side,  # P2-T0b: carry through rebuild
             combat_log_id=combat_log_id,
             combat_log=fight_results.combat_log,
             metadata=fight_results.metadata,
@@ -2505,9 +2523,7 @@ class CombatService:
 
                 ship = await player_ship_repo.get_active_ship(session, player.id)
                 if ship is None:
-                    flogger.warning(
-                        f"_consume_secondary_ammo: no active ship for player_id={player.id} — skipping"
-                    )
+                    flogger.warning(f"_consume_secondary_ammo: no active ship for player_id={player.id} — skipping")
                     continue
 
                 # Read current ammo dict; never mutate in-place (JSON SQLAlchemy gotcha — must reassign)
@@ -2537,12 +2553,9 @@ class CombatService:
                 await session.flush()
 
                 flogger.debug(
-                    f"_consume_secondary_ammo: ship {ship.id} ammo updated: {ammo!r}, "
-                    f"secondary_weapons={sw_names!r}"
+                    f"_consume_secondary_ammo: ship {ship.id} ammo updated: {ammo!r}, secondary_weapons={sw_names!r}"
                 )
 
             except Exception as exc:
                 # Non-fatal — ammo write-back failure should not abort the fight record
-                flogger.error(
-                    f"_consume_secondary_ammo failed: user_id={user_id} guild_id={guild_id}: {exc}"
-                )
+                flogger.error(f"_consume_secondary_ammo failed: user_id={user_id} guild_id={guild_id}: {exc}")

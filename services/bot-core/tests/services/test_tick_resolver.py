@@ -633,3 +633,146 @@ class TestPhaseOrdering:
         }
         for evt in result.combat_log:
             assert evt.type in allowed, f"Unexpected event type in T3 log: {evt.type!r}"
+
+
+# ---------------------------------------------------------------------------
+# 9. winner_side field (P2-T0b)
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerSide:
+    """P2-T0b: FightResults.winner_side is derived from death-branch, not winner_name."""
+
+    def test_winner_side_is_1_when_c1_wins(self):
+        """C2 hull reaches 0 first → winner_side == 1 (challenger/combatant1)."""
+        l1 = _bare_loadout("Survivor", base_armour=100)
+        l2 = _bare_loadout("DeadC2", base_armour=0)
+        result = TickResolver(seed=1).resolve(l1, l2)
+
+        assert result.is_stalemate is False
+        assert result.winner_name == "Survivor"
+        assert result.winner_side == 1
+
+    def test_winner_side_is_2_when_c2_wins(self):
+        """C1 hull reaches 0 first → winner_side == 2 (target/combatant2)."""
+        l1 = _bare_loadout("DeadC1", base_armour=0)
+        l2 = _bare_loadout("Survivor", base_armour=100)
+        result = TickResolver(seed=1).resolve(l1, l2)
+
+        assert result.is_stalemate is False
+        assert result.winner_name == "Survivor"
+        assert result.winner_side == 2
+
+    def test_winner_side_is_none_on_time_cap_stalemate(self):
+        """Neither combatant dies → time_cap stalemate → winner_side is None."""
+        l1 = _bare_loadout("P1", base_armour=100)
+        l2 = _bare_loadout("P2", base_armour=100)
+        result = TickResolver().resolve(l1, l2)
+
+        assert result.is_stalemate is True
+        assert result.winner_name is None
+        assert result.winner_side is None
+
+    def test_winner_side_is_none_on_mutual_kill(self):
+        """Both hulls depleted same tick → mutual kill stalemate → winner_side is None."""
+        l1 = _bare_loadout("MutualA", base_armour=0)
+        l2 = _bare_loadout("MutualB", base_armour=0)
+        result = TickResolver(seed=1).resolve(l1, l2)
+
+        assert result.is_stalemate is True
+        assert result.winner_name is None
+        assert result.winner_side is None
+
+    def test_winner_side_same_name_combatant1_wins(self):
+        """SAME-NAME decisiveness test: both combatants have identical names.
+
+        C2 (base_armour=0) is already dead on tick-0, so C1 (side 1) wins.
+        A name-compare approach would be ambiguous here; winner_side must still
+        correctly report 1 because the termination logic keys on c2_dead, not names.
+        """
+        shared_name = "CloneShip"
+        l1 = _bare_loadout(shared_name, base_armour=100)  # side 1 — survives
+        l2 = _bare_loadout(shared_name, base_armour=0)  # side 2 — dead on tick 0
+        result = TickResolver(seed=1).resolve(l1, l2)
+
+        assert result.is_stalemate is False
+        # Both names are the same — a name-compare would be unreliable
+        assert result.winner_name == shared_name
+        assert result.loser_name == shared_name
+        # winner_side is unambiguous because it comes from the death-branch
+        assert result.winner_side == 1, (
+            "winner_side must be 1 (side of c1/combatant1) even when both combatants share the same ship name"
+        )
+
+    def test_winner_side_same_name_combatant2_wins(self):
+        """SAME-NAME discriminating test: both combatants share an identical name.
+
+        C1 (side 1, base_armour=0) dies on tick-0; C2 (side 2) survives.
+        A name-derived impl ('winner_side = 1 if winner_name == c1.name else 2')
+        would return 1 (WRONG) because winner_name == c1.name == c2.name.
+        The correct impl keys on the death-branch, not the name, and must return 2.
+        """
+        shared_name = "CloneShip"
+        l1 = _bare_loadout(shared_name, base_armour=0)  # side 1 — dies immediately
+        l2 = _bare_loadout(shared_name, base_armour=100)  # side 2 — survives
+        result = TickResolver(seed=1).resolve(l1, l2)
+
+        assert result.is_stalemate is False
+        assert result.winner_name == shared_name
+        assert result.loser_name == shared_name
+        # Name-derived impl returns 1 here (wrong); death-branch impl returns 2 (correct)
+        assert result.winner_side == 2, (
+            "winner_side must be 2 (side of c2/combatant2) when c1 dies, "
+            "even though both combatants share the same ship name"
+        )
+
+    def test_winner_side_consistent_with_winner_name(self):
+        """winner_side==1 implies winner_name==c1.name; winner_side==2 implies winner_name==c2.name."""
+        # C1 wins
+        r1 = TickResolver(seed=1).resolve(
+            _bare_loadout("Alice", base_armour=100),
+            _bare_loadout("Bob", base_armour=0),
+        )
+        assert r1.winner_side == 1
+        assert r1.winner_name == "Alice"
+
+        # C2 wins
+        r2 = TickResolver(seed=1).resolve(
+            _bare_loadout("Alice", base_armour=0),
+            _bare_loadout("Bob", base_armour=100),
+        )
+        assert r2.winner_side == 2
+        assert r2.winner_name == "Bob"
+
+    def test_fight_results_pickle_roundtrip_with_winner_side(self):
+        """FightResults (frozen+slots) with winner_side set round-trips through pickle."""
+        import pickle
+
+        from services.combat_models import FightResults, FightStats
+
+        def _fs(name: str) -> FightStats:
+            return FightStats(
+                ship_name=name,
+                raw_hp=1000,
+                raw_dps=10.0,
+                varied_hp=1000,
+                varied_dps=10.0,
+                ttk=100.0,
+            )
+
+        fr = FightResults(
+            winner_name="Alpha",
+            loser_name="Beta",
+            is_stalemate=False,
+            ship1_stats=_fs("Alpha"),
+            ship2_stats=_fs("Beta"),
+            winner_side=1,
+        )
+
+        serialised = pickle.dumps(fr)
+        restored = pickle.loads(serialised)
+
+        assert restored.winner_side == 1
+        assert restored.winner_name == "Alpha"
+        assert restored.loser_name == "Beta"
+        assert restored.is_stalemate is False

@@ -27,7 +27,6 @@ This directory contains the full database infrastructure:
 | File | Purpose |
 |---|---|
 | `manager.py` | `DatabaseManager` singleton — async engine, session factory, health checks |
-| `circuit_breaker.py` | `CircuitBreaker` — fault tolerance for DB operations |
 | `migration_manager.py` | `MigrationManager` — Alembic wrapper for zero-friction migrations |
 | `schema_manager.py` | `SchemaManager` — reads `schema` table for version health info |
 | `tablenames.py` | `TableNames` enum — single source of truth for all table names |
@@ -104,43 +103,6 @@ health_info = await db_manager.get_health_info()
 ```
 
 Used by the health router at `/api/v1/health/`.
-
----
-
-## CircuitBreaker (`circuit_breaker.py`)
-
-Provides fault tolerance for database operations. Three states:
-
-```
-CLOSED ──(N failures)──→ OPEN
-  ↑                        │
-  └──(success_threshold)── HALF_OPEN ←──(recovery_timeout)──┘
-```
-
-| State | Behaviour |
-|---|---|
-| `CLOSED` | Normal operation; failures increment counter |
-| `OPEN` | Immediately rejects all calls with `CircuitBreakerError`; entered after `failure_threshold` consecutive failures |
-| `HALF_OPEN` | Allows limited test calls; closes on `success_threshold` successes, re-opens on failure |
-
-### Default Config
-
-```python
-CircuitBreakerConfig(
-    failure_threshold=5,     # Open after 5 failures
-    recovery_timeout=60,     # Try again after 60 seconds
-    success_threshold=3,     # Close after 3 successes
-    expected_exception=Exception  # Any exception counts as failure
-)
-```
-
-### Usage
-
-```python
-circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
-
-result = await circuit_breaker.call(my_async_db_function, arg1, arg2)
-```
 
 ---
 

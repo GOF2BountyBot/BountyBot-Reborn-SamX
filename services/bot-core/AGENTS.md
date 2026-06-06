@@ -14,7 +14,7 @@ Authoritative reference for AI agents doing maintenance, troubleshooting, or fea
 - Shop system: tier-gated guild shops with periodic refresh
 - Inventory management: player items, Kaamo station storage
 - Scheduled jobs: bounty spawning/expiry, shop refresh, temperature decay, duel expiry
-- Database management: async SQLAlchemy ORM, Alembic migrations, circuit breaker
+- Database management: async SQLAlchemy ORM, Alembic migrations
 - REST API: 15 auto-discovered routers, all under `/api/v1/`
 
 ---
@@ -86,9 +86,8 @@ services/bot-core/
 │       ├── shops_schema.py
 │       └── users_schema.py
     ├── persist/
-    │   ├── database/                   # DB engine, sessions, migrations, circuit breaker
+    │   ├── database/                   # DB engine, sessions, migrations
     │   │   ├── manager.py              # DatabaseManager singleton (db_manager)
-    │   │   ├── circuit_breaker.py      # CircuitBreaker (CLOSED/OPEN/HALF_OPEN)
     │   │   ├── migration_manager.py    # MigrationManager wrapping Alembic
     │   │   ├── schema_manager.py       # SchemaManager for version health checks
     │   │   ├── tablenames.py           # TableNames enum (single source of truth)
@@ -378,18 +377,6 @@ Singleton `db_manager` instance manages the entire async connection lifecycle:
 - `get_db_session()` — FastAPI dependency alias for `db_manager.get_session()`
 - `db_manager.shutdown()` — disposes engine; call on shutdown
 - Connection pool config via env vars: `DB_POOL_SIZE` (default 10), `DB_MAX_OVERFLOW` (20), `DB_POOL_TIMEOUT` (30), `DB_POOL_RECYCLE` (3600), `DB_ECHO` (false)
-
-### CircuitBreaker (`persist/database/circuit_breaker.py`)
-
-Three-state fault-tolerance wrapper for DB operations:
-
-| State | Behaviour |
-|---|---|
-| `CLOSED` | Normal operation; failures increment counter |
-| `OPEN` | All calls immediately rejected; entered after `failure_threshold` failures |
-| `HALF_OPEN` | Limited calls allowed to test recovery; re-opens on failure |
-
-Default config: `failure_threshold=5`, `recovery_timeout=60s`, `success_threshold=3`.
 
 ### MigrationManager (`persist/database/migration_manager.py`)
 

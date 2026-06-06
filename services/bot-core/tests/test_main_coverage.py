@@ -315,7 +315,6 @@ class TestLifespan:
             patch("persist.database.migration_manager.MigrationManager", mock_mm_class),
             patch("main.initialize_schema", new_callable=AsyncMock, return_value=mock_schema_mgr),
             patch("main.auto_seed_data", new_callable=AsyncMock),
-            patch("main.create_async_engine"),
             patch("main.create_engine"),
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
@@ -411,7 +410,6 @@ class TestLifespan:
             patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock, side_effect=Exception("seed fail")),
-            patch("main.create_async_engine"),
             patch("main.create_engine"),
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
@@ -428,7 +426,13 @@ class TestLifespan:
 
     @pytest.mark.asyncio
     async def test_lifespan_scheduler_failure_raises(self):
-        """If scheduler init fails, startup should raise."""
+        """If sync-engine creation for APScheduler fails, startup should raise.
+
+        The old test patched create_async_engine (which no longer exists in main.py).
+        The real scheduler-init failure point is create_engine() — used to build the
+        synchronous SQLAlchemy engine that backs SQLAlchemyJobStore.  Patching that
+        to raise verifies the except-block re-raises and aborts startup.
+        """
         from main import lifespan
 
         test_app = FastAPI()
@@ -440,7 +444,7 @@ class TestLifespan:
             patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock),
-            patch("main.create_async_engine", side_effect=Exception("scheduler fail")),
+            patch("main.create_engine", side_effect=Exception("scheduler fail")),
             patch("persist.database.migration_manager.MigrationManager") as MockMM,
         ):
             mock_mm_instance = MagicMock()
@@ -470,7 +474,6 @@ class TestLifespan:
             patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock),
-            patch("main.create_async_engine"),
             patch("main.create_engine"),
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
@@ -505,7 +508,6 @@ class TestLifespan:
             patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock),
-            patch("main.create_async_engine"),
             patch("main.create_engine"),
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),

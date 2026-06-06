@@ -31,7 +31,6 @@ from persist.schemas.schema_manager import initialize_schema
 from services.game_constants import GameConstants
 from shared import bblogger
 from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import create_async_engine
 from utils.auto_seeder import auto_seed_data
 from utils.job_executor import run_job
 
@@ -379,13 +378,6 @@ async def lifespan(fastapi_app: FastAPI):
 
     try:
         flogger.info("⏰ Initializing Scheduler…")
-
-        # existing async engine (if you need it elsewhere)
-        create_async_engine(
-            db_manager._connection_string,  # asyncpg URL
-            echo=False,
-            future=True,
-        )
 
         # derive a sync URL and engine for APScheduler
         sync_url = db_manager._connection_string.replace("postgresql+asyncpg", "postgresql")

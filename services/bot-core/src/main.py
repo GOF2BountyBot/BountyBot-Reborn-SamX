@@ -555,7 +555,7 @@ if __name__ == "__main__":
         host=os.getenv("BOT_HOST", "0.0.0.0"),
         port=int(os.getenv("BOT_PORT", os.getenv("PORT", "8000"))),
         access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
-        workers=4,
+        workers=int(os.getenv("WORKERS", "1")),
         # Explicit: uvloop + httptools are bundled with uvicorn[standard];
         # "auto" picks them up but pinning makes the dependency obvious.
         loop="uvloop",

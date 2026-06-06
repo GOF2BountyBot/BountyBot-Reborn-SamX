@@ -45,7 +45,7 @@ from src.services.combat_models import (
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_service import (
+from src.services.combat_resolver import (
     _BOOSTER_MODULE_TYPE,
     _CLOAK_MODULE_TYPE,
     _EMERGENCY_SYSTEM_MODULE_TYPE,

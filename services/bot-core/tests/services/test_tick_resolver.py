@@ -44,7 +44,7 @@ from services.combat_models import (
     ModuleStats,
     ShipLoadout,
 )
-from services.combat_service import (
+from services.combat_resolver import (
     TickResolver,
     _apply_damage,
     _CombatantState,

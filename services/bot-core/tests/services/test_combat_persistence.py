@@ -42,7 +42,7 @@ from src.services.combat_models import (
     FightStats,
     ShipLoadout,
 )
-from src.services.combat_service import _apply_damage, _build_fight_summary, _init_combatant
+from src.services.combat_resolver import _apply_damage, _build_fight_summary, _init_combatant
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -51,7 +51,7 @@ from services.combat_balance import (
     thruster_ramp,
 )
 from services.combat_models import ModuleStats, ShipLoadout
-from services.combat_service import TickResolver, _init_combatant
+from services.combat_resolver import TickResolver, _init_combatant
 from services.game_constants import GameConstants
 
 # ---------------------------------------------------------------------------
@@ -450,7 +450,7 @@ class TestResolverIntegration:
             scanner_bonus_pp_seen.append(kwargs["own_scanner_bonus_pp"])
             return real_fn(**kwargs)
 
-        with patch("services.combat_service.compute_pilot_accuracy", side_effect=spy):
+        with patch("services.combat_resolver.compute_pilot_accuracy", side_effect=spy):
             TickResolver(seed=0).resolve(l_b, l_bare)
 
         # Called at least once per combatant per tick (18,000 ticks × 2 = 36,000 calls)

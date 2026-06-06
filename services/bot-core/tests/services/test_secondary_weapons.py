@@ -38,7 +38,7 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
 from src.services.combat_models import ModuleStats, ShipLoadout, WeaponStats
-from src.services.combat_service import TickResolver, _init_combatant, _nuke_dmg, _rocket_accuracy, _shock_blast_apply
+from src.services.combat_resolver import TickResolver, _init_combatant, _nuke_dmg, _rocket_accuracy, _shock_blast_apply
 from src.services.game_constants import GameConstants
 
 TICK_MS: int = GameConstants.TICK_MS  # 10

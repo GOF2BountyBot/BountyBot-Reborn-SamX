@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import pytest
 from src.services.combat_models import ModuleStats, ShipLoadout, WeaponStats
-from src.services.combat_service import TickResolver, _init_combatant
+from src.services.combat_resolver import TickResolver, _init_combatant
 from src.services.game_constants import GameConstants
 
 TICK_MS: int = GameConstants.TICK_MS  # 10

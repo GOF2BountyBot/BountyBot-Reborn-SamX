@@ -37,7 +37,7 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
 from src.services.combat_models import ModuleStats, ShipLoadout, WeaponStats
-from src.services.combat_service import TickResolver, _init_combatant
+from src.services.combat_resolver import TickResolver, _init_combatant
 from src.services.game_constants import GameConstants
 
 TICK_MS: int = GameConstants.TICK_MS  # 10
@@ -337,7 +337,7 @@ def test_auto_turret_cloak_override_compounds():
     # Build a combat where pilot_turret_acc is already CLOAK_SET_VALUE (pre-computed by T4).
     # We verify the math holds via _init_combatant — the acc calculation happens in the resolver.
     # We use a wrapper to patch the compute_pilot_accuracy to return cloak values:
-    import src.services.combat_service as cs_module
+    import src.services.combat_resolver as cr_module
     from src.services.combat_balance import compute_pilot_accuracy
 
     original_compute = compute_pilot_accuracy
@@ -346,7 +346,7 @@ def test_auto_turret_cloak_override_compounds():
         # Return (CLOAK_SET_VALUE, CLOAK_SET_VALUE) — cloak override for both acc values
         return (CLOAK_SET, CLOAK_SET)
 
-    cs_module.compute_pilot_accuracy = cloak_compute
+    cr_module.compute_pilot_accuracy = cloak_compute
     try:
         turret = _auto_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
         attacker = _loadout("Attacker", turrets=[turret])
@@ -365,7 +365,7 @@ def test_auto_turret_cloak_override_compounds():
                 f"Expected auto-turret accuracy {expected_auto_acc} under cloak, got {acc}"
             )
     finally:
-        cs_module.compute_pilot_accuracy = original_compute
+        cr_module.compute_pilot_accuracy = original_compute
 
 
 # ---------------------------------------------------------------------------

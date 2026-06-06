@@ -42,11 +42,10 @@ if "sqlalchemy_utils" not in sys.modules:
 from src.services.combat_models import (
     CombatEvent,
     CombatEventType,
-    ModuleStats,
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_service import TickResolver, _init_combatant
+from src.services.combat_resolver import TickResolver
 from src.services.game_constants import GameConstants
 from src.services.loadout_consistency_service import LoadoutConsistencyService
 

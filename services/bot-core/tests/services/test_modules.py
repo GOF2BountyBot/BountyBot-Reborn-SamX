@@ -46,7 +46,7 @@ from src.services.combat_models import (
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_service import (
+from src.services.combat_resolver import (
     _BOOSTER_MODULE_TYPE,
     _CLOAK_MODULE_TYPE,
     _THRUSTER_MODULE_TYPE,
@@ -453,7 +453,7 @@ class TestCloakActivation:
         Per §7.2 timing fix: the cooldown equals exactly loading_speed_ms at the expiry tick
         and reaches 0 exactly loading_speed_ms/tick_ms ticks later (no off-by-one).
         """
-        from src.services.combat_service import _tick_module_effects
+        from src.services.combat_resolver import _tick_module_effects
 
         loading_speed_ms = 2_000  # matches _cloak_mod() default
         effect_duration_ms = 10_000  # matches _cloak_mod() default

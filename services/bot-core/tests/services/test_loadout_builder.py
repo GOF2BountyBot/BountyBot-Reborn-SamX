@@ -993,7 +993,7 @@ class TestCriminalWeaponSelfHealing:
     def test_dps_only_weapon_bakes_nonzero_effective_damage(self):
         """Weapon dict with only 'dps' (no damage_per_shot/loading_speed_ms)
         produces effective_damage_per_shot > 0 via the cadence fallback."""
-        from src.services.combat_service import _init_combatant
+        from src.services.combat_resolver import _init_combatant
 
         criminal_ship = make_criminal_ship(
             ship_name="Hiro",
@@ -1010,7 +1010,7 @@ class TestCriminalWeaponSelfHealing:
 
     def test_dps_only_weapon_bakes_nonzero_range_m(self):
         """Weapon dict with only 'dps' (no range_m) produces range_m > 0 via the floor fallback."""
-        from src.services.combat_service import _init_combatant
+        from src.services.combat_resolver import _init_combatant
 
         criminal_ship = make_criminal_ship(
             ship_name="Inflict",
@@ -1025,7 +1025,7 @@ class TestCriminalWeaponSelfHealing:
 
     def test_dps_only_weapon_is_not_pure_emp(self):
         """Weapon with dps > 0 and no explicit damage_per_shot must not be classified pure-EMP."""
-        from src.services.combat_service import _init_combatant
+        from src.services.combat_resolver import _init_combatant
 
         criminal_ship = make_criminal_ship(
             ship_name="Betty",
@@ -1040,7 +1040,7 @@ class TestCriminalWeaponSelfHealing:
 
     def test_full_combat_fields_dict_preserves_values(self):
         """Weapon dict with all combat fields set preserves them exactly (no fallback applied)."""
-        from src.services.combat_service import _init_combatant
+        from src.services.combat_resolver import _init_combatant
 
         criminal_ship = make_criminal_ship(
             ship_name="Betty",
@@ -1086,7 +1086,7 @@ class TestCriminalWeaponSelfHealingEdgeCases:
         The self-healing fallback must NOT overwrite the explicit 0 with a derived value —
         is_pure_emp must be True and baked damage must stay 0.
         """
-        from src.services.combat_service import _init_combatant
+        from src.services.combat_resolver import _init_combatant
 
         criminal_ship = make_criminal_ship(
             ship_name="EMP Raider",
@@ -1119,7 +1119,7 @@ class TestCriminalWeaponSelfHealingEdgeCases:
         must self-heal to non-zero baked damage and non-zero range — mirroring the
         primary-weapon self-heal test.
         """
-        from src.services.combat_service import _init_combatant
+        from src.services.combat_resolver import _init_combatant
 
         criminal_ship = make_criminal_ship(
             ship_name="Legacy Gunship",

@@ -50,7 +50,7 @@ from src.services.combat_models import (
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_service import (
+from src.services.combat_resolver import (
     _EMERGENCY_SYSTEM_MODULE_TYPE,
     TickResolver,
     _apply_damage,
@@ -644,7 +644,7 @@ class TestESEndToEnd:
         # We need a combatant with both ES AND a cloak/booster to detect ordering.
         # Set up so that ES fires on a lethal-damage tick, and cloak MIGHT also trigger.
         # The ES event must precede any phase-5 module_activation events.
-        from src.services.combat_service import _CLOAK_MODULE_TYPE
+        from src.services.combat_resolver import _CLOAK_MODULE_TYPE
 
         cloak_mod = ModuleStats(
             name="TestCloak",

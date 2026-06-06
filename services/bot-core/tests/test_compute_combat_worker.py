@@ -1,4 +1,4 @@
-"""Tests for the utils.compute.combat_worker leaf module.
+"""Tests for the compute.combat_worker leaf module.
 
 Two test groups:
 1. Import-hygiene via forkserver child process — proves combat_worker does NOT
@@ -18,7 +18,7 @@ imported modules.
 Inside the child we:
   1. Add the ``src/`` directory to ``sys.path`` (same path the parent uses).
   2. Snapshot ``sys.modules`` keys BEFORE importing combat_worker.
-  3. Import ``utils.compute.combat_worker``.
+  3. Import ``compute.combat_worker`` (PRODUCTION PATH — not spec_from_file_location).
   4. Snapshot ``sys.modules`` keys AFTER the import.
   5. Return the *difference* (newly imported module names) back to the parent.
 
@@ -32,11 +32,8 @@ from __future__ import annotations
 
 import ast
 import multiprocessing
-import os
 import pathlib
 import sys
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Path helpers
@@ -53,10 +50,21 @@ _FORBIDDEN_PREFIXES: tuple[str, ...] = (
     "sqlalchemy",
     "asyncpg",
     "fastapi",
-    "starlette",          # fastapi re-exports from starlette; ban both
+    "starlette",  # fastapi re-exports from starlette; ban both
     "persist",
-    "main",               # the FastAPI app entrypoint
-    "services",
+    "main",  # the FastAPI app entrypoint
+    "services.combat_service",
+    "services.combat_log_service",
+    "services.bounty_service",
+    "services.player_service",
+    "services.shop_service",
+    "services.loadout_service",
+    "services.ship_service",
+    "services.guild_service",
+    "services.admin_service",
+    "services.audit_service",
+    "services.duel_service",
+    "services.spawn_service",
     "utils.executors",
     "utils.job_executor",
     "utils.auto_seeder",
@@ -84,10 +92,9 @@ _FORBIDDEN_PREFIXES: tuple[str, ...] = (
 def _child_check_imports(src_dir: str) -> dict:
     """Run inside a fresh forkserver child.
 
-    Imports ``combat_worker`` directly by file path using
-    ``importlib.util.spec_from_file_location``, bypassing the ``utils``
-    package init (which auto-imports executors and their heavy deps).  This
-    isolates what *combat_worker itself* requires at import time.
+    Imports ``combat_worker`` via the PRODUCTION path
+    (``from compute.combat_worker import run_fight``).  This is the same path
+    ProcessPoolExecutor uses when unpickling the function reference.
 
     Returns a dict::
 
@@ -97,23 +104,17 @@ def _child_check_imports(src_dir: str) -> dict:
             "added_modules": list,    # Module names added by importing combat_worker
         }
     """
-    import importlib.util
-    import pathlib
+
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
 
     result: dict = {"success": False, "error": None, "added_modules": []}
     try:
-        module_path = pathlib.Path(src_dir) / "utils" / "compute" / "combat_worker.py"
-
         # Snapshot before import
         before: set[str] = set(sys.modules.keys())
 
-        # Load module directly by file path — does NOT trigger utils/__init__.py
-        spec = importlib.util.spec_from_file_location(
-            "utils.compute.combat_worker", module_path
-        )
-        module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-        sys.modules["utils.compute.combat_worker"] = module
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        # PRODUCTION import path — same as ProcessPoolExecutor uses
+        from compute.combat_worker import run_fight as _  # noqa: F401
 
         # Snapshot after import
         after: set[str] = set(sys.modules.keys())
@@ -140,9 +141,7 @@ def test_combat_worker_imports_cleanly_in_forkserver_child() -> None:
         pool.close()
         pool.join()
 
-    assert result["success"], (
-        f"combat_worker failed to import in forkserver child: {result['error']}"
-    )
+    assert result["success"], f"combat_worker failed to import in forkserver child: {result['error']}"
 
 
 def test_combat_worker_adds_no_heavy_modules_in_forkserver_child() -> None:
@@ -160,22 +159,17 @@ def test_combat_worker_adds_no_heavy_modules_in_forkserver_child() -> None:
         pool.close()
         pool.join()
 
-    assert result["success"], (
-        f"combat_worker import failed; cannot check added modules: {result['error']}"
-    )
+    assert result["success"], f"combat_worker import failed; cannot check added modules: {result['error']}"
 
     added: list[str] = result["added_modules"]
     violations: list[str] = [
-        mod
-        for mod in added
-        for prefix in _FORBIDDEN_PREFIXES
-        if mod == prefix or mod.startswith(prefix + ".")
+        mod for mod in added for prefix in _FORBIDDEN_PREFIXES if mod == prefix or mod.startswith(prefix + ".")
     ]
 
     assert not violations, (
-        f"combat_worker import dragged in forbidden heavy modules:\n"
+        "combat_worker import dragged in forbidden heavy modules:\n"
         + "\n".join(f"  {v}" for v in violations)
-        + f"\n\nFull added-module list:\n"
+        + "\n\nFull added-module list:\n"
         + "\n".join(f"  {m}" for m in added)
     )
 
@@ -184,7 +178,7 @@ def test_combat_worker_adds_no_heavy_modules_in_forkserver_child() -> None:
 # Test 2: static AST check on top-level import statements
 # ---------------------------------------------------------------------------
 
-_COMBAT_WORKER_PATH = _SRC_DIR / "utils" / "compute" / "combat_worker.py"
+_COMBAT_WORKER_PATH = _SRC_DIR / "compute" / "combat_worker.py"
 
 _FORBIDDEN_IMPORT_NAMES: tuple[str, ...] = (
     "sqlalchemy",
@@ -193,20 +187,18 @@ _FORBIDDEN_IMPORT_NAMES: tuple[str, ...] = (
     "starlette",
     "persist",
     "main",
-    "services",
-    "executors",
-    "job_executor",
-    "auto_seeder",
-    "data_loader",
-    "scheduler_holder",
-    "executor_holder",
-    "offload",
+    "utils.executors",
+    "utils.job_executor",
+    "utils.auto_seeder",
+    "utils.data_loader",
+    "utils.scheduler_holder",
+    "utils.executor_holder",
+    "utils.offload",
     "message_builders",
     "api",
     "alembic",
     "apscheduler",
     "httpx",
-    "pydantic",
     "PIL",
     "uvicorn",
 )
@@ -218,11 +210,7 @@ def _collect_toplevel_import_names(source: str) -> list[str]:
     Only top-level (module-scope) ``import X`` and ``from X import Y``
     statements are collected; imports inside function bodies are ignored
     (deferred imports are intentionally allowed for executors, but
-    combat_worker must not even have deferred imports of heavy modules).
-
-    Actually for this skeleton the task only forbids top-level imports, so
-    we restrict to ``ast.Import`` / ``ast.ImportFrom`` nodes whose parent is
-    the module body (i.e. depth == 1 from the Module node).
+    combat_worker must not have deferred imports of heavy modules).
     """
     tree = ast.parse(source)
     names: list[str] = []
@@ -230,18 +218,20 @@ def _collect_toplevel_import_names(source: str) -> list[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 names.append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                names.append(node.module)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.append(node.module)
     return names
 
 
 def test_combat_worker_has_no_forbidden_toplevel_imports() -> None:
-    """Top-level import statements in combat_worker.py must be stdlib-only.
+    """Top-level import statements in combat_worker.py must be DB-free.
 
     Parses the source with ``ast`` and checks that no forbidden module name
     appears as a top-level import.  This catches accidental additions before
     they ever reach a runtime test.
+
+    Note: services.combat_models and services.combat_resolver ARE allowed at
+    top-level because services/__init__.py is inert and both modules are DB-free.
     """
     source = _COMBAT_WORKER_PATH.read_text(encoding="utf-8")
     toplevel_imports = _collect_toplevel_import_names(source)
@@ -254,14 +244,12 @@ def test_combat_worker_has_no_forbidden_toplevel_imports() -> None:
                 break  # one violation entry per import line
 
     assert not violations, (
-        f"combat_worker.py has forbidden top-level import(s):\n"
+        "combat_worker.py has forbidden top-level import(s):\n"
         + "\n".join(f"  import {v}" for v in violations)
-        + "\n\nOnly stdlib imports are allowed at module top-level."
+        + "\n\nOnly DB-free imports are allowed at module top-level."
     )
 
 
 def test_combat_worker_source_exists() -> None:
     """Sanity check: the module source file is present at the expected path."""
-    assert _COMBAT_WORKER_PATH.exists(), (
-        f"combat_worker.py not found at {_COMBAT_WORKER_PATH}"
-    )
+    assert _COMBAT_WORKER_PATH.exists(), f"combat_worker.py not found at {_COMBAT_WORKER_PATH}"

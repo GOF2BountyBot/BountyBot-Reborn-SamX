@@ -492,7 +492,7 @@ async def lifespan(fastapi_app: FastAPI):
 
     # Pre-import the combat worker leaf in the forkserver control process so
     # each spawned worker inherits it without a cold import.
-    multiprocessing.set_forkserver_preload(["utils.compute.combat_worker"])
+    multiprocessing.set_forkserver_preload(["compute.combat_worker"])
 
     mp_ctx = multiprocessing.get_context("forkserver")
     process_pool = ProcessPoolExecutor(mp_context=mp_ctx, max_workers=PROCESS_POOL_WORKERS)

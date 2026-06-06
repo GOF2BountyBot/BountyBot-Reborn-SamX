@@ -51,8 +51,41 @@ flogger = bblogger.get_logger("bot-main-script")
 #   Ref: https://docs.python.org/3/library/concurrent.futures.html
 #        (Changed in 3.13: max_workers uses os.process_cpu_count() by default)
 # ---------------------------------------------------------------------------
-PROCESS_POOL_WORKERS: int = int(os.getenv("PROCESS_POOL_WORKERS", "3"))
-THREAD_POOL_WORKERS: int = int(os.getenv("THREAD_POOL_WORKERS", str(max(4, 2 * PROCESS_POOL_WORKERS))))
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read an environment variable as a positive integer.
+
+    Returns *default* when the variable is unset or empty.
+    Raises ``ValueError`` with a descriptive message when the value is present
+    but cannot be parsed as an integer OR is less than 1.  Fails loudly so
+    misconfiguration is visible at startup rather than silently ignored.
+
+    Args:
+        name:    Name of the environment variable.
+        default: Value to use when the variable is absent or empty.
+
+    Returns:
+        A positive integer (>= 1).
+
+    Raises:
+        ValueError: If the value is non-integer or less than 1.
+    """
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"Environment variable {name!r} must be a positive integer; got {raw!r}") from None
+    if value < 1:
+        raise ValueError(f"Environment variable {name!r} must be >= 1; got {value!r}")
+    return value
+
+
+_DEFAULT_PROCESS_POOL_WORKERS = 3
+PROCESS_POOL_WORKERS: int = _positive_int_env("PROCESS_POOL_WORKERS", _DEFAULT_PROCESS_POOL_WORKERS)
+THREAD_POOL_WORKERS: int = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * PROCESS_POOL_WORKERS))
 
 
 # ---------------------------------------------------------------------------

@@ -913,3 +913,186 @@ class TestForkserverSmokeReal:
             raise AssertionError("Expected RuntimeError after shutdown, but no exception was raised")
         except RuntimeError:
             pass  # expected
+
+
+# ===================================================================
+# P1-T5: _positive_int_env helper validation
+# ===================================================================
+
+
+class TestPositiveIntEnv:
+    """Tests for the _positive_int_env validation helper.
+
+    Tests call the helper directly rather than reimporting main with
+    different env vars to avoid import-time side effects.
+    """
+
+    def _get_helper(self):
+        from main import _positive_int_env
+
+        return _positive_int_env
+
+    # ------------------------------------------------------------------
+    # Default behaviour (unset / empty)
+    # ------------------------------------------------------------------
+
+    def test_unset_both_returns_defaults(self, monkeypatch):
+        """Unset PROCESS_POOL_WORKERS and THREAD_POOL_WORKERS → defaults 3 and 6."""
+        monkeypatch.delenv("PROCESS_POOL_WORKERS", raising=False)
+        monkeypatch.delenv("THREAD_POOL_WORKERS", raising=False)
+
+        _positive_int_env = self._get_helper()
+
+        process_workers = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        thread_workers = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * process_workers))
+
+        assert process_workers == 3
+        assert thread_workers == 6
+
+    def test_empty_string_returns_default(self, monkeypatch):
+        """An empty string value is treated the same as unset."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "")
+
+        _positive_int_env = self._get_helper()
+        result = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        assert result == 3
+
+    def test_whitespace_only_returns_default(self, monkeypatch):
+        """A whitespace-only value is treated the same as unset."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "   ")
+
+        _positive_int_env = self._get_helper()
+        result = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        assert result == 3
+
+    # ------------------------------------------------------------------
+    # Floor-at-4 for thread pool
+    # ------------------------------------------------------------------
+
+    def test_process_1_thread_floors_at_4(self, monkeypatch):
+        """With PROCESS_POOL_WORKERS=1, thread default = max(4, 2*1) = 4."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "1")
+        monkeypatch.delenv("THREAD_POOL_WORKERS", raising=False)
+
+        _positive_int_env = self._get_helper()
+
+        process_workers = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        thread_workers = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * process_workers))
+
+        assert process_workers == 1
+        assert thread_workers == 4  # floor applied: max(4, 2*1)=4, not 2
+
+    # ------------------------------------------------------------------
+    # Explicit values honored exactly
+    # ------------------------------------------------------------------
+
+    def test_explicit_values_honored(self, monkeypatch):
+        """process=2, thread=9 → both returned exactly, no floor override."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "2")
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "9")
+
+        _positive_int_env = self._get_helper()
+
+        process_workers = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        thread_workers = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * process_workers))
+
+        assert process_workers == 2
+        assert thread_workers == 9  # explicit value: no floor applied
+
+    def test_explicit_thread_below_floor_honored(self, monkeypatch):
+        """An explicit THREAD_POOL_WORKERS=1 is honored; the floor only applies to the default."""
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "1")
+
+        _positive_int_env = self._get_helper()
+        # The floor max(4, ...) is only in the default expression, not enforced by the helper
+        result = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * 3))
+        assert result == 1
+
+    # ------------------------------------------------------------------
+    # Invalid values → clear failure with var name in message
+    # ------------------------------------------------------------------
+
+    def test_non_integer_process_raises_with_var_name(self, monkeypatch):
+        """PROCESS_POOL_WORKERS='foo' raises ValueError naming the variable."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "foo")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="PROCESS_POOL_WORKERS"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    def test_non_integer_process_includes_bad_value_in_message(self, monkeypatch):
+        """Error message for non-integer includes the bad value."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "foo")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="foo"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    def test_zero_process_raises_with_var_name(self, monkeypatch):
+        """PROCESS_POOL_WORKERS='0' raises ValueError naming the variable."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "0")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="PROCESS_POOL_WORKERS"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    def test_negative_process_raises_with_var_name(self, monkeypatch):
+        """PROCESS_POOL_WORKERS='-1' raises ValueError naming the variable."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "-1")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="PROCESS_POOL_WORKERS"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    def test_non_integer_thread_raises_with_var_name(self, monkeypatch):
+        """THREAD_POOL_WORKERS='bar' raises ValueError naming the variable."""
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "bar")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="THREAD_POOL_WORKERS"):
+            _positive_int_env("THREAD_POOL_WORKERS", 6)
+
+    def test_zero_thread_raises_with_var_name(self, monkeypatch):
+        """THREAD_POOL_WORKERS='0' raises ValueError naming the variable."""
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "0")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="THREAD_POOL_WORKERS"):
+            _positive_int_env("THREAD_POOL_WORKERS", 6)
+
+    def test_negative_thread_raises_with_var_name(self, monkeypatch):
+        """THREAD_POOL_WORKERS='-5' raises ValueError naming the variable."""
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "-5")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="THREAD_POOL_WORKERS"):
+            _positive_int_env("THREAD_POOL_WORKERS", 6)
+
+    def test_float_string_raises(self, monkeypatch):
+        """PROCESS_POOL_WORKERS='2.5' raises ValueError (not a valid int)."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "2.5")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="PROCESS_POOL_WORKERS"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    # ------------------------------------------------------------------
+    # Module-level constants smoke check (import-time evaluation)
+    # ------------------------------------------------------------------
+
+    def test_module_constants_are_positive_ints(self):
+        """PROCESS_POOL_WORKERS and THREAD_POOL_WORKERS on the module are ints >= 1."""
+        import main as main_module
+
+        assert isinstance(main_module.PROCESS_POOL_WORKERS, int)
+        assert main_module.PROCESS_POOL_WORKERS >= 1
+        assert isinstance(main_module.THREAD_POOL_WORKERS, int)
+        assert main_module.THREAD_POOL_WORKERS >= 1

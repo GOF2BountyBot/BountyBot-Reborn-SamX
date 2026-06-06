@@ -30,13 +30,14 @@ Deferred imports (ORM modules) are not used here — this executor calls the
 OS-level ``pg_dump`` binary directly so it never opens a SQLAlchemy session.
 """
 
-import asyncio
 import os
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from shared.bblogger import get_logger
+
+from utils.offload import offload_io
 
 flogger = get_logger("pg-backup-executor")
 
@@ -94,13 +95,7 @@ async def execute_pg_backup_job(job_id: str, payload: dict) -> dict:
     env["PGPASSWORD"] = _DB_PASSWORD
 
     try:
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            _dump_and_compress,
-            job_id,
-            env,
-            tmp_path,
-        )
+        await offload_io(_dump_and_compress, job_id, env, tmp_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -136,7 +131,7 @@ async def execute_pg_backup_job(job_id: str, payload: dict) -> dict:
 def _dump_and_compress(job_id: str, env: dict, tmp_path: Path) -> None:
     """Run ``pg_dump | zstd -10`` synchronously.
 
-    Executed inside ``run_in_executor`` so it doesn't block the event loop.
+    Executed via ``offload_io`` (shared thread pool) so it doesn't block the event loop.
     """
     pg_dump_cmd = [
         "pg_dump",

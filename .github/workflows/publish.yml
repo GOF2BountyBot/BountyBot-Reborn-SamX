@@ -1,7 +1,7 @@
 name: Test, Build & Publish
 
 # Pipeline phases:
-#   1. Lint                                — ruff check + format
+#   1. Lint                                — ruff check + format, then pylint
 #   2. Tests   (3 parallel)                — bot-core / discord-gateway / blender-service
 #   3. Build   (4 parallel, needs tests)   — push sha-<short> (+ semver) to GHCR
 #                                            On PR: build local only, no push
@@ -64,7 +64,7 @@ env:
 
 jobs:
   lint:
-    name: Ruff lint & format check
+    name: Lint (ruff + pylint)
     runs-on: ubuntu-latest
 
     steps:
@@ -83,6 +83,12 @@ jobs:
 
       - name: Ruff format check
         run: ruff format --check services/bot-core/src services/bot-core/tests services/discord-gateway/src services/discord-gateway/tests services/blender-service/src services/blender-service/tests
+
+      - name: Install Pylint
+        run: pip install pylint
+
+      - name: Pylint (lint)
+        run: pylint --rcfile=utils/pylintrc services/bot-core/src services/bot-core/tests services/discord-gateway/src services/discord-gateway/tests services/blender-service/src services/blender-service/tests
 
 # ── Phase 2: Tests ───────────────────────────────────────────────────────────
 

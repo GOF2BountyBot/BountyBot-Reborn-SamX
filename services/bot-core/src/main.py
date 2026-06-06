@@ -16,8 +16,10 @@ import asyncio
 import fcntl
 import importlib
 import logging as pyLogging
+import multiprocessing
 import os
 import pkgutil
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 
 from api import routers
@@ -32,9 +34,25 @@ from services.game_constants import GameConstants
 from shared import bblogger
 from sqlalchemy import create_engine
 from utils.auto_seeder import auto_seed_data
+from utils.executor_holder import set_process_pool, set_thread_pool
 from utils.job_executor import run_job
 
 flogger = bblogger.get_logger("bot-main-script")
+
+# ---------------------------------------------------------------------------
+# Executor pool sizing — read from env with sane defaults.
+#
+# WHY explicit max_workers is REQUIRED:
+#   On Python 3.13, ProcessPoolExecutor defaults to os.process_cpu_count()
+#   which reads the CPU *affinity mask*, not the Docker CFS cgroup quota
+#   (cpu_quota / cpu_period).  Inside a Docker container, process_cpu_count()
+#   typically returns the host CPU count, not the container's allocated share,
+#   so the pool would over-provision workers.  We MUST set max_workers explicitly.
+#   Ref: https://docs.python.org/3/library/concurrent.futures.html
+#        (Changed in 3.13: max_workers uses os.process_cpu_count() by default)
+# ---------------------------------------------------------------------------
+PROCESS_POOL_WORKERS: int = int(os.getenv("PROCESS_POOL_WORKERS", "3"))
+THREAD_POOL_WORKERS: int = int(os.getenv("THREAD_POOL_WORKERS", str(max(4, 2 * PROCESS_POOL_WORKERS))))
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +436,39 @@ async def lifespan(fastapi_app: FastAPI):
                 fcntl.flock(sched_lock_fd, fcntl.LOCK_UN)
             os.close(sched_lock_fd)
 
+    # -----------------------------------------------------------------------
+    # Build executor pools AFTER the scheduler is up (forkserver server is
+    # spawned into a stable parent snapshot) and BEFORE yield.
+    #
+    # WHY forkserver (not fork):
+    #   fork() in a multithreaded process (event loop + APScheduler threads)
+    #   is unsafe; on Python 3.12+ it raises DeprecationWarning.  forkserver
+    #   uses a single-threaded helper process as the actual fork()-er, which
+    #   is safe.  Ref: https://docs.python.org/3.13/library/multiprocessing.html
+    #
+    # set_forkserver_preload: tells the forkserver helper to pre-import the
+    #   listed modules so child processes inherit them without re-importing.
+    #   This is the module-level function (multiprocessing.set_forkserver_preload)
+    #   documented in the Python 3.13 stdlib.  It must be called before the
+    #   first worker is spawned (i.e. before ProcessPoolExecutor is created).
+    #   Ref: https://docs.python.org/3.13/library/multiprocessing.html#multiprocessing.set_forkserver_preload
+    # -----------------------------------------------------------------------
+    flogger.info(
+        f"🔧 Building executor pools: process_workers={PROCESS_POOL_WORKERS}, thread_workers={THREAD_POOL_WORKERS}"
+    )
+
+    # Pre-import the combat worker leaf in the forkserver control process so
+    # each spawned worker inherits it without a cold import.
+    multiprocessing.set_forkserver_preload(["utils.compute.combat_worker"])
+
+    mp_ctx = multiprocessing.get_context("forkserver")
+    process_pool = ProcessPoolExecutor(mp_context=mp_ctx, max_workers=PROCESS_POOL_WORKERS)
+    thread_pool = ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS)
+
+    set_process_pool(process_pool)
+    set_thread_pool(thread_pool)
+    flogger.info("✅ Executor pools built and registered in executor_holder")
+
     flogger.info("📚 API Documentation available at: /docs")
     flogger.info("📖 ReDoc Documentation available at: /redoc")
 
@@ -431,6 +482,20 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.info("✅ Scheduler stopped")
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"⚠️ Error shutting down scheduler: {e}")
+
+    try:
+        flogger.info("🔧 Shutting down process pool...")
+        process_pool.shutdown(wait=True)
+        flogger.info("✅ Process pool shut down")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"⚠️ Error shutting down process pool: {e}")
+
+    try:
+        flogger.info("🔧 Shutting down thread pool...")
+        thread_pool.shutdown(wait=True)
+        flogger.info("✅ Thread pool shut down")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"⚠️ Error shutting down thread pool: {e}")
 
     try:
         flogger.info("🗄️ Shutting down database connections...")

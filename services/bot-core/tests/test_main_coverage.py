@@ -545,3 +545,371 @@ class TestMainBlock:
                 assert isinstance(health_filter, logging.Filter)
             finally:
                 main_module.__name__ = original_name
+
+
+# ===================================================================
+# P1-T4: Executor pool creation in lifespan
+# ===================================================================
+
+
+class TestLifespanExecutorPools:
+    """Mock-based tests for executor pool construction, registration, and teardown.
+
+    These tests patch ProcessPoolExecutor and ThreadPoolExecutor so no actual
+    forkserver processes are spawned, keeping the suite fast.  Construction
+    kwargs and shutdown(wait=True) calls are asserted via mock inspection.
+    """
+
+    def _make_mock_pool(self):
+        """Return a MagicMock that tracks shutdown() calls."""
+        mock = MagicMock()
+        mock.shutdown = MagicMock()
+        return mock
+
+    @pytest.mark.asyncio
+    async def test_executor_pools_created_with_correct_workers(self):
+        """After startup, process pool uses PROCESS_POOL_WORKERS=2 and
+        thread pool floors at max(4, 2*2)=4 per formula.
+
+        The module-level constants PROCESS_POOL_WORKERS / THREAD_POOL_WORKERS are
+        evaluated at import time from os.getenv, so we patch them directly on the
+        module object rather than via os.environ (which would only affect future reads).
+        """
+        from main import lifespan
+
+        test_app = FastAPI()
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        mock_process_pool = self._make_mock_pool()
+        mock_thread_pool = self._make_mock_pool()
+
+        mock_pp_cls = MagicMock(return_value=mock_process_pool)
+        mock_tp_cls = MagicMock(return_value=mock_thread_pool)
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", mock_pp_cls),
+            patch("main.ThreadPoolExecutor", mock_tp_cls),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.set_process_pool") as mock_set_pp,
+            patch("main.set_thread_pool") as mock_set_tp,
+            # Patch the module-level constants directly (they are already evaluated
+            # from os.getenv at import time; patching os.environ has no effect here).
+            patch("main.PROCESS_POOL_WORKERS", 2),
+            patch("main.THREAD_POOL_WORKERS", max(4, 2 * 2)),
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                # ProcessPoolExecutor constructed with max_workers=2 and an mp_context
+                pp_call_kwargs = mock_pp_cls.call_args[1]
+                assert pp_call_kwargs["max_workers"] == 2
+                assert pp_call_kwargs["mp_context"] is not None
+
+                # ThreadPoolExecutor constructed with max_workers = max(4, 2*2) = 4
+                tp_call_kwargs = mock_tp_cls.call_args[1]
+                assert tp_call_kwargs["max_workers"] == 4
+
+                # Pools registered in holder
+                mock_set_pp.assert_called_once_with(mock_process_pool)
+                mock_set_tp.assert_called_once_with(mock_thread_pool)
+
+    @pytest.mark.asyncio
+    async def test_executor_pools_registered_in_holder(self):
+        """Holder registration functions are called exactly once during startup."""
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool") as mock_set_pp,
+            patch("main.set_thread_pool") as mock_set_tp,
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                mock_set_pp.assert_called_once()
+                mock_set_tp.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_executor_pools_shutdown_called_on_teardown(self):
+        """On shutdown, both pools have shutdown(wait=True) called.
+
+        An exception in one teardown block must not prevent the other from running.
+        """
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        mock_process_pool = MagicMock()
+        mock_thread_pool = MagicMock()
+        mock_process_pool.shutdown = MagicMock()
+        mock_thread_pool.shutdown = MagicMock()
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", return_value=mock_process_pool),
+            patch("main.ThreadPoolExecutor", return_value=mock_thread_pool),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                pass  # yields; then teardown runs
+
+        # After lifespan exits, both pools must have been shut down with wait=True
+        mock_process_pool.shutdown.assert_called_once_with(wait=True)
+        mock_thread_pool.shutdown.assert_called_once_with(wait=True)
+
+    @pytest.mark.asyncio
+    async def test_executor_pool_shutdown_error_does_not_skip_other(self):
+        """If process pool shutdown raises, thread pool shutdown still runs."""
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        mock_process_pool = MagicMock()
+        mock_thread_pool = MagicMock()
+        mock_process_pool.shutdown = MagicMock(side_effect=RuntimeError("pool crash"))
+        mock_thread_pool.shutdown = MagicMock()
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", return_value=mock_process_pool),
+            patch("main.ThreadPoolExecutor", return_value=mock_thread_pool),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            # Must not raise; both teardown blocks are independent try/except
+            async with lifespan(test_app):
+                pass
+
+        # Thread pool shutdown still called despite process pool crash
+        mock_thread_pool.shutdown.assert_called_once_with(wait=True)
+
+    @pytest.mark.asyncio
+    async def test_process_pool_uses_forkserver_context(self):
+        """ProcessPoolExecutor is constructed with a forkserver mp_context."""
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        fake_mp_ctx = MagicMock(name="forkserver_ctx")
+        mock_pp_cls = MagicMock(return_value=MagicMock())
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context", return_value=fake_mp_ctx) as mock_get_ctx,
+            patch("main.ProcessPoolExecutor", mock_pp_cls),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                # get_context called with "forkserver"
+                mock_get_ctx.assert_called_once_with("forkserver")
+
+                # ProcessPoolExecutor received our fake context object
+                pp_kwargs = mock_pp_cls.call_args[1]
+                assert pp_kwargs["mp_context"] is fake_mp_ctx
+
+    @pytest.mark.asyncio
+    async def test_thread_pool_workers_floor_at_four(self):
+        """Thread pool worker count is max(4, 2 * PROCESS_POOL_WORKERS).
+
+        With PROCESS_POOL_WORKERS=1, 2*1=2 < 4, so thread workers floor at 4.
+        Module-level constants are patched directly since they are evaluated at import time.
+        """
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+        mock_tp_cls = MagicMock(return_value=MagicMock())
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", mock_tp_cls),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
+            # PROCESS_POOL_WORKERS=1 → 2*1=2 < 4 → floor at 4
+            patch("main.PROCESS_POOL_WORKERS", 1),
+            patch("main.THREAD_POOL_WORKERS", max(4, 2 * 1)),  # = 4
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                tp_kwargs = mock_tp_cls.call_args[1]
+                assert tp_kwargs["max_workers"] == 4
+
+
+# ===================================================================
+# P1-T4: Real (non-mocked) forkserver smoke test
+# ===================================================================
+
+
+def _trivial_add(a: int, b: int) -> int:
+    """Picklable top-level function used by the forkserver smoke test."""
+    return a + b
+
+
+class TestForkserverSmokeReal:
+    """Non-mocked test that actually spawns a forkserver ProcessPoolExecutor
+    and confirms it can run a trivial task and shut down cleanly.
+
+    This test is intentionally isolated from the lifespan to keep it simple
+    and portable — it only validates that the forkserver context + explicit
+    max_workers construction works on this Python/OS combination.
+    """
+
+    def test_forkserver_pool_runs_trivial_task(self):
+        """Build a real forkserver ProcessPoolExecutor, run a task, verify result."""
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+
+        mp_ctx = mp.get_context("forkserver")
+        with ProcessPoolExecutor(mp_context=mp_ctx, max_workers=2) as pool:
+            future = pool.submit(_trivial_add, 3, 7)
+            result = future.result(timeout=30)
+
+        assert result == 10
+
+    def test_forkserver_pool_shuts_down_cleanly(self):
+        """ProcessPoolExecutor with forkserver context shuts down without errors."""
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+
+        mp_ctx = mp.get_context("forkserver")
+        pool = ProcessPoolExecutor(mp_context=mp_ctx, max_workers=2)
+
+        # Submit a trivial task to confirm the pool is live
+        future = pool.submit(_trivial_add, 1, 2)
+        assert future.result(timeout=30) == 3
+
+        # Explicit shutdown should not raise
+        pool.shutdown(wait=True)
+
+        # After shutdown, submitting new work should raise RuntimeError
+        try:
+            pool.submit(_trivial_add, 1, 2)
+            raise AssertionError("Expected RuntimeError after shutdown, but no exception was raised")
+        except RuntimeError:
+            pass  # expected

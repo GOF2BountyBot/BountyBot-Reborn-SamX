@@ -693,3 +693,324 @@ class TestModuleLevelConvenienceFunctions:
             mock_mgr.table_exists = AsyncMock(return_value=True)
             result = await module_table_exists("players")
             assert result is True
+
+
+# ===========================================================================
+# P1-T6: Pool sizing tests
+# ===========================================================================
+
+
+class TestPoolSizingDefaults:
+    """P1-T6: pool_size=40 / max_overflow=20 defaults and env overrides."""
+
+    def test_default_pool_size_is_40(self):
+        """pool_size must default to 40 when DB_POOL_SIZE is unset."""
+        with patch("persist.database.manager.bblogger"), patch.dict(os.environ, {}, clear=False) as env:
+            # Remove override if present so we exercise the true default
+            env.pop("DB_POOL_SIZE", None)
+            mgr = DatabaseManager()
+        assert mgr._pool_config["pool_size"] == 40
+
+    def test_default_max_overflow_is_20(self):
+        """max_overflow must default to 20 when DB_MAX_OVERFLOW is unset."""
+        with patch("persist.database.manager.bblogger"), patch.dict(os.environ, {}, clear=False) as env:
+            env.pop("DB_MAX_OVERFLOW", None)
+            mgr = DatabaseManager()
+        assert mgr._pool_config["max_overflow"] == 20
+
+    def test_env_override_pool_size(self):
+        """DB_POOL_SIZE env var overrides the default pool_size."""
+        env_overrides = {"DB_POOL_SIZE": "10", "DB_MAX_OVERFLOW": "5"}
+        with patch("persist.database.manager.bblogger"), patch.dict(os.environ, env_overrides):
+            mgr = DatabaseManager()
+        assert mgr._pool_config["pool_size"] == 10
+
+    def test_env_override_max_overflow(self):
+        """DB_MAX_OVERFLOW env var overrides the default max_overflow."""
+        env_overrides = {"DB_POOL_SIZE": "10", "DB_MAX_OVERFLOW": "5"}
+        with patch("persist.database.manager.bblogger"), patch.dict(os.environ, env_overrides):
+            mgr = DatabaseManager()
+        assert mgr._pool_config["max_overflow"] == 5
+
+    def test_default_total_pool_under_postgres_max_connections(self):
+        """Default pool_size + max_overflow must stay safely under Postgres max_connections (100)."""
+        with patch("persist.database.manager.bblogger"), patch.dict(os.environ, {}, clear=False) as env:
+            env.pop("DB_POOL_SIZE", None)
+            env.pop("DB_MAX_OVERFLOW", None)
+            mgr = DatabaseManager()
+        total = mgr._pool_config["pool_size"] + mgr._pool_config["max_overflow"]
+        # Observed Postgres max_connections = 100; require total < 100.
+        ceiling = DatabaseManager._POSTGRES_MAX_CONNECTIONS_FLOOR
+        assert total < ceiling, f"total pool ({total}) must be < Postgres max_connections ({ceiling})"
+
+    def test_default_total_satisfies_warm_load_formula(self):
+        """Default total must satisfy: pool_size + max_overflow >= (2 * 16) + 10 = 42."""
+        with patch("persist.database.manager.bblogger"), patch.dict(os.environ, {}, clear=False) as env:
+            env.pop("DB_POOL_SIZE", None)
+            env.pop("DB_MAX_OVERFLOW", None)
+            mgr = DatabaseManager()
+        total = mgr._pool_config["pool_size"] + mgr._pool_config["max_overflow"]
+        autocomplete_warm_concurrency = 16  # default AUTOCOMPLETE_WARM_CONCURRENCY
+        live_headroom = 10
+        minimum_required = (2 * autocomplete_warm_concurrency) + live_headroom
+        assert total >= minimum_required, (
+            f"total pool ({total}) < required minimum ({minimum_required}) "
+            f"for warm_concurrency={autocomplete_warm_concurrency} + headroom={live_headroom}"
+        )
+
+    def test_ceiling_check_raises_when_total_exceeds_max_connections(self):
+        """Startup must raise ValueError when pool total >= Postgres max_connections ceiling."""
+        # Set pool_size + max_overflow = 100 (equal to ceiling) → must raise
+        with (
+            patch("persist.database.manager.bblogger"),
+            patch.dict(os.environ, {"DB_POOL_SIZE": "80", "DB_MAX_OVERFLOW": "20"}),
+            pytest.raises(ValueError, match="DB pool too large"),
+        ):
+            DatabaseManager()
+
+    def test_ceiling_check_passes_when_total_is_under_max_connections(self):
+        """No ValueError when pool total is safely under max_connections ceiling."""
+        env_overrides = {"DB_POOL_SIZE": "40", "DB_MAX_OVERFLOW": "20"}
+        with patch("persist.database.manager.bblogger"), patch.dict(os.environ, env_overrides):
+            mgr = DatabaseManager()
+        assert mgr._pool_config["pool_size"] + mgr._pool_config["max_overflow"] == 60
+
+
+def _live_db_conn_str() -> str | None:
+    """
+    Return a connection string to the live dev Postgres, or None if unreachable.
+
+    When tests run on the HOST (outside docker) the DB may be reachable via:
+      - localhost:15432  (published port — WSL2 sometimes blocks this)
+      - the docker bridge IP on port 5432 (always works on Linux hosts)
+    We try each candidate in order and return the first reachable one.
+    """
+    import socket
+    import subprocess
+
+    candidates: list[tuple[str, int]] = [
+        ("127.0.0.1", int(os.getenv("HOST_DB_PORT", "15432"))),
+    ]
+    # Also probe via the docker bridge IP if docker is available
+    try:
+        fmt = "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"
+        result = subprocess.run(
+            ["sudo", "docker", "inspect", "bountydev-db", "--format", fmt],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        bridge_ip = result.stdout.strip()
+        if bridge_ip:
+            candidates.append((bridge_ip, 5432))
+    except Exception:  # pragma: no cover
+        pass
+
+    for host, port in candidates:
+        try:
+            sock = socket.create_connection((host, port), timeout=1)
+            sock.close()
+            db_user = os.getenv("POSTGRES_USER", "bounty")
+            db_pass = os.getenv("POSTGRES_PASSWORD", "bounty")
+            db_name = os.getenv("POSTGRES_DB", "bountydb")
+            return f"postgresql+asyncpg://{db_user}:{db_pass}@{host}:{port}/{db_name}"
+        except OSError:
+            continue
+    return None  # DB not reachable from host
+
+
+class TestPoolConcurrencyLive:
+    """P1-T6: real concurrency checkout against live bountydev-db.
+
+    Design: each task uses ``engine.connect()`` (not AsyncSession), which
+    immediately checks out a pool connection and holds it for the duration of
+    the ``async with`` block.  An ``asyncio.sleep(hold_seconds)`` inside the
+    block ensures ALL tasks are suspended while holding their connection so
+    that pool pressure is genuinely concurrent, not sequential.
+
+    Anti-vacuousness proof: a separate test drives the same harness against a
+    pool_size=5 / max_overflow=5 (total 10) engine with 32 held-concurrent
+    checkouts and asserts it raises ``sqlalchemy.exc.TimeoutError`` ("QueuePool
+    limit … reached").  The positive test (40/20) must then serve all 32 with
+    no errors — proving the 40/20 pool genuinely absorbs 32 concurrent holders.
+    """
+
+    @pytest.mark.asyncio
+    async def test_small_pool_exhausted_by_32_held_concurrent(self):
+        """ANTI-VACUOUSNESS: pool_size=5/max_overflow=5 must raise TimeoutError with 32 held concurrent checkouts."""
+        import asyncio
+
+        from sqlalchemy import text
+        from sqlalchemy.exc import TimeoutError as SQLATimeoutError
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        conn_str = _live_db_conn_str()
+        if conn_str is None:
+            pytest.skip("Live DB not reachable from host")
+
+        # Total pool capacity = 10; 32 tasks will exhaust it with a short hold.
+        engine = create_async_engine(
+            conn_str,
+            pool_size=5,
+            max_overflow=5,
+            pool_timeout=1,  # fail fast when pool is full
+        )
+
+        async def _hold_connection(i: int):
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT 1 as n"))
+                val = result.scalar()
+                # Hold the connection so all 32 are open simultaneously.
+                await asyncio.sleep(2)
+                return val
+
+        concurrency = 32
+        tasks = [_hold_connection(i) for i in range(concurrency)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        await engine.dispose()
+
+        errors = [r for r in results if isinstance(r, Exception)]
+        timeout_errors = [e for e in errors if isinstance(e, SQLATimeoutError)]
+        assert timeout_errors, (
+            "Expected SQLAlchemy TimeoutError (QueuePool limit) when 32 tasks hold "
+            f"connections simultaneously against a pool_size=5/max_overflow=5 engine, "
+            f"but got errors={errors}, successes={[r for r in results if r == 1]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_32_concurrent_checkouts_no_timeout(self):
+        """pool_size=40/max_overflow=20 must serve all 32 held-concurrent checkouts with no errors.
+
+        Each task holds its connection for 0.2 s while suspended so that all 32
+        are genuinely in-flight simultaneously.  The 40/20 pool (60 total) has
+        ample headroom; no TimeoutError should occur.
+        """
+        import asyncio
+
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        conn_str = _live_db_conn_str()
+        if conn_str is None:
+            pytest.skip("Live DB not reachable from host")
+
+        engine = create_async_engine(
+            conn_str,
+            pool_size=40,
+            max_overflow=20,
+            pool_timeout=10,
+        )
+
+        async def _hold_connection(i: int):
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT 1 as n"))
+                val = result.scalar()
+                # Hold connection while suspended so all 32 are open at once.
+                await asyncio.sleep(0.2)
+                return val
+
+        concurrency = 32
+        tasks = [_hold_connection(i) for i in range(concurrency)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        await engine.dispose()
+
+        errors = [r for r in results if isinstance(r, Exception)]
+        assert not errors, f"Pool exhaustion or errors with 40/20 pool: {errors}"
+        assert all(r == 1 for r in results), f"Unexpected query results: {results}"
+
+
+class TestPoolWarnAtCeiling:
+    """P1-T6 SHOULD FIX: warning fires when pool total exceeds 75% of Postgres max_connections."""
+
+    def test_warn_logged_when_pool_approaches_ceiling(self):
+        """pool_size=60 + max_overflow=20 = 80 > 75% of 100 → flogger.warning must be called."""
+        with (
+            patch("persist.database.manager.flogger") as mock_flogger,
+            patch.dict(os.environ, {"DB_POOL_SIZE": "60", "DB_MAX_OVERFLOW": "20"}),
+        ):
+            DatabaseManager()
+
+        mock_flogger.warning.assert_called_once()
+        warning_msg = mock_flogger.warning.call_args[0][0]
+        assert "approaching" in warning_msg, f"Expected 'approaching' in warning: {warning_msg!r}"
+        assert "ceiling" in warning_msg, f"Expected 'ceiling' in warning: {warning_msg!r}"
+
+    def test_no_warn_when_pool_is_under_75_percent(self):
+        """pool_size=40 + max_overflow=20 = 60 ≤ 75% of 100 → flogger.warning must NOT be called."""
+        with (
+            patch("persist.database.manager.flogger") as mock_flogger,
+            patch.dict(os.environ, {"DB_POOL_SIZE": "40", "DB_MAX_OVERFLOW": "20"}),
+        ):
+            DatabaseManager()
+
+        mock_flogger.warning.assert_not_called()
+
+
+def _live_db_env_overrides() -> dict[str, str] | None:
+    """
+    Return env-var overrides that point POSTGRES_* at the live bountydev-db,
+    or None if the DB is not reachable from the current host.
+
+    Uses the same discovery logic as _live_db_conn_str() but returns individual
+    env vars so DatabaseManager._load_config() picks them up correctly.
+    """
+    import socket
+    import subprocess
+
+    candidates: list[tuple[str, int]] = [
+        ("127.0.0.1", int(os.getenv("HOST_DB_PORT", "15432"))),
+    ]
+    try:
+        fmt = "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"
+        result = subprocess.run(
+            ["sudo", "docker", "inspect", "bountydev-db", "--format", fmt],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        bridge_ip = result.stdout.strip()
+        if bridge_ip:
+            candidates.append((bridge_ip, 5432))
+    except Exception:  # pragma: no cover
+        pass
+
+    for host, port in candidates:
+        try:
+            sock = socket.create_connection((host, port), timeout=1)
+            sock.close()
+            return {
+                "POSTGRES_HOST": host,
+                "POSTGRES_PORT": str(port),
+                "POSTGRES_USER": os.getenv("POSTGRES_USER", "bounty"),
+                "POSTGRES_PASSWORD": os.getenv("POSTGRES_PASSWORD", "bounty"),
+                "POSTGRES_DB": os.getenv("POSTGRES_DB", "bountydb"),
+            }
+        except OSError:
+            continue
+    return None
+
+
+class TestPoolEngineObjectLive:
+    """P1-T6 NICE-TO-HAVE: verify pool config values reach the actual QueuePool object after initialize()."""
+
+    @pytest.mark.asyncio
+    async def test_engine_pool_size_and_max_overflow_after_initialize(self):
+        """engine.pool.size() == 40 and pool._max_overflow == 20 after initialize()."""
+        db_env = _live_db_env_overrides()
+        if db_env is None:
+            pytest.skip("Live DB not reachable from host")
+
+        env_overrides = {**db_env, "DB_POOL_SIZE": "40", "DB_MAX_OVERFLOW": "20"}
+
+        with patch("persist.database.manager.bblogger"), patch.dict(os.environ, env_overrides):
+            mgr = DatabaseManager()
+            await mgr.initialize()
+
+        pool = mgr.engine.pool
+        pool_size = pool.size()
+        max_overflow = pool._max_overflow
+
+        await mgr.shutdown()
+
+        assert pool_size == 40, f"Expected pool.size()==40, got {pool_size}"
+        assert max_overflow == 20, f"Expected pool._max_overflow==20, got {max_overflow}"

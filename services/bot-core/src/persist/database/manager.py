@@ -44,6 +44,16 @@ class DatabaseManager:
         self._metadata = MetaData()
         self._load_config()
 
+    # Pool sizing formula (single-worker rationale — Decision D10):
+    #   pool_size + max_overflow >= (2 * AUTOCOMPLETE_WARM_CONCURRENCY) + live_headroom
+    #   With AUTOCOMPLETE_WARM_CONCURRENCY default 16 → up to 32 in-flight warm GETs,
+    #   and live_headroom >= 10, the minimum is 42.
+    #   We run ONE uvicorn worker (P0-T1); there is ONE pool, not 4×(pool+overflow).
+    #   Defaults: pool_size=40 / max_overflow=20 → total 60.
+    #   Must stay safely under Postgres max_connections (100 on this deployment).
+    #   Override via DB_POOL_SIZE / DB_MAX_OVERFLOW env vars.
+    _POSTGRES_MAX_CONNECTIONS_FLOOR = 100  # Observed via SHOW max_connections; keep total well below.
+
     def _load_config(self) -> None:
         """Load database configuration from environment variables."""
         db_host = os.getenv("POSTGRES_HOST", "bounty_db")
@@ -52,11 +62,32 @@ class DatabaseManager:
         db_user = os.getenv("POSTGRES_USER", "bounty")
         db_password = os.getenv("POSTGRES_PASSWORD", "bounty")
 
-        pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
+        pool_size = int(os.getenv("DB_POOL_SIZE", "40"))
         max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "20"))
         pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
         pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
         echo_flag = os.getenv("DB_ECHO", "false").lower() == "true"
+
+        total_pool = pool_size + max_overflow
+        ceiling = self._POSTGRES_MAX_CONNECTIONS_FLOOR
+        if total_pool >= ceiling:
+            # Hard error: exceeding max_connections causes connection failures for all services.
+            raise ValueError(
+                f"DB pool too large: pool_size={pool_size} + max_overflow={max_overflow} = {total_pool} "
+                f">= Postgres max_connections={ceiling}. "
+                f"Reduce DB_POOL_SIZE or DB_MAX_OVERFLOW."
+            )
+        if total_pool > ceiling * 0.75:
+            flogger.warning(
+                f"DB pool approaching Postgres max_connections ceiling: "
+                f"pool_size={pool_size} + max_overflow={max_overflow} = {total_pool} "
+                f"(ceiling={ceiling}, used {total_pool / ceiling:.0%}). "
+                f"Consider reducing DB_POOL_SIZE or DB_MAX_OVERFLOW."
+            )
+        flogger.info(
+            f"DB pool sizing: pool_size={pool_size} + max_overflow={max_overflow} = {total_pool} "
+            f"(Postgres max_connections ceiling={ceiling}, headroom={ceiling - total_pool})"
+        )
 
         flogger.debug(
             f"Pool configuration: size={pool_size}, max_overflow={max_overflow}, "

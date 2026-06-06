@@ -674,12 +674,12 @@ class TestOrchestratorCapacityWithQueued:
     async def test_skips_tier_when_active_plus_queued_covers_max(self, sqlite_engine_and_factory):
         """Tier with active_count=2 and queued_count=1 against max=3 → capacity_full.
 
-        The orchestrator queries the ``apscheduler_jobs`` table directly for the
-        queued count.  We create that table manually (it is not part of the ORM
-        models) and insert one row matching the naming pattern for the bronze
-        tier to verify the combined accounting is correct.
+        The orchestrator now reads already-queued jobs via the APScheduler API
+        (``get_scheduler().get_jobs()``) rather than raw SQL on apscheduler_jobs.
+        We inject one matching job into a mock scheduler to simulate the queued
+        count without touching the DB at all.
 
-        # 1 mock — db_manager bridge (Tier B)
+        # 2 mocks — db_manager bridge (Tier B) + scheduler holder (APScheduler API)
         """
         _engine, factory = sqlite_engine_and_factory
 
@@ -697,24 +697,22 @@ class TestOrchestratorCapacityWithQueued:
             for i in range(ACTIVE):
                 await _seed_active_bounty(seed_db, GUILD_ID, DIVISION, f"Criminal-{i}")
 
-            # Create the apscheduler_jobs table and insert a fake queued job row.
-            # The orchestrator now reads next_run_time too (Fix C, gap-aware
-            # scheduling) so the schema must include it.
-            await seed_db.execute(
-                text("CREATE TABLE IF NOT EXISTS apscheduler_jobs (id TEXT PRIMARY KEY, next_run_time REAL)")
+        # Build a mock scheduler with one queued job matching the bronze prefix.
+        # next_run_time is UTC-aware (mirroring what APScheduler returns for a
+        # date-trigger job scheduled with a UTC-aware run_date).
+        mock_jobs = [
+            SimpleNamespace(
+                id=f"bounty_spawn_{GUILD_ID}_{DIVISION}_fake-uuid-0",
+                next_run_time=datetime.now(UTC) + timedelta(minutes=10),
             )
-            # Seed an arbitrary future fire time — value doesn't affect this
-            # test (capacity gate is hit before the fire-time computation).
-            fake_fire = datetime.now(UTC).timestamp() + 600.0
-            for j in range(QUEUED_JOBS):
-                await seed_db.execute(
-                    text("INSERT INTO apscheduler_jobs (id, next_run_time) VALUES (:id, :nrt)"),
-                    {"id": f"bounty_spawn_{GUILD_ID}_{DIVISION}_fake-uuid-{j}", "nrt": fake_fire},
-                )
-            await seed_db.commit()
+            for _ in range(QUEUED_JOBS)
+        ]
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs = MagicMock(return_value=mock_jobs)
 
         with (
             patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler),
             respx.mock(assert_all_called=False),
         ):
             result = await execute_bounty_spawn_orchestrate_job("test-job-id", {})

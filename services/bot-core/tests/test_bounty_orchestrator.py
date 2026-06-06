@@ -325,28 +325,57 @@ def _make_sql_scalar_result(value: int) -> MagicMock:
 
 
 def _make_db_with_sql_count(queued_count: int) -> AsyncMock:
-    """Build a mock DB session where execute() returns a SQLAlchemy-like result.
+    """Build a mock DB session for use as the SQLAlchemy session in tests.
 
-    Supports BOTH the legacy ``.scalar_one()`` path (returning ``queued_count``)
-    AND the post-Fix-C ``.all()`` path (returning ``queued_count`` rows of
-    ``(next_run_time_epoch,)`` tuples). This keeps the legacy tests passing
-    after the orchestrator was changed to read individual fire times for
-    gap-aware scheduling.
+    The ``queued_count`` parameter is retained for call-site compatibility but
+    no longer configures a ``db.execute`` mock — the orchestrator now reads
+    already-queued jobs via the APScheduler API (``get_scheduler().get_jobs()``)
+    rather than raw SQL.  Use ``_configure_scheduler_jobs`` to inject queued
+    job fire times into the scheduler mock when a non-zero count is needed.
+    """
+    mock_db = AsyncMock()
+    return mock_db
+
+
+def _make_mock_scheduler_jobs(queued_count: int, guild_id: int, tier_lower: str) -> MagicMock:
+    """Return a mock APScheduler scheduler whose ``get_jobs()`` returns
+    ``queued_count`` jobs whose IDs match the bounty-spawn prefix for the given
+    (guild_id, tier_lower).  Fire times are spread 10 min apart in the future
+    so they are not collision candidates with a new job computed by the
+    gap-aware scheduling logic.
     """
     from datetime import datetime as _dt
+    from types import SimpleNamespace
 
-    mock_db = AsyncMock()
-    result = MagicMock()
-    result.scalar_one = MagicMock(return_value=queued_count)
-    # Each row is a one-element tuple (next_run_time_epoch,).
-    # Spread the queued fires over ~10min steps in the future so they are
-    # not collision candidates with any new fire time computed by the
-    # orchestrator's gap-aware logic.
-    now_epoch = _dt.now(UTC).timestamp()
-    rows = [(now_epoch + 600.0 + i * 600.0,) for i in range(queued_count)]
-    result.all = MagicMock(return_value=rows)
-    mock_db.execute = AsyncMock(return_value=result)
-    return mock_db
+    prefix = f"bounty_spawn_{guild_id}_{tier_lower}_"
+    now = _dt.now(UTC)
+    mock_jobs = []
+    for i in range(queued_count):
+        job = SimpleNamespace(
+            id=f"{prefix}{i:04d}",
+            next_run_time=now + timedelta(minutes=10 + i * 10),
+        )
+        mock_jobs.append(job)
+
+    mock_scheduler = MagicMock()
+    mock_scheduler.get_jobs = MagicMock(return_value=mock_jobs)
+    return mock_scheduler
+
+
+def _configure_scheduler_jobs(queued_count: int, guild_id: int, tier_lower: str) -> MagicMock:
+    """Patch ``utils.scheduler_holder.get_scheduler`` so the orchestrator sees
+    ``queued_count`` already-scheduled jobs for (guild_id, tier_lower).
+
+    Returns the mock scheduler so callers can make additional assertions.
+    Note: callers MUST stop the patch themselves (or use as a context manager).
+    This helper starts the patch and registers a finaliser via the returned
+    patcher object attached as ``.patcher`` on the scheduler mock.
+    """
+    mock_scheduler = _make_mock_scheduler_jobs(queued_count, guild_id, tier_lower)
+    patcher = patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler)
+    patcher.start()
+    mock_scheduler.patcher = patcher
+    return mock_scheduler
 
 
 # ===========================================================================
@@ -359,26 +388,31 @@ async def test_orchestrator_skips_tier_when_capacity_full():
     """Test 1: Orchestrator skips tier when active + queued >= max_for_tier."""
     from utils.executors.bounty_spawn_executor import execute_bounty_spawn_orchestrate_job
 
-    mock_db = _make_db_with_sql_count(10)  # 10 queued jobs
+    mock_db = _make_db_with_sql_count(10)  # db mock (execute no longer called)
     _configure_db_manager(mock_db)
     _configure_config_repo(
         [_make_guild_config(100, bounty_max_per_tier={"bronze": 20, "silver": 3, "gold": 3, "platinum": 3})]
     )
     # 10 active bounties + 10 queued = 20 = max → skip
     _configure_bounty_repo(active_count_map={(100, "bronze"): 10})
+    # Inject 10 queued spawn jobs for bronze via the scheduler API
+    mock_sched = _configure_scheduler_jobs(10, 100, "bronze")
 
     mock_post = AsyncMock()
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock()
     mock_post.return_value = mock_resp
 
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    try:
+        with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post = mock_post
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        result = await execute_bounty_spawn_orchestrate_job("orch-1", {"job_type": "bounty_spawn_orchestrate"})
+            result = await execute_bounty_spawn_orchestrate_job("orch-1", {"job_type": "bounty_spawn_orchestrate"})
+    finally:
+        mock_sched.patcher.stop()
 
     # Bronze tier should be skipped (10+10=20 = max); silver/gold/platinum may queue
     tier_results = result["results"].get(100, {}).get("tiers", {})
@@ -390,12 +424,14 @@ async def test_orchestrator_queues_when_below_capacity():
     """Test 1b: Orchestrator queues when active + queued < max_for_tier (10+9=19 < 20)."""
     from utils.executors.bounty_spawn_executor import execute_bounty_spawn_orchestrate_job
 
-    mock_db = _make_db_with_sql_count(9)  # 9 queued jobs
+    mock_db = _make_db_with_sql_count(9)  # db mock (execute no longer called)
     _configure_db_manager(mock_db)
     cfg = _make_guild_config(200, bounty_max_per_tier={"bronze": 20, "silver": 3, "gold": 3, "platinum": 3})
     _configure_config_repo([cfg])
     # 10 active + 9 queued = 19 < 20 → should queue
     _configure_bounty_repo(active_count_map={(200, "bronze"): 10})
+    # Inject 9 queued spawn jobs for bronze via the scheduler API
+    mock_sched = _configure_scheduler_jobs(9, 200, "bronze")
 
     jobs_posted = []
 
@@ -406,13 +442,16 @@ async def test_orchestrator_queues_when_below_capacity():
         mock_resp.json = MagicMock(return_value={})
         return mock_resp
 
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = _mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    try:
+        with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post = _mock_post
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        result = await execute_bounty_spawn_orchestrate_job("orch-queue", {"job_type": "bounty_spawn_orchestrate"})
+            result = await execute_bounty_spawn_orchestrate_job("orch-queue", {"job_type": "bounty_spawn_orchestrate"})
+    finally:
+        mock_sched.patcher.stop()
 
     tier_results = result["results"].get(200, {}).get("tiers", {})
     assert tier_results.get("bronze", {}).get("queued", 0) == 1
@@ -538,24 +577,57 @@ async def test_orchestrator_fire_time_within_window(interval_minutes: int):
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_queue_count_uses_correct_like_pattern():
-    """Test 4: Queue-count SQL uses LIKE pattern bounty_spawn_{guild_id}_{tier_lower}_%."""
+async def test_orchestrator_queue_count_uses_correct_prefix_filter():
+    """Test 4: Queue-count uses Python ``startswith`` prefix bounty_spawn_{guild_id}_{tier_lower}_.
+
+    The tier component of the prefix MUST be load-bearing.  The scenario is
+    constructed so that a wrong/too-broad prefix flips the capacity decision:
+
+    Setup (guild 500, all active=0):
+      - bronze: max=2, exactly 2 matching queued jobs  →  capacity_full  (0+2 >= 2)
+      - silver/gold/platinum: max=5, exactly 2 queued jobs each  →  not full (0+2 < 5)
+
+    Correct prefix (bounty_spawn_500_bronze_):
+      bronze is capacity_full → 0 new jobs queued for bronze
+      other tiers each queue 1 → total_queued == 3
+
+    Mutation (a) too-broad prefix (bounty_spawn_500_):
+      bronze counts all 8 guild-500 jobs (2 per tier × 4) → still ≥ 2 → still full
+      BUT silver/gold/platinum also count 8 jobs → 8 >= 5 → all tiers become full
+      → total_queued == 0  ≠ 3  → assertion FAILS
+
+    Mutation (b) wrong-guild prefix (bounty_spawn_999_bronze_):
+      bronze counts the 1 wrong-guild decoy job (999_bronze) → 1 < 2 → NOT full
+      → bronze would queue 1 more → total_queued == 4  ≠ 3  → assertion FAILS
+
+    Decoys are included for additional wrong-guild / wrong-tier-suffix coverage.
+    """
+    from types import SimpleNamespace
+
     from utils.executors.bounty_spawn_executor import execute_bounty_spawn_orchestrate_job
 
-    execute_calls = []
+    guild_id = 500
+    tiers = ["bronze", "silver", "gold", "platinum"]
 
-    async def _mock_execute(stmt, params=None):
-        if params and "pattern" in params:
-            execute_calls.append(params["pattern"])
-        result = MagicMock()
-        result.scalar_one = MagicMock(return_value=0)
-        return result
+    # Build synthetic job list: exactly 2 matching jobs per tier for guild 500.
+    now = datetime.now(UTC)
+    all_jobs = []
+    for tier in tiers:
+        prefix = f"bounty_spawn_{guild_id}_{tier}_"
+        for i in range(2):
+            all_jobs.append(SimpleNamespace(id=f"{prefix}{i:04d}", next_run_time=now + timedelta(minutes=10 + i * 5)))
+    # Decoys — must NOT be counted for guild 500 / bronze
+    all_jobs.append(SimpleNamespace(id="bounty_spawn_999_bronze_0000", next_run_time=now + timedelta(minutes=5)))
+    all_jobs.append(SimpleNamespace(id="bounty_spawn_500_bronzeX_0000", next_run_time=now + timedelta(minutes=5)))
 
-    mock_db = AsyncMock()
-    mock_db.execute = _mock_execute
+    mock_scheduler = MagicMock()
+    mock_scheduler.get_jobs = MagicMock(return_value=all_jobs)
+
+    mock_db = _make_db_with_sql_count(0)
     _configure_db_manager(mock_db)
-
-    cfg = _make_guild_config(500, bounty_max_per_tier={"bronze": 3, "silver": 3, "gold": 3, "platinum": 3})
+    # bronze max == number of bronze queued jobs → bronze is capacity_full.
+    # silver/gold/platinum max=5 > 2 queued → they still get a new job each.
+    cfg = _make_guild_config(guild_id, bounty_max_per_tier={"bronze": 2, "silver": 5, "gold": 5, "platinum": 5})
     _configure_config_repo([cfg])
     _configure_bounty_repo(count_return=0)
 
@@ -565,24 +637,41 @@ async def test_orchestrator_queue_count_uses_correct_like_pattern():
         mock_resp.json = MagicMock(return_value={})
         return mock_resp
 
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = _mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    with patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler):
+        with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.post = _mock_post
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        await execute_bounty_spawn_orchestrate_job("orch-4", {"job_type": "bounty_spawn_orchestrate"})
+            result = await execute_bounty_spawn_orchestrate_job("orch-4", {"job_type": "bounty_spawn_orchestrate"})
 
-    # Verify patterns used: one per tier
-    assert len(execute_calls) == 4, f"Expected 4 SQL calls (one per tier), got {len(execute_calls)}"
-    expected_patterns = {
-        "bounty_spawn_500_bronze_%",
-        "bounty_spawn_500_silver_%",
-        "bounty_spawn_500_gold_%",
-        "bounty_spawn_500_platinum_%",
-    }
-    assert set(execute_calls) == expected_patterns, (
-        f"Unexpected patterns: {set(execute_calls)} — expected {expected_patterns}"
+    # Bronze is capacity_full (0 active + 2 queued == 2 == max).
+    # Silver, gold, platinum are not full (0 + 2 < 5) → each queues 1 new job.
+    # Total new jobs queued == 3 (NOT 4).
+    # A too-broad prefix makes all tiers appear full → 0; a wrong-guild prefix
+    # makes bronze appear empty → 4.  Both are caught by this single assertion.
+    assert result["total_queued"] == 3, (
+        f"Expected 3 new jobs queued (bronze full, 3 other tiers each queue 1), got {result['total_queued']}"
+    )
+
+    # Bronze tier must be reported as capacity_full.
+    guild_result = result.get("results", {}).get(guild_id, {})
+    bronze_result = guild_result.get("tiers", {}).get("bronze", {})
+    assert bronze_result.get("reason") == "capacity_full", (
+        f"Expected bronze capacity_full, got: {bronze_result}"
+    )
+
+    # Other tiers must each have queued exactly 1 new job.
+    for tier in ("silver", "gold", "platinum"):
+        tier_result = guild_result.get("tiers", {}).get(tier, {})
+        assert tier_result.get("queued") == 1, (
+            f"Expected {tier} to queue 1 new job, got: {tier_result}"
+        )
+
+    # get_jobs() must have been called once per tier (4 tiers).
+    assert mock_scheduler.get_jobs.call_count == 4, (
+        f"Expected get_jobs() called once per tier (4), got {mock_scheduler.get_jobs.call_count}"
     )
 
 

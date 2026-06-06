@@ -340,22 +340,21 @@ async def execute_bounty_spawn_orchestrate_job(job_id: str, payload: dict) -> di
                     # Read already-queued one-time spawn jobs in scheduler.
                     # We need BOTH the count (for capacity gate) AND the
                     # fire times (for gap-aware scheduling, Fix C).
+                    # Uses the APScheduler API instead of raw SQL so that all
+                    # DB access goes through SQLAlchemy / the scheduler layer.
                     # --------------------------------------------------
-                    from sqlalchemy import text
+                    from utils.scheduler_holder import get_scheduler
 
-                    pattern = f"bounty_spawn_{gid}_{tier_lower}_%"
-                    queued_rows = (
-                        await db.execute(
-                            text(
-                                "SELECT next_run_time FROM apscheduler_jobs "
-                                "WHERE id LIKE :pattern AND next_run_time IS NOT NULL"
-                            ),
-                            {"pattern": pattern},
-                        )
-                    ).all()
-                    queued_fire_times: list[datetime] = [
-                        datetime.fromtimestamp(row[0], tz=UTC) for row in queued_rows if row[0] is not None
-                    ]
+                    _scheduler = get_scheduler()
+                    _job_id_prefix = f"bounty_spawn_{gid}_{tier_lower}_"
+                    if _scheduler is not None:
+                        queued_fire_times: list[datetime] = [
+                            job.next_run_time
+                            for job in _scheduler.get_jobs()
+                            if job.id.startswith(_job_id_prefix) and job.next_run_time is not None
+                        ]
+                    else:
+                        queued_fire_times = []
                     queued_count = len(queued_fire_times)
 
                     if active_count + queued_count >= max_for_tier:

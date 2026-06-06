@@ -2168,6 +2168,11 @@ class BountyService:
             flogger.warning(f"Cannot expire bounty {bounty_id}: not found")
             return None
 
+        # Idempotency guard: protects against the expiry job firing again
+        # after a scheduler restart (re-fire of a job that already ran), or
+        # a cadence overlap where the bounty was captured between the job
+        # being scheduled and it actually executing.  NOT a concurrent-worker
+        # guard — at WORKERS=1 only one expiry job runs at a time.
         if bounty.status != "active":
             flogger.warning(f"Cannot expire bounty {bounty_id}: status is {bounty.status}")
             return None

@@ -68,7 +68,10 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
             # Fetch the bounty first (regardless of status) so we can delete the announcement.
             bounty_obj = await bounty_repo.get_by_id(db, bounty_id)
 
-            # Try to expire it (only succeeds if still active; returns None otherwise).
+            # Try to expire it.  The guard in expire_bounty() checks
+            # status == 'active' before writing; it returns None (no-op) if
+            # the bounty was already captured/completed, or if the expiry job
+            # was re-fired after a restart and already ran once before.
             bounty = await bounty_service.expire_bounty(db, bounty_id)
 
             # Always attempt to delete the announcement, even if bounty was already captured.

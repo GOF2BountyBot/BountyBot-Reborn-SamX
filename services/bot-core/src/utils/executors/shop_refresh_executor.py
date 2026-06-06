@@ -60,6 +60,16 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
     -------
     dict
         Summary of the refresh operation.
+
+    WARNING — NO IDEMPOTENCY GUARD
+    --------------------------------
+    This job has no guard against double-execution.  It is correct only
+    at WORKERS=1 (the default single-uvicorn-worker deployment).  If
+    multi-worker is ever reintroduced, re-entrant invocations (from
+    cadence overlap or a post-restart scheduler re-fire) would refresh
+    shop stock twice in the same tick — visible to players and wasteful.
+    A leader-election mechanism or a per-guild "last refreshed at" check
+    would be required before running at workers > 1.
     """
     # Deferred imports to avoid transitive ORM dependencies at module load time.
     from persist.database.manager import db_manager

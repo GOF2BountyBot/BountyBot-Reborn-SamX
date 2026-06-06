@@ -542,14 +542,15 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
             return {"success": False, "reason": "tier_not_configured"}
 
         # ------------------------------------------------------------------
-        # 5. Re-check active count (benign race handling)
+        # 5. Re-check active count (cadence-overlap / restart guard)
         # ------------------------------------------------------------------
         active_count = await bounty_repo.count_active_by_guild_and_division(db, guild_id, tier_lower)
         bounty_max_per_tier: dict = getattr(config, "bounty_max_per_tier", None) or {}
         max_for_tier: int = (bounty_max_per_tier or {}).get(tier_lower, DEFAULT_MAX) or DEFAULT_MAX
 
         if active_count >= max_for_tier:
-            # Benign race — another job already filled the slot.  Not a warning.
+            # Slot already full — a prior cadence tick filled it, or the
+            # scheduler re-fired this job after a restart.  Not a warning.
             flogger.info(
                 f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
                 f"capacity reached at fire time ({active_count}/{max_for_tier}) — benign race, skipping"
@@ -570,14 +571,14 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
             return {"success": False, "reason": "spawn_failed"}
 
         # ------------------------------------------------------------------
-        # Fix B: EARLY COMMIT. Make the new bounty visible to other sessions
-        # *before* the long-running announce step. Shrinks the TOCTOU race
-        # window for any concurrent select_criminal call from "until session
-        # exits after Discord round-trip" (which can be 10+ s on slow Discord)
-        # to roughly the duration of the spawn_bounty INSERT itself (~tens of
-        # ms). Combined with the gap-aware fire-time spacing (Fix C, ≥10s
-        # apart minimum), concurrent same-criminal selection is effectively
-        # impossible without DB outage.
+        # Fix B: EARLY COMMIT. Make the new bounty visible to subsequent DB
+        # reads *before* the long-running announce step. Shrinks the TOCTOU
+        # window for a back-to-back cadence tick (two spawn jobs scheduled
+        # close together) from "until session exits after Discord round-trip"
+        # (which can be 10+ s on slow Discord) to roughly the duration of the
+        # spawn_bounty INSERT itself (~tens of ms). Combined with the
+        # gap-aware fire-time spacing (Fix C, ≥10s apart minimum), same-
+        # criminal double-selection is effectively impossible without DB outage.
         # ------------------------------------------------------------------
         await db.commit()
         bounty_id = spawned_bounty.id  # capture in case rollback expires the instance

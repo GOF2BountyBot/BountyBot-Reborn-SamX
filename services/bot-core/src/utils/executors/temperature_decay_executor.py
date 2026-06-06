@@ -68,6 +68,16 @@ async def execute_temperature_decay_job(job_id: str, payload: dict) -> dict:
                     ...
                 },
             }
+
+    WARNING — NO IDEMPOTENCY GUARD
+    --------------------------------
+    This job has no guard against double-execution.  It is correct only
+    at WORKERS=1 (the default single-uvicorn-worker deployment).  If
+    multi-worker is ever reintroduced, re-entrant invocations (from
+    cadence overlap or a post-restart scheduler re-fire) would apply the
+    decay factor twice in the same tick, under-counting temperatures.
+    A leader-election mechanism or a per-guild "last decayed at" timestamp
+    check would be required before running at workers > 1.
     """
     # Deferred imports — avoids transitive ORM dependencies at module load time.
     from persist.database.manager import db_manager

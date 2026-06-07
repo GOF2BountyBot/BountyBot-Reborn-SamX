@@ -259,9 +259,9 @@ class TestBountyMapEndpoint:
         app.include_router(bounty_router, prefix="/api/v1")
         app.dependency_overrides[get_bounty_service] = lambda: mock_bounty_service
 
-        # Patch module-level singletons used by the endpoint.
-        bounty_module._map_renderer = mock_renderer
-        bounty_module._system_graph = mock_graph
+        # Wire shared singletons on app.state (P3-T7: no module-level singletons).
+        app.state.map_renderer = mock_renderer
+        app.state.system_graph = mock_graph
         bounty_module._map_cache = {}  # clear cache between tests
 
         return TestClient(app)

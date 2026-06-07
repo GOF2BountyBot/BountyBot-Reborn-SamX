@@ -14,15 +14,13 @@ import asyncio
 import os
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from persist.database.manager import db_manager, get_db_session
 from persist.repositories.config_repository import ConfigRepository
 from services.audit_service import AuditService
 from services.bounty_service import BountyService
 from services.loadout_response_service import LoadoutResponseService
-from services.map_renderer import MapRenderer
-from services.system_graph_service import SystemGraphService
 from shared import bblogger
 from utils.bounty_announcement_payload import _project_checked
 
@@ -43,13 +41,8 @@ from api.schemas.loadout_schema import LoadoutResponse
 flogger = bblogger.get_logger("bounty-router")
 
 # ---------------------------------------------------------------------------
-# Module-level singletons — created once, reused across requests.
-# ---------------------------------------------------------------------------
-
-_map_renderer = MapRenderer()
-_system_graph = SystemGraphService()
-
 # Simple in-process cache: (bounty_id, route_tuple) -> PNG bytes
+# ---------------------------------------------------------------------------
 _map_cache: dict[tuple[int, tuple[str, ...]], bytes] = {}
 
 
@@ -59,6 +52,53 @@ def get_bounty_service() -> BountyService:
 
 def get_loadout_response_service() -> LoadoutResponseService:
     return LoadoutResponseService()
+
+
+def _get_map_renderer(request: Request):
+    """Return the shared MapRenderer from app.state (set at startup).
+
+    Raises HTTP 503 when the renderer is absent so the endpoint fails fast
+    rather than returning a misleading result.
+    """
+    renderer = getattr(request.app.state, "map_renderer", None)
+    if renderer is None:
+        flogger.warning("map_renderer not found on app.state — service may still be starting up")
+        raise HTTPException(status_code=503, detail="Map renderer not yet available")
+    return renderer
+
+
+def _get_system_graph(request: Request):
+    """Return the shared SystemGraphService from app.state (set at startup).
+
+    Raises HTTP 503 when the graph is absent so the endpoint fails fast
+    rather than returning a misleading result.
+    """
+    graph = getattr(request.app.state, "system_graph", None)
+    if graph is None:
+        flogger.warning("system_graph not found on app.state — service may still be starting up")
+        raise HTTPException(status_code=503, detail="System graph not yet available")
+    return graph
+
+
+def _get_map_renderer_optional(request: Request):
+    """Return the shared MapRenderer from app.state, or None if absent.
+
+    Used by multi-phase write endpoints (e.g. admin-spawn) where map rendering
+    is best-effort: the primary operation (spawn + audit log) must succeed
+    regardless of renderer availability.  Hard-failing Depends would abort the
+    entire endpoint on a renderer outage — that is not acceptable for writes.
+    """
+    return getattr(request.app.state, "map_renderer", None)
+
+
+def _get_system_graph_optional(request: Request):
+    """Return the shared SystemGraphService from app.state, or None if absent.
+
+    Used by multi-phase write endpoints (e.g. admin-spawn) where graph access
+    is best-effort: the primary operation must succeed even when the graph is
+    temporarily unavailable (e.g. during startup).
+    """
+    return getattr(request.app.state, "system_graph", None)
 
 
 router = APIRouter(
@@ -397,6 +437,8 @@ async def get_bounty_loadout(
 async def get_bounty_map(
     bounty_id: int,
     service: BountyService = Depends(get_bounty_service),
+    map_renderer=Depends(_get_map_renderer),
+    system_graph=Depends(_get_system_graph),
 ):
     """Return a PNG image of the star map with the bounty route overlaid."""
     async with get_db_session() as db:
@@ -411,12 +453,12 @@ async def get_bounty_map(
             flogger.debug(f"Map cache hit for bounty_id={bounty_id}")
         else:
             flogger.debug(f"Map cache miss for bounty_id={bounty_id}, rendering")
-            # Ensure system graph is populated.
-            if not _system_graph.is_loaded():
-                await _system_graph.load_graph(db)
+            # Ensure system graph is populated (should already be at startup).
+            if not system_graph.is_loaded():
+                await system_graph.load_graph(db)
 
             try:
-                png_bytes = _map_renderer.render_route_for_bounty(route, _system_graph)
+                png_bytes = map_renderer.render_route_for_bounty(route, system_graph)
                 _map_cache[cache_key] = png_bytes
                 flogger.info(f"Map rendered for bounty_id={bounty_id} route={len(route)} systems")
             except Exception as e:
@@ -497,6 +539,8 @@ async def admin_spawn_bounties(
     user_id: int = Query(..., description="Admin Discord user ID for audit log"),
     quantity: int = Query(1, ge=1, le=10, description="Number of bounties to spawn per tier (1-10)"),
     service: BountyService = Depends(get_bounty_service),
+    _map_renderer=Depends(_get_map_renderer_optional),
+    _system_graph=Depends(_get_system_graph_optional),
 ):
     """Admin-triggered bounty spawn — bypasses max-bounty cap.
 
@@ -566,9 +610,11 @@ async def admin_spawn_bounties(
 
         # ----------------------------------------------------------------
         # Phase 2a — batch-render all route maps in-process (no HTTP self-call).
+        # _map_renderer / _system_graph come from Depends (optional — None when
+        # the renderer/graph is not yet available at startup).
         # ----------------------------------------------------------------
         bounty_pngs: dict[int, bytes] = {}  # bounty_id -> PNG bytes
-        if spawned_orm:
+        if spawned_orm and _map_renderer is not None and _system_graph is not None:
             try:
                 async with get_db_session() as render_db:
                     if not _system_graph.is_loaded():
@@ -590,6 +636,8 @@ async def admin_spawn_bounties(
                         )
             except Exception as graph_exc:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"Admin spawn: system graph load failed: {graph_exc} — skipping all map images")
+        elif spawned_orm:
+            flogger.warning("Admin spawn: map_renderer or system_graph not on app.state — skipping map rendering")
 
         # ----------------------------------------------------------------
         # Phase 2b — batch-upload route maps to gateway image channel.

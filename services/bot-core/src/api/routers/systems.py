@@ -4,22 +4,16 @@ Systems API router — star system pathfinding and queries.
 
 from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from persist.database.manager import db_manager
-from services.map_renderer import MapRenderer
 from services.pathfinding_service import PathfindingError, PathfindingService
-from services.system_graph_service import SystemGraphService
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("bot-systems-router")
 
 router = APIRouter(prefix="/systems", tags=["systems"])
-
-# Module-level singletons — graph and renderer are initialised once and reused.
-_graph_service = SystemGraphService()
-_map_renderer = MapRenderer()
 
 # Simple in-process cache keyed by (start, end) tuple.
 _route_map_cache: dict[tuple[str, str], bytes] = {}
@@ -30,11 +24,30 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
         yield session
 
 
+def _get_system_graph(request: Request):
+    """Return the shared SystemGraphService from app.state (set at startup)."""
+    graph = getattr(request.app.state, "system_graph", None)
+    if graph is None:
+        flogger.warning("system_graph not found on app.state — service may still be starting up")
+        raise HTTPException(status_code=503, detail="System graph not yet available")
+    return graph
+
+
+def _get_map_renderer(request: Request):
+    """Return the shared MapRenderer from app.state (set at startup)."""
+    renderer = getattr(request.app.state, "map_renderer", None)
+    if renderer is None:
+        flogger.warning("map_renderer not found on app.state — service may still be starting up")
+        raise HTTPException(status_code=503, detail="Map renderer not yet available")
+    return renderer
+
+
 @router.get("/route")
 async def find_route(
     start: str,
     end: str,
     db: AsyncSession = Depends(get_db),
+    graph_service=Depends(_get_system_graph),
 ) -> dict:
     """Find shortest route between two star systems using A* pathfinding.
 
@@ -46,12 +59,12 @@ async def find_route(
     """
     flogger.info(f"Route query initiated: start='{start}' end='{end}'")
     try:
-        if not _graph_service.is_loaded():
+        if not graph_service.is_loaded():
             flogger.debug("System graph not yet loaded, loading from database")
-            await _graph_service.load_graph(db)
+            await graph_service.load_graph(db)
             flogger.debug("System graph loaded successfully")
 
-        pf_service = PathfindingService(_graph_service)
+        pf_service = PathfindingService(graph_service)
         result = pf_service.make_route(start, end)
     except Exception as e:
         flogger.error(f"Pathfinding service error: start='{start}' end='{end}' error={type(e).__name__}: {e}")
@@ -85,6 +98,8 @@ async def get_route_map(
     start: str,
     end: str,
     db: AsyncSession = Depends(get_db),
+    graph_service=Depends(_get_system_graph),
+    map_renderer=Depends(_get_map_renderer),
 ) -> Response:
     """Return a PNG star map image with the route between two systems overlaid.
 
@@ -106,11 +121,11 @@ async def get_route_map(
 
     # Re-use the same pathfinding logic as find_route.
     try:
-        if not _graph_service.is_loaded():
+        if not graph_service.is_loaded():
             flogger.debug("System graph not yet loaded, loading from database")
-            await _graph_service.load_graph(db)
+            await graph_service.load_graph(db)
 
-        pf_service = PathfindingService(_graph_service)
+        pf_service = PathfindingService(graph_service)
         result = pf_service.make_route(start, end)
     except Exception as e:
         flogger.error(f"Pathfinding error during map render: start='{start}' end='{end}' error={type(e).__name__}: {e}")
@@ -134,7 +149,7 @@ async def get_route_map(
 
     route: list[str] = result
     try:
-        png_bytes = _map_renderer.render_route_for_bounty(route, _graph_service)
+        png_bytes = map_renderer.render_route_for_bounty(route, graph_service)
         _route_map_cache[cache_key] = png_bytes
         flogger.info(f"Route map rendered: start='{start}' end='{end}' systems={len(route)}")
     except Exception as e:

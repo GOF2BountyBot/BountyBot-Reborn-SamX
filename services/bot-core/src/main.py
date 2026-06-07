@@ -379,6 +379,25 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.error("🛑 Application startup aborted due to database issues")
         raise
 
+    # Pre-warm the shared map renderer + system graph (P3-T7).
+    # Constructed ONCE here and stored on app.state so both the bounties and
+    # systems routers share exactly one instance — no lazy per-request init,
+    # no second cold singleton in a worker thread.
+    try:
+        from services.map_renderer import MapRenderer
+        from services.system_graph_service import SystemGraphService
+
+        flogger.info("🗺️  Pre-warming shared MapRenderer + SystemGraphService...")
+        _map_renderer = MapRenderer()
+        _system_graph = SystemGraphService()
+        async with db_manager.get_session() as _warmup_db:
+            await _system_graph.load_graph(_warmup_db)
+        fastapi_app.state.map_renderer = _map_renderer
+        fastapi_app.state.system_graph = _system_graph
+        flogger.info("✅ Shared map renderer + system graph ready")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"⚠️  Map renderer / system graph pre-warm failed (non-fatal, continuing): {e}")
+
     # Recovery sweep: mark stale active bounties/duels as expired (B.14 — Layer 2).
     # Runs AFTER migrations and BEFORE the scheduler, so the DB is clean before
     # any jobs or live requests are processed.

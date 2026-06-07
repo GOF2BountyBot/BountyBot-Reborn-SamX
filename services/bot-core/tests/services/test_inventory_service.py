@@ -1041,9 +1041,11 @@ class TestConsolidateInventoryMerge:
         assert result["items_consolidated"] == 1
         assert "1" in result["message"]
 
-        # The duplicate should be removed and primary updated with summed quantity (3+5=8)
-        mock_inventory_repo.remove.assert_awaited_once_with(mock_db, duplicate)
-        mock_inventory_repo.update_quantity.assert_awaited_once_with(mock_db, primary.id, 8)
+        # The duplicate should be removed and primary updated with summed quantity (3+5=8).
+        # commit=True is the default (self-committing maintenance call); the router
+        # path passes commit=False so the Player lock spans the whole RMW (D5-T3).
+        mock_inventory_repo.remove.assert_awaited_once_with(mock_db, duplicate, commit=True)
+        mock_inventory_repo.update_quantity.assert_awaited_once_with(mock_db, primary.id, 8, commit=True)
 
     @pytest.mark.asyncio
     async def test_multiple_duplicate_groups(self, service, mock_db, mock_inventory_repo):
@@ -1070,6 +1072,21 @@ class TestConsolidateInventoryMerge:
 
         assert result["player_id"] == 42
         assert result["items_consolidated"] == 0
+
+    @pytest.mark.asyncio
+    async def test_commit_false_threads_through_to_repo_writes(self, service, mock_db, mock_inventory_repo):
+        """D5-T3: commit=False must flow to BOTH repo writes so the router's
+        db.begin() owns the transaction and the Player FOR UPDATE lock is held
+        across the whole read-modify-write (no premature mid-RMW commit)."""
+        primary = _make_inventory_item(item_id=10, item_type="weapon", item_name="Gun A", quantity=3)
+        duplicate = _make_inventory_item(item_id=11, item_type="weapon", item_name="Gun A", quantity=5)
+        mock_inventory_repo.get_player_items = AsyncMock(return_value=[primary, duplicate])
+
+        result = await service.consolidate_inventory(mock_db, player_id=1, commit=False)
+
+        assert result["items_consolidated"] == 1
+        mock_inventory_repo.remove.assert_awaited_once_with(mock_db, duplicate, commit=False)
+        mock_inventory_repo.update_quantity.assert_awaited_once_with(mock_db, primary.id, 8, commit=False)
 
 
 # ===========================================================================

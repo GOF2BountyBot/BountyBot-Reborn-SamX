@@ -19,6 +19,13 @@ Cases (from D5 design §Mandatory tester cases):
   2  Concurrent EQUIP + SELL of the same item → no negative cargo, no item
      materialised/destroyed, final ``owned = cargo + equipped``.
   4  switch-ship (set-active) during SELL of a cargo item → no double-mint/drop.
+  8  consolidate_inventory (path 18) during a same-player equip → the consolidate
+     route's lock-first + db.begin() serialises the multi-row RMW against the
+     equip, conserving owned (D5-T3).  Plus an ANTI-VACUOUS probe that proves the
+     two protections SEPARATELY: (a) the LOCK serialises concurrent same-player
+     RMWs and prevents the lost update; (b) db.begin() provides durability in
+     this raw-factory harness (its sessions roll back uncommitted flushes on
+     close, so without db.begin() a commit=False merge does not persist).
   9  Cross-player NON-interference: two DIFFERENT players equipping concurrently
      must NOT serialise (proves no over-locking).
   R  Lock RELEASED on success AND on exception/rollback.
@@ -68,6 +75,7 @@ from persist.models.player_inventory import PlayerInventory
 from persist.models.player_ship import PlayerShip
 from persist.models.user import User
 from persist.repositories.player_repository import PlayerRepository
+from services.inventory_service import InventoryService
 from services.loadout_consistency_service import LoadoutConsistencyService
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -679,6 +687,414 @@ async def test_lock_released_on_success_and_on_exception():
             assert locked is not None
             await db.rollback()
         assert asyncio.get_event_loop().time() - t0 < 0.5, "Lock leaked after a committed mutation"
+    finally:
+        await _cleanup(factory)
+        await engine.dispose()
+
+
+# ===========================================================================
+# Case 8 (D5-T3): consolidate_inventory route path — lock-first + db.begin()
+# ===========================================================================
+
+
+async def _seed_player_with_duplicate_cargo(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    qty_a: int,
+    qty_b: int,
+) -> tuple[int, int]:
+    """Seed a player + active ship + TWO duplicate cargo rows of the test weapon.
+
+    Duplicate (item_type, item_name) rows are exactly the corruption
+    ``consolidate_inventory`` exists to merge.  Returns ``(player_id, ship_id)``.
+    """
+    await _seed_user(db, user_id)
+    player = Player(
+        user_id=user_id,
+        guild_id=_TEST_GUILD,
+        credits=10_000,
+        tier="Bronze",
+        classic_mode=True,
+    )
+    db.add(player)
+    await db.flush()
+
+    ship = PlayerShip(
+        player_id=player.id,
+        ship_name=_SHIP_NAME,
+        is_active=True,
+        weapons=[],
+        modules=[],
+        turrets=[],
+        secondary_weapons=[],
+    )
+    db.add(ship)
+    await db.flush()
+    player.active_ship_id = ship.id
+
+    for qty in (qty_a, qty_b):
+        db.add(
+            PlayerInventory(
+                player_id=player.id,
+                item_type=_INV_TYPE,
+                item_name=_ITEM_NAME,
+                quantity=qty,
+            )
+        )
+    await db.flush()
+    return player.id, ship.id
+
+
+async def _consolidate_via_route_path(factory, player_id: int) -> None:
+    """Drive the EXACT D5-T3 router shape for ``consolidate_inventory``.
+
+    Mirrors ``api/routers/inventory.py::consolidate_inventory``: one explicit
+    ``db.begin()`` unit of work, the aggregate-root Player lock acquired FIRST
+    (it serialises concurrent same-player RMWs), then the service run with
+    ``commit=False`` so the db.begin() owns the atomic transaction boundary.
+    """
+    player_repo = PlayerRepository()
+    inventory_service = InventoryService()
+    async with factory() as db, db.begin():
+        await player_repo.get_by_id_for_update(db, player_id)
+        await inventory_service.consolidate_inventory(db, player_id, commit=False)
+
+
+async def _consolidate_route_path_without_begin(factory, player_id: int) -> None:
+    """The route shape WITHOUT the ``db.begin()`` atomic boundary (mutation arm).
+
+    Same lock-first + ``commit=False`` call sequence as
+    ``_consolidate_via_route_path`` but with NO outer ``db.begin()``.  In this
+    raw-factory harness the session's uncommitted flushes are rolled back when
+    the context manager closes (these factory sessions have no AC-7
+    auto-commit), so the merge does NOT persist.  Used to prove ``db.begin()``
+    is load-bearing for durability here.
+    """
+    player_repo = PlayerRepository()
+    inventory_service = InventoryService()
+    async with factory() as db:
+        await player_repo.get_by_id_for_update(db, player_id)
+        await inventory_service.consolidate_inventory(db, player_id, commit=False)
+
+
+async def _cargo_total_and_rowcount(factory, player_id: int) -> tuple[int, int]:
+    """Return ``(summed_quantity, row_count)`` for the test weapon's cargo rows."""
+    async with factory() as db:
+        res = await db.execute(
+            select(PlayerInventory.quantity).where(
+                PlayerInventory.player_id == player_id,
+                PlayerInventory.item_type == _INV_TYPE,
+                PlayerInventory.item_name == _ITEM_NAME,
+            )
+        )
+        quantities = list(res.scalars().all())
+        return sum(quantities), len(quantities)
+
+
+async def test_case8_consolidate_serialises_behind_equip_lock():
+    """The consolidate route path BLOCKS behind a same-player equip's lock.
+
+    Session A runs ``equip_one`` (takes the aggregate-root Player FOR UPDATE
+    lock) and holds the transaction open.  Session B drives the consolidate
+    ROUTE path, whose FIRST action is ``get_by_id_for_update`` on the same
+    Player row — so it must BLOCK until A commits, then merge the (now post-equip)
+    cargo rows.  We assert (a) B was serialised behind A (it took ~A's hold time)
+    and (b) ``owned = cargo + equipped`` is conserved and the duplicate rows are
+    merged to a single row.
+    """
+    engine, factory = _make_pg_factory()
+    try:
+        await _cleanup(factory)
+        # Two duplicate cargo rows (qty 1 each) → cargo total 2, plus an empty ship.
+        async with factory() as db, db.begin():
+            player_id, ship_id = await _seed_player_with_duplicate_cargo(db, _TEST_USER_A, qty_a=1, qty_b=1)
+
+        svc = LoadoutConsistencyService()
+        a_locked = asyncio.Event()
+        timings: dict = {}
+
+        async def equip_holds_lock():
+            async with factory() as db:
+                await db.begin()
+                await svc.equip_one(
+                    db, player_id=player_id, ship_id=ship_id, item_name=_ITEM_NAME, equipment_type=_EQUIP_TYPE
+                )
+                a_locked.set()
+                await asyncio.sleep(0.4)  # hold the aggregate-root lock
+                await db.commit()
+
+        async def consolidate_blocks():
+            await a_locked.wait()
+            await asyncio.sleep(0.03)  # ensure A still holds the lock
+            t0 = asyncio.get_event_loop().time()
+            await _consolidate_via_route_path(factory, player_id)
+            timings["consolidate_elapsed"] = asyncio.get_event_loop().time() - t0
+
+        await asyncio.gather(equip_holds_lock(), consolidate_blocks())
+
+        # B's FIRST act is the Player FOR UPDATE; it had to wait out most of A's
+        # 0.4s hold.  A leak / missing lock would let it return near-instantly.
+        assert timings["consolidate_elapsed"] > 0.2, (
+            "consolidate route did NOT serialise behind the equip lock "
+            f"(elapsed {timings['consolidate_elapsed']:.3f}s) — its lock-first guard is missing."
+        )
+
+        cargo_total, row_count = await _cargo_total_and_rowcount(factory, player_id)
+        _, equipped = await _owned_breakdown(factory, player_id, ship_id)
+        # Equip consumed exactly one unit (cargo 2 → 1); consolidate merged the
+        # remaining duplicate rows into a single surviving row of the residual qty.
+        assert equipped == 1, f"equip must have placed exactly one slot ref, got {equipped}"
+        assert cargo_total + equipped == 2, f"owned must be conserved at 2, got cargo={cargo_total} equipped={equipped}"
+        assert row_count == 1, f"consolidate must merge duplicate rows to one, got {row_count} rows"
+    finally:
+        await _cleanup(factory)
+        await engine.dispose()
+
+
+async def _run_decrement_vs_consolidate(factory, *, take_lock: bool) -> int:
+    """Race a same-player cargo decrement against a consolidate; return final cargo.
+
+    Seeds two duplicate rows summing to 8, then runs a concurrent (−1) decrement
+    while a consolidate merges the duplicates.
+
+    ``take_lock=True`` drives the REAL route path: the decrementer holds the
+    aggregate-root Player ``FOR UPDATE`` lock, and the consolidate route BLOCKS on
+    that lock until the decrement commits, then reads the POST-decrement rows and
+    merges 7 → survivor 7.  The decrement is PRESERVED (final cargo 7).
+
+    ``take_lock=False`` reproduces the PRE-D5-T3 unlocked route exactly: the
+    consolidator reads the rows (sum 8) with NO Player lock and writes the survivor
+    back with the STALE sum, each delete/update in its own auto-committed statement
+    — so a decrement that commits in between is OVERWRITTEN and LOST (final cargo 8).
+    """
+    await _cleanup(factory)
+    async with factory() as db, db.begin():
+        player_id, _ = await _seed_player_with_duplicate_cargo(db, _TEST_USER_A, qty_a=3, qty_b=5)
+
+    player_repo = PlayerRepository()
+
+    if take_lock:
+        decrementer_locked = asyncio.Event()
+
+        async def decrement_holds_lock():
+            async with factory() as db:
+                await db.begin()
+                # Take the SAME aggregate-root Player lock the route takes first.
+                await player_repo.get_by_id_for_update(db, player_id)
+                row = (
+                    (
+                        await db.execute(
+                            select(PlayerInventory)
+                            .where(
+                                PlayerInventory.player_id == player_id,
+                                PlayerInventory.item_type == _INV_TYPE,
+                                PlayerInventory.item_name == _ITEM_NAME,
+                            )
+                            .order_by(PlayerInventory.id)
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+                row.quantity = row.quantity - 1  # 8 → 7 total
+                await db.flush()
+                decrementer_locked.set()
+                await asyncio.sleep(0.3)  # hold the lock so consolidate must block
+                await db.commit()
+
+        async def consolidate_route():
+            await decrementer_locked.wait()
+            await asyncio.sleep(0.03)
+            # Real route path: blocks on the Player lock, then merges POST-decrement.
+            await _consolidate_via_route_path(factory, player_id)
+
+        await asyncio.gather(decrement_holds_lock(), consolidate_route())
+    else:
+        read_done = asyncio.Event()
+        decrement_done = asyncio.Event()
+
+        async def unlocked_consolidator():
+            # PRE-D5-T3 route: NO Player lock, auto-commit-per-statement writes.
+            async with factory() as db:
+                rows = (
+                    (
+                        await db.execute(
+                            select(PlayerInventory)
+                            .where(
+                                PlayerInventory.player_id == player_id,
+                                PlayerInventory.item_type == _INV_TYPE,
+                                PlayerInventory.item_name == _ITEM_NAME,
+                            )
+                            .order_by(PlayerInventory.id)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                survivor = rows[0]
+                stale_sum = sum(r.quantity for r in rows)  # 8 — read BEFORE the decrement
+                read_done.set()
+                await decrement_done.wait()  # let the concurrent decrement commit first
+                # Blind overwrite with the STALE sum (each its own committed statement).
+                for dup in rows[1:]:
+                    await db.delete(dup)
+                    await db.commit()
+                survivor.quantity = stale_sum
+                await db.commit()
+
+        async def concurrent_decrement():
+            await read_done.wait()
+            async with factory() as db, db.begin():
+                row = (
+                    (
+                        await db.execute(
+                            select(PlayerInventory)
+                            .where(
+                                PlayerInventory.player_id == player_id,
+                                PlayerInventory.item_type == _INV_TYPE,
+                                PlayerInventory.item_name == _ITEM_NAME,
+                            )
+                            .order_by(PlayerInventory.id)
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+                row.quantity = row.quantity - 1  # commit a (−1) the consolidate must not lose
+            decrement_done.set()
+
+        await asyncio.gather(unlocked_consolidator(), concurrent_decrement())
+
+    cargo_total, _ = await _cargo_total_and_rowcount(factory, player_id)
+    return cargo_total
+
+
+async def test_anti_vacuous_consolidate_lock_is_load_bearing_for_lost_update():
+    """PROPERTY A (ANTI-VACUOUS): the Player LOCK prevents the consolidate lost update.
+
+    Consolidate is a read-all → sum → delete-dups → overwrite-survivor cycle.  If
+    another transaction decrements a cargo row AFTER consolidate reads but BEFORE it
+    writes the survivor, an UNLOCKED consolidate overwrites with the stale sum and
+    the decrement vanishes.  The aggregate-root Player ``FOR UPDATE`` lock is what
+    serialises the two same-player RMWs and prevents that — db.begin() is NOT what
+    fixes the lost update (it governs atomicity/durability, see the separate
+    durability test).
+
+    Mutation proof is the contrast of the two runs of the SAME race:
+      * WITHOUT the lock (pre-D5-T3 unlocked route): final cargo 8 — the (−1)
+        decrement is LOST.  This is the negative assertion; if it ever read 7 the
+        scenario would not exercise a real race and the lock would be vacuous.
+      * WITH the lock (real route path): the consolidate BLOCKS until the decrement
+        commits, re-reads fresh, and merges 7 → final cargo 7 — PRESERVED.
+    Deleting ``get_by_id_for_update`` from the route would make the locked run lose
+    the update too (cargo 8), failing the ``== 7`` assertion.
+    """
+    engine, factory = _make_pg_factory()
+    try:
+        unlocked_cargo = await _run_decrement_vs_consolidate(factory, take_lock=False)
+        assert unlocked_cargo == 8, (
+            "ANTI-VACUOUS FAILED: the UNLOCKED consolidate did NOT lose the concurrent "
+            f"decrement (cargo={unlocked_cargo}); without a real lost update there is "
+            "nothing for the lock to fix."
+        )
+
+        locked_cargo = await _run_decrement_vs_consolidate(factory, take_lock=True)
+        assert locked_cargo == 7, (
+            "LOCK NOT LOAD-BEARING: with the Player FOR UPDATE lock the concurrent "
+            f"decrement was NOT preserved (cargo={locked_cargo}, expected 7) — the lock "
+            "did not serialise the RMW."
+        )
+    finally:
+        await _cleanup(factory)
+        await engine.dispose()
+
+
+async def test_anti_vacuous_consolidate_db_begin_is_load_bearing_for_durability():
+    """PROPERTY B (ANTI-VACUOUS): ``db.begin()`` makes the commit=False merge persist.
+
+    The consolidate service runs with ``commit=False`` (flush-only); something must
+    own the transaction and commit it.  The route uses an explicit ``db.begin()``.
+
+    This is a HARNESS-scoped durability proof: these raw-factory test sessions have
+    no AC-7 auto-commit-on-clean-exit, so an uncommitted flush is rolled back when
+    the session closes.  (The production route's ``get_db_session`` additionally
+    backstops durability via AC-7; here db.begin() is the sole committer, which
+    makes the property cleanly observable.)  No concurrency — this isolates
+    durability from the lock's serialisation property (tested separately).
+
+    Mutation proof is the contrast of two single-threaded runs over identical seed
+    data (two duplicate rows, sum 8):
+      * WITHOUT ``db.begin()``: the flush-only merge is rolled back on session close
+        → rows STAY un-merged (2 rows, sum 8) — did NOT persist.
+      * WITH ``db.begin()``: the merge commits → 1 row, sum 8 — persisted.
+    Stripping ``db.begin()`` from the route helper would leave 2 rows, failing the
+    ``row_count == 1`` assertion; adding it back to the no-begin arm would merge to
+    1, failing the ``row_count == 2`` assertion.
+    """
+    engine, factory = _make_pg_factory()
+    try:
+        # ---- Arm 1: NO db.begin() → flush-only merge rolled back on close --------
+        await _cleanup(factory)
+        async with factory() as db, db.begin():
+            player_id, _ = await _seed_player_with_duplicate_cargo(db, _TEST_USER_A, qty_a=3, qty_b=5)
+
+        await _consolidate_route_path_without_begin(factory, player_id)
+
+        cargo_total, row_count = await _cargo_total_and_rowcount(factory, player_id)
+        assert row_count == 2, (
+            "db.begin() NOT LOAD-BEARING: the commit=False merge persisted WITHOUT an "
+            f"explicit transaction (row_count={row_count}, expected 2 un-merged rows)."
+        )
+        assert cargo_total == 8, f"un-merged total must be unchanged at 8, got {cargo_total}"
+
+        # ---- Arm 2: WITH db.begin() → merge commits and persists -----------------
+        await _cleanup(factory)
+        async with factory() as db, db.begin():
+            player_id, _ = await _seed_player_with_duplicate_cargo(db, _TEST_USER_A, qty_a=3, qty_b=5)
+
+        await _consolidate_via_route_path(factory, player_id)
+
+        cargo_total, row_count = await _cargo_total_and_rowcount(factory, player_id)
+        assert row_count == 1, f"db.begin() did NOT persist the merge (row_count={row_count}, expected 1 merged row)."
+        assert cargo_total == 8, f"merged total must conserve quantity at 8, got {cargo_total}"
+    finally:
+        await _cleanup(factory)
+        await engine.dispose()
+
+
+async def test_case18_consolidate_failure_in_db_begin_rolls_back_cleanly():
+    """D5-T3 (path 18): a failure mid-``db.begin()`` rolls back the partial merge.
+
+    Drives the consolidate route shape (lock-first + ``db.begin()`` + commit=False
+    merge), then raises INSIDE the ``db.begin()`` block AFTER the merge has flushed.
+    The ``db.begin()`` context exits via the exception and rolls back, so NONE of the
+    flushed delete/update survives: a fresh read still sees the original two
+    duplicate rows (no partial merge, no half-deleted state).
+    """
+    engine, factory = _make_pg_factory()
+    try:
+        await _cleanup(factory)
+        async with factory() as db, db.begin():
+            player_id, _ = await _seed_player_with_duplicate_cargo(db, _TEST_USER_A, qty_a=3, qty_b=5)
+
+        player_repo = PlayerRepository()
+        inventory_service = InventoryService()
+
+        class _Boom(RuntimeError):
+            pass
+
+        with pytest.raises(_Boom):
+            async with factory() as db, db.begin():
+                await player_repo.get_by_id_for_update(db, player_id)
+                await inventory_service.consolidate_inventory(db, player_id, commit=False)
+                # The merge has now flushed (delete dup + survivor=8) but NOT committed.
+                raise _Boom("simulated mid-transaction failure")
+
+        # db.begin() rolled back on the exception → original duplicate rows intact.
+        cargo_total, row_count = await _cargo_total_and_rowcount(factory, player_id)
+        assert row_count == 2, f"rollback must leave both duplicate rows, got {row_count}"
+        assert cargo_total == 8, f"rollback must preserve original total 8, got {cargo_total}"
     finally:
         await _cleanup(factory)
         await engine.dispose()

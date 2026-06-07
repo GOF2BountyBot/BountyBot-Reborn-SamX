@@ -91,13 +91,26 @@ def mock_inventory_service():
 
 
 @pytest.fixture
-def test_app(mock_inventory_service):
+def mock_player_repo():
+    """Mock PlayerRepository for the consolidate route's aggregate-root lock (D5-T3).
+
+    The consolidate route acquires ``get_by_id_for_update`` on the Player row
+    FIRST; router-level tests override the repo so no real DB call is made.
+    """
+    repo = AsyncMock()
+    repo.get_by_id_for_update = AsyncMock()
+    return repo
+
+
+@pytest.fixture
+def test_app(mock_inventory_service, mock_player_repo):
     app = FastAPI()
-    from api.routers.inventory import get_inventory_service
+    from api.routers.inventory import get_inventory_service, get_player_repository
     from api.routers.inventory import router as inventory_router
 
     app.include_router(inventory_router, prefix="/api/v1")
     app.dependency_overrides[get_inventory_service] = lambda: mock_inventory_service
+    app.dependency_overrides[get_player_repository] = lambda: mock_player_repo
     yield app
     app.dependency_overrides.clear()
 
@@ -908,7 +921,7 @@ class TestConsolidateInventory:
 
     @patch("api.routers.inventory.get_db_session")
     def test_consolidate_inventory_delegates_to_service(self, mock_get_db, client, mock_inventory_service):
-        """Service is called with the correct player_id."""
+        """Service is called with the correct player_id, commit=False (router owns the txn)."""
         _configure_db_mock(mock_get_db)
 
         client.post("/api/v1/inventory/player/7/consolidate")
@@ -916,6 +929,23 @@ class TestConsolidateInventory:
         mock_inventory_service.consolidate_inventory.assert_awaited_once()
         call_args = mock_inventory_service.consolidate_inventory.call_args
         assert call_args.args[1] == 7
+        # D5-T3: the service runs with commit=False so the router's db.begin()
+        # owns the transaction and the Player FOR UPDATE lock spans the whole RMW.
+        assert call_args.kwargs.get("commit") is False
+
+    @patch("api.routers.inventory.get_db_session")
+    def test_consolidate_inventory_locks_player_first(
+        self, mock_get_db, client, mock_inventory_service, mock_player_repo
+    ):
+        """D5-T3: the aggregate-root Player lock is acquired BEFORE the consolidate RMW."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.post("/api/v1/inventory/player/7/consolidate")
+
+        assert response.status_code == 200
+        # Lock-first: get_by_id_for_update on the same player_id must have been awaited.
+        mock_player_repo.get_by_id_for_update.assert_awaited_once()
+        assert mock_player_repo.get_by_id_for_update.call_args.args[1] == 7
 
     @patch("api.routers.inventory.get_db_session")
     def test_consolidate_inventory_server_error_returns_500(self, mock_get_db, client, mock_inventory_service):

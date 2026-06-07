@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
+from persist.repositories.player_repository import PlayerRepository
 from services.exceptions import InvalidItemTypeError
 from services.inventory_service import InventoryService
 from shared import bblogger
@@ -35,6 +36,10 @@ router = APIRouter(
 # Dependency injection
 async def get_inventory_service():
     return InventoryService()
+
+
+async def get_player_repository():
+    return PlayerRepository()
 
 
 @router.get("/player/{player_id}", response_model=list[InventoryItemResponse])
@@ -285,13 +290,40 @@ async def validate_item_compatibility(
 
 
 @router.post("/player/{player_id}/consolidate")
-async def consolidate_inventory(player_id: int, inventory_service: InventoryService = Depends(get_inventory_service)):
+async def consolidate_inventory(
+    player_id: int,
+    inventory_service: InventoryService = Depends(get_inventory_service),
+    player_repo: PlayerRepository = Depends(get_player_repository),
+):
     """Consolidate duplicate inventory entries (maintenance function)."""
     flogger.info(f"Consolidating inventory for player {player_id}")
 
     try:
-        async with get_db_session() as db:
-            result = await inventory_service.consolidate_inventory(db, player_id)
+        # D5-T3 (path 18): consolidate is a multi-row read-modify-write across
+        # player_inventories (read all cargo rows → merge dup groups → delete +
+        # update_quantity). It previously ran with NEITHER a transaction NOR a
+        # lock, so two same-player consolidations (or a consolidation racing a
+        # cargo decrement) could interleave and LOSE an update.
+        #
+        # The LOCK is what fixes that: acquiring the aggregate-root Player row
+        # FOR UPDATE FIRST (lock-ordering rule: aggregate row before any read
+        # that feeds the RMW) serialises concurrent same-player RMWs, so the
+        # lost update cannot occur. AsyncSession autobegin already holds that
+        # row lock until the session is committed/closed, so db.begin() does NOT
+        # change the lock's duration.
+        #
+        # db.begin() is load-bearing for ATOMICITY: it makes the Player lock
+        # acquisition and the flush-only (commit=False) consolidate writes one
+        # explicit unit of work that commits together on success and rolls back
+        # together on error. (Durability is additionally backstopped by
+        # get_db_session's AC-7 auto-commit-on-clean-exit, but the project's
+        # transaction-discipline contract requires the boundary to be explicit
+        # rather than relying on that safety net — see test_transaction_discipline.)
+        # The service therefore runs with commit=False so this db.begin() owns
+        # the transaction.
+        async with get_db_session() as db, db.begin():
+            await player_repo.get_by_id_for_update(db, player_id)
+            result = await inventory_service.consolidate_inventory(db, player_id, commit=False)
 
             return result
 

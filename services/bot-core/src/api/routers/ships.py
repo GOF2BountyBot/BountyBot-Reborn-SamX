@@ -302,12 +302,38 @@ async def update_ship_loadout(
     ship_id: int,
     request: UpdateLoadoutRequest,
     player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
+    player_repo: PlayerRepository = Depends(get_player_repository),
 ):
-    """Update a ship's equipment loadout."""
+    """Update a ship's equipment loadout (admin/maintenance direct JSON overwrite)."""
     flogger.info(f"Updating loadout for ship {ship_id}")
 
     try:
-        async with get_db_session() as db:
+        # D5-T3 (path 19): this admin/maintenance route overwrites the ship's
+        # JSON slot lists directly, bypassing the LoadoutConsistencyService
+        # choke-point. It previously ran with NEITHER a transaction NOR the
+        # aggregate-root lock, so a concurrent equip/unequip on the same player
+        # could interleave and corrupt the owned = cargo + equipped invariant.
+        #
+        # The LOCK is what fixes that: taking the Player row FOR UPDATE FIRST
+        # (lock-ordering rule) serialises this overwrite against any concurrent
+        # same-player loadout mutation. AsyncSession autobegin already holds the
+        # row lock until the session is committed/closed, so db.begin() does NOT
+        # change the lock's duration.
+        #
+        # db.begin() is load-bearing for ATOMICITY: it makes the lock
+        # acquisition and the flush-only (commit=False) loadout overwrite one
+        # explicit unit of work that commits/rolls back together. (Durability is
+        # additionally backstopped by get_db_session's AC-7 auto-commit, but the
+        # transaction-discipline contract requires an explicit boundary — see
+        # test_transaction_discipline.) The ship's immutable player_id is
+        # resolved up front to know which aggregate to lock.
+        async with get_db_session() as db, db.begin():
+            ship = await player_ship_repo.get_by_id(db, ship_id)
+            if not ship:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Ship {ship_id} not found")
+
+            await player_repo.get_by_id_for_update(db, ship.player_id)
+
             # Build loadout update dict
             loadout_updates = {}
             if request.weapons is not None:
@@ -317,7 +343,7 @@ async def update_ship_loadout(
             if request.turrets is not None:
                 loadout_updates["turrets"] = request.turrets
 
-            ship = await player_ship_repo.update_loadout(db, ship_id, loadout_updates)
+            ship = await player_ship_repo.update_loadout(db, ship_id, loadout_updates, commit=False)
 
             return ShipResponse(
                 id=ship.id,
@@ -333,6 +359,8 @@ async def update_ship_loadout(
                 created_at=ship.created_at.isoformat(),
             )
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:

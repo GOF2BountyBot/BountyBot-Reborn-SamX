@@ -527,12 +527,33 @@ class InventoryService:
             flogger.error(f"Error getting item count for player {player_id}: {e}")
             raise
 
-    async def consolidate_inventory(self, db: AsyncSession, player_id: int) -> dict[str, Any]:
+    async def consolidate_inventory(self, db: AsyncSession, player_id: int, *, commit: bool = True) -> dict[str, Any]:
         """
         Consolidate duplicate inventory entries (maintenance function).
 
         Groups items by (item_type, item_name), keeps one entry per group with
         the summed quantity, and deletes the rest.
+
+        This is a multi-row read-modify-write across ``player_inventories``: it
+        reads all of the player's cargo rows, merges duplicate (type, name)
+        groups, deletes the redundant rows, and updates the surviving row's
+        quantity.  Under READ COMMITTED with no lock it is a lost-update window
+        (D5 path 18).
+
+        Concurrency contract (the caller/router is responsible for both):
+          * The aggregate-root Player ``FOR UPDATE`` lock, acquired FIRST, is
+            what serialises concurrent same-player RMWs and so prevents the lost
+            update. (The session's autobegin holds that lock until commit/close;
+            an explicit ``db.begin()`` does not change the lock's duration.)
+          * An explicit ``db.begin()`` provides atomicity: the lock acquisition
+            and these flush-only writes commit/roll back together as one unit of
+            work — the project's transaction-discipline contract requires that
+            explicit boundary rather than relying on get_db_session's AC-7
+            auto-commit-on-clean-exit safety net.
+
+        Args:
+            commit: When False, the underlying repo writes flush instead of
+                commit, so the caller's ``db.begin()`` owns the transaction.
 
         Returns consolidation results.
         """
@@ -556,11 +577,11 @@ class InventoryService:
 
                 # Delete all duplicate entries (all but the primary)
                 for duplicate in group[1:]:
-                    await self.inventory_repo.remove(db, duplicate)
+                    await self.inventory_repo.remove(db, duplicate, commit=commit)
                     items_consolidated += 1
 
                 # Update the primary with the summed quantity
-                await self.inventory_repo.update_quantity(db, primary.id, total_quantity)
+                await self.inventory_repo.update_quantity(db, primary.id, total_quantity, commit=commit)
 
             message = (
                 f"Consolidated {items_consolidated} duplicate item(s)"

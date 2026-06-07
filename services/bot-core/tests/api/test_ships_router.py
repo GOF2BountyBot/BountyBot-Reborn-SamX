@@ -107,6 +107,10 @@ def mock_player_repo():
     repo = AsyncMock()
     repo.get_by_id = AsyncMock(return_value=make_mock_player())
     repo.update_active_ship = AsyncMock()
+    # D5-T3 (path 19): update_ship_loadout takes the aggregate-root Player lock
+    # FIRST via get_by_id_for_update; router-level tests override the repo so no
+    # real DB call is made.
+    repo.get_by_id_for_update = AsyncMock(return_value=make_mock_player())
     return repo
 
 
@@ -529,6 +533,53 @@ class TestUpdateShipLoadout:
         assert response.status_code == 500
         data = response.json()
         assert "detail" in data
+
+    def test_update_ship_loadout_locks_player_first(self, client, mock_ship_repo, mock_player_repo):
+        """D5-T3 (path 19): the aggregate-root Player lock is acquired on the ship's
+        player_id BEFORE the loadout overwrite.
+
+        The route resolves the ship (player_id=1 via make_mock_ship) then locks that
+        player FIRST. Mirrors test_inventory_router::test_consolidate_inventory_
+        locks_player_first. Without the lock call this assertion fails — proving the
+        lock is load-bearing, not silently absorbed by the mock.
+        """
+        payload = {"weapons": ["Pulse Laser"]}
+        response = client.put("/api/v1/ships/1/loadout", json=payload)
+
+        assert response.status_code == 200
+        # Lock-first: get_by_id_for_update on the ship's player_id must have been awaited.
+        mock_player_repo.get_by_id_for_update.assert_awaited_once()
+        assert mock_player_repo.get_by_id_for_update.call_args.args[1] == 1
+
+    def test_update_ship_loadout_overwrites_with_commit_false(self, client, mock_ship_repo):
+        """D5-T3 (path 19): the loadout overwrite runs with commit=False so the
+        route's db.begin() owns the atomic unit of work.
+
+        A silent revert to commit=True (service/repo committing mid-block) would be
+        caught here.
+        """
+        payload = {"weapons": ["Pulse Laser"]}
+        response = client.put("/api/v1/ships/1/loadout", json=payload)
+
+        assert response.status_code == 200
+        mock_ship_repo.update_loadout.assert_awaited_once()
+        assert mock_ship_repo.update_loadout.call_args.kwargs.get("commit") is False
+
+    def test_update_ship_loadout_ship_not_found_returns_404(self, client, mock_ship_repo):
+        """D5-T3 (path 19): a missing ship yields 404, NOT 500.
+
+        Exercises the ``except HTTPException: raise`` guard: the route raises a 404
+        HTTPException, which must propagate untouched rather than being swallowed by
+        the broad ``except Exception`` and re-raised as a 500. (Removing that guard
+        line makes this return 500 — confirmed by mutation proof.)
+        """
+        mock_ship_repo.get_by_id = AsyncMock(return_value=None)
+
+        payload = {"weapons": ["Pulse Laser"]}
+        response = client.put("/api/v1/ships/999/loadout", json=payload)
+
+        assert response.status_code == 404
+        assert "999" in response.json()["detail"]
 
 
 class TestUpdateShipNickname:

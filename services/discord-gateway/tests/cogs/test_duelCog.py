@@ -434,6 +434,74 @@ class TestDuelAcceptCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "invalid" in call_kwargs[0][0].lower()
 
+    def test_accept_uses_timeout_15(self, mock_duel_cog, make_mock_response):
+        """/duel-accept POST to /duels/<id>/accept must use timeout=15 (G-T2: raised from 10s).
+
+        Mutation proof: setting timeout=10 in source causes this assertion to fail.
+        """
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        accept_resp = make_mock_response(
+            _make_accept_result(duel_id=1, is_stalemate=False, winner_name="A", loser_name="B")
+        )
+
+        timeout_values: list = []
+        call_count = 0
+
+        async def _spy_post(url, **kw):
+            nonlocal call_count
+            call_count += 1
+            timeout_values.append(kw.get("timeout"))
+            if call_count == 1:
+                return player_resp
+            return accept_resp
+
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=_spy_post)
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        assert len(timeout_values) >= 2, f"Expected 2+ post() calls, got {len(timeout_values)}"
+        accept_timeout = timeout_values[1]
+        assert accept_timeout == 15, (
+            f"Expected /duels/accept timeout=15 (G-T2), got {accept_timeout!r}. "
+            "Did you forget to raise the timeout from 10 to 15?"
+        )
+
+    def test_accept_graceful_error_on_failure(self, mock_duel_cog, make_mock_response):
+        """/duel-accept shows graceful error on network failure (no auto-retry)."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error = httpx.TimeoutException("timed out", request=MagicMock())
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, error])
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        # Must show exactly ONE follow-up (the error message), no retry
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False), "Error response should be ephemeral"
+
+    def test_accept_no_auto_retry(self, mock_duel_cog, make_mock_response):
+        """/duel-accept must NOT retry on HTTP failure — idempotency makes it safe but
+        verify the implementation has no retry loop (single attempt only)."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error_response = MagicMock()
+        error_response.status_code = 500
+        http_error = httpx.HTTPStatusError("500", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        # post() must be called exactly twice: once for player resolution, once for accept
+        assert mock_duel_cog.http_client.post.await_count == 2, (
+            f"Expected exactly 2 post() calls (no retry), got {mock_duel_cog.http_client.post.await_count}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _build_accept_embed — winner/loser player-name display (B.63)
@@ -759,7 +827,7 @@ def _make_betty_duel(
     return {
         "duel_id": 42,
         "is_stalemate": is_stalemate,
-        "winner_name": "Betty",   # same ship name for both — the ambiguous case
+        "winner_name": "Betty",  # same ship name for both — the ambiguous case
         "loser_name": "Betty",
         "credits_transferred": 500 if not is_stalemate else 0,
         "stakes": 500,

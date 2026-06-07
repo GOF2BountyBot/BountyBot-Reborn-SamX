@@ -437,7 +437,7 @@ class DuelCog(commands.Cog):
             resp = await self.http_client.post(
                 f"{api_base}/duels/{duel_id}/accept",
                 params={"user_id": player_id},
-                timeout=10,
+                timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()

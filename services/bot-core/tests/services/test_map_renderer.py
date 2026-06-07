@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import io
 import os
+from collections import OrderedDict
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PIL import Image
 
 # ---------------------------------------------------------------------------
@@ -247,6 +249,18 @@ class TestRenderRouteForBounty:
 class TestBountyMapEndpoint:
     """GET /api/v1/bounties/{bounty_id}/map should return a PNG response."""
 
+    @pytest.fixture(autouse=True)
+    def _reset_map_cache(self):
+        """Save and restore _map_cache so no plain-dict replacement leaks out."""
+        import api.routers.bounties as bounty_module
+
+        original = bounty_module._map_cache
+        bounty_module._map_cache = OrderedDict()
+        try:
+            yield
+        finally:
+            bounty_module._map_cache = original
+
     def _make_app(self, mock_bounty_service, mock_renderer, mock_graph):
         """Build a test FastAPI app with dependency overrides."""
         import api.routers.bounties as bounty_module
@@ -262,7 +276,7 @@ class TestBountyMapEndpoint:
         # Wire shared singletons on app.state (P3-T7: no module-level singletons).
         app.state.map_renderer = mock_renderer
         app.state.system_graph = mock_graph
-        bounty_module._map_cache = {}  # clear cache between tests
+        bounty_module._map_cache.clear()  # clear the OrderedDict (not replace it)
 
         return TestClient(app)
 

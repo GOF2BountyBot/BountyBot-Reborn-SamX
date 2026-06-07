@@ -28,6 +28,7 @@ import concurrent.futures
 import os
 import sys
 import threading
+from collections import OrderedDict
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -779,8 +780,8 @@ class TestCacheBehavior:
         write_idents: list[int] = []
         render_idents: list[int] = []
 
-        class _TrackedDict(dict):
-            """Dict subclass that records the calling thread ident on every write."""
+        class _TrackedDict(OrderedDict):
+            """OrderedDict subclass that records the calling thread ident on every write."""
 
             def __setitem__(self, key, value):
                 write_idents.append(threading.get_ident())
@@ -859,8 +860,8 @@ class TestCacheBehavior:
         write_idents: list[int] = []
         render_idents: list[int] = []
 
-        class _TrackedDict(dict):
-            """Dict subclass that records the calling thread ident on every write."""
+        class _TrackedDict(OrderedDict):
+            """OrderedDict subclass that records the calling thread ident on every write."""
 
             def __setitem__(self, key, value):
                 write_idents.append(threading.get_ident())

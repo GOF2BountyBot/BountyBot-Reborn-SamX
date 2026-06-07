@@ -2,6 +2,7 @@
 Systems API router — star system pathfinding and queries.
 """
 
+from collections import OrderedDict
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,8 +16,34 @@ flogger = bblogger.get_logger("bot-systems-router")
 
 router = APIRouter(prefix="/systems", tags=["systems"])
 
-# Simple in-process cache keyed by (start, end) tuple.
-_route_map_cache: dict[tuple[str, str], bytes] = {}
+# Bounded LRU in-process cache keyed by (start, end) tuple.
+#
+# Memory math: each PNG is ~1.9 MB.  Cap of 32 ≈ 60 MB worst case.
+# System-pair queries tend to cluster around a small working set of popular
+# routes, so 32 covers practical traffic while preventing unbounded growth
+# from all possible (start, end) combinations in a large star-system graph.
+#
+# ALL mutations happen on the event-loop thread ONLY (never from inside an
+# offloaded render worker) — same discipline as bounties._map_cache.
+_ROUTE_MAP_CACHE_MAX = 32
+_route_map_cache: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+
+
+def _route_map_cache_get(key: tuple[str, str], default: bytes | None = None) -> bytes | None:
+    """Loop-thread LRU read: return value and move the entry to MRU position."""
+    if key not in _route_map_cache:
+        return default
+    _route_map_cache.move_to_end(key)
+    return _route_map_cache[key]
+
+
+def _route_map_cache_set(key: tuple[str, str], value: bytes) -> None:
+    """Loop-thread LRU write: insert/update and evict LRU entry on overflow."""
+    if key in _route_map_cache:
+        _route_map_cache.move_to_end(key)
+    _route_map_cache[key] = value
+    if len(_route_map_cache) > _ROUTE_MAP_CACHE_MAX:
+        _route_map_cache.popitem(last=False)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
@@ -113,9 +140,10 @@ async def get_route_map(
     flogger.info(f"Route map requested: start='{start}' end='{end}'")
 
     cache_key = (start, end)
-    if cache_key in _route_map_cache:
+    cached = _route_map_cache_get(cache_key)
+    if cached is not None:
         flogger.debug(f"Route map cache hit: start='{start}' end='{end}'")
-        return Response(content=_route_map_cache[cache_key], media_type="image/png")
+        return Response(content=cached, media_type="image/png")
 
     flogger.debug(f"Route map cache miss: start='{start}' end='{end}', computing route")
 
@@ -150,10 +178,10 @@ async def get_route_map(
     route: list[str] = result
     try:
         png_bytes = await map_renderer.render_route_offloaded(route, graph_service)
-        _route_map_cache[cache_key] = png_bytes
+        _route_map_cache_set(cache_key, png_bytes)  # loop-thread write; bounded LRU
         flogger.info(f"Route map rendered: start='{start}' end='{end}' systems={len(route)}")
     except Exception as e:
         flogger.error(f"Map render failed: start='{start}' end='{end}' error={type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to render route map") from e
 
-    return Response(content=_route_map_cache[cache_key], media_type="image/png")
+    return Response(content=png_bytes, media_type="image/png")

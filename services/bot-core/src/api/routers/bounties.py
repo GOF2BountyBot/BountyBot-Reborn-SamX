@@ -12,6 +12,7 @@ Handles bounty-related operations including:
 
 import asyncio
 import os
+from collections import OrderedDict
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -41,9 +42,36 @@ from api.schemas.loadout_schema import LoadoutResponse
 flogger = bblogger.get_logger("bounty-router")
 
 # ---------------------------------------------------------------------------
-# Simple in-process cache: (bounty_id, route_tuple) -> PNG bytes
+# Bounded LRU in-process cache: (bounty_id, route_tuple) -> PNG bytes
+#
+# Memory math: each PNG is ~1.9 MB.  Cap of 32 ≈ 60 MB worst case — large
+# enough to cover typical multi-guild deployments (4 divisions × ~8 guilds)
+# while preventing unbounded growth from accumulated unique bounty keys.
+#
+# Implementation: OrderedDict with move-to-end on access (LRU) and
+# popitem(last=False) on overflow (evict oldest).  ALL mutations (write,
+# move-to-end, evict) happen on the event-loop thread ONLY — never from
+# inside an offloaded render worker.
 # ---------------------------------------------------------------------------
-_map_cache: dict[tuple[int, tuple[str, ...]], bytes] = {}
+_MAP_CACHE_MAX = 32
+_map_cache: OrderedDict[tuple[int, tuple[str, ...]], bytes] = OrderedDict()
+
+
+def _map_cache_get(key: tuple[int, tuple[str, ...]], default: bytes | None = None) -> bytes | None:
+    """Loop-thread LRU read: return value and move the entry to MRU position."""
+    if key not in _map_cache:
+        return default
+    _map_cache.move_to_end(key)
+    return _map_cache[key]
+
+
+def _map_cache_set(key: tuple[int, tuple[str, ...]], value: bytes) -> None:
+    """Loop-thread LRU write: insert/update and evict LRU entry on overflow."""
+    if key in _map_cache:
+        _map_cache.move_to_end(key)
+    _map_cache[key] = value
+    if len(_map_cache) > _MAP_CACHE_MAX:
+        _map_cache.popitem(last=False)
 
 
 def get_bounty_service() -> BountyService:
@@ -449,7 +477,8 @@ async def get_bounty_map(
         route: list[str] = list(bounty.route) if bounty.route else []
         cache_key = (bounty_id, tuple(route))
 
-        if cache_key in _map_cache:
+        cached = _map_cache_get(cache_key)
+        if cached is not None:
             flogger.debug(f"Map cache hit for bounty_id={bounty_id}")
         else:
             flogger.debug(f"Map cache miss for bounty_id={bounty_id}, rendering")
@@ -459,13 +488,14 @@ async def get_bounty_map(
 
             try:
                 png_bytes = await map_renderer.render_route_offloaded(route, system_graph)
-                _map_cache[cache_key] = png_bytes
+                _map_cache_set(cache_key, png_bytes)  # loop-thread write; safe
+                cached = png_bytes
                 flogger.info(f"Map rendered for bounty_id={bounty_id} route={len(route)} systems")
             except Exception as e:
                 flogger.error(f"Map render failed for bounty_id={bounty_id}: {e}")
                 raise
 
-        return Response(content=_map_cache[cache_key], media_type="image/png")
+        return Response(content=cached, media_type="image/png")
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +650,7 @@ async def admin_spawn_bounties(
         # CACHE WRITE DISCIPLINE: _map_cache is written ON THE LOOP THREAD
         # ONLY — after gather() resolves, in the loop body below.  Worker
         # threads must never write to this dict (no thread-safety guarantee).
-        # Unbounded-growth fix is a separate task (P3-T6); do not add a cap here.
+        # Bounded-LRU eviction (_MAP_CACHE_MAX=32) is handled by _map_cache_set.
         #
         # Dead-check removed: newly-spawned bounties cannot already be in
         # _map_cache (their IDs are fresh from Phase 1), so the old
@@ -656,7 +686,7 @@ async def admin_spawn_bounties(
                 for bounty_id, route, png in render_results:
                     if png:
                         cache_key = (bounty_id, tuple(route))
-                        _map_cache[cache_key] = png  # loop-thread write; safe
+                        _map_cache_set(cache_key, png)  # loop-thread write; bounded LRU
                         bounty_pngs[bounty_id] = png
 
             except Exception as graph_exc:  # pylint: disable=broad-exception-caught

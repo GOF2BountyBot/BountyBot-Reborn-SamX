@@ -782,3 +782,46 @@ class TestAdminSpawnBounty:
         embed_text = str(embed.to_dict())
         # gold should be mentioned as skipped
         assert "gold" in embed_text.lower()
+
+    def test_spawn_bounty_uses_60s_timeout(self, mock_admin_cog):
+        """Admin-spawn POST must use a 60s timeout to match bot-core's upload client (P3-T4 / G-T3)."""
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user()
+
+        mock_admin_cog.http_client.post = AsyncMock(return_value=_make_admin_spawn_response())
+
+        asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, tier=None))
+
+        mock_admin_cog.http_client.post.assert_called_once()
+        call_kwargs = mock_admin_cog.http_client.post.call_args[1]
+        assert call_kwargs.get("timeout") == 60, (
+            f"Expected timeout=60 to match bot-core upload client, got {call_kwargs.get('timeout')}"
+        )
+
+    def test_spawn_bounty_timeout_surfaces_graceful_error_no_retry(self, mock_admin_cog):
+        """httpx.TimeoutException on admin-spawn must surface a graceful ⚠️ error embed and NOT trigger a retry.
+
+        Admin-spawn is non-idempotent — a second POST would double-spawn bounties.
+        The except-Exception handler must catch the timeout exactly once and send
+        a single ephemeral warning, not re-issue the request.
+        """
+        import httpx as _httpx
+
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user()
+
+        # Raise TimeoutException on every call — if there were a retry loop this
+        # AsyncMock would be called more than once.
+        timeout_exc = _httpx.TimeoutException("timed out")
+        mock_admin_cog.http_client.post = AsyncMock(side_effect=timeout_exc)
+
+        asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, tier=None))
+
+        # POST must have been attempted exactly once — no retry on this non-idempotent path.
+        assert mock_admin_cog.http_client.post.call_count == 1, (
+            "admin_spawn_bounty must NOT retry on timeout (non-idempotent: double-spawn risk)"
+        )
+        # User receives a single graceful warning message, not a silent failure.
+        interaction.followup.send.assert_called_once()
+        args = interaction.followup.send.call_args[0]
+        assert "⚠️" in args[0]

@@ -1645,7 +1645,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             resp = await self.http_client.post(
                 f"{api_base}/bounties/guild/{interaction.guild_id}/admin-spawn",
                 params=params,
-                timeout=30,
+                timeout=60,
             )
             resp.raise_for_status()
             result = resp.json()

@@ -260,12 +260,24 @@ choke-point (`equip_one`, `unequip_one`, `evacuate_ship_loadout_to_inventory`,
 `shop_service.{purchase_item, purchase_ship, sell_item, sell_ship}`, and
 `ships.transfer_ship` all take the `Player` lock as the first player access.
 
-> Note (open item, not D5-T2): `bounty_service.distribute_rewards` mutates each
-> rewarded player's credits from an **unlocked** `get_by_id` read. This is a
-> lost-update gap for concurrent credit ops, NOT a lock-ordering/deadlock hazard
-> (loadout/credit ops never lock a `Bounty` row, so no cycle exists). If a future
-> task adds `FOR UPDATE` there, it MUST lock players in ascending `player_id`
-> order (sort the rewards by `player_id`) to preserve rule 2.
+> Note (D5-T2b, IMPLEMENTED): `bounty_service.distribute_rewards` previously
+> mutated each rewarded player's credits from an **unlocked** `get_by_id` read —
+> a lost-update gap for concurrent credit ops (NOT a lock-ordering/deadlock
+> hazard, since loadout/credit ops never lock a `Bounty` row so no cycle exists).
+> D5-T2b closed it: `distribute_rewards` now acquires each rewarded player's row
+> `FOR UPDATE` via `get_by_id_for_update` **before** the credit RMW, locking
+> players in **ascending `player_id` order** (it iterates `sorted(rewards,
+> key=lambda r: r.player_id)`) to preserve rule 2. It runs inside `check_bounty`,
+> which already holds the `Bounty` row lock (P2-T10), so the composed order is
+> Bounty → Players-ascending (rule 1, aggregate-first) — no Player → Bounty cycle
+> is introduced. `get_by_id_for_update`'s `populate_existing=True` (D5-T1) means
+> the locked re-fetch refreshes `check_bounty`'s pre-loaded (unlocked) player
+> object with the freshly-committed credits, so the increment lands on fresh
+> state under the lock. (`_award_combat_bonus`, the bronze 2x bonus, re-reads the
+> winner via unlocked `get_by_id` *after* `distribute_rewards` has already locked
+> that same row in the same transaction — an identity-map hit on an
+> already-locked row — so it is serialised by transitivity and needs no separate
+> lock.)
 
 ### update_credits with commit=False
 

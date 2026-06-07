@@ -2097,8 +2097,31 @@ class BountyService:
             Updated RewardInfo list (post-mutation).
         """
         modified_players = []
-        for reward in rewards:
-            player = await self.player_repo.get_by_id(db, reward.player_id)
+        # D5-T2b: lock EACH rewarded player's row FOR UPDATE before the credit
+        # read-modify-write so concurrent credit ops (shop buy / transfer / duel,
+        # or another /check payout touching the same player) serialise instead of
+        # losing an update.  Two ordering rules from the global lock-ordering
+        # contract (persist/repositories/AGENTS.md) apply:
+        #   1. Aggregate-first: distribute_rewards runs inside check_bounty, which
+        #      already holds the Bounty row lock (P2-T10).  This adds the Player
+        #      lock *after* the Bounty lock — Bounty → Players, never Player →
+        #      Bounty — so no AB-BA cycle against /check itself is created.
+        #   2. Players in ASCENDING player_id order — matches transfer_credits /
+        #      ships.transfer_ship / duel accept (the only other multi-player
+        #      credit paths), so a multi-checker payout (1 winner + N consolation)
+        #      and a concurrent multi-player credit op acquire their shared player
+        #      rows in the same order and never deadlock (40P01).
+        # We iterate a player_id-sorted view of `rewards`; the returned `rewards`
+        # list itself is left in its original order so callers' per-player display
+        # ordering (_build_payout_breakdown, winner lookup) is unchanged.
+        #
+        # get_by_id_for_update carries populate_existing=True (D5-T1), so even
+        # though check_bounty pre-loaded this same player UNLOCKED at the top of
+        # the call, the FOR UPDATE re-fetch overwrites the in-memory object with
+        # the freshly-committed credits read under the lock.  The mutation below
+        # therefore operates on the fresh locked balance — no stale-read clobber.
+        for reward in sorted(rewards, key=lambda r: r.player_id):
+            player = await self.player_repo.get_by_id_for_update(db, reward.player_id)
             if player is None:
                 flogger.warning(f"Player {reward.player_id} not found during reward distribution")
                 continue

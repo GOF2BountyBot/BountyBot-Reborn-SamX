@@ -286,10 +286,10 @@ class TestBountyMapEndpoint:
         mock_service.bounty_repo = AsyncMock()
         mock_service.bounty_repo.get_by_id = AsyncMock(return_value=mock_bounty)
 
-        # Mock renderer (returns fake PNG bytes).
+        # Mock renderer — endpoint now calls render_route_offloaded (async), not render_route_for_bounty.
         _fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
         mock_renderer = MagicMock()
-        mock_renderer.render_route_for_bounty.return_value = _fake_png
+        mock_renderer.render_route_offloaded = AsyncMock(return_value=_fake_png)
 
         # Mock graph (already loaded).
         mock_graph = MagicMock()

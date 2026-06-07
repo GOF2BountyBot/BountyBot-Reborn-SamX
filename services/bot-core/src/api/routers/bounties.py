@@ -458,7 +458,7 @@ async def get_bounty_map(
                 await system_graph.load_graph(db)
 
             try:
-                png_bytes = map_renderer.render_route_for_bounty(route, system_graph)
+                png_bytes = await map_renderer.render_route_offloaded(route, system_graph)
                 _map_cache[cache_key] = png_bytes
                 flogger.info(f"Map rendered for bounty_id={bounty_id} route={len(route)} systems")
             except Exception as e:

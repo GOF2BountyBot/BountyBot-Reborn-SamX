@@ -149,7 +149,7 @@ async def get_route_map(
 
     route: list[str] = result
     try:
-        png_bytes = map_renderer.render_route_for_bounty(route, graph_service)
+        png_bytes = await map_renderer.render_route_offloaded(route, graph_service)
         _route_map_cache[cache_key] = png_bytes
         flogger.info(f"Route map rendered: start='{start}' end='{end}' systems={len(route)}")
     except Exception as e:

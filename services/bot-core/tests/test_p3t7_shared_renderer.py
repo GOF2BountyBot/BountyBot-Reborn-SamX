@@ -21,6 +21,7 @@ Adversarial-grade test suite with three guarantees:
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -97,6 +98,50 @@ _SYSTEMS = {
 #   ... (see test/fixtures/README for instructions)
 # EOF
 _GOLDEN_PNG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "fixtures", "golden_route_abc.png"))
+
+_HOLDER_MODULE = "utils.executor_holder"
+_OFFLOAD_MODULE = "utils.offload"
+
+
+@pytest.fixture
+def thread_pool():
+    """Create and register a ThreadPoolExecutor in a fresh executor_holder module.
+
+    Required because the endpoints now call render_route_offloaded (P3-T5), which
+    offloads the PIL render to the thread pool via offload_io.  Tests that exercise
+    the real MapRenderer via TestClient need a thread pool registered.
+
+    Uses the same save-restore pattern as test_p3t3_render_offload.py to guarantee
+    order-independence: saves and restores the canonical module references on teardown.
+    """
+    _saved_holder = sys.modules.get(_HOLDER_MODULE)
+    _saved_offload = sys.modules.get(_OFFLOAD_MODULE)
+
+    if _HOLDER_MODULE in sys.modules:
+        del sys.modules[_HOLDER_MODULE]
+    import utils.executor_holder as holder
+
+    if _OFFLOAD_MODULE in sys.modules:
+        del sys.modules[_OFFLOAD_MODULE]
+    import utils.offload  # noqa: F401 — imported for side effect (binds to fresh holder)
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="test-p3t7")
+    holder.set_thread_pool(pool)
+
+    yield pool
+
+    pool.shutdown(wait=True)
+    holder._thread_pool = None
+
+    if _saved_holder is not None:
+        sys.modules[_HOLDER_MODULE] = _saved_holder
+    elif _HOLDER_MODULE in sys.modules:
+        del sys.modules[_HOLDER_MODULE]
+
+    if _saved_offload is not None:
+        sys.modules[_OFFLOAD_MODULE] = _saved_offload
+    elif _OFFLOAD_MODULE in sys.modules:
+        del sys.modules[_OFFLOAD_MODULE]
 
 
 def _make_loaded_graph():
@@ -244,9 +289,12 @@ class TestSingletonDedup:
 
         return image_open_count, load_graph_count
 
-    def test_base_image_loaded_exactly_once_across_both_endpoints(self):
+    def test_base_image_loaded_exactly_once_across_both_endpoints(self, thread_pool):
         """Image.open is called exactly once for the shared MapRenderer even
         when both the bounty-map and systems-route-map endpoints are exercised.
+
+        Requires thread_pool fixture: endpoints now call render_route_offloaded (P3-T5)
+        which offloads PIL work to the thread pool.
         """
         real_image = Image.open(_MAP_PATH).convert("RGB")
         image_open_count, _ = self._run_with_shared_pair(real_image)
@@ -255,10 +303,12 @@ class TestSingletonDedup:
             "Two separate MapRenderer instances would each load the image once → count==2."
         )
 
-    def test_graph_not_reloaded_when_already_warmed(self):
+    def test_graph_not_reloaded_when_already_warmed(self, thread_pool):
         """load_graph is NOT called during request handling when the graph was
         pre-warmed at startup (is_loaded() == True).  This verifies the
         pre-warm path works and no redundant DB round-trip occurs.
+
+        Requires thread_pool fixture: endpoints now call render_route_offloaded (P3-T5).
         """
         real_image = Image.open(_MAP_PATH).convert("RGB")
         _, load_graph_count = self._run_with_shared_pair(real_image)
@@ -346,9 +396,12 @@ class TestByteIdentity:
     """Endpoint output matches the committed golden reference PNG."""
 
     @pytest.fixture
-    def shared_setup(self):
+    def shared_setup(self, thread_pool):
         """Build a shared renderer + graph wired on app.state, clear caches,
         and return a TestClient ready to serve requests.
+
+        Requests thread_pool fixture: endpoints now call render_route_offloaded (P3-T5)
+        which offloads PIL work to the thread pool — a registered pool is required.
         """
         from services.map_renderer import MapRenderer
         from services.system_graph_service import SystemGraphService

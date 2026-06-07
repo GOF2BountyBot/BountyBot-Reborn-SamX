@@ -21,6 +21,7 @@ apscheduler
 python-dotenv
 Pillow
 zstandard
+orjson>=3.10,<4
 
 # Testing & QC
 pylint>=3.0.0

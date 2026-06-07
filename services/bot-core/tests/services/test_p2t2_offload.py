@@ -191,8 +191,10 @@ class TestLogResultTrue:
 
         Strategy: call run_fight(seed=42) directly to get the canonical list[dict]
         timeline, then call fight_ships — with run_fight patched to also use seed=42 —
-        and compare the re-hydrated list[CombatEvent] against the canonical timeline
-        using dataclasses.asdict.
+        and compare the offload list[dict] directly against the canonical timeline.
+
+        P2-T6: fight_results.combat_log is now list[dict] (no re-hydration into
+        CombatEvent objects).  Byte-identity is proved by direct dict == dict comparison.
 
         The seed IS pinned to 42 on BOTH sides of the comparison; this is what
         guarantees byte-identical RNG streams.  The weapon setup (armour=10,
@@ -276,29 +278,20 @@ class TestLogResultTrue:
         assert len(captured_fight_results) == 1
         fight_results = captured_fight_results[0]
 
-        # Verify the timeline consists of CombatEvent-shaped objects (re-hydrated, not plain dicts).
-        # Use hasattr checks to avoid src./services. module-path discrepancy.
+        # P2-T6: fight_results.combat_log is now list[dict] (no re-hydration).
         assert len(fight_results.combat_log) > 0
         for ev in fight_results.combat_log:
-            assert hasattr(ev, "tick"), f"Expected CombatEvent shape, got {type(ev)}: {ev!r}"
-            assert hasattr(ev, "type"), f"Expected CombatEvent shape, got {type(ev)}: {ev!r}"
-            assert hasattr(ev, "actor"), f"Expected CombatEvent shape, got {type(ev)}: {ev!r}"
-            assert hasattr(ev, "data"), f"Expected CombatEvent shape, got {type(ev)}: {ev!r}"
+            assert isinstance(ev, dict), f"Expected dict (P2-T6 passthrough), got {type(ev)}: {ev!r}"
+            assert set(ev.keys()) == {"tick", "type", "actor", "target", "data"}, f"Unexpected event shape: {ev.keys()}"
 
-        # Re-hydrated events must be serialisable via dataclasses.asdict — byte-identical to pre-offload
-        serialised = [dataclasses.asdict(ev) for ev in fight_results.combat_log]  # type: ignore[arg-type]
-        for d in serialised:
-            assert set(d.keys()) == {"tick", "type", "actor", "target", "data"}, f"Unexpected event shape: {d.keys()}"
-
-        # Byte-identical parity: asdict of each re-hydrated CombatEvent == the canonical raw dict
+        # Byte-identical parity: the offload list[dict] == the canonical raw dict (no conversion needed)
         assert len(fight_results.combat_log) == len(canonical_timeline), (
             f"Timeline length mismatch: offload={len(fight_results.combat_log)}, canonical={len(canonical_timeline)}"
         )
 
-        for i, (offload_ev, canonical_d) in enumerate(zip(fight_results.combat_log, canonical_timeline, strict=True)):
-            offload_d = dataclasses.asdict(offload_ev)  # type: ignore[arg-type]
+        for i, (offload_d, canonical_d) in enumerate(zip(fight_results.combat_log, canonical_timeline, strict=True)):
             assert offload_d == canonical_d, (
-                f"Event [{i}] mismatch:\n  offload (asdict): {offload_d}\n  canonical (raw):  {canonical_d}"
+                f"Event [{i}] mismatch:\n  offload (dict): {offload_d}\n  canonical (raw): {canonical_d}"
             )
 
 
@@ -401,7 +394,6 @@ class TestFightResultsReconstructionCompleteness:
           ship1_stats (all FightStats fields), ship2_stats (all FightStats fields),
           timeline (via dataclasses.asdict), metadata, and combat_log_id (None).
         """
-        import dataclasses
 
         from src.services.combat_resolver import TickResolver
 
@@ -464,12 +456,14 @@ class TestFightResultsReconstructionCompleteness:
         _assert_stats_equal("ship1_stats", offload_result.ship1_stats, baseline.ship1_stats)
         _assert_stats_equal("ship2_stats", offload_result.ship2_stats, baseline.ship2_stats)
 
-        # Timeline: length and per-event dict equality
+        # Timeline: length and per-event dict equality.
+        # P2-T6: offload path produces list[dict]; baseline (in-process TickResolver) produces
+        # list[CombatEvent].  Compare by converting the baseline via asdict.
         assert len(offload_result.combat_log) == len(baseline.combat_log), (
             f"timeline length mismatch: offload={len(offload_result.combat_log)} baseline={len(baseline.combat_log)}"
         )
-        for i, (offload_ev, baseline_ev) in enumerate(zip(offload_result.combat_log, baseline.combat_log, strict=True)):
-            offload_d = dataclasses.asdict(offload_ev)  # type: ignore[arg-type]
+        for i, (offload_d, baseline_ev) in enumerate(zip(offload_result.combat_log, baseline.combat_log, strict=True)):
+            assert isinstance(offload_d, dict), f"Event [{i}]: expected dict (P2-T6), got {type(offload_d)}"
             baseline_d = dataclasses.asdict(baseline_ev)
             assert offload_d == baseline_d, f"Event [{i}] mismatch:\n  offload : {offload_d}\n  baseline: {baseline_d}"
 

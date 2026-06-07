@@ -9,10 +9,12 @@ SimpleTTKResolver and variance helpers are retired.
 
 P2-T2: fight_ships routes through offload_cpu(run_fight, ...) to run combat
 in a process-pool worker, keeping the event loop free. The worker returns a
-plain-dict result; fight_ships re-hydrates it into a full FightResults with a
-list[CombatEvent] combat_log so that all downstream code (persist, stat
-increments, duel decode) is byte-identical to the pre-offload path.
-P2-T6 will remove the re-hydration round-trip by making persist a passthrough.
+plain-dict result.
+
+P2-T6: fight_ships passes the worker's list[dict] timeline straight into
+FightResults.combat_log (no re-hydration into CombatEvent objects).
+CombatLogService.persist accepts both list[dict] (passthrough) and
+list[CombatEvent] (asdict via is_dataclass guard) for legacy/in-process callers.
 """
 
 from typing import TYPE_CHECKING
@@ -22,7 +24,6 @@ from shared import bblogger
 from utils.offload import offload_cpu
 
 from services.combat_models import (
-    CombatEvent,
     CombatMeta,
     CombatStats,
     FightResults,
@@ -317,22 +318,6 @@ class CombatService:
             compact=False,
         )
 
-        # Re-hydrate the worker's list[dict] timeline back into list[CombatEvent] so that
-        # CombatLogService.persist's existing dataclasses.asdict loop, the post-fight stat-
-        # increment scans, and the duel decode all work UNCHANGED — persisted output is
-        # byte-identical to pre-offload.  P2-T6 will remove this round-trip by making
-        # persist a dict-passthrough.
-        combat_log: list[CombatEvent] = [
-            CombatEvent(
-                tick=ev["tick"],
-                type=ev["type"],
-                actor=ev["actor"],
-                target=ev["target"],
-                data=ev["data"],
-            )
-            for ev in raw["timeline"]
-        ]
-
         # Reconstruct FightStats from the plain-dict slices returned by the worker.
         def _stats_from_dict(d: dict) -> FightStats:
             return FightStats(
@@ -351,7 +336,7 @@ class CombatService:
             ship1_stats=_stats_from_dict(raw["ship1_stats"]),
             ship2_stats=_stats_from_dict(raw["ship2_stats"]),
             winner_side=raw["winner_side"],
-            combat_log=combat_log,  # type: ignore[arg-type]  — list[CombatEvent], annotation is list[dict]
+            combat_log=raw["timeline"],  # P2-T6: list[dict] passthrough — no asdict needed
             metadata=raw["metadata"],
         )
 

@@ -1,8 +1,11 @@
 """CombatLogService — persists resolved fight records to combat_log (§12 / T10).
 
 Receives the in-memory FightResults from the TickResolver and writes one
-combat_log row per resolved fight. Serialises the CombatEvent timeline via
-dataclasses.asdict() before JSON storage — raw object serialisation would fail.
+combat_log row per resolved fight.
+
+P2-T6: persist() accepts a timeline of plain dicts (offload path) or CombatEvent
+dataclasses (legacy/in-process path).  Plain dicts pass through as-is; dataclasses
+are converted via dataclasses.asdict() using the is_dataclass guard.
 
 The created_at column has no server_default (migration 0011); every insert MUST
 go through the ORM so the application-side default supplies the value.

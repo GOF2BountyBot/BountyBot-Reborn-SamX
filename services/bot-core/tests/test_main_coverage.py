@@ -319,6 +319,14 @@ class TestLifespan:
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
+            # P2-T2-CAUSED: patch pool constructors + holder setters so this lifespan
+            # unit test does NOT create real pools or mutate the global executor_holder.
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
         ):
             async with lifespan(test_app):
                 # App is "running" — verify startup happened
@@ -415,6 +423,13 @@ class TestLifespan:
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
             patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            # P2-T2-CAUSED: prevent real pool creation / holder mutation
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
         ):
             mock_mm_instance = MagicMock()
             mock_mm_instance.ensure_current = MagicMock()
@@ -479,6 +494,13 @@ class TestLifespan:
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
             patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            # P2-T2-CAUSED: prevent real pool creation / holder mutation
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
         ):
             mock_mm_instance = MagicMock()
             mock_mm_instance.ensure_current = MagicMock()
@@ -513,6 +535,13 @@ class TestLifespan:
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
             patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            # P2-T2-CAUSED: prevent real pool creation / holder mutation
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
         ):
             mock_mm_instance = MagicMock()
             mock_mm_instance.ensure_current = MagicMock()

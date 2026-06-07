@@ -208,50 +208,29 @@ class TestFightShipsLogResultTrue:
 
     @pytest.mark.asyncio
     async def test_pvc_damage_reduction_reaches_resolver(self):
-        """pvc_damage_reduction=0.33 is forwarded to the TickResolver."""
+        """pvc_damage_reduction=0.33 is forwarded to run_fight via offload_cpu (P2-T2).
+
+        P2-T2: fight_ships now routes through offload_cpu(run_fight, ...) instead of
+        calling self._tick_resolver.resolve directly.  We verify the kwarg survives the
+        offload boundary by patching offload_cpu at its import site in combat_service.
+        """
         service = CombatService()
         l1 = ShipLoadout(ship_name="A", base_armour=200)
         l2 = ShipLoadout(ship_name="B", base_armour=200)
 
         captured_pvc_dr = None
 
-        def _spy_resolve(loadout1, loadout2, *, pvc_damage_reduction=0.0, guild_config=None, rng=None, **_kwargs):
+        async def _spy_offload_cpu(fn, *args, **kwargs):
             nonlocal captured_pvc_dr
-            captured_pvc_dr = pvc_damage_reduction
-            # Return a minimal FightResults
-            from src.services.combat_models import FightResults, FightStats
+            captured_pvc_dr = kwargs.get("pvc_damage_reduction")
+            # Delegate to the real run_fight so we get a valid result dict back
+            return fn(*args, **kwargs)
 
-            s = FightStats(ship_name="A", raw_hp=200, raw_dps=0.0, varied_hp=200, varied_dps=0.0, ttk=None)
-            return FightResults(
-                winner_name=None,
-                loser_name=None,
-                is_stalemate=True,
-                ship1_stats=s,
-                ship2_stats=s,
-                combat_log=[],
-                metadata={
-                    "schema_version": 1,
-                    "summary": {
-                        "outcome": "stalemate",
-                        "reason": "time_cap",
-                        "duration_ticks": 100,
-                        "winner": None,
-                        "combatants": {
-                            "1": {"name": "A", "ship": "A", "damage_dealt": 0, "damage_taken": 0},
-                            "2": {"name": "B", "ship": "B", "damage_dealt": 0, "damage_taken": 0},
-                        },
-                    },
-                    "metadata": {
-                        "tick_ms": 10,
-                        "total_ticks": 100,
-                        "resolver": "tick_v1",
-                        "pvc_damage_reduction": pvc_damage_reduction,
-                    },
-                },
-            )
+        # CombatService is imported from src.services.combat_service, so fight_ships
+        # uses src.services.combat_service's globals — patch there, not services.combat_service.
+        with patch("src.services.combat_service.offload_cpu", new=_spy_offload_cpu):
+            await service.fight_ships(l1, l2, log_result=False, pvc_damage_reduction=0.33)
 
-        service._tick_resolver.resolve = _spy_resolve
-        await service.fight_ships(l1, l2, log_result=False, pvc_damage_reduction=0.33)
         assert captured_pvc_dr == pytest.approx(0.33)
 
 

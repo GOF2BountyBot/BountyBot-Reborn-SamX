@@ -17,7 +17,6 @@ process boundary.
 from __future__ import annotations
 
 import concurrent.futures
-import importlib
 import multiprocessing
 import os
 import sys
@@ -63,18 +62,28 @@ def _multiply_sum(a: int, b: int, multiplier: int = 1) -> int:
 def pools():
     """Create real ProcessPoolExecutor and ThreadPoolExecutor, register them
     in the holder, yield, then shut them down and reset the holder globals so
-    no state leaks into subsequent tests."""
-    # Fresh holder module so we start from a clean slate
+    no state leaks into subsequent tests.
+
+    Saves and restores sys.modules entries for utils.executor_holder and
+    utils.offload so this fixture does NOT leak swapped module objects to
+    tests that run after it (order-independence guarantee).
+    """
     holder_name = "utils.executor_holder"
+    offload_name = "utils.offload"
+
+    # Save originals before swapping (may be None if not yet imported).
+    _saved_holder = sys.modules.get(holder_name)
+    _saved_offload = sys.modules.get(offload_name)
+
+    # Fresh holder module so we start from a clean slate
     if holder_name in sys.modules:
         del sys.modules[holder_name]
-    import utils.executor_holder as holder  # noqa: PLC0415
+    import utils.executor_holder as holder
 
     # Also reload offload so it picks up the fresh holder
-    offload_name = "utils.offload"
     if offload_name in sys.modules:
         del sys.modules[offload_name]
-    import utils.offload as offload  # noqa: PLC0415
+    import utils.offload as offload
 
     process_pool = concurrent.futures.ProcessPoolExecutor(
         mp_context=multiprocessing.get_context("forkserver"),
@@ -90,9 +99,22 @@ def pools():
     process_pool.shutdown(wait=True)
     thread_pool.shutdown(wait=True)
 
-    # Reset globals so the next test sees an uninitialised holder
+    # Reset the fresh holder's globals (belt-and-suspenders)
     holder._process_pool = None
     holder._thread_pool = None
+
+    # Restore the original module objects so subsequent tests (including the
+    # services/conftest.py session fixture) see the canonical holder that
+    # combat_service.offload_cpu → utils.offload → get_process_pool references.
+    if _saved_holder is not None:
+        sys.modules[holder_name] = _saved_holder
+    elif holder_name in sys.modules:
+        del sys.modules[holder_name]
+
+    if _saved_offload is not None:
+        sys.modules[offload_name] = _saved_offload
+    elif offload_name in sys.modules:
+        del sys.modules[offload_name]
 
 
 # ---------------------------------------------------------------------------
@@ -104,9 +126,7 @@ def pools():
 async def test_offload_cpu_runs_in_separate_process(pools):
     """offload_cpu must execute fn in a different process."""
     worker_pid = await pools.offload_cpu(_return_pid)
-    assert worker_pid != os.getpid(), (
-        f"Expected worker PID to differ from test PID {os.getpid()}, got {worker_pid}"
-    )
+    assert worker_pid != os.getpid(), f"Expected worker PID to differ from test PID {os.getpid()}, got {worker_pid}"
 
 
 @pytest.mark.asyncio
@@ -177,41 +197,67 @@ async def test_offload_io_accepts_non_picklable_fn(pools):
 async def test_offload_cpu_without_pool_raises():
     """Calling offload_cpu before the process pool is registered must raise RuntimeError."""
     holder_name = "utils.executor_holder"
+    offload_name = "utils.offload"
+
+    # Save originals so we can restore them on teardown (well-behaved test: restore global state).
+    _saved_holder = sys.modules.get(holder_name)
+    _saved_offload = sys.modules.get(offload_name)
+
     if holder_name in sys.modules:
         del sys.modules[holder_name]
-    import utils.executor_holder as holder  # noqa: PLC0415
+    import utils.executor_holder  # noqa: F401 — imported for side-effect (loads fresh module)
 
-    offload_name = "utils.offload"
     if offload_name in sys.modules:
         del sys.modules[offload_name]
-    import utils.offload as offload  # noqa: PLC0415
+    import utils.offload as offload
 
-    # Neither pool is set on the fresh module
-    with pytest.raises(RuntimeError, match="ProcessPoolExecutor has not been initialised"):
-        await offload.offload_cpu(_add, 1, 2)
+    try:
+        # Neither pool is set on the fresh module
+        with pytest.raises(RuntimeError, match="ProcessPoolExecutor has not been initialised"):
+            await offload.offload_cpu(_add, 1, 2)
+    finally:
+        # Restore originals so subsequent tests see the canonical module objects.
+        if _saved_holder is not None:
+            sys.modules[holder_name] = _saved_holder
+        elif holder_name in sys.modules:
+            del sys.modules[holder_name]
 
-    # Clean up
-    holder._process_pool = None
-    holder._thread_pool = None
+        if _saved_offload is not None:
+            sys.modules[offload_name] = _saved_offload
+        elif offload_name in sys.modules:
+            del sys.modules[offload_name]
 
 
 @pytest.mark.asyncio
 async def test_offload_io_without_pool_raises():
     """Calling offload_io before the thread pool is registered must raise RuntimeError."""
     holder_name = "utils.executor_holder"
+    offload_name = "utils.offload"
+
+    # Save originals so we can restore them on teardown (well-behaved test: restore global state).
+    _saved_holder = sys.modules.get(holder_name)
+    _saved_offload = sys.modules.get(offload_name)
+
     if holder_name in sys.modules:
         del sys.modules[holder_name]
-    import utils.executor_holder as holder  # noqa: PLC0415
+    import utils.executor_holder  # noqa: F401 — imported for side-effect (loads fresh module)
 
-    offload_name = "utils.offload"
     if offload_name in sys.modules:
         del sys.modules[offload_name]
-    import utils.offload as offload  # noqa: PLC0415
+    import utils.offload as offload
 
-    # Neither pool is set on the fresh module
-    with pytest.raises(RuntimeError, match="ThreadPoolExecutor has not been initialised"):
-        await offload.offload_io(_add, 1, 2)
+    try:
+        # Neither pool is set on the fresh module
+        with pytest.raises(RuntimeError, match="ThreadPoolExecutor has not been initialised"):
+            await offload.offload_io(_add, 1, 2)
+    finally:
+        # Restore originals so subsequent tests see the canonical module objects.
+        if _saved_holder is not None:
+            sys.modules[holder_name] = _saved_holder
+        elif holder_name in sys.modules:
+            del sys.modules[holder_name]
 
-    # Clean up
-    holder._process_pool = None
-    holder._thread_pool = None
+        if _saved_offload is not None:
+            sys.modules[offload_name] = _saved_offload
+        elif offload_name in sys.modules:
+            del sys.modules[offload_name]

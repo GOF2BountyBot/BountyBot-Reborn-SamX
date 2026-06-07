@@ -30,7 +30,46 @@ sys.modules.setdefault("sqlalchemy_utils", _mock_sau)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
-from persist.repositories.ship_repository import ShipRepository
+from persist.repositories.ship_repository import ShipRepository, _ship_column_names
+
+# ---------------------------------------------------------------------------
+# Order-independence guard: _ship_column_names() lazily caches column names
+# on the function object the first time it is called.  Tests that patch
+# 'persist.repositories.ship_repository.Ship' with a MockShip MUST not run
+# when the cache is None (it would call MockShip.__table__ which raises).
+#
+# This autouse fixture pre-warms the cache from the real Ship model BEFORE
+# each test, then clears it AFTER each test so that each test always starts
+# with a populated cache.  Pre-warming is safe here because the real Ship
+# model is importable in tests (sqlalchemy_utils is mocked at module top).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _warm_and_reset_ship_column_cache():
+    """Pre-populate _ship_column_names._cache from the real Ship, then restore after.
+
+    _ship_column_names() lazy-caches column names on the function object. Tests
+    that patch 'persist.repositories.ship_repository.Ship' with a MockShip would
+    crash (MockShip.__table__ AttributeError) if the cache is empty when the
+    patch is active.  This fixture ensures the cache is always pre-warmed from the
+    REAL Ship before each test, and clears it after so subsequent tests start fresh
+    and the fixture re-warms correctly.  Order-independence guaranteed.
+    """
+    from persist.models.ship import Ship  # real model — has __table__
+
+    # Save whatever the cache state is before this test
+    _saved_cache = getattr(_ship_column_names, "_cache", None)
+
+    # Pre-warm from the real Ship so MockShip patches never hit the
+    # None-cache → Ship.__table__ code path while Ship is patched
+    _ship_column_names._cache = {col.name for col in Ship.__table__.columns}  # type: ignore[attr-defined]
+
+    yield
+
+    # Restore original state (typically None → cleared for next test warm-up)
+    _ship_column_names._cache = _saved_cache  # type: ignore[attr-defined]
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

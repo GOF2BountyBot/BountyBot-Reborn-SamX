@@ -6,17 +6,28 @@ legacy-compatible stat collection helpers (get_dps, get_armour, get_shield).
 
 T10: fight_ships is now async and routes exclusively through TickResolver.
 SimpleTTKResolver and variance helpers are retired.
+
+P2-T2: fight_ships routes through offload_cpu(run_fight, ...) to run combat
+in a process-pool worker, keeping the event loop free. The worker returns a
+plain-dict result; fight_ships re-hydrates it into a full FightResults with a
+list[CombatEvent] combat_log so that all downstream code (persist, stat
+increments, duel decode) is byte-identical to the pre-offload path.
+P2-T6 will remove the re-hydration round-trip by making persist a passthrough.
 """
 
 from typing import TYPE_CHECKING
 
+from compute.combat_worker import run_fight
 from shared import bblogger
+from utils.offload import offload_cpu
 
 from services.combat_models import (
+    CombatEvent,
     CombatEventType,
     CombatMeta,
     CombatStats,
     FightResults,
+    FightStats,
     ShipLoadout,
 )
 from services.combat_resolver import TickResolver
@@ -25,6 +36,24 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger(__name__)
+
+
+def _is_orm_model(obj: object) -> bool:
+    """Return True if *obj* is a live SQLAlchemy ORM model instance.
+
+    Used by fight_ships to guard the offload boundary (C1a-4): ORM rows carry
+    lazy-load proxies that are not picklable and must never cross a process
+    boundary.  The check is duck-typed (no SQLAlchemy import at call time)
+    so it remains safe in forkserver child processes.
+    """
+    if obj is None:
+        return False
+    cls = type(obj)
+    # SQLAlchemy mapped classes carry a '__mapper__' attribute set by the
+    # mapper registry at class-definition time.  Plain dataclasses, Pydantic
+    # models, and primitive values do not have it.
+    return hasattr(cls, "__mapper__")
+
 
 # ---------------------------------------------------------------------------
 # CombatService — stat collection + fight orchestration (T10: async, TickResolver)
@@ -268,14 +297,63 @@ class CombatService:
             f"context={context!r} log_result={log_result} pvc_dr={pvc_damage_reduction}"
         )
 
-        # Run the tick resolver (pure, synchronous computation — no DB)
-        fight_results = self._tick_resolver.resolve(
+        # C1a-4: guard — guild_config MUST NOT cross the process boundary as an ORM row.
+        # Extract any needed scalar fields before offload; pass None for now (reserved).
+        # If guild_config were an SQLAlchemy model its lazy-load proxies are not picklable.
+        assert not _is_orm_model(guild_config), (
+            "fight_ships: guild_config must not be a live ORM model — extract scalar fields before offload (C1a-4)"
+        )
+
+        # P2-T2: run the tick resolver in a process-pool worker via offload_cpu.
+        # seed=None matches current default-RNG behaviour (non-deterministic production).
+        # compact=False → full result dict with timeline, summary, metadata, stats.
+        raw = await offload_cpu(
+            run_fight,
             loadout1,
             loadout2,
             pvc_damage_reduction=pvc_damage_reduction,
-            guild_config=guild_config,
+            seed=None,
             combatant1_label=combatant1_label,
             combatant2_label=combatant2_label,
+            compact=False,
+        )
+
+        # Re-hydrate the worker's list[dict] timeline back into list[CombatEvent] so that
+        # CombatLogService.persist's existing dataclasses.asdict loop, the post-fight stat-
+        # increment scans, and the duel decode all work UNCHANGED — persisted output is
+        # byte-identical to pre-offload.  P2-T6 will remove this round-trip by making
+        # persist a dict-passthrough.
+        combat_log: list[CombatEvent] = [
+            CombatEvent(
+                tick=ev["tick"],
+                type=ev["type"],
+                actor=ev["actor"],
+                target=ev["target"],
+                data=ev["data"],
+            )
+            for ev in raw["timeline"]
+        ]
+
+        # Reconstruct FightStats from the plain-dict slices returned by the worker.
+        def _stats_from_dict(d: dict) -> FightStats:
+            return FightStats(
+                ship_name=d["ship_name"],
+                raw_hp=d["raw_hp"],
+                raw_dps=d["raw_dps"],
+                varied_hp=d["varied_hp"],
+                varied_dps=d["varied_dps"],
+                ttk=d["ttk"],
+            )
+
+        fight_results = FightResults(
+            winner_name=raw["winner_name"],
+            loser_name=raw["loser_name"],
+            is_stalemate=raw["is_stalemate"],
+            ship1_stats=_stats_from_dict(raw["ship1_stats"]),
+            ship2_stats=_stats_from_dict(raw["ship2_stats"]),
+            winner_side=raw["winner_side"],
+            combat_log=combat_log,  # type: ignore[arg-type]  — list[CombatEvent], annotation is list[dict]
+            metadata=raw["metadata"],
         )
 
         if not log_result:

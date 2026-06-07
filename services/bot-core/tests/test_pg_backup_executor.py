@@ -89,12 +89,37 @@ def named_thread_pool():
     3. Patches pg_backup_executor.offload_io to the fresh function so the
        executor uses the holder we just configured.
     Teardown restores the original binding and nulls the pool.
+
+    ORDER-INDEPENDENCE FIX (P2-T2-CAUSED):
+    importlib.reload(utils.offload) re-executes
+    ``from utils.executor_holder import get_process_pool, get_thread_pool``
+    inside Module_Offload, rebinding those names to whatever holder is
+    in sys.modules at reload time (which may NOT be the canonical Module_A
+    that tests/services/conftest.py's session fixture registered the process
+    pool on).  All downstream callers whose fight_ships path reaches
+    offload_cpu → Module_Offload.get_process_pool would then see a holder
+    with _process_pool=None.
+    Fix: save and restore Module_Offload's get_process_pool and get_thread_pool
+    so the reload's rebinding is unwound on teardown.
     """
     import importlib
 
-    # Ensure fresh, consistent module instances.
-    holder_mod = importlib.reload(sys.modules["utils.executor_holder"])
-    offload_mod = importlib.reload(sys.modules["utils.offload"])
+    offload_mod = sys.modules["utils.offload"]
+    holder_mod_pre = sys.modules["utils.executor_holder"]
+
+    # Save the pre-reload state BEFORE any reload corrupts it.
+    # get_process_pool / get_thread_pool in offload_mod reference whatever
+    # holder was live when offload was last imported; we must restore them.
+    _saved_gpp = offload_mod.get_process_pool
+    _saved_gtp = offload_mod.get_thread_pool
+    # Save _process_pool from the holder BEFORE reload wipes it to None.
+    # The services session fixture may already have registered a thread pool
+    # here; we must put it back so fight_ships tests after us still work.
+    _saved_process_pool = holder_mod_pre._process_pool
+
+    # Reload both modules to get a clean, consistent pair.
+    holder_mod = importlib.reload(holder_mod_pre)
+    importlib.reload(offload_mod)
 
     pool = concurrent.futures.ThreadPoolExecutor(
         max_workers=2,
@@ -111,6 +136,15 @@ def named_thread_pool():
     finally:
         pool.shutdown(wait=True)
         holder_mod._thread_pool = None
+        # Restore _process_pool to whatever the services session fixture had set
+        # (the reload wiped it; without this, subsequent fight_ships calls raise
+        # "ProcessPoolExecutor has not been initialised").
+        holder_mod._process_pool = _saved_process_pool
+        # Restore Module_Offload's get_process_pool / get_thread_pool to the
+        # pre-reload bindings so callers using the old function reference still
+        # reach the correct (canonical) holder.
+        offload_mod.get_process_pool = _saved_gpp
+        offload_mod.get_thread_pool = _saved_gtp
         _exec_mod.offload_io = original_offload_io
 
 

@@ -4,6 +4,29 @@ Map Renderer Service.
 Renders bounty route overlays on the star map image using Pillow.
 The base map is lazy-loaded and cached; each render creates a copy
 and draws coloured lines and dots for the supplied route.
+
+CONCURRENCY MODEL (P3-T3)
+--------------------------
+``render_route(route, system_coords)`` is a PURE callable: it performs only
+PIL pixel work, accepts plain Python data (list / dict / tuples), and can be
+safely offloaded to a worker thread via ``offload_io``.
+
+For production use the caller MUST pre-warm the renderer once on the loop
+thread (via ``prewarm()`` or ``render_route_for_bounty``).  When the base image
+is already in ``_base_image``, ``_load_base()`` short-circuits with zero I/O or
+lock contention — making the worker execution genuinely CPU/IO-bound Pillow
+work only.  If the base image is NOT pre-warmed before the first offloaded
+call, ``_load_base()`` will execute on the worker thread — which is not the
+intended usage (use ``prewarm()`` at startup to prevent this).
+
+The recommended offload pattern is ``render_route_offloaded``::
+
+    png_bytes = await renderer.render_route_offloaded(route, system_graph)
+
+This method:
+  1. Resolves ``system_coords`` on the event-loop thread (safe: read-only
+     graph access, no DB).
+  2. Offloads the pure PIL render to the thread pool via ``offload_io``.
 """
 
 from __future__ import annotations
@@ -233,3 +256,53 @@ class MapRenderer:
             f"render_route_for_bounty: route={len(route)} systems, {len(system_coords)} coords resolved from graph"
         )
         return self.render_route(route, system_coords)
+
+    async def render_route_offloaded(
+        self,
+        route: list[str],
+        system_graph: SystemGraphService,
+    ) -> bytes:
+        """Resolve coords on the loop, then offload the pure PIL render to a worker thread.
+
+        This is the P3-T3 offload seam.  The method has two distinct phases:
+
+        **Phase 1 (loop thread)** — coordinate resolution:
+            Iterates the pre-warmed *system_graph* in-process to build a plain
+            ``dict[str, tuple[int, int]]``.  No DB, no async I/O.
+
+        **Phase 2 (worker thread, via offload_io)** — pure PIL render:
+            Calls :meth:`render_route` with the resolved coords.  Because the
+            renderer is always pre-warmed before requests are served (see
+            :meth:`prewarm` and the lifespan block in ``main.py``), ``_load_base``
+            short-circuits on the fast-path and the worker does only PIL work.
+
+        Parameters
+        ----------
+        route:
+            Ordered list of system names forming the route.
+        system_graph:
+            A **pre-loaded** :class:`~services.system_graph_service.SystemGraphService`
+            instance (graph must be warm; ``load_graph`` must NOT be called here).
+
+        Returns
+        -------
+        bytes
+            PNG-encoded image bytes, identical to those produced by
+            :meth:`render_route_for_bounty` for the same inputs.
+        """
+        from utils.offload import offload_io
+
+        # Phase 1: resolve coords on the event-loop thread.
+        # Read-only access to the pre-warmed graph — no DB, no async I/O.
+        system_coords: dict[str, tuple[int, int]] = {}
+        for system_name in route:
+            node = system_graph.get_system(system_name)
+            if node is not None:
+                system_coords[system_name] = node.coordinates
+        flogger.info(
+            f"render_route_offloaded: route={len(route)} systems, {len(system_coords)} coords resolved from graph"
+        )
+
+        # Phase 2: offload the pure PIL render to the thread pool.
+        # render_route accepts only plain Python data — safe to call from any thread.
+        return await offload_io(self.render_route, route, system_coords)

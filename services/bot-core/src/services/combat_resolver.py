@@ -134,6 +134,15 @@ _BOOSTER_MODULE_TYPE = "BoosterModule"
 _THRUSTER_MODULE_TYPE = "ThrusterModule"
 _EMERGENCY_SYSTEM_MODULE_TYPE = "EmergencySystemModule"
 
+# Module keys tracked in the §12 summary module_activations dict (P2-T4).
+# Mirrors the local set inside _build_fight_summary; promoted here so callers
+# (_increment_player_stats, tests) can reference it without duplicating the list.
+# COUPLING NOTE: _increment_player_stats reads module_activations from the summary
+# block, which filters by this allowlist. Any new module that emits a
+# module_activation event MUST be added here or it will be silently excluded from
+# player total_module_activations stats.
+_ACTIVATION_MODULES: frozenset[str] = frozenset({"cloak", "booster", "emergency_system"})
+
 # Built-in U'tool module name (§10 supersession)
 _UTOOL_BUILTIN_NAME = "U'tool"
 
@@ -1024,8 +1033,7 @@ def _build_fight_summary(
         slot = _name_to_slot.get(actor)
         return str(slot) if slot is not None else None
 
-    # Discrete activation modules tracked in summary (§12 / §13)
-    _ACTIVATION_MODULES = frozenset({"cloak", "booster", "emergency_system"})
+    # Discrete activation modules tracked in summary (§12 / §13) — uses module-level constant
 
     for ev in events:
         if ev.type == CombatEventType.weapon_fire:

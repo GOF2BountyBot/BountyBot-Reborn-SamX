@@ -435,8 +435,19 @@ class CombatService:
         """Increment Player combat-stat counters for human combatants (§13).
 
         total_fights += 1 always.
-        total_nukes_fired += count of weapon_fire/nuke events for this combatant.
-        total_module_activations += count of module_activation events for this combatant.
+        total_nukes_fired += secondary_fired["nuke"] from the side-keyed summary block.
+        total_module_activations += sum of module_activations values from the side-keyed summary block.
+
+        Counts are read from the pre-built per-combatant summary block (§12 data.summary.combatants)
+        rather than re-scanning the full event timeline. The summary is already side-keyed (slot "1"/"2"),
+        so attribution is correct even when both combatants share the same ship name.
+
+        COUPLING NOTE: module_activations in the summary is built via the hard-coded _ACTIVATION_MODULES
+        allowlist in combat_resolver._build_fight_summary (currently: cloak, booster, emergency_system).
+        The deleted full-timeline scan counted ANY module_activation event regardless of module key;
+        today only those 3 modules emit module_activation events (all are in the allowlist), so counts
+        match exactly. ANY FUTURE activation-emitting module MUST be added to _ACTIVATION_MODULES in
+        combat_resolver.py or it will be silently excluded from total_module_activations stats.
 
         NPC side (user_id is None): skip cleanly, no DB call.
         """
@@ -459,29 +470,11 @@ class CombatService:
 
             cb_block = combatants_summary.get(slot_key, {})
 
-            # Count nuke fires for this combatant from the event timeline
-            combatant_name = cb_block.get("name", "")
-            nukes_fired = 0
-            module_activations = 0
-            for ev in fight_results.combat_log:
-                # combat_log holds CombatEvent dataclass objects (not dicts); read attributes
-                if hasattr(ev, "type") and hasattr(ev, "actor"):
-                    ev_actor = ev.actor
-                    ev_type = ev.type
-                    ev_data = ev.data if hasattr(ev, "data") else {}
-                else:
-                    # Fallback if somehow a dict slipped through
-                    ev_actor = ev.get("actor") if isinstance(ev, dict) else None
-                    ev_type = ev.get("type") if isinstance(ev, dict) else None
-                    ev_data = ev.get("data", {}) if isinstance(ev, dict) else {}
-
-                if ev_actor != combatant_name:
-                    continue
-                if ev_type == CombatEventType.weapon_fire:
-                    if ev_data.get("subtype") == "nuke":
-                        nukes_fired += 1
-                elif ev_type == CombatEventType.module_activation:
-                    module_activations += 1
+            # Read counts from side-keyed summary block (P2-T4: replaces full-timeline scan).
+            # secondary_fired is sparse {subtype: count}; "nuke" key absent means 0 nukes.
+            nukes_fired: int = cb_block.get("secondary_fired", {}).get("nuke", 0)
+            # module_activations is sparse {module_key: count}; sum all present values.
+            module_activations: int = sum(cb_block.get("module_activations", {}).values())
 
             try:
                 player = await player_repo.get_by_user_and_guild(session, user_id, guild_id)

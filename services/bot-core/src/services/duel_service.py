@@ -304,10 +304,18 @@ class DuelService:
         credits_transferred = 0
 
         if not fight_results.is_stalemate:
-            # Determine winner and loser by matching ship names
-            if fight_results.winner_name == challenger_loadout.ship_name:
+            # P2-T8a: Decode winner via winner_side (1 = challenger/loadout1, 2 = target/loadout2).
+            # NEVER by ship name — ship names are presentation-only and are not unique within a guild.
+            # winner_side == 1 → challenger passed as loadout1; winner_side == 2 → target passed as loadout2.
+            if fight_results.winner_side == 1:
                 winner, loser = challenger, target
             else:
+                # winner_side == 2 (or unexpected None with is_stalemate=False — log and treat target as winner)
+                if fight_results.winner_side != 2:
+                    flogger.warning(
+                        f"Duel {duel_id}: is_stalemate=False but winner_side={fight_results.winner_side!r} "
+                        f"— expected 1 or 2; defaulting to target wins"
+                    )
                 winner, loser = target, challenger
 
             # Transfer credits and update stats

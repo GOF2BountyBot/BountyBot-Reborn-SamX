@@ -334,9 +334,22 @@ async def accept_duel(
         _duration_ticks = int(_fight_summary.get("duration_ticks", 0))
         _duration_s = (_duration_ticks * _tick_ms) / 1000.0 if _duration_ticks else None
 
+        # P2-T8a: resolve winner player_id (snowflake) from winner_side — NEVER by name.
+        # winner_side == 1 → challenger (loadout1); winner_side == 2 → target (loadout2).
+        # Stalemate → None.  Names (winner_name, loser_name) remain for presentation only.
+        _winner_side = getattr(fight, "winner_side", None)
+        if fight.is_stalemate or _winner_side is None:
+            _winner_player_id: int | None = None
+        elif _winner_side == 1:
+            _winner_player_id = challenger.id
+        else:
+            _winner_player_id = target.id
+
         return {
             "duel_id": duel_id,
             "is_stalemate": fight.is_stalemate,
+            # P2-T8a: winner reported by immutable player snowflake (not by name)
+            "winner_player_id": _winner_player_id,
             "winner_name": fight.winner_name,
             "loser_name": fight.loser_name,
             "credits_transferred": result["credits_transferred"],

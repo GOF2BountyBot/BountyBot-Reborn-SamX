@@ -57,12 +57,19 @@ def make_mock_fight_result(
     winner_name="Ship A",
     loser_name="Ship B",
     is_stalemate=False,
+    winner_side: int | None = None,
 ):
-    """Build a MagicMock that looks like a FightResult."""
+    """Build a MagicMock that looks like a FightResult.
+
+    winner_side must be a real int (1, 2) or None — never left as a MagicMock
+    auto-attribute, which would be truthy and silently mis-route winner_player_id
+    resolution in the router.  Defaults to None (stalemate/unknown).
+    """
     fight = MagicMock()
     fight.winner_name = winner_name
     fight.loser_name = loser_name
     fight.is_stalemate = is_stalemate
+    fight.winner_side = winner_side
     return fight
 
 
@@ -71,6 +78,7 @@ def make_mock_accept_result(
     is_stalemate=False,
     winner_name="Ship A",
     loser_name="Ship B",
+    winner_side: int | None = None,
     credits_transferred=500,
     stakes=500,
     challenger_id=100,
@@ -80,11 +88,17 @@ def make_mock_accept_result(
     target_credits=500,
     target_name=None,
 ):
-    """Build the dict returned by DuelService.accept_duel."""
+    """Build the dict returned by DuelService.accept_duel.
+
+    winner_side is forwarded to make_mock_fight_result so that the router's
+    getattr(fight, "winner_side", None) receives a real int or None — not a
+    truthy MagicMock auto-attribute that would silently mis-route winner_player_id.
+    """
     fight = make_mock_fight_result(
         winner_name=winner_name,
         loser_name=loser_name,
         is_stalemate=is_stalemate,
+        winner_side=winner_side,
     )
     challenger = make_mock_player(player_id=challenger_id, credits=challenger_credits)
     target = make_mock_player(player_id=target_id, credits=target_credits)
@@ -540,6 +554,120 @@ class TestAcceptDuel:
         assert data["duration_ticks"] is None
         assert data["duration_s"] is None
         assert data["combatants"] is None
+
+    # ------------------------------------------------------------------
+    # P2-T8a: winner_player_id resolved from winner_side, not from name
+    # ------------------------------------------------------------------
+
+    @patch("api.routers.duels.get_db_session")
+    def test_accept_duel_winner_player_id_challenger_wins(self, mock_get_db, client, mock_duel_service):
+        """P2-T8a: winner_side=1 → winner_player_id equals challenger snowflake (not target).
+
+        Anti-vacuous: swapping the side→id mapping in the router (i.e. side==1 → target.id)
+        would return target_id (200) instead of challenger_id (100), failing this assertion.
+        """
+        _configure_db_mock(mock_get_db)
+        CHALLENGER_ID = 100
+        TARGET_ID = 200
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, challenger_id=CHALLENGER_ID, target_id=TARGET_ID)
+        )
+        mock_duel_service.accept_duel = AsyncMock(
+            return_value=make_mock_accept_result(
+                duel_id=1,
+                is_stalemate=False,
+                winner_name="Ship A",
+                loser_name="Ship B",
+                winner_side=1,  # challenger wins
+                credits_transferred=500,
+                stakes=500,
+                challenger_id=CHALLENGER_ID,
+                challenger_credits=1500,
+                target_id=TARGET_ID,
+                target_credits=500,
+            )
+        )
+
+        response = client.post(f"/api/v1/duels/1/accept?user_id={TARGET_ID}")
+
+        assert response.status_code == 200
+        data = response.json()
+        # winner_side=1 → challenger is the winner
+        assert data["winner_player_id"] == CHALLENGER_ID, (
+            f"expected challenger_id={CHALLENGER_ID}, got {data['winner_player_id']}"
+        )
+        # Confirm it is NOT the target — wrong mapping must fail
+        assert data["winner_player_id"] != TARGET_ID
+
+    @patch("api.routers.duels.get_db_session")
+    def test_accept_duel_winner_player_id_target_wins(self, mock_get_db, client, mock_duel_service):
+        """P2-T8a: winner_side=2 → winner_player_id equals target snowflake (not challenger).
+
+        Anti-vacuous: swapping the side→id mapping in the router (i.e. side==2 → challenger.id)
+        would return challenger_id (100) instead of target_id (200), failing this assertion.
+        """
+        _configure_db_mock(mock_get_db)
+        CHALLENGER_ID = 100
+        TARGET_ID = 200
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, challenger_id=CHALLENGER_ID, target_id=TARGET_ID)
+        )
+        mock_duel_service.accept_duel = AsyncMock(
+            return_value=make_mock_accept_result(
+                duel_id=1,
+                is_stalemate=False,
+                winner_name="Ship B",
+                loser_name="Ship A",
+                winner_side=2,  # target wins
+                credits_transferred=500,
+                stakes=500,
+                challenger_id=CHALLENGER_ID,
+                challenger_credits=500,
+                target_id=TARGET_ID,
+                target_credits=1500,
+            )
+        )
+
+        response = client.post(f"/api/v1/duels/1/accept?user_id={TARGET_ID}")
+
+        assert response.status_code == 200
+        data = response.json()
+        # winner_side=2 → target is the winner
+        assert data["winner_player_id"] == TARGET_ID, (
+            f"expected target_id={TARGET_ID}, got {data['winner_player_id']}"
+        )
+        # Confirm it is NOT the challenger — wrong mapping must fail
+        assert data["winner_player_id"] != CHALLENGER_ID
+
+    @patch("api.routers.duels.get_db_session")
+    def test_accept_duel_winner_player_id_stalemate_is_none(self, mock_get_db, client, mock_duel_service):
+        """P2-T8a: stalemate (winner_side=None, is_stalemate=True) → winner_player_id is None."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, challenger_id=100, target_id=200)
+        )
+        mock_duel_service.accept_duel = AsyncMock(
+            return_value=make_mock_accept_result(
+                duel_id=1,
+                is_stalemate=True,
+                winner_name="",
+                loser_name="",
+                winner_side=None,
+                credits_transferred=0,
+                stakes=500,
+                challenger_id=100,
+                challenger_credits=1000,
+                target_id=200,
+                target_credits=1000,
+            )
+        )
+
+        response = client.post("/api/v1/duels/1/accept?user_id=200")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["winner_player_id"] is None
+        assert data["is_stalemate"] is True
 
 
 # ===========================================================================

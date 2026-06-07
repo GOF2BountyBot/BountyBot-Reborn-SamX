@@ -389,6 +389,7 @@ async def lifespan(fastapi_app: FastAPI):
 
         flogger.info("🗺️  Pre-warming shared MapRenderer + SystemGraphService...")
         _map_renderer = MapRenderer()
+        _map_renderer.prewarm()  # P3-T1: load base image once on the loop thread
         _system_graph = SystemGraphService()
         async with db_manager.get_session() as _warmup_db:
             await _system_graph.load_graph(_warmup_db)

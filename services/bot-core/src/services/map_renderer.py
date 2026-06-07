@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import os
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -89,21 +90,46 @@ class MapRenderer:
     def __init__(self, map_path: str | None = None) -> None:
         self._map_path: str = map_path or _DEFAULT_MAP_PATH
         self._base_image: Image.Image | None = None
+        self._base_lock: threading.Lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _load_base(self) -> Image.Image:
-        """Return the cached base map, loading it from disk if necessary."""
+        """Return the cached base map, loading it from disk if necessary.
+
+        Thread-safe: the double-checked lock ensures Image.open() is called
+        at most once even if multiple threads enter concurrently on a cold
+        cache.  After the first load the fast-path (outer ``if``) short-
+        circuits with zero lock contention.
+        """
         if self._base_image is None:
-            try:
-                self._base_image = Image.open(self._map_path).convert("RGB")
-                flogger.info(f"Base map loaded from {self._map_path}")
-            except Exception as e:
-                flogger.error(f"Failed to load base map from {self._map_path}: {e}")
-                raise
+            with self._base_lock:
+                # Second check inside the lock: another thread may have
+                # loaded the image while we were waiting to acquire it.
+                if self._base_image is None:
+                    try:
+                        self._base_image = Image.open(self._map_path).convert("RGB")
+                        flogger.info(f"Base map loaded from {self._map_path}")
+                    except Exception as e:
+                        flogger.error(f"Failed to load base map from {self._map_path}: {e}")
+                        raise
         return self._base_image
+
+    # ------------------------------------------------------------------
+    # Public warm API
+    # ------------------------------------------------------------------
+
+    def prewarm(self) -> None:
+        """Load and cache the base map image eagerly.
+
+        Intended to be called once on the event-loop thread during application
+        startup (inside the FastAPI lifespan block) so that the image is
+        already in memory before any worker threads touch the renderer.
+        Calling this more than once is a no-op (the cache is already warm).
+        """
+        self._load_base()
 
     # ------------------------------------------------------------------
     # Public API

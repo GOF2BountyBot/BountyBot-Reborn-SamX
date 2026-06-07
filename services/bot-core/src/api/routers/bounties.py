@@ -609,7 +609,23 @@ async def admin_spawn_bounties(
             )
 
         # ----------------------------------------------------------------
-        # Phase 2a — batch-render all route maps in-process (no HTTP self-call).
+        # Phase 2a — parallel fan-out render for all route maps.
+        #
+        # For each spawned bounty, resolve its route list on the loop (cheap,
+        # read-only graph access), then fan out ALL PIL renders concurrently
+        # via the T3 offload seam (render_route_offloaded).  Coord resolution
+        # happens inside render_route_offloaded Phase-1 (on the loop thread);
+        # the pure PIL work runs concurrently on the thread pool.
+        #
+        # CACHE WRITE DISCIPLINE: _map_cache is written ON THE LOOP THREAD
+        # ONLY — after gather() resolves, in the loop body below.  Worker
+        # threads must never write to this dict (no thread-safety guarantee).
+        # Unbounded-growth fix is a separate task (P3-T6); do not add a cap here.
+        #
+        # Dead-check removed: newly-spawned bounties cannot already be in
+        # _map_cache (their IDs are fresh from Phase 1), so the old
+        # ``if cache_key in _map_cache`` branch was always-missing dead code.
+        #
         # _map_renderer / _system_graph come from Depends (optional — None when
         # the renderer/graph is not yet available at startup).
         # ----------------------------------------------------------------
@@ -619,21 +635,30 @@ async def admin_spawn_bounties(
                 async with get_db_session() as render_db:
                     if not _system_graph.is_loaded():
                         await _system_graph.load_graph(render_db)
-                for b in spawned_orm:
+
+                # Build one render coroutine per bounty (coords resolved on loop inside
+                # render_route_offloaded Phase-1; PIL work offloaded to thread pool).
+                async def _render_one(b) -> tuple[int, list[str], bytes]:
+                    route = list(b.route) if b.route else []
                     try:
-                        route = list(b.route) if b.route else []
-                        cache_key = (b.id, tuple(route))
-                        if cache_key in _map_cache:
-                            bounty_pngs[b.id] = _map_cache[cache_key]
-                        else:
-                            png = _map_renderer.render_route_for_bounty(route, _system_graph)
-                            _map_cache[cache_key] = png
-                            bounty_pngs[b.id] = png
+                        png = await _map_renderer.render_route_offloaded(route, _system_graph)
                     except Exception as render_exc:  # pylint: disable=broad-exception-caught
                         flogger.warning(
                             f"Admin spawn: map render failed for bounty {b.id}: {render_exc} — "
                             "will announce without route map image"
                         )
+                        return (b.id, route, b"")
+                    return (b.id, route, png)
+
+                render_results = await asyncio.gather(*[_render_one(b) for b in spawned_orm])
+
+                # Write cache ON THE LOOP THREAD ONLY — after gather resolves.
+                for bounty_id, route, png in render_results:
+                    if png:
+                        cache_key = (bounty_id, tuple(route))
+                        _map_cache[cache_key] = png  # loop-thread write; safe
+                        bounty_pngs[bounty_id] = png
+
             except Exception as graph_exc:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"Admin spawn: system graph load failed: {graph_exc} — skipping all map images")
         elif spawned_orm:

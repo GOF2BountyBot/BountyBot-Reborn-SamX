@@ -791,3 +791,284 @@ class TestSummaryEndToEnd:
         # C2 has no weapons — C2.damage_dealt should be 0
         assert s["combatants"]["2"]["damage_dealt"] == 0
         assert s["combatants"]["1"]["damage_taken"] == 0
+
+
+# ---------------------------------------------------------------------------
+# TestSecondaryRoundsByWeapon — P2-T3: secondary_rounds_by_weapon sparse dict
+# ---------------------------------------------------------------------------
+
+
+def _sec_event_with_side(actor: str, subtype: str, weapon: str, side: int, tick: int = 1) -> CombatEvent:
+    """Secondary weapon_fire event with data['side'] set for correct slot attribution."""
+    return CombatEvent(
+        tick=tick,
+        type=CombatEventType.weapon_fire,
+        actor=actor,
+        target="other",
+        data={
+            "slot": "secondary",
+            "subtype": subtype,
+            "weapon": weapon,
+            "hit": True,
+            "accuracy": 1.0,
+            "side": side,  # attacker's slot — mirrors what the resolver emits (CI-20)
+        },
+    )
+
+
+class TestSecondaryRoundsByWeapon:
+    # ------------------------------------------------------------------
+    # Additive check: pre-existing combatant keys unchanged with no secondaries
+    # ------------------------------------------------------------------
+
+    _PRE_EXISTING_KEYS = (
+        "name",
+        "ship",
+        "start_hp",
+        "final_hp",
+        "damage_dealt",
+        "damage_taken",
+        "shots_fired",
+        "shots_hit",
+        "accuracy",
+        "module_activations",
+        "secondary_fired",
+    )
+
+    def test_pre_existing_keys_byte_identical_no_secondaries(self):
+        """All pre-existing combatant keys are present and byte-identical when no secondaries fire.
+
+        The only change to the block is a new key; existing values must be unaltered.
+        """
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _weapon_fire_event("C1", "C2", tick=1, hit=True),
+            _damage_event("C2", attacker="C1", amount=20, tick=1),
+            _fight_end_event(10, "C1", "hp_depleted", 10, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 10, "C1")
+        for ck in ("1", "2"):
+            cb = s["combatants"][ck]
+            for key in self._PRE_EXISTING_KEYS:
+                assert key in cb, f"Combatant {ck} missing pre-existing key: {key}"
+        # Spot-check values are unchanged (not just present)
+        assert s["combatants"]["1"]["shots_fired"] == 1
+        assert s["combatants"]["1"]["shots_hit"] == 1
+        assert s["combatants"]["1"]["accuracy"] == pytest.approx(1.0)
+        assert s["combatants"]["1"]["damage_dealt"] == 20
+        assert s["combatants"]["2"]["secondary_fired"] == {}
+
+    def test_new_field_present_in_combatant_block(self):
+        """secondary_rounds_by_weapon key is present in every combatant block."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _fight_end_event(1, None, "time_cap", 1, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 1, None)
+        for ck in ("1", "2"):
+            assert "secondary_rounds_by_weapon" in s["combatants"][ck]
+
+    def test_empty_when_no_secondaries(self):
+        """secondary_rounds_by_weapon is {} for both sides when no secondary fires occur."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _fight_end_event(1, None, "time_cap", 1, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 1, None)
+        assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == {}
+        assert s["combatants"]["2"]["secondary_rounds_by_weapon"] == {}
+
+    def test_primary_events_not_tallied(self):
+        """Primary weapon_fire events (slot='primary') do NOT appear in secondary_rounds_by_weapon."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _weapon_fire_event("C1", "C2", tick=1, hit=True),  # primary slot
+            _fight_end_event(2, None, "time_cap", 2, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 2, None)
+        assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == {}
+
+    # ------------------------------------------------------------------
+    # Correctness: side-keyed counts match hand-tally of secondary weapon_fire events
+    # ------------------------------------------------------------------
+
+    def test_single_weapon_single_fire(self):
+        """One secondary fire on side 1: secondary_rounds_by_weapon[weapon_name] == 1."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _sec_event_with_side("C1", "rocket", "Viper Rocket", side=1, tick=1),
+            _fight_end_event(5, None, "time_cap", 5, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None)
+        assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == {"Viper Rocket": 1}
+        assert s["combatants"]["2"]["secondary_rounds_by_weapon"] == {}
+
+    def test_multiple_fires_same_weapon(self):
+        """Three fires of the same weapon on side 1: count == 3."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _sec_event_with_side("C1", "rocket", "Viper Rocket", side=1, tick=1),
+            _sec_event_with_side("C1", "rocket", "Viper Rocket", side=1, tick=2),
+            _sec_event_with_side("C1", "rocket", "Viper Rocket", side=1, tick=3),
+            _fight_end_event(5, None, "time_cap", 5, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None)
+        assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == {"Viper Rocket": 3}
+
+    def test_two_weapons_two_sides(self):
+        """C1 fires RocketA x2; C2 fires MissileB x1. Both sides tallied independently."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _sec_event_with_side("C1", "rocket", "RocketA", side=1, tick=1),
+            _sec_event_with_side("C1", "rocket", "RocketA", side=1, tick=2),
+            _sec_event_with_side("C2", "missile", "MissileB", side=2, tick=3),
+            _fight_end_event(5, None, "time_cap", 5, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None)
+        assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == {"RocketA": 2}
+        assert s["combatants"]["2"]["secondary_rounds_by_weapon"] == {"MissileB": 1}
+
+    def test_mixed_weapons_per_side(self):
+        """C1 fires RocketA x2 and MissileC x1; counts split by weapon name."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _sec_event_with_side("C1", "rocket", "RocketA", side=1, tick=1),
+            _sec_event_with_side("C1", "missile", "MissileC", side=1, tick=2),
+            _sec_event_with_side("C1", "rocket", "RocketA", side=1, tick=3),
+            _fight_end_event(5, None, "time_cap", 5, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None)
+        assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == {"RocketA": 2, "MissileC": 1}
+
+    # ------------------------------------------------------------------
+    # Criterion match: secondary_rounds_by_weapon mirrors _consume_secondary_ammo scan
+    # ------------------------------------------------------------------
+
+    def test_matches_consume_ammo_scan_criterion(self):
+        """secondary_rounds_by_weapon per side matches a manual scan using _consume_secondary_ammo
+        criterion (weapon_fire events with slot=='secondary', counted by data['weapon']).
+
+        This verifies P2-T5 can collapse the full-timeline scan onto the summary field
+        and produce identical ammo decrements.
+        """
+        c1, c2 = _make_states("Pilot1", "Pilot2")
+        sec_events = [
+            _sec_event_with_side("Pilot1", "rocket", "Viper Rocket", side=1, tick=1),
+            _sec_event_with_side("Pilot1", "rocket", "Viper Rocket", side=1, tick=2),
+            _sec_event_with_side("Pilot1", "missile", "Patala Missile", side=1, tick=3),
+            _sec_event_with_side("Pilot2", "rocket", "Viper Rocket", side=2, tick=4),
+        ]
+        events = [
+            _fight_start_event("Pilot1", "Pilot2"),
+            *sec_events,
+            _fight_end_event(10, None, "time_cap", 10, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 10, None)
+
+        # Hand-tally using same criterion as _consume_secondary_ammo:
+        # filter weapon_fire, slot=="secondary", count by data["weapon"] per side
+        hand_tally: dict[str, dict[str, int]] = {"1": {}, "2": {}}
+        for ev in sec_events:
+            if ev.data.get("slot") == "secondary":
+                wname = ev.data.get("weapon", "")
+                slot_str = str(ev.data["side"])
+                if wname and slot_str in hand_tally:
+                    hand_tally[slot_str][wname] = hand_tally[slot_str].get(wname, 0) + 1
+
+        assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == hand_tally["1"]
+        assert s["combatants"]["2"]["secondary_rounds_by_weapon"] == hand_tally["2"]
+
+    # ------------------------------------------------------------------
+    # Same-name correctness: side attribution via data["side"] not actor name
+    # ------------------------------------------------------------------
+
+    def test_same_name_ships_split_by_side_not_name(self):
+        """When both combatants share an identical ship name, secondary_rounds_by_weapon
+        must split counts correctly by side (data['side']), NOT collapse by actor name.
+
+        C1 fires 'Viper Rocket' x2 (side=1); C2 fires 'Viper Rocket' x1 (side=2).
+        Both ships are named 'SameName'. Without side-keying they would collapse.
+        """
+        c1, c2 = _make_states("SameName", "SameName")  # identical ship names
+        events = [
+            _fight_start_event("SameName", "SameName"),
+            _sec_event_with_side("SameName", "rocket", "Viper Rocket", side=1, tick=1),
+            _sec_event_with_side("SameName", "rocket", "Viper Rocket", side=1, tick=2),
+            _sec_event_with_side("SameName", "rocket", "Viper Rocket", side=2, tick=3),
+            _fight_end_event(5, None, "time_cap", 5, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None)
+        # Side 1 fired 2; side 2 fired 1 — must NOT be merged by name
+        assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == {"Viper Rocket": 2}
+        assert s["combatants"]["2"]["secondary_rounds_by_weapon"] == {"Viper Rocket": 1}
+
+    def test_same_name_no_name_collision_in_secondary_fired(self):
+        """Same-name fight: secondary_fired is also side-keyed; verify both fields agree
+        on the same-name attribution invariant.
+        """
+        c1, c2 = _make_states("Clone", "Clone")
+        events = [
+            _fight_start_event("Clone", "Clone"),
+            _sec_event_with_side("Clone", "missile", "Patala Missile", side=1, tick=1),
+            _sec_event_with_side("Clone", "missile", "Patala Missile", side=2, tick=2),
+            _sec_event_with_side("Clone", "missile", "Patala Missile", side=2, tick=3),
+            _fight_end_event(5, None, "time_cap", 5, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None)
+        # secondary_fired: keyed by subtype
+        assert s["combatants"]["1"]["secondary_fired"] == {"missile": 1}
+        assert s["combatants"]["2"]["secondary_fired"] == {"missile": 2}
+        # secondary_rounds_by_weapon: keyed by weapon name — must match same split
+        assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == {"Patala Missile": 1}
+        assert s["combatants"]["2"]["secondary_rounds_by_weapon"] == {"Patala Missile": 2}
+
+    # ------------------------------------------------------------------
+    # TickResolver integration: real fight with secondaries
+    # ------------------------------------------------------------------
+
+    def test_resolver_fight_with_secondaries_has_field(self):
+        """A TickResolver fight with a secondary-equipped ship produces secondary_rounds_by_weapon
+        in the summary, and the total count matches weapon_fire events in the combat log.
+        """
+        from src.services.combat_models import WeaponStats
+
+        rocket = WeaponStats(
+            name="Viper Rocket",
+            dps=10.0,
+            damage_per_shot=100,
+            loading_speed_ms=500,
+            range_m=5000.0,
+            subtype="rocket",
+        )
+        lo1 = ShipLoadout(
+            ship_name="Attacker",
+            base_armour=500,
+            weapons=[],
+            secondary_weapons=[rocket],
+        )
+        lo2 = ShipLoadout(ship_name="Defender", base_armour=500, weapons=[], secondary_weapons=[])
+        result = TickResolver(seed=42).resolve(lo1, lo2)
+        s = result.metadata["summary"]
+
+        # Gather weapon_fire secondary events from combat_log for side 1
+        timeline_count: dict[str, int] = {}
+        for ev in result.combat_log:
+            if ev.type == "weapon_fire" and ev.data.get("slot") == "secondary":
+                side_str = str(ev.data.get("side", ""))
+                if side_str == "1":
+                    wname = ev.data.get("weapon", "")
+                    if wname:
+                        timeline_count[wname] = timeline_count.get(wname, 0) + 1
+
+        field = s["combatants"]["1"]["secondary_rounds_by_weapon"]
+        assert field == timeline_count, (
+            f"secondary_rounds_by_weapon {field!r} != hand-tally from combat_log {timeline_count!r}"
+        )

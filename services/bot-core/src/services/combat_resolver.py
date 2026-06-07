@@ -966,8 +966,10 @@ def _build_fight_summary(
       shots_fired       — count of weapon_fire events actor==combatant
       shots_hit         — count of weapon_fire events actor==combatant AND data["hit"]==True
       accuracy          — shots_hit/shots_fired; 0.0 if no shots
-      module_activations — {module_key: count} SPARSE (cloak/booster/emergency_system only)
-      secondary_fired   — {subtype: count} SPARSE (secondaries only)
+      module_activations          — {module_key: count} SPARSE (cloak/booster/emergency_system only)
+      secondary_fired             — {subtype: count} SPARSE (secondaries only)
+      secondary_rounds_by_weapon  — {weapon_name: count} SPARSE (secondaries only, by weapon name);
+                                    mirrors _consume_secondary_ammo criterion (slot=="secondary").
       damage_dealt      — sum of damage event amounts where data["source"]["attacker"]==combatant
       damage_taken      — sum of damage event amounts where target==combatant
 
@@ -1007,6 +1009,7 @@ def _build_fight_summary(
     shots_hit: dict[str, int] = {c1_slot: 0, c2_slot: 0}
     module_activations: dict[str, dict[str, int]] = {c1_slot: {}, c2_slot: {}}
     secondary_fired: dict[str, dict[str, int]] = {c1_slot: {}, c2_slot: {}}
+    secondary_rounds_by_weapon: dict[str, dict[str, int]] = {c1_slot: {}, c2_slot: {}}
     damage_dealt: dict[str, int] = {c1_slot: 0, c2_slot: 0}
     damage_taken: dict[str, int] = {c1_slot: 0, c2_slot: 0}
 
@@ -1036,6 +1039,12 @@ def _build_fight_summary(
                 sub = ev.data.get("subtype", "")
                 if sub:
                     secondary_fired[ev_slot][sub] = secondary_fired[ev_slot].get(sub, 0) + 1
+                # secondary_rounds_by_weapon — count by weapon name (same slot criterion);
+                # side-keyed so same-name ships accumulate per-side correctly (CI-24).
+                # Criterion mirrors _consume_secondary_ammo: slot=="secondary" + weapon name present.
+                w_name = ev.data.get("weapon", "")
+                if w_name and ev_slot in secondary_rounds_by_weapon:
+                    secondary_rounds_by_weapon[ev_slot][w_name] = secondary_rounds_by_weapon[ev_slot].get(w_name, 0) + 1
 
         elif ev.type == CombatEventType.module_activation:
             ev_slot = _slot_from_event(ev)
@@ -1090,6 +1099,7 @@ def _build_fight_summary(
             "accuracy": acc,
             "module_activations": dict(module_activations[slot_key]),  # sparse — only keys that fired ≥1
             "secondary_fired": dict(secondary_fired[slot_key]),  # sparse — only subtypes that fired ≥1
+            "secondary_rounds_by_weapon": dict(secondary_rounds_by_weapon[slot_key]),  # sparse — by weapon name
         }
 
     return {

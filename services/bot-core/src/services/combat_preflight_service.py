@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from utils.offload import offload_cpu
 
 from services.bounty_service import BountyService
+from services.combat_service import _is_orm_model
 from services.game_constants import GameConstants
 from services.loadout_builder import LoadoutBuilder
 
@@ -175,6 +176,19 @@ class CombatPreflightService:
             criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
             # seed=None matches the default-RNG behaviour of the old fight_ships path.
             matchups.append((player_loadout, criminal_loadout, None, "", ""))
+
+        # C1a-4 parity guard: ensure no live ORM model crosses the process boundary.
+        # run_fight_batch has no guild_config param, but a future refactor could
+        # accidentally introduce one.  This mirrors the _is_orm_model assert in fight_ships.
+        assert not _is_orm_model(GameConstants.PVC_DAMAGE_REDUCTION), (
+            "estimate: pvc_damage_reduction must not be a live ORM model (C1a-4)"
+        )
+        for _idx, _matchup in enumerate(matchups):
+            for _pos, _elem in enumerate(_matchup):
+                assert not _is_orm_model(_elem), (
+                    f"estimate: matchup[{_idx}][{_pos}] must not be a live ORM model — "
+                    "extract scalar fields before offload (C1a-4)"
+                )
 
         # ONE dispatch: all num_sims fights run inside a single worker process.
         # compact=True → each result is (winner_side, is_stalemate).

@@ -19,6 +19,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
+import orjson
 from shared import bblogger
 from sqlalchemy import MetaData, inspect, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
@@ -26,6 +27,22 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from sqlalchemy.orm import sessionmaker
 
 flogger = bblogger.get_logger("bot-database-manager")
+
+# ---------------------------------------------------------------------------
+# orjson codec for SQLAlchemy JSON/JSONB columns (P4-T2).
+#
+# OPT_NAIVE_UTC: naive datetimes (no tzinfo) are treated as UTC and serialized
+# to RFC-3339 format ("YYYY-MM-DDTHH:MM:SS+00:00").  All JSON columns in this
+# codebase store only string-keyed dicts — OPT_NON_STR_KEYS is intentionally
+# absent (fail-fast on any future int-keyed write; see P4-T3 audit).
+#
+# json_serializer must return str (SQLAlchemy contract); orjson.dumps returns
+# bytes, so .decode() is required.
+# ---------------------------------------------------------------------------
+_ORJSON_OPTS: int = orjson.OPT_NAIVE_UTC
+
+_json_serializer = lambda o: orjson.dumps(o, option=_ORJSON_OPTS).decode()  # noqa: E731
+_json_deserializer = orjson.loads
 
 
 class DatabaseManager:
@@ -118,7 +135,13 @@ class DatabaseManager:
         try:
             flogger.info("Initializing async database connection...")
             flogger.debug("Creating AsyncEngine with asyncpg dialect and connection pool")
-            self._engine = create_async_engine(self._connection_string, future=True, **self._pool_config)
+            self._engine = create_async_engine(
+                self._connection_string,
+                future=True,
+                json_serializer=_json_serializer,
+                json_deserializer=_json_deserializer,
+                **self._pool_config,
+            )
             flogger.debug("AsyncEngine created successfully")
             flogger.debug("Creating async_sessionmaker")
             self._session_factory = sessionmaker(bind=self._engine, class_=AsyncSession, expire_on_commit=False)

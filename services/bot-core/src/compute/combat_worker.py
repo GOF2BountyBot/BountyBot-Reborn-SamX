@@ -178,4 +178,52 @@ def run_fight(
     }
 
 
-__all__: list[str] = ["run_fight"]
+def run_fight_batch(
+    matchups: list[tuple],
+    *,
+    pvc_damage_reduction: float,
+    compact: bool = True,
+) -> list[tuple]:
+    """Execute a batch of combat simulations in a single worker process.
+
+    Designed to replace N separate ``offload_cpu(run_fight, ...)`` calls with a
+    single process-pool dispatch so the event loop blocks only once for the
+    entire preflight Monte-Carlo pass.
+
+    Parameters
+    ----------
+    matchups:
+        A list of 5-tuples, each of the form::
+
+            (loadout1, loadout2, seed, combatant1_label, combatant2_label)
+
+        All elements must be picklable.  ``seed`` may be ``None`` (non-deterministic)
+        or an ``int`` (pinned for tests).
+    pvc_damage_reduction:
+        Keith T. Maxwell DR forwarded to every ``run_fight`` call unchanged.
+    compact:
+        Forwarded to ``run_fight``.  ``True`` (default) → each result is a
+        ``(winner_side, is_stalemate)`` 2-tuple.  ``False`` → full dict.
+
+    Returns
+    -------
+    list[tuple[int | None, bool]]
+        One ``(winner_side, is_stalemate)`` per matchup when ``compact=True``.
+        One full-result ``dict`` per matchup when ``compact=False``.
+    """
+    results = []
+    for loadout1, loadout2, seed, combatant1_label, combatant2_label in matchups:
+        result = run_fight(
+            loadout1,
+            loadout2,
+            pvc_damage_reduction=pvc_damage_reduction,
+            seed=seed,
+            combatant1_label=combatant1_label,
+            combatant2_label=combatant2_label,
+            compact=compact,
+        )
+        results.append(result)
+    return results
+
+
+__all__: list[str] = ["run_fight", "run_fight_batch"]

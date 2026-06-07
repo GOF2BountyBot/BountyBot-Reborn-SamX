@@ -31,12 +31,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from types import SimpleNamespace
 
+from compute.combat_worker import run_fight_batch
 from persist.repositories.bounty_repository import BountyRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
+from utils.offload import offload_cpu
 
 from services.bounty_service import BountyService
-from services.combat_service import CombatService
 from services.game_constants import GameConstants
 from services.loadout_builder import LoadoutBuilder
 
@@ -73,7 +74,6 @@ class CombatPreflightService:
 
     def __init__(self):
         self.bounty_repo = BountyRepository()
-        self.combat_service = CombatService()
 
     async def _synthesize_criminals(
         self,
@@ -165,19 +165,34 @@ class CombatPreflightService:
                 sample_size=0,
             )
 
-        player_wins = 0
-        criminal_wins = 0
+        # P2-T7: pre-draw criminals (with replacement) and build matchup list,
+        # then dispatch a SINGLE process-pool call for all num_sims fights.
+        # The draw replicates the old per-sim random.choice(criminals) exactly —
+        # same RNG object, same number of draws, same order.
+        matchups: list[tuple] = []
         for _ in range(num_sims):
             bounty = random.choice(criminals)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
-            # T10: fight_ships is now async + keyword-only; log_result=False skips DB writes (preflight path)
-            fight = await self.combat_service.fight_ships(
-                player_loadout,
-                criminal_loadout,
-                log_result=False,
-                pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION,
-            )
-            if fight.is_stalemate or fight.winner_name == player_loadout.ship_name:
+            # seed=None matches the default-RNG behaviour of the old fight_ships path.
+            matchups.append((player_loadout, criminal_loadout, None, "", ""))
+
+        # ONE dispatch: all num_sims fights run inside a single worker process.
+        # compact=True → each result is (winner_side, is_stalemate).
+        # player = combatant1 = side 1; criminal = combatant2 = side 2.
+        sim_results: list[tuple] = await offload_cpu(
+            run_fight_batch,
+            matchups,
+            pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION,
+            compact=True,
+        )
+
+        player_wins = 0
+        criminal_wins = 0
+        for winner_side, is_stalemate in sim_results:
+            # Stalemate counts as a player win (same semantics as the old
+            # `fight.is_stalemate or fight.winner_name == player_loadout.ship_name`
+            # check — stalemate was always a player win in that branch too).
+            if is_stalemate or winner_side == 1:
                 player_wins += 1
             else:
                 criminal_wins += 1

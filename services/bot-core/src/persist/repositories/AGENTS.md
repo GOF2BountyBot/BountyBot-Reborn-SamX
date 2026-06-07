@@ -223,12 +223,16 @@ Used when reading-then-modifying credits to prevent TOCTOU race conditions:
 ```python
 async def get_by_id_for_update(self, db: AsyncSession, obj_id: int) -> Player | None:
     result = await db.execute(
-        select(Player).where(Player.id == obj_id).with_for_update()
+        select(Player).where(Player.id == obj_id)
+        .with_for_update().execution_options(populate_existing=True)
     )
     return result.scalars().first()
 ```
 
-Use this inside an explicit `async with db.begin()` transaction block when the caller will later modify and commit.
+Use this inside an explicit `async with db.begin()` transaction block when the
+caller will later modify and commit. The `populate_existing=True` is **required**,
+not cosmetic — see the **Refresh-under-lock** rule under "Global lock-ordering
+rule" below for why.
 
 ### Global lock-ordering rule (D5 — deadlock safety)
 
@@ -278,6 +282,61 @@ choke-point (`equip_one`, `unequip_one`, `evacuate_ship_loadout_to_inventory`,
 > that same row in the same transaction — an identity-map hit on an
 > already-locked row — so it is serialised by transitivity and needs no separate
 > lock.)
+
+**Refresh-under-lock (D5-T1).** A locked read MUST go through
+`get_by_id_for_update`, which emits
+`select(...).with_for_update().execution_options(populate_existing=True)`. The
+`populate_existing=True` is **required**, not cosmetic: our sessions run with
+`expire_on_commit=False` (production default), so an instance already present in
+the identity map (e.g. pre-loaded by an earlier unlocked `get_by_id` in the same
+transaction — as `shop_service.{sell_ship,purchase_ship}` and
+`ships.transfer_ship` do) would be returned **from cache**. Without
+`populate_existing`, the `FOR UPDATE` re-read acquires the row lock but the
+guard then reads the **stale pre-commit** attributes — the classic "lock looks
+correct, tests green" trap. `populate_existing=True` makes the ORM
+unconditionally overwrite the in-memory object with the row just fetched under
+the lock — *"the corresponding instances in the Session will be fully refreshed –
+erasing any existing data within the objects (including pending changes) and
+replacing with the data loaded from the result"*
+([SQLAlchemy 2.0 — Populate Existing](https://docs.sqlalchemy.org/en/20/orm/queryguide/api.html#populate-existing)).
+So the lock-holder always evaluates its guards against committed state.
+
+**Transaction boundary (D5-T3).** A PostgreSQL `FOR UPDATE` row lock is held
+until the current transaction ends: *"Row-level locks are released at
+transaction end or during savepoint rollback"* and `FOR UPDATE` *"prevents them
+from being locked, modified or deleted by other transactions until the current
+transaction ends"*
+([PostgreSQL 13.3.2 — Row-Level Locks](https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS)).
+Wrapping the lock acquisition in `async with db.begin():` does **not** change
+that *duration*, because an explicit `Session.begin()` is not a separate or
+nested transaction from the one the session would autobegin on its first DB
+statement — *"The `Session.begin()` method and the session's "autobegin" process
+use the same sequence of steps to begin the transaction"*
+([SQLAlchemy 2.0 — Explicit Begin](https://docs.sqlalchemy.org/en/20/orm/session_transaction.html#explicit-begin)).
+`db.begin()` is still **mandatory** for any route that calls a flush-only
+(`commit=False`) service: it makes the lock acquisition and the flush-only
+writes one explicit unit of work that commits/rolls back together (atomicity),
+and it is the contract enforced by `tests/test_transaction_discipline.py`
+(relying on `get_db_session`'s clean-exit auto-commit instead is not acceptable —
+the boundary must be explicit). Within that unit of work, acquire the `Player`
+lock (`get_by_id_for_update`) **FIRST**, before any read whose value feeds the
+read-modify-write (rule 1 above).
+
+**Bypass routes are closed (D5-T3).** The two routes that used to mutate the
+loadout/inventory aggregate *without* the choke-point —
+`inventory.consolidate_inventory` (POST `/inventory/player/{id}/consolidate`) and
+`ships.update_ship_loadout` (PUT `/ships/{id}/loadout`, admin/maintenance JSON
+overwrite) — now both open an explicit `db.begin()` and take the `Player` row
+`FOR UPDATE` before any read whose value feeds the read-modify-write (rule 3
+above). For `consolidate_inventory` the `get_by_id_for_update` IS the first DB
+statement in the block. For `update_ship_loadout` the lock is preceded by one
+unlocked `player_ship_repo.get_by_id(ship_id)` read — a non-RMW lookup that only
+resolves the ship's immutable `player_id` so the route knows *which* aggregate to
+lock; its value never feeds the protected invariant, so it does not violate rule
+3 (which governs reads that feed the RMW, not the read that selects the lock
+target). They are the canonical **worked examples** of applying this rule
+outside the `LoadoutConsistencyService` choke-point; copy their inline comment
+pattern when adding any new route that touches the aggregate directly.
 
 ### update_credits with commit=False
 
@@ -521,4 +580,6 @@ add coverage but do not substitute for the integration assertion.
 
 ---
 
-*Last updated: 2026-04-30*
+*Last updated: 2026-06-07 (D5-T4: consolidated the D5 lock-ordering /
+refresh-under-lock / transaction-boundary convention into the "Global
+lock-ordering rule" section)*

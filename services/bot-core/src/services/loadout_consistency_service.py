@@ -120,6 +120,13 @@ class LoadoutConsistencyService:
     async def _lock_player(self, db: AsyncSession, player_id: int) -> None:
         """Acquire the aggregate-root ``SELECT ... FOR UPDATE`` lock on the Player row (D5).
 
+        Canonical rule (ordering + refresh-under-lock + transaction-boundary) lives
+        in ``persist/repositories/AGENTS.md`` § "Global lock-ordering rule (D5 —
+        deadlock safety)"; the summary below must stay consistent with it. In short:
+        the aggregate row is locked first, then ``Player`` row(s) in ascending
+        ``player_id`` order, and the locked read refreshes the identity map
+        (``populate_existing=True``) so guards see committed state.
+
         The Player row (``players.id = player_id``) is the aggregate-root mutex
         for the whole ``owned = quantity(cargo) + Σ equipped`` invariant, which
         spans the ``Player`` row plus N ``player_ships`` JSON-slot lists plus M

@@ -145,6 +145,10 @@ def svc() -> EquipmentService:
     service.item_repo = AsyncMock()
     service.module_repo = AsyncMock()
     service.ship_data_repo = AsyncMock()
+    # D5: shared aggregate-root lock repo — mocked clean no-op so the
+    # choke-point's FOR UPDATE lock does not hit the (mocked) db session.
+    service.player_repo = AsyncMock()
+    service.player_repo.get_by_id_for_update = AsyncMock(return_value=None)
 
     # Default: nothing found (tests override what they need)
     service.ship_repo.get_by_id = AsyncMock(return_value=None)

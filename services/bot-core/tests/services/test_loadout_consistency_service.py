@@ -108,6 +108,11 @@ def svc() -> LoadoutConsistencyService:
     s.inventory_repo = AsyncMock()
     s.item_repo = AsyncMock()
     s.ship_repo = AsyncMock()
+    # D5: the choke-point acquires the aggregate-root Player FOR UPDATE lock
+    # first via player_repo.get_by_id_for_update — mock it as a clean no-op so
+    # these mocked-db unit tests exercise the method logic, not the lock plumbing.
+    s.player_repo = AsyncMock()
+    s.player_repo.get_by_id_for_update = AsyncMock(return_value=None)
 
     s.player_ship_repo.get_by_id = AsyncMock(return_value=None)
     s.player_ship_repo.get_player_ships = AsyncMock(return_value=[])

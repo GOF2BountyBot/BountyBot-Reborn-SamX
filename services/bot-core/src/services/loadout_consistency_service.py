@@ -61,6 +61,7 @@ from typing import Any
 from persist.models.player_ship import PlayerShip
 from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.item_repository import ItemRepository
+from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.ship_repository import ShipRepository
 from shared import bblogger
@@ -98,6 +99,7 @@ class LoadoutConsistencyService:
         inventory_repo: InventoryRepository | None = None,
         item_repo: ItemRepository | None = None,
         ship_repo: ShipRepository | None = None,
+        player_repo: PlayerRepository | None = None,
     ) -> None:
         # Optional constructor injection so callers (e.g.
         # ``EquipmentService.equip_item``) can share their already-mocked
@@ -106,10 +108,42 @@ class LoadoutConsistencyService:
         self.inventory_repo = inventory_repo if inventory_repo is not None else InventoryRepository()
         self.item_repo = item_repo if item_repo is not None else ItemRepository()
         self.ship_repo = ship_repo if ship_repo is not None else ShipRepository()
+        # D5: the Player row is the aggregate-root mutex for the
+        # ``owned = cargo + equipped`` invariant.  ``_lock_player`` uses this
+        # repo's ``get_by_id_for_update`` to acquire it.
+        self.player_repo = player_repo if player_repo is not None else PlayerRepository()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    async def _lock_player(self, db: AsyncSession, player_id: int) -> None:
+        """Acquire the aggregate-root ``SELECT ... FOR UPDATE`` lock on the Player row (D5).
+
+        The Player row (``players.id = player_id``) is the aggregate-root mutex
+        for the whole ``owned = quantity(cargo) + Σ equipped`` invariant, which
+        spans the ``Player`` row plus N ``player_ships`` JSON-slot lists plus M
+        ``player_inventories`` rows — all keyed by ``player_id``.  Because
+        ``FOR UPDATE`` is self-conflicting, taking this lock FIRST in every
+        same-player loadout/inventory mutation serialises it against every other
+        same-player mutation (loadout *and* credit, since the credit invariant
+        already locks the same row), while leaving other players unaffected
+        (a different row).
+
+        This MUST be called at the top of each public mutation method, before any
+        read whose value feeds a read-modify-write (slot caps, cargo quantity,
+        slot lists), so the lock-holder always re-reads committed state.  The lock
+        auto-releases at transaction end / rollback (PostgreSQL row-level locks),
+        so it is scoped exactly to the caller's ``db.begin()`` unit of work.
+
+        ``get_by_id_for_update`` uses ``populate_existing=True``; if the player
+        was pre-loaded unlocked earlier in the transaction, the locked re-fetch
+        overwrites the stale identity-mapped attributes with committed state.
+
+        This is a pure lock primitive: it intentionally does NOT raise when no
+        Player row exists (validation of player existence is the caller's job).
+        """
+        await self.player_repo.get_by_id_for_update(db, player_id)
 
     async def _resolve_concrete_type(self, db: AsyncSession, item_name: str, fallback_kind: str | None = None) -> str:
         """Resolve an item name to its concrete inventory item_type.
@@ -271,6 +305,10 @@ class LoadoutConsistencyService:
             InvalidItemTypeError: secondary_weapons gated off.
             RuntimeError: invoked outside an active transaction (AC-6 guard).
         """
+        # D5: aggregate-root lock FIRST — before any read that feeds the
+        # cargo/slot read-modify-write below (serialises same-player equips).
+        await self._lock_player(db, player_id)
+
         # 1. Resolve / validate equipment_type
         if equipment_type is None:
             base = await self.item_repo.get_by_name_any_type(db, item_name)
@@ -434,6 +472,9 @@ class LoadoutConsistencyService:
             ValueError: validation failure (mapped to HTTP 400).
             RuntimeError: invoked outside an active transaction (AC-6 guard).
         """
+        # D5: aggregate-root lock FIRST — before the slot-read / cargo-write RMW.
+        await self._lock_player(db, player_id)
+
         # Ship first so we can do fallback scan if equipment_type can't be auto-detected.
         # B.15: DB errors during ship lookup surface as friendly ValueError.
         try:
@@ -567,9 +608,7 @@ class LoadoutConsistencyService:
                     # secondary must return 0 copies to cargo, not invent a round.
                     rounds = src_ammo.pop(name, 0)
                     if rounds > 0:
-                        await self.inventory_repo.add_item(
-                            db, player_id, concrete, name, rounds, commit=False
-                        )
+                        await self.inventory_repo.add_item(db, player_id, concrete, name, rounds, commit=False)
                 else:
                     await self.inventory_repo.add_item(db, player_id, concrete, name, 1, commit=False)
 
@@ -628,6 +667,10 @@ class LoadoutConsistencyService:
         Returns ``{items_returned: list[str], items_returned_detail: dict[kind, list[str]],
         duplicates_dropped: int}``.
         """
+        # D5: aggregate-root lock FIRST (keyed by the ship's owner) — before the
+        # anti-dup scan / cargo-mint RMW across this and the player's other ships.
+        await self._lock_player(db, ship.player_id)
+
         items_returned: list[str] = []
         items_returned_detail: dict[str, list[str]] = {kind: [] for kind in _SLOT_KINDS}
         duplicates_dropped = 0
@@ -658,9 +701,7 @@ class LoadoutConsistencyService:
                     # secondary must return 0 copies to cargo, not invent a round.
                     rounds = ship_ammo.pop(name, 0)
                     if rounds > 0:
-                        await self.inventory_repo.add_item(
-                            db, ship.player_id, concrete, name, rounds, commit=False
-                        )
+                        await self.inventory_repo.add_item(db, ship.player_id, concrete, name, rounds, commit=False)
                 else:
                     await self.inventory_repo.add_item(db, ship.player_id, concrete, name, 1, commit=False)
                 items_returned.append(name)
@@ -700,6 +741,9 @@ class LoadoutConsistencyService:
         switching to a smaller ship.  Returns a structured report so the
         cog can render a "X items moved to cargo" notice.
         """
+        # D5: aggregate-root lock FIRST — before the slot-cap read / overflow-mint RMW.
+        await self._lock_player(db, player_id)
+
         ship = await self.player_ship_repo.get_by_id(db, target_ship_id)
         if ship is None:
             raise ValueError(f"Ship {target_ship_id} not found")
@@ -731,9 +775,7 @@ class LoadoutConsistencyService:
                         rounds = ship_ammo.pop(name, 0)
                         ammo_dirty = True
                         if rounds > 0:
-                            await self.inventory_repo.add_item(
-                                db, player_id, concrete, name, rounds, commit=False
-                            )
+                            await self.inventory_repo.add_item(db, player_id, concrete, name, rounds, commit=False)
                     else:
                         await self.inventory_repo.add_item(db, player_id, concrete, name, 1, commit=False)
                 evacuated[kind] = list(overflow)
@@ -800,6 +842,13 @@ class LoadoutConsistencyService:
             ValueError: ship not found, or ship does not belong to player.
             RuntimeError: invoked outside an active transaction (I3 guard).
         """
+        # D5: aggregate-root lock FIRST — before reconcile / transfer / set-active.
+        # The nested reconcile_active_ship_slots / transfer_loadout_to_new_ship
+        # calls re-acquire the same Player row's FOR UPDATE within this same
+        # transaction, which is a documented no-op (a transaction may re-hold its
+        # own row lock).
+        await self._lock_player(db, player_id)
+
         # 1. Fetch the target ship and validate ownership.
         target_ship = await self.player_ship_repo.get_by_id(db, target_ship_id)
         if target_ship is None:
@@ -871,6 +920,9 @@ class LoadoutConsistencyService:
 
         Returns ``{duplicates_removed, ships_modified, ships_scanned, dry_run}``.
         """
+        # D5: aggregate-root lock FIRST — before scanning/rewriting slot lists.
+        await self._lock_player(db, player_id)
+
         # Use the repository method (which sorts by is_active desc, created_at)
         # rather than a raw select — keeps the test path mockable and matches
         # the "active wins" tie-breaking rule.

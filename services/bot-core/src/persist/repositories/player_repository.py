@@ -32,9 +32,29 @@ class PlayerRepository(IRepository[Player]):
         Use this inside a transaction when you need to read-then-modify
         credit balances (or any field) to prevent TOCTOU race conditions.
         The lock is held until the enclosing transaction commits or rolls back.
+
+        This is also the aggregate-root mutex for the loadout/inventory
+        ``owned = cargo + equipped`` invariant (D5): every same-player
+        loadout/inventory mutation acquires this lock first via
+        ``LoadoutConsistencyService._lock_player`` so the whole cross-table
+        read-modify-write serialises against every other same-player mutation.
+
+        IMPORTANT: ``execution_options(populate_existing=True)`` is required
+        because the session runs with ``expire_on_commit=False`` (our production
+        default).  Without it, a Player already present in the SQLAlchemy
+        identity map (e.g. pre-loaded by an earlier unlocked ``get_by_id`` in the
+        same transaction — as ``shop_service.sell_ship`` / ``purchase_ship`` and
+        ``ships.transfer_ship`` do) would be returned from cache and the guard
+        would read pre-commit stale state even though the FOR UPDATE lock was
+        acquired — the classic "lock looks correct, tests green" trap.  With
+        ``populate_existing=True`` the ORM unconditionally overwrites the
+        in-memory object with the data just fetched from Postgres under the lock.
+        This mirrors ``BountyRepository`` / ``DuelRepository`` (P2-T10).
         """
         try:
-            result = await db.execute(select(Player).where(Player.id == obj_id).with_for_update())
+            result = await db.execute(
+                select(Player).where(Player.id == obj_id).with_for_update().execution_options(populate_existing=True)
+            )
             return result.scalars().first()
         except Exception as e:
             flogger.error(f"Error getting player (FOR UPDATE) by ID {obj_id}: {e}")

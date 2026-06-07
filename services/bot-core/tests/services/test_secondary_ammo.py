@@ -542,6 +542,9 @@ def svc() -> LoadoutConsistencyService:
     s.inventory_repo = AsyncMock()
     s.item_repo = AsyncMock()
     s.ship_repo = AsyncMock()
+    # D5: aggregate-root Player lock — mocked clean no-op (see fixture rationale).
+    s.player_repo = AsyncMock()
+    s.player_repo.get_by_id_for_update = AsyncMock(return_value=None)
     s.player_ship_repo.get_by_id = AsyncMock(return_value=None)
     s.player_ship_repo.get_player_ships = AsyncMock(return_value=[])
     s.player_ship_repo.add_equipment = AsyncMock()

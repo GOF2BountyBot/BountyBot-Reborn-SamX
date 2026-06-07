@@ -341,6 +341,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 inventory_repo=self.inventory_repo,
                 item_repo=self.item_repo,
                 ship_repo=self.ship_repo,
+                player_repo=self.player_repo,
             )
             activation_result = await consistency.activate_ship(
                 db,
@@ -578,6 +579,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     inventory_repo=self.inventory_repo,
                     item_repo=self.item_repo,
                     ship_repo=self.ship_repo,
+                    player_repo=self.player_repo,
                 )
                 evac = await consistency.evacuate_ship_loadout_to_inventory(db, ship=player_ship)
                 items_unequipped = {kind: list(v) for kind, v in evac["items_returned_detail"].items()}

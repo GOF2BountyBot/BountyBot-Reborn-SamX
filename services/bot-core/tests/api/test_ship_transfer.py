@@ -223,6 +223,8 @@ class TestShipTransfer:
     @patch("api.routers.ships.get_db_session")
     def test_transfer_ship_empty_loadout(self, mock_get_db, client, mock_player_ship_repo, mock_player_repo):
         """Returns 200 with empty items_returned_to_source when ship has no loadout."""
+        from services.loadout_consistency_service import LoadoutConsistencyService
+
         mock_session = _configure_db_mock(mock_get_db)
         mock_player_repo.get_by_id.side_effect = [
             make_mock_player(id=10),
@@ -237,8 +239,14 @@ class TestShipTransfer:
         mock_session.commit = AsyncMock()
         mock_session.refresh = AsyncMock()
 
-        payload = {"from_player_id": 10, "to_player_id": 20, "ship_id": 42}
-        resp = client.post("/api/v1/ships/transfer", json=payload)
+        # D5: the choke-point now acquires the aggregate-root Player FOR UPDATE
+        # lock first.  With a mocked db session, the real PlayerRepository's
+        # ``result.scalars().first()`` chain cannot resolve, so inject a real
+        # service whose player_repo is mocked (clean no-op lock).
+        real_svc = LoadoutConsistencyService(player_repo=AsyncMock())
+        with patch("services.loadout_consistency_service.LoadoutConsistencyService", return_value=real_svc):
+            payload = {"from_player_id": 10, "to_player_id": 20, "ship_id": 42}
+            resp = client.post("/api/v1/ships/transfer", json=payload)
         assert resp.status_code == 200
         data = resp.json()
         assert data["items_returned_to_source"] == []
@@ -307,10 +315,14 @@ class TestShipTransfer:
         mock_ps_repo_for_svc.get_by_id = AsyncMock(return_value=ship_a)
 
         # Create the REAL LoadoutConsistencyService with injected mock repos.
+        # D5: player_repo is mocked so the aggregate-root FOR UPDATE lock is a
+        # clean no-op against the mocked db session (does not affect the
+        # anti-duplication add_item assertion below).
         real_svc = LoadoutConsistencyService(
             player_ship_repo=mock_ps_repo_for_svc,
             inventory_repo=mock_inv_repo,
             item_repo=mock_item_repo,
+            player_repo=AsyncMock(),
         )
 
         # Patch the router's import of LoadoutConsistencyService to return our real instance.

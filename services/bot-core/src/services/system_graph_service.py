@@ -7,6 +7,7 @@ adjacency graph. The graph is loaded once and cached.
 
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass
 
@@ -35,6 +36,7 @@ class SystemGraphService:
         self.system_repo = SystemRepository()
         self._graph: dict[str, SystemNode] = {}
         self._loaded = False
+        self._load_lock: asyncio.Lock = asyncio.Lock()
         # Pre-computed caches — built once in load_graph, invalidated by reset.
         self._validated_neighbours: dict[str, list[str]] = {}
         self._jump_gate_systems: list[str] = []
@@ -44,47 +46,69 @@ class SystemGraphService:
         """Load all systems from DB and build adjacency graph.
 
         Cached after first load; subsequent calls are no-ops.
+
+        Double-checked locking with asyncio.Lock keeps the build to exactly
+        one execution even if multiple coroutines call this concurrently on a
+        cold instance.  The fast-path (outer ``if self._loaded``) bypasses the
+        lock entirely once the graph is warm so there is zero contention on
+        steady-state requests.  ``_loaded`` is set as the very last step so
+        no concurrent reader ever observes the flag while the graph is
+        partially built.
         """
+        # Fast-path: already warm — no lock needed.
         if self._loaded:
             flogger.debug("System graph cache hit — already loaded, skipping DB load")
             return
 
-        flogger.debug("System graph cache miss — loading from database")
-        try:
-            systems = await self.system_repo.list_all(db)
-            flogger.debug(f"Retrieved {len(systems)} systems from database")
-        except Exception as e:
-            flogger.error(f"Failed to load system graph from database: {e}")
-            raise
+        async with self._load_lock:
+            # Second check inside the lock: another coroutine may have
+            # completed the build while we waited to acquire it.
+            if self._loaded:
+                flogger.debug("System graph cache hit (post-lock) — already loaded, skipping DB load")
+                return
 
-        self._graph = {}
-        edge_count = 0
-        for sys in systems:
-            neighbours = list(sys.neighbours) if sys.neighbours else []
-            node = SystemNode(
-                name=sys.name,
-                coordinates=tuple(sys.coordinates) if sys.coordinates else (0, 0),
-                neighbours=neighbours,
-                faction=sys.faction or "",
-                security=sys.security or 1,
-            )
-            self._graph[sys.name] = node
-            edge_count += len(neighbours)
-            flogger.trace(f"Loaded system '{sys.name}' with {len(neighbours)} connections")
+            flogger.debug("System graph cache miss — loading from database")
+            try:
+                systems = await self.system_repo.list_all(db)
+                flogger.debug(f"Retrieved {len(systems)} systems from database")
+            except Exception as e:
+                flogger.error(f"Failed to load system graph from database: {e}")
+                raise
 
-        # Pre-compute validated neighbours (only those present in graph)
-        # and jump-gate system list so hot-path lookups avoid repeated work.
-        self._validated_neighbours = {}
-        jump_gates: list[str] = []
-        for name, node in self._graph.items():
-            valid = [n for n in node.neighbours if n in self._graph]
-            self._validated_neighbours[name] = valid
-            if node.neighbours:
-                jump_gates.append(name)
-            flogger.trace(f"Validated neighbours for '{name}': {len(valid)} valid out of {len(node.neighbours)}")
-        self._jump_gate_systems = jump_gates
+            graph: dict[str, SystemNode] = {}
+            edge_count = 0
+            for sys in systems:
+                neighbours = list(sys.neighbours) if sys.neighbours else []
+                node = SystemNode(
+                    name=sys.name,
+                    coordinates=tuple(sys.coordinates) if sys.coordinates else (0, 0),
+                    neighbours=neighbours,
+                    faction=sys.faction or "",
+                    security=sys.security or 1,
+                )
+                graph[sys.name] = node
+                edge_count += len(neighbours)
+                flogger.trace(f"Loaded system '{sys.name}' with {len(neighbours)} connections")
 
-        self._loaded = True
+            # Pre-compute validated neighbours (only those present in graph)
+            # and jump-gate system list so hot-path lookups avoid repeated work.
+            validated_neighbours: dict[str, list[str]] = {}
+            jump_gates: list[str] = []
+            for name, node in graph.items():
+                valid = [n for n in node.neighbours if n in graph]
+                validated_neighbours[name] = valid
+                if node.neighbours:
+                    jump_gates.append(name)
+                flogger.trace(f"Validated neighbours for '{name}': {len(valid)} valid out of {len(node.neighbours)}")
+
+            # Publish the fully-built graph atomically before setting the flag.
+            # Any reader that sees _loaded=True is guaranteed to see a complete graph.
+            self._graph = graph
+            self._validated_neighbours = validated_neighbours
+            self._jump_gate_systems = jump_gates
+            # Set _loaded LAST — this is the visibility fence for all readers.
+            self._loaded = True
+
         flogger.info(
             f"System graph loaded: {len(self._graph)} systems, {edge_count} edges, "
             f"{len(self._jump_gate_systems)} jump-gate systems"

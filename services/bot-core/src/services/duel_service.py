@@ -218,9 +218,37 @@ class DuelService:
             flogger.error(f"Duel not found for accept: duel_id={duel_id}")
             raise ValueError(f"Duel request with ID {duel_id} not found.")
 
+        # Fast-fail on the unlocked stale object — avoids acquiring any lock for
+        # clearly terminal duels (completed, expired, etc.).  This check is NOT
+        # the idempotency guard; the authoritative guard is the re-read under lock
+        # below.
         if duel.status != "pending":
             flogger.error(
                 f"Invalid duel status for accept: duel_id={duel_id} status={duel.status} (expected 'pending')"
+            )
+            raise ValueError(f"Duel {duel_id} cannot be accepted — current status is {duel.status!r}.")
+
+        # CONCURRENCY FIX (X3-duel): LOCK ORDERING — acquire the Duel row lock
+        # FIRST, then Player rows in ascending player_id order.  This global
+        # ordering (aggregate first, then players ascending) prevents AB-BA
+        # deadlocks with other paths that also lock Player rows.
+        #
+        # populate_existing=True is MANDATORY because expire_on_commit=False means
+        # the duel row is already in the session identity map from the unlocked
+        # get_by_id above.  Without it, SQLAlchemy returns the cached stale object
+        # and the status guard reads pre-commit state even though the lock was
+        # acquired — the classic "lock looks correct, tests green" trap.
+        duel = await self.duel_repo.get_by_id_for_update(db, duel_id)
+        if duel is None:
+            flogger.error(f"Duel disappeared between load and lock: duel_id={duel_id}")
+            raise ValueError(f"Duel request with ID {duel_id} not found.")
+
+        # Idempotency guard under lock: if a concurrent accept already completed
+        # this duel, the second accept is a NO-OP rather than a double-payout.
+        if duel.status != "pending":
+            flogger.info(
+                f"accept_duel idempotent NO-OP: duel_id={duel_id} status={duel.status!r} "
+                f"(already resolved by a concurrent accept)"
             )
             raise ValueError(f"Duel {duel_id} cannot be accepted — current status is {duel.status!r}.")
 

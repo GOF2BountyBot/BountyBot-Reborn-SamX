@@ -30,6 +30,33 @@ class DuelRepository(IRepository[DuelRequest]):
             flogger.error(f"Error getting duel request by ID {obj_id}: {e}")
             raise
 
+    async def get_by_id_for_update(self, db: AsyncSession, obj_id: int) -> DuelRequest | None:
+        """Get duel request by primary key with SELECT ... FOR UPDATE row-level lock.
+
+        Use inside a transaction when you need to read-then-modify ``status``
+        (or any other field) to prevent TOCTOU race conditions.  The lock is
+        held until the enclosing transaction commits or rolls back.
+
+        IMPORTANT: ``execution_options(populate_existing=True)`` is required when
+        the session has ``expire_on_commit=False`` (our production default).
+        Without it, a row already present in the SQLAlchemy identity map would be
+        returned from cache and the guard would read pre-commit stale state even
+        though the lock was acquired.  With ``populate_existing=True`` the ORM
+        unconditionally overwrites the in-memory object with the data just fetched
+        from Postgres.
+        """
+        try:
+            result = await db.execute(
+                select(DuelRequest)
+                .where(DuelRequest.id == obj_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            return result.scalars().first()
+        except Exception as e:
+            flogger.error(f"Error getting duel request (FOR UPDATE) by ID {obj_id}: {e}")
+            raise
+
     async def get_by_name(self, db: AsyncSession, name: str) -> DuelRequest | None:
         """Not applicable for duel requests."""
         raise NotImplementedError("Duel requests are not queried by name")

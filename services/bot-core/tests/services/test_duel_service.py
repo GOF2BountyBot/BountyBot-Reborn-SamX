@@ -405,6 +405,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.update_status.return_value = duel
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
@@ -453,6 +454,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.update_status.return_value = duel
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
@@ -497,6 +499,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.update_status.return_value = duel
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
@@ -567,6 +570,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
@@ -590,6 +594,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
@@ -614,6 +619,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.update_status.return_value = duel
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
@@ -1289,6 +1295,8 @@ class TestAcceptDuelAvailableBalance:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        # X3-duel: accept_duel now re-reads duel under FOR UPDATE lock after player locks.
+        duel_repo.get_by_id_for_update.return_value = duel
 
         def pending_stakes(db, pid, *, exclude_duel_id=None):
             if pid == 1:
@@ -1489,6 +1497,8 @@ def _make_accept_duel_scaffolding(
 
     duel_repo = AsyncMock()
     duel_repo.get_by_id.return_value = duel
+    # X3-duel: accept_duel now re-reads duel under FOR UPDATE lock after player locks.
+    duel_repo.get_by_id_for_update.return_value = duel
     duel_repo.update_status.return_value = duel
     duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
@@ -1656,9 +1666,7 @@ class TestWinnerDecodedBySnowflake:
             f"target should have 1200 credits after winning (got {tg.credits}); "
             "a name-compare revert would credit challenger instead"
         )
-        assert ch.credits == 800, (
-            f"challenger should have 800 credits after losing (got {ch.credits})"
-        )
+        assert ch.credits == 800, f"challenger should have 800 credits after losing (got {ch.credits})"
         assert tg.duel_wins == 1
         assert ch.duel_losses == 1
         assert result["credits_transferred"] == 200

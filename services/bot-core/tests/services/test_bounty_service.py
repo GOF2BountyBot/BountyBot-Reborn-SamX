@@ -183,6 +183,14 @@ def service() -> BountyService:
     B.49: config_repo is also replaced so that check_bounty / spawn_bounty can
     call get_by_guild_id without going to the real DB.  The default return value
     is None which causes resolve_constant to fall back to global GameConstants.
+
+    X3-bounty: bounty_repo.get_by_id_for_update is configured as an AsyncMock
+    with a side_effect that looks up the bounty by ID from whatever
+    get_active_by_guild_and_division.return_value is set to at call time.
+    This means tests that set get_active_by_guild_and_division.return_value = [bounty]
+    automatically get the correct bounty returned by get_by_id_for_update without
+    needing an extra line in every test.  Tests that need a specific override can
+    overwrite get_by_id_for_update.side_effect or return_value directly.
     """
     svc = BountyService()
     svc.bounty_repo = MagicMock()
@@ -191,6 +199,23 @@ def service() -> BountyService:
     svc.player_repo = MagicMock()
     svc.config_repo = MagicMock()
     svc.config_repo.get_by_guild_id = AsyncMock(return_value=None)
+
+    # X3-bounty: auto-route get_by_id_for_update to the correct bounty from the
+    # active-bounties list configured via get_active_by_guild_and_division.return_value.
+    # The side_effect runs at call-time, so it reads whatever return_value the test set.
+    async def _for_update_side_effect(_db, bounty_id):
+        rv = svc.bounty_repo.get_active_by_guild_and_division.return_value
+        if rv is None:
+            return None
+        # rv may be a coroutine return value (from AsyncMock) or a plain list
+        active = rv if isinstance(rv, list) else []
+        for b in active:
+            if getattr(b, "id", None) == bounty_id:
+                return b
+        return None
+
+    svc.bounty_repo.get_by_id_for_update = AsyncMock(side_effect=_for_update_side_effect)
+
     return svc
 
 
@@ -1226,6 +1251,12 @@ def check_bounty_setup(service, mock_db):
 
     LoadoutBuilder.from_player is already mocked globally by the _mock_loadout_builder_from_player
     autouse fixture, so tests here don't need real DB calls inside the loadout builder.
+
+    X3-bounty: get_by_id_for_update is now called inside _process_single_bounty_check to acquire
+    a row-level lock before reading the checked map.  The service() fixture configures a smart
+    side_effect on get_by_id_for_update that auto-routes by ID from the active bounties list.
+    Tests only need to set get_active_by_guild_and_division.return_value = [bounty] and the
+    lock lookup automatically finds the correct bounty.
     """
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
@@ -1273,6 +1304,7 @@ def _make_active_bounty(
         answer=answer,
         criminal_name=criminal_name,
         checked=checked,
+        status="active",  # X3-bounty: _process_single_bounty_check now checks status under lock
     )
 
 
@@ -1313,6 +1345,7 @@ async def test_check_bounty_cooldown_expired(check_bounty_setup):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Beta", guild_id=1)
@@ -1329,6 +1362,7 @@ async def test_check_bounty_not_found(check_bounty_setup):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Nonexistent", guild_id=1)
 
@@ -1345,6 +1379,7 @@ async def test_check_bounty_already_checked(check_bounty_setup):
     bounty = _make_active_bounty(checked={"Alpha": -1, "Beta": 42, "Gamma": -1, "Sol": -1, "Omega": -1})
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Beta", guild_id=1)
 
@@ -1361,6 +1396,7 @@ async def test_check_bounty_incorrect(check_bounty_setup):
     bounty = _make_active_bounty(route=["Alpha", "Beta", "Gamma", "Sol", "Omega"], answer="Sol")
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
@@ -1381,6 +1417,7 @@ async def test_check_bounty_correct(check_bounty_setup):
     bounty.criminal_ship = {}
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
     service.calc_rewards = AsyncMock(
         return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
@@ -1406,6 +1443,7 @@ async def test_check_bounty_applies_cooldown(check_bounty_setup):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     before = datetime.now(UTC)
@@ -1423,6 +1461,7 @@ async def test_check_bounty_updates_checked_dict(check_bounty_setup):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     await service.check_bounty(mock_db, player_id=7, system_name="Alpha", guild_id=1)
@@ -1443,6 +1482,7 @@ async def test_check_bounty_proximity_hint(check_bounty_setup):
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Gamma", guild_id=1)
@@ -1467,6 +1507,7 @@ async def test_check_bounty_no_proximity_hint_far(service, mock_db):
     )
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.get_by_id_for_update = AsyncMock(return_value=bounty)  # X3-bounty
     service.bounty_repo.update = AsyncMock(return_value=bounty)
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="A", guild_id=1)
@@ -1483,6 +1524,7 @@ async def test_check_bounty_classic_mode_uses_bronze(service, mock_db):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.get_by_id_for_update = AsyncMock(return_value=bounty)  # X3-bounty
     service.bounty_repo.update = AsyncMock(return_value=bounty)
 
     await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
@@ -1496,6 +1538,7 @@ async def test_check_bounty_recently_spotted_when_1_stop_behind(service, mock_db
     """Returns recently_spotted=True when checked system is 1 stop behind the answer."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player()
@@ -1507,6 +1550,7 @@ async def test_check_bounty_recently_spotted_when_1_stop_behind(service, mock_db
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Gamma", guild_id=1)
@@ -1521,6 +1565,7 @@ async def test_check_bounty_recently_spotted_when_2_stops_behind(service, mock_d
     """Returns recently_spotted=True when checked system is 2 stops behind the answer."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player()
@@ -1532,6 +1577,7 @@ async def test_check_bounty_recently_spotted_when_2_stops_behind(service, mock_d
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="B", guild_id=1)
@@ -1545,6 +1591,7 @@ async def test_check_bounty_not_recently_spotted_when_3_or_more_stops_behind(ser
     """Returns recently_spotted=False when checked system is 3+ stops behind the answer."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player()
@@ -1556,6 +1603,7 @@ async def test_check_bounty_not_recently_spotted_when_3_or_more_stops_behind(ser
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="A", guild_id=1)
@@ -1569,6 +1617,7 @@ async def test_check_bounty_not_recently_spotted_when_ahead_of_answer(service, m
     """Returns recently_spotted=False when checked system is AHEAD of the answer on the route."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player()
@@ -1580,6 +1629,7 @@ async def test_check_bounty_not_recently_spotted_when_ahead_of_answer(service, m
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="B", guild_id=1)
@@ -1609,12 +1659,14 @@ async def test_check_bounty_not_on_cooldown_cooldown_until_is_none(service, mock
     """Returns cooldown_until=None when player is not on cooldown."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player(bounty_cooldown_end=None)
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
@@ -1637,6 +1689,10 @@ def combat_integration_setup(service, mock_db):
 
     LoadoutBuilder.from_player is already mocked globally by the _mock_loadout_builder_from_player
     autouse fixture. Individual tests override this patch when they need a specific ship name.
+
+    X3-bounty: get_by_id_for_update is now called inside _process_single_bounty_check.
+    The service() fixture's smart side_effect auto-routes by bounty ID from whatever
+    get_active_by_guild_and_division.return_value is set to.
     """
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
@@ -3737,7 +3793,7 @@ async def test_check_bounty_bronze_same_name_criminal_wins_no_bonus(service, moc
     _fs1 = SimpleNamespace(ship_name=shared_name, raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None)
     _fs2 = SimpleNamespace(ship_name=shared_name, raw_hp=500, raw_dps=50.0, varied_hp=500, varied_dps=50.0, ttk=2.0)
     mock_fight = SimpleNamespace(
-        winner_name=shared_name,    # same as player ship name — name-key would be ambiguous
+        winner_name=shared_name,  # same as player ship name — name-key would be ambiguous
         loser_name=shared_name,
         is_stalemate=False,
         ship1_stats=_fs1,
@@ -3763,11 +3819,10 @@ async def test_check_bounty_bronze_same_name_criminal_wins_no_bonus(service, moc
         result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
 
     assert result.result == CheckResult.CORRECT
-    assert result.combat_won is True   # Bronze: auto-capture still succeeds
+    assert result.combat_won is True  # Bronze: auto-capture still succeeds
     # P2-T8b: criminal won (side-2) → no bonus; a name-keyed impl would give bonus=True
     assert result.bonus_won is False, (
-        "bonus_won must be False when criminal wins (side-2), "
-        "even if player and criminal share the same ship name"
+        "bonus_won must be False when criminal wins (side-2), even if player and criminal share the same ship name"
     )
     service._award_combat_bonus.assert_not_called()
 
@@ -3802,7 +3857,7 @@ async def test_check_bounty_silver_same_name_criminal_wins_no_duel_won(service, 
     _fs1 = SimpleNamespace(ship_name=shared_name, raw_hp=50, raw_dps=0.0, varied_hp=50, varied_dps=0.0, ttk=None)
     _fs2 = SimpleNamespace(ship_name=shared_name, raw_hp=1000, raw_dps=99.0, varied_hp=1000, varied_dps=99.0, ttk=0.5)
     mock_fight = SimpleNamespace(
-        winner_name=shared_name,    # same as player ship name — name-key would be ambiguous
+        winner_name=shared_name,  # same as player ship name — name-key would be ambiguous
         loser_name=shared_name,
         is_stalemate=False,
         ship1_stats=_fs1,
@@ -3832,8 +3887,7 @@ async def test_check_bounty_silver_same_name_criminal_wins_no_duel_won(service, 
 
     # P2-T8b: criminal won (side-2) → combat_won=False for silver; name-keyed impl gives True
     assert result.combat_won is False, (
-        "combat_won must be False when criminal wins (side-2), "
-        "even if player and criminal share the same ship name"
+        "combat_won must be False when criminal wins (side-2), even if player and criminal share the same ship name"
     )
     # Reset should be called on combat loss
     service._reset_bounty_checks.assert_awaited_once_with(mock_db, bounty)
@@ -6028,9 +6082,16 @@ class TestCi17SecondaryGeneration:
         db = self._make_db()
         pool = [
             _make_secondary(
-                "Nuke Alpha", tech_level=1, subtype="nuke", damage=800,
-                loading_speed_ms=3000, range_m=2000.0,
-                burst_count=0, emp_damage=0, magnitude_m=500.0, steerable=True,
+                "Nuke Alpha",
+                tech_level=1,
+                subtype="nuke",
+                damage=800,
+                loading_speed_ms=3000,
+                range_m=2000.0,
+                burst_count=0,
+                emp_damage=0,
+                magnitude_m=500.0,
+                steerable=True,
             ),
         ]
 
@@ -6039,9 +6100,19 @@ class TestCi17SecondaryGeneration:
         assert len(result["secondaries"]) == 1
         s = result["secondaries"][0]
         required_fields = {
-            "name", "emoji", "value", "dps", "rounds",
-            "damage", "loading_speed_ms", "range_m", "subtype",
-            "burst_count", "emp_damage", "magnitude_m", "steerable",
+            "name",
+            "emoji",
+            "value",
+            "dps",
+            "rounds",
+            "damage",
+            "loading_speed_ms",
+            "range_m",
+            "subtype",
+            "burst_count",
+            "emp_damage",
+            "magnitude_m",
+            "steerable",
         }
         assert required_fields.issubset(set(s.keys())), f"Missing fields: {required_fields - set(s.keys())}"
 

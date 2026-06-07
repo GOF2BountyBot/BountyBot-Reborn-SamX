@@ -138,6 +138,7 @@ def _make_active_bounty(
         reward_per_sys=reward_per_sys,
         end_time=end_time,
         criminal_ship=criminal_ship,
+        status="active",  # X3-bounty: _process_single_bounty_check now checks status under lock
     )
 
 
@@ -167,6 +168,10 @@ def service() -> BountyService:
     B.49: config_repo is also replaced so that check_bounty can call
     get_by_guild_id without hitting the real DB.  Returns None by default
     so resolve_constant falls back to global GameConstants values.
+
+    X3-bounty: bounty_repo.get_by_id_for_update is configured as an AsyncMock
+    with a side_effect that auto-routes by bounty ID from the active bounties
+    list set via get_active_by_guild_and_division.return_value.
     """
     svc = BountyService()
     svc.bounty_repo = MagicMock()
@@ -175,6 +180,16 @@ def service() -> BountyService:
     svc.player_repo = MagicMock()
     svc.config_repo = MagicMock()
     svc.config_repo.get_by_guild_id = AsyncMock(return_value=None)
+
+    async def _for_update_side_effect(_db, bounty_id):
+        rv = svc.bounty_repo.get_active_by_guild_and_division.return_value
+        active = rv if isinstance(rv, list) else []
+        for b in active:
+            if getattr(b, "id", None) == bounty_id:
+                return b
+        return None
+
+    svc.bounty_repo.get_by_id_for_update = AsyncMock(side_effect=_for_update_side_effect)
     return svc
 
 

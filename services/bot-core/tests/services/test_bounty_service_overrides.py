@@ -199,6 +199,7 @@ class TestPvcArmourBuffOverride:
             checked={"Sol": -1},
             end_time=None,
             division="bronze",
+            status="active",  # X3-bounty: _process_single_bounty_check checks status under lock
         )
 
     def _make_player(self) -> SimpleNamespace:
@@ -235,6 +236,8 @@ class TestPvcArmourBuffOverride:
         db = AsyncMock()
         bounty = self._make_bronze_bounty()
         service.bounty_repo.update = AsyncMock()
+        # X3-bounty: _process_single_bounty_check calls get_by_id_for_update before reading checked
+        service.bounty_repo.get_by_id_for_update = AsyncMock(return_value=bounty)
 
         with (
             patch("services.bounty_service.BountyService.distribute_rewards", new=AsyncMock(return_value=None)),
@@ -284,6 +287,8 @@ class TestPvcArmourBuffOverride:
         db = AsyncMock()
         bounty = self._make_bronze_bounty(bounty_id=2)
         service.bounty_repo.update = AsyncMock()
+        # X3-bounty: _process_single_bounty_check calls get_by_id_for_update before reading checked
+        service.bounty_repo.get_by_id_for_update = AsyncMock(return_value=bounty)
 
         cfg = MagicMock()
         cfg.pvc_damage_reduction = 0.20  # T10: per-guild override for PvC DR

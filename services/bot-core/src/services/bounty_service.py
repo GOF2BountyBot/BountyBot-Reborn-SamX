@@ -1361,6 +1361,12 @@ class BountyService:
         cooldown_seconds = resolve_constant(cfg, "check_cooldown", GameConstants.CHECK_COOLDOWN)
         tier_before = player.tier
 
+        # LOCK ORDERING (X3-bounty): acquire Bounty row locks in ascending bounty.id
+        # order to prevent AB-BA deadlocks when two concurrent /check calls touch
+        # the same set of bounties in different orders.  The actual lock is taken
+        # inside _process_single_bounty_check via get_by_id_for_update.
+        matching_bounties = sorted(matching_bounties, key=lambda b: b.id)
+
         for bounty in matching_bounties:
             outcome, announce_info = await self._process_single_bounty_check(
                 db,
@@ -1456,7 +1462,41 @@ class BountyService:
         the original single-bounty contract. Multi-bounty terminal hits
         therefore distribute rewards independently per matching bounty.
         """
-        # System is in this bounty's route
+        # CONCURRENCY FIX (X3-bounty): acquire a row-level lock on this bounty
+        # BEFORE reading its ``checked`` map.  Two concurrent /check calls both
+        # loaded the unlocked row in Step 4; whichever session arrives here first
+        # wins the lock, the second blocks until the first commits.
+        #
+        # populate_existing=True is MANDATORY because expire_on_commit=False means
+        # the row is already in the session identity map from the unlocked SELECT
+        # above.  Without it, SQLAlchemy returns the cached in-memory object and
+        # the guard reads pre-commit stale state even though the lock was acquired.
+        bounty = await self.bounty_repo.get_by_id_for_update(db, bounty.id)
+        if bounty is None:
+            # Bounty disappeared between the initial load and the lock (expired/deleted).
+            return (
+                CheckResponse(
+                    result=CheckResult.NOT_FOUND,
+                    message="Bounty no longer active",
+                ),
+                None,
+            )
+
+        # Re-check status under lock: another session may have captured this bounty
+        # between our unlocked load and now.
+        if bounty.status != "active":
+            return (
+                CheckResponse(
+                    result=CheckResult.ALREADY_CHECKED,
+                    bounty_id=bounty.id,
+                    criminal_name=bounty.criminal_name,
+                    message=f"Bounty {bounty.id} already resolved",
+                    division=division,
+                ),
+                None,
+            )
+
+        # Read the FRESH checked map (just populated by the locked fetch).
         checked = dict(bounty.checked)  # Copy to modify
 
         if checked.get(system_name, -1) != -1:
@@ -1537,9 +1577,7 @@ class BountyService:
                     # P2-T8b: player is always combatant1 (loadout1 / side-1).
                     # winner_side==1 → player won; winner_side==2 → criminal won.
                     # Stalemate counts as player win (legacy semantics preserved).
-                    combat_player_won = fight_results.is_stalemate or (
-                        fight_results.winner_side == 1
-                    )
+                    combat_player_won = fight_results.is_stalemate or (fight_results.winner_side == 1)
                     if combat_player_won:
                         bonus_won = True
                         total_reward = winner_reward * 2

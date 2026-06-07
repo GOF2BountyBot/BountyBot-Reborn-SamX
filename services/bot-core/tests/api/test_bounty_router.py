@@ -1498,6 +1498,7 @@ class TestCombatBonusEndpoint:
         mock_fight.winner_name = "Betty"
         mock_fight.loser_name = "Bandit"
         mock_fight.is_stalemate = False
+        mock_fight.winner_side = 1  # P2-T8b: player is always side-1 (combatant1)
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
         mock_fight.combat_log_id = None
@@ -1551,6 +1552,7 @@ class TestCombatBonusEndpoint:
         mock_fight.winner_name = "Overlord"
         mock_fight.loser_name = "Betty"
         mock_fight.is_stalemate = False
+        mock_fight.winner_side = 2  # P2-T8b: criminal is side-2; criminal wins here
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
         mock_fight.combat_log_id = None
@@ -1606,6 +1608,7 @@ class TestCombatBonusEndpoint:
         mock_fight.winner_name = None
         mock_fight.loser_name = None
         mock_fight.is_stalemate = True
+        mock_fight.winner_side = None  # P2-T8b: stalemate has no winner side
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
         mock_fight.combat_log_id = None
@@ -1630,6 +1633,69 @@ class TestCombatBonusEndpoint:
         data = response.json()
         assert data["won"] is True
         assert data["bonus_credits"] == 300
+
+    @patch("api.routers.bounties.get_db_session")
+    @patch("services.loadout_builder.LoadoutBuilder")
+    @patch("services.combat_service.CombatService")
+    def test_combat_bonus_same_name_criminal_wins_no_bonus(
+        self, mock_combat_cls, mock_lb_cls, mock_get_db, combat_client, mock_bounty_service
+    ):
+        """P2-T8b SAME-NAME anti-vacuous: player and criminal share the same ship name.
+
+        Criminal wins (winner_side=2). A name-keyed impl would return won=True because
+        winner_name == player_loadout.ship_name (both are "CloneShip").
+        The side-keyed impl (winner_side==1) correctly returns won=False.
+        """
+        from types import SimpleNamespace
+
+        _configure_db_mock(mock_get_db)
+
+        shared_name = "CloneShip"
+        player_loadout = MagicMock()
+        player_loadout.ship_name = shared_name
+        mock_lb_cls.from_player = AsyncMock(return_value=player_loadout)
+        mock_lb_cls.from_criminal_ship = MagicMock(return_value=MagicMock(ship_name=shared_name))
+
+        mock_combat = MagicMock()
+        fight_stats1 = SimpleNamespace(
+            ship_name=shared_name, raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None
+        )
+        fight_stats2 = SimpleNamespace(
+            ship_name=shared_name, raw_hp=500, raw_dps=99.0, varied_hp=500, varied_dps=99.0, ttk=1.0
+        )
+        mock_fight = MagicMock()
+        mock_fight.winner_name = shared_name    # same as player ship — name-key is ambiguous
+        mock_fight.loser_name = shared_name
+        mock_fight.is_stalemate = False
+        mock_fight.winner_side = 2  # P2-T8b: criminal (side-2) wins
+        mock_fight.ship1_stats = fight_stats1
+        mock_fight.ship2_stats = fight_stats2
+        mock_fight.combat_log_id = None
+        mock_combat.fight_ships = AsyncMock(return_value=mock_fight)
+        mock_combat_cls.return_value = mock_combat
+
+        mock_player = MagicMock()
+        mock_player.credits = 500
+        mock_player.lifetime_credits = 1000
+        mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=mock_player)
+
+        response = combat_client.post(
+            "/api/v1/bounties/combat-bonus",
+            json={
+                "player_id": 42,
+                "base_reward": 500,
+                "criminal_ship": {"ship_name": shared_name, "ship_armour": 500, "weapons": [], "turrets": []},
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # P2-T8b: criminal won (side-2) → won=False; name-keyed impl gives won=True
+        assert data["won"] is False, (
+            "won must be False when criminal wins (side-2), "
+            "even if player and criminal share the same ship name"
+        )
+        assert data["bonus_credits"] == 0
 
 
 # ===========================================================================
@@ -1737,6 +1803,7 @@ class TestCombatBonusAdversarial:
         mock_fight.winner_name = "Betty"
         mock_fight.loser_name = "Bandit"
         mock_fight.is_stalemate = False
+        mock_fight.winner_side = 1  # P2-T8b: player is always side-1 (combatant1)
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
         mock_fight.combat_log_id = None
@@ -1795,6 +1862,7 @@ class TestCombatBonusAdversarial:
         mock_fight.winner_name = "Betty"
         mock_fight.loser_name = "Bandit"
         mock_fight.is_stalemate = False
+        mock_fight.winner_side = 1  # P2-T8b: player is always side-1 (combatant1)
         mock_fight.ship1_stats = fight_stats1
         mock_fight.ship2_stats = fight_stats2
         mock_fight.combat_log_id = None

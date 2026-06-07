@@ -1534,9 +1534,12 @@ class BountyService:
                         combatant1_label=_player_label,
                         combatant2_label=_criminal_label,
                     )
-                    combat_player_won = (
-                        fight_results.winner_name == player_loadout.ship_name
-                    ) or fight_results.is_stalemate
+                    # P2-T8b: player is always combatant1 (loadout1 / side-1).
+                    # winner_side==1 → player won; winner_side==2 → criminal won.
+                    # Stalemate counts as player win (legacy semantics preserved).
+                    combat_player_won = fight_results.is_stalemate or (
+                        fight_results.winner_side == 1
+                    )
                     if combat_player_won:
                         bonus_won = True
                         total_reward = winner_reward * 2
@@ -1582,7 +1585,10 @@ class BountyService:
                     combatant1_label=_player_label,
                     combatant2_label=_criminal_label,
                 )
-                duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
+                # P2-T8b: player is always combatant1 (loadout1 / side-1).
+                # winner_side==1 → player won; winner_side==2 → criminal won.
+                # Stalemate counts as player win (legacy semantics preserved).
+                duel_won = fight_results.is_stalemate or (fight_results.winner_side == 1)
 
             if duel_won:
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)

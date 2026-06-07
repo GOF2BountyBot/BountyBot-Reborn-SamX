@@ -256,6 +256,7 @@ async def test_check_correct_triggers_announcement_edit_loss(service, mock_db):
         ship1_stats=_fs1,
         ship2_stats=_fs2,
         combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
     service.combat_service = MagicMock()
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
@@ -361,6 +362,7 @@ async def test_check_correct_silver_win_edits_with_captured_flag(service, mock_d
         ship1_stats=_fs1,
         ship2_stats=_fs2,
         combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
     service.combat_service = MagicMock()
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
@@ -668,6 +670,7 @@ async def test_check_correct_loss_edits_announcement_no_captured_flag(service, m
         ship1_stats=_fs1,
         ship2_stats=_fs2,
         combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
     service.combat_service = MagicMock()
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)

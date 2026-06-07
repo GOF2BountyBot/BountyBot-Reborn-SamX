@@ -241,8 +241,10 @@ async def combat_bonus(
                 combatant2_label=_criminal_label,
             )
 
-            # Determine outcome (stalemate = player wins for bounties)
-            won = fight_results.is_stalemate or (fight_results.winner_name == player_loadout.ship_name)
+            # P2-T8b: player is always combatant1 (loadout1 / side-1).
+            # winner_side==1 → player won; winner_side==2 → criminal won.
+            # Stalemate counts as player win (legacy semantics preserved).
+            won = fight_results.is_stalemate or (fight_results.winner_side == 1)
             bonus_credits = 0
 
             if won:

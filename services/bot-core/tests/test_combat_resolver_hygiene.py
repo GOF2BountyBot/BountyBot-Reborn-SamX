@@ -226,3 +226,65 @@ def test_combat_resolver_has_no_forbidden_toplevel_imports() -> None:
 def test_combat_resolver_source_exists() -> None:
     """Sanity check: combat_resolver.py is present at expected path."""
     assert _COMBAT_RESOLVER_PATH.exists(), f"combat_resolver.py not found at {_COMBAT_RESOLVER_PATH}"
+
+
+# ---------------------------------------------------------------------------
+# P2-T8b: Static assertion — no name-keyed win/identity/attribution decision
+# in combat/duel/bounty mechanics.
+# ---------------------------------------------------------------------------
+
+_MECHANIC_FILES = [
+    _SRC_DIR / "services" / "combat_resolver.py",
+    _SRC_DIR / "services" / "bounty_service.py",
+    _SRC_DIR / "services" / "duel_service.py",
+    _SRC_DIR / "api" / "routers" / "bounties.py",
+    _SRC_DIR / "api" / "routers" / "duels.py",
+    _SRC_DIR / "services" / "combat_service.py",
+    _SRC_DIR / "services" / "combat_preflight_service.py",
+]
+
+# Patterns that indicate a name-keyed DECISION (win/identity/attribution).
+# Presentation-only uses (f-strings, log lines, == in test assertions) are expected
+# to be NOT in the mechanic source files.
+# We grep for equality comparisons of winner_name/loser_name against another name.
+_FORBIDDEN_PATTERNS = [
+    "winner_name ==",
+    "loser_name ==",
+    "== winner_name",
+    "== loser_name",
+    "fight_results.winner_name == player_loadout",
+    "fight.winner_name == ",
+]
+
+
+def test_no_name_keyed_decision_in_combat_mechanics() -> None:
+    """P2-T8b: No combat/duel/bounty MECHANIC file may use winner_name/loser_name
+    equality as a DECISION predicate.
+
+    Presentation-only uses (embedding in dicts, logging, schema fields) are
+    allowed but must not drive win/identity/attribution logic.
+
+    Files checked: combat_resolver, bounty_service, duel_service, bounties router,
+    duels router, combat_service, combat_preflight_service.
+    """
+    violations: list[str] = []
+
+    for filepath in _MECHANIC_FILES:
+        if not filepath.exists():
+            continue
+        source = filepath.read_text(encoding="utf-8")
+        for lineno, line in enumerate(source.splitlines(), start=1):
+            stripped = line.strip()
+            # Skip comment lines — these may document the old pattern for clarity
+            if stripped.startswith("#"):
+                continue
+            for pattern in _FORBIDDEN_PATTERNS:
+                if pattern in stripped:
+                    violations.append(f"{filepath.name}:{lineno}: {stripped!r}")
+                    break
+
+    assert not violations, (
+        "P2-T8b: name-keyed mechanic decision found — all wins/identity must use "
+        "winner_side or player snowflake IDs, not name comparisons:\n"
+        + "\n".join(f"  {v}" for v in violations)
+    )

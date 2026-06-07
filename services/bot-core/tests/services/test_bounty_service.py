@@ -1652,6 +1652,7 @@ def combat_integration_setup(service, mock_db):
             ship1_stats=_fs,
             ship2_stats=_fs,
             combat_log_id=None,
+            winner_side=None,
         )
     )
     return service, mock_db
@@ -1733,6 +1734,7 @@ async def test_check_bounty_correct_player_wins_combat(combat_integration_setup)
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
         combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -1791,6 +1793,7 @@ async def test_check_bounty_correct_bronze_player_loses_combat_still_captured(co
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
         combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -1840,6 +1843,7 @@ async def test_check_bounty_correct_silver_player_loses_combat(combat_integratio
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
         combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -1878,6 +1882,7 @@ async def test_check_bounty_correct_stalemate_counts_as_win(combat_integration_s
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
         combat_log_id=None,
+        winner_side=None,  # P2-T8b: stalemate has no winner side
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -1964,6 +1969,7 @@ async def test_check_bounty_correct_combat_with_full_criminal_loadout(combat_int
             ship1_stats=_fight_stats1,
             ship2_stats=_fight_stats2,
             combat_log_id=None,
+            winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
         )
 
     service.combat_service.fight_ships = capture_fight
@@ -3309,6 +3315,7 @@ async def test_check_bounty_bronze_with_ship_bonus_won(service, mock_db):
         ship1_stats=_fs1,
         ship2_stats=_fs2,
         combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -3365,6 +3372,7 @@ async def test_check_bounty_bronze_with_ship_bonus_lost(service, mock_db):
         ship1_stats=_fs1,
         ship2_stats=_fs2,
         combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -3411,6 +3419,7 @@ async def test_check_bounty_silver_mandatory_combat_win(service, mock_db):
         ship1_stats=_fs1,
         ship2_stats=_fs2,
         combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -3463,6 +3472,7 @@ async def test_check_bounty_silver_mandatory_combat_loss_resets_checks(service, 
         ship1_stats=_fs1,
         ship2_stats=_fs2,
         combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -3508,6 +3518,7 @@ async def test_check_bounty_gold_mandatory_combat_win(service, mock_db):
         ship1_stats=_fs1,
         ship2_stats=_fs2,
         combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -3554,6 +3565,7 @@ async def test_check_bounty_silver_stalemate_counts_as_win(service, mock_db):
         ship1_stats=_fs1,
         ship2_stats=_fs2,
         combat_log_id=None,
+        winner_side=None,  # P2-T8b: stalemate has no winner side
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -3624,6 +3636,7 @@ async def test_check_bounty_bronze_combat_result_serialized(service, mock_db):
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
         combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -3670,6 +3683,7 @@ async def test_check_bounty_silver_combat_result_serialized(service, mock_db):
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
         combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
     service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
@@ -3690,6 +3704,139 @@ async def test_check_bounty_silver_combat_result_serialized(service, mock_db):
     assert result.combat_result is not None
     assert result.combat_result["winner_name"] == "Groza"
     assert "ship1_stats" in result.combat_result
+
+
+# ===========================================================================
+# P2-T8b: Same-name ship tests — id/side keying for win determination
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_bronze_same_name_criminal_wins_no_bonus(service, mock_db):
+    """P2-T8b SAME-NAME anti-vacuous: player and criminal share the same ship name.
+
+    Criminal wins (winner_side=2). A name-keyed impl (winner_name == player_loadout.ship_name)
+    would incorrectly assign bonus_won=True because winner_name == criminal_ship_name
+    == player_ship_name.  The side-keyed impl (winner_side == 1) correctly yields
+    bonus_won=False.
+    """
+    from services.bounty_service import RewardInfo
+    from services.combat_models import ShipLoadout
+
+    service.player_repo.get_by_id = AsyncMock()
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.update = AsyncMock()
+    service.combat_service = MagicMock()
+
+    shared_name = "CloneShip"
+    active_ship = SimpleNamespace(ship_name=shared_name, armour=100)
+    player = _make_player_with_tier(tier="Bronze", active_ship=active_ship)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {"ship_name": shared_name, "ship_armour": 500, "weapons": [], "turrets": []}
+
+    _fs1 = SimpleNamespace(ship_name=shared_name, raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None)
+    _fs2 = SimpleNamespace(ship_name=shared_name, raw_hp=500, raw_dps=50.0, varied_hp=500, varied_dps=50.0, ttk=2.0)
+    mock_fight = SimpleNamespace(
+        winner_name=shared_name,    # same as player ship name — name-key would be ambiguous
+        loser_name=shared_name,
+        is_stalemate=False,
+        ship1_stats=_fs1,
+        ship2_stats=_fs2,
+        combat_log_id=None,
+        winner_side=2,  # Criminal (side-2) wins — correct side-keyed determination
+    )
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
+
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=400, xp_earned=20, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+    service._award_combat_bonus = AsyncMock()
+
+    with patch(
+        "services.loadout_builder.LoadoutBuilder.from_player",
+        new=AsyncMock(return_value=ShipLoadout(ship_name=shared_name, base_armour=100)),
+    ):
+        result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True   # Bronze: auto-capture still succeeds
+    # P2-T8b: criminal won (side-2) → no bonus; a name-keyed impl would give bonus=True
+    assert result.bonus_won is False, (
+        "bonus_won must be False when criminal wins (side-2), "
+        "even if player and criminal share the same ship name"
+    )
+    service._award_combat_bonus.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_silver_same_name_criminal_wins_no_duel_won(service, mock_db):
+    """P2-T8b SAME-NAME anti-vacuous: Silver player and criminal share the same ship name.
+
+    Criminal wins (winner_side=2). A name-keyed impl (winner_name == player_loadout.ship_name)
+    would incorrectly treat this as a player win (duel_won=True) because both names match.
+    The side-keyed impl (winner_side == 1) correctly yields duel_won=False → combat_won=False.
+
+    calc_rewards / distribute_rewards / _build_payout_breakdown are mocked so that
+    when a name-keyed mutation incorrectly takes the duel_won=True win-path, the code
+    completes and fails CLEANLY at the combat_won assertion (AssertionError) rather
+    than crashing with an AttributeError deep in the reward-calculation machinery.
+    """
+    from services.bounty_service import RewardInfo
+    from services.combat_models import ShipLoadout
+
+    service.player_repo.get_by_id = AsyncMock()
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.update = AsyncMock()
+    service.combat_service = MagicMock()
+
+    shared_name = "CloneShip"
+    active_ship = SimpleNamespace(ship_name=shared_name, armour=50)
+    player = _make_player_with_tier(tier="Silver", active_ship=active_ship)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {"ship_name": shared_name, "ship_armour": 1000, "weapons": [], "turrets": []}
+
+    _fs1 = SimpleNamespace(ship_name=shared_name, raw_hp=50, raw_dps=0.0, varied_hp=50, varied_dps=0.0, ttk=None)
+    _fs2 = SimpleNamespace(ship_name=shared_name, raw_hp=1000, raw_dps=99.0, varied_hp=1000, varied_dps=99.0, ttk=0.5)
+    mock_fight = SimpleNamespace(
+        winner_name=shared_name,    # same as player ship name — name-key would be ambiguous
+        loser_name=shared_name,
+        is_stalemate=False,
+        ship1_stats=_fs1,
+        ship2_stats=_fs2,
+        combat_log_id=None,
+        winner_side=2,  # Criminal (side-2) wins — correct side-keyed determination
+    )
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
+    service._reset_bounty_checks = AsyncMock()
+    # Mock the reward win-path so a name-keyed mutation (duel_won=True) completes
+    # and reaches the assertion rather than crashing inside calc_rewards/distribute_rewards.
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=500, xp_earned=25, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+    service._build_payout_breakdown = AsyncMock(return_value=None)
+
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+
+    with patch(
+        "services.loadout_builder.LoadoutBuilder.from_player",
+        new=AsyncMock(return_value=ShipLoadout(ship_name=shared_name, base_armour=50)),
+    ):
+        result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    # P2-T8b: criminal won (side-2) → combat_won=False for silver; name-keyed impl gives True
+    assert result.combat_won is False, (
+        "combat_won must be False when criminal wins (side-2), "
+        "even if player and criminal share the same ship name"
+    )
+    # Reset should be called on combat loss
+    service._reset_bounty_checks.assert_awaited_once_with(mock_db, bounty)
 
 
 # ===========================================================================
@@ -4807,6 +4954,7 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
             ship1_stats=_fight_stats1,
             ship2_stats=_fight_stats2,
             combat_log_id=None,
+            winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
         )
 
     service.combat_service.fight_ships = _capture_fight
@@ -4875,6 +5023,7 @@ async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setu
             ship1_stats=_fight_stats1,
             ship2_stats=_fight_stats2,
             combat_log_id=None,
+            winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
         )
 
     service.combat_service.fight_ships = _capture_fight

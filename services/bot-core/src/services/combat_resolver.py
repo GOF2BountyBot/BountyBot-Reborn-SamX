@@ -2017,13 +2017,15 @@ class TickResolver:
 
         # ttk: duration_s for the combatant that LOST; None for the winner (they survived).
         # On stalemate: both survived (or mutual kill) → both get None.
+        # P2-T8b: use winner_side (death-branch keyed, unambiguous even for same-name ships)
+        # rather than winner_name comparison (would mis-assign ttk when c1.name == c2.name).
         c1_ttk: float | None = None
         c2_ttk: float | None = None
         if not is_stalemate:
-            if winner_name == c1.name:
-                c2_ttk = duration_s  # c2 died
-            elif winner_name == c2.name:
-                c1_ttk = duration_s  # c1 died
+            if winner_side == 1:
+                c2_ttk = duration_s  # c1 won → c2 died
+            elif winner_side == 2:
+                c1_ttk = duration_s  # c2 won → c1 died
 
         ship1_stats = FightStats(
             ship_name=c1.name,

@@ -776,3 +776,65 @@ class TestWinnerSide:
         assert restored.winner_name == "Alpha"
         assert restored.loser_name == "Beta"
         assert restored.is_stalemate is False
+
+    # ------------------------------------------------------------------
+    # P2-T8b: ttk stat assignment uses winner_side, not winner_name.
+    # Same-name ships would mis-assign ttk under a name-keyed impl.
+    # ------------------------------------------------------------------
+
+    def test_ttk_assigned_to_loser_not_winner_c1_wins(self):
+        """C1 wins → ship1_stats.ttk is None (winner survived); ship2_stats.ttk is set (loser died).
+
+        P2-T8b: ttk is keyed by winner_side (1/2), not by winner_name comparison.
+        """
+        l1 = _bare_loadout("Fighter", base_armour=100)
+        l2 = _bare_loadout("Target", base_armour=0)  # dies immediately
+        result = TickResolver(seed=1).resolve(l1, l2)
+
+        assert result.winner_side == 1
+        # Winner's ttk must be None (they survived)
+        assert result.ship1_stats.ttk is None, "Winner (side 1) must have ttk=None"
+        # Loser's ttk must be set (they died at some tick)
+        assert result.ship2_stats.ttk is not None, "Loser (side 2) must have ttk set"
+
+    def test_ttk_assigned_to_loser_not_winner_c2_wins(self):
+        """C2 wins → ship2_stats.ttk is None (winner survived); ship1_stats.ttk is set (loser died).
+
+        P2-T8b: ttk is keyed by winner_side (1/2), not by winner_name comparison.
+        """
+        l1 = _bare_loadout("Victim", base_armour=0)   # dies immediately
+        l2 = _bare_loadout("Defender", base_armour=100)
+        result = TickResolver(seed=1).resolve(l1, l2)
+
+        assert result.winner_side == 2
+        # Loser's ttk must be set (they died)
+        assert result.ship1_stats.ttk is not None, "Loser (side 1) must have ttk set"
+        # Winner's ttk must be None (they survived)
+        assert result.ship2_stats.ttk is None, "Winner (side 2) must have ttk=None"
+
+    def test_ttk_same_name_ships_c2_wins_ttk_on_c1_not_c2(self):
+        """SAME-NAME anti-vacuous: when both ships share a name and c2 wins,
+        ttk must be assigned to c1 (the loser), not c2 (the winner).
+
+        A name-keyed impl (winner_name == c1.name → c2_ttk) would set c2_ttk even
+        when c2 is the winner (because winner_name == c1.name == c2.name).
+        The correct side-keyed impl (winner_side == 2 → c1_ttk) sets c1_ttk.
+        """
+        shared_name = "CloneShip"
+        l1 = _bare_loadout(shared_name, base_armour=0)    # side 1 — dies immediately
+        l2 = _bare_loadout(shared_name, base_armour=100)   # side 2 — survives
+        result = TickResolver(seed=1).resolve(l1, l2)
+
+        assert result.winner_side == 2, "Side 2 must win when side 1 has no HP"
+        assert result.winner_name == shared_name
+        assert result.loser_name == shared_name
+        # P2-T8b correctness: c1 (loser) gets ttk; c2 (winner) gets None.
+        # A name-keyed impl would incorrectly set c2_ttk (because winner_name == c1.name).
+        assert result.ship1_stats.ttk is not None, (
+            "Loser (side 1 / CloneShip) must have ttk set; "
+            "a name-keyed impl would assign ttk to side 2 instead (same name)"
+        )
+        assert result.ship2_stats.ttk is None, (
+            "Winner (side 2 / CloneShip) must have ttk=None; "
+            "a name-keyed impl would set ttk=None for side 2 only by accident"
+        )

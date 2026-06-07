@@ -230,6 +230,43 @@ async def get_by_id_for_update(self, db: AsyncSession, obj_id: int) -> Player | 
 
 Use this inside an explicit `async with db.begin()` transaction block when the caller will later modify and commit.
 
+### Global lock-ordering rule (D5 — deadlock safety)
+
+Any transaction that locks **more than one** row MUST acquire locks in this order:
+
+1. **Aggregate row first** — the `Bounty` row (`/check`) or `Duel` row (`/accept`)
+   is locked via `get_by_id_for_update` **before** any `Player` lock the same
+   transaction takes. No path may lock a `Player` row *before* the aggregate row
+   it also touches (doing so would create an AB-BA cycle against `/check` /
+   `/accept`, which lock aggregate-then-player).
+2. **Then `Player` row(s) in ascending `player_id` order** — matches
+   `transfer_credits` (`player_service.py`). The only multi-player transactions
+   are `transfer_credits`, `duel accept`, and `ships.transfer_ship`; all lock
+   players in ascending id order.
+3. **In any single-player credit/inventory/loadout mutation, the FIRST lock
+   acquired MUST be the `Player` row** (`get_by_id_for_update`), taken before any
+   unlocked read whose value feeds a read-modify-write (credit balance, cargo
+   quantity, slot list, slot caps). "First lock = most restrictive mode that will
+   be needed" (PostgreSQL deadlocks guidance).
+4. The **loadout lock and the credit lock are the SAME `Player` row** and so
+   collapse into one lock class. Re-acquiring the same player's row lock later in
+   the same transaction (e.g. the loadout choke-point's `_lock_player` after a
+   shop service already locked for credits) is permitted and is an
+   **intra-transaction no-op** — a transaction may re-hold its own row lock.
+
+Audited lock-first sites (D5-T1 + D5-T2): the `LoadoutConsistencyService`
+choke-point (`equip_one`, `unequip_one`, `evacuate_ship_loadout_to_inventory`,
+`reconcile_active_ship_slots`, `activate_ship`, `repair_player`),
+`shop_service.{purchase_item, purchase_ship, sell_item, sell_ship}`, and
+`ships.transfer_ship` all take the `Player` lock as the first player access.
+
+> Note (open item, not D5-T2): `bounty_service.distribute_rewards` mutates each
+> rewarded player's credits from an **unlocked** `get_by_id` read. This is a
+> lost-update gap for concurrent credit ops, NOT a lock-ordering/deadlock hazard
+> (loadout/credit ops never lock a `Bounty` row, so no cycle exists). If a future
+> task adds `FOR UPDATE` there, it MUST lock players in ascending `player_id`
+> order (sort the rewards by `player_id`) to preserve rule 2.
+
 ### update_credits with commit=False
 
 ```python

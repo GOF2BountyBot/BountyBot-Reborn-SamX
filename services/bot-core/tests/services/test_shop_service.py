@@ -393,6 +393,7 @@ class TestPurchaseItem:
     async def test_raises_when_shop_item_not_found(self, service, mock_db, mock_player_repo, mock_shop_repo):
         """ValueError raised when shop item does not exist."""
         mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         mock_shop_repo.get_by_id.return_value = None
 
         with pytest.raises(ValueError, match="Shop item 55 not found"):
@@ -404,6 +405,7 @@ class TestPurchaseItem:
         player = _make_player(tier="Bronze")
         shop_item = _make_shop_item(tier="Gold")  # Requires Gold+
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         with pytest.raises(ValueError, match="cannot access"):
@@ -415,6 +417,7 @@ class TestPurchaseItem:
         player = _make_player(tier="Bronze", credits=5000)
         shop_item = _make_shop_item(tier="Bronze", quantity=1, price=100)
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         with pytest.raises(ValueError, match="Insufficient quantity"):
@@ -426,6 +429,7 @@ class TestPurchaseItem:
         player = _make_player(tier="Bronze", credits=50)
         shop_item = _make_shop_item(tier="Bronze", quantity=5, price=200)
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         with pytest.raises(ValueError, match="Insufficient credits"):
@@ -523,6 +527,7 @@ class TestSellItem:
         B.7: Error message must NOT contain numeric player_id; must use 'your inventory'.
         """
         mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         mock_inventory_repo.get_player_items_by_name.return_value = []  # not found
 
         with pytest.raises(ValueError, match="not found in your inventory") as exc_info:
@@ -537,6 +542,7 @@ class TestSellItem:
     ):
         """ValueError raised when player has fewer than requested quantity."""
         mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         inventory_item = _make_inventory_item(quantity=1, item_type="primary_weapon")
         mock_inventory_repo.get_player_items_by_name.return_value = [inventory_item]
 
@@ -552,6 +558,7 @@ class TestSellItem:
         defensively to preserve the invariant that sells are always unambiguous writes.
         """
         mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         # Mock two rows for the same item_name but different concrete types
         row_a = _make_inventory_item(quantity=1, item_type="primary_weapon", item_name="AmbiguousItem")
         row_b = _make_inventory_item(quantity=1, item_type="turret_weapon", item_name="AmbiguousItem")
@@ -1331,6 +1338,7 @@ class TestPurchaseShip:
         shop_item = _make_shop_item(item_type="weapon", item_name="Pulse Laser", price=200)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         with pytest.raises(ValueError, match="not a ship"):
@@ -1445,6 +1453,7 @@ class TestSellShip:
         active_ship = _make_player_ship(ship_id=100, player_id=1, is_active=True)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = active_ship
 
         with pytest.raises(ValueError, match="Cannot sell active ship"):
@@ -1520,6 +1529,7 @@ class TestSellShip:
         )
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = other_players_ship
 
         with pytest.raises(ValueError, match="does not belong to player"):
@@ -1531,6 +1541,7 @@ class TestSellShip:
         player = _make_player(guild_id=999, credits=1000)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = None  # ship not found
 
         with pytest.raises(ValueError, match="Ship 999 not found"):

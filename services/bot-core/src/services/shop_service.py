@@ -155,8 +155,9 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         Returns transaction details including cost and remaining shop quantity.
         """
         try:
-            # Get player and validate
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2 (lock-ordering rule 1): lock the Player row FIRST so the locked
+            # read is the first player access feeding the credit read-modify-write.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -165,7 +166,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             if not shop_item:
                 raise ValueError(f"Shop item {shop_item_id} not found")
 
-            # Validate tier access
+            # Validate tier access (reads the locked player row)
             if not self._can_access_tier(player.tier, shop_item.tier):
                 raise ValueError(f"Player tier {player.tier} cannot access {shop_item.tier} shop")
 
@@ -176,14 +177,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # Calculate total cost
             total_cost = shop_item.price * quantity
 
-            # Check player credits
-            if player.credits < total_cost:
-                raise ValueError(f"Insufficient credits. Cost: {total_cost}, Available: {player.credits}")
-
-            # Lock player row and re-check credits under lock
-            player = await self.player_repo.get_by_id_for_update(db, player_id)
-            if not player:
-                raise ValueError(f"Player {player_id} not found")
+            # Check player credits under lock (prevents TOCTOU race)
             if player.credits < total_cost:
                 raise ValueError(f"Insufficient credits. Cost: {total_cost}, Available: {player.credits}")
 
@@ -279,8 +273,17 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             Transaction details dict
         """
         try:
-            # Validate player exists
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2 (lock-ordering rule 1): acquire the Player-row aggregate lock
+            # FIRST — before any read whose value feeds the credit/loadout
+            # read-modify-write below.  ``activate_ship`` (called later) re-locks the
+            # same Player row via the choke-point's ``_lock_player``; that re-acquire
+            # is an intra-transaction no-op (a txn may re-hold its own row lock), so
+            # the loadout lock and this credit lock collapse into one lock class with
+            # no A-then-B hazard.  Previously this method read ``get_by_id`` (unlocked)
+            # for the tier-access validation and only locked at the credit re-check,
+            # leaving the lock as the SECOND player access; the locked read is now the
+            # FIRST player access, satisfying "first lock = most restrictive mode".
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -295,6 +298,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
             # Validate tier access (mirrors purchase_item — closes a privilege-escalation
             # gap where ships from any tier shop could be purchased without restriction).
+            # Reads the locked player row.
             if not self._can_access_tier(player.tier, shop_item.tier):
                 raise ValueError(f"Player tier {player.tier} cannot access {shop_item.tier} shop")
 
@@ -304,12 +308,6 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 raise ValueError(f"Static ship data not found for '{shop_item.item_name}'")
 
             new_ship_price = shop_item.price
-
-            # Transaction is owned by the caller (router).
-            # Lock the player row to prevent concurrent credit modifications.
-            player = await self.player_repo.get_by_id_for_update(db, player_id)
-            if not player:
-                raise ValueError(f"Player {player_id} not found")
 
             # Re-check credits under lock (prevents TOCTOU race)
             if player.credits < new_ship_price:
@@ -427,8 +425,10 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 but guarded defensively).
         """
         try:
-            # Get player and validate
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2 (lock-ordering rule 1): lock the Player row FIRST so the locked
+            # read is the first player access feeding the credit/inventory
+            # read-modify-write below.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -467,12 +467,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             unit_sell_price = base_price
             total_sell_value = unit_sell_price * quantity
 
-            # Transaction is owned by the caller (router).
-            # Lock player row to prevent concurrent credit modifications.
-            player = await self.player_repo.get_by_id_for_update(db, player_id)
-            if not player:
-                raise ValueError(f"Player {player_id} not found")
-
+            # Player row already locked (FOR UPDATE) at the top of this method (D5-T2).
             # Remove item from player inventory (commit=False — caller's transaction controls commit)
             await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity, commit=False)
 
@@ -533,8 +528,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             if target_tier not in self.VALID_TIERS:
                 raise ValueError(f"Invalid target tier: {target_tier}")
 
-            # Validate player exists
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2 (lock-ordering rule 1): lock the Player row FIRST.  The evacuate
+            # choke-point (when clear_equipment) re-locks the SAME player row via
+            # ``_lock_player``; that re-acquire is an intra-transaction no-op, so the
+            # loadout lock and this credit lock collapse into one lock class.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -563,12 +561,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 "secondary_weapons": [],
             }
 
-            # Transaction is owned by the caller (router).
-            # Lock the player row to prevent concurrent credit modifications.
-            player = await self.player_repo.get_by_id_for_update(db, player_id)
-            if not player:
-                raise ValueError(f"Player {player_id} not found")
-
+            # Player row already locked (FOR UPDATE) at the top of this method (D5-T2).
             if clear_equipment:
                 # Package G (B.19): use the LoadoutConsistencyService choke-point
                 # (anti-duplication guard prevents legacy phantom-item exploit).

@@ -651,6 +651,17 @@ async def transfer_ship(
                     detail="Cannot transfer the active ship. Set another ship as active first.",
                 )
 
+            # D5-T2 (lock-ordering rule 2): this transaction mutates BOTH players'
+            # aggregates — the from_player's loadout/inventory (the evacuate mints
+            # cargo) and the to_player's fleet (it gains ship ownership).  Lock both
+            # Player rows FOR UPDATE in ASCENDING player_id order BEFORE the evacuate,
+            # matching transfer_credits' ascending-id pattern so no AB-BA deadlock can
+            # arise with any other multi-player credit/loadout transaction.  The
+            # evacuate choke-point re-locks from_player via ``_lock_player``; that
+            # re-acquire is an intra-transaction no-op.
+            for _pid in sorted({request.from_player_id, request.to_player_id}):
+                await player_repo.get_by_id_for_update(db, _pid)
+
             # Package G (B.19): evacuate items via the LoadoutConsistencyService
             # choke-point (anti-duplication guard prevents legacy phantom-item
             # exploit on transfer).  The service clears the ship's slot lists

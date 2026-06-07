@@ -23,7 +23,6 @@ from utils.offload import offload_cpu
 
 from services.combat_models import (
     CombatEvent,
-    CombatEventType,
     CombatMeta,
     CombatStats,
     FightResults,
@@ -507,9 +506,16 @@ class CombatService:
     ) -> None:
         """Write back per-secondary ammo consumption for human combatants (CI-16).
 
-        Scans the combat_log timeline for weapon_fire events (slot=secondary) per human
-        combatant, counts rounds fired per weapon name, decrements secondary_ammo on the
-        player's active ship, and auto-unequips (removes name + ammo key) if rounds reach 0.
+        Reads per-weapon secondary round counts from the side-keyed summary block
+        (summary.combatants[slot]["secondary_rounds_by_weapon"]) populated by
+        _build_fight_summary (P2-T3).  Decrements secondary_ammo on the player's
+        active ship and auto-unequips (removes name + ammo key) if rounds reach 0.
+
+        Using the side-keyed summary fixes the PvC name-mismatch bug: the old
+        full-timeline scan matched events by ev.actor (ship name) against
+        combatant_name (display_name), which zeroed counts whenever the two
+        differed.  The summary is always slot-keyed and correct regardless of
+        whether display_name matches ship name.
 
         Criminal side (user_id is None): skip — no cross-fight persistence for NPCs (CI-17 deferred).
         Mirrors the non-fatal try/except style of _increment_player_stats.
@@ -533,27 +539,11 @@ class CombatService:
                 continue  # NPC side — no cross-fight ammo persistence
 
             cb_block = combatants_summary.get(slot_key, {})
-            combatant_name = cb_block.get("name", "")
 
-            # Count rounds fired per weapon name from combat_log timeline
-            rounds_fired: dict[str, int] = {}
-            for ev in fight_results.combat_log:
-                # combat_log holds CombatEvent dataclass objects — use attribute access
-                if hasattr(ev, "type") and hasattr(ev, "actor"):
-                    ev_actor = ev.actor
-                    ev_type = ev.type
-                    ev_data = ev.data if hasattr(ev, "data") else {}
-                else:
-                    ev_actor = ev.get("actor") if isinstance(ev, dict) else None
-                    ev_type = ev.get("type") if isinstance(ev, dict) else None
-                    ev_data = ev.get("data", {}) if isinstance(ev, dict) else {}
-
-                if ev_actor != combatant_name:
-                    continue
-                if ev_type == CombatEventType.weapon_fire and ev_data.get("slot") == "secondary":
-                    w_name = ev_data.get("weapon", "")
-                    if w_name:
-                        rounds_fired[w_name] = rounds_fired.get(w_name, 0) + 1
+            # Read per-weapon secondary round counts from the side-keyed summary block
+            # (populated by _build_fight_summary, P2-T3).  Keys are weapon names, matching
+            # the secondary_ammo dict on the player ship — no timeline re-scan needed.
+            rounds_fired: dict[str, int] = dict(cb_block.get("secondary_rounds_by_weapon", {}))
 
             if not rounds_fired:
                 continue  # no secondary fires — nothing to write back

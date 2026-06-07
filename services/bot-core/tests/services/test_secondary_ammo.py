@@ -324,7 +324,11 @@ class TestConsumeSecondaryAmmo:
             metadata={
                 "summary": {
                     "combatants": {
-                        "1": {"name": "Human", "ship": "Betty"},
+                        "1": {
+                            "name": "Human",
+                            "ship": "Betty",
+                            "secondary_rounds_by_weapon": {"Rocket1": 2},
+                        },
                     }
                 }
             },
@@ -386,7 +390,15 @@ class TestConsumeSecondaryAmmo:
             ship2_stats=FightStats("NPC", 500, 5.0, 500, 5.0, 50.0),
             combat_log=weapon_fire_events,
             metadata={
-                "summary": {"combatants": {"1": {"name": "Human", "ship": "Betty"}}}
+                "summary": {
+                    "combatants": {
+                        "1": {
+                            "name": "Human",
+                            "ship": "Betty",
+                            "secondary_rounds_by_weapon": {"Nuke1": 3},
+                        }
+                    }
+                }
             },
         )
 
@@ -1509,3 +1521,604 @@ class TestCi17CriminalSecondaryIntegration:
         assert depleted_events[0].tick == nuke_fire.tick, (
             f"secondary_depleted tick {depleted_events[0].tick} != fire tick {nuke_fire.tick}"
         )
+
+
+# ===========================================================================
+# Section J: P2-T5 — _consume_secondary_ammo reads secondary_rounds_by_weapon
+# ===========================================================================
+
+
+def _make_fight_results_with_summary(
+    secondary_rounds_by_weapon_slot1: dict | None = None,
+    secondary_rounds_by_weapon_slot2: dict | None = None,
+    combatant1_name: str = "Human",
+    combatant2_name: str = "NPC",
+) -> object:
+    """Build a minimal FightResults with summary.combatants keyed by slot.
+
+    secondary_rounds_by_weapon for each slot defaults to {} if not supplied.
+    The combat_log is intentionally empty — P2-T5 does NOT read it.
+    """
+    from src.services.combat_models import FightResults, FightStats
+
+    return FightResults(
+        winner_name=combatant1_name,
+        loser_name=combatant2_name,
+        is_stalemate=False,
+        ship1_stats=FightStats(combatant1_name, 1000, 10.0, 1000, 10.0, 100.0),
+        ship2_stats=FightStats(combatant2_name, 500, 5.0, 500, 5.0, 50.0),
+        combat_log=[],  # no timeline — P2-T5 reads summary only
+        metadata={
+            "summary": {
+                "combatants": {
+                    "1": {
+                        "name": combatant1_name,
+                        "ship": combatant1_name,
+                        "secondary_rounds_by_weapon": secondary_rounds_by_weapon_slot1 or {},
+                    },
+                    "2": {
+                        "name": combatant2_name,
+                        "ship": combatant2_name,
+                        "secondary_rounds_by_weapon": secondary_rounds_by_weapon_slot2 or {},
+                    },
+                }
+            }
+        },
+    )
+
+
+def _patch_repos(mock_player_repo, mock_ship_repo):
+    """Context-manager helper: temporarily replace the PlayerRepository and
+    PlayerShipRepository constructors with lambdas returning the mocks.
+
+    Returns (orig_pr, orig_psr) so caller can restore if needed outside a with-block.
+    """
+    import persist.repositories.player_repository as _pr
+    import persist.repositories.player_ship_repository as _psr
+
+    orig_pr = _pr.PlayerRepository
+    orig_psr = _psr.PlayerShipRepository
+    _pr.PlayerRepository = lambda: mock_player_repo
+    _psr.PlayerShipRepository = lambda: mock_ship_repo
+    return _pr, _psr, orig_pr, orig_psr
+
+
+def _restore_repos(_pr, _psr, orig_pr, orig_psr):
+    _pr.PlayerRepository = orig_pr
+    _psr.PlayerShipRepository = orig_psr
+
+
+class TestP2T5ConsumeSecondaryAmmoSummaryRead:
+    """P2-T5: _consume_secondary_ammo reads secondary_rounds_by_weapon from summary
+    instead of re-scanning the timeline.
+
+    Tests:
+      - BYTE-IDENTITY: matching names (old scan worked) → same decrements as before
+      - BUGFIX: PvC name-mismatch → player ammo correctly decremented (not zeroed)
+      - BUGFIX: same-name fight → per-side attribution correct
+      - INVARIANTS: never-negative, only-secondaries-affected, no-secondary cases
+      - NO TIMELINE WALK: combat_log is empty; function completes without error
+      - Multi-weapon, partial ammo, zero ammo, multi-weapon loadout exhaustive cases
+    """
+
+    @pytest.mark.asyncio
+    async def test_byte_identity_matching_names_single_weapon(self):
+        """BYTE-IDENTITY: display_name == ship_name, single weapon, 2 fires → ammo 5-2=3.
+
+        Old scan (worked): scanned combat_log, matched ev.actor=="Human", counted 2.
+        New read: reads secondary_rounds_by_weapon["Rocket1"]==2 from summary.
+        Decrement must be identical.
+        """
+        from src.services.combat_service import CombatService
+
+        fight_results = _make_fight_results_with_summary(
+            secondary_rounds_by_weapon_slot1={"Rocket1": 2}
+        )
+
+        mock_player = SimpleNamespace(id=100)
+        mock_ship = MagicMock()
+        mock_ship.id = 1
+        mock_ship.secondary_ammo = {"Rocket1": 5}
+        mock_ship.secondary_weapons = ["Rocket1"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # BYTE-IDENTITY: same as old scan → 5 - 2 = 3
+        assert mock_ship.secondary_ammo == {"Rocket1": 3}
+        assert mock_ship.secondary_weapons == ["Rocket1"]
+
+    @pytest.mark.asyncio
+    async def test_byte_identity_multi_weapon(self):
+        """BYTE-IDENTITY: two secondary weapons, each fired some rounds → correct decrements."""
+        from src.services.combat_service import CombatService
+
+        fight_results = _make_fight_results_with_summary(
+            secondary_rounds_by_weapon_slot1={"RocketA": 3, "MissileB": 2}
+        )
+
+        mock_player = SimpleNamespace(id=100)
+        mock_ship = MagicMock()
+        mock_ship.id = 1
+        mock_ship.secondary_ammo = {"RocketA": 10, "MissileB": 5}
+        mock_ship.secondary_weapons = ["RocketA", "MissileB"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        assert mock_ship.secondary_ammo == {"RocketA": 7, "MissileB": 3}
+        assert mock_ship.secondary_weapons == ["RocketA", "MissileB"]
+
+    @pytest.mark.asyncio
+    async def test_bugfix_pvc_name_mismatch_player_ammo_decremented(self):
+        """BUGFIX: PvC fight where display_name ('Hunter') != ship_name ('Eagle Scout').
+
+        Old scan: ev.actor == 'Eagle Scout' but combatant_name == 'Hunter' → 0 counted.
+        New read: summary slot '1' has secondary_rounds_by_weapon == {'Rocket': 3} → ammo decremented.
+        """
+        from src.services.combat_models import FightResults, FightStats
+        from src.services.combat_service import CombatService
+
+        # Player display_name is 'Hunter'; ship name is 'Eagle Scout'
+        fight_results = FightResults(
+            winner_name="Hunter",
+            loser_name="Criminal Ship",
+            is_stalemate=False,
+            ship1_stats=FightStats("Eagle Scout", 1000, 10.0, 1000, 10.0, 100.0),
+            ship2_stats=FightStats("Criminal Ship", 500, 5.0, 500, 5.0, 50.0),
+            combat_log=[],  # intentionally empty — no timeline walk
+            metadata={
+                "summary": {
+                    "combatants": {
+                        "1": {
+                            "name": "Hunter",            # display_name (pilot label)
+                            "ship": "Eagle Scout",       # ship name
+                            "secondary_rounds_by_weapon": {"Rocket": 3},  # correct side-keyed count
+                        },
+                        "2": {
+                            "name": "Criminal Warlord",
+                            "ship": "Criminal Ship",
+                            "secondary_rounds_by_weapon": {},
+                        },
+                    }
+                }
+            },
+        )
+
+        mock_player = SimpleNamespace(id=42)
+        mock_ship = MagicMock()
+        mock_ship.id = 7
+        mock_ship.secondary_ammo = {"Rocket": 5}
+        mock_ship.secondary_weapons = ["Rocket"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # BUGFIX: old scan zeroed; new summary-read correctly decrements 5-3=2
+        assert mock_ship.secondary_ammo == {"Rocket": 2}, (
+            "PvC name-mismatch: ammo must be decremented by side-keyed count (3), not zeroed."
+        )
+        # Prove the count read matches secondary_rounds_by_weapon for slot '1'
+        expected_fires = fight_results.metadata["summary"]["combatants"]["1"]["secondary_rounds_by_weapon"]
+        assert expected_fires == {"Rocket": 3}
+
+    @pytest.mark.asyncio
+    async def test_bugfix_same_name_fight_per_side_attribution(self):
+        """BUGFIX: both combatants named 'Eagle' → old scan mis-attributed; summary is per-side.
+
+        Old scan: ev.actor=='Eagle' matched both sides when combatant_name=='Eagle' →
+        double-counted or mis-attributed rounds.  New summary is slot-keyed so each
+        side's secondary_rounds_by_weapon is isolated.
+        """
+        from src.services.combat_models import FightResults, FightStats
+        from src.services.combat_service import CombatService
+
+        fight_results = FightResults(
+            winner_name="Eagle",
+            loser_name="Eagle",
+            is_stalemate=False,
+            ship1_stats=FightStats("Eagle", 1000, 10.0, 1000, 10.0, 100.0),
+            ship2_stats=FightStats("Eagle", 500, 5.0, 500, 5.0, 50.0),
+            combat_log=[],  # intentionally empty
+            metadata={
+                "summary": {
+                    "combatants": {
+                        "1": {
+                            "name": "Eagle",
+                            "ship": "Eagle",
+                            "secondary_rounds_by_weapon": {"Nuke": 2},  # side-1 fired 2
+                        },
+                        "2": {
+                            "name": "Eagle",
+                            "ship": "Eagle",
+                            "secondary_rounds_by_weapon": {"Nuke": 1},  # side-2 fired 1
+                        },
+                    }
+                }
+            },
+        )
+
+        # Side 1 player
+        mock_player1 = SimpleNamespace(id=10)
+        mock_ship1 = MagicMock()
+        mock_ship1.id = 1
+        mock_ship1.secondary_ammo = {"Nuke": 5}
+        mock_ship1.secondary_weapons = ["Nuke"]
+
+        # Side 2 player
+        mock_player2 = SimpleNamespace(id=20)
+        mock_ship2 = MagicMock()
+        mock_ship2.id = 2
+        mock_ship2.secondary_ammo = {"Nuke": 4}
+        mock_ship2.secondary_weapons = ["Nuke"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+
+        # get_by_user_and_guild returns different players for different user_ids
+        async def _player_by_user(session, user_id, guild_id):
+            return mock_player1 if user_id == 101 else mock_player2
+
+        async def _ship_by_player(session, player_id):
+            return mock_ship1 if player_id == 10 else mock_ship2
+
+        mock_player_repo.get_by_user_and_guild = _player_by_user
+        mock_ship_repo.get_active_ship = _ship_by_player
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=101,
+                combatant2_user_id=102,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # BUGFIX: per-side attribution — side-1 fired 2, side-2 fired 1
+        assert mock_ship1.secondary_ammo == {"Nuke": 3}, (
+            "Same-name fight: side-1 ammo must be decremented by 2 (not double-counted)."
+        )
+        assert mock_ship2.secondary_ammo == {"Nuke": 3}, (
+            "Same-name fight: side-2 ammo must be decremented by 1."
+        )
+
+    @pytest.mark.asyncio
+    async def test_invariant_ammo_never_negative(self):
+        """INVARIANT: fire count > current ammo → new ammo = 0 (clamped, not negative)."""
+        from src.services.combat_service import CombatService
+
+        # Summary says 10 rounds fired but ship only has 3
+        fight_results = _make_fight_results_with_summary(
+            secondary_rounds_by_weapon_slot1={"Rocket": 10}
+        )
+
+        mock_player = SimpleNamespace(id=100)
+        mock_ship = MagicMock()
+        mock_ship.id = 1
+        mock_ship.secondary_ammo = {"Rocket": 3}
+        mock_ship.secondary_weapons = ["Rocket"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # Clamped at 0 → auto-unequipped
+        assert "Rocket" not in mock_ship.secondary_ammo, "Ammo should not exist (depleted/removed)."
+        assert "Rocket" not in mock_ship.secondary_weapons
+
+    @pytest.mark.asyncio
+    async def test_invariant_zero_ammo_start_no_negative(self):
+        """INVARIANT: ship starts with 0 ammo → remains at 0 (weapon already absent via auto-unequip on prior fight)."""
+        from src.services.combat_service import CombatService
+
+        # If ammo key is present with 0 and summary says 1 fired, must clamp
+        fight_results = _make_fight_results_with_summary(
+            secondary_rounds_by_weapon_slot1={"Rocket": 1}
+        )
+
+        mock_player = SimpleNamespace(id=100)
+        mock_ship = MagicMock()
+        mock_ship.id = 1
+        mock_ship.secondary_ammo = {"Rocket": 0}
+        mock_ship.secondary_weapons = ["Rocket"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # Must not go negative; 0 → auto-unequipped
+        assert "Rocket" not in mock_ship.secondary_ammo, "0 ammo fired must result in auto-unequip."
+
+    @pytest.mark.asyncio
+    async def test_invariant_only_secondary_weapons_affected(self):
+        """INVARIANT: secondary_rounds_by_weapon only has secondary weapon names;
+        primary weapon names are never in the dict — ship.secondary_ammo for unrelated
+        primary keys is not touched.
+        """
+        from src.services.combat_service import CombatService
+
+        # Summary has only one secondary weapon
+        fight_results = _make_fight_results_with_summary(
+            secondary_rounds_by_weapon_slot1={"Rocket": 2}
+        )
+
+        mock_player = SimpleNamespace(id=100)
+        mock_ship = MagicMock()
+        mock_ship.id = 1
+        # Ship has a secondary ammo dict; primary "BlasterGun" is NOT in secondary_ammo
+        mock_ship.secondary_ammo = {"Rocket": 5}
+        mock_ship.secondary_weapons = ["Rocket"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # Only Rocket affected
+        assert mock_ship.secondary_ammo == {"Rocket": 3}
+
+    @pytest.mark.asyncio
+    async def test_invariant_no_secondary_fires_nothing_written(self):
+        """INVARIANT: secondary_rounds_by_weapon == {} → no DB writes, no flush."""
+        from src.services.combat_service import CombatService
+
+        # Empty secondary_rounds_by_weapon
+        fight_results = _make_fight_results_with_summary(
+            secondary_rounds_by_weapon_slot1={}
+        )
+
+        mock_player = SimpleNamespace(id=100)
+        mock_ship = MagicMock()
+        mock_ship.id = 1
+        mock_ship.secondary_ammo = {"Rocket": 5}
+        mock_ship.secondary_weapons = ["Rocket"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # No flush called (skips early)
+        mock_session.flush.assert_not_called()
+        # Ammo unchanged
+        assert mock_ship.secondary_ammo == {"Rocket": 5}
+
+    @pytest.mark.asyncio
+    async def test_no_timeline_walk_empty_combat_log_with_summary_fires(self):
+        """NO TIMELINE WALK: combat_log is empty but summary has secondary_rounds_by_weapon.
+
+        If the function still walked the timeline it would find 0 events → no decrement.
+        With summary-read it correctly decrements from the summary counts.
+        """
+        from src.services.combat_service import CombatService
+
+        fight_results = _make_fight_results_with_summary(
+            secondary_rounds_by_weapon_slot1={"Nuke": 2}
+        )
+        # Confirm combat_log is indeed empty
+        assert fight_results.combat_log == [], "Precondition: combat_log must be empty for this test"
+
+        mock_player = SimpleNamespace(id=100)
+        mock_ship = MagicMock()
+        mock_ship.id = 1
+        mock_ship.secondary_ammo = {"Nuke": 4}
+        mock_ship.secondary_weapons = ["Nuke"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # Summary-based: 4 - 2 = 2; if timeline-walk still present it would yield 0 (empty log)
+        assert mock_ship.secondary_ammo == {"Nuke": 2}, (
+            "Empty combat_log with non-empty summary: ammo must be decremented from summary counts. "
+            "If still 4, the timeline walk was NOT removed."
+        )
+
+    @pytest.mark.asyncio
+    async def test_partial_ammo_multi_weapon_exhaustive(self):
+        """Exhaustive: three secondary weapon types, partial ammo, various fire counts."""
+        from src.services.combat_service import CombatService
+
+        fight_results = _make_fight_results_with_summary(
+            secondary_rounds_by_weapon_slot1={"RocketA": 3, "MissileB": 7, "NukeC": 1}
+        )
+
+        mock_player = SimpleNamespace(id=100)
+        mock_ship = MagicMock()
+        mock_ship.id = 1
+        mock_ship.secondary_ammo = {"RocketA": 5, "MissileB": 7, "NukeC": 3}
+        mock_ship.secondary_weapons = ["RocketA", "MissileB", "NukeC"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # RocketA: 5 - 3 = 2
+        assert mock_ship.secondary_ammo.get("RocketA") == 2
+        # MissileB: 7 - 7 = 0 → auto-unequipped
+        assert "MissileB" not in mock_ship.secondary_ammo
+        assert "MissileB" not in mock_ship.secondary_weapons
+        # NukeC: 3 - 1 = 2
+        assert mock_ship.secondary_ammo.get("NukeC") == 2
+        # RocketA and NukeC remain equipped
+        assert "RocketA" in mock_ship.secondary_weapons
+        assert "NukeC" in mock_ship.secondary_weapons
+
+    @pytest.mark.asyncio
+    async def test_weapon_not_in_ammo_dict_skipped(self):
+        """Summary has a weapon key not in ship's secondary_ammo → skipped gracefully."""
+        from src.services.combat_service import CombatService
+
+        # Summary says Rocket fired 3 rounds but ship has no Rocket in ammo dict
+        fight_results = _make_fight_results_with_summary(
+            secondary_rounds_by_weapon_slot1={"Rocket": 3}
+        )
+
+        mock_player = SimpleNamespace(id=100)
+        mock_ship = MagicMock()
+        mock_ship.id = 1
+        mock_ship.secondary_ammo = {"Nuke": 2}  # Rocket absent
+        mock_ship.secondary_weapons = ["Nuke"]
+
+        mock_session = AsyncMock()
+        mock_player_repo = AsyncMock()
+        mock_ship_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
+
+        _pr, _psr, orig_pr, orig_psr = _patch_repos(mock_player_repo, mock_ship_repo)
+        try:
+            svc = CombatService()
+            await svc._consume_secondary_ammo(
+                session=mock_session,
+                fight_results=fight_results,
+                combatant1_user_id=999,
+                combatant2_user_id=None,
+                guild_id=1,
+            )
+        finally:
+            _restore_repos(_pr, _psr, orig_pr, orig_psr)
+
+        # Nuke untouched; flush still called (Rocket key loop iterates but skips)
+        assert mock_ship.secondary_ammo.get("Nuke") == 2

@@ -1002,6 +1002,85 @@ class TestCheckCommandRespx:
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
 
+    def test_check_uses_timeout_20(self, mock_bounty_cog, request):
+        """/check POST to /bounties/check must use timeout=20 (G-T1: raised from 10s).
+
+        Mutation proof: setting timeout=10 in source causes this test to fail because
+        respx will see the call with timeout=10 and we assert timeout=20 on the captured call.
+        """
+        from unittest.mock import patch as _patch
+
+        import httpx
+        import respx
+
+        self._with_real_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        check_response = {
+            "result": "incorrect",
+            "message": "No bounty.",
+            "outcomes": [{"result": "incorrect", "bounty_id": None}],
+        }
+
+        captured_calls: list = []
+        original_send = mock_bounty_cog.http_client.send
+
+        async def _capture_send(request_obj, **kwargs):
+            captured_calls.append(request_obj)
+            return await original_send(request_obj, **kwargs)
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            _patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{self._BOT_API}/bounties/check").mock(
+                return_value=httpx.Response(200, json=check_response)
+            )
+
+            # Capture the timeout kwarg passed directly on the post() call.
+            original_post = mock_bounty_cog.http_client.post
+            timeout_values: list = []
+
+            async def _spy_post(url, **kw):
+                timeout_values.append(kw.get("timeout"))
+                return await original_post(url, **kw)
+
+            mock_bounty_cog.http_client.post = _spy_post
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, system="Sol"))
+            mock_bounty_cog.http_client.post = original_post
+
+        # The second post() call is the /bounties/check call (first is /players/)
+        assert len(timeout_values) >= 2, f"Expected 2+ post() calls, got {len(timeout_values)}"
+        check_timeout = timeout_values[1]
+        assert check_timeout == 20, (
+            f"Expected /bounties/check timeout=20 (G-T1), got {check_timeout!r}. "
+            "Did you forget to raise the timeout from 10 to 20?"
+        )
+
+    def test_check_graceful_error_on_timeout(self, mock_bounty_cog, make_mock_response):
+        """/check should show graceful error message when /bounties/check times out.
+
+        Player resolution (first post) succeeds; the /bounties/check post times out.
+        The outer except-Exception handler sends an ephemeral error message.
+        """
+        import httpx
+
+        interaction = _create_mock_interaction()
+        # _populate_systems autouse fixture already set the cache, but set again for clarity
+        mock_bounty_cog._systems_cache.set("all", ["Sol"])
+        player_resp = make_mock_response({"id": 1})
+        timeout_exc = httpx.TimeoutException("timed out", request=MagicMock())
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=[player_resp, timeout_exc])
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, system="Sol"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False), "Timeout error should be sent as ephemeral"
+        assert "error occurred" in call_kwargs[0][0].lower()
+
 
 # ---------------------------------------------------------------------------
 # /bounties command

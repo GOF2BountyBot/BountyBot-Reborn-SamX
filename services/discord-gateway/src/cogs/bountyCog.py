@@ -258,7 +258,7 @@ class BountyCog(commands.Cog):
                 f"{api_base}/bounties/check",
                 json={"player_id": player_id, "system_name": system},
                 params={"guild_id": interaction.guild_id},
-                timeout=10,
+                timeout=20,
             )
 
             if resp.status_code == 429:

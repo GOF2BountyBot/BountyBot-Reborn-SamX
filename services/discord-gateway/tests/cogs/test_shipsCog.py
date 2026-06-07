@@ -846,7 +846,7 @@ class TestSetActiveCommand:
 
         asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -1043,7 +1043,7 @@ class TestSetActiveCommandRespx:
 
             asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, "5"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
 
 

@@ -37,6 +37,46 @@ flogger = bblogger.get_logger("combat-log-service")
 _VALID_CONTEXTS: frozenset[str] = frozenset({"duel", "bounty_pvc", "bounty_bonus"})
 
 
+class _SubpathAdapter:
+    """Thin adapter: makes a sub-path Row namedtuple duck-type like CombatLog for _pov_outcome.
+
+    P4-T7b: the sub-path select returns a SQLAlchemy Row with individual
+    fields (``summary``, ``metadata``, ``key_events``) instead of the full
+    ``data`` JSON blob. ``_pov_outcome`` is a static method that accesses
+    ``row.data["summary"]["combatants"]`` for hull-based winner resolution.
+    This adapter presents ``data`` as a minimal dict containing only the
+    summary sub-path so ``_pov_outcome`` works unchanged.
+    """
+
+    __slots__ = (
+        "combatant1_name",
+        "combatant1_user_id",
+        "combatant2_name",
+        "combatant2_user_id",
+        "context",
+        "created_at",
+        "data",
+        "guild_id",
+        "id",
+        "is_stalemate",
+        "winner_name",
+    )
+
+    def __init__(self, sub: object, summary: dict) -> None:
+        self.id = sub.id  # type: ignore[attr-defined]
+        self.guild_id = sub.guild_id  # type: ignore[attr-defined]
+        self.context = sub.context  # type: ignore[attr-defined]
+        self.combatant1_name = sub.combatant1_name  # type: ignore[attr-defined]
+        self.combatant2_name = sub.combatant2_name  # type: ignore[attr-defined]
+        self.combatant1_user_id = sub.combatant1_user_id  # type: ignore[attr-defined]
+        self.combatant2_user_id = sub.combatant2_user_id  # type: ignore[attr-defined]
+        self.winner_name = sub.winner_name  # type: ignore[attr-defined]
+        self.is_stalemate = sub.is_stalemate  # type: ignore[attr-defined]
+        self.created_at = sub.created_at  # type: ignore[attr-defined]
+        # Reconstruct the minimal data shape _pov_outcome needs (summary only).
+        self.data: dict = {"summary": summary}
+
+
 class CombatLogService:
     """Persist resolved fight records and enforce §12 invariants."""
 
@@ -222,6 +262,15 @@ class CombatLogService:
     ) -> dict:
         """Return full combat detail for one battle.
 
+        P4-T7b fast path: uses get_subpath_for_detail() to select only
+        data->'summary', data->'metadata', data->'key_events' server-side so
+        the multi-MB timeline sub-key is never shipped or loaded into Python.
+
+        Legacy-row fallback: when the stored row has no "key_events" key (written
+        before P4-T7a), the sub-path select returns key_events=None. In that case
+        get_detail falls back to a full get_by_id() load and runs _extract_key_events
+        on the timeline — exactly the T7a read path — so legacy rows remain correct.
+
         Raises:
             KeyError: if the battle does not exist OR the user is not a combatant
                       (both map to 404 — never leak existence).
@@ -232,11 +281,76 @@ class CombatLogService:
             created_at, outcome, combatant1, combatant2, duration_ticks,
             duration_s, pvc_damage_reduction, key_events
         """
-        row = await self._repo.get_by_id(db, battle_id)
+        # P4-T7b: fast-path — sub-path select (timeline never shipped)
+        sub = await self._repo.get_subpath_for_detail(db, battle_id)
 
-        # Ownership gate — return the same KeyError for "not found" and "not a combatant"
-        # so callers render 404 in both cases (don't leak existence).
-        if row is None or (row.combatant1_user_id != user_id and row.combatant2_user_id != user_id):
+        # Not found
+        if sub is None:
+            raise KeyError(f"combat_log id={battle_id} not found or user_id={user_id} not a combatant")
+
+        # Ownership gate — same KeyError for "not found" and "not a combatant"
+        if sub.combatant1_user_id != user_id and sub.combatant2_user_id != user_id:
+            raise KeyError(f"combat_log id={battle_id} not found or user_id={user_id} not a combatant")
+
+        # sub.key_events is None ↔ legacy row (no "key_events" in stored data blob).
+        # Fall back to full row load so _extract_key_events can scan the timeline.
+        if sub.key_events is None:
+            return await self._get_detail_legacy_fallback(db, battle_id, user_id, sub)
+
+        # Fast path: all required sub-paths are present; timeline is never loaded.
+        summary: dict = sub.summary or {}
+        metadata: dict = sub.metadata or {}
+        combatants_map: dict = summary.get("combatants", {})
+
+        # _pov_outcome needs row.data.summary.combatants for hull-based winner
+        # resolution. Construct a thin adapter so the static method works unchanged.
+        _adapter = _SubpathAdapter(sub, summary)
+        _opponent_name, outcome = self._pov_outcome(_adapter, user_id)  # type: ignore[arg-type]
+
+        tick_ms = int(metadata.get("tick_ms", _TICK_MS))
+        duration_ticks = int(summary.get("duration_ticks", 0))
+        pvc_dr = float(metadata.get("pvc_damage_reduction", 0.0) or 0.0)
+
+        c1 = self._parse_combatant(combatants_map.get("1", {}))
+        c2 = self._parse_combatant(combatants_map.get("2", {}))
+        key_events: list[dict] = sub.key_events
+
+        flogger.info(f"get_detail: battle_id={battle_id} user_id={user_id} outcome={outcome!r} path=fast")
+        return {
+            "id": sub.id,
+            "guild_id": sub.guild_id,
+            "context": sub.context,
+            "combatant1_name": sub.combatant1_name,
+            "combatant2_name": sub.combatant2_name,
+            "combatant1_user_id": sub.combatant1_user_id,
+            "combatant2_user_id": sub.combatant2_user_id,
+            "winner_name": sub.winner_name,
+            "is_stalemate": sub.is_stalemate,
+            "created_at": sub.created_at,
+            "outcome": outcome,
+            "combatant1": c1,
+            "combatant2": c2,
+            "duration_ticks": duration_ticks,
+            "duration_s": _ticks_to_seconds(duration_ticks, tick_ms),
+            "pvc_damage_reduction": pvc_dr,
+            "key_events": key_events,
+        }
+
+    async def _get_detail_legacy_fallback(
+        self,
+        db: AsyncSession,
+        battle_id: int,
+        user_id: int,
+        sub: object,
+    ) -> dict:
+        """Legacy fallback for get_detail when the stored row has no key_events.
+
+        P4-T7b: called only when sub.key_events is None (row written before P4-T7a).
+        Loads the full row (including timeline) and runs _extract_key_events — the
+        same path T7a's read used. 72h retention means legacy rows self-heal in 3 days.
+        """
+        row = await self._repo.get_by_id(db, battle_id)
+        if row is None:
             raise KeyError(f"combat_log id={battle_id} not found or user_id={user_id} not a combatant")
 
         _opponent_name, outcome = self._pov_outcome(row, user_id)
@@ -253,16 +367,9 @@ class CombatLogService:
 
         c1 = self._parse_combatant(combatants_map.get("1", {}))
         c2 = self._parse_combatant(combatants_map.get("2", {}))
+        key_events: list[dict] = self._extract_key_events(timeline, tick_ms, combatants_map=combatants_map)
 
-        # P4-T7a: prefer the precomputed key_events stored in the data blob.
-        # Fall back to live extraction for legacy rows written before this change
-        # (they lack the "key_events" key; 72h retention self-heals in 3 days).
-        if "key_events" in data:
-            key_events: list[dict] = data["key_events"]
-        else:
-            key_events = self._extract_key_events(timeline, tick_ms, combatants_map=combatants_map)
-
-        flogger.info(f"get_detail: battle_id={battle_id} user_id={user_id} outcome={outcome!r}")
+        flogger.info(f"get_detail: battle_id={battle_id} user_id={user_id} outcome={outcome!r} path=legacy")
         return {
             "id": row.id,
             "guild_id": row.guild_id,

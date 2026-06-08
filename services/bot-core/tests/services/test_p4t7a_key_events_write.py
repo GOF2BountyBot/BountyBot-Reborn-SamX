@@ -400,6 +400,30 @@ def _make_row_with_key_events(timeline: list[dict]) -> MagicMock:
     return row
 
 
+def _make_sub_row(row: MagicMock, *, key_events: list | None) -> MagicMock:
+    """Build a sub-path Row mock as returned by get_subpath_for_detail.
+
+    P4-T7b: get_detail now calls get_subpath_for_detail() first.  Tests that
+    mock the repo must mock get_subpath_for_detail (not get_by_id) for the fast
+    path; for the legacy fallback (key_events=None) they must mock BOTH methods.
+    """
+    sub = MagicMock()
+    sub.id = row.id
+    sub.guild_id = row.guild_id
+    sub.context = row.context
+    sub.combatant1_name = row.combatant1_name
+    sub.combatant2_name = row.combatant2_name
+    sub.combatant1_user_id = row.combatant1_user_id
+    sub.combatant2_user_id = row.combatant2_user_id
+    sub.winner_name = row.winner_name
+    sub.is_stalemate = row.is_stalemate
+    sub.created_at = row.created_at
+    sub.summary = row.data["summary"]
+    sub.metadata = row.data["metadata"]
+    sub.key_events = key_events
+    return sub
+
+
 # ---------------------------------------------------------------------------
 # X2 parity tests
 # ---------------------------------------------------------------------------
@@ -633,16 +657,28 @@ class TestX2KeyEventsParity:
 
 
 class TestLegacyFallback:
-    """Legacy rows (no stored key_events) resolve correctly via _extract_key_events."""
+    """Legacy rows (no stored key_events) resolve correctly via _extract_key_events.
+
+    P4-T7b note: get_detail now calls get_subpath_for_detail() first (fast path).
+    Legacy rows are detected when key_events is None in the sub-path row; the service
+    then falls back to get_by_id() + _extract_key_events (the T7a path).  Tests mock
+    get_subpath_for_detail to control which path is taken.
+    """
 
     @pytest.mark.asyncio
     async def test_legacy_row_resolves_via_fallback(self):
-        """A row without key_events in data still produces correct key_events via fallback."""
+        """A row without key_events in data still produces correct key_events via fallback.
+
+        P4-T7b: simulate legacy row by setting key_events=None in the sub-path mock;
+        service falls back to get_by_id + _extract_key_events.
+        """
         timeline = _make_standard_timeline()
         row = _make_row_no_key_events(timeline)
+        sub = _make_sub_row(row, key_events=None)  # None → triggers fallback
 
         svc = CombatLogService()
         mock_repo = AsyncMock()
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         mock_repo.get_by_id = AsyncMock(return_value=row)
         svc._repo = mock_repo
 
@@ -657,27 +693,33 @@ class TestLegacyFallback:
     async def test_legacy_output_identical_to_stored(self):
         """Legacy row fallback produces IDENTICAL key_events to a stored row with the same timeline.
 
-        This is the critical regression test: if the fallback diverges from the stored value,
-        users get inconsistent results between old and new rows.
+        P4-T7b: legacy row uses key_events=None sub-path → full load fallback.
+        Stored row uses key_events=<list> sub-path → fast path.
+        Both must produce identical key_events (same extractor function, same inputs).
         """
         timeline = _make_standard_timeline()
 
         # Row WITHOUT stored key_events (legacy)
         legacy_row = _make_row_no_key_events(timeline)
+        legacy_sub = _make_sub_row(legacy_row, key_events=None)
+
         # Row WITH stored key_events (new-style)
         stored_row = _make_row_with_key_events(timeline)
+        stored_ke = stored_row.data["key_events"]
+        stored_sub = _make_sub_row(stored_row, key_events=stored_ke)
 
         svc = CombatLogService()
 
-        # Get detail from legacy row
+        # Get detail from legacy row (fallback path)
         mock_repo = AsyncMock()
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=legacy_sub)
         mock_repo.get_by_id = AsyncMock(return_value=legacy_row)
         svc._repo = mock_repo
         legacy_detail = await svc.get_detail(MagicMock(), battle_id=42, user_id=111)
 
-        # Get detail from stored row
+        # Get detail from stored row (fast path)
         mock_repo2 = AsyncMock()
-        mock_repo2.get_by_id = AsyncMock(return_value=stored_row)
+        mock_repo2.get_subpath_for_detail = AsyncMock(return_value=stored_sub)
         svc._repo = mock_repo2
         stored_detail = await svc.get_detail(MagicMock(), battle_id=43, user_id=111)
 
@@ -690,12 +732,17 @@ class TestLegacyFallback:
 
     @pytest.mark.asyncio
     async def test_legacy_empty_timeline_produces_empty_key_events(self):
-        """Legacy row with empty timeline: fallback produces empty list."""
+        """Legacy row with empty timeline: fallback produces empty list.
+
+        P4-T7b: key_events=None in sub-path → fallback → empty extraction.
+        """
         timeline = _make_minimal_timeline()
         row = _make_row_no_key_events(timeline)
+        sub = _make_sub_row(row, key_events=None)
 
         svc = CombatLogService()
         mock_repo = AsyncMock()
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         mock_repo.get_by_id = AsyncMock(return_value=row)
         svc._repo = mock_repo
 
@@ -706,8 +753,8 @@ class TestLegacyFallback:
     async def test_stored_key_events_preferred_over_fallback(self):
         """When data["key_events"] is present, it is returned without calling _extract_key_events.
 
-        This verifies the short-circuit: the stored value is returned as-is and the
-        fallback extractor is NOT called (which would be wasteful).
+        P4-T7b: fast path — the sub-path row carries the sentinel key_events directly.
+        The service returns it without loading the timeline or calling _extract_key_events.
         """
         timeline = _make_standard_timeline()
         row = _make_row_with_key_events(timeline)
@@ -715,10 +762,11 @@ class TestLegacyFallback:
         # Inject a sentinel value that would differ from real extraction
         sentinel = [{"tick": 9999, "event_type": "Sentinel", "detail": "STORED_SENTINEL"}]
         row.data["key_events"] = sentinel
+        sub = _make_sub_row(row, key_events=sentinel)
 
         svc = CombatLogService()
         mock_repo = AsyncMock()
-        mock_repo.get_by_id = AsyncMock(return_value=row)
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         svc._repo = mock_repo
 
         detail = await svc.get_detail(MagicMock(), battle_id=43, user_id=111)

@@ -7,9 +7,10 @@ T10 will call delete_older_than() from db_retention_executor.
 """
 
 from datetime import datetime
+from typing import Any
 
 from shared import bblogger
-from sqlalchemy import delete, or_, select
+from sqlalchemy import Row, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -59,6 +60,55 @@ class CombatLogRepository(IRepository[CombatLog]):
             return await db.get(CombatLog, obj_id)
         except Exception as e:
             flogger.error(f"Error fetching combat_log id={obj_id}: {e}")
+            raise
+
+    async def get_subpath_for_detail(self, db: AsyncSession, obj_id: int) -> Row[Any] | None:
+        """Fetch only the sub-paths needed for get_detail, skipping the multi-MB timeline.
+
+        P4-T7b: JSONB sub-path select — selects data->'summary', data->'metadata',
+        data->'key_events' server-side (via SQLAlchemy column index accessors on the
+        _JSONB column) so the timeline sub-key is never shipped or loaded into Python.
+
+        On PostgreSQL (prod/JSONB) the emitted SQL is:
+            SELECT ..., data -> 'summary', data -> 'metadata', data -> 'key_events' ...
+        On SQLite (unit-test suite/JSON) the emitted SQL is:
+            SELECT ..., JSON_QUOTE(JSON_EXTRACT(data, '$."summary"')), ...
+
+        Both dialects deserialize the JSON sub-values automatically: the returned
+        Row fields ``summary``, ``metadata``, and ``key_events`` are already Python
+        dicts/lists (not raw JSON strings).
+
+        Returns:
+            A SQLAlchemy Row namedtuple with fields:
+              id, guild_id, context, combatant1_name, combatant2_name,
+              combatant1_user_id, combatant2_user_id, winner_name, is_stalemate,
+              created_at, summary, metadata, key_events
+            or None if no row with that id exists.
+
+        Note: key_events is None when the stored data blob has no "key_events" key
+        (legacy row written before P4-T7a). Callers must handle this case by falling
+        back to get_by_id() + _extract_key_events (see CombatLogService.get_detail).
+        """
+        try:
+            stmt = select(
+                CombatLog.id,
+                CombatLog.guild_id,
+                CombatLog.context,
+                CombatLog.combatant1_name,
+                CombatLog.combatant2_name,
+                CombatLog.combatant1_user_id,
+                CombatLog.combatant2_user_id,
+                CombatLog.winner_name,
+                CombatLog.is_stalemate,
+                CombatLog.created_at,
+                CombatLog.data["summary"].label("summary"),
+                CombatLog.data["metadata"].label("metadata"),
+                CombatLog.data["key_events"].label("key_events"),
+            ).where(CombatLog.id == obj_id)
+            result = await db.execute(stmt)
+            return result.one_or_none()
+        except Exception as e:
+            flogger.error(f"Error fetching combat_log subpath id={obj_id}: {e}")
             raise
 
     async def get_by_name(self, db: AsyncSession, name: str) -> CombatLog | None:

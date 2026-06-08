@@ -98,12 +98,19 @@ def _make_fight_results_with_dataclass_log(c1_user_id: int = 111) -> FightResult
     stats2 = FightStats(ship_name="C2", raw_hp=100, raw_dps=5.0, varied_hp=100, varied_dps=5.0, ttk=5.0)
     events: list[CombatEvent] = [
         CombatEvent(tick=0, type=CombatEventType.fight_start, actor=None, target=None, data={}),
-        CombatEvent(tick=1, type=CombatEventType.weapon_fire, actor="C1", target="C2",
-                    data={"weapon": "Pulse", "hit": True}),
-        CombatEvent(tick=1, type=CombatEventType.damage, actor=None, target="C2",
-                    data={"amount": 100, "absorbed": 100}),
-        CombatEvent(tick=1, type=CombatEventType.fight_end, actor=None, target=None,
-                    data={"winner": "C1", "reason": "hp_depleted"}),
+        CombatEvent(
+            tick=1, type=CombatEventType.weapon_fire, actor="C1", target="C2", data={"weapon": "Pulse", "hit": True}
+        ),
+        CombatEvent(
+            tick=1, type=CombatEventType.damage, actor=None, target="C2", data={"amount": 100, "absorbed": 100}
+        ),
+        CombatEvent(
+            tick=1,
+            type=CombatEventType.fight_end,
+            actor=None,
+            target=None,
+            data={"winner": "C1", "reason": "hp_depleted"},
+        ),
     ]
     return FightResults(
         winner_name="C1",
@@ -155,12 +162,15 @@ def _make_fight_results_with_dict_log(c1_user_id: int = 111) -> FightResults:
     stats2 = FightStats(ship_name="C2", raw_hp=100, raw_dps=5.0, varied_hp=100, varied_dps=5.0, ttk=5.0)
     events: list[dict] = [
         {"tick": 0, "type": "fight_start", "actor": None, "target": None, "data": {}},
-        {"tick": 1, "type": "weapon_fire", "actor": "C1", "target": "C2",
-         "data": {"weapon": "Pulse", "hit": True}},
-        {"tick": 1, "type": "damage", "actor": None, "target": "C2",
-         "data": {"amount": 100, "absorbed": 100}},
-        {"tick": 1, "type": "fight_end", "actor": None, "target": None,
-         "data": {"winner": "C1", "reason": "hp_depleted"}},
+        {"tick": 1, "type": "weapon_fire", "actor": "C1", "target": "C2", "data": {"weapon": "Pulse", "hit": True}},
+        {"tick": 1, "type": "damage", "actor": None, "target": "C2", "data": {"amount": 100, "absorbed": 100}},
+        {
+            "tick": 1,
+            "type": "fight_end",
+            "actor": None,
+            "target": None,
+            "data": {"winner": "C1", "reason": "hp_depleted"},
+        },
     ]
     return FightResults(
         winner_name="C1",
@@ -212,9 +222,7 @@ class TestLegacyGuardDataclassBranch:
         assert len(timeline) == len(fr.combat_log)
         for item in timeline:
             assert isinstance(item, dict), f"Expected dict; got {type(item)}"
-            assert set(item.keys()) == {"tick", "type", "actor", "target", "data"}, (
-                f"Unexpected keys: {item.keys()}"
-            )
+            assert set(item.keys()) == {"tick", "type", "actor", "target", "data"}, f"Unexpected keys: {item.keys()}"
 
     @pytest.mark.asyncio
     async def test_dataclass_timeline_values_match_asdict(self):
@@ -240,9 +248,7 @@ class TestLegacyGuardDataclassBranch:
         timeline = captured_row.data["timeline"]
         for i, (stored_dict, original_ev) in enumerate(zip(timeline, original_events, strict=True)):
             expected = dataclasses.asdict(original_ev)
-            assert stored_dict == expected, (
-                f"Event [{i}] mismatch:\n  stored: {stored_dict}\n  expected: {expected}"
-            )
+            assert stored_dict == expected, f"Event [{i}] mismatch:\n  stored: {stored_dict}\n  expected: {expected}"
 
 
 # ---------------------------------------------------------------------------
@@ -314,9 +320,7 @@ class TestNoAsdictOnHotPath:
 
         timeline = captured_row.data["timeline"]
         assert timeline == original_dicts, (
-            f"Dict timeline must be stored byte-identically.\n"
-            f"  stored:   {timeline}\n"
-            f"  original: {original_dicts}"
+            f"Dict timeline must be stored byte-identically.\n  stored:   {timeline}\n  original: {original_dicts}"
         )
 
 
@@ -407,9 +411,7 @@ class TestPersistedByteIdentity:
 
         # Step 3: each element must be a plain dict (no re-hydration)
         for i, ev in enumerate(offload_timeline):
-            assert isinstance(ev, dict), (
-                f"Event [{i}] must be dict (P2-T6 no re-hydration), got {type(ev)}"
-            )
+            assert isinstance(ev, dict), f"Event [{i}] must be dict (P2-T6 no re-hydration), got {type(ev)}"
 
         # Step 4: byte-identical to canonical
         assert len(offload_timeline) == len(canonical_timeline), (
@@ -440,9 +442,7 @@ class TestFightShipsNoRehydration:
 
         assert len(result.combat_log) > 0, "Expected non-empty combat_log"
         for i, ev in enumerate(result.combat_log):
-            assert isinstance(ev, dict), (
-                f"Event [{i}]: expected dict (P2-T6 no re-hydration), got {type(ev)}"
-            )
+            assert isinstance(ev, dict), f"Event [{i}]: expected dict (P2-T6 no re-hydration), got {type(ev)}"
 
     @pytest.mark.asyncio
     async def test_fight_ships_dict_events_have_expected_keys(self):
@@ -502,6 +502,7 @@ class TestCombatLogReadPathRegression:
         fake_row.winner_name = "C1"
         fake_row.is_stalemate = False
         from datetime import UTC, datetime
+
         fake_row.created_at = datetime(2025, 1, 1, tzinfo=UTC)
         fake_row.data = {
             "schema_version": 1,
@@ -535,13 +536,39 @@ class TestCombatLogReadPathRegression:
             },
             "timeline": [
                 {"tick": 0, "type": "fight_start", "actor": None, "target": None, "data": {}},
-                {"tick": 1, "type": "fight_end", "actor": None, "target": None,
-                 "data": {"winner": "C1", "reason": "hp_depleted", "duration_ticks": 5}},
+                {
+                    "tick": 1,
+                    "type": "fight_end",
+                    "actor": None,
+                    "target": None,
+                    "data": {"winner": "C1", "reason": "hp_depleted", "duration_ticks": 5},
+                },
             ],
             "metadata": {"tick_ms": 10, "total_ticks": 5, "resolver": "tick_v1", "pvc_damage_reduction": 0.0},
         }
 
-        with patch.object(svc._repo, "get_by_id", new=AsyncMock(return_value=fake_row)):
+        # P4-T7b: get_detail calls get_subpath_for_detail first.
+        # fake_row has no "key_events" in data (legacy row) → sub returns key_events=None
+        # → service falls back to get_by_id + _extract_key_events.
+        fake_sub = MagicMock()
+        fake_sub.id = fake_row.id
+        fake_sub.guild_id = fake_row.guild_id
+        fake_sub.context = fake_row.context
+        fake_sub.combatant1_name = fake_row.combatant1_name
+        fake_sub.combatant2_name = fake_row.combatant2_name
+        fake_sub.combatant1_user_id = fake_row.combatant1_user_id
+        fake_sub.combatant2_user_id = fake_row.combatant2_user_id
+        fake_sub.winner_name = fake_row.winner_name
+        fake_sub.is_stalemate = fake_row.is_stalemate
+        fake_sub.created_at = fake_row.created_at
+        fake_sub.summary = fake_row.data["summary"]
+        fake_sub.metadata = fake_row.data["metadata"]
+        fake_sub.key_events = None  # legacy row — triggers full-row fallback
+
+        with (
+            patch.object(svc._repo, "get_subpath_for_detail", new=AsyncMock(return_value=fake_sub)),
+            patch.object(svc._repo, "get_by_id", new=AsyncMock(return_value=fake_row)),
+        ):
             detail = await svc.get_detail(db=AsyncMock(), battle_id=7, user_id=42)
 
         # Should not raise; key fields must be present

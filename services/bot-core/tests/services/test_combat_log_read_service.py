@@ -117,6 +117,31 @@ def _make_row(
     return row
 
 
+def _make_sub_row(row: MagicMock, *, key_events: list | None = None) -> MagicMock:
+    """Build a MagicMock that looks like a get_subpath_for_detail Row namedtuple.
+
+    P4-T7b: get_detail now calls get_subpath_for_detail() first and gets back a
+    sub-path Row with fields: id, guild_id, context, combatant1/2_name/user_id,
+    winner_name, is_stalemate, created_at, summary, metadata, key_events.
+    Pass key_events=None to simulate a legacy row (triggers full-row fallback).
+    """
+    sub = MagicMock()
+    sub.id = row.id
+    sub.guild_id = row.guild_id
+    sub.context = row.context
+    sub.combatant1_name = row.combatant1_name
+    sub.combatant2_name = row.combatant2_name
+    sub.combatant1_user_id = row.combatant1_user_id
+    sub.combatant2_user_id = row.combatant2_user_id
+    sub.winner_name = row.winner_name
+    sub.is_stalemate = row.is_stalemate
+    sub.created_at = row.created_at
+    sub.summary = row.data["summary"]
+    sub.metadata = row.data["metadata"]
+    sub.key_events = key_events
+    return sub
+
+
 # ---------------------------------------------------------------------------
 # Tests: _pov_outcome
 # ---------------------------------------------------------------------------
@@ -229,10 +254,16 @@ class TestExtractKeyEvents:
             self._make_weapon_fire_event(100, "Betty", "secondary", "rocket", "Rockets MK1"),
             # CI-13: nuke events now show "detonated (opp: N, self: M)" not hit/miss
             {
-                "tick": 200, "type": "weapon_fire", "actor": "Betty", "target": "Opponent",
+                "tick": 200,
+                "type": "weapon_fire",
+                "actor": "Betty",
+                "target": "Opponent",
                 "data": {
-                    "slot": "secondary", "subtype": "nuke", "weapon": "Nuke",
-                    "opponent_damage": 80, "self_damage": 5,
+                    "slot": "secondary",
+                    "subtype": "nuke",
+                    "weapon": "Nuke",
+                    "opponent_damage": 80,
+                    "self_damage": 5,
                 },
             },
         ]
@@ -315,13 +346,24 @@ class TestExtractKeyEvents:
         """fight_start → Engagement baseline line (CI-22 Tier A)."""
         events = [
             {
-                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "tick": 0,
+                "type": "fight_start",
+                "actor": None,
+                "target": None,
                 "data": {
                     "combatants": [
-                        {"name": "Betty", "display_name": "SamX", "ship": "Betty",
-                         "hp": {"hull": 100, "armour": 50, "shield": 0}},
-                        {"name": "Vossk", "display_name": "H'Soc", "ship": "Vossk",
-                         "hp": {"hull": 80, "armour": 30, "shield": 20}},
+                        {
+                            "name": "Betty",
+                            "display_name": "SamX",
+                            "ship": "Betty",
+                            "hp": {"hull": 100, "armour": 50, "shield": 0},
+                        },
+                        {
+                            "name": "Vossk",
+                            "display_name": "H'Soc",
+                            "ship": "Vossk",
+                            "hp": {"hull": 80, "armour": 30, "shield": 20},
+                        },
                     ],
                     "initial_distance": 5000,
                 },
@@ -337,7 +379,10 @@ class TestExtractKeyEvents:
         """fight_end → Outcome baseline line (CI-22 Tier A)."""
         events = [
             {
-                "tick": 3488, "type": "fight_end", "actor": None, "target": None,
+                "tick": 3488,
+                "type": "fight_end",
+                "actor": None,
+                "target": None,
                 "data": {"winner": "Betty", "reason": "hp_depleted", "duration_ticks": 3488},
             },
         ]
@@ -368,8 +413,8 @@ class TestExtractKeyEvents:
                     "reason": "hp_depleted",
                     "duration_ticks": 3488,
                     "final_hp": {
-                        "c1": {"hull": 0, "armour": 0, "shield": 0},   # c1 (SamX) died
-                        "c2": {"hull": 95, "armour": 20, "shield": 0}, # c2 (H'Soc) survived
+                        "c1": {"hull": 0, "armour": 0, "shield": 0},  # c1 (SamX) died
+                        "c2": {"hull": 95, "armour": 20, "shield": 0},  # c2 (H'Soc) survived
                     },
                 },
             },
@@ -379,18 +424,17 @@ class TestExtractKeyEvents:
         outcome = result[0]
         assert outcome["event_type"] == "Outcome"
         # H'Soc (slot 2) won; SamX (slot 1) lost — label must reflect this
-        assert "H'Soc wins" in outcome["detail"], (
-            f"Expected \"H'Soc wins\" in outcome but got: {outcome['detail']!r}"
-        )
-        assert "SamX" in outcome["detail"], (
-            f"Expected 'SamX' (the loser) in outcome but got: {outcome['detail']!r}"
-        )
+        assert "H'Soc wins" in outcome["detail"], f'Expected "H\'Soc wins" in outcome but got: {outcome["detail"]!r}'
+        assert "SamX" in outcome["detail"], f"Expected 'SamX' (the loser) in outcome but got: {outcome['detail']!r}"
 
     def test_fight_end_stalemate_outcome_line(self):
         """fight_end with no winner → Stalemate outcome line."""
         events = [
             {
-                "tick": 18000, "type": "fight_end", "actor": None, "target": None,
+                "tick": 18000,
+                "type": "fight_end",
+                "actor": None,
+                "target": None,
                 "data": {"winner": None, "reason": "time_cap", "duration_ticks": 18000},
             },
         ]
@@ -424,38 +468,57 @@ class TestExtractKeyEvents:
         events = [
             # fight_start at tick 0 to seed HP tracking
             {
-                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "tick": 0,
+                "type": "fight_start",
+                "actor": None,
+                "target": None,
                 "data": {
                     "combatants": [
-                        {"name": "Alice", "ship": "Wraith",
-                         "hp": {"hull": 100, "armour": 50, "shield": 0}},  # total = 150
-                        {"name": "Bob", "ship": "Centaur",
-                         "hp": {"hull": 100, "armour": 50, "shield": 0}},
+                        {
+                            "name": "Alice",
+                            "ship": "Wraith",
+                            "hp": {"hull": 100, "armour": 50, "shield": 0},
+                        },  # total = 150
+                        {"name": "Bob", "ship": "Centaur", "hp": {"hull": 100, "armour": 50, "shield": 0}},
                     ],
                     "initial_distance": 3000,
                 },
             },
             # 1. secondary weapon_fire hit (causal first) — no side= to avoid First hit branch
             {
-                "tick": tick, "type": "weapon_fire", "actor": "Alice", "target": "Bob",
+                "tick": tick,
+                "type": "weapon_fire",
+                "actor": "Alice",
+                "target": "Bob",
                 "data": {
-                    "slot": "secondary", "subtype": "rocket", "weapon": "S'koon",
+                    "slot": "secondary",
+                    "subtype": "rocket",
+                    "weapon": "S'koon",
                     "hit": True,
                 },
             },
             # 2. layer_depleted for the target (armour depleted by that hit)
             {
-                "tick": tick, "type": "layer_depleted", "actor": "Bob", "target": None,
+                "tick": tick,
+                "type": "layer_depleted",
+                "actor": "Bob",
+                "target": None,
                 "data": {"layer": "armour", "side": 2},
             },
             # 3. secondary_depleted (ran out of ammo after firing)
             {
-                "tick": tick, "type": "secondary_depleted", "actor": "Alice", "target": None,
+                "tick": tick,
+                "type": "secondary_depleted",
+                "actor": "Alice",
+                "target": None,
                 "data": {"weapon": "S'koon"},
             },
             # 4. damage event that crosses 50% HP milestone for side 1
             {
-                "tick": tick, "type": "damage", "actor": "Bob", "target": "Alice",
+                "tick": tick,
+                "type": "damage",
+                "actor": "Bob",
+                "target": "Alice",
                 "data": {
                     "side": 1,
                     "hp_after": {"hull": 74, "armour": 0, "shield": 0},  # 74/150 ≈ 49% → crosses 50%
@@ -492,7 +555,10 @@ class TestExtractKeyEvents:
         """
         events = [
             {
-                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "tick": 0,
+                "type": "fight_start",
+                "actor": None,
+                "target": None,
                 "data": {
                     "combatants": [
                         {"name": "A", "ship": "X", "hp": {"hull": 100, "armour": 0, "shield": 0}},
@@ -503,14 +569,22 @@ class TestExtractKeyEvents:
             },
             # Mid-fight event at tick 500
             {
-                "tick": 500, "type": "layer_depleted", "actor": "A", "target": None,
+                "tick": 500,
+                "type": "layer_depleted",
+                "actor": "A",
+                "target": None,
                 "data": {"layer": "shield"},
             },
             # fight_end at tick 3000 — must be last after stable sort
             {
-                "tick": 3000, "type": "fight_end", "actor": None, "target": None,
+                "tick": 3000,
+                "type": "fight_end",
+                "actor": None,
+                "target": None,
                 "data": {
-                    "winner": "A", "reason": "hp_depleted", "duration_ticks": 3000,
+                    "winner": "A",
+                    "reason": "hp_depleted",
+                    "duration_ticks": 3000,
                     "final_hp": {
                         "c1": {"hull": 40, "armour": 0, "shield": 0},
                         "c2": {"hull": 0, "armour": 0, "shield": 0},
@@ -677,10 +751,14 @@ class TestListForPlayer:
 
 class TestGetDetail:
     async def test_happy_path(self):
+        # P4-T7b: get_detail now calls get_subpath_for_detail first (fast path).
+        # Provide a sub-path row with stored key_events to exercise the fast path.
         svc = CombatLogService()
         row = _make_row(row_id=1, c1_user_id=100, c2_user_id=200, c1_final_hull=50, c2_final_hull=0)
+        stored_ke = [{"tick": 0, "event_type": "Engagement", "time_s": 0.0, "actor": None, "detail": "test"}]
+        sub = _make_sub_row(row, key_events=stored_ke)
         mock_repo = AsyncMock()
-        mock_repo.get_by_id = AsyncMock(return_value=row)
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         svc._repo = mock_repo
 
         detail = await svc.get_detail(MagicMock(), battle_id=1, user_id=100)
@@ -689,39 +767,54 @@ class TestGetDetail:
         assert detail["combatant1"]["name"] == row.combatant1_name
 
     async def test_ownership_gate_non_combatant_raises_key_error(self):
-        """User not in the fight gets KeyError (→ 404)."""
+        """User not in the fight gets KeyError (→ 404).
+
+        P4-T7b: ownership gate is applied on the sub-path row (no full-row load needed).
+        """
         svc = CombatLogService()
         row = _make_row(row_id=2, c1_user_id=100, c2_user_id=200)
+        sub = _make_sub_row(row, key_events=[])
         mock_repo = AsyncMock()
-        mock_repo.get_by_id = AsyncMock(return_value=row)
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         svc._repo = mock_repo
 
         with pytest.raises(KeyError):
             await svc.get_detail(MagicMock(), battle_id=2, user_id=999)
 
     async def test_not_found_raises_key_error(self):
-        """Non-existent battle_id also raises KeyError (→ 404)."""
+        """Non-existent battle_id also raises KeyError (→ 404).
+
+        P4-T7b: get_subpath_for_detail returns None → KeyError (same as T7a).
+        """
         svc = CombatLogService()
         mock_repo = AsyncMock()
-        mock_repo.get_by_id = AsyncMock(return_value=None)
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=None)
         svc._repo = mock_repo
 
         with pytest.raises(KeyError):
             await svc.get_detail(MagicMock(), battle_id=9999, user_id=100)
 
     async def test_pvc_damage_reduction_included(self):
+        # P4-T7b fast path: metadata comes from the sub-path row directly.
         svc = CombatLogService()
         row = _make_row(row_id=3, c1_user_id=100, c2_user_id=None)
         row.data["metadata"]["pvc_damage_reduction"] = 0.33
+        stored_ke = []
+        sub = _make_sub_row(row, key_events=stored_ke)
+        sub.metadata = dict(row.data["metadata"])  # include updated pvc_damage_reduction
         mock_repo = AsyncMock()
-        mock_repo.get_by_id = AsyncMock(return_value=row)
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         svc._repo = mock_repo
 
         detail = await svc.get_detail(MagicMock(), battle_id=3, user_id=100)
         assert detail["pvc_damage_reduction"] == 0.33
 
     async def test_key_events_extraction(self):
-        """Key events are extracted from the timeline."""
+        """Key events are extracted from the timeline (legacy-row fallback path).
+
+        P4-T7b: when get_subpath_for_detail returns key_events=None (legacy row),
+        get_detail falls back to a full get_by_id load + _extract_key_events.
+        """
         timeline = [
             {"tick": 100, "type": "layer_depleted", "actor": "Betty", "target": None, "data": {"layer": "armour"}},
             {
@@ -734,7 +827,10 @@ class TestGetDetail:
         ]
         svc = CombatLogService()
         row = _make_row(row_id=4, c1_user_id=100, c2_user_id=200, timeline=timeline)
+        # Simulate legacy row: sub-path returns key_events=None
+        sub = _make_sub_row(row, key_events=None)
         mock_repo = AsyncMock()
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         mock_repo.get_by_id = AsyncMock(return_value=row)
         svc._repo = mock_repo
 
@@ -745,38 +841,45 @@ class TestGetDetail:
         assert "Secondary fire (rocket)" in types_found
 
     async def test_stalemate_outcome(self):
+        # P4-T7b fast path: stalemate detected via sub-path row is_stalemate flag.
         svc = CombatLogService()
         row = _make_row(row_id=5, c1_user_id=100, c2_user_id=200, is_stalemate=True, winner_name=None)
         row.data["summary"]["winner"] = None
+        stored_ke = []
+        sub = _make_sub_row(row, key_events=stored_ke)
         mock_repo = AsyncMock()
-        mock_repo.get_by_id = AsyncMock(return_value=row)
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         svc._repo = mock_repo
 
         detail = await svc.get_detail(MagicMock(), battle_id=5, user_id=100)
         assert detail["outcome"] == "stalemate"
 
     async def test_accuracy_computed(self):
-        """accuracy = shots_hit / shots_fired."""
+        """accuracy = shots_hit / shots_fired (fast path)."""
         svc = CombatLogService()
         row = _make_row(row_id=6, c1_user_id=100, c2_user_id=200)
         # Override c1 shots for a known ratio
         row.data["summary"]["combatants"]["1"]["shots_fired"] = 100
         row.data["summary"]["combatants"]["1"]["shots_hit"] = 65
+        stored_ke = []
+        sub = _make_sub_row(row, key_events=stored_ke)
         mock_repo = AsyncMock()
-        mock_repo.get_by_id = AsyncMock(return_value=row)
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         svc._repo = mock_repo
 
         detail = await svc.get_detail(MagicMock(), battle_id=6, user_id=100)
         assert detail["combatant1"]["accuracy"] == pytest.approx(0.65)
 
     async def test_accuracy_none_when_no_shots(self):
-        """accuracy is None when shots_fired == 0."""
+        """accuracy is None when shots_fired == 0 (fast path)."""
         svc = CombatLogService()
         row = _make_row(row_id=7, c1_user_id=100, c2_user_id=200)
         row.data["summary"]["combatants"]["1"]["shots_fired"] = 0
         row.data["summary"]["combatants"]["1"]["shots_hit"] = 0
+        stored_ke = []
+        sub = _make_sub_row(row, key_events=stored_ke)
         mock_repo = AsyncMock()
-        mock_repo.get_by_id = AsyncMock(return_value=row)
+        mock_repo.get_subpath_for_detail = AsyncMock(return_value=sub)
         svc._repo = mock_repo
 
         detail = await svc.get_detail(MagicMock(), battle_id=7, user_id=100)

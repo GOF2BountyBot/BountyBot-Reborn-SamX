@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from shared import bblogger
+from shared.http_retry import with_transient_retry
 
 import utils.autocomplete_state as autocomplete_state
 from utils.autocomplete_state import NormalizedChoice
@@ -113,12 +114,13 @@ async def warm_active_player_loadout(guild_id: int, player_id: int) -> None:
             return
 
         try:
-            # Fetch inventory
-            inv_resp = await client.get(
+            # Fetch inventory (idempotent GET — retried on transient failures;
+            # with_transient_retry calls raise_for_status() internally)
+            inv_resp = await with_transient_retry(
+                client.get,
                 f"{api_base}/inventory/player/{player_id}",
                 timeout=10.0,
             )
-            inv_resp.raise_for_status()
             items = inv_resp.json()
 
             inventory_choices: list[NormalizedChoice] = []
@@ -144,12 +146,13 @@ async def warm_active_player_loadout(guild_id: int, player_id: int) -> None:
             return
 
         try:
-            # Fetch ships
-            ships_resp = await client.get(
+            # Fetch ships (idempotent GET — retried on transient failures;
+            # with_transient_retry calls raise_for_status() internally)
+            ships_resp = await with_transient_retry(
+                client.get,
                 f"{api_base}/ships/player/{player_id}",
                 timeout=10.0,
             )
-            ships_resp.raise_for_status()
             ships = ships_resp.json()
 
             ships_choices: list[NormalizedChoice] = []
@@ -209,8 +212,9 @@ async def warm_guild_players(guild_id: int) -> None:
             url = (
                 f"{api_base}/players/guild/{guild_id}?active_within_days={active_within_days}&limit={limit}&skip={skip}"
             )
-            resp = await client.get(url, timeout=10.0)
-            resp.raise_for_status()
+            # Idempotent GET — retried on transient failures (5xx/timeout/connect);
+            # with_transient_retry calls raise_for_status() internally.
+            resp = await with_transient_retry(client.get, url, timeout=10.0)
             players = resp.json()
 
             for player in players:

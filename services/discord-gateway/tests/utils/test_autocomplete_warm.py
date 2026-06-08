@@ -18,7 +18,9 @@ Acceptance criteria covered:
 from __future__ import annotations
 
 import asyncio
+import importlib.util as _ilu
 import os
+import pathlib as _pl
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,6 +31,9 @@ import respx
 
 # ---------------------------------------------------------------------------
 # Inject mock shared.bblogger BEFORE any application imports.
+# shared.http_retry is the REAL module (loaded from services/shared/) so that
+# ``from shared.http_retry import with_transient_retry`` resolves in
+# autocomplete_warm.py.
 # ---------------------------------------------------------------------------
 
 _mock_shared = types.ModuleType("shared")
@@ -37,6 +42,13 @@ _mock_bblogger = types.ModuleType("shared.bblogger")
 _mock_bblogger.get_logger = MagicMock(return_value=MagicMock())
 sys.modules.setdefault("shared", _mock_shared)
 sys.modules.setdefault("shared.bblogger", _mock_bblogger)
+
+# Load the real http_retry module from the canonical services/shared/ location.
+_http_retry_path = str(_pl.Path(__file__).parents[3] / "shared" / "http_retry.py")
+_http_retry_spec = _ilu.spec_from_file_location("shared.http_retry", _http_retry_path)
+_http_retry_mod = _ilu.module_from_spec(_http_retry_spec)  # type: ignore[arg-type]
+_http_retry_spec.loader.exec_module(_http_retry_mod)  # type: ignore[union-attr]
+sys.modules.setdefault("shared.http_retry", _http_retry_mod)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 

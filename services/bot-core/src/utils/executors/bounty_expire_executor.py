@@ -199,13 +199,15 @@ async def _push_bounty_cache_expire(parent_job_id: str, guild_id: int, db) -> No
         token = _os.getenv("INTERNAL_AUTH_TOKEN", "")
         headers = {"X-Internal-Auth": token} if token else {}
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
+            from shared.http_retry import with_transient_retry  # deferred — avoids forkserver mock-shared collision
+
+            await with_transient_retry(
+                client.post,
                 gateway_url,
                 json={"bounties": bounty_dicts},
                 headers=headers,
                 timeout=5.0,
             )
-            resp.raise_for_status()
         flogger.debug(
             f"BountyExpireJob[{parent_job_id}] pushed bounty cache for guild={guild_id} remaining={len(bounty_dicts)}"
         )

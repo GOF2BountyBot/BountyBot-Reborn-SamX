@@ -1,6 +1,7 @@
 """Service-specific fixtures for bot-core tests."""
 
 import contextlib
+import importlib.util
 import os
 import sys
 import types
@@ -14,7 +15,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 # Add the src directory to the path so imports work
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+_SRC_ROOT = os.path.join(os.path.dirname(__file__), "..", "src")
+sys.path.insert(0, _SRC_ROOT)
 # Add the tests directory to the path so test helpers (e.g. conftest) are importable
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -42,6 +44,16 @@ _mock_shared.bblogger = _mock_bblogger
 
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
+
+# Load the real shared.http_retry from src/ so executor imports can resolve it.
+# conftest installs a flat mock 'shared' (not a real package), so we must load
+# http_retry directly from the filesystem and register it in sys.modules.
+_http_retry_path = os.path.join(_SRC_ROOT, "shared", "http_retry.py")
+if os.path.exists(_http_retry_path) and "shared.http_retry" not in sys.modules:
+    _spec = importlib.util.spec_from_file_location("shared.http_retry", _http_retry_path)
+    _http_retry_mod = importlib.util.module_from_spec(_spec)
+    sys.modules["shared.http_retry"] = _http_retry_mod
+    _spec.loader.exec_module(_http_retry_mod)
 
 
 # Register the `real_push` marker so pytest does not warn about it.

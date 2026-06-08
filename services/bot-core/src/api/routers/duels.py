@@ -99,14 +99,16 @@ async def _push_duel_cache(guild_id: int, player_id: int, pending_duels: list, o
             f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache"
             f"/{quote(str(safe_guild), safe='')}/{quote(str(safe_player), safe='')}"
         )
+        from shared.http_retry import with_transient_retry  # deferred — avoids forkserver mock-shared collision
+
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
+            await with_transient_retry(
+                client.post,
                 cache_url,
                 json={"pending_duels": pending_duels, "outgoing_duels": outgoing_duels},
                 headers=headers,
                 timeout=5,
             )
-        resp.raise_for_status()
         flogger.debug(
             f"_push_duel_cache: pushed guild={guild_id} player={player_id} "
             f"pending={len(pending_duels)} outgoing={len(outgoing_duels)}"

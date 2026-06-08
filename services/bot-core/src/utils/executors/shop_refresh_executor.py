@@ -296,13 +296,15 @@ async def _push_shop_cache(parent_job_id: str, guild_id: int, tier: str, items: 
                     d[k] = v.isoformat()
             serialised.append(d)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
+            from shared.http_retry import with_transient_retry  # deferred — avoids forkserver mock-shared collision
+
+            await with_transient_retry(
+                client.post,
                 gateway_url,
                 json={"items": serialised},
                 headers=headers,
                 timeout=5.0,
             )
-            resp.raise_for_status()
         flogger.debug(
             f"ShopRefreshJob[{parent_job_id}] pushed shop cache for guild={guild_id} tier={tier} "
             f"items={len(serialised)}"

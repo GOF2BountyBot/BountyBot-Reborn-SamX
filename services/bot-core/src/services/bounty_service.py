@@ -1832,14 +1832,16 @@ class BountyService:
             # SSRF guard: coerce to int — non-numeric values raise ValueError,
             # caught by the surrounding try/except as a warning.
             safe_guild = int(guild_id)
+            from shared.http_retry import with_transient_retry  # deferred — avoids forkserver mock-shared collision
+
             async with httpx.AsyncClient() as client:
-                resp = await client.post(
+                await with_transient_retry(
+                    client.post,
                     f"{gateway_url}/internal/autocomplete/bounty-cache/{quote(str(safe_guild), safe='')}",
                     json={"bounties": bounty_dicts},
                     headers=headers,
                     timeout=5.0,
                 )
-            resp.raise_for_status()
             flogger.debug(
                 f"check_bounty: pushed bounty cache after capture for guild={guild_id} remaining={len(bounty_dicts)}"
             )

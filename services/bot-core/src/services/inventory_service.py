@@ -70,7 +70,11 @@ class InventoryService:
                 else:
                     items = await self.inventory_repo.get_player_items_by_types(db, player_id, concrete_types)
 
-            # Format items for response
+            # Format items for response — batch-fetch all item details in 5 queries
+            # (P6-T2: replaces N×5 sequential per-item lookups).
+            item_names = [item.item_name for item in items]
+            details_by_name = await self._get_items_details_batch(db, item_names)
+
             formatted_items = []
             for item in items:
                 formatted_item = {
@@ -79,7 +83,7 @@ class InventoryService:
                     "item_name": item.item_name,
                     "quantity": item.quantity,
                     "acquired_at": item.acquired_at.isoformat(),
-                    "item_details": await self._get_item_details(db, item.item_name),
+                    "item_details": details_by_name.get(item.item_name),
                 }
                 formatted_items.append(formatted_item)
 
@@ -422,59 +426,75 @@ class InventoryService:
             flogger.error(f"Error validating item compatibility: {e}")
             raise
 
+    async def _get_items_details_batch(
+        self, db: AsyncSession, item_names: list[str]
+    ) -> dict[str, dict[str, Any] | None]:
+        """Batch-fetch item details for a list of item names.
+
+        P6-T2: replaces N×5 sequential ``_get_item_details`` calls (one per item
+        name × five repos) with 5 batched ``WHERE name IN (...)`` queries — one
+        per repo type.  For an inventory with N distinct item names this reduces
+        the query count from up to 5·N to exactly 5.
+
+        The priority ordering mirrors ``_get_item_details``: primary_weapon →
+        secondary_weapon → turret_weapon → module → ship.  If the same name
+        somehow appears in two repos (shouldn't happen in practice) the first
+        match wins, matching the old sequential-scan behaviour.
+
+        Args:
+            db:         Async database session.
+            item_names: Unique item names to look up (duplicates tolerated).
+
+        Returns:
+            Mapping of item_name → detail dict (or ``None`` if not found in any
+            repo).  Every name in *item_names* has a key in the result — unknown
+            names map to ``None``.
+        """
+        if not item_names:
+            return {}
+
+        unique_names = list(dict.fromkeys(item_names))  # preserve order, drop dupes
+
+        # Pre-fill with None so all queried names are present in the result.
+        details: dict[str, dict[str, Any] | None] = dict.fromkeys(unique_names, None)
+
+        # Repos in priority order (mirrors _get_item_details lookup sequence).
+        repo_type_pairs = [
+            (self.primary_weapon_repo, "primary_weapon"),
+            (self.secondary_weapon_repo, "secondary_weapon"),
+            (self.turret_weapon_repo, "turret_weapon"),
+            (self.module_repo, "module"),
+            (self.ship_repo, "ship"),
+        ]
+
+        for repo, item_type in repo_type_pairs:
+            # Only look up names we haven't resolved yet.
+            unresolved = [n for n in unique_names if details[n] is None]
+            if not unresolved:
+                break  # all resolved — no more queries needed
+            found_items = await repo.get_by_names(db, unresolved)
+            for item in found_items:
+                name = item.name
+                if details[name] is None:  # first-match wins
+                    details[name] = {
+                        "name": name,
+                        "tech_level": getattr(item, "tech_level", None) if item_type != "ship" else None,
+                        "value": getattr(item, "value", None),
+                        "type": item_type,
+                    }
+
+        return details
+
     async def _get_item_details(self, db: AsyncSession, item_name: str) -> dict[str, Any] | None:
-        """Get item details by searching all item repositories."""
-        # Search primary weapons
-        item = await self.primary_weapon_repo.get_by_name(db, item_name)
-        if item:
-            return {
-                "name": item.name,
-                "tech_level": getattr(item, "tech_level", None),
-                "value": getattr(item, "value", None),
-                "type": "primary_weapon",
-            }
+        """Get item details by searching all item repositories.
 
-        # Search secondary weapons
-        item = await self.secondary_weapon_repo.get_by_name(db, item_name)
-        if item:
-            return {
-                "name": item.name,
-                "tech_level": getattr(item, "tech_level", None),
-                "value": getattr(item, "value", None),
-                "type": "secondary_weapon",
-            }
-
-        # Search turret weapons
-        item = await self.turret_weapon_repo.get_by_name(db, item_name)
-        if item:
-            return {
-                "name": item.name,
-                "tech_level": getattr(item, "tech_level", None),
-                "value": getattr(item, "value", None),
-                "type": "turret_weapon",
-            }
-
-        # Search modules
-        item = await self.module_repo.get_by_name(db, item_name)
-        if item:
-            return {
-                "name": item.name,
-                "tech_level": getattr(item, "tech_level", None),
-                "value": getattr(item, "value", None),
-                "type": "module",
-            }
-
-        # Search ships
-        item = await self.ship_repo.get_by_name(db, item_name)
-        if item:
-            return {
-                "name": item.name,
-                "tech_level": None,
-                "value": getattr(item, "value", None),
-                "type": "ship",
-            }
-
-        return None
+        Single-item convenience wrapper around ``_get_items_details_batch``.
+        Retained for callers that look up a single item by name.
+        Use ``_get_items_details_batch`` when processing multiple items to
+        avoid N×5 sequential repo calls.
+        """
+        result = await self._get_items_details_batch(db, [item_name])
+        return result.get(item_name)
 
     async def _get_ship_details(self, db: AsyncSession, ship_name: str) -> dict[str, Any] | None:
         """Get ship details from the database."""

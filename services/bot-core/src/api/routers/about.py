@@ -187,6 +187,75 @@ async def list_objects_for_category(category: DataCategory, db: AsyncSession = D
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
+def _build_object_result(obj: Any, category: DataCategory) -> dict[str, Any]:
+    """Build the result dict for a matched game object.
+
+    Shared by ``get_object_by_name`` and ``get_object_by_alias`` so both endpoints
+    produce identical output from the same first-match logic.  Only category-specific
+    fields that differ from the common base are appended; combat enrichment is applied
+    at the end.
+
+    Note: this helper does NOT include ``neighbours``/``security`` for systems — those
+    are exclusive to ``get_object_by_id`` which has a richer system view.
+    """
+    result: dict[str, Any] = {
+        "id": obj.id,
+        "name": obj.name,
+        "aliases": obj.aliases or [],
+        "built_in": getattr(obj, "built_in", None),
+        "emoji": getattr(obj, "emoji", None),
+        "icon": getattr(obj, "icon", None),
+        "value": getattr(obj, "value", None),
+        "wiki": getattr(obj, "wiki", None),
+        "type": getattr(obj, "type", None),
+        "tech_level": getattr(obj, "tech_level", None),
+        "extra_atts": getattr(obj, "extra_atts", None),
+        "category": category.value,
+    }
+
+    if category == DataCategory.module:
+        result["max_equipped"] = obj.max_equipped
+    elif category == DataCategory.primary:
+        result["dps"] = obj.dps
+    elif category == DataCategory.secondary:
+        result["damage"] = obj.damage
+        result["loading_speed"] = obj.loading_speed
+    elif category == DataCategory.turret:
+        result["dps"] = obj.dps
+    elif category == DataCategory.ship:
+        result.update(
+            {
+                "armour": obj.armour,
+                "cargo": obj.cargo,
+                "handling": obj.handling,
+                "shop_spawn_rate": obj.shop_spawn_rate,
+                "max_modules": obj.max_modules,
+                "max_primaries": obj.max_primaries,
+                "max_secondaries": obj.max_secondaries,
+                "max_turrets": obj.max_turrets,
+                "manufacturer": obj.manufacturer,
+                "skinnable": obj.skinnable,
+                "compatible_skins": obj.compatible_skins or [],
+                "model": obj.model,
+                "norm_spec": obj.norm_spec,
+                "assets": obj.assets or [],
+                "save_due": obj.save_due,
+                "builtin_modules": obj.builtin_modules or [],
+            }
+        )
+    elif category == DataCategory.criminal:
+        # result["is_player"] = obj.is_player
+        result["faction"] = obj.faction
+    elif category == DataCategory.system:
+        result["coordinates"] = obj.coordinates
+        result["faction"] = obj.faction
+    elif category == DataCategory.commodity:
+        result.update(CommodityResponse.model_validate(obj).model_dump())
+
+    _enrich_combat_fields(result, category.value)
+    return result
+
+
 @router.get("/object/name/{object_name}", response_model=dict[str, Any])
 async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db)):
     """
@@ -195,66 +264,11 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
     """
     flogger.info(f"Request received: GET /object/name/{{object_name}}, object_name={object_name}")
     try:
-        # Try each repository to find the object
+        # Scan repos in declaration order; return on first match (short-circuit).
         for category, repo in CATEGORY_REPOS.items():
             obj = await repo.get_by_name(db, object_name)
             if obj:
-                # Convert to dict format
-                result: dict[str, Any] = {
-                    "id": obj.id,
-                    "name": obj.name,
-                    "aliases": obj.aliases or [],
-                    "built_in": getattr(obj, "built_in", None),
-                    "emoji": getattr(obj, "emoji", None),
-                    "icon": getattr(obj, "icon", None),
-                    "value": getattr(obj, "value", None),
-                    "wiki": getattr(obj, "wiki", None),
-                    "type": getattr(obj, "type", None),
-                    "tech_level": getattr(obj, "tech_level", None),
-                    "extra_atts": getattr(obj, "extra_atts", None),
-                    "category": category.value,
-                }
-
-                if category == DataCategory.module:
-                    result["max_equipped"] = obj.max_equipped
-                elif category == DataCategory.primary:
-                    result["dps"] = obj.dps
-                elif category == DataCategory.secondary:
-                    result["damage"] = obj.damage
-                    result["loading_speed"] = obj.loading_speed
-                elif category == DataCategory.turret:
-                    result["dps"] = obj.dps
-                elif category == DataCategory.ship:
-                    result.update(
-                        {
-                            "armour": obj.armour,
-                            "cargo": obj.cargo,
-                            "handling": obj.handling,
-                            "shop_spawn_rate": obj.shop_spawn_rate,
-                            "max_modules": obj.max_modules,
-                            "max_primaries": obj.max_primaries,
-                            "max_secondaries": obj.max_secondaries,
-                            "max_turrets": obj.max_turrets,
-                            "manufacturer": obj.manufacturer,
-                            "skinnable": obj.skinnable,
-                            "compatible_skins": obj.compatible_skins or [],
-                            "model": obj.model,
-                            "norm_spec": obj.norm_spec,
-                            "assets": obj.assets or [],
-                            "save_due": obj.save_due,
-                            "builtin_modules": obj.builtin_modules or [],
-                        }
-                    )
-                elif category == DataCategory.criminal:
-                    # result["is_player"] = obj.is_player
-                    result["faction"] = obj.faction
-                elif category == DataCategory.system:
-                    result["coordinates"] = obj.coordinates
-                    result["faction"] = obj.faction
-                elif category == DataCategory.commodity:
-                    result.update(CommodityResponse.model_validate(obj).model_dump())
-
-                _enrich_combat_fields(result, category.value)
+                result = _build_object_result(obj, category)
                 flogger.debug(f"Object found: name={object_name}, category={category.value}, id={obj.id}")
                 return result
 
@@ -276,64 +290,11 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
     """
     flogger.info(f"Request received: GET /object/alias/{{alias}}, alias={alias}")
     try:
+        # Scan repos in declaration order; return on first match (short-circuit).
         for category, repo in CATEGORY_REPOS.items():
             obj = await repo.get_by_alias(db, alias)
             if obj:
-                result: dict[str, Any] = {
-                    "id": obj.id,
-                    "name": obj.name,
-                    "aliases": obj.aliases or [],
-                    "built_in": getattr(obj, "built_in", None),
-                    "emoji": getattr(obj, "emoji", None),
-                    "icon": getattr(obj, "icon", None),
-                    "value": getattr(obj, "value", None),
-                    "wiki": getattr(obj, "wiki", None),
-                    "type": getattr(obj, "type", None),
-                    "tech_level": getattr(obj, "tech_level", None),
-                    "extra_atts": getattr(obj, "extra_atts", None),
-                    "category": category.value,
-                }
-
-                if category == DataCategory.module:
-                    result["max_equipped"] = obj.max_equipped
-                elif category == DataCategory.primary:
-                    result["dps"] = obj.dps
-                elif category == DataCategory.secondary:
-                    result["damage"] = obj.damage
-                    result["loading_speed"] = obj.loading_speed
-                elif category == DataCategory.turret:
-                    result["dps"] = obj.dps
-                elif category == DataCategory.ship:
-                    result.update(
-                        {
-                            "armour": obj.armour,
-                            "cargo": obj.cargo,
-                            "handling": obj.handling,
-                            "shop_spawn_rate": obj.shop_spawn_rate,
-                            "max_modules": obj.max_modules,
-                            "max_primaries": obj.max_primaries,
-                            "max_secondaries": obj.max_secondaries,
-                            "max_turrets": obj.max_turrets,
-                            "manufacturer": obj.manufacturer,
-                            "skinnable": obj.skinnable,
-                            "compatible_skins": obj.compatible_skins or [],
-                            "model": obj.model,
-                            "norm_spec": obj.norm_spec,
-                            "assets": obj.assets or [],
-                            "save_due": obj.save_due,
-                            "builtin_modules": obj.builtin_modules or [],
-                        }
-                    )
-                elif category == DataCategory.criminal:
-                    # result["is_player"] = obj.is_player
-                    result["faction"] = obj.faction
-                elif category == DataCategory.system:
-                    result["coordinates"] = obj.coordinates
-                    result["faction"] = obj.faction
-                elif category == DataCategory.commodity:
-                    result.update(CommodityResponse.model_validate(obj).model_dump())
-
-                _enrich_combat_fields(result, category.value)
+                result = _build_object_result(obj, category)
                 flogger.debug(f"Object found by alias: alias={alias}, category={category.value}, id={obj.id}")
                 return result
 

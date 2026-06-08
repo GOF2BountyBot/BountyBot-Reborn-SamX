@@ -33,6 +33,28 @@ class UserRepository(IRepository[User]):
             flogger.error(f"Error getting user by name {name}: {e}")
             raise
 
+    async def get_by_ids(self, db: AsyncSession, obj_ids: list[int]) -> list[User]:
+        """Batch-fetch multiple users by primary key in one ``WHERE id IN (...)`` query.
+
+        P6-T4: used by ``DuelService.get_all_pending_for_guild`` to replace N
+        sequential ``get_by_id`` calls with two batched fetches (players then users).
+
+        Args:
+            db:      Async database session.
+            obj_ids: Discord user IDs to fetch.  Duplicates are tolerated.
+
+        Returns:
+            List of matching User objects; silently omits IDs with no row.
+        """
+        if not obj_ids:
+            return []
+        try:
+            result = await db.execute(select(User).where(User.id.in_(obj_ids)))
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error fetching users by IDs {obj_ids}: {e}")
+            raise
+
     async def get_by_discord_id(self, db: AsyncSession, discord_id: int) -> User | None:
         """Get user by Discord ID (snowflake).
 

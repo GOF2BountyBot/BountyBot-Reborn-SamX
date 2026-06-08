@@ -203,8 +203,10 @@ class PlayerRepository(IRepository[Player]):
         db: AsyncSession,
         guild_id: int,
         active_within_days: int | None = None,
+        skip: int = 0,
+        limit: int | None = None,
     ) -> list[Player]:
-        """Get all players in a specific guild.
+        """Get players in a specific guild with optional DB-side pagination.
 
         Args:
             db: Database session.
@@ -212,16 +214,76 @@ class PlayerRepository(IRepository[Player]):
             active_within_days: When set and > 0, restricts results to players
                 whose ``updated_at`` is within this many days of the current UTC time.
                 ``0`` means "warm everyone" — same as ``None`` (no filter applied).
+            skip: Number of rows to skip (OFFSET).  Default 0 (no offset).
+            limit: Maximum number of rows to return (LIMIT).  Default ``None``
+                returns all matching rows.  P6-T3: use this instead of
+                Python-slicing after a full load.
         """
         try:
             query = select(Player).where(Player.guild_id == guild_id)
             if active_within_days is not None and active_within_days > 0:
                 cutoff = datetime.now(UTC) - timedelta(days=active_within_days)
                 query = query.where(Player.updated_at >= cutoff)
+            if skip:
+                query = query.offset(skip)
+            if limit is not None:
+                query = query.limit(limit)
             result = await db.execute(query)
             return list(result.scalars().all())
         except Exception as e:
             flogger.error(f"Error getting players for guild {guild_id}: {e}")
+            raise
+
+    async def get_guild_stats(self, db: AsyncSession, guild_id: int) -> dict:
+        """Return aggregate statistics for a guild using DB-side computation.
+
+        P6-T4: replaces the ``get_players_by_guild`` full-load + Python loop in
+        the admin stats endpoint with two DB aggregate queries so the app never
+        materialises the full player list just to sum a few columns.
+
+        Queries issued:
+          1. ``SELECT count(*), sum(credits), sum(xp) WHERE guild_id = ?``
+          2. ``SELECT tier, count(*) WHERE guild_id = ? GROUP BY tier``
+
+        Returns a dict with keys identical to what the admin stats endpoint
+        produces, so the router can return it directly without any further
+        transformation:
+          ``guild_id``, ``total_players``, ``tier_distribution``,
+          ``total_credits``, ``total_xp``, ``average_credits``, ``average_xp``.
+        """
+        try:
+            # Query 1: scalar aggregates
+            agg_result = await db.execute(
+                select(
+                    func.count(Player.id).label("total_players"),  # pylint: disable=not-callable
+                    func.coalesce(func.sum(Player.credits), 0).label("total_credits"),  # pylint: disable=not-callable
+                    func.coalesce(func.sum(Player.xp), 0).label("total_xp"),  # pylint: disable=not-callable
+                ).where(Player.guild_id == guild_id)
+            )
+            row = agg_result.one()
+            total_players: int = row.total_players
+            total_credits: int = row.total_credits
+            total_xp: int = row.total_xp
+
+            # Query 2: tier distribution
+            tier_result = await db.execute(
+                select(Player.tier, func.count(Player.id).label("cnt"))  # pylint: disable=not-callable
+                .where(Player.guild_id == guild_id)
+                .group_by(Player.tier)
+            )
+            tier_distribution: dict[str, int] = {tier: cnt for tier, cnt in tier_result.all()}
+
+            return {
+                "guild_id": guild_id,
+                "total_players": total_players,
+                "tier_distribution": tier_distribution,
+                "total_credits": total_credits,
+                "total_xp": total_xp,
+                "average_credits": total_credits / total_players if total_players > 0 else 0,
+                "average_xp": total_xp / total_players if total_players > 0 else 0,
+            }
+        except Exception as e:
+            flogger.error(f"Error getting guild stats for guild {guild_id}: {e}")
             raise
 
     async def get_players_by_user(self, db: AsyncSession, user_id: int) -> list[Player]:

@@ -900,29 +900,10 @@ async def get_guild_statistics(
 
     try:
         async with get_db_session() as db:
-            players = await player_service.player_repo.get_players_by_guild(db, guild_id)
-
-            # Calculate statistics
-            total_players = len(players)
-            tier_counts = {}
-            total_credits = 0
-            total_xp = 0
-
-            for player in players:
-                tier_counts[player.tier] = tier_counts.get(player.tier, 0) + 1
-                total_credits += player.credits
-                total_xp += player.xp
-
-            stats = {
-                "guild_id": guild_id,
-                "total_players": total_players,
-                "tier_distribution": tier_counts,
-                "total_credits": total_credits,
-                "total_xp": total_xp,
-                "average_credits": total_credits / total_players if total_players > 0 else 0,
-                "average_xp": total_xp / total_players if total_players > 0 else 0,
-            }
-
+            # P6-T4: use DB-side aggregates instead of loading all players into
+            # Python and summing there.  Two queries (scalar agg + GROUP BY tier)
+            # replace one full table scan materialised as a Python list.
+            stats = await player_service.player_repo.get_guild_stats(db, guild_id)
             return stats
 
     except Exception as e:

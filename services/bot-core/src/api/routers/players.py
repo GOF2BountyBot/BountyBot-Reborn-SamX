@@ -179,16 +179,18 @@ async def get_players_by_guild(
     try:
         async with get_db_session() as db:
             if tier:
+                # Tier-filtered path: full load required for Python-side tier filter;
+                # pagination applied in-process after filtering (P6-T3 scope is no-tier path).
                 players = await player_service.get_players_by_tier(
                     db, guild_id, tier, active_within_days=active_within_days
                 )
+                paginated_players = players[skip : skip + limit]
             else:
-                players = await player_service.player_repo.get_players_by_guild(
-                    db, guild_id, active_within_days=active_within_days
+                # P6-T3: push skip/limit into the query (LIMIT/OFFSET) so the DB
+                # returns at most `limit` rows instead of loading the full guild set.
+                paginated_players = await player_service.player_repo.get_players_by_guild(
+                    db, guild_id, active_within_days=active_within_days, skip=skip, limit=limit
                 )
-
-            # Apply pagination
-            paginated_players = players[skip : skip + limit]
 
             return [
                 PlayerResponse(

@@ -1721,18 +1721,26 @@ class TestGetSystemHealth:
 
 
 class TestGetGuildStatistics:
-    """Tests for GET /api/v1/admin/guilds/{guild_id}/stats."""
+    """Tests for GET /api/v1/admin/guilds/{guild_id}/stats.
+
+    P6-T4: endpoint now calls player_repo.get_guild_stats (DB-side aggregates)
+    instead of loading all players into Python.  Test mocks updated accordingly.
+    """
 
     @patch("api.routers.admin.get_db_session")
     def test_get_guild_statistics_happy_path(self, mock_get_db, client, mock_player_service):
         """Returns 200 with correct statistics for a guild with players."""
         _configure_db_mock(mock_get_db)
-        # 2 players: Bronze with 100 credits/50 xp, Silver with 200 credits/150 xp
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(
-            return_value=[
-                make_mock_player(id=1, credits=100, xp=50, tier="Bronze"),
-                make_mock_player(id=2, credits=200, xp=150, tier="Silver"),
-            ]
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "total_players": 2,
+                "tier_distribution": {"Bronze": 1, "Silver": 1},
+                "total_credits": 300,
+                "total_xp": 200,
+                "average_credits": 150.0,
+                "average_xp": 100.0,
+            }
         )
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
@@ -1752,12 +1760,16 @@ class TestGetGuildStatistics:
     def test_get_guild_statistics_multiple_players_same_tier(self, mock_get_db, client, mock_player_service):
         """Correctly counts tier distribution when multiple players share a tier."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(
-            return_value=[
-                make_mock_player(id=1, credits=100, xp=50, tier="Bronze"),
-                make_mock_player(id=2, credits=150, xp=75, tier="Bronze"),
-                make_mock_player(id=3, credits=500, xp=500, tier="Silver"),
-            ]
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "total_players": 3,
+                "tier_distribution": {"Bronze": 2, "Silver": 1},
+                "total_credits": 750,
+                "total_xp": 625,
+                "average_credits": 250.0,
+                "average_xp": 208.3,
+            }
         )
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
@@ -1772,7 +1784,17 @@ class TestGetGuildStatistics:
     def test_get_guild_statistics_empty_guild(self, mock_get_db, client, mock_player_service):
         """Returns zero averages and empty tier_distribution for guild with no players."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(return_value=[])
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "total_players": 0,
+                "tier_distribution": {},
+                "total_credits": 0,
+                "total_xp": 0,
+                "average_credits": 0,
+                "average_xp": 0,
+            }
+        )
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
 
@@ -1788,20 +1810,31 @@ class TestGetGuildStatistics:
 
     @patch("api.routers.admin.get_db_session")
     def test_get_guild_statistics_calls_repo_with_correct_guild_id(self, mock_get_db, client, mock_player_service):
-        """Passes the correct guild_id to player_repo.get_players_by_guild."""
+        """Passes the correct guild_id to player_repo.get_guild_stats."""
         _configure_db_mock(mock_get_db)
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 99999,
+                "total_players": 0,
+                "tier_distribution": {},
+                "total_credits": 0,
+                "total_xp": 0,
+                "average_credits": 0,
+                "average_xp": 0,
+            }
+        )
 
         client.get("/api/v1/admin/guilds/99999/stats?user_id=67890")
 
-        mock_player_service.player_repo.get_players_by_guild.assert_awaited_once()
-        call_args = mock_player_service.player_repo.get_players_by_guild.call_args
+        mock_player_service.player_repo.get_guild_stats.assert_awaited_once()
+        call_args = mock_player_service.player_repo.get_guild_stats.call_args
         assert 99999 in call_args.args or call_args.kwargs.get("guild_id") == 99999
 
     @patch("api.routers.admin.get_db_session")
     def test_get_guild_statistics_server_error_returns_500(self, mock_get_db, client, mock_player_service):
         """Returns 500 when player_repo raises an unexpected exception."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(side_effect=RuntimeError("Query timeout"))
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(side_effect=RuntimeError("Query timeout"))
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
 
@@ -1812,12 +1845,16 @@ class TestGetGuildStatistics:
     def test_get_guild_statistics_correct_average_calculation(self, mock_get_db, client, mock_player_service):
         """Calculates average_credits and average_xp correctly."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(
-            return_value=[
-                make_mock_player(id=1, credits=100, xp=0, tier="Bronze"),
-                make_mock_player(id=2, credits=300, xp=200, tier="Bronze"),
-                make_mock_player(id=3, credits=200, xp=100, tier="Bronze"),
-            ]
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "total_players": 3,
+                "tier_distribution": {"Bronze": 3},
+                "total_credits": 600,
+                "total_xp": 300,
+                "average_credits": 200.0,
+                "average_xp": 100.0,
+            }
         )
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")

@@ -611,6 +611,10 @@ class DuelService:
 
         Used by the Discord gateway for admin autocomplete on /admin_duel.
 
+        P6-T4: replaces N×2 sequential player+user ``get_by_id`` calls with two
+        batched ``WHERE id IN (...)`` fetches (one for players, one for users),
+        capping the query count to 3 regardless of how many pending duels exist.
+
         Args:
             db: SQLAlchemy async session.
             guild_id: Guild the duels are scoped to.
@@ -620,30 +624,39 @@ class DuelService:
             Either name is None if it cannot be resolved.
         """
         duels = await self.duel_repo.get_all_pending_by_guild(db, guild_id)
+        if not duels:
+            return []
 
-        result = []
-        for duel in duels:
-            challenger_name: str | None = None
-            target_name: str | None = None
-            try:
-                challenger = await self.player_repo.get_by_id(db, duel.challenger_id)
-                if challenger is not None:
-                    user = await self.user_repo.get_by_id(db, challenger.user_id)
-                    if user and user.discord_username:
-                        challenger_name = user.discord_username
-            except Exception as exc:  # defensive — lookup failures must never break autocomplete
-                flogger.debug(f"Could not resolve challenger name for duel {duel.id}: {exc}")
-            try:
-                target = await self.player_repo.get_by_id(db, duel.target_id)
-                if target is not None:
-                    user = await self.user_repo.get_by_id(db, target.user_id)
-                    if user and user.discord_username:
-                        target_name = user.discord_username
-            except Exception as exc:  # defensive — lookup failures must never break autocomplete
-                flogger.debug(f"Could not resolve target name for duel {duel.id}: {exc}")
-            result.append((duel, challenger_name, target_name))
+        # Collect all player IDs we need to resolve in one shot.
+        player_ids = list({duel.challenger_id for duel in duels} | {duel.target_id for duel in duels})
+        try:
+            players_list = await self.player_repo.get_by_ids(db, player_ids)
+        except Exception as exc:  # defensive — lookup failures must never break autocomplete
+            flogger.debug(f"Batch player lookup failed for guild {guild_id}: {exc}")
+            players_list = []
 
-        return result
+        player_by_id: dict[int, object] = {p.id: p for p in players_list}
+
+        # Collect all user_ids from resolved players.
+        user_ids = list({p.user_id for p in players_list})
+        try:
+            users_list = await self.user_repo.get_by_ids(db, user_ids)
+        except Exception as exc:  # defensive — lookup failures must never break autocomplete
+            flogger.debug(f"Batch user lookup failed for guild {guild_id}: {exc}")
+            users_list = []
+
+        user_by_id: dict[int, object] = {u.id: u for u in users_list}
+
+        def _resolve_name(player_id: int) -> str | None:
+            player = player_by_id.get(player_id)
+            if player is None:
+                return None
+            user = user_by_id.get(player.user_id)
+            if user and user.discord_username:
+                return user.discord_username
+            return None
+
+        return [(duel, _resolve_name(duel.challenger_id), _resolve_name(duel.target_id)) for duel in duels]
 
     # ------------------------------------------------------------------
     # Admin: cancel all pending duels for a guild

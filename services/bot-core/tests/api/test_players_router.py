@@ -291,13 +291,14 @@ class TestGetPlayersByGuild:
         assert data[0]["guild_id"] == 67890
 
     def test_get_players_by_guild_uses_repo_when_no_tier(self, mock_db_session, client, mock_player_service):
-        """Service delegation: no tier -> uses player_repo.get_players_by_guild."""
+        """Service delegation: no tier -> uses player_repo.get_players_by_guild with skip/limit (P6-T3)."""
         mock_session, _ = mock_db_session
 
         client.get("/api/v1/players/guild/67890")
 
+        # P6-T3: skip and limit are now passed to the repo so the DB applies LIMIT/OFFSET.
         mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
-            mock_session, 67890, active_within_days=None
+            mock_session, 67890, active_within_days=None, skip=0, limit=100
         )
         mock_player_service.get_players_by_tier.assert_not_called()
 
@@ -313,17 +314,22 @@ class TestGetPlayersByGuild:
         )
         mock_player_service.player_repo.get_players_by_guild.assert_not_called()
 
-    def test_get_players_by_guild_pagination(self, client, mock_player_service):
-        """Pagination: skip and limit query params are respected."""
-        # Create 5 players
-        players = [make_mock_player(id=i) for i in range(1, 6)]
-        mock_player_service.player_repo.get_players_by_guild.return_value = players
+    def test_get_players_by_guild_pagination(self, mock_db_session, client, mock_player_service):
+        """Pagination: skip and limit are forwarded to the repo; DB returns ≤ limit rows (P6-T3)."""
+        mock_session, _ = mock_db_session
+        # P6-T3: repo receives skip/limit and returns the already-paginated slice.
+        page = [make_mock_player(id=2), make_mock_player(id=3)]
+        mock_player_service.player_repo.get_players_by_guild.return_value = page
 
         response = client.get("/api/v1/players/guild/67890?skip=1&limit=2")
 
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 2
+        # Verify skip and limit were forwarded to the repo.
+        mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
+            mock_session, 67890, active_within_days=None, skip=1, limit=2
+        )
 
     def test_get_players_by_guild_empty_result(self, client, mock_player_service):
         """Happy path: guild with no players returns empty list."""
@@ -344,14 +350,14 @@ class TestGetPlayersByGuild:
         assert "Failed to get players" in response.json()["detail"]
 
     def test_get_players_by_guild_active_within_days_returns_200(self, mock_db_session, client, mock_player_service):
-        """active_within_days=7: returns 200 and passes filter param to repo."""
+        """active_within_days=7: returns 200 and passes all params (incl. skip/limit) to repo."""
         mock_session, _ = mock_db_session
 
         response = client.get("/api/v1/players/guild/67890?active_within_days=7")
 
         assert response.status_code == 200
         mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
-            mock_session, 67890, active_within_days=7
+            mock_session, 67890, active_within_days=7, skip=0, limit=100
         )
 
     def test_get_players_by_guild_active_within_days_zero_passes_zero(
@@ -364,7 +370,7 @@ class TestGetPlayersByGuild:
 
         assert response.status_code == 200
         mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
-            mock_session, 67890, active_within_days=0
+            mock_session, 67890, active_within_days=0, skip=0, limit=100
         )
 
     def test_get_players_by_guild_active_within_days_negative_returns_422(self, client, mock_player_service):

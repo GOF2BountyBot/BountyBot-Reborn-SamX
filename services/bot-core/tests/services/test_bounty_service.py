@@ -215,6 +215,9 @@ def service() -> BountyService:
         return None
 
     svc.bounty_repo.get_by_id_for_update = AsyncMock(side_effect=_for_update_side_effect)
+    # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids (batched).
+    # Default to empty list; tests that need payout breakdown content can override.
+    svc.player_repo.get_by_ids = AsyncMock(return_value=[])
 
     return svc
 
@@ -1259,6 +1262,9 @@ def check_bounty_setup(service, mock_db):
     lock lookup automatically finds the correct bounty.
     """
     service.player_repo.get_by_id = AsyncMock()
+    # P6-T1: _build_payout_breakdown now calls get_by_ids (batched) instead of get_by_id.
+    # Default to empty list; tests that assert on payout content can override.
+    service.player_repo.get_by_ids = AsyncMock(return_value=[])
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
     service.bounty_repo.update = AsyncMock()
     return service, mock_db
@@ -1695,6 +1701,9 @@ def combat_integration_setup(service, mock_db):
     get_active_by_guild_and_division.return_value is set to.
     """
     service.player_repo.get_by_id = AsyncMock()
+    # P6-T1: _build_payout_breakdown now calls get_by_ids (batched) instead of get_by_id.
+    # Default to empty list so check_bounty tests that don't assert on payout content still pass.
+    service.player_repo.get_by_ids = AsyncMock(return_value=[])
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
     service.bounty_repo.update = AsyncMock()
     service.combat_service = MagicMock()
@@ -5717,6 +5726,10 @@ class TestBuildPayoutBreakdown:
     - Falls back to str(reward.player_id) when player not found
     - Returns empty list when rewards is empty
     - Amount is credits_earned from RewardInfo
+
+    P6-T1 update: _build_payout_breakdown now calls player_repo.get_by_ids
+    (batched WHERE id IN) instead of per-reward get_by_id.  Tests mock
+    player_repo.get_by_ids rather than player_repo.get_by_id.
     """
 
     @pytest.fixture
@@ -5748,7 +5761,7 @@ class TestBuildPayoutBreakdown:
         """RewardInfo with is_winner=True → role='capture claim'."""
         reward = self._make_reward_info(is_winner=True, credits_earned=5000)
         player = self._make_player(display_name="WinnerPlayer")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5763,7 +5776,7 @@ class TestBuildPayoutBreakdown:
         """RewardInfo with is_winner=False → role='system check'."""
         reward = self._make_reward_info(is_winner=False, credits_earned=200)
         player = self._make_player(display_name="CheckerPlayer")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5778,7 +5791,7 @@ class TestBuildPayoutBreakdown:
         """player_display_name uses Player.display_name when it is non-empty."""
         reward = self._make_reward_info(is_winner=True)
         player = self._make_player(user_id=555, display_name="SamAccountX")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5790,7 +5803,7 @@ class TestBuildPayoutBreakdown:
         """Falls back to str(player.user_id) when display_name is None."""
         reward = self._make_reward_info(player_id=1)
         player = self._make_player(user_id=123456, display_name=None)
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5802,7 +5815,7 @@ class TestBuildPayoutBreakdown:
         """Falls back to str(player.user_id) when display_name is empty string."""
         reward = self._make_reward_info(player_id=1)
         player = self._make_player(user_id=789, display_name="")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5815,7 +5828,8 @@ class TestBuildPayoutBreakdown:
     async def test_skips_entry_when_player_not_found(self, service):
         """When player is not found in DB, the entry is silently skipped."""
         reward = self._make_reward_info(player_id=999)
-        service.player_repo.get_by_id = AsyncMock(return_value=None)
+        # Return empty list → no players found → entry skipped
+        service.player_repo.get_by_ids = AsyncMock(return_value=[])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5837,7 +5851,7 @@ class TestBuildPayoutBreakdown:
         """breakdown entry 'amount' must equal reward.credits_earned."""
         reward = self._make_reward_info(credits_earned=7049, is_winner=True)
         player = self._make_player(display_name="SamX")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5855,11 +5869,8 @@ class TestBuildPayoutBreakdown:
         checker1_player = self._make_player(player_id=2, display_name="Checker1")
         checker2_player = self._make_player(player_id=3, display_name="Checker2")
 
-        async def get_by_id_side_effect(db, pid):
-            mapping = {1: winner_player, 2: checker1_player, 3: checker2_player}
-            return mapping.get(pid)
-
-        service.player_repo.get_by_id = get_by_id_side_effect
+        # get_by_ids returns all three players; output order must follow rewards list
+        service.player_repo.get_by_ids = AsyncMock(return_value=[winner_player, checker1_player, checker2_player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [winner_reward, checker1_reward, checker2_reward])
@@ -5875,7 +5886,7 @@ class TestBuildPayoutBreakdown:
         """Each entry in payout_breakdown must have player_display_name, role, amount."""
         reward = self._make_reward_info(is_winner=True, credits_earned=3000)
         player = self._make_player(display_name="X")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])

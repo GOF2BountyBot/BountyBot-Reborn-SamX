@@ -60,6 +60,31 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error getting player (FOR UPDATE) by ID {obj_id}: {e}")
             raise
 
+    async def get_by_ids(self, db: AsyncSession, obj_ids: list[int]) -> list[Player]:
+        """Fetch multiple players by ID in a single ``WHERE id IN (...)`` query.
+
+        P6-T1: batch alternative to N sequential ``get_by_id`` calls.  Order of
+        the returned list matches DB retrieval order (not necessarily the order
+        of ``obj_ids``); callers that need a specific ordering should build a
+        mapping from the result.
+
+        Args:
+            db:      Async database session.
+            obj_ids: List of player IDs to fetch.  Duplicates are fine — the DB
+                     will de-duplicate via the primary-key index.
+
+        Returns:
+            List of matching Player objects (silently omits IDs with no row).
+        """
+        if not obj_ids:
+            return []
+        try:
+            result = await db.execute(select(Player).where(Player.id.in_(obj_ids)))
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error fetching players by IDs {obj_ids}: {e}")
+            raise
+
     async def get_by_name(self, db: AsyncSession, name: str) -> Player | None:
         """Not applicable for players - they don't have names."""
         raise NotImplementedError("Players don't have searchable names")

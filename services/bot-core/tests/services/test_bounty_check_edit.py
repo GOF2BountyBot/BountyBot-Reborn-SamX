@@ -190,6 +190,9 @@ def service() -> BountyService:
         return None
 
     svc.bounty_repo.get_by_id_for_update = AsyncMock(side_effect=_for_update_side_effect)
+    # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids (batched).
+    # Default to empty list; individual tests that need payout content can override.
+    svc.player_repo.get_by_ids = AsyncMock(return_value=[])
     return svc
 
 

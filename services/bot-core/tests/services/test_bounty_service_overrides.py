@@ -247,6 +247,10 @@ class TestPvcArmourBuffOverride:
                     return_value=[RewardInfo(player_id=42, credits_earned=500, xp_earned=50, is_winner=True)]
                 ),
             ),
+            # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids.
+            # This test uses a real BountyService with a real PlayerRepository against a mock db,
+            # so we patch _build_payout_breakdown to avoid a real DB call.
+            patch("services.bounty_service.BountyService._build_payout_breakdown", new=AsyncMock(return_value=[])),
             patch("services.bounty_service.BountyService._award_combat_bonus", new=AsyncMock()),
             patch("services.loadout_builder.LoadoutBuilder.from_player") as mock_from_player,
             patch("services.loadout_builder.LoadoutBuilder.from_criminal_ship") as mock_from_criminal,
@@ -301,6 +305,10 @@ class TestPvcArmourBuffOverride:
                     return_value=[RewardInfo(player_id=42, credits_earned=500, xp_earned=50, is_winner=True)]
                 ),
             ),
+            # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids.
+            # This test uses a real BountyService with a real PlayerRepository against a mock db,
+            # so we patch _build_payout_breakdown to avoid a real DB call.
+            patch("services.bounty_service.BountyService._build_payout_breakdown", new=AsyncMock(return_value=[])),
             patch("services.bounty_service.BountyService._award_combat_bonus", new=AsyncMock()),
             patch("services.loadout_builder.LoadoutBuilder.from_player") as mock_from_player,
             patch("services.loadout_builder.LoadoutBuilder.from_criminal_ship") as mock_from_criminal,

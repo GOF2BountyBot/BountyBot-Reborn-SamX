@@ -541,6 +541,7 @@ class BountyService:
         )
 
         ship = None
+        all_ships: list | None = None  # P6-T9b: cached to avoid second identical query on fallback
         if ship_tl != -1:
             from persist.models.ship import Ship
             from sqlalchemy import select
@@ -552,12 +553,16 @@ class BountyService:
                 ship = random.choice(matching_ships)
 
         if ship is None:
-            # Fallback: pick any combat-capable ship (max_primaries > 0)
-            from persist.models.ship import Ship
-            from sqlalchemy import select
+            # Fallback: pick any combat-capable ship (max_primaries > 0).
+            # P6-T9b: reuse all_ships from the TL-match query above if it was
+            # already fetched; only execute a new query when ship_tl == -1 (i.e.
+            # the TL-match branch was skipped and all_ships was never populated).
+            if all_ships is None:
+                from persist.models.ship import Ship
+                from sqlalchemy import select
 
-            result = await db.execute(select(Ship).where(Ship.max_primaries > 0))
-            all_ships = list(result.scalars().all())
+                result = await db.execute(select(Ship).where(Ship.max_primaries > 0))
+                all_ships = list(result.scalars().all())
             if not all_ships:
                 flogger.warning("No combat-capable ships (max_primaries > 0) found in DB — this should never happen")
             if all_ships:
@@ -652,9 +657,19 @@ class BountyService:
                 chosen = random.choice(available_pool)
                 equipped_modules.append(chosen)
                 mtype = getattr(chosen, "type", "")
-                equipped_type_counts[mtype] = equipped_type_counts.get(mtype, 0) + 1
-                # Re-filter pool based on updated type counts
-                available_pool = [m for m in available_pool if _can_equip(m)]
+                new_count = equipped_type_counts.get(mtype, 0) + 1
+                equipped_type_counts[mtype] = new_count
+                # P6-T9a: de-quadratic re-filter.  After equipping `chosen` of
+                # type `mtype`, only that type's limit can newly become exceeded —
+                # all other types are untouched.  So instead of re-scanning the
+                # entire pool (O(pool) per pick), we remove items of `mtype` only
+                # when the count has just reached its limit.  Items of other types
+                # remain valid and need not be re-tested.
+                limit = GameConstants.MODULE_EQUIP_LIMITS.get(mtype, -1)
+                if limit != -1 and new_count >= limit:
+                    # This type is now full; drop every remaining entry of this type.
+                    available_pool = [m for m in available_pool if getattr(m, "type", "") != mtype]
+                # else: limit is -1 (unlimited) or not yet reached → pool unchanged.
 
         # ----------------------------------------------------------------
         # Calculate partial values (weapons + modules) before turret selection
@@ -2181,8 +2196,10 @@ class BountyService:
     ) -> list[dict]:
         """Build a per-player payout breakdown list for embed rendering.
 
-        Fetches each player by ID to get their display_name, then assembles
-        one dict per player with player_display_name, role, and amount.
+        P6-T1: Fetches ALL players in a single ``WHERE id IN (...)`` query
+        instead of one ``get_by_id`` per reward (N+1 → 1).  The output list
+        preserves the original ``rewards`` ordering so callers' per-player
+        display ordering is unchanged.
 
         Args:
             db:      Async database session.
@@ -2192,9 +2209,19 @@ class BountyService:
             List of dicts with keys: player_display_name, role, amount.
             role is 'capture claim' for the winner, 'system check' for others.
         """
+        if not rewards:
+            return []
+
+        # P6-T1: single batched fetch via player_repo.get_by_ids (WHERE id IN (...))
+        # instead of one get_by_id per reward.  Result is indexed by player_id so
+        # the output loop below can preserve the original rewards ordering.
+        player_ids = [r.player_id for r in rewards]
+        players = await self.player_repo.get_by_ids(db, player_ids)
+        players_by_id = {p.id: p for p in players}
+
         payout_breakdown: list[dict] = []
         for reward in rewards:
-            player = await self.player_repo.get_by_id(db, reward.player_id)
+            player = players_by_id.get(reward.player_id)
             if player is None:
                 continue
             # Use display_name if available and non-empty, else fall back to str(user_id)

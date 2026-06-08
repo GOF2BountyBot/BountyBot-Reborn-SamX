@@ -8,7 +8,11 @@ economic factors, progression thresholds, and administrative settings.
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, BigInteger, DateTime, Float, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+# Portable JSON type: Postgres uses JSONB; SQLite unit-test suite falls back to JSON.
+_JSONB = JSON().with_variant(JSONB(), "postgresql")
 
 from persist.database.tablenames import TableNames
 from persist.models.base import Base
@@ -41,22 +45,22 @@ class GuildConfig(Base):
     shop_announcements_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # Shop inventory size ranges (JSON objects with min/max values)
-    ship_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
-    weapon_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
-    secondary_weapon_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
-    module_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
-    turret_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
+    ship_count_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 3, "max": 5})
+    weapon_count_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 3, "max": 5})
+    secondary_weapon_count_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 3, "max": 5})
+    module_count_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 3, "max": 5})
+    turret_count_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 3, "max": 5})
 
     # Quantity ranges for each item type
-    ship_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 1, "max": 1})
-    weapon_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
-    secondary_weapon_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
-    module_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
-    turret_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
+    ship_quantity_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 1, "max": 1})
+    weapon_quantity_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 2, "max": 4})
+    secondary_weapon_quantity_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 2, "max": 4})
+    module_quantity_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 2, "max": 4})
+    turret_quantity_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 2, "max": 4})
 
     # Tech level probabilities (JSON objects)
     tech_level_probabilities: Mapped[dict[str, float]] = mapped_column(
-        JSON, default={"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10}
+        _JSONB, default={"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10}
     )
 
     # Economic settings
@@ -65,20 +69,20 @@ class GuildConfig(Base):
 
     # XP and tier thresholds
     xp_thresholds: Mapped[dict[str, int]] = mapped_column(
-        JSON, default={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        _JSONB, default={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
     )
 
     # Activity temperature per division (persisted for decay across restarts)
     # Default: {"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0}
     division_temperatures: Mapped[dict[str, float]] = mapped_column(
-        JSON,
+        _JSONB,
         default={"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0},
         nullable=True,
     )
 
     # Bounty configuration (per-guild)
     bounty_max_per_tier: Mapped[dict[str, int] | None] = mapped_column(
-        JSON, default={"bronze": 3, "silver": 3, "gold": 3, "platinum": 3}, nullable=True
+        _JSONB, default={"bronze": 3, "silver": 3, "gold": 3, "platinum": 3}, nullable=True
     )
     bounty_expiry_minutes: Mapped[int | None] = mapped_column(Integer, default=480, nullable=True)
     bounty_spawn_interval_minutes: Mapped[int | None] = mapped_column(Integer, default=60, nullable=True)
@@ -90,7 +94,7 @@ class GuildConfig(Base):
     # ------------------------------------------------------------------
 
     # Combat / Balance
-    division_max_tl: Mapped[dict[str, int] | None] = mapped_column(JSON, nullable=True, default=None)
+    division_max_tl: Mapped[dict[str, int] | None] = mapped_column(_JSONB, nullable=True, default=None)
     ship_value_reward_percentage: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     criminal_equip_damageless_weapon_chance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     criminal_max_gear_upgrade: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

@@ -9,7 +9,11 @@ and current status.
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, BigInteger, DateTime, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+
+# Portable JSON type: Postgres uses JSONB; SQLite unit-test suite falls back to JSON.
+_JSONB = JSON().with_variant(JSONB(), "postgresql")
 
 from persist.database.tablenames import TableNames
 from persist.models.base import Base
@@ -25,7 +29,7 @@ class Bounty(Base):
     criminal_faction: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Route and answer
-    route: Mapped[list] = mapped_column(JSON, nullable=False)
+    route: Mapped[list] = mapped_column(_JSONB, nullable=False)
     answer: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Rewards
@@ -33,7 +37,7 @@ class Bounty(Base):
     reward_per_sys: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Tracking dict: system_name -> user_id (-1 = unchecked)
-    checked: Mapped[dict] = mapped_column(JSON, nullable=False)
+    checked: Mapped[dict] = mapped_column(_JSONB, nullable=False)
 
     # Timing
     issue_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
@@ -41,7 +45,7 @@ class Bounty(Base):
 
     # Criminal details
     tech_level: Mapped[int] = mapped_column(Integer, nullable=False)
-    criminal_ship: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    criminal_ship: Mapped[dict | None] = mapped_column(_JSONB, nullable=True)
 
     # Status tracking
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")

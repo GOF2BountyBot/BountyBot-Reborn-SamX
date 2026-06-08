@@ -8,7 +8,12 @@ fights (NULL user_id) are handled natively.
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Index, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+
+# Portable JSON type: Postgres uses JSONB (binary, indexable, sub-path operators);
+# SQLite falls back to JSON (the unit-test suite runs on SQLite — no JSONB type there).
+_JSONB = JSON().with_variant(JSONB(), "postgresql")
 
 from persist.database.tablenames import TableNames
 from persist.models.base import Base
@@ -30,7 +35,7 @@ class CombatLog(Base):
     is_stalemate: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
     # Full event-tick timeline + summary (§12). Generic JSON — never queried internally.
-    data: Mapped[dict] = mapped_column(JSON, nullable=False)
+    data: Mapped[dict] = mapped_column(_JSONB, nullable=False)
 
     # Retention key (§12 / Appendix A: COMBAT_LOG_RETENTION_HOURS = 72)
     created_at: Mapped[datetime] = mapped_column(

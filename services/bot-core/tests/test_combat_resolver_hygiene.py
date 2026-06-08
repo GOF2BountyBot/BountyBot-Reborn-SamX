@@ -285,6 +285,5 @@ def test_no_name_keyed_decision_in_combat_mechanics() -> None:
 
     assert not violations, (
         "P2-T8b: name-keyed mechanic decision found — all wins/identity must use "
-        "winner_side or player snowflake IDs, not name comparisons:\n"
-        + "\n".join(f"  {v}" for v in violations)
+        "winner_side or player snowflake IDs, not name comparisons:\n" + "\n".join(f"  {v}" for v in violations)
     )

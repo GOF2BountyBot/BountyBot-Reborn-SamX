@@ -633,9 +633,7 @@ class TestAcceptDuel:
         assert response.status_code == 200
         data = response.json()
         # winner_side=2 → target is the winner
-        assert data["winner_player_id"] == TARGET_ID, (
-            f"expected target_id={TARGET_ID}, got {data['winner_player_id']}"
-        )
+        assert data["winner_player_id"] == TARGET_ID, f"expected target_id={TARGET_ID}, got {data['winner_player_id']}"
         # Confirm it is NOT the challenger — wrong mapping must fail
         assert data["winner_player_id"] != CHALLENGER_ID
 
@@ -643,9 +641,7 @@ class TestAcceptDuel:
     def test_accept_duel_winner_player_id_stalemate_is_none(self, mock_get_db, client, mock_duel_service):
         """P2-T8a: stalemate (winner_side=None, is_stalemate=True) → winner_player_id is None."""
         _configure_db_mock(mock_get_db)
-        mock_duel_service.get_duel = AsyncMock(
-            return_value=make_mock_duel(id=1, challenger_id=100, target_id=200)
-        )
+        mock_duel_service.get_duel = AsyncMock(return_value=make_mock_duel(id=1, challenger_id=100, target_id=200))
         mock_duel_service.accept_duel = AsyncMock(
             return_value=make_mock_accept_result(
                 duel_id=1,

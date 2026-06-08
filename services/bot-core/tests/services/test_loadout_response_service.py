@@ -313,9 +313,7 @@ class TestBuildPlayerLoadout:
         svc = _make_svc(player=player, user=user)
         svc.item_repo = MagicMock()
         # Return a stub item for secondaries
-        svc.item_repo.get_by_name = AsyncMock(
-            return_value=SimpleNamespace(emoji="<:edo:1>", dps=None, value=800)
-        )
+        svc.item_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(emoji="<:edo:1>", dps=None, value=800))
         db = _make_db_session(player_ship=ps, ship=ship, module_factory=lambda n: None)
 
         result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)

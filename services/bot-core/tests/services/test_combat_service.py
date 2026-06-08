@@ -382,9 +382,7 @@ class TestCombatServiceT10:
             )
 
         # Rebuild path must have set combat_log_id
-        assert result.combat_log_id == fake_log_id, (
-            f"combat_log_id expected {fake_log_id}, got {result.combat_log_id}"
-        )
+        assert result.combat_log_id == fake_log_id, f"combat_log_id expected {fake_log_id}, got {result.combat_log_id}"
         # And winner_side must survive the rebuild — not be reset to None
         assert result.winner_side == 1, (
             f"winner_side expected 1 after log_result=True rebuild, got {result.winner_side}"

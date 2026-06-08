@@ -780,8 +780,7 @@ class TestCI27ESHullDeathEvent:
 
         # ES must fire at least once for this test to be meaningful
         es_acts = [
-            e for e in log
-            if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
+            e for e in log if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
         ]
         assert len(es_acts) >= 1, "ES must fire for this regression to be exercised"
 
@@ -789,10 +788,9 @@ class TestCI27ESHullDeathEvent:
 
         # No hull layer_depleted should exist on the tick ES fired (ship was saved)
         hull_dead_on_es_tick = [
-            e for e in log
-            if e.type == CombatEventType.layer_depleted
-            and e.data.get("layer") == "hull"
-            and e.tick == es_tick
+            e
+            for e in log
+            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull" and e.tick == es_tick
         ]
         assert hull_dead_on_es_tick == [], (
             f"CI-27 regression: hull layer_depleted emitted on ES-save tick {es_tick}; "
@@ -811,8 +809,7 @@ class TestCI27ESHullDeathEvent:
         log = result.combat_log
 
         hull_dead_events = [
-            e for e in log
-            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
+            e for e in log if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
         ]
         assert len(hull_dead_events) == 1, (
             f"Expected exactly one hull layer_depleted for a true death; got {len(hull_dead_events)}"
@@ -840,7 +837,7 @@ class TestCI27ESHullDeathEvent:
         # survives; enemy HP is tuned so the fight ends after ES fires + invuln expires.
         es_loadout = ShipLoadout(
             ship_name="ESShip",
-            base_armour=10,   # lethal on first hit → ES fires tick ~0
+            base_armour=10,  # lethal on first hit → ES fires tick ~0
             modules=[_es_mod()],
             weapons=[WeaponStats(name="SmallGun", dps=1.0, damage_per_shot=1, loading_speed_ms=100, range_m=5000.0)],
         )
@@ -853,22 +850,18 @@ class TestCI27ESHullDeathEvent:
         log = result.combat_log
 
         es_acts = [
-            e for e in log
-            if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
+            e for e in log if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
         ]
         assert len(es_acts) == 1, f"Expected ES to fire exactly once; got {len(es_acts)}"
         es_tick = es_acts[0].tick
 
         hull_dead_events = [
-            e for e in log
-            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
+            e for e in log if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
         ]
 
         # No hull-death at the ES-save tick
         on_es_tick = [e for e in hull_dead_events if e.tick == es_tick]
-        assert on_es_tick == [], (
-            f"Hull-dead event must not appear on ES-save tick {es_tick}; found: {on_es_tick}"
-        )
+        assert on_es_tick == [], f"Hull-dead event must not appear on ES-save tick {es_tick}; found: {on_es_tick}"
 
         # If the ship genuinely dies later, hull-dead must be exactly once
         if hull_dead_events:
@@ -901,8 +894,7 @@ class TestCI27ESHullDeathEvent:
 
         fight_end = next(e for e in log if e.type == CombatEventType.fight_end)
         hull_dead_events = [
-            e for e in log
-            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
+            e for e in log if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
         ]
 
         if fight_end.data.get("reason") == "mutual":
@@ -934,8 +926,7 @@ class TestCI27ESHullDeathEvent:
         )
 
         hull_dead_events = [
-            e for e in log
-            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
+            e for e in log if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
         ]
         assert hull_dead_events == [], (
             f"Time-cap stalemate must NOT emit any hull layer_depleted; got: {hull_dead_events}"

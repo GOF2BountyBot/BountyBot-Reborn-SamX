@@ -207,8 +207,7 @@ def _compute_next_fire_time(
 
     # Step 3: never schedule in the past
     min_fire = now_dt + timedelta(seconds=_MIN_LEAD_SECONDS)
-    if target_time < min_fire:
-        target_time = min_fire
+    target_time = max(target_time, min_fire)
 
     # Step 4: bounded jitter — matches legacy window calc
     window_minutes = min(15.0, 0.25 * interval_minutes)
@@ -216,8 +215,7 @@ def _compute_next_fire_time(
     fire_time = target_time + timedelta(seconds=jitter_seconds)
 
     # Re-clamp post-jitter so jitter can never push us into the past either.
-    if fire_time < min_fire:
-        fire_time = min_fire
+    fire_time = max(fire_time, min_fire)
 
     # Step 5: collision-avoidance nudge against queued fires.
     for _ in range(_MAX_NUDGE_ITERATIONS):

@@ -549,11 +549,10 @@ class TestConcurrencyEvidence:
 
         # Use a 1-worker pool to simulate serial execution.
         serial_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="serial-test")
-        try:
-            # Override holder to use the 1-worker pool.
-            import utils.executor_holder as holder
+        import utils.executor_holder as holder
 
-            _saved_pool = holder._thread_pool
+        _saved_pool = holder._thread_pool  # capture before try so finally can always restore
+        try:
             holder.set_thread_pool(serial_pool)
 
             # Must also reload offload so it picks up the new pool reference.

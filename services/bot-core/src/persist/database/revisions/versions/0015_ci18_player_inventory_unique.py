@@ -41,17 +41,21 @@ def upgrade() -> None:
 
     # Dedup pre-flight: merge quantities into the lowest-id row, then delete duplicates.
     # This prevents the subsequent create_unique_constraint from failing on dirty DBs.
-    op.execute(sa.text(
-        f"UPDATE {_TABLE} t SET quantity = s.total FROM ("
-        f"  SELECT MIN(id) AS keep_id, player_id, item_type, item_name, SUM(quantity) AS total"
-        f"  FROM {_TABLE} GROUP BY player_id, item_type, item_name HAVING COUNT(*) > 1"
-        f") s WHERE t.id = s.keep_id"
-    ))
-    op.execute(sa.text(
-        f"DELETE FROM {_TABLE} t USING ("
-        f"  SELECT id, MIN(id) OVER (PARTITION BY player_id, item_type, item_name) AS keep_id FROM {_TABLE}"
-        f") d WHERE t.id = d.id AND t.id <> d.keep_id"
-    ))
+    op.execute(
+        sa.text(
+            f"UPDATE {_TABLE} t SET quantity = s.total FROM ("
+            f"  SELECT MIN(id) AS keep_id, player_id, item_type, item_name, SUM(quantity) AS total"
+            f"  FROM {_TABLE} GROUP BY player_id, item_type, item_name HAVING COUNT(*) > 1"
+            f") s WHERE t.id = s.keep_id"
+        )
+    )
+    op.execute(
+        sa.text(
+            f"DELETE FROM {_TABLE} t USING ("
+            f"  SELECT id, MIN(id) OVER (PARTITION BY player_id, item_type, item_name) AS keep_id FROM {_TABLE}"
+            f") d WHERE t.id = d.id AND t.id <> d.keep_id"
+        )
+    )
     op.create_unique_constraint(_UQ, _TABLE, list(_COLS))
 
 

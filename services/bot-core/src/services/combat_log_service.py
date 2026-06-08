@@ -289,7 +289,7 @@ class CombatLogService:
             raise KeyError(f"combat_log id={battle_id} not found or user_id={user_id} not a combatant")
 
         # Ownership gate — same KeyError for "not found" and "not a combatant"
-        if sub.combatant1_user_id != user_id and sub.combatant2_user_id != user_id:
+        if user_id not in (sub.combatant1_user_id, sub.combatant2_user_id):
             raise KeyError(f"combat_log id={battle_id} not found or user_id={user_id} not a combatant")
 
         # sub.key_events is None ↔ legacy row (no "key_events" in stored data blob).

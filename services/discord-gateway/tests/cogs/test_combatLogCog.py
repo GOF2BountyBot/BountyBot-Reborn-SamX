@@ -271,9 +271,7 @@ class TestBattleAutocomplete:
         assert len(choices) == 1
         label = choices[0].name
         # Full format must include both combatant names separated by " vs "
-        assert "SamX vs H'Soc" in label, (
-            f"Expected 'SamX vs H\\'Soc' in label but got: {label!r}"
-        )
+        assert "SamX vs H'Soc" in label, f"Expected 'SamX vs H\\'Soc' in label but got: {label!r}"
 
     async def test_choice_label_fallback_when_names_absent(self, cog):
         """CI-20: when combatant names are absent (None / missing keys) the label falls back

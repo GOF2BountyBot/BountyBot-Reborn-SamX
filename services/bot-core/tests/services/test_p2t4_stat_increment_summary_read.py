@@ -579,9 +579,7 @@ class TestNoTimelineWalk:
         src = inspect.getsource(service._increment_player_stats)
 
         # Must read from secondary_fired (summary key)
-        assert "secondary_fired" in src, (
-            "_increment_player_stats must read 'secondary_fired' from the summary block"
-        )
+        assert "secondary_fired" in src, "_increment_player_stats must read 'secondary_fired' from the summary block"
         # Must read module_activations from cb_block
         assert "module_activations" in src, (
             "_increment_player_stats must read 'module_activations' from the summary block"

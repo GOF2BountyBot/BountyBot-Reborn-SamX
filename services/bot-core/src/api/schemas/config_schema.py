@@ -61,7 +61,7 @@ class GameConstantsOverridesMixin(BaseModel):
         if set(v.keys()) != required_keys:
             raise ValueError(f"division_max_tl must have exactly keys: {required_keys}")
         for key, val in v.items():
-            if not isinstance(val, int) or not (1 <= val <= 10):
+            if not isinstance(val, int) or not 1 <= val <= 10:
                 raise ValueError(f"division_max_tl[{key!r}] must be an integer between 1 and 10")
         return v
 

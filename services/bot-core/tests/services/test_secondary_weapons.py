@@ -894,7 +894,8 @@ class TestCrossSubtype:
                 all_fires = [
                     e
                     for e in result.combat_log
-                    if e.type == "weapon_fire" and e.data.get("slot") == "secondary"
+                    if e.type == "weapon_fire"
+                    and e.data.get("slot") == "secondary"
                     and e.data.get("subtype") == "shock-blast"
                 ]
                 assert len(all_fires) >= 1, f"{subtype_name}: should fire at some point in the fight"
@@ -1590,9 +1591,9 @@ class TestRepairBotRegenEndToEnd:
         attacker_loadout = _loadout(weapons=[gun], base_armour=500, name="Attacker")
         result = TickResolver(seed=0).resolve(attacker_loadout, defender_loadout, rng=_AlwaysHit())
         hull_armour_regen = [
-            e for e in result.combat_log
-            if e.type == "regen" and e.actor == "Defender"
-            and e.data.get("layer") in ("hull", "armour")
+            e
+            for e in result.combat_log
+            if e.type == "regen" and e.actor == "Defender" and e.data.get("layer") in ("hull", "armour")
         ]
         assert len(hull_armour_regen) == 0, "No repair bot → no hull/armour regen events"
 
@@ -1635,7 +1636,8 @@ class TestShockBlastRangeGuard:
         """
         result = self._run_fight()
         t0_fires = [
-            e for e in result.combat_log
+            e
+            for e in result.combat_log
             if e.tick == 0 and e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"
         ]
         assert len(t0_fires) == 0, (
@@ -1651,18 +1653,18 @@ class TestShockBlastRangeGuard:
         is the distance at which the weapon fired. It must be < SHOCK_BLAST_TRIGGER_RANGE_M.
         """
         result = self._run_fight()
-        sb_fires = [
-            e for e in result.combat_log
-            if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"
-        ]
+        sb_fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"]
         assert len(sb_fires) >= 1, "Expected at least one shock-blast fire in a full fight"
 
         for fire_ev in sb_fires:
             tick = fire_ev.tick
             # Find the distance event on the same tick with cause='shock_blast'
             dist_ev = next(
-                (e for e in result.combat_log
-                 if e.tick == tick and e.type == "distance" and e.data.get("cause") == "shock_blast"),
+                (
+                    e
+                    for e in result.combat_log
+                    if e.tick == tick and e.type == "distance" and e.data.get("cause") == "shock_blast"
+                ),
                 None,
             )
             assert dist_ev is not None, f"No shock_blast distance event on tick {tick}"
@@ -1682,8 +1684,7 @@ class TestShockBlastRangeGuard:
         """
         result = self._run_fight()
         first_fire = next(
-            (e for e in result.combat_log
-             if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"),
+            (e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"),
             None,
         )
         assert first_fire is not None, "Expected at least one shock-blast fire"
@@ -1691,14 +1692,15 @@ class TestShockBlastRangeGuard:
         # Shock-blast has no specific cooldown_end event in the current implementation
         # (secondaries don't emit cooldown_end directly).
         # Verify the first fire is NOT on tick 0 — that's the proxy for "no wasted cooldown".
-        assert first_fire.tick > 0, (
-            f"First shock-blast fire on tick {first_fire.tick} — expected tick > 0 after FIX 2"
-        )
+        assert first_fire.tick > 0, f"First shock-blast fire on tick {first_fire.tick} — expected tick > 0 after FIX 2"
 
         # Additional: the fire tick corresponds to distance < SHOCK_BLAST_TRIGGER_RANGE_M
         dist_ev = next(
-            (e for e in result.combat_log
-             if e.tick == first_fire.tick and e.type == "distance" and e.data.get("cause") == "shock_blast"),
+            (
+                e
+                for e in result.combat_log
+                if e.tick == first_fire.tick and e.type == "distance" and e.data.get("cause") == "shock_blast"
+            ),
             None,
         )
         assert dist_ev is not None
@@ -1711,22 +1713,22 @@ class TestShockBlastRangeGuard:
         """
         result = self._run_fight()
         first_fire = next(
-            (e for e in result.combat_log
-             if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"),
+            (e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "shock-blast"),
             None,
         )
         assert first_fire is not None
 
         tick = first_fire.tick
         dist_ev = next(
-            (e for e in result.combat_log
-             if e.tick == tick and e.type == "distance" and e.data.get("cause") == "shock_blast"),
+            (
+                e
+                for e in result.combat_log
+                if e.tick == tick and e.type == "distance" and e.data.get("cause") == "shock_blast"
+            ),
             None,
         )
         assert dist_ev is not None, f"No shock_blast distance event on fire tick {tick}"
-        assert abs(dist_ev.data["to"] - STARTING_DIST) < 1e-6, (
-            "Shock-blast must reset distance to STARTING_DISTANCE_M"
-        )
+        assert abs(dist_ev.data["to"] - STARTING_DIST) < 1e-6, "Shock-blast must reset distance to STARTING_DISTANCE_M"
         assert first_fire.data["hit"] is True
         assert abs(first_fire.data["accuracy"] - 1.0) < 1e-9
 

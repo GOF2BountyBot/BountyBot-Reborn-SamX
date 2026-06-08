@@ -539,9 +539,7 @@ class TestP2T7OneDispatch:
         ):
             await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=10)
 
-        assert offload_mock.call_count == 1, (
-            f"Expected exactly 1 offload_cpu dispatch, got {offload_mock.call_count}"
-        )
+        assert offload_mock.call_count == 1, f"Expected exactly 1 offload_cpu dispatch, got {offload_mock.call_count}"
 
     @pytest.mark.asyncio
     async def test_offload_called_with_run_fight_batch(self):

@@ -10,7 +10,6 @@ Covers:
 from __future__ import annotations
 
 import concurrent.futures
-import importlib
 import sys
 
 import pytest
@@ -22,6 +21,7 @@ def _fresh_module():
     if mod_name in sys.modules:
         del sys.modules[mod_name]
     import utils.executor_holder as m
+
     return m
 
 

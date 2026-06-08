@@ -70,8 +70,7 @@ def _insert_guild(engine: sa.engine.Engine, guild_id: int) -> None:
     with engine.connect() as conn:
         conn.execute(
             sa.text(
-                f"INSERT INTO {_TABLE} (guild_id, weapon_count_range, weapon_quantity_range) "
-                "VALUES (:gid, :wcr, :wqr)"
+                f"INSERT INTO {_TABLE} (guild_id, weapon_count_range, weapon_quantity_range) VALUES (:gid, :wcr, :wqr)"
             ),
             {"gid": guild_id, "wcr": json.dumps({"min": 3, "max": 5}), "wqr": json.dumps({"min": 2, "max": 4})},
         )
@@ -117,15 +116,11 @@ def _run_upgrade_sqlite(engine: sa.engine.Engine) -> None:
 
         # Backfill NULLs — mirrors the migration R1 backfill
         conn.execute(
-            sa.text(
-                f"UPDATE {_TABLE} SET {_COUNT_COL} = :val WHERE {_COUNT_COL} IS NULL"
-            ),
+            sa.text(f"UPDATE {_TABLE} SET {_COUNT_COL} = :val WHERE {_COUNT_COL} IS NULL"),
             {"val": json.dumps(_DEFAULT_COUNT)},
         )
         conn.execute(
-            sa.text(
-                f"UPDATE {_TABLE} SET {_QTY_COL} = :val WHERE {_QTY_COL} IS NULL"
-            ),
+            sa.text(f"UPDATE {_TABLE} SET {_QTY_COL} = :val WHERE {_QTY_COL} IS NULL"),
             {"val": json.dumps(_DEFAULT_QTY)},
         )
 
@@ -373,7 +368,7 @@ class TestMigration0014RealUpgradeSQLParsing:
         with engine.connect() as conn:
             broken_sql = sa.text(
                 "UPDATE guild_configs "
-                "SET secondary_weapon_count_range = '{\"min\":3,\"max\":5}'::jsonb "
+                'SET secondary_weapon_count_range = \'{"min":3,"max":5}\'::jsonb '
                 "WHERE secondary_weapon_count_range IS NULL"
             )
             with pytest.raises(sa.exc.StatementError):

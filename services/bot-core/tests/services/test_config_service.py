@@ -1150,9 +1150,7 @@ class TestCI11SecondaryWeaponConfigKeys:
     """CI-11: item_count_ranges / quantity_ranges must support 'secondary_weapons' key."""
 
     @pytest.mark.asyncio
-    async def test_secondary_weapons_count_range_unpacked_to_flat_field(
-        self, service, mock_db, mock_config_repo
-    ):
+    async def test_secondary_weapons_count_range_unpacked_to_flat_field(self, service, mock_db, mock_config_repo):
         """item_count_ranges['secondary_weapons'] is unpacked to secondary_weapon_count_range."""
         mock_config_repo.get_config_summary.return_value = {"guild_id": 999}
 
@@ -1172,9 +1170,7 @@ class TestCI11SecondaryWeaponConfigKeys:
         assert "item_count_ranges" not in call_args
 
     @pytest.mark.asyncio
-    async def test_secondary_weapons_quantity_range_unpacked_to_flat_field(
-        self, service, mock_db, mock_config_repo
-    ):
+    async def test_secondary_weapons_quantity_range_unpacked_to_flat_field(self, service, mock_db, mock_config_repo):
         """quantity_ranges['secondary_weapons'] is unpacked to secondary_weapon_quantity_range."""
         mock_config_repo.get_config_summary.return_value = {"guild_id": 999}
 
@@ -1194,9 +1190,7 @@ class TestCI11SecondaryWeaponConfigKeys:
         assert "quantity_ranges" not in call_args
 
     @pytest.mark.asyncio
-    async def test_omitting_secondary_weapons_does_not_clobber_existing(
-        self, service, mock_db, mock_config_repo
-    ):
+    async def test_omitting_secondary_weapons_does_not_clobber_existing(self, service, mock_db, mock_config_repo):
         """Payload omitting secondary_weapons must not pass secondary_weapon_count_range to repo.
 
         Backward-compat: a caller providing only 'weapons' must not wipe the secondary

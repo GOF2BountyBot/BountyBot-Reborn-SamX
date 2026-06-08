@@ -733,10 +733,7 @@ class BountyService:
 
             # Sample min(max_secondaries, pool_size) distinct items WITHOUT replacement
             n_pick = min(ship.max_secondaries, len(equipped_secondaries))
-            if n_pick > 0:
-                equipped_secondaries = random.sample(equipped_secondaries, n_pick)
-            else:
-                equipped_secondaries = []
+            equipped_secondaries = random.sample(equipped_secondaries, n_pick) if n_pick > 0 else []
 
         # Knob #4: count each secondary's value ONCE per equipped type (not scaled by rounds).
         secondary_value = sum(getattr(sw, "value", 0) for sw in equipped_secondaries)
@@ -1934,7 +1931,6 @@ class BountyService:
         import os
 
         import httpx as _httpx
-        from persist.repositories.config_repository import ConfigRepository
         from persist.repositories.user_repository import UserRepository
         from utils.bounty_announcement_payload import build_capture_payout_embed
 

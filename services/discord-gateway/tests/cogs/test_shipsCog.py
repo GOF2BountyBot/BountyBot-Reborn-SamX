@@ -301,7 +301,6 @@ class TestShipsCogInitialization:
 
     def test_initialization_logs_debug(self, mock_ships_cog):
         """ShipsCog __init__ should log a debug message."""
-        global _module_logger
         assert _module_logger is not None
         _module_logger.debug.assert_called_with("ShipsCog initialized")
 

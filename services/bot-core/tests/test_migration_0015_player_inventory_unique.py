@@ -116,6 +116,7 @@ def _build_mock_op(conn: sa.engine.Connection):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_unique_names(conn: sa.engine.Connection) -> set[str]:
     insp = sa.inspect(conn)
     return {c["name"] for c in insp.get_unique_constraints(_TABLE)}
@@ -127,10 +128,7 @@ def _drop_constraint_if_exists(conn: sa.engine.Connection) -> None:
 
 def _count_rows(conn: sa.engine.Connection, player_id: int, item_type: str, item_name: str) -> int:
     result = conn.execute(
-        sa.text(
-            f"SELECT COUNT(*) FROM {_TABLE} "
-            f"WHERE player_id = :pid AND item_type = :itype AND item_name = :iname"
-        ),
+        sa.text(f"SELECT COUNT(*) FROM {_TABLE} WHERE player_id = :pid AND item_type = :itype AND item_name = :iname"),
         {"pid": player_id, "itype": item_type, "iname": item_name},
     )
     return result.scalar()
@@ -139,8 +137,7 @@ def _count_rows(conn: sa.engine.Connection, player_id: int, item_type: str, item
 def _sum_quantity(conn: sa.engine.Connection, player_id: int, item_type: str, item_name: str) -> int:
     result = conn.execute(
         sa.text(
-            f"SELECT SUM(quantity) FROM {_TABLE} "
-            f"WHERE player_id = :pid AND item_type = :itype AND item_name = :iname"
+            f"SELECT SUM(quantity) FROM {_TABLE} WHERE player_id = :pid AND item_type = :itype AND item_name = :iname"
         ),
         {"pid": player_id, "itype": item_type, "iname": item_name},
     )
@@ -183,6 +180,7 @@ def _enable_fk(conn: sa.engine.Connection) -> None:
 # ---------------------------------------------------------------------------
 # Sync engine (used for DDL / migration tests — Alembic op works synchronously)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="function")
 def pg_sync_engine():

@@ -13,8 +13,9 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from message_builders.factory import MessageBuilderFactory
 from persist.repositories.discord_message_repository import DiscordMessageRepository
 from pydantic import BaseModel, Field
-from routers.discord_message import DiscordMessageResponse, EmbedPayloadDict
 from shared import bblogger
+
+from api.schemas.discord_message_schema import DiscordMessageResponse, EmbedPayloadDict
 
 flogger = bblogger.get_logger("bot-time-announcement-router")
 

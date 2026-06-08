@@ -100,10 +100,8 @@ def _start_event(c1_name: str, c2_name: str, hull1: int = 200, hull2: int = 200)
         target=None,
         data={
             "combatants": [
-                {"name": c1_name, "display_name": c1_name, "ship": c1_name, "slot": 1,
-                 "hp": _hp(hull1)},
-                {"name": c2_name, "display_name": c2_name, "ship": c2_name, "slot": 2,
-                 "hp": _hp(hull2)},
+                {"name": c1_name, "display_name": c1_name, "ship": c1_name, "slot": 1, "hp": _hp(hull1)},
+                {"name": c2_name, "display_name": c2_name, "ship": c2_name, "slot": 2, "hp": _hp(hull2)},
             ],
             "initial_distance": 5000.0,
         },
@@ -210,8 +208,7 @@ class TestCI20NameIdentity:
         """Old rows without data['side'] in events fall back to actor name without crashing."""
         timeline = [
             # Old-style: no 'side' key in data
-            {"tick": 100, "type": "layer_depleted", "actor": "Betty", "target": None,
-             "data": {"layer": "armour"}},
+            {"tick": 100, "type": "layer_depleted", "actor": "Betty", "target": None, "data": {"layer": "armour"}},
         ]
         result = CombatLogService._extract_key_events(timeline, combatants_map={})
         # Should produce one armour-depleted event using raw actor as label
@@ -223,8 +220,13 @@ class TestCI20NameIdentity:
         """When data['side'] is set, combatants_map[side]['name'] is used as label."""
         combatants_map = {"1": {"name": "SamX", "ship": "Betty"}, "2": {"name": "H'Soc", "ship": "Betty"}}
         timeline = [
-            {"tick": 200, "type": "layer_depleted", "actor": "Betty", "target": None,
-             "data": {"layer": "shield", "side": 1}},
+            {
+                "tick": 200,
+                "type": "layer_depleted",
+                "actor": "Betty",
+                "target": None,
+                "data": {"layer": "shield", "side": 1},
+            },
         ]
         result = CombatLogService._extract_key_events(timeline, combatants_map=combatants_map)
         assert len(result) == 1
@@ -246,8 +248,9 @@ class TestCI21Despam:
         att = _loadout("Att", base_armour=500, weapons=[_gun(dps=200, dmg=110, speed_ms=200)])
         defn = _loadout("Def", base_armour=500, modules=[shield])
         result = TickResolver(seed=0).resolve(att, defn)
-        depleted = [e for e in result.combat_log if e.type == CombatEventType.layer_depleted and
-                    e.data.get("layer") == "shield"]
+        depleted = [
+            e for e in result.combat_log if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "shield"
+        ]
         # Should be at most once (latch); may be zero if shield never fully depletes in this fight
         assert len(depleted) <= 1
 
@@ -259,8 +262,9 @@ class TestCI21Despam:
         defn = _loadout("Def", base_armour=2000, modules=[shield])
         # Use a fixed seed so results are deterministic
         result = TickResolver(seed=99).resolve(att, defn)
-        depleted = [e for e in result.combat_log if e.type == CombatEventType.layer_depleted and
-                    e.data.get("layer") == "shield"]
+        depleted = [
+            e for e in result.combat_log if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "shield"
+        ]
         # Allow 0 (miss-dominated fight), 1, or 2+ depleted events
         # Key assertion: depleted_layers latch does not erroneously suppress all events
         assert isinstance(depleted, list)  # at minimum, no crash
@@ -270,8 +274,9 @@ class TestCI21Despam:
         att = _loadout("Att", base_armour=200, weapons=[_gun(dps=500, dmg=500, speed_ms=100)])
         defn = _loadout("Def", base_armour=50)
         result = TickResolver(seed=42).resolve(att, defn)
-        hull_depleted = [e for e in result.combat_log if e.type == CombatEventType.layer_depleted and
-                         e.data.get("layer") == "hull"]
+        hull_depleted = [
+            e for e in result.combat_log if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "hull"
+        ]
         assert len(hull_depleted) == 1
 
     def test_summary_stats_byte_identical_after_ci21(self):
@@ -324,8 +329,7 @@ class TestCI21Despam:
         defn = _loadout("Def", base_armour=80, modules=[repair_bot])
         result = TickResolver(seed=0).resolve(att, defn)
         armour_depleted = [
-            e for e in result.combat_log
-            if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "armour"
+            e for e in result.combat_log if e.type == CombatEventType.layer_depleted and e.data.get("layer") == "armour"
         ]
         # Latch: at most one armour-depleted emit when sliver regen < 25% of max_armour
         assert len(armour_depleted) <= 1
@@ -341,13 +345,24 @@ class TestCI22BaselineEvents:
         """fight_start → Engagement baseline line always present."""
         timeline = [
             {
-                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "tick": 0,
+                "type": "fight_start",
+                "actor": None,
+                "target": None,
                 "data": {
                     "combatants": [
-                        {"name": "Betty", "display_name": "SamX", "ship": "Betty",
-                         "hp": {"hull": 200, "armour": 0, "shield": 0}},
-                        {"name": "Vossk", "display_name": "H'Soc", "ship": "Vossk",
-                         "hp": {"hull": 150, "armour": 0, "shield": 0}},
+                        {
+                            "name": "Betty",
+                            "display_name": "SamX",
+                            "ship": "Betty",
+                            "hp": {"hull": 200, "armour": 0, "shield": 0},
+                        },
+                        {
+                            "name": "Vossk",
+                            "display_name": "H'Soc",
+                            "ship": "Vossk",
+                            "hp": {"hull": 150, "armour": 0, "shield": 0},
+                        },
                     ],
                     "initial_distance": 5000,
                 },
@@ -361,13 +376,28 @@ class TestCI22BaselineEvents:
         combatants_map = {"1": {"name": "SamX", "ship": "Betty"}, "2": {"name": "H'Soc", "ship": "Vossk"}}
         timeline = [
             # C1 misses first, then hits
-            {"tick": 1, "type": "weapon_fire", "actor": "Betty", "target": "Vossk",
-             "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": False, "side": 1}},
-            {"tick": 2, "type": "weapon_fire", "actor": "Betty", "target": "Vossk",
-             "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 1}},
+            {
+                "tick": 1,
+                "type": "weapon_fire",
+                "actor": "Betty",
+                "target": "Vossk",
+                "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": False, "side": 1},
+            },
+            {
+                "tick": 2,
+                "type": "weapon_fire",
+                "actor": "Betty",
+                "target": "Vossk",
+                "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 1},
+            },
             # C2 hits
-            {"tick": 3, "type": "weapon_fire", "actor": "Vossk", "target": "Betty",
-             "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 2}},
+            {
+                "tick": 3,
+                "type": "weapon_fire",
+                "actor": "Vossk",
+                "target": "Betty",
+                "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 2},
+            },
         ]
         result = CombatLogService._extract_key_events(timeline, combatants_map=combatants_map)
         first_hits = [e for e in result if e["event_type"] == "First hit"]
@@ -379,10 +409,20 @@ class TestCI22BaselineEvents:
     def test_first_hit_per_side_only_once_each(self):
         """First hit line fires at most once per side even with multiple hits."""
         timeline = [
-            {"tick": 1, "type": "weapon_fire", "actor": "C1", "target": "C2",
-             "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 1}},
-            {"tick": 2, "type": "weapon_fire", "actor": "C1", "target": "C2",
-             "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 1}},
+            {
+                "tick": 1,
+                "type": "weapon_fire",
+                "actor": "C1",
+                "target": "C2",
+                "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 1},
+            },
+            {
+                "tick": 2,
+                "type": "weapon_fire",
+                "actor": "C1",
+                "target": "C2",
+                "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 1},
+            },
         ]
         result = CombatLogService._extract_key_events(timeline)
         first_hits = [e for e in result if e["event_type"] == "First hit"]
@@ -392,8 +432,13 @@ class TestCI22BaselineEvents:
         """fight_end with winner → Outcome line."""
         combatants_map = {"1": {"name": "SamX", "ship": "Betty"}, "2": {"name": "H'Soc", "ship": "Vossk"}}
         timeline = [
-            {"tick": 500, "type": "fight_end", "actor": None, "target": None,
-             "data": {"winner": "Betty", "reason": "hp_depleted", "duration_ticks": 500}},
+            {
+                "tick": 500,
+                "type": "fight_end",
+                "actor": None,
+                "target": None,
+                "data": {"winner": "Betty", "reason": "hp_depleted", "duration_ticks": 500},
+            },
         ]
         result = CombatLogService._extract_key_events(timeline, combatants_map=combatants_map)
         outcomes = [e for e in result if e["event_type"] == "Outcome"]
@@ -403,8 +448,13 @@ class TestCI22BaselineEvents:
     def test_outcome_line_stalemate(self):
         """fight_end with no winner → Stalemate outcome line."""
         timeline = [
-            {"tick": 18000, "type": "fight_end", "actor": None, "target": None,
-             "data": {"winner": None, "reason": "time_cap", "duration_ticks": 18000}},
+            {
+                "tick": 18000,
+                "type": "fight_end",
+                "actor": None,
+                "target": None,
+                "data": {"winner": None, "reason": "time_cap", "duration_ticks": 18000},
+            },
         ]
         result = CombatLogService._extract_key_events(timeline)
         outcomes = [e for e in result if e["event_type"] == "Outcome"]
@@ -416,25 +466,46 @@ class TestCI22BaselineEvents:
         # start_hp = 200 hull; first damage takes it to 100 (50%); second to 80
         timeline = [
             {
-                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "tick": 0,
+                "type": "fight_start",
+                "actor": None,
+                "target": None,
                 "data": {
                     "combatants": [
-                        {"name": "A", "display_name": "A", "ship": "A",
-                         "hp": {"hull": 200, "armour": 0, "shield": 0}},
-                        {"name": "B", "display_name": "B", "ship": "B",
-                         "hp": {"hull": 200, "armour": 0, "shield": 0}},
+                        {"name": "A", "display_name": "A", "ship": "A", "hp": {"hull": 200, "armour": 0, "shield": 0}},
+                        {"name": "B", "display_name": "B", "ship": "B", "hp": {"hull": 200, "armour": 0, "shield": 0}},
                     ],
                     "initial_distance": 5000,
                 },
             },
             # B takes damage (side=2): 200 → 100 (exactly 50%)
-            {"tick": 10, "type": "damage", "actor": None, "target": "B",
-             "data": {"amount": 100, "absorbed": 100, "hp_after": {"hull": 100, "armour": 0, "shield": 0},
-                      "source": {"attacker": "A"}, "side": 2}},
+            {
+                "tick": 10,
+                "type": "damage",
+                "actor": None,
+                "target": "B",
+                "data": {
+                    "amount": 100,
+                    "absorbed": 100,
+                    "hp_after": {"hull": 100, "armour": 0, "shield": 0},
+                    "source": {"attacker": "A"},
+                    "side": 2,
+                },
+            },
             # B takes more damage: 100 → 80 (still ≤50%, should NOT re-fire 50% milestone)
-            {"tick": 20, "type": "damage", "actor": None, "target": "B",
-             "data": {"amount": 20, "absorbed": 20, "hp_after": {"hull": 80, "armour": 0, "shield": 0},
-                      "source": {"attacker": "A"}, "side": 2}},
+            {
+                "tick": 20,
+                "type": "damage",
+                "actor": None,
+                "target": "B",
+                "data": {
+                    "amount": 20,
+                    "absorbed": 20,
+                    "hp_after": {"hull": 80, "armour": 0, "shield": 0},
+                    "source": {"attacker": "A"},
+                    "side": 2,
+                },
+            },
         ]
         result = CombatLogService._extract_key_events(timeline)
         milestones_50 = [e for e in result if "HP milestone" in e["event_type"] and "50%" in e["event_type"]]
@@ -444,25 +515,46 @@ class TestCI22BaselineEvents:
         """25% HP milestone fires exactly once when HP crosses ≤25%."""
         timeline = [
             {
-                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "tick": 0,
+                "type": "fight_start",
+                "actor": None,
+                "target": None,
                 "data": {
                     "combatants": [
-                        {"name": "A", "display_name": "A", "ship": "A",
-                         "hp": {"hull": 200, "armour": 0, "shield": 0}},
-                        {"name": "B", "display_name": "B", "ship": "B",
-                         "hp": {"hull": 200, "armour": 0, "shield": 0}},
+                        {"name": "A", "display_name": "A", "ship": "A", "hp": {"hull": 200, "armour": 0, "shield": 0}},
+                        {"name": "B", "display_name": "B", "ship": "B", "hp": {"hull": 200, "armour": 0, "shield": 0}},
                     ],
                     "initial_distance": 5000,
                 },
             },
             # B drops from 200 → 40 (20%), crossing both 50% and 25%
-            {"tick": 10, "type": "damage", "actor": None, "target": "B",
-             "data": {"amount": 160, "absorbed": 160, "hp_after": {"hull": 40, "armour": 0, "shield": 0},
-                      "source": {"attacker": "A"}, "side": 2}},
+            {
+                "tick": 10,
+                "type": "damage",
+                "actor": None,
+                "target": "B",
+                "data": {
+                    "amount": 160,
+                    "absorbed": 160,
+                    "hp_after": {"hull": 40, "armour": 0, "shield": 0},
+                    "source": {"attacker": "A"},
+                    "side": 2,
+                },
+            },
             # More damage: B drops to 10 (5%) — 25% milestone must NOT re-fire
-            {"tick": 20, "type": "damage", "actor": None, "target": "B",
-             "data": {"amount": 30, "absorbed": 30, "hp_after": {"hull": 10, "armour": 0, "shield": 0},
-                      "source": {"attacker": "A"}, "side": 2}},
+            {
+                "tick": 20,
+                "type": "damage",
+                "actor": None,
+                "target": "B",
+                "data": {
+                    "amount": 30,
+                    "absorbed": 30,
+                    "hp_after": {"hull": 10, "armour": 0, "shield": 0},
+                    "source": {"attacker": "A"},
+                    "side": 2,
+                },
+            },
         ]
         result = CombatLogService._extract_key_events(timeline)
         milestones_25 = [e for e in result if "HP milestone" in e["event_type"] and "25%" in e["event_type"]]
@@ -472,22 +564,33 @@ class TestCI22BaselineEvents:
         """All key events are sorted by tick (baseline events not starved)."""
         # Mix baseline (fight_start tick=0, fight_end tick=100) with secondary at tick=50
         timeline = [
-            {"tick": 100, "type": "fight_end", "actor": None, "target": None,
-             "data": {"winner": "A", "reason": "hp_depleted", "duration_ticks": 100}},
             {
-                "tick": 0, "type": "fight_start", "actor": None, "target": None,
+                "tick": 100,
+                "type": "fight_end",
+                "actor": None,
+                "target": None,
+                "data": {"winner": "A", "reason": "hp_depleted", "duration_ticks": 100},
+            },
+            {
+                "tick": 0,
+                "type": "fight_start",
+                "actor": None,
+                "target": None,
                 "data": {
                     "combatants": [
-                        {"name": "A", "display_name": "A", "ship": "A",
-                         "hp": {"hull": 200, "armour": 0, "shield": 0}},
-                        {"name": "B", "display_name": "B", "ship": "B",
-                         "hp": {"hull": 200, "armour": 0, "shield": 0}},
+                        {"name": "A", "display_name": "A", "ship": "A", "hp": {"hull": 200, "armour": 0, "shield": 0}},
+                        {"name": "B", "display_name": "B", "ship": "B", "hp": {"hull": 200, "armour": 0, "shield": 0}},
                     ],
                     "initial_distance": 5000,
                 },
             },
-            {"tick": 50, "type": "layer_depleted", "actor": "B", "target": None,
-             "data": {"layer": "armour", "side": 2}},
+            {
+                "tick": 50,
+                "type": "layer_depleted",
+                "actor": "B",
+                "target": None,
+                "data": {"layer": "armour", "side": 2},
+            },
         ]
         result = CombatLogService._extract_key_events(timeline)
         ticks = [e["tick"] for e in result]
@@ -502,6 +605,7 @@ class TestCI22BaselineEvents:
         result = TickResolver(seed=0).resolve(att, defn, combatant1_label="Player1", combatant2_label="Criminal1")
         # Serialize for _extract_key_events
         import dataclasses
+
         timeline = [dataclasses.asdict(ev) for ev in result.combat_log]
         combatants_map = result.metadata["summary"].get("combatants", {})
         tick_ms = result.metadata["metadata"]["tick_ms"]

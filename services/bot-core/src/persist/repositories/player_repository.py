@@ -271,7 +271,7 @@ class PlayerRepository(IRepository[Player]):
                 .where(Player.guild_id == guild_id)
                 .group_by(Player.tier)
             )
-            tier_distribution: dict[str, int] = {tier: cnt for tier, cnt in tier_result.all()}
+            tier_distribution: dict[str, int] = dict(tier_result.all())
 
             return {
                 "guild_id": guild_id,

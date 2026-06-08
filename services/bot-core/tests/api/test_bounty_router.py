@@ -1664,7 +1664,7 @@ class TestCombatBonusEndpoint:
             ship_name=shared_name, raw_hp=500, raw_dps=99.0, varied_hp=500, varied_dps=99.0, ttk=1.0
         )
         mock_fight = MagicMock()
-        mock_fight.winner_name = shared_name    # same as player ship — name-key is ambiguous
+        mock_fight.winner_name = shared_name  # same as player ship — name-key is ambiguous
         mock_fight.loser_name = shared_name
         mock_fight.is_stalemate = False
         mock_fight.winner_side = 2  # P2-T8b: criminal (side-2) wins
@@ -1692,8 +1692,7 @@ class TestCombatBonusEndpoint:
         data = response.json()
         # P2-T8b: criminal won (side-2) → won=False; name-keyed impl gives won=True
         assert data["won"] is False, (
-            "won must be False when criminal wins (side-2), "
-            "even if player and criminal share the same ship name"
+            "won must be False when criminal wins (side-2), even if player and criminal share the same ship name"
         )
         assert data["bonus_credits"] == 0
 

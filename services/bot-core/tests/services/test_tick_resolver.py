@@ -802,7 +802,7 @@ class TestWinnerSide:
 
         P2-T8b: ttk is keyed by winner_side (1/2), not by winner_name comparison.
         """
-        l1 = _bare_loadout("Victim", base_armour=0)   # dies immediately
+        l1 = _bare_loadout("Victim", base_armour=0)  # dies immediately
         l2 = _bare_loadout("Defender", base_armour=100)
         result = TickResolver(seed=1).resolve(l1, l2)
 
@@ -821,8 +821,8 @@ class TestWinnerSide:
         The correct side-keyed impl (winner_side == 2 → c1_ttk) sets c1_ttk.
         """
         shared_name = "CloneShip"
-        l1 = _bare_loadout(shared_name, base_armour=0)    # side 1 — dies immediately
-        l2 = _bare_loadout(shared_name, base_armour=100)   # side 2 — survives
+        l1 = _bare_loadout(shared_name, base_armour=0)  # side 1 — dies immediately
+        l2 = _bare_loadout(shared_name, base_armour=100)  # side 2 — survives
         result = TickResolver(seed=1).resolve(l1, l2)
 
         assert result.winner_side == 2, "Side 2 must win when side 1 has no HP"

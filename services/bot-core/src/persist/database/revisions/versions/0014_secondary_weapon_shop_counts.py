@@ -59,16 +59,14 @@ def upgrade() -> None:
     # a real parameter and cast it explicitly with CAST(...AS jsonb) to avoid both the
     # colon-parse issue and any ::jsonb ambiguity.
     op.execute(
-        text(
-            f"UPDATE {_TABLE} SET {_COUNT_COL} = CAST(:val AS jsonb) "
-            f"WHERE {_COUNT_COL} IS NULL"
-        ).bindparams(val='{"min": 3, "max": 5}')
+        text(f"UPDATE {_TABLE} SET {_COUNT_COL} = CAST(:val AS jsonb) WHERE {_COUNT_COL} IS NULL").bindparams(
+            val='{"min": 3, "max": 5}'
+        )
     )
     op.execute(
-        text(
-            f"UPDATE {_TABLE} SET {_QTY_COL} = CAST(:val AS jsonb) "
-            f"WHERE {_QTY_COL} IS NULL"
-        ).bindparams(val='{"min": 2, "max": 4}')
+        text(f"UPDATE {_TABLE} SET {_QTY_COL} = CAST(:val AS jsonb) WHERE {_QTY_COL} IS NULL").bindparams(
+            val='{"min": 2, "max": 4}'
+        )
     )
 
 

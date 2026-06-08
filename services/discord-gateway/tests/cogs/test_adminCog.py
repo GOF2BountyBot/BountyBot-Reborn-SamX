@@ -4339,7 +4339,6 @@ class TestAdminClearBountiesTimeoutAndCancel:
     @pytest.fixture(autouse=True)
     def _use_confirm_view_fixture(self, mock_admin_cog):
         """Keep real ConfirmView for these tests to test timeout/cancel paths."""
-        pass
 
     def test_clear_bounties_not_admin(self, mock_admin_cog):
         """admin_clear_bounties rejects non-admin user before showing confirm view."""

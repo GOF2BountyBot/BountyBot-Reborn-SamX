@@ -97,7 +97,6 @@ class TestHealthCogInitialization:
 
     def test_initialization(self, mock_health_cog):
         """healthCog should initialize properly with bot reference."""
-        global _module_logger
         assert mock_health_cog.bot is not None
         # The cog uses the module-level flogger
         assert _module_logger is not None

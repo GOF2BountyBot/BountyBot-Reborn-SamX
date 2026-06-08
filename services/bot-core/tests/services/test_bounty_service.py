@@ -6004,8 +6004,6 @@ class TestCi17SecondaryGeneration:
     @pytest.mark.asyncio
     async def test_dead_weight_damage_excluded(self, service):
         """Secondaries with damage ≤ CRIMINAL_SECONDARY_MIN_DAMAGE are excluded."""
-        from services.game_constants import GameConstants
-
         ship = _make_ship("Warrior", value=200000, max_primaries=2, max_secondaries=3)
         db = self._make_db()
         # damage=0 and damage=1 should be excluded (default threshold=1)

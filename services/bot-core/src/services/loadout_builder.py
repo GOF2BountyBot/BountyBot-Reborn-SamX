@@ -237,11 +237,10 @@ class LoadoutBuilder:
         # Inner extra_atts contains: loading_speed_ms, range_m, damage_per_shot, subtype (plasma-collectors only).
         # damage_per_shot is read from seed when present; derived as dps × loading_speed_ms/1000 as fallback.
         from persist.models.turret_weapon import TurretWeapon
-        from sqlalchemy import select as _select_tw  # avoid name collision with earlier `select`
 
         turrets: list[WeaponStats] = []
         for t_name in player_ship.turrets or []:
-            tw_result = await db.execute(_select_tw(TurretWeapon).where(TurretWeapon.name == t_name))
+            tw_result = await db.execute(select(TurretWeapon).where(TurretWeapon.name == t_name))
             tw_item = tw_result.scalars().first()
             if tw_item is None:
                 tw_item = await item_repo.get_by_name(db, t_name, item_type="turret_weapon")

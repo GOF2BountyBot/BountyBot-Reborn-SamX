@@ -58,6 +58,7 @@ STARTING_DIST: float = float(GameConstants.STARTING_DISTANCE_M)
 # Deterministic RNG stubs
 # ---------------------------------------------------------------------------
 
+
 class _AlwaysHit:
     def random(self) -> float:
         return 0.0
@@ -77,6 +78,7 @@ class _AlwaysMiss:
 # ---------------------------------------------------------------------------
 # Helpers — weapon/loadout builders
 # ---------------------------------------------------------------------------
+
 
 def _secondary(
     name: str = "TestRocket",
@@ -141,6 +143,7 @@ def _resolve(l1: ShipLoadout, l2: ShipLoadout, *, rng=None) -> list[CombatEvent]
 # Section A: Resolver — ammo gate, decrement, secondary_depleted event
 # ---------------------------------------------------------------------------
 
+
 class TestResolverAmmoGate:
     def test_ammo_1_fires_exactly_once(self):
         """With ammo=1, a rocket fires on tick 0, then is blocked on subsequent ticks."""
@@ -189,8 +192,7 @@ class TestResolverAmmoGate:
         dep = _depleted_events_for(log, "Ship")
         assert len(dep) == 1
         fire_tick = next(
-            e.tick for e in log
-            if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "LastShot"
+            e.tick for e in log if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "LastShot"
         )
         assert dep[0].tick == fire_tick, "Depleted event must be on the same tick as last fire"
         assert dep[0].data["weapon"] == "LastShot"
@@ -202,10 +204,7 @@ class TestResolverAmmoGate:
         l2 = _loadout(name="Target")
         log = _resolve(l1, l2, rng=_AlwaysHit())
 
-        cluster_fires = [
-            e for e in log
-            if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "Cluster5"
-        ]
+        cluster_fires = [e for e in log if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "Cluster5"]
         assert len(cluster_fires) == 1, "cluster-missile ammo=1 → exactly 1 fire trigger"
         assert cluster_fires[0].data.get("fired") == 5, "Should have 5 sub-munitions"
         dep = _depleted_events_for(log, "Ship")
@@ -233,9 +232,14 @@ class TestResolverAmmoGate:
                 kwargs["damage"] = 200.0
                 # need magnitude_m
                 sw = WeaponStats(
-                    name=f"W_{sub}", dps=1.0, damage_per_shot=200.0,
-                    loading_speed_ms=100, range_m=4000.0,
-                    subtype="nuke", magnitude_m=2000.0, ammo=2,
+                    name=f"W_{sub}",
+                    dps=1.0,
+                    damage_per_shot=200.0,
+                    loading_speed_ms=100,
+                    range_m=4000.0,
+                    subtype="nuke",
+                    magnitude_m=2000.0,
+                    ammo=2,
                 )
             else:
                 sw = _secondary(**{k: v for k, v in kwargs.items() if k != "damage"}, damage=50.0)
@@ -243,12 +247,11 @@ class TestResolverAmmoGate:
             l2 = _loadout(name="Target", base_armour=99_999)
             log = _resolve(l1, l2, rng=_AlwaysHit())
 
-            sec_fires = [
-                e for e in log
-                if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == f"W_{sub}"
-            ]
+            sec_fires = [e for e in log if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == f"W_{sub}"]
             assert len(sec_fires) == 2, f"subtype={sub!r}: expected 2 fires (ammo=2), got {len(sec_fires)}"
-            dep = [e for e in log if e.type == CombatEventType.secondary_depleted and e.data.get("weapon") == f"W_{sub}"]
+            dep = [
+                e for e in log if e.type == CombatEventType.secondary_depleted and e.data.get("weapon") == f"W_{sub}"
+            ]
             assert len(dep) == 1, f"subtype={sub!r}: expected 1 depleted event, got {len(dep)}"
 
     def test_deferred_noop_subtype_does_not_fire_or_deplete(self):
@@ -267,6 +270,7 @@ class TestResolverAmmoGate:
 # ---------------------------------------------------------------------------
 # Section B: _consume_secondary_ammo write-back
 # ---------------------------------------------------------------------------
+
 
 class TestConsumeSecondaryAmmo:
     """Tests for CombatService._consume_secondary_ammo via fight_ships with log_result=False.
@@ -304,14 +308,24 @@ class TestConsumeSecondaryAmmo:
         We call the internal logic by injecting the repos via the
         persist.repositories module-level class replacement pattern.
         """
-        from src.services.combat_service import CombatService
         from src.services.combat_models import FightResults, FightStats
+        from src.services.combat_service import CombatService
 
         weapon_fire_events = [
-            CombatEvent(tick=0, type=CombatEventType.weapon_fire, actor="Human",
-                        target="NPC", data={"slot": "secondary", "weapon": "Rocket1", "hit": True}),
-            CombatEvent(tick=10, type=CombatEventType.weapon_fire, actor="Human",
-                        target="NPC", data={"slot": "secondary", "weapon": "Rocket1", "hit": True}),
+            CombatEvent(
+                tick=0,
+                type=CombatEventType.weapon_fire,
+                actor="Human",
+                target="NPC",
+                data={"slot": "secondary", "weapon": "Rocket1", "hit": True},
+            ),
+            CombatEvent(
+                tick=10,
+                type=CombatEventType.weapon_fire,
+                actor="Human",
+                target="NPC",
+                data={"slot": "secondary", "weapon": "Rocket1", "hit": True},
+            ),
         ]
 
         fight_results = FightResults(
@@ -351,6 +365,7 @@ class TestConsumeSecondaryAmmo:
         # but sys.modules has two different keys). Patch the canonical key used by the service.
         import persist.repositories.player_repository as _pr
         import persist.repositories.player_ship_repository as _psr
+
         orig_pr = _pr.PlayerRepository
         orig_psr = _psr.PlayerShipRepository
         _pr.PlayerRepository = lambda: mock_player_repo
@@ -375,17 +390,24 @@ class TestConsumeSecondaryAmmo:
     @pytest.mark.asyncio
     async def test_consume_ammo_depletes_to_zero_auto_unequips(self):
         """When rounds hit 0, weapon name is removed from both secondary_weapons and secondary_ammo."""
-        from src.services.combat_service import CombatService
         from src.services.combat_models import FightResults, FightStats
+        from src.services.combat_service import CombatService
 
         weapon_fire_events = [
-            CombatEvent(tick=i * 10, type=CombatEventType.weapon_fire, actor="Human",
-                        target="NPC", data={"slot": "secondary", "weapon": "Nuke1", "hit": True})
+            CombatEvent(
+                tick=i * 10,
+                type=CombatEventType.weapon_fire,
+                actor="Human",
+                target="NPC",
+                data={"slot": "secondary", "weapon": "Nuke1", "hit": True},
+            )
             for i in range(3)
         ]
 
         fight_results = FightResults(
-            winner_name="Human", loser_name="NPC", is_stalemate=False,
+            winner_name="Human",
+            loser_name="NPC",
+            is_stalemate=False,
             ship1_stats=FightStats("Human", 1000, 10.0, 1000, 10.0, 100.0),
             ship2_stats=FightStats("NPC", 500, 5.0, 500, 5.0, 50.0),
             combat_log=weapon_fire_events,
@@ -416,6 +438,7 @@ class TestConsumeSecondaryAmmo:
 
         import persist.repositories.player_repository as _pr
         import persist.repositories.player_ship_repository as _psr
+
         orig_pr = _pr.PlayerRepository
         orig_psr = _psr.PlayerShipRepository
         _pr.PlayerRepository = lambda: mock_player_repo
@@ -441,11 +464,13 @@ class TestConsumeSecondaryAmmo:
     @pytest.mark.asyncio
     async def test_npc_side_no_writeback(self):
         """Criminal side (user_id=None) must not touch DB at all."""
-        from src.services.combat_service import CombatService
         from src.services.combat_models import FightResults, FightStats
+        from src.services.combat_service import CombatService
 
         fight_results = FightResults(
-            winner_name="NPC", loser_name="Human", is_stalemate=False,
+            winner_name="NPC",
+            loser_name="Human",
+            is_stalemate=False,
             ship1_stats=FightStats("NPC", 1000, 10.0, 1000, 10.0, 100.0),
             ship2_stats=FightStats("Human", 500, 5.0, 500, 5.0, 50.0),
             combat_log=[],
@@ -456,6 +481,7 @@ class TestConsumeSecondaryAmmo:
         mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=None)
 
         import persist.repositories.player_repository as _pr
+
         orig_pr = _pr.PlayerRepository
         _pr.PlayerRepository = lambda: mock_player_repo
         try:
@@ -477,6 +503,7 @@ class TestConsumeSecondaryAmmo:
 # ---------------------------------------------------------------------------
 # Helpers for consistency service tests
 # ---------------------------------------------------------------------------
+
 
 def _make_player_ship(
     ship_id: int = 1,
@@ -562,6 +589,7 @@ def svc() -> LoadoutConsistencyService:
 # Section C: Equip/Unequip invariants
 # ---------------------------------------------------------------------------
 
+
 class TestEquipSecondary:
     """Conservation: owned(S) = cargo.quantity(S) + secondary_ammo[S]"""
 
@@ -579,8 +607,9 @@ class TestEquipSecondary:
         svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
         svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Rocket", "SecondaryWeapon"))
 
-        result = await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="Rocket",
-                                      equipment_type="secondary_weapons")
+        result = await svc.equip_one(
+            mock_db, player_id=42, ship_id=1, item_name="Rocket", equipment_type="secondary_weapons"
+        )
 
         assert result["success"] is True
         # All 10 rounds removed from cargo
@@ -606,8 +635,9 @@ class TestEquipSecondary:
         svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
         svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Rocket", "SecondaryWeapon"))
 
-        result = await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="Rocket",
-                                      equipment_type="secondary_weapons")
+        result = await svc.equip_one(
+            mock_db, player_id=42, ship_id=1, item_name="Rocket", equipment_type="secondary_weapons"
+        )
 
         assert result["success"] is True
         # All 7 cargo rounds removed
@@ -629,8 +659,9 @@ class TestEquipSecondary:
         svc.player_ship_repo.remove_equipment = AsyncMock()
         svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Nuke", "NukeWeapon"))
 
-        result = await svc.unequip_one(mock_db, player_id=42, ship_id=1, item_name="Nuke",
-                                        equipment_type="secondary_weapons")
+        result = await svc.unequip_one(
+            mock_db, player_id=42, ship_id=1, item_name="Nuke", equipment_type="secondary_weapons"
+        )
 
         assert result["success"] is True
         # Ammo dict cleared before remove_equipment
@@ -639,10 +670,7 @@ class TestEquipSecondary:
         svc.inventory_repo.add_item.assert_called_once()
         call_args = svc.inventory_repo.add_item.call_args
         # quantity is the 5th positional arg (index 4) or a keyword arg
-        if len(call_args[0]) > 4:
-            qty = call_args[0][4]
-        else:
-            qty = call_args[1].get("quantity", call_args[0][-1])
+        qty = call_args[0][4] if len(call_args[0]) > 4 else call_args[1].get("quantity", call_args[0][-1])
         assert qty == 5, f"Expected 5 rounds to cargo, got {qty}"
 
     @pytest.mark.asyncio
@@ -660,8 +688,7 @@ class TestEquipSecondary:
         svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
         svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Missile", "SecondaryWeapon"))
 
-        await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="Missile",
-                             equipment_type="secondary_weapons")
+        await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="Missile", equipment_type="secondary_weapons")
 
         # Cargo was removed: remove_item called with quantity=initial_cargo
         call_args = svc.inventory_repo.remove_item.call_args
@@ -675,6 +702,7 @@ class TestEquipSecondary:
 # Section D: R1 — transfer_loadout_to_new_ship BLOCKER
 # ---------------------------------------------------------------------------
 
+
 class TestTransferLoadout:
     """BLOCKER R1: secondary_ammo must follow the weapon name to the new ship."""
 
@@ -682,7 +710,9 @@ class TestTransferLoadout:
     async def test_r1_fitting_secondary_ammo_follows_to_new_ship(self, svc, mock_db):
         """R1 fits case: secondary fits in dst → ammo moves src→dst."""
         src = _make_player_ship(
-            ship_id=1, secondary_weapons=["Rocket"], secondary_ammo={"Rocket": 7},
+            ship_id=1,
+            secondary_weapons=["Rocket"],
+            secondary_ammo={"Rocket": 7},
         )
         dst = _make_player_ship(ship_id=2, secondary_weapons=[], secondary_ammo={})
         slot_limits = {"weapons": 2, "modules": 3, "turrets": 1, "secondary_weapons": 1}
@@ -690,7 +720,11 @@ class TestTransferLoadout:
         svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[src, dst])
 
         result = await svc.transfer_loadout_to_new_ship(
-            mock_db, player_id=42, src_ship=src, dst_ship=dst, slot_limits=slot_limits,
+            mock_db,
+            player_id=42,
+            src_ship=src,
+            dst_ship=dst,
+            slot_limits=slot_limits,
         )
 
         assert "Rocket" in result["breakdown"]["secondary_weapons"]["transferred"]
@@ -702,7 +736,9 @@ class TestTransferLoadout:
     async def test_r1_overflow_secondary_returns_whole_ammo_stack_to_cargo(self, svc, mock_db):
         """R1 overflow case: secondary can't fit → whole ammo stack → cargo."""
         src = _make_player_ship(
-            ship_id=1, secondary_weapons=["Rocket"], secondary_ammo={"Rocket": 9},
+            ship_id=1,
+            secondary_weapons=["Rocket"],
+            secondary_ammo={"Rocket": 9},
         )
         # dst already has max secondaries
         dst = _make_player_ship(ship_id=2, secondary_weapons=["Missile"], secondary_ammo={"Missile": 4})
@@ -713,7 +749,11 @@ class TestTransferLoadout:
         svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Rocket", "SecondaryWeapon"))
 
         result = await svc.transfer_loadout_to_new_ship(
-            mock_db, player_id=42, src_ship=src, dst_ship=dst, slot_limits=slot_limits,
+            mock_db,
+            player_id=42,
+            src_ship=src,
+            dst_ship=dst,
+            slot_limits=slot_limits,
         )
 
         assert "Rocket" in result["breakdown"]["secondary_weapons"]["overflowed"]
@@ -727,7 +767,9 @@ class TestTransferLoadout:
     async def test_r1_owned_conserved_fit_path(self, svc, mock_db):
         """R1 conservation: owned = 0 cargo (not overflowed) + 7 in dst.secondary_ammo."""
         src = _make_player_ship(
-            ship_id=1, secondary_weapons=["Blast"], secondary_ammo={"Blast": 7},
+            ship_id=1,
+            secondary_weapons=["Blast"],
+            secondary_ammo={"Blast": 7},
         )
         dst = _make_player_ship(ship_id=2, secondary_weapons=[], secondary_ammo={})
         slot_limits = {"weapons": 2, "modules": 3, "turrets": 1, "secondary_weapons": 2}
@@ -735,7 +777,11 @@ class TestTransferLoadout:
         svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[src, dst])
 
         await svc.transfer_loadout_to_new_ship(
-            mock_db, player_id=42, src_ship=src, dst_ship=dst, slot_limits=slot_limits,
+            mock_db,
+            player_id=42,
+            src_ship=src,
+            dst_ship=dst,
+            slot_limits=slot_limits,
         )
 
         # No cargo add (no overflow)
@@ -749,6 +795,7 @@ class TestTransferLoadout:
 # Section E: R2 — evacuate_ship_loadout_to_inventory BLOCKER
 # ---------------------------------------------------------------------------
 
+
 class TestEvacuateShip:
     """BLOCKER R2: evacuating a ship must return WHOLE ammo stack, not 1 copy."""
 
@@ -756,7 +803,8 @@ class TestEvacuateShip:
     async def test_r2_evacuate_returns_whole_ammo_stack(self, svc, mock_db):
         """R2: evacuate ship with 8 Rocket rounds → cargo gets 8 rounds."""
         ship = _make_player_ship(
-            ship_id=1, player_id=42,
+            ship_id=1,
+            player_id=42,
             secondary_weapons=["Rocket"],
             secondary_ammo={"Rocket": 8},
         )
@@ -777,7 +825,8 @@ class TestEvacuateShip:
     async def test_r2_owned_conserved_after_evacuate(self, svc, mock_db):
         """R2 conservation: before=12 rounds on ship; after=12 rounds in cargo."""
         ship = _make_player_ship(
-            ship_id=1, player_id=42,
+            ship_id=1,
+            player_id=42,
             secondary_weapons=["Nuke", "Missile"],
             secondary_ammo={"Nuke": 3, "Missile": 9},
         )
@@ -787,17 +836,15 @@ class TestEvacuateShip:
         await svc.evacuate_ship_loadout_to_inventory(mock_db, ship=ship)
 
         calls = svc.inventory_repo.add_item.call_args_list
-        total_returned = sum(
-            c[0][4] if len(c[0]) > 4 else c[1].get("quantity", 0)
-            for c in calls
-        )
+        total_returned = sum(c[0][4] if len(c[0]) > 4 else c[1].get("quantity", 0) for c in calls)
         assert total_returned == 12, f"Expected 12 rounds total to cargo, got {total_returned}"
 
     @pytest.mark.asyncio
     async def test_r2_secondary_ammo_cleared_on_ship(self, svc, mock_db):
         """R2: after evacuation, secondary_ammo is {} and secondary_weapons is []."""
         ship = _make_player_ship(
-            ship_id=1, player_id=42,
+            ship_id=1,
+            player_id=42,
             secondary_weapons=["Rocket"],
             secondary_ammo={"Rocket": 5},
         )
@@ -814,6 +861,7 @@ class TestEvacuateShip:
 # Section F: Shop purchase_item top-up
 # ---------------------------------------------------------------------------
 
+
 class TestShopPurchaseTopUp:
     """Shop: buying a secondary already equipped → top-up ammo, not cargo."""
 
@@ -823,8 +871,12 @@ class TestShopPurchaseTopUp:
         from src.services.shop_service import ShopService
 
         shop_item = SimpleNamespace(
-            id=1, item_type="secondary_weapon", item_name="Rocket",
-            tier="Bronze", price=100, quantity=5,
+            id=1,
+            item_type="secondary_weapon",
+            item_name="Rocket",
+            tier="Bronze",
+            price=100,
+            quantity=5,
         )
         player = SimpleNamespace(id=42, credits=9999, tier="Bronze")
 
@@ -839,8 +891,15 @@ class TestShopPurchaseTopUp:
         svc.inventory_repo = AsyncMock()
         svc.player_ship_repo = AsyncMock()
         # Other repos not needed
-        for attr in ["item_repo", "primary_weapon_repo", "secondary_weapon_repo",
-                     "turret_weapon_repo", "module_repo", "ship_repo", "config_repo"]:
+        for attr in [
+            "item_repo",
+            "primary_weapon_repo",
+            "secondary_weapon_repo",
+            "turret_weapon_repo",
+            "module_repo",
+            "ship_repo",
+            "config_repo",
+        ]:
             setattr(svc, attr, AsyncMock())
 
         svc.player_repo.get_by_id = AsyncMock(return_value=player)
@@ -864,8 +923,12 @@ class TestShopPurchaseTopUp:
         from src.services.shop_service import ShopService
 
         shop_item = SimpleNamespace(
-            id=2, item_type="secondary_weapon", item_name="Missile",
-            tier="Bronze", price=200, quantity=10,
+            id=2,
+            item_type="secondary_weapon",
+            item_name="Missile",
+            tier="Bronze",
+            price=200,
+            quantity=10,
         )
         player = SimpleNamespace(id=42, credits=9999, tier="Bronze")
 
@@ -879,8 +942,15 @@ class TestShopPurchaseTopUp:
         svc.shop_repo = AsyncMock()
         svc.inventory_repo = AsyncMock()
         svc.player_ship_repo = AsyncMock()
-        for attr in ["item_repo", "primary_weapon_repo", "secondary_weapon_repo",
-                     "turret_weapon_repo", "module_repo", "ship_repo", "config_repo"]:
+        for attr in [
+            "item_repo",
+            "primary_weapon_repo",
+            "secondary_weapon_repo",
+            "turret_weapon_repo",
+            "module_repo",
+            "ship_repo",
+            "config_repo",
+        ]:
             setattr(svc, attr, AsyncMock())
 
         svc.player_repo.get_by_id = AsyncMock(return_value=player)
@@ -903,6 +973,7 @@ class TestShopPurchaseTopUp:
 # ---------------------------------------------------------------------------
 # Section G: Migration smoke test
 # ---------------------------------------------------------------------------
+
 
 class TestMigrationSmoke:
     def test_migration_file_has_correct_revision(self):
@@ -928,10 +999,12 @@ class TestMigrationSmoke:
         import importlib.util
         import os
 
-        migration_path = os.path.normpath(os.path.join(
-            os.path.dirname(__file__),
-            "../../src/persist/database/revisions/versions/0013_secondary_ammo.py",
-        ))
+        migration_path = os.path.normpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "../../src/persist/database/revisions/versions/0013_secondary_ammo.py",
+            )
+        )
         spec = importlib.util.spec_from_file_location("migration_0013", migration_path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -944,6 +1017,7 @@ class TestMigrationSmoke:
 # Section H: Back-compat — ammo=None is infinite (T6 regression guard)
 # ---------------------------------------------------------------------------
 
+
 class TestBackCompatInfiniteAmmo:
     def test_weapon_stats_default_ammo_is_none(self):
         """WeaponStats.ammo defaults to None (back-compat for primaries/turrets)."""
@@ -953,8 +1027,12 @@ class TestBackCompatInfiniteAmmo:
     def test_secondary_weapon_with_no_ammo_field_is_infinite(self):
         """Legacy secondary with ammo=None fires indefinitely."""
         sw = WeaponStats(
-            name="OldRocket", dps=1.0, damage_per_shot=50.0,
-            loading_speed_ms=100, range_m=4000.0, subtype="rocket",
+            name="OldRocket",
+            dps=1.0,
+            damage_per_shot=50.0,
+            loading_speed_ms=100,
+            range_m=4000.0,
+            subtype="rocket",
             # ammo intentionally omitted (defaults to None)
         )
         assert sw.ammo is None
@@ -978,6 +1056,7 @@ class TestBackCompatInfiniteAmmo:
 # Section I: BUG regression guards (CI-16 adversarial pass, 2026-06-04)
 # ---------------------------------------------------------------------------
 
+
 class TestBug1ReconcileOverflowAmmoAware:
     """BUG-1 regression: reconcile_active_ship_slots must return whole ammo stack."""
 
@@ -985,7 +1064,8 @@ class TestBug1ReconcileOverflowAmmoAware:
     async def test_reconcile_overflow_secondary_returns_whole_ammo_stack(self, svc, mock_db):
         """9-round secondary that overflows reconcile → 9 rounds to cargo, not 1."""
         ship = _make_player_ship(
-            ship_id=10, player_id=42,
+            ship_id=10,
+            player_id=42,
             secondary_weapons=["Rocket"],
             secondary_ammo={"Rocket": 9},
             is_active=True,
@@ -994,9 +1074,7 @@ class TestBug1ReconcileOverflowAmmoAware:
 
         svc.player_ship_repo.get_by_id = AsyncMock(return_value=ship)
         svc.ship_repo.get_by_name = AsyncMock(return_value=static)
-        svc.item_repo.get_by_name_any_type = AsyncMock(
-            return_value=_make_base_item("Rocket", "SecondaryWeapon")
-        )
+        svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Rocket", "SecondaryWeapon"))
 
         result = await svc.reconcile_active_ship_slots(mock_db, player_id=42, target_ship_id=10)
 
@@ -1014,7 +1092,8 @@ class TestBug1ReconcileOverflowAmmoAware:
     async def test_reconcile_overflow_conservation_owned_equals_cargo(self, svc, mock_db):
         """After reconcile overflow, all rounds end up in cargo (owned conserved)."""
         ship = _make_player_ship(
-            ship_id=11, player_id=42,
+            ship_id=11,
+            player_id=42,
             secondary_weapons=["Nuke", "Missile"],
             secondary_ammo={"Nuke": 3, "Missile": 5},
             is_active=True,
@@ -1024,17 +1103,12 @@ class TestBug1ReconcileOverflowAmmoAware:
 
         svc.player_ship_repo.get_by_id = AsyncMock(return_value=ship)
         svc.ship_repo.get_by_name = AsyncMock(return_value=static)
-        svc.item_repo.get_by_name_any_type = AsyncMock(
-            return_value=_make_base_item("X", "SecondaryWeapon")
-        )
+        svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("X", "SecondaryWeapon"))
 
         await svc.reconcile_active_ship_slots(mock_db, player_id=42, target_ship_id=11)
 
         calls = svc.inventory_repo.add_item.call_args_list
-        total = sum(
-            c[0][4] if len(c[0]) > 4 else c[1].get("quantity", 0)
-            for c in calls
-        )
+        total = sum(c[0][4] if len(c[0]) > 4 else c[1].get("quantity", 0) for c in calls)
         assert total == 8, f"Conservation violation: expected 8 rounds to cargo, got {total}"
 
 
@@ -1045,22 +1119,18 @@ class TestBug2DepletedSecondaryReturnsZero:
     async def test_evacuate_depleted_secondary_adds_zero_to_cargo(self, svc, mock_db):
         """Evacuating a 0-round (depleted) secondary → add_item NOT called (0 rounds)."""
         ship = _make_player_ship(
-            ship_id=20, player_id=42,
+            ship_id=20,
+            player_id=42,
             secondary_weapons=["Nuke"],
             secondary_ammo={"Nuke": 0},
         )
         svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship])
-        svc.item_repo.get_by_name_any_type = AsyncMock(
-            return_value=_make_base_item("Nuke", "SecondaryWeapon")
-        )
+        svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Nuke", "SecondaryWeapon"))
 
         await svc.evacuate_ship_loadout_to_inventory(mock_db, ship=ship)
 
         # add_item must NOT have been called for Nuke (0 rounds → nothing to return)
-        nuke_calls = [
-            c for c in svc.inventory_repo.add_item.call_args_list
-            if "Nuke" in (c[0] + tuple(c[1].values()))
-        ]
+        nuke_calls = [c for c in svc.inventory_repo.add_item.call_args_list if "Nuke" in (c[0] + tuple(c[1].values()))]
         assert len(nuke_calls) == 0, (
             f"BUG-2 regression: add_item was called {len(nuke_calls)} time(s) "
             f"for 0-round Nuke — max(1,0)=1 invents a round"
@@ -1070,27 +1140,30 @@ class TestBug2DepletedSecondaryReturnsZero:
     async def test_transfer_overflow_depleted_secondary_returns_zero(self, svc, mock_db):
         """Transfer overflow of 0-round secondary → add_item NOT called."""
         src = _make_player_ship(
-            ship_id=1, secondary_weapons=["Nuke"], secondary_ammo={"Nuke": 0},
+            ship_id=1,
+            secondary_weapons=["Nuke"],
+            secondary_ammo={"Nuke": 0},
         )
         dst = _make_player_ship(
-            ship_id=2, secondary_weapons=["Rocket"], secondary_ammo={"Rocket": 5},
+            ship_id=2,
+            secondary_weapons=["Rocket"],
+            secondary_ammo={"Rocket": 5},
         )
         slot_limits = {"weapons": 2, "modules": 3, "turrets": 1, "secondary_weapons": 1}
 
         svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[src, dst])
-        svc.item_repo.get_by_name_any_type = AsyncMock(
-            return_value=_make_base_item("Nuke", "SecondaryWeapon")
-        )
+        svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Nuke", "SecondaryWeapon"))
 
         result = await svc.transfer_loadout_to_new_ship(
-            mock_db, player_id=42, src_ship=src, dst_ship=dst, slot_limits=slot_limits,
+            mock_db,
+            player_id=42,
+            src_ship=src,
+            dst_ship=dst,
+            slot_limits=slot_limits,
         )
 
         assert "Nuke" in result["breakdown"]["secondary_weapons"]["overflowed"]
-        nuke_calls = [
-            c for c in svc.inventory_repo.add_item.call_args_list
-            if "Nuke" in (c[0] + tuple(c[1].values()))
-        ]
+        nuke_calls = [c for c in svc.inventory_repo.add_item.call_args_list if "Nuke" in (c[0] + tuple(c[1].values()))]
         assert len(nuke_calls) == 0, (
             f"BUG-2 regression: transfer pushed {len(nuke_calls)} cargo add(s) for 0-round Nuke"
         )
@@ -1121,8 +1194,9 @@ class TestBug3TopUpWhenSlotsFull:
         svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Rocket", "SecondaryWeapon"))
         svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
 
-        result = await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="Rocket",
-                                      equipment_type="secondary_weapons")
+        result = await svc.equip_one(
+            mock_db, player_id=42, ship_id=1, item_name="Rocket", equipment_type="secondary_weapons"
+        )
 
         assert result["success"] is True, "Top-up should succeed even when all slots full"
         # No new slot appended
@@ -1150,9 +1224,9 @@ class TestBug3TopUpWhenSlotsFull:
         svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
 
         import pytest as _pytest
+
         with _pytest.raises(ValueError, match="No available secondary_weapons slots"):
-            await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="EMP",
-                                equipment_type="secondary_weapons")
+            await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="EMP", equipment_type="secondary_weapons")
 
 
 class TestBug4RouterSecondaryAmmo:
@@ -1161,15 +1235,24 @@ class TestBug4RouterSecondaryAmmo:
     def test_ship_response_schema_has_secondary_ammo_field(self):
         """ShipResponse schema declares secondary_ammo: dict[str, int] | None."""
         from src.api.schemas.ships_schema import ShipResponse
+
         fields = ShipResponse.model_fields
         assert "secondary_ammo" in fields, "ShipResponse must have secondary_ammo field"
 
     def test_ship_response_accepts_secondary_ammo(self):
         """ShipResponse correctly round-trips secondary_ammo data."""
         from src.api.schemas.ships_schema import ShipResponse
+
         resp = ShipResponse(
-            id=1, player_id=42, ship_name="Betty", nickname=None, is_active=True,
-            weapons=[], modules=[], turrets=[], secondary_weapons=["Rocket"],
+            id=1,
+            player_id=42,
+            ship_name="Betty",
+            nickname=None,
+            is_active=True,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["Rocket"],
             secondary_ammo={"Rocket": 7},
             created_at="2026-06-04T00:00:00",
         )
@@ -1178,9 +1261,17 @@ class TestBug4RouterSecondaryAmmo:
     def test_ship_response_secondary_ammo_defaults_to_none(self):
         """ShipResponse.secondary_ammo defaults to None when not provided."""
         from src.api.schemas.ships_schema import ShipResponse
+
         resp = ShipResponse(
-            id=1, player_id=42, ship_name="Betty", nickname=None, is_active=True,
-            weapons=[], modules=[], turrets=[], secondary_weapons=[],
+            id=1,
+            player_id=42,
+            ship_name="Betty",
+            nickname=None,
+            is_active=True,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=[],
             created_at="2026-06-04T00:00:00",
         )
         assert resp.secondary_ammo is None
@@ -1188,17 +1279,28 @@ class TestBug4RouterSecondaryAmmo:
     def test_ship_loadout_summary_response_has_secondary_ammo_field(self):
         """ShipLoadoutSummaryResponse declares secondary_ammo: dict[str, int]."""
         from src.api.schemas.ships_schema import ShipLoadoutSummaryResponse
+
         fields = ShipLoadoutSummaryResponse.model_fields
         assert "secondary_ammo" in fields, "ShipLoadoutSummaryResponse must have secondary_ammo field"
 
     def test_ship_loadout_summary_response_accepts_secondary_ammo(self):
         """ShipLoadoutSummaryResponse correctly round-trips secondary_ammo data."""
         from src.api.schemas.ships_schema import ShipLoadoutSummaryResponse
+
         resp = ShipLoadoutSummaryResponse(
-            ship_id=1, ship_name="Betty", nickname=None, is_active=True,
-            weapons=[], modules=[], turrets=[], secondary_weapons=["Nuke"],
+            ship_id=1,
+            ship_name="Betty",
+            nickname=None,
+            is_active=True,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["Nuke"],
             secondary_ammo={"Nuke": 3},
-            weapons_count=0, modules_count=0, turrets_count=0, secondary_weapons_count=1,
+            weapons_count=0,
+            modules_count=0,
+            turrets_count=0,
+            secondary_weapons_count=1,
         )
         assert resp.secondary_ammo == {"Nuke": 3}
 
@@ -1211,7 +1313,8 @@ class TestConservationInvariantAcrossAllPaths:
         """Full reconcile + transfer chain: no rounds are minted or dropped."""
         # Ship with 5 Rocket rounds; cap drops to 0 → all 5 should overflow to cargo
         ship = _make_player_ship(
-            ship_id=1, player_id=42,
+            ship_id=1,
+            player_id=42,
             secondary_weapons=["Rocket"],
             secondary_ammo={"Rocket": 5},
             is_active=True,
@@ -1220,17 +1323,12 @@ class TestConservationInvariantAcrossAllPaths:
 
         svc.player_ship_repo.get_by_id = AsyncMock(return_value=ship)
         svc.ship_repo.get_by_name = AsyncMock(return_value=static)
-        svc.item_repo.get_by_name_any_type = AsyncMock(
-            return_value=_make_base_item("Rocket", "SecondaryWeapon")
-        )
+        svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_base_item("Rocket", "SecondaryWeapon"))
 
         await svc.reconcile_active_ship_slots(mock_db, player_id=42, target_ship_id=1)
 
         calls = svc.inventory_repo.add_item.call_args_list
-        cargo_total = sum(
-            c[0][4] if len(c[0]) > 4 else c[1].get("quantity", 0)
-            for c in calls
-        )
+        cargo_total = sum(c[0][4] if len(c[0]) > 4 else c[1].get("quantity", 0) for c in calls)
         # ammo on ship now 0 (all popped); cargo = 5
         assert cargo_total == 5, f"Conservation: expected 5 rounds in cargo, got {cargo_total}"
         # ammo sidecar cleared for Rocket
@@ -1332,7 +1430,9 @@ class TestCi17CriminalSecondaryIntegration:
         player_loadout = ShipLoadout(
             ship_name="Durable Player",
             base_armour=999_999,
-            weapons=[WeaponStats(name="No-dmg Gun", dps=0.0, damage_per_shot=0.0, loading_speed_ms=1000, range_m=9999.0)],
+            weapons=[
+                WeaponStats(name="No-dmg Gun", dps=0.0, damage_per_shot=0.0, loading_speed_ms=1000, range_m=9999.0)
+            ],
         )
         resolver = TickResolver()
         result = resolver.resolve(criminal_loadout, player_loadout, pvc_damage_reduction=0.0, rng=_AlwaysHit())
@@ -1344,10 +1444,7 @@ class TestCi17CriminalSecondaryIntegration:
         criminal_ship = self._criminal_ship_with_rocket(rounds=n)
         log = self._resolve_criminal_vs_player(criminal_ship)
 
-        fires = [
-            e for e in log
-            if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "Test Rocket"
-        ]
+        fires = [e for e in log if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "Test Rocket"]
         assert len(fires) <= n, f"Expected ≤{n} fires, got {len(fires)}"
 
     def test_criminal_rocket_rounds_1_fires_exactly_once(self):
@@ -1355,10 +1452,7 @@ class TestCi17CriminalSecondaryIntegration:
         criminal_ship = self._criminal_ship_with_rocket(rounds=1)
         log = self._resolve_criminal_vs_player(criminal_ship)
 
-        fires = [
-            e for e in log
-            if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "Test Rocket"
-        ]
+        fires = [e for e in log if e.type == CombatEventType.weapon_fire and e.data.get("weapon") == "Test Rocket"]
         assert len(fires) == 1, f"Expected exactly 1 fire, got {len(fires)}"
 
     def test_criminal_secondary_depleted_event_emitted(self):
@@ -1377,7 +1471,8 @@ class TestCi17CriminalSecondaryIntegration:
 
         # Rockets that hit emit a damage event with absorbed > 0 (actual HP removed)
         damage_events_from_rocket = [
-            e for e in log
+            e
+            for e in log
             if e.type == CombatEventType.damage
             and isinstance(e.data.get("source"), dict)
             and e.data["source"].get("weapon") == "Test Rocket"
@@ -1485,14 +1580,13 @@ class TestCi17CriminalSecondaryIntegration:
             ],
         )
         resolver = TickResolver()
-        result = resolver.resolve(
-            criminal_loadout, opponent_loadout, pvc_damage_reduction=0.0, rng=_AlwaysHit()
-        )
+        result = resolver.resolve(criminal_loadout, opponent_loadout, pvc_damage_reduction=0.0, rng=_AlwaysHit())
         log = result.combat_log
 
         # 1. Secondary FIRED: at least one weapon_fire with slot=="secondary" for this weapon
         secondary_fires = [
-            e for e in log
+            e
+            for e in log
             if e.type == CombatEventType.weapon_fire
             and e.data.get("slot") == "secondary"
             and e.data.get("weapon") == "CI-17 Annihilator"
@@ -1512,9 +1606,9 @@ class TestCi17CriminalSecondaryIntegration:
 
         # 3. Ammo depleted: secondary_depleted event emitted after the single round fires
         depleted_events = [
-            e for e in log
-            if e.type == CombatEventType.secondary_depleted
-            and e.data.get("weapon") == "CI-17 Annihilator"
+            e
+            for e in log
+            if e.type == CombatEventType.secondary_depleted and e.data.get("weapon") == "CI-17 Annihilator"
         ]
         assert len(depleted_events) == 1, (
             f"Expected 1 secondary_depleted event (rounds=1), got {len(depleted_events)}. "
@@ -1614,9 +1708,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         """
         from src.services.combat_service import CombatService
 
-        fight_results = _make_fight_results_with_summary(
-            secondary_rounds_by_weapon_slot1={"Rocket1": 2}
-        )
+        fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket1": 2})
 
         mock_player = SimpleNamespace(id=100)
         mock_ship = MagicMock()
@@ -1652,9 +1744,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         """BYTE-IDENTITY: two secondary weapons, each fired some rounds → correct decrements."""
         from src.services.combat_service import CombatService
 
-        fight_results = _make_fight_results_with_summary(
-            secondary_rounds_by_weapon_slot1={"RocketA": 3, "MissileB": 2}
-        )
+        fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"RocketA": 3, "MissileB": 2})
 
         mock_player = SimpleNamespace(id=100)
         mock_ship = MagicMock()
@@ -1706,8 +1796,8 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
                 "summary": {
                     "combatants": {
                         "1": {
-                            "name": "Hunter",            # display_name (pilot label)
-                            "ship": "Eagle Scout",       # ship name
+                            "name": "Hunter",  # display_name (pilot label)
+                            "ship": "Eagle Scout",  # ship name
                             "secondary_rounds_by_weapon": {"Rocket": 3},  # correct side-keyed count
                         },
                         "2": {
@@ -1834,9 +1924,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         assert mock_ship1.secondary_ammo == {"Nuke": 3}, (
             "Same-name fight: side-1 ammo must be decremented by 2 (not double-counted)."
         )
-        assert mock_ship2.secondary_ammo == {"Nuke": 3}, (
-            "Same-name fight: side-2 ammo must be decremented by 1."
-        )
+        assert mock_ship2.secondary_ammo == {"Nuke": 3}, "Same-name fight: side-2 ammo must be decremented by 1."
 
     @pytest.mark.asyncio
     async def test_invariant_ammo_never_negative(self):
@@ -1844,9 +1932,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         from src.services.combat_service import CombatService
 
         # Summary says 10 rounds fired but ship only has 3
-        fight_results = _make_fight_results_with_summary(
-            secondary_rounds_by_weapon_slot1={"Rocket": 10}
-        )
+        fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 10})
 
         mock_player = SimpleNamespace(id=100)
         mock_ship = MagicMock()
@@ -1883,9 +1969,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         from src.services.combat_service import CombatService
 
         # If ammo key is present with 0 and summary says 1 fired, must clamp
-        fight_results = _make_fight_results_with_summary(
-            secondary_rounds_by_weapon_slot1={"Rocket": 1}
-        )
+        fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 1})
 
         mock_player = SimpleNamespace(id=100)
         mock_ship = MagicMock()
@@ -1924,9 +2008,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         from src.services.combat_service import CombatService
 
         # Summary has only one secondary weapon
-        fight_results = _make_fight_results_with_summary(
-            secondary_rounds_by_weapon_slot1={"Rocket": 2}
-        )
+        fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 2})
 
         mock_player = SimpleNamespace(id=100)
         mock_ship = MagicMock()
@@ -1963,9 +2045,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         from src.services.combat_service import CombatService
 
         # Empty secondary_rounds_by_weapon
-        fight_results = _make_fight_results_with_summary(
-            secondary_rounds_by_weapon_slot1={}
-        )
+        fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={})
 
         mock_player = SimpleNamespace(id=100)
         mock_ship = MagicMock()
@@ -2006,9 +2086,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         """
         from src.services.combat_service import CombatService
 
-        fight_results = _make_fight_results_with_summary(
-            secondary_rounds_by_weapon_slot1={"Nuke": 2}
-        )
+        fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Nuke": 2})
         # Confirm combat_log is indeed empty
         assert fight_results.combat_log == [], "Precondition: combat_log must be empty for this test"
 
@@ -2094,9 +2172,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         from src.services.combat_service import CombatService
 
         # Summary says Rocket fired 3 rounds but ship has no Rocket in ammo dict
-        fight_results = _make_fight_results_with_summary(
-            secondary_rounds_by_weapon_slot1={"Rocket": 3}
-        )
+        fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 3})
 
         mock_player = SimpleNamespace(id=100)
         mock_ship = MagicMock()

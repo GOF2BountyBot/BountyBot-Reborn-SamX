@@ -18,6 +18,8 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         openssl \
         # jq for the API testing script
         jq \
+        # gosu for privilege drop in entrypoint (root → botuser)
+        gosu \
         # vim and sudo for debugging — comment out once stable
         # vim \
         # sudo \
@@ -91,11 +93,17 @@ RUN groupadd --gid 1002 botuser && \
     chmod -R 1777 /home/botuser && \
     chmod -R 1777 /app
 
-USER botuser
-
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fs http://localhost:7999/api/v1/health || exit 1
 
-# The '& tail -f /dev/null' keeps the container running if the app crashes,
-# allowing exec access for debugging.
-ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/bot.py & tail -f /dev/null"]
+# Sanity-check gosu is functional before the image is sealed.
+RUN gosu nobody true
+
+# Copy the entrypoint script (chmod set on host; Dockerfile RUN ensures execute bit).
+COPY services/discord-gateway/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
+# The entrypoint starts as root, normalizes /app/data ownership, then drops to
+# botuser via gosu.  The '& tail -f /dev/null' keep-alive (inside the gosu'd
+# command) preserves original crash-survival behavior.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

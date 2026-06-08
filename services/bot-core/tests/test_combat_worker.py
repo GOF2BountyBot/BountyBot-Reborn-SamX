@@ -131,7 +131,10 @@ class TestParity:
             compact=False,
         )
 
-        expected_key_events = _extract_key_events(worker_out["timeline"])
+        # T7a: worker now passes combatants_map to _extract_key_events for display-name
+        # resolution.  The parity check must mirror the same call signature.
+        _combatants_map = worker_out["metadata"].get("summary", {}).get("combatants", {})
+        expected_key_events = _extract_key_events(worker_out["timeline"], combatants_map=_combatants_map)
         assert worker_out["key_events"] == expected_key_events
 
     def test_winner_and_stalemate_match_in_process(self):

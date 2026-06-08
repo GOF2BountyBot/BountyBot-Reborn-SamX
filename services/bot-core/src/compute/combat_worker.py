@@ -147,9 +147,12 @@ def run_fight(
         for ev in result.combat_log
     ]
 
-    # Extract key events from the serialized timeline (same call path as
-    # CombatLogService.get_battle_summary, for X2 parity by construction).
-    key_events = _extract_key_events(timeline)
+    # Extract key events from the serialized timeline.
+    # Pass combatants_map so display-name resolution matches the read path
+    # (X2 parity by construction — same function, same inputs as persist-time
+    # computation in CombatLogService).
+    _combatants_map: dict = result.metadata.get("summary", {}).get("combatants", {})
+    key_events = _extract_key_events(timeline, combatants_map=_combatants_map)
 
     # FightStats → plain dict (picklable; avoids shipping a frozen dataclass
     # with slots across process boundaries — though those are picklable too,

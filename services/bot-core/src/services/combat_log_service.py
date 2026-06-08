@@ -99,12 +99,30 @@ class CombatLogService:
             for ev in raw_timeline
         ]
 
+        # Compute key_events at write time and store in the data blob.
+        # Uses the same _extract_key_events from combat_resolver (the resolver leaf
+        # imported above) so the stored value is byte-identical to what the
+        # fallback read path produces on the same timeline — X2 parity by
+        # construction (same function, same inputs).
+        _tick_ms_write: int = int(metadata.get("metadata", {}).get("tick_ms", _TICK_MS))
+        _combatants_map_write: dict = combatants_summary
+        _key_events_write: list[dict] = _extract_key_events(
+            serialised_timeline,
+            tick_ms=_tick_ms_write,
+            combatants_map=_combatants_map_write,
+        )
+
         # Build the data blob (§12 "data column — internal schema")
         data_blob: dict = {
             "schema_version": metadata.get("schema_version", 1),
             "summary": summary,
             "timeline": serialised_timeline,
             "metadata": metadata.get("metadata", {}),
+            # P4-T7a: precomputed key_events stored at write time.
+            # Eliminates the full-timeline scan on every read.
+            # Legacy rows (no "key_events" key) fall back to _extract_key_events
+            # in get_detail(); 72h retention means they self-heal within 3 days.
+            "key_events": _key_events_write,
         }
 
         row = CombatLog(
@@ -236,7 +254,13 @@ class CombatLogService:
         c1 = self._parse_combatant(combatants_map.get("1", {}))
         c2 = self._parse_combatant(combatants_map.get("2", {}))
 
-        key_events = self._extract_key_events(timeline, tick_ms, combatants_map=combatants_map)
+        # P4-T7a: prefer the precomputed key_events stored in the data blob.
+        # Fall back to live extraction for legacy rows written before this change
+        # (they lack the "key_events" key; 72h retention self-heals in 3 days).
+        if "key_events" in data:
+            key_events: list[dict] = data["key_events"]
+        else:
+            key_events = self._extract_key_events(timeline, tick_ms, combatants_map=combatants_map)
 
         flogger.info(f"get_detail: battle_id={battle_id} user_id={user_id} outcome={outcome!r}")
         return {

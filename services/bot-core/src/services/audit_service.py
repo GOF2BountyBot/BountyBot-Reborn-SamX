@@ -64,7 +64,7 @@ class AuditService:
                 action=action,
                 resource_type=resource_type,
                 resource_id=resource_id,
-                details=json.dumps(details) if details is not None else None,
+                details=json.dumps(details, default=str) if details is not None else None,
                 status=status,
             )
             db.add(entry)

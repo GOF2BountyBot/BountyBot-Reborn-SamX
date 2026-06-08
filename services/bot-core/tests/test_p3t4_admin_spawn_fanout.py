@@ -29,6 +29,7 @@ import concurrent.futures
 import os
 import sys
 import threading
+from collections import OrderedDict
 from datetime import UTC, datetime
 from types import ModuleType
 from unittest.mock import MagicMock
@@ -101,8 +102,11 @@ class _FakeGraph:
 
 
 # ---------------------------------------------------------------------------
-# 40 fake bounties — each with a unique 3-system route so renders differ.
-# Routes are guaranteed unique to prevent any cross-bounty cache collision.
+# 40 fake bounties with 3-system routes generated via modular index (i % 38).
+# Routes are NOT guaranteed unique — bounties 0 and 38 share the same route.
+# That is intentional: the cache-write thread-safety test only requires that
+# writes recorded by _TrackedDict all happen on the event-loop thread; cache
+# collisions (duplicate keys) are harmless for that assertion.
 # ---------------------------------------------------------------------------
 
 
@@ -377,8 +381,8 @@ class TestCacheLoopThreadOnly:
         loop_thread_ident = threading.get_ident()
         write_idents: list[int] = []
 
-        class _TrackedDict(dict):
-            """Dict subclass that records the calling thread ident on every write."""
+        class _TrackedDict(OrderedDict):
+            """OrderedDict subclass that records the calling thread ident on every write."""
 
             def __setitem__(self, key, value):
                 write_idents.append(threading.get_ident())

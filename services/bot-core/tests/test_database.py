@@ -466,10 +466,15 @@ class TestDatabaseManagerTestConnection:
         mock_engine.connect = MagicMock(return_value=mock_conn)
         mgr._engine = mock_engine
 
-        with patch("persist.database.manager.time.sleep"):
+        mock_sleep = AsyncMock()
+        with patch("persist.database.manager.asyncio.sleep", mock_sleep):
             await mgr._test_connection()
 
         assert call_count == 3
+        # Two OperationalErrors → two sleeps with exponential backoff (2s, 4s)
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_any_call(2)
+        mock_sleep.assert_any_call(4)
 
     @pytest.mark.asyncio
     async def test_test_connection_fails_after_max_retries(self):
@@ -486,8 +491,11 @@ class TestDatabaseManagerTestConnection:
         mock_engine.connect = MagicMock(return_value=mock_conn)
         mgr._engine = mock_engine
 
-        with patch("persist.database.manager.time.sleep"), pytest.raises(OperationalError):
+        mock_sleep = AsyncMock()
+        with patch("persist.database.manager.asyncio.sleep", mock_sleep), pytest.raises(OperationalError):
             await mgr._test_connection()
+        # max_retries=5 → 4 sleeps before the 5th attempt raises
+        assert mock_sleep.call_count == 4
 
     @pytest.mark.asyncio
     async def test_test_connection_unexpected_error_raises_immediately(self):

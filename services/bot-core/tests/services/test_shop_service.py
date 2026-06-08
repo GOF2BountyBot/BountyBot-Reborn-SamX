@@ -1848,8 +1848,14 @@ class TestCI11SecondaryWeaponOwnRange:
 
         mock_shop_repo.create_or_update = _fake_create_or_update
 
+        # Return distinct names per call so dedup doesn't collapse them.
+        # Each call gets a unique index suffix; the type prefix ensures
+        # secondary draws never use the weapon namespace.
+        _call_counters: dict[str, int] = {}
+
         async def _fake_get_random(db, item_type, tech_level):
-            return f"Fake_{item_type}"
+            _call_counters[item_type] = _call_counters.get(item_type, 0) + 1
+            return f"Fake_{item_type}_{_call_counters[item_type]}"
 
         service._get_random_item_by_tech_level = _fake_get_random
         service._get_item_base_price = AsyncMock(return_value=100)
@@ -1902,8 +1908,14 @@ class TestCI11SecondaryWeaponOwnRange:
 
         mock_shop_repo.create_or_update = _fake_create_or_update
 
+        # Return distinct names per call so dedup doesn't collapse draws to one item.
+        # Each call gets a unique index suffix; the type prefix ensures
+        # secondary draws never bleed into the weapon namespace.
+        _call_counters2: dict[str, int] = {}
+
         async def _fake_get_random(db, item_type, tech_level):
-            return f"Fake_{item_type}"
+            _call_counters2[item_type] = _call_counters2.get(item_type, 0) + 1
+            return f"Fake_{item_type}_{_call_counters2[item_type]}"
 
         service._get_random_item_by_tech_level = _fake_get_random
         service._get_item_base_price = AsyncMock(return_value=100)

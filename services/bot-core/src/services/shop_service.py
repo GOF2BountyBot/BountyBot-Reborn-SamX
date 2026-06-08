@@ -657,6 +657,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # are excluded at the item-selection layer in _get_random_item_by_tech_level.
             _generation_types = tuple(t for t in GameConstants.CURRENTLY_ENABLED_TYPES if t in _CONCRETE_TO_CONFIG_KEY)
             generated_items = []
+            # Track drawn item_names to avoid duplicate upserts: a name drawn more
+            # than once in the same refresh would otherwise hit create_or_update()
+            # multiple times for the same row.  Deduplicate here before the upsert
+            # so each unique item_name is written exactly once.
+            _seen_item_names: set[str] = set()
 
             for concrete_type in _generation_types:
                 config_key = _CONCRETE_TO_CONFIG_KEY[concrete_type]
@@ -676,6 +681,12 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     if not item_name:
                         continue  # Skip if no items available at this tech level
 
+                    # Skip duplicate draws (draws-with-replacement): only the first
+                    # occurrence of each item_name is upserted in this refresh cycle.
+                    if item_name in _seen_item_names:
+                        continue
+                    _seen_item_names.add(item_name)
+
                     # Calculate price
                     base_price = await self._get_item_base_price(db, item_name)
 
@@ -693,17 +704,6 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
                     shop_item = await self.shop_repo.create_or_update(db, shop_item_data)
                     generated_items.append(shop_item)
-
-            # Deduplicate: the generation loop draws items with replacement, so the same
-            # item_name may be drawn multiple times. create_or_update() upserts to a single
-            # DB row each time, leaving the DB clean — but every draw unconditionally
-            # appends to generated_items, causing duplicates in the announcement embed
-            # and the autocomplete cache push. Keep only the final (most-recently-upserted)
-            # state for each item_name.
-            seen: dict[str, object] = {}
-            for si in generated_items:
-                seen[si.item_name] = si
-            generated_items = list(seen.values())
 
             refresh_details = {
                 "guild_id": guild_id,

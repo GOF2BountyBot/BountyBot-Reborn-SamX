@@ -13,9 +13,9 @@ Key Features:
 - Future-ready for repository pattern integration
 """
 
+import asyncio
 import contextlib
 import os
-import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -168,7 +168,7 @@ class DatabaseManager:
             except OperationalError as e:
                 if attempt < max_retries - 1:
                     flogger.warning(f"DB connection attempt {attempt + 1} failed: {e}. Retrying in {retry_delay}s...")
-                    time.sleep(retry_delay)
+                    await asyncio.sleep(retry_delay)
                     retry_delay *= 2
                 else:
                     flogger.error("Database connection failed after retries")

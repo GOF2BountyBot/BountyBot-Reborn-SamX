@@ -842,7 +842,12 @@ class TestExecuteTimeAnnouncementJob:
             await execute_time_announcement_job("job-post-err", payload)
 
     async def test_updates_job_args_after_first_create(self, _patch_env):
-        """After a POST (new announcement), the executor updates the job with the new message_id."""
+        """After a POST (new announcement), the executor updates the job args with the new message_id.
+
+        P6-T8: update is now via direct scheduler.modify_job (no HTTP PUT loopback).
+        Verifies that modify_job is called with args=[job_id, updated_payload] where
+        updated_payload includes the new message_id.
+        """
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
         get_resp = MagicMock()
@@ -855,16 +860,9 @@ class TestExecuteTimeAnnouncementJob:
         post_resp.raise_for_status = MagicMock()
         post_resp.json.return_value = {"message_id": "brand-new-id"}
 
-        put_resp = MagicMock()
-        put_resp.status_code = 200
-        put_resp.text = ""
-        put_resp.raise_for_status = MagicMock()
-        put_resp.json.return_value = {}
-
         client = AsyncMock()
         client.get = AsyncMock(return_value=get_resp)
         client.post = AsyncMock(return_value=post_resp)
-        client.put = AsyncMock(return_value=put_resp)
 
         ctx = MagicMock()
         ctx.__aenter__ = AsyncMock(return_value=client)
@@ -872,13 +870,35 @@ class TestExecuteTimeAnnouncementJob:
 
         payload = {"guild_id": "g1", "channel_id": "c1", "current_time": "2026-01-01T00:00:00Z"}
 
-        with patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx):
+        mock_scheduler = MagicMock()
+        mock_scheduler.modify_job = MagicMock(return_value=None)
+
+        with (
+            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler),
+        ):
             await execute_time_announcement_job("job-create", payload)
 
-        # The PUT to the scheduler API should have been called with the new message_id
-        client.put.assert_awaited()
-        put_call_str = str(client.put.call_args_list)
-        assert "brand-new-id" in put_call_str
+        # P6-T8: modify_job must be called directly (no HTTP PUT loopback).
+        mock_scheduler.modify_job.assert_called_once()
+        call_args = mock_scheduler.modify_job.call_args
+        # First positional arg is the job_id.
+        job_id_arg = call_args.args[0] if call_args.args else call_args.kwargs.get("job_id")
+        assert job_id_arg == "job-create", f"modify_job job_id={job_id_arg!r}, expected 'job-create'"
+        # args= kwarg carries [job_id, new_payload].
+        new_args = call_args.kwargs.get("args")
+        assert new_args is not None, "modify_job must be called with args= kwarg"
+        assert len(new_args) == 2, f"Expected args=[job_id, payload], got {new_args!r}"
+        new_payload = new_args[1]
+        assert new_payload.get("message_id") == "brand-new-id", (
+            f"Updated payload must include message_id='brand-new-id', got {new_payload!r}"
+        )
+
+        # No HTTP PUT to the scheduler API (P6-T8 no-loopback assertion).
+        all_put_calls = [str(c) for c in client.put.call_args_list] if hasattr(client, "put") else []
+        assert not any("/jobs/" in c for c in all_put_calls), (
+            f"HTTP PUT to /jobs/ should NOT be made (P6-T8 no-loopback); calls: {all_put_calls}"
+        )
 
     async def test_uses_current_time_from_payload_if_provided(self, _patch_env):
         """If 'current_time' is in payload, it is used instead of datetime.now."""

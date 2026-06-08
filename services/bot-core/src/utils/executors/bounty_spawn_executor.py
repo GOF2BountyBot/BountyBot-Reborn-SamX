@@ -383,7 +383,10 @@ async def execute_bounty_spawn_orchestrate_job(job_id: str, payload: dict) -> di
                     )
 
                     # --------------------------------------------------
-                    # Schedule one-time bounty_spawn_one job
+                    # Schedule one-time bounty_spawn_one job — direct
+                    # in-process call (P6-T8: no HTTP loopback).
+                    # Uses the same scheduler instance registered by
+                    # main.py lifespan via scheduler_holder.set_scheduler.
                     # --------------------------------------------------
                     spawn_job_id = f"bounty_spawn_{gid}_{tier_lower}_{uuid.uuid4()}"
                     one_time_payload = {
@@ -391,20 +394,21 @@ async def execute_bounty_spawn_orchestrate_job(job_id: str, payload: dict) -> di
                         "guild_id": gid,
                         "tier": tier_lower,
                     }
-                    body = {
-                        "run_at": fire_time.isoformat(),
-                        "payload": one_time_payload,
-                        "job_id": spawn_job_id,
-                    }
 
                     try:
-                        async with httpx.AsyncClient() as client:
-                            resp = await client.post(
-                                f"{_SELF_BASE_URL}/jobs",
-                                json=body,
-                                timeout=10,
-                            )
-                        resp.raise_for_status()
+                        from utils.job_executor import run_job
+                        from utils.scheduler_holder import get_scheduler
+
+                        _spawn_scheduler = get_scheduler()
+                        if _spawn_scheduler is None:
+                            raise RuntimeError("scheduler not available via holder")
+                        _spawn_scheduler.add_job(
+                            run_job,
+                            trigger="date",
+                            run_date=fire_time,
+                            args=[spawn_job_id, one_time_payload],
+                            id=spawn_job_id,
+                        )
                         guild_queued += 1
                         total_queued += 1
                         flogger.info(

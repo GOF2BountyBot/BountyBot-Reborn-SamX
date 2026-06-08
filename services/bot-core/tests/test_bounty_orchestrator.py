@@ -343,6 +343,9 @@ def _make_mock_scheduler_jobs(queued_count: int, guild_id: int, tier_lower: str)
     (guild_id, tier_lower).  Fire times are spread 10 min apart in the future
     so they are not collision candidates with a new job computed by the
     gap-aware scheduling logic.
+
+    P6-T8: ``add_job`` is also mocked (plain MagicMock, no side-effect) so the
+    orchestrator's direct in-process scheduling call succeeds without HTTP.
     """
     from datetime import datetime as _dt
     from types import SimpleNamespace
@@ -359,6 +362,23 @@ def _make_mock_scheduler_jobs(queued_count: int, guild_id: int, tier_lower: str)
 
     mock_scheduler = MagicMock()
     mock_scheduler.get_jobs = MagicMock(return_value=mock_jobs)
+    mock_scheduler.add_job = MagicMock(return_value=None)
+    return mock_scheduler
+
+
+def _make_empty_scheduler() -> MagicMock:
+    """Return a mock APScheduler scheduler with zero queued jobs.
+
+    P6-T8: Used by orchestrator tests that do NOT pre-load any queued jobs
+    (cold-start / below-capacity scenarios).  Both ``get_jobs`` and ``add_job``
+    are mocked so the direct in-process scheduling path succeeds.
+
+    Returns the scheduler mock directly (no patcher — callers wrap it themselves
+    in ``patch("utils.scheduler_holder.get_scheduler", return_value=...)``.
+    """
+    mock_scheduler = MagicMock()
+    mock_scheduler.get_jobs = MagicMock(return_value=[])
+    mock_scheduler.add_job = MagicMock(return_value=None)
     return mock_scheduler
 
 
@@ -385,7 +405,10 @@ def _configure_scheduler_jobs(queued_count: int, guild_id: int, tier_lower: str)
 
 @pytest.mark.asyncio
 async def test_orchestrator_skips_tier_when_capacity_full():
-    """Test 1: Orchestrator skips tier when active + queued >= max_for_tier."""
+    """Test 1: Orchestrator skips tier when active + queued >= max_for_tier.
+
+    P6-T8: scheduling uses direct scheduler.add_job — no HTTP loopback.
+    """
     from utils.executors.bounty_spawn_executor import execute_bounty_spawn_orchestrate_job
 
     mock_db = _make_db_with_sql_count(10)  # db mock (execute no longer called)
@@ -395,22 +418,12 @@ async def test_orchestrator_skips_tier_when_capacity_full():
     )
     # 10 active bounties + 10 queued = 20 = max → skip
     _configure_bounty_repo(active_count_map={(100, "bronze"): 10})
-    # Inject 10 queued spawn jobs for bronze via the scheduler API
+    # Inject 10 queued spawn jobs for bronze via the scheduler API.
+    # _make_mock_scheduler_jobs also stubs add_job so direct scheduling succeeds.
     mock_sched = _configure_scheduler_jobs(10, 100, "bronze")
 
-    mock_post = AsyncMock()
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_post.return_value = mock_resp
-
     try:
-        with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.post = mock_post
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await execute_bounty_spawn_orchestrate_job("orch-1", {"job_type": "bounty_spawn_orchestrate"})
+        result = await execute_bounty_spawn_orchestrate_job("orch-1", {"job_type": "bounty_spawn_orchestrate"})
     finally:
         mock_sched.patcher.stop()
 
@@ -421,7 +434,10 @@ async def test_orchestrator_skips_tier_when_capacity_full():
 
 @pytest.mark.asyncio
 async def test_orchestrator_queues_when_below_capacity():
-    """Test 1b: Orchestrator queues when active + queued < max_for_tier (10+9=19 < 20)."""
+    """Test 1b: Orchestrator queues when active + queued < max_for_tier (10+9=19 < 20).
+
+    P6-T8: scheduling uses direct scheduler.add_job — no HTTP loopback.
+    """
     from utils.executors.bounty_spawn_executor import execute_bounty_spawn_orchestrate_job
 
     mock_db = _make_db_with_sql_count(9)  # db mock (execute no longer called)
@@ -430,26 +446,12 @@ async def test_orchestrator_queues_when_below_capacity():
     _configure_config_repo([cfg])
     # 10 active + 9 queued = 19 < 20 → should queue
     _configure_bounty_repo(active_count_map={(200, "bronze"): 10})
-    # Inject 9 queued spawn jobs for bronze via the scheduler API
+    # Inject 9 queued spawn jobs for bronze via the scheduler API.
+    # _make_mock_scheduler_jobs also stubs add_job so direct scheduling succeeds.
     mock_sched = _configure_scheduler_jobs(9, 200, "bronze")
 
-    jobs_posted = []
-
-    async def _mock_post(url, json=None, timeout=None, **kwargs):
-        jobs_posted.append(json)
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={})
-        return mock_resp
-
     try:
-        with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.post = _mock_post
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await execute_bounty_spawn_orchestrate_job("orch-queue", {"job_type": "bounty_spawn_orchestrate"})
+        result = await execute_bounty_spawn_orchestrate_job("orch-queue", {"job_type": "bounty_spawn_orchestrate"})
     finally:
         mock_sched.patcher.stop()
 
@@ -459,7 +461,11 @@ async def test_orchestrator_queues_when_below_capacity():
 
 @pytest.mark.asyncio
 async def test_orchestrator_queues_exactly_one_job_per_eligible_tier():
-    """Test 2: Orchestrator queues exactly ONE job per eligible tier per invocation."""
+    """Test 2: Orchestrator queues exactly ONE job per eligible tier per invocation.
+
+    P6-T8: scheduling uses direct scheduler.add_job — no HTTP loopback.
+    add_job call count confirms one job queued per tier.
+    """
     from utils.executors.bounty_spawn_executor import execute_bounty_spawn_orchestrate_job
 
     mock_db = _make_db_with_sql_count(0)  # no queued jobs
@@ -468,26 +474,16 @@ async def test_orchestrator_queues_exactly_one_job_per_eligible_tier():
     _configure_config_repo([cfg])
     _configure_bounty_repo(count_return=0)  # no active bounties
 
-    jobs_posted = []
+    mock_sched = _make_empty_scheduler()
 
-    async def _mock_post(url, json=None, timeout=None, **kwargs):
-        jobs_posted.append({"url": url, "payload": json})
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={})
-        return mock_resp
-
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = _mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with patch("utils.scheduler_holder.get_scheduler", return_value=mock_sched):
         result = await execute_bounty_spawn_orchestrate_job("orch-2", {"job_type": "bounty_spawn_orchestrate"})
 
     # 4 tiers: bronze, silver, gold, platinum — one job each
     assert result["total_queued"] == 4
-    assert len(jobs_posted) == 4
+    assert mock_sched.add_job.call_count == 4, (
+        f"Expected 4 direct add_job calls (one per tier), got {mock_sched.add_job.call_count}"
+    )
 
 
 # ===========================================================================
@@ -526,20 +522,16 @@ async def test_orchestrator_fire_time_within_window(interval_minutes: int):
     fire_times_recorded = []
     now_before = datetime.now(UTC)
 
-    async def _mock_post(url, json=None, timeout=None, **kwargs):
-        if json and "run_at" in json:
-            fire_times_recorded.append(json["run_at"])
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={})
-        return mock_resp
+    # P6-T8: capture fire times via add_job kwargs (run_date) instead of HTTP body.
+    mock_sched = _make_empty_scheduler()
 
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = _mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    def _capture_add_job(func, trigger=None, run_date=None, args=None, id=None, **kwargs):
+        if run_date is not None:
+            fire_times_recorded.append(run_date.isoformat())
 
+    mock_sched.add_job = MagicMock(side_effect=_capture_add_job)
+
+    with patch("utils.scheduler_holder.get_scheduler", return_value=mock_sched):
         await execute_bounty_spawn_orchestrate_job(
             f"orch-window-{interval_minutes}", {"job_type": "bounty_spawn_orchestrate"}
         )
@@ -631,20 +623,10 @@ async def test_orchestrator_queue_count_uses_correct_prefix_filter():
     _configure_config_repo([cfg])
     _configure_bounty_repo(count_return=0)
 
-    async def _mock_post(url, json=None, timeout=None, **kwargs):
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={})
-        return mock_resp
-
+    # P6-T8: mock_scheduler already has add_job via _make_mock_scheduler_jobs.
+    # No HTTP mock needed — scheduling is direct.
     with patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler):
-        with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.post = _mock_post
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            result = await execute_bounty_spawn_orchestrate_job("orch-4", {"job_type": "bounty_spawn_orchestrate"})
+        result = await execute_bounty_spawn_orchestrate_job("orch-4", {"job_type": "bounty_spawn_orchestrate"})
 
     # Bronze is capacity_full (0 active + 2 queued == 2 == max).
     # Silver, gold, platinum are not full (0 + 2 < 5) → each queues 1 new job.
@@ -658,16 +640,12 @@ async def test_orchestrator_queue_count_uses_correct_prefix_filter():
     # Bronze tier must be reported as capacity_full.
     guild_result = result.get("results", {}).get(guild_id, {})
     bronze_result = guild_result.get("tiers", {}).get("bronze", {})
-    assert bronze_result.get("reason") == "capacity_full", (
-        f"Expected bronze capacity_full, got: {bronze_result}"
-    )
+    assert bronze_result.get("reason") == "capacity_full", f"Expected bronze capacity_full, got: {bronze_result}"
 
     # Other tiers must each have queued exactly 1 new job.
     for tier in ("silver", "gold", "platinum"):
         tier_result = guild_result.get("tiers", {}).get(tier, {})
-        assert tier_result.get("queued") == 1, (
-            f"Expected {tier} to queue 1 new job, got: {tier_result}"
-        )
+        assert tier_result.get("queued") == 1, f"Expected {tier} to queue 1 new job, got: {tier_result}"
 
     # get_jobs() must have been called once per tier (4 tiers).
     assert mock_scheduler.get_jobs.call_count == 4, (
@@ -697,18 +675,10 @@ async def test_orchestrator_uses_bounty_max_per_tier_not_temperature():
     _configure_config_repo([cfg])
     _configure_bounty_repo(count_return=0)
 
-    async def _mock_post(url, json=None, timeout=None, **kwargs):
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={})
-        return mock_resp
+    # P6-T8: scheduling uses direct scheduler.add_job — no HTTP loopback.
+    mock_sched = _make_empty_scheduler()
 
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = _mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with patch("utils.scheduler_holder.get_scheduler", return_value=mock_sched):
         await execute_bounty_spawn_orchestrate_job("orch-5", {"job_type": "bounty_spawn_orchestrate"})
 
     # TemperatureService.get_max_bounties must NOT have been called by the orchestrator
@@ -758,18 +728,10 @@ async def test_orchestrator_does_not_read_or_write_next_spawn_check_at():
     _configure_db_manager(mock_db)
     _configure_bounty_repo(count_return=0)
 
-    async def _mock_post(url, json=None, timeout=None, **kwargs):
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={})
-        return mock_resp
+    # P6-T8: scheduling uses direct scheduler.add_job — no HTTP loopback.
+    mock_sched = _make_empty_scheduler()
 
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = _mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with patch("utils.scheduler_holder.get_scheduler", return_value=mock_sched):
         await execute_bounty_spawn_orchestrate_job("orch-6", {"job_type": "bounty_spawn_orchestrate"})
 
     # next_spawn_check_at should NOT have been accessed by the orchestrator
@@ -795,25 +757,19 @@ async def test_orchestrator_skips_guild_not_fully_configured():
     _configure_config_repo([cfg])
     _configure_bounty_repo(count_return=0)
 
-    jobs_posted = []
+    # P6-T8: guild is ineligible so scheduling is never attempted.
+    # No scheduler mock needed; assert add_job is never called by providing
+    # an empty scheduler that would record any unexpected call.
+    mock_sched = _make_empty_scheduler()
 
-    async def _mock_post(url, json=None, timeout=None, **kwargs):
-        jobs_posted.append(json)
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={})
-        return mock_resp
-
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = _mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with patch("utils.scheduler_holder.get_scheduler", return_value=mock_sched):
         result = await execute_bounty_spawn_orchestrate_job("orch-7", {"job_type": "bounty_spawn_orchestrate"})
 
     assert result["total_queued"] == 0
-    assert len(jobs_posted) == 0
+    # No scheduling attempted for ineligible guild.
+    assert mock_sched.add_job.call_count == 0, (
+        f"Expected 0 add_job calls for ineligible guild, got {mock_sched.add_job.call_count}"
+    )
 
 
 # ===========================================================================
@@ -833,31 +789,27 @@ async def test_orchestrator_skips_tier_when_max_zero_or_missing():
     _configure_config_repo([cfg])
     _configure_bounty_repo(count_return=0)
 
-    jobs_posted_tiers = []
+    # P6-T8: capture scheduled tiers via add_job kwargs instead of HTTP body.
+    scheduled_tiers = []
 
-    async def _mock_post(url, json=None, timeout=None, **kwargs):
-        if json and "payload" in json:
-            tier = json["payload"].get("tier")
-            if tier:
-                jobs_posted_tiers.append(tier)
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={})
-        return mock_resp
+    def _capture_tier(func, trigger=None, run_date=None, args=None, id=None, **kwargs):
+        # args = [job_id, payload]; payload has "tier"
+        if args and len(args) >= 2 and isinstance(args[1], dict):
+            t = args[1].get("tier")
+            if t:
+                scheduled_tiers.append(t)
 
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = _mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    mock_sched = _make_empty_scheduler()
+    mock_sched.add_job = MagicMock(side_effect=_capture_tier)
 
+    with patch("utils.scheduler_holder.get_scheduler", return_value=mock_sched):
         await execute_bounty_spawn_orchestrate_job("orch-8", {"job_type": "bounty_spawn_orchestrate"})
 
     # Bronze must not be queued (max=0)
-    assert "bronze" not in jobs_posted_tiers, f"Bronze should be skipped (max=0) but got: {jobs_posted_tiers}"
+    assert "bronze" not in scheduled_tiers, f"Bronze should be skipped (max=0) but got: {scheduled_tiers}"
     # Gold and platinum should be queued
-    assert "gold" in jobs_posted_tiers
-    assert "platinum" in jobs_posted_tiers
+    assert "gold" in scheduled_tiers
+    assert "platinum" in scheduled_tiers
 
 
 # ===========================================================================
@@ -1417,34 +1369,28 @@ async def test_def001_orchestrator_post_includes_prefixed_job_id_in_body():
     _configure_config_repo([cfg])
     _configure_bounty_repo(count_return=0)
 
-    posted_bodies: list[dict] = []
+    # P6-T8: job is submitted via direct add_job; capture id= kwarg to verify
+    # the prefixed job_id flows through correctly (DEF-001 regression guard).
+    scheduled_ids: list[str] = []
 
-    async def _mock_post(url, json=None, timeout=None, **kwargs):
-        posted_bodies.append(json)
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json = MagicMock(return_value={})
-        return mock_resp
+    def _capture_id(func, trigger=None, run_date=None, args=None, id=None, **kwargs):
+        if id is not None:
+            scheduled_ids.append(id)
 
-    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = _mock_post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    mock_sched = _make_empty_scheduler()
+    mock_sched.add_job = MagicMock(side_effect=_capture_id)
 
+    with patch("utils.scheduler_holder.get_scheduler", return_value=mock_sched):
         await execute_bounty_spawn_orchestrate_job("def001-body", {"job_type": "bounty_spawn_orchestrate"})
 
-    assert len(posted_bodies) == 4, f"Expected 4 POSTs (one per tier), got {len(posted_bodies)}"
+    assert len(scheduled_ids) == 4, f"Expected 4 add_job calls (one per tier), got {len(scheduled_ids)}"
     pattern = re.compile(r"^bounty_spawn_9001_(bronze|silver|gold|platinum)_[0-9a-f\-]{36}$")
     seen_tiers = set()
-    for body in posted_bodies:
-        assert "job_id" in body, (
-            f"POST body missing ``job_id`` key: {body!r}. DEF-001 regression — the router "
-            "cannot honour a caller-supplied ID that isn't present."
+    for jid in scheduled_ids:
+        assert pattern.match(jid), (
+            f"Scheduled job id={jid!r} does not match bounty_spawn_<gid>_<tier>_<uuid> pattern. "
+            "DEF-001 regression — the orchestrator must pass the prefixed id to add_job."
         )
-        assert pattern.match(body["job_id"]), (
-            f"POSTed job_id={body['job_id']!r} does not match bounty_spawn_<gid>_<tier>_<uuid> pattern"
-        )
-        seen_tiers.add(body["job_id"].split("_")[3])
+        seen_tiers.add(jid.split("_")[3])
 
     assert seen_tiers == {"bronze", "silver", "gold", "platinum"}

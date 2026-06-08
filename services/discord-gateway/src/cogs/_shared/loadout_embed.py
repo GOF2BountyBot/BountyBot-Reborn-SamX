@@ -336,6 +336,7 @@ def _apply_truncation_strategy(
     max_modules = stats.get("max_modules") or 0
     cargo_capacity = stats.get("cargo") or 0
     cargo_total_count = response.get("cargo_total_count") or 0
+    modules_total_count = response.get("modules_total_count") or len(modules)
 
     # Pre-format candidate lines (full rendering) so we can measure.
     weapon_lines_full = [_format_weapon_line(w) for w in weapons]
@@ -348,7 +349,7 @@ def _apply_truncation_strategy(
     weapon_header = _build_section_header("Primary Weapons", len(weapons), max_primaries)
     turret_header = _build_section_header("Turrets", len(turrets), max_turrets)
     secondary_header = _build_section_header("Secondaries", len(secondaries), max_secondaries)
-    module_header = _build_section_header("Modules", len(modules), max_modules)
+    module_header = _build_section_header("Modules", modules_total_count, max_modules)
     cargo_header = _build_section_header("Cargo Hold", cargo_total_count, cargo_capacity)
 
     # Approximate cost per section: header len + spacer len + lines len + newlines

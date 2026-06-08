@@ -115,5 +115,8 @@ class LoadoutResponse(BaseModel):
     cargo: list[CargoItem] = Field(default_factory=list)
     cargo_total_count: int = 0  # Sum of CargoItem.quantity — used in 'Cargo Hold <N/M>' header
 
+    # Modules
+    modules_total_count: int = 0  # True equipped module count (pre-dedup) — used in 'Modules <N/M>' header
+
     # Error/info
     message: str | None = None  # "No active ship", etc. — gateway renders error embed

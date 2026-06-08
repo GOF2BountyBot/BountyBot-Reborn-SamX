@@ -823,3 +823,147 @@ class TestCriminalModuleDedup:
         # All 9 entries returned as separate items — INVARIANT verified.
         assert len(result.modules) == 9
         assert all(m.name == "Rhoda Blackhole" for m in result.modules)
+
+
+# ---------------------------------------------------------------------------
+# modules_total_count field tests
+# ---------------------------------------------------------------------------
+
+
+class TestModulesTotalCount:
+    """modules_total_count must be the PRE-dedup count for criminal path and
+    equal to len(modules) for player path (never deduped).
+    """
+
+    def _make_bounty(self, criminal_ship):
+        return SimpleNamespace(
+            id=77,
+            criminal_name="Doni Trillyx",
+            criminal_faction="Terran",
+            tech_level=5,
+            criminal_ship=criminal_ship,
+        )
+
+    async def test_criminal_modules_total_count_is_pre_dedup_count(self):
+        """Criminal with 3× CompressorModule + 2 others → modules_total_count==5, len(modules)==3 after dedup."""
+        criminal_ship = {
+            "ship_name": "Interceptor",
+            "ship_armour": 95,
+            "total_hp": 200,
+            "weapons": [],
+            "turrets": [],
+            "modules": [
+                {"name": "Static Thrust", "type": "ThrusterModule", "value": 400},
+                {"name": "Targe Shield", "type": "ShieldModule", "value": 500},
+                {"name": "ZMI Optistore", "type": "CompressorModule", "value": 300},
+                {"name": "ZMI Optistore", "type": "CompressorModule", "value": 300},
+                {"name": "ZMI Optistore", "type": "CompressorModule", "value": 300},
+            ],
+        }
+        bounty = self._make_bounty(criminal_ship)
+        ship = _interceptor_ship()
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=77)
+
+        assert result is not None
+        # Dedup collapses 3× ZMI Optistore into 1 entry → list shrinks 5→3
+        assert len(result.modules) == 3, f"Expected 3 deduped module entries, got {len(result.modules)}"
+        # But modules_total_count must reflect the true pre-dedup count
+        assert result.modules_total_count == 5, (
+            f"Expected modules_total_count==5 (pre-dedup), got {result.modules_total_count}"
+        )
+
+    async def test_criminal_modules_total_count_no_dedup_needed(self):
+        """Criminal with no dedup-eligible duplicates: modules_total_count == len(modules)."""
+        criminal_ship = {
+            "ship_name": "Interceptor",
+            "ship_armour": 95,
+            "total_hp": 200,
+            "weapons": [],
+            "turrets": [],
+            "modules": [
+                {"name": "Static Thrust", "type": "ThrusterModule", "value": 400},
+                {"name": "Targe Shield", "type": "ShieldModule", "value": 500},
+            ],
+        }
+        bounty = self._make_bounty(criminal_ship)
+        ship = _interceptor_ship()
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=77)
+
+        assert result is not None
+        assert len(result.modules) == 2
+        assert result.modules_total_count == 2
+
+    async def test_player_modules_total_count_equals_len_modules(self):
+        """Player path: modules_total_count == len(modules) (players are never deduped)."""
+        player = _player()
+        user = _user()
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=["D'iol", "D'iol", "AutoPacker 2"],
+            turrets=[],
+            secondary_weapons=[],
+            secondary_ammo={},
+        )
+        ship = _ship()
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+
+        def _module_factory(name):
+            if name == "D'iol":
+                return _diol_module()
+            if name == "AutoPacker 2":
+                return _compressor_module()
+            return None
+
+        db = _make_db_session(player_ship=ps, ship=ship, module_factory=_module_factory)
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        assert result is not None
+        # Player path: 3 modules, all returned individually (no dedup)
+        assert len(result.modules) == 3
+        assert result.modules_total_count == 3
+
+    async def test_criminal_compressor_x9_modules_total_count_is_13(self):
+        """Pal Tyyrt-style: 9× CompressorModule + 4 other modules → modules_total_count==13."""
+        modules = (
+            [{"name": "Targe Shield", "type": "ShieldModule", "value": 500}]
+            + [{"name": "Phoenix SIS", "type": "ShieldInjectorModule", "value": 700}]
+            + [{"name": "Spectral Filter Omega", "type": "SpectralFilterModule", "value": 600}]
+            + [{"name": "Rhoda Vortex", "type": "TimeExtenderModule", "value": 800}]
+            + [{"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300} for _ in range(9)]
+        )
+        criminal_ship = {
+            "ship_name": "Darkzov",
+            "ship_armour": 200,
+            "total_hp": 740,
+            "weapons": [],
+            "turrets": [],
+            "modules": modules,
+        }
+        bounty = self._make_bounty(criminal_ship)
+        ship = _interceptor_ship(name="Darkzov", cargo=80, handling=50, armour=200)
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=77)
+
+        assert result is not None
+        # After dedup: 4 passthrough + 1 grouped = 5 visible entries
+        assert len(result.modules) == 5
+        # Pre-dedup total: 4 + 9 = 13
+        assert result.modules_total_count == 13

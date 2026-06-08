@@ -350,6 +350,161 @@ class TestSectionHeaders:
 
 
 # ---------------------------------------------------------------------------
+# modules_total_count field — Modules <N/M> header correctness
+# ---------------------------------------------------------------------------
+
+
+class TestModulesTotalCountHeader:
+    """Verify that the Modules <N/M> header uses modules_total_count (pre-dedup)
+    rather than len(modules) (post-dedup display list).
+
+    This is the fix for the Doni Trillyx live bug: header was <3/5> when the
+    criminal had 5 real equipped modules (3 of them were deduped CompressorModules).
+    """
+
+    def test_modules_header_uses_modules_total_count_when_present(self):
+        """modules_total_count=5 with 3 display entries → header shows <5/5>."""
+        resp = _make_criminal_response(
+            modules=[
+                {
+                    "name": "Static Thrust",
+                    "emoji": None,
+                    "type": "ThrusterModule",
+                    "value": 400,
+                    "effects": [],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "Targe Shield",
+                    "emoji": None,
+                    "type": "ShieldModule",
+                    "value": 500,
+                    "effects": [],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "ZMI Optistore x3",
+                    "emoji": None,
+                    "type": "CompressorModule",
+                    "value": 300,
+                    "effects": [],
+                    "combat_tier": "utility",
+                },
+            ],
+            modules_total_count=5,  # 3 display entries but 5 real modules (3× ZMI deduped)
+            ship_stats={
+                "armour": 95,
+                "cargo": 45,
+                "handling": 60,
+                "hp": 95,
+                "dps": 5.2,
+                "total_value": 1000,
+                "max_primaries": 1,
+                "max_secondaries": 0,
+                "max_turrets": 0,
+                "max_modules": 5,
+            },
+        )
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        field = next((f for f in embed.fields if f.name.startswith("Modules")), None)
+        assert field is not None
+        # Header must use modules_total_count (5), not len(modules) (3)
+        assert field.name == "Modules <5/5>", (
+            f"Expected 'Modules <5/5>' but got {field.name!r} — "
+            "modules_total_count was ignored in favour of len(modules)"
+        )
+
+    def test_modules_header_fallback_to_len_when_field_absent(self):
+        """When modules_total_count is absent (old response), falls back to len(modules)."""
+        resp = _make_criminal_response(
+            modules=[
+                {
+                    "name": "ZMI Optistore x3",
+                    "emoji": None,
+                    "type": "CompressorModule",
+                    "value": 300,
+                    "effects": [],
+                    "combat_tier": "utility",
+                },
+            ],
+            ship_stats={
+                "armour": 95,
+                "cargo": 45,
+                "handling": 60,
+                "hp": 95,
+                "dps": 5.2,
+                "total_value": 1000,
+                "max_primaries": 1,
+                "max_secondaries": 0,
+                "max_turrets": 0,
+                "max_modules": 5,
+            },
+        )
+        # Explicitly remove modules_total_count to simulate old response without the field
+        resp.pop("modules_total_count", None)
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        field = next((f for f in embed.fields if f.name.startswith("Modules")), None)
+        assert field is not None
+        # Fallback: len(modules) == 1
+        assert field.name == "Modules <1/5>", f"Expected fallback 'Modules <1/5>' but got {field.name!r}"
+
+    def test_modules_header_doni_trillyx_scenario(self):
+        """Exact Doni Trillyx scenario: 5 equipped modules (3× ZMI Optistore deduped).
+
+        Before fix: header showed <3/5> (used len(post-dedup list)).
+        After fix: header shows <5/5> (uses modules_total_count).
+        """
+        resp = _make_criminal_response(
+            modules=[
+                {
+                    "name": "Static Thrust",
+                    "emoji": None,
+                    "type": "ThrusterModule",
+                    "value": 400,
+                    "effects": [],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "Targe Shield",
+                    "emoji": None,
+                    "type": "ShieldModule",
+                    "value": 500,
+                    "effects": [],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "ZMI Optistore x3",
+                    "emoji": None,
+                    "type": "CompressorModule",
+                    "value": 300,
+                    "effects": [],
+                    "combat_tier": "utility",
+                },
+            ],
+            modules_total_count=5,  # authoritative pre-dedup count from bot-core
+            ship_stats={
+                "armour": 95,
+                "cargo": 45,
+                "handling": 60,
+                "hp": 200,
+                "dps": 10.0,
+                "total_value": 5000,
+                "max_primaries": 1,
+                "max_secondaries": 0,
+                "max_turrets": 0,
+                "max_modules": 5,
+            },
+        )
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        field = next((f for f in embed.fields if f.name.startswith("Modules")), None)
+        assert field is not None
+        # The fix: shows <5/5> not <3/5>
+        assert field.name == "Modules <5/5>", (
+            f"Doni Trillyx bug regression: expected 'Modules <5/5>', got {field.name!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Weapon/module/cargo line formatting
 # ---------------------------------------------------------------------------
 

@@ -236,6 +236,7 @@ class LoadoutResponseService:
             turrets=turret_items,
             secondaries=secondary_items,
             modules=module_items,
+            modules_total_count=len(module_items),
             cargo=cargo_items,
             cargo_total_count=cargo_total_count,
         )
@@ -471,6 +472,7 @@ class LoadoutResponseService:
         # both /criminal-loadout AND bounty announcements (both are criminal
         # rendering surfaces). Player loadouts go through build_player_loadout
         # which never invokes this helper.
+        modules_total_count = len(module_items)  # Capture pre-dedup count for 'Modules <N/M>' header
         module_items = _apply_criminal_module_dedup(module_items)
 
         # DPS
@@ -534,6 +536,7 @@ class LoadoutResponseService:
             turrets=turret_items,
             secondaries=secondary_items,
             modules=module_items,
+            modules_total_count=modules_total_count,
             cargo=[],
             cargo_total_count=0,
         )

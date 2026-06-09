@@ -37,6 +37,10 @@ class WeaponResponse(ItemResponse):
 
 class PrimaryWeaponResponse(WeaponResponse):
     dps: float | None = None
+    # D-002: per-shot breakdown fields sourced from inner extra_atts
+    loading_speed_ms: int | None = None
+    damage_per_shot: int | None = None
+    subtype: str | None = None
 
 
 class SecondaryWeaponResponse(WeaponResponse):
@@ -45,10 +49,17 @@ class SecondaryWeaponResponse(WeaponResponse):
     nuke_direct_damage: int | None = None  # = damage when subtype == "nuke"
     nuke_effective_magnitude_m: int | None = None  # = magnitude_m * NUKE_MAGNITUDE_SCALE, rounded
     nuke_self_damage_factor: float | None = None  # = NUKE_FRIENDLY_FACTOR when subtype == "nuke"
+    # D-004: weapon subtype for "Weapon type" embed field (e.g. "cluster-missile", "shock-blast")
+    subtype: str | None = None
 
 
 class TurretWeaponResponse(WeaponResponse):
-    pass
+    # D-002: per-shot breakdown fields sourced from inner extra_atts
+    loading_speed_ms: int | None = None
+    damage_per_shot: int | None = None
+    subtype: str | None = None
+    # D-003: firing mode — True=Automatic, False=Manual (None=omit)
+    automatic: bool | None = None
 
 
 class ShipResponse(ItemResponse):

@@ -58,6 +58,14 @@ def _enrich_combat_fields(result: dict[str, Any], category: str) -> None:
         emp = int(raw_emp) if raw_emp is not None else None
         result["emp_damage"] = emp if emp else None
 
+    if category in ("primary_weapon", "turret_weapon"):
+        # D-002: per-shot breakdown fields from inner extra_atts
+        raw_ls = extra_inner.get("loading_speed_ms") if isinstance(extra_inner, dict) else None
+        result["loading_speed_ms"] = int(raw_ls) if raw_ls is not None else None
+        raw_dps_shot = extra_inner.get("damage_per_shot") if isinstance(extra_inner, dict) else None
+        result["damage_per_shot"] = int(raw_dps_shot) if raw_dps_shot is not None else None
+        result["subtype"] = subtype if subtype else None
+
     if category == "secondary_weapon":
         # Cluster-missile burst_count
         raw_burst = extra_inner.get("burst_count") if isinstance(extra_inner, dict) else None
@@ -77,6 +85,9 @@ def _enrich_combat_fields(result: dict[str, Any], category: str) -> None:
             result["nuke_direct_damage"] = None
             result["nuke_effective_magnitude_m"] = None
             result["nuke_self_damage_factor"] = None
+
+        # D-004: surface subtype so the embed can render "Weapon type" for secondaries
+        result["subtype"] = subtype if subtype else None
 
     if category == "module":
         item_type: str = result.get("type") or ""
@@ -222,6 +233,7 @@ def _build_object_result(obj: Any, category: DataCategory) -> dict[str, Any]:
         result["loading_speed"] = obj.loading_speed
     elif category == DataCategory.turret:
         result["dps"] = obj.dps
+        result["automatic"] = obj.automatic
     elif category == DataCategory.ship:
         result.update(
             {
@@ -350,6 +362,7 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
             result["loading_speed"] = obj.loading_speed
         elif category == DataCategory.turret:
             result["dps"] = obj.dps
+            result["automatic"] = obj.automatic
         elif category == DataCategory.ship:
             result.update(
                 {

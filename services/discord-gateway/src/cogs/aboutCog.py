@@ -1,6 +1,7 @@
 import asyncio
 import io
 import os
+import time
 
 import discord
 import httpx
@@ -23,6 +24,10 @@ flogger.debug(f"aboutCog loading with BOT_API_BASE_URL: {api_base}")
 # Commodity price/raw fields are rendered explicitly in the commodity branch, so they
 # must be suppressed from the generic "Additional Info" extra_atts dump to avoid
 # duplicate fields and raw wiki markup leaking into the embed.
+
+# TTL for the icon-URL validation success cache (seconds).
+_ICON_CACHE_TTL_S = 3600
+
 _COMMODITY_EXTRA_SKIP = {
     "price_source",
     "price_range_min_credits",
@@ -54,6 +59,10 @@ class AboutCog(commands.Cog):
             name="about-objects",
         )
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        # Maps icon URL → monotonic timestamp of last successful HEAD validation.
+        # Only successful responses are cached; failures are never stored so that
+        # transient rate-limit errors self-heal on the next /about command.
+        self._icon_ok_cache: dict[str, float] = {}
 
         # Schedule preload once bot is ready
         bot.loop.create_task(self._preload_data())
@@ -206,6 +215,42 @@ class AboutCog(commands.Cog):
             )
             await interaction.followup.send("⚠️ An error occurred while fetching object information.", ephemeral=True)
 
+    async def _validate_icon_with_cache(self, url: str) -> bool:
+        """Validate an icon URL with retry and success-only caching.
+
+        Returns True if the URL is reachable (HTTP 200).  False on ultimate failure.
+
+        Cache behaviour:
+        - Successful validations are cached for _ICON_CACHE_TTL_S seconds using
+          time.monotonic() so the result is immune to wall-clock jumps.
+        - Failures are NEVER cached; a transient rate-limit therefore self-heals on
+          the next /about invocation without any manual intervention.
+
+        Retry behaviour:
+        - Up to 2 HEAD attempts; a 1-second async sleep separates them so that a
+          single momentary rate-limit burst still yields a valid thumbnail on retry.
+        """
+        now = time.monotonic()
+        cached_ts = self._icon_ok_cache.get(url)
+        if cached_ts is not None and now - cached_ts < _ICON_CACHE_TTL_S:
+            return True
+
+        for attempt in range(2):
+            try:
+                head_resp = await self.http_client.head(url, timeout=5)
+                if head_resp.status_code == 200:
+                    self._icon_ok_cache[url] = time.monotonic()
+                    return True
+                flogger.debug(f"Icon URL returned {head_resp.status_code} (attempt {attempt + 1}/2): {url}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.debug(f"Failed to validate icon URL {url} (attempt {attempt + 1}/2): {e}")
+
+            if attempt == 0:
+                await asyncio.sleep(1)
+
+        # Both attempts failed — do NOT cache; return fail-closed
+        return False
+
     async def _create_object_embed(self, obj_data: dict) -> discord.Embed:
         """Create a rich embed with object information"""
         name = obj_data.get("name", "Unknown")
@@ -235,15 +280,8 @@ class AboutCog(commands.Cog):
 
         # ← Generic thumbnail: check icon URL resolves before applying
         icon_url = obj_data.get("icon")
-        if icon_url:
-            try:
-                head_resp = await self.http_client.head(icon_url, timeout=5)
-                if head_resp.status_code == 200:
-                    embed.set_thumbnail(url=icon_url)
-                else:
-                    flogger.debug(f"Icon URL returned {head_resp.status_code}: {icon_url}")
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                flogger.debug(f"Failed to validate icon URL {icon_url}: {e}")
+        if icon_url and await self._validate_icon_with_cache(icon_url):
+            embed.set_thumbnail(url=icon_url)
 
         # Add basic information
         if obj_data.get("type"):
@@ -280,6 +318,16 @@ class AboutCog(commands.Cog):
             emp_dmg = obj_data.get("emp_damage")
             if emp_dmg is not None and emp_dmg > 0:
                 embed.add_field(name="EMP damage", value=str(emp_dmg), inline=True)
+            # D-002: per-shot breakdown fields
+            dps_shot = obj_data.get("damage_per_shot")
+            if dps_shot is not None and dps_shot > 0:
+                embed.add_field(name="Damage per shot", value=str(dps_shot), inline=True)
+            ls_ms = obj_data.get("loading_speed_ms")
+            if ls_ms is not None:
+                embed.add_field(name="Loading speed", value=f"{ls_ms} ms", inline=True)
+            weapon_subtype = obj_data.get("subtype")
+            if weapon_subtype:
+                embed.add_field(name="Weapon type", value=weapon_subtype.replace("-", " ").title(), inline=True)
 
         elif category == "secondary_weapon":
             # §14 / T11: Cluster-missile burst fields — show before generic damage to keep context clear
@@ -319,10 +367,28 @@ class AboutCog(commands.Cog):
             ls = obj_data.get("loading_speed")
             if ls is not None:
                 embed.add_field(name="Loading Speed", value=f"{ls} ms", inline=True)
+            # D-004: weapon subtype for secondary weapons
+            sec_subtype = obj_data.get("subtype")
+            if sec_subtype:
+                embed.add_field(name="Weapon type", value=sec_subtype.replace("-", " ").title(), inline=True)
 
         elif category == "turret_weapon":
             if obj_data.get("dps") is not None:
                 embed.add_field(name="DPS", value=f"{obj_data['dps']:.1f}", inline=True)
+            # D-002: per-shot breakdown fields
+            dps_shot = obj_data.get("damage_per_shot")
+            if dps_shot is not None and dps_shot > 0:
+                embed.add_field(name="Damage per shot", value=str(dps_shot), inline=True)
+            ls_ms = obj_data.get("loading_speed_ms")
+            if ls_ms is not None:
+                embed.add_field(name="Loading speed", value=f"{ls_ms} ms", inline=True)
+            # D-003: firing mode — shown on all turrets (including plasma-collectors)
+            automatic = obj_data.get("automatic")
+            if automatic is not None:
+                embed.add_field(name="Firing mode", value="Automatic" if automatic else "Manual", inline=True)
+            weapon_subtype = obj_data.get("subtype")
+            if weapon_subtype:
+                embed.add_field(name="Weapon type", value=weapon_subtype.replace("-", " ").title(), inline=True)
 
         elif category == "ship":
             # Hull & capacity
@@ -430,6 +496,11 @@ class AboutCog(commands.Cog):
         # (dpsMultiplier is a scalar at the outer level and would appear in the generic dump)
         _T11_EXTRA_SUPPRESS = {"dpsMultiplier"}
 
+        # D-005: suppress "loading speed" from the generic dump for secondary weapons —
+        # it is already rendered as the dedicated "Loading Speed: <n> ms" field above.
+        # SQL-confirmed outer key: `loading speed` (lowercase, single space, no underscore/suffix).
+        _SECONDARY_EXTRA_SKIP = {"loading speed"}
+
         # Add remaining extra attributes (skip mechanics_text — shown above)
         if extra_atts:
             extra_text = ""
@@ -439,6 +510,8 @@ class AboutCog(commands.Cog):
                 if key in _T11_EXTRA_SUPPRESS:
                     continue
                 if category == "commodity" and key in _COMMODITY_EXTRA_SKIP:
+                    continue
+                if category == "secondary_weapon" and key in _SECONDARY_EXTRA_SKIP:
                     continue
                 if isinstance(value, (int, float, str, bool)):
                     extra_text += f"**{key.replace('_', ' ').title()}:** {value}\n"

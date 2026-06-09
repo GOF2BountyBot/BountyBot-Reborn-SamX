@@ -1,12 +1,14 @@
 {
   "aliases": [
-    "skoon"
+    "skoon",
+    "skoonn",
+    "s'koon"
   ],
   "builtIn": false,
   "damage": 140,
-  "icon": "https://i.postimg.cc/nVk0cDFR/sh-koom.png",
+  "icon": "https://i.postimg.cc/bvK7z2RV/s-koonn.png",
   "loading speed": 3000,
-  "name": "S'koon",
+  "name": "S'koonn",
   "value": 181,
   "wiki": "",
   "type": "SecondaryWeapon",

@@ -227,7 +227,12 @@ def _format_ship_stats_field(response: dict) -> tuple[str, str]:
 
 
 def _format_weapon_line(weapon: dict) -> str:
-    """Format a weapon/turret line as ':emoji: Name | DPS: **X**' or '• Name' fallback."""
+    """Format a weapon/turret line.
+
+    Renders ':emoji: Name | DPS: **X** | Dmg/shot: **N** | Loading: **N ms**',
+    appending only the segments whose values are present. Falls back to '• Name'
+    when no emoji and name-only when no combat fields exist.
+    """
     name = weapon.get("name") or "Unknown"
     emoji = weapon.get("emoji")
     dps = weapon.get("dps")
@@ -236,6 +241,12 @@ def _format_weapon_line(weapon: dict) -> str:
     if dps is not None:
         dps_str = f"{dps:g}" if isinstance(dps, (int, float)) else str(dps)
         line = f"{line} | DPS: **{dps_str}**"
+    dmg_shot = weapon.get("damage_per_shot")
+    if dmg_shot is not None:
+        line = f"{line} | Dmg/shot: **{dmg_shot}**"
+    loading = weapon.get("loading_speed_ms")
+    if loading is not None:
+        line = f"{line} | Loading: **{loading} ms**"
     return line
 
 
@@ -260,8 +271,9 @@ def _format_module_line(module: dict) -> str:
 def _format_secondary_line(secondary: dict) -> str:
     """Format a secondary-weapon line.
 
-    Renders as ':emoji: Name | ×N rounds' when rounds are present, or ':emoji: Name'
-    when the round count is absent. Falls back to '• ' bullet when no emoji.
+    Renders ':emoji: Name | ×N | Dmg/shot: **N** | Loading: **N ms**', appending
+    only the segments whose values are present (rounds, per-shot damage, reload).
+    No DPS is shown — secondaries are ammo-limited. Falls back to '• ' when no emoji.
     """
     name = secondary.get("name") or "Unknown"
     emoji = secondary.get("emoji")
@@ -270,6 +282,13 @@ def _format_secondary_line(secondary: dict) -> str:
     line = f"{prefix}{name}"
     if rounds is not None:
         line = f"{line} | ×{rounds}"
+    # Secondaries show per-shot damage + reload, but NOT DPS (ammo-limited).
+    dmg_shot = secondary.get("damage_per_shot")
+    if dmg_shot is not None:
+        line = f"{line} | Dmg/shot: **{dmg_shot}**"
+    loading = secondary.get("loading_speed_ms")
+    if loading is not None:
+        line = f"{line} | Loading: **{loading} ms**"
     return line
 
 

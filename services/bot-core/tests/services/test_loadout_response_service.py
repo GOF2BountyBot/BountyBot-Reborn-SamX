@@ -967,3 +967,86 @@ class TestModulesTotalCount:
         assert len(result.modules) == 5
         # Pre-dedup total: 4 + 9 = 13
         assert result.modules_total_count == 13
+
+
+# ---------------------------------------------------------------------------
+# Weapon combat-field extraction — damage_per_shot / loading_speed_ms
+# ---------------------------------------------------------------------------
+
+
+class TestWeaponCombatFields:
+    """_weapon_combat_fields pulls per-shot damage + reload from a weapon's extra_atts."""
+
+    @staticmethod
+    def _fn():
+        from services.loadout_response_service import LoadoutResponseService
+
+        return LoadoutResponseService._weapon_combat_fields
+
+    def test_nested_inner_extra_atts(self):
+        """Real DB shape: combat fields nested under inner extra_atts (Dark Matter Laser)."""
+        item = SimpleNamespace(
+            extra_atts={
+                "builtIn": False,
+                "techLevel": 9,
+                "extra_atts": {"damage_per_shot": 60, "loading_speed_ms": 680, "range_m": 3300},
+            }
+        )
+        assert self._fn()(item) == (60, 680)
+
+    def test_secondary_damage_key_fallback(self):
+        """Secondaries store per-shot damage under `damage`, not `damage_per_shot`."""
+        item = SimpleNamespace(extra_atts={"extra_atts": {"damage": 800, "loading_speed_ms": 3000}})
+        assert self._fn()(item) == (800, 3000)
+
+    def test_flat_extra_atts_without_nesting(self):
+        """Falls back to the outer dict when there's no inner extra_atts."""
+        item = SimpleNamespace(extra_atts={"damage_per_shot": 12, "loading_speed_ms": 500})
+        assert self._fn()(item) == (12, 500)
+
+    def test_missing_fields_yield_none(self):
+        item = SimpleNamespace(extra_atts={"extra_atts": {"range_m": 5500}})
+        assert self._fn()(item) == (None, None)
+
+    def test_non_dict_extra_atts(self):
+        assert self._fn()(SimpleNamespace(extra_atts=None)) == (None, None)
+        assert self._fn()(None) == (None, None)
+
+    def test_non_numeric_value_coerced_to_none(self):
+        item = SimpleNamespace(extra_atts={"extra_atts": {"damage_per_shot": "n/a", "loading_speed_ms": 680}})
+        assert self._fn()(item) == (None, 680)
+
+
+class TestNormalizeWeaponDict:
+    """_normalize_weapon_dict projects criminal_ship JSON fields including the new combat fields."""
+
+    @staticmethod
+    def _fn():
+        from services.loadout_response_service import LoadoutResponseService
+
+        return LoadoutResponseService._normalize_weapon_dict
+
+    def test_primary_weapon_fields(self):
+        raw = {"name": "Rail Gun", "emoji": "<:rg:1>", "dps": 88.2, "value": 1000, "damage_per_shot": 60, "loading_speed_ms": 680}
+        out = self._fn()(raw)
+        assert out["damage_per_shot"] == 60
+        assert out["loading_speed_ms"] == 680
+        assert "rounds" not in out
+
+    def test_secondary_damage_and_rounds(self):
+        raw = {"name": "S'koonn", "dps": 0.0, "value": 5000, "damage": 800, "loading_speed_ms": 3000, "rounds": 1}
+        out = self._fn()(raw, include_rounds=True)
+        assert out["damage_per_shot"] == 800  # mapped from `damage`
+        assert out["loading_speed_ms"] == 3000
+        assert out["rounds"] == 1
+
+    def test_float_values_coerced_to_int(self):
+        raw = {"name": "W", "damage_per_shot": 8.0, "loading_speed_ms": 600.0}
+        out = self._fn()(raw)
+        assert out["damage_per_shot"] == 8
+        assert out["loading_speed_ms"] == 600
+
+    def test_missing_combat_fields_none(self):
+        out = self._fn()({"name": "W"})
+        assert out["damage_per_shot"] is None
+        assert out["loading_speed_ms"] is None

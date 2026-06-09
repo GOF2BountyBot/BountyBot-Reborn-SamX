@@ -251,6 +251,29 @@ class LoadoutResponseService:
             flogger.debug(f"User lookup failed for player {player.id}: {e}")
         return f"Player {player.id}"
 
+    @staticmethod
+    def _weapon_combat_fields(item) -> tuple[int | None, int | None]:
+        """Extract (damage_per_shot, loading_speed_ms) from a weapon's extra_atts.
+
+        Combat fields live in the nested inner ``extra_atts`` dict (DB nesting
+        pattern); falls back to the outer dict for flat layouts. Secondary
+        weapons may store per-shot damage under ``damage`` instead of
+        ``damage_per_shot``. Non-numeric/missing values yield None.
+        """
+        raw = getattr(item, "extra_atts", None) if item else None
+        if not isinstance(raw, dict):
+            return None, None
+        inner = raw.get("extra_atts")
+        src = inner if isinstance(inner, dict) else raw
+
+        def _to_int(value) -> int | None:
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        return _to_int(src.get("damage_per_shot", src.get("damage"))), _to_int(src.get("loading_speed_ms"))
+
     async def _build_weapon_items(
         self, db: AsyncSession, names: list[str], item_type: str
     ) -> tuple[list[LoadoutWeaponItem], float]:
@@ -263,12 +286,15 @@ class LoadoutResponseService:
             dps = getattr(item, "dps", None) if item else None
             if dps:
                 total_dps += dps
+            dmg_shot, loading_ms = self._weapon_combat_fields(item)
             items.append(
                 LoadoutWeaponItem(
                     name=name,
                     emoji=item.emoji if item else None,
                     dps=dps,
                     value=item.value if item else None,
+                    damage_per_shot=dmg_shot,
+                    loading_speed_ms=loading_ms,
                 )
             )
         return items, total_dps
@@ -294,6 +320,7 @@ class LoadoutResponseService:
             if item is None:
                 item = await self.item_repo.get_by_name(db, name)
             rounds = ammo.get(name) if ammo else None
+            dmg_shot, loading_ms = self._weapon_combat_fields(item)
             items.append(
                 LoadoutWeaponItem(
                     name=name,
@@ -301,6 +328,8 @@ class LoadoutResponseService:
                     dps=getattr(item, "dps", None) if item else None,
                     value=item.value if item else None,
                     rounds=rounds,
+                    damage_per_shot=dmg_shot,
+                    loading_speed_ms=loading_ms,
                 )
             )
         return items
@@ -549,11 +578,20 @@ class LoadoutResponseService:
             raw:            Raw weapon dict from criminal_ship JSON.
             include_rounds: When True, also extract the ``rounds`` field (secondary weapons).
         """
+        def _opt_int(value) -> int | None:
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
         result = {
             "name": raw.get("name", "Unknown"),
             "emoji": raw.get("emoji"),
             "dps": raw.get("dps"),
             "value": raw.get("value"),
+            # Secondaries store per-shot damage under `damage`; weapons under `damage_per_shot`.
+            "damage_per_shot": _opt_int(raw.get("damage_per_shot", raw.get("damage"))),
+            "loading_speed_ms": _opt_int(raw.get("loading_speed_ms")),
         }
         if include_rounds:
             result["rounds"] = raw.get("rounds")

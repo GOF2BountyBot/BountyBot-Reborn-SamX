@@ -32,6 +32,8 @@ class LoadoutWeaponItem(BaseModel):
     dps: float | None = None
     value: int | None = None
     rounds: int | None = None  # Secondary weapons only — ammo count (None = not applicable)
+    damage_per_shot: int | None = None  # Per-shot damage (primary/turret/secondary); None = unknown
+    loading_speed_ms: int | None = None  # Reload/cooldown in ms; None = unknown
 
 
 class LoadoutModuleItem(BaseModel):

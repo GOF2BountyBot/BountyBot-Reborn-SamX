@@ -1830,3 +1830,73 @@ class TestTurretsAndSecondariesSections:
         embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
         sec_field = next(f for f in embed.fields if f.name.startswith("Secondaries"))
         assert "• Mystery Bomb | ×5" in sec_field.value
+
+
+# ---------------------------------------------------------------------------
+# Combat detail on weapon/secondary lines + PrimaryWeaponMod module effects
+# (damage-per-shot, loading speed, modifier effects)
+# ---------------------------------------------------------------------------
+
+
+from cogs._shared.loadout_embed import (  # noqa: E402
+    _format_module_line,
+    _format_secondary_line,
+    _format_weapon_line,
+)
+
+
+class TestWeaponCombatDetailLine:
+    """_format_weapon_line appends Dmg/shot + Loading segments when present."""
+
+    def test_primary_with_all_segments(self):
+        line = _format_weapon_line(
+            {"name": "Dark Matter Laser", "emoji": "<:dml:1>", "dps": 88.23, "damage_per_shot": 60, "loading_speed_ms": 680}
+        )
+        assert line == "<:dml:1> Dark Matter Laser | DPS: **88.23** | Dmg/shot: **60** | Loading: **680 ms**"
+
+    def test_dps_present_combat_fields_absent(self):
+        """Backwards-compatible: no new fields → unchanged DPS-only line."""
+        line = _format_weapon_line({"name": "Pulse Laser", "emoji": "<:p:1>", "dps": 12.0})
+        assert line == "<:p:1> Pulse Laser | DPS: **12**"
+
+    def test_partial_only_damage_per_shot(self):
+        line = _format_weapon_line({"name": "W", "dps": 5.0, "damage_per_shot": 30})
+        assert line == "• W | DPS: **5** | Dmg/shot: **30**"
+
+    def test_partial_only_loading(self):
+        line = _format_weapon_line({"name": "W", "dps": 5.0, "loading_speed_ms": 400})
+        assert line == "• W | DPS: **5** | Loading: **400 ms**"
+
+
+class TestSecondaryCombatDetailLine:
+    """_format_secondary_line shows per-shot damage + reload but never DPS."""
+
+    def test_secondary_with_rounds_and_combat_fields(self):
+        line = _format_secondary_line(
+            {"name": "S'koonn", "emoji": "<:sk:1>", "rounds": 1, "damage_per_shot": 800, "loading_speed_ms": 3000}
+        )
+        assert line == "<:sk:1> S'koonn | ×1 | Dmg/shot: **800** | Loading: **3000 ms**"
+        assert "DPS:" not in line  # secondaries are ammo-limited — no DPS
+
+    def test_secondary_without_combat_fields_unchanged(self):
+        line = _format_secondary_line({"name": "EMP Nuke", "emoji": "<:n:2>", "rounds": 1})
+        assert line == "<:n:2> EMP Nuke | ×1"
+
+
+class TestPrimaryWeaponModModuleLine:
+    """PrimaryWeaponMod module renders its pre-formatted modifier effects."""
+
+    def test_overcharge_effects_rendered(self):
+        line = _format_module_line(
+            {
+                "name": "Nirai Overcharge",
+                "emoji": "<:noc:1>",
+                "type": "PrimaryWeaponModModule",
+                "effects": [
+                    {"label": "Damage", "value": "+20%"},
+                    {"label": "Fire Rate", "value": "-10%"},
+                    {"label": "Net DPS", "value": "×1.1"},
+                ],
+            }
+        )
+        assert line == "<:noc:1> Nirai Overcharge | Damage: **+20%** | Fire Rate: **-10%** | Net DPS: **×1.1**"

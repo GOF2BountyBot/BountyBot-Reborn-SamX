@@ -356,6 +356,41 @@ class TestReloadAutocompleteCommand:
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
 
+    @patch("cogs.devCog.httpx")
+    def test_reload_autocomplete_does_not_clear_systems_cache(self, mock_httpx, mock_dev_cog):
+        """D-010 regression: /reload_autocomplete must NOT clear BountyCog._systems_cache.
+
+        _systems_cache is a static catalog (ttl=None, no refresh_fn) re-populated by
+        BountyCog._preload_data. If it is also in the cache-clear list it gets cleared
+        right after the preload and stays empty (no lazy-fill), blanking the /check
+        system autocomplete. The refresh_fn-backed caches (e.g. _bounty_cache) must
+        still be cleared.
+        """
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        cog = MagicMock()
+        cog._preload_data = AsyncMock()
+        cog._preload_categories = AsyncMock()
+        cog._preload_ship_skins = AsyncMock()
+        cog._preload_render_settings = AsyncMock()
+        cog._preload_static_catalogs = AsyncMock()
+        # Distinct cache mocks so we can assert exactly which ones got cleared.
+        cog._systems_cache = MagicMock()
+        cog._systems_cache.clear = MagicMock()
+        cog._bounty_cache = MagicMock()
+        cog._bounty_cache.clear = MagicMock()
+        mock_dev_cog.bot.get_cog.return_value = cog
+
+        asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
+
+        # The static systems catalog must NOT be cleared (D-010).
+        cog._systems_cache.clear.assert_not_called()
+        # Sanity: the lazy-fill caches ARE still cleared, proving the clear loop ran
+        # and the assertion above is meaningful (not vacuously true).
+        cog._bounty_cache.clear.assert_called()
+
 
 class TestErrorHandling:
     """Tests for error handling in devCog."""

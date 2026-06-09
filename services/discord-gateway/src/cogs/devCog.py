@@ -174,7 +174,10 @@ class DevCog(commands.Cog):
         cache_targets = [
             ("ShopCog", "_shop_cache", "shop cache"),
             ("BountyCog", "_bounty_cache", "bounty cache"),
-            ("BountyCog", "_systems_cache", "bounty systems cache"),
+            # D-010: _systems_cache is intentionally NOT cleared here. It is a static
+            # catalog (ttl=None, no refresh_fn) re-populated by BountyCog._preload_data
+            # in method_targets above; clearing it after the preload leaves it
+            # permanently empty (no lazy-fill), blanking the /check system autocomplete.
             ("DuelCog", "_pending_duel_cache", "duel pending cache"),
             ("DuelCog", "_outgoing_duel_cache", "duel outgoing cache"),
             ("SchedulerCog", "_job_cache", "scheduler job cache"),

@@ -78,9 +78,12 @@ class SchedulerCog(commands.Cog):
         On cold miss, schedules a background refresh and returns [] immediately.
         """
         try:
+            # HOT PATH: peek first; on cold miss cold-fill within the 1.0s budget so
+            # the 0th keystroke is never empty (single gate — well within budget).
             jobs = self._job_cache.peek("all")
             if jobs is None:
-                self._job_cache.schedule_refresh("all")
+                jobs = await self._job_cache.get_with_timeout("all", timeout=1.0)
+            if jobs is None:
                 return []
             norm_current = normalize_for_search(current)
             choices = []

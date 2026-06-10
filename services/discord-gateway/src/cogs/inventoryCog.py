@@ -1071,23 +1071,26 @@ class InventoryCog(commands.Cog):
             guild_id = interaction.guild_id
             user_id = interaction.user.id
 
-            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            # GATE 1 (cold-fill): resolve player_id from shared player cache.
             if autocomplete_state.player_cache is None:
                 return []
             player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
             if player_entry is None:
-                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+            if player_entry is None:
                 return []
             player_id = player_entry.get("id")
             if not player_id:
                 return []
 
-            # HOT PATH: peek inventory_cache — no HTTP
+            # GATE 2 (cold-fill): inventory cache. Two 1.0s gates ≈ 2s worst case,
+            # within the 3s autocomplete budget.
             if autocomplete_state.inventory_cache is None:
                 return []
             items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
             if items is None:
-                autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
+                items = await autocomplete_state.inventory_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+            if items is None:
                 return []
 
             norm_current = normalize_for_search(current)
@@ -1220,6 +1223,17 @@ class InventoryCog(commands.Cog):
                 )
                 await interaction.followup.send(content=target.mention, embed=embed)
 
+                # Invalidate player caches for BOTH giver and recipient — credits changed
+                # on both sides; recipient invalidation was previously missing (give-bug fix).
+                try:
+                    autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                    autocomplete_state.invalidate_player(interaction.guild_id, target.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/give credits: player cache invalidation failed for "
+                        f"source={interaction.user.id}, target={target.id}; transaction still succeeded"
+                    )
+
             elif give_type == "item":
                 if not item:
                     await interaction.followup.send("❌ Please select an item to give.", ephemeral=True)
@@ -1276,10 +1290,14 @@ class InventoryCog(commands.Cog):
                 embed.add_field(name="Item Type", value=item_type.replace("_", " ").title(), inline=True)
                 await interaction.followup.send(content=target.mention, embed=embed)
 
-                # Invalidate inventory for both giver and recipient
+                # Invalidate inventory AND player caches for both giver and recipient.
+                # player_cache is keyed on the Discord user_id; recipient player
+                # invalidation was previously missing (give-bug fix).
                 try:
                     autocomplete_state.invalidate_inventory(interaction.guild_id, source_player["id"])
                     autocomplete_state.invalidate_inventory(interaction.guild_id, target_player["id"])
+                    autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                    autocomplete_state.invalidate_player(interaction.guild_id, target.id)
                 except Exception:  # pylint: disable=broad-exception-caught
                     flogger.warning(
                         f"/give item: cache invalidation failed for "

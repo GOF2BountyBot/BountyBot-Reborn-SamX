@@ -184,13 +184,17 @@ class BountyCog(commands.Cog):
             guild_id = interaction.guild_id
             user_id = interaction.user.id
 
-            # HOT PATH: peek bounty cache — no HTTP
+            # HOT PATH: peek bounty cache — no HTTP. On cold miss, cold-fill the
+            # PRIMARY gate within the 1.0s budget so the 0th keystroke is never empty.
             bounties = self._bounty_cache.peek(guild_id)
             if bounties is None:
-                self._bounty_cache.schedule_refresh(guild_id)
+                bounties = await self._bounty_cache.get_with_timeout(guild_id, timeout=1.0)
+            if bounties is None:
                 return []
 
-            # Attempt tier filtering from player cache — graceful degradation on miss
+            # Attempt tier filtering from player cache — graceful degradation on miss.
+            # THIRD-GATE RULE: the player tier-filter stays peek-only (degrade on miss);
+            # the budget is already spent on the primary bounty gate.
             player_tier: str | None = None
             if autocomplete_state.player_cache is not None:
                 player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))

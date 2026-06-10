@@ -1834,42 +1834,42 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             guild_id = interaction.guild_id
             target_user_id = target_user.id
 
-            # HOT PATH: peek player_cache for target user — no HTTP
+            # GATE 1 (cold-fill): resolve target player from player_cache so the 0th
+            # keystroke is never empty for a cold-but-resolvable target.
             if autocomplete_state.player_cache is not None:
                 player_entry = autocomplete_state.player_cache.peek((guild_id, target_user_id))
+                if player_entry is None:
+                    player_entry = await autocomplete_state.player_cache.get_with_timeout(
+                        (guild_id, target_user_id), timeout=1.0
+                    )
                 if player_entry is not None:
                     player_id = player_entry.get("id")
-                    if player_id is not None:
-                        # HOT PATH: peek inventory_cache for target player — no HTTP
-                        if autocomplete_state.inventory_cache is not None:
-                            items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
-                            if items is not None:
-                                choices: list[app_commands.Choice[str]] = []
-                                seen: set[str] = set()
-                                for nc in items:
-                                    raw = nc.raw if hasattr(nc, "raw") else nc
-                                    item_name = raw.get("item_name") or ""
-                                    item_type = raw.get("item_type") or ""
-                                    quantity = raw.get("quantity") or 0
-                                    if not item_name or item_name in seen:
-                                        continue
-                                    qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
-                                    type_label = item_type.replace("_", " ").title() or "Item"
-                                    label = f"{item_name} ({type_label}){qty_suffix}"
-                                    norm_label = normalize_for_search(label)
-                                    norm_name = normalize_for_search(item_name)
-                                    if norm_current in norm_label or norm_current in norm_name:
-                                        seen.add(item_name)
-                                        choices.append(app_commands.Choice(name=label[:100], value=item_name))
-                                return choices[:25]
-                            # Inventory cache cold miss — schedule refresh
-                            autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
-                    else:
-                        # Player has no id field — schedule refresh
-                        autocomplete_state.player_cache.schedule_refresh((guild_id, target_user_id))
-                else:
-                    # Player cache cold miss — schedule refresh
-                    autocomplete_state.player_cache.schedule_refresh((guild_id, target_user_id))
+                    if player_id is not None and autocomplete_state.inventory_cache is not None:
+                        # GATE 2 (cold-fill): target player's inventory. Two 1.0s gates ≈ 2s.
+                        items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
+                        if items is None:
+                            items = await autocomplete_state.inventory_cache.get_with_timeout(
+                                (guild_id, player_id), timeout=1.0
+                            )
+                        if items is not None:
+                            choices: list[app_commands.Choice[str]] = []
+                            seen: set[str] = set()
+                            for nc in items:
+                                raw = nc.raw if hasattr(nc, "raw") else nc
+                                item_name = raw.get("item_name") or ""
+                                item_type = raw.get("item_type") or ""
+                                quantity = raw.get("quantity") or 0
+                                if not item_name or item_name in seen:
+                                    continue
+                                qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
+                                type_label = item_type.replace("_", " ").title() or "Item"
+                                label = f"{item_name} ({type_label}){qty_suffix}"
+                                norm_label = normalize_for_search(label)
+                                norm_name = normalize_for_search(item_name)
+                                if norm_current in norm_label or norm_current in norm_name:
+                                    seen.add(item_name)
+                                    choices.append(app_commands.Choice(name=label[:100], value=item_name))
+                            return choices[:25]
 
             flogger.warning(
                 f"remove_item_autocomplete: could not resolve inventory for "

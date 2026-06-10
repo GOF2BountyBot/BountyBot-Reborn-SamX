@@ -473,23 +473,33 @@ class TestJobIdAutocompleteColdCache:
 
         assert result == [], f"Expected [] on cold cache, got {result}"
 
-    def test_cold_cache_schedules_refresh(self, scheduler_cog):
-        """Cold _job_cache fires schedule_refresh('all') without HTTP per keystroke."""
-        from unittest.mock import patch
+    def test_cold_cache_coldfills_on_first_keystroke(self, scheduler_cog):
+        """Cold _job_cache cold-fills on the 0th keystroke (the bug being fixed).
 
+        Uniform cold-fill contract: on a peek miss the handler awaits
+        get_with_timeout("all", 1.0), which runs refresh_fn once and populates
+        the cache, so the FIRST keystroke returns data instead of [].
+        A revert to peek+schedule_refresh would reintroduce the empty-first-call
+        failure (asserted by test_cold_cache_returns_empty_list with a raising fn).
+        """
         scheduler_cog._job_cache.invalidate("all")
 
-        scheduler_cog.http_client.get = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called per-keystroke on cold miss")
-        )
+        # Stub refresh_fn so the cold-fill resolves with real rows (no HTTP).
+        jobs = [{"id": "bounty_spawn_default", "trigger": "interval[minutes=5]"}]
 
-        # Patch schedule_refresh to track calls
-        with patch.object(scheduler_cog._job_cache, "schedule_refresh") as mock_refresh:
-            interaction = _create_mock_interaction()
-            result = asyncio.run(scheduler_cog.job_id_autocomplete(interaction, "bounty"))
+        async def _fake_fetch(_key):
+            return jobs
 
-            assert result == []
-            mock_refresh.assert_called_once_with("all")
+        scheduler_cog._job_cache._refresh_fn = _fake_fetch
+
+        interaction = _create_mock_interaction()
+        result = asyncio.run(scheduler_cog.job_id_autocomplete(interaction, "bounty"))
+
+        # First keystroke is NOT empty — cold-fill populated the cache.
+        assert len(result) == 1, f"cold-fill should populate 0th keystroke, got {result}"
+        assert result[0].value == "bounty_spawn_default"
+        # Cache is now warm for the next keystroke.
+        assert scheduler_cog._job_cache.peek("all") == jobs
 
     def test_warm_cache_with_jobs_returns_choices(self, scheduler_cog):
         """Warm _job_cache returns matching choices without HTTP."""

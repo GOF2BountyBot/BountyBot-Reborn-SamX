@@ -170,21 +170,24 @@ class DuelCog(commands.Cog):
             guild_id = interaction.guild_id
             user_id = interaction.user.id
 
-            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            # GATE 1 (cold-fill): resolve player_id from shared player cache.
             if autocomplete_state.player_cache is None:
                 return []
             player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
             if player_entry is None:
-                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+            if player_entry is None:
                 return []
             player_id = player_entry.get("id")
             if not player_id:
                 return []
 
-            # HOT PATH: peek pending duel cache — no HTTP
+            # GATE 2 (cold-fill): pending duel cache. Two 1.0s gates ≈ 2s worst case,
+            # within the 3s autocomplete budget.
             duels = self._pending_duel_cache.peek((guild_id, player_id))
             if duels is None:
-                self._pending_duel_cache.schedule_refresh((guild_id, player_id))
+                duels = await self._pending_duel_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+            if duels is None:
                 return []
 
             norm_current = normalize_for_search(current)
@@ -220,21 +223,24 @@ class DuelCog(commands.Cog):
             guild_id = interaction.guild_id
             user_id = interaction.user.id
 
-            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            # GATE 1 (cold-fill): resolve player_id from shared player cache.
             if autocomplete_state.player_cache is None:
                 return []
             player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
             if player_entry is None:
-                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+            if player_entry is None:
                 return []
             player_id = player_entry.get("id")
             if not player_id:
                 return []
 
-            # HOT PATH: peek outgoing duel cache — no HTTP
+            # GATE 2 (cold-fill): outgoing duel cache. Two 1.0s gates ≈ 2s worst case,
+            # within the 3s autocomplete budget.
             duels = self._outgoing_duel_cache.peek((guild_id, player_id))
             if duels is None:
-                self._outgoing_duel_cache.schedule_refresh((guild_id, player_id))
+                duels = await self._outgoing_duel_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+            if duels is None:
                 return []
 
             norm_current = normalize_for_search(current)

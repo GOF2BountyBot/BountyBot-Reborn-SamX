@@ -117,11 +117,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         self.bot = bot
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
         self._render_settings: list[str] = []
+        # Static catalogs — TTL=None. SELF-HEAL via refresh_fn: a cleared key
+        # (from /reload_autocomplete) lazily re-fills on the next get() instead of
+        # staying empty forever (kills the D-010 class bug). The handlers already use
+        # `await cache.get(category)`, so no handler change is needed for self-heal.
         self._item_catalog: AutocompleteCache[str, list[str]] = AutocompleteCache(
-            ttl_seconds=None, name="adminCog-item-catalog"
+            ttl_seconds=None, refresh_fn=self._fetch_item_catalog, name="adminCog-item-catalog"
         )
         self._ship_catalog: AutocompleteCache[str, list[str]] = AutocompleteCache(
-            ttl_seconds=None, name="adminCog-ship-catalog"
+            ttl_seconds=None, refresh_fn=self._fetch_ship_catalog, name="adminCog-ship-catalog"
         )
         # Guild-scoped pending-duel cache for /admin_duel (distinct from DuelCog's
         # per-player caches — this is the guild-wide admin view). Consistency via
@@ -160,12 +164,29 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 await asyncio.sleep(wait)
         flogger.error("Failed to preload render settings after 3 attempts")
 
+    async def _fetch_item_catalog(self, category: str) -> list[str]:
+        """Refresh one item-type catalog. Reused as _item_catalog.refresh_fn AND by
+        the preload, so a cleared key self-heals on the next get(). Raises on HTTP error.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
+        resp.raise_for_status()
+        return [obj["name"] for obj in resp.json() if obj.get("name")]
+
+    async def _fetch_ship_catalog(self, _key: str) -> list[str]:
+        """Refresh the game-ship catalog. Reused as _ship_catalog.refresh_fn AND by the
+        preload, so a cleared key self-heals on the next get(). Raises on HTTP error.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
+        resp.raise_for_status()
+        return [s["name"] for s in resp.json() if s.get("name")]
+
     async def _preload_static_catalogs(self) -> None:
         """Preload item catalogs (4 categories) and ship catalog from bot-core.
 
         Uses 5-attempt exponential-backoff retry (5s, 10s, 20s, 40s, 60s) mirroring
         the pattern in bountyCog._preload_data.  On terminal failure leaves the cache
         empty for that category so autocomplete degrades gracefully to an empty list.
+        Each loader is shared with the cache refresh_fn so self-heal and preload agree.
         """
         await self.bot.wait_until_ready()
 
@@ -173,9 +194,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         for category in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
             for attempt in range(5):
                 try:
-                    resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
-                    resp.raise_for_status()
-                    names = [obj["name"] for obj in resp.json() if obj.get("name")]
+                    names = await self._fetch_item_catalog(category)
                     self._item_catalog.set(category, names)
                     flogger.info(f"_preload_static_catalogs: loaded {len(names)} items for category={category}")
                     break
@@ -196,9 +215,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         # Preload ship catalog.
         for attempt in range(5):
             try:
-                resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
-                resp.raise_for_status()
-                names = [s["name"] for s in resp.json() if s.get("name")]
+                names = await self._fetch_ship_catalog("all")
                 self._ship_catalog.set("all", names)
                 flogger.info(f"_preload_static_catalogs: loaded {len(names)} ships")
                 break

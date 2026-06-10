@@ -330,11 +330,15 @@ class TestReloadAutocompleteCommand:
         # Call command via callback
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
-        # Verify behavior — at least the preload methods were called
+        # Verify behavior — Phase 3: backend-sourced static caches now clear-and-self-heal,
+        # so the only remaining explicit preloads are the plain in-code lists:
+        # DevCog._preload_categories and AdminCog._preload_render_settings.
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
-        # _preload_data is called for AboutCog and BountyCog (2 times total)
-        assert about_cog._preload_data.await_count >= 1
+        assert about_cog._preload_categories.await_count >= 1
+        assert about_cog._preload_render_settings.await_count >= 1
+        # And the static catalogs are cleared (self-heal on next keystroke).
+        about_cog._shop_cache.clear.assert_called()
 
     @patch("cogs.devCog.httpx")
     def test_reload_autocomplete_with_errors(self, mock_httpx, mock_dev_cog):
@@ -357,25 +361,20 @@ class TestReloadAutocompleteCommand:
         interaction.followup.send.assert_called_once()
 
     @patch("cogs.devCog.httpx")
-    def test_reload_autocomplete_does_not_clear_systems_cache(self, mock_httpx, mock_dev_cog):
-        """D-010 regression: /reload_autocomplete must NOT clear BountyCog._systems_cache.
+    def test_reload_clears_systems_cache_now_that_it_self_heals(self, mock_httpx, mock_dev_cog):
+        """Phase 3 (D-010 fix): the carve-out is GONE — _systems_cache IS now cleared.
 
-        _systems_cache is a static catalog (ttl=None, no refresh_fn) re-populated by
-        BountyCog._preload_data. If it is also in the cache-clear list it gets cleared
-        right after the preload and stays empty (no lazy-fill), blanking the /check
-        system autocomplete. The refresh_fn-backed caches (e.g. _bounty_cache) must
-        still be cleared.
+        Now that _systems_cache has a refresh_fn, /reload_autocomplete can clear it
+        uniformly like any other cache; the next /check keystroke cold-fills it. This
+        is the inverse of the old D-010 carve-out behaviour (which left it untouched).
         """
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
         cog = MagicMock()
-        cog._preload_data = AsyncMock()
         cog._preload_categories = AsyncMock()
-        cog._preload_ship_skins = AsyncMock()
         cog._preload_render_settings = AsyncMock()
-        cog._preload_static_catalogs = AsyncMock()
         # Distinct cache mocks so we can assert exactly which ones got cleared.
         cog._systems_cache = MagicMock()
         cog._systems_cache.clear = MagicMock()
@@ -385,10 +384,8 @@ class TestReloadAutocompleteCommand:
 
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
-        # The static systems catalog must NOT be cleared (D-010).
-        cog._systems_cache.clear.assert_not_called()
-        # Sanity: the lazy-fill caches ARE still cleared, proving the clear loop ran
-        # and the assertion above is meaningful (not vacuously true).
+        # The static systems catalog IS now cleared (self-heals via refresh_fn).
+        cog._systems_cache.clear.assert_called()
         cog._bounty_cache.clear.assert_called()
 
 
@@ -609,26 +606,29 @@ class TestReloadAutocompletePackageE:
     # ------------------------------------------------------------------
 
     @patch("cogs.devCog.httpx")
-    def test_reload_invokes_admin_preload_static_catalogs(self, mock_httpx, mock_dev_cog):
-        """reload_autocomplete invokes AdminCog._preload_static_catalogs."""
+    def test_reload_clears_admin_static_catalogs(self, mock_httpx, mock_dev_cog):
+        """Phase 3: AdminCog item/ship catalogs are now CLEARED (self-heal via refresh_fn)
+        instead of being re-driven by _preload_static_catalogs from /reload_autocomplete.
+        """
         interaction = self._make_interaction()
 
         admin_cog = MagicMock()
-        admin_cog._preload_data = AsyncMock()
         admin_cog._preload_render_settings = AsyncMock()
-        admin_cog._preload_static_catalogs = AsyncMock()
+        admin_cog._item_catalog = MagicMock()
+        admin_cog._item_catalog.clear = MagicMock()
+        admin_cog._ship_catalog = MagicMock()
+        admin_cog._ship_catalog.clear = MagicMock()
+        admin_cog._admin_pending_duel_cache = MagicMock()
+        admin_cog._admin_pending_duel_cache.clear = MagicMock()
 
         bounty_cog = MagicMock()
-        bounty_cog._preload_data = AsyncMock()
 
         about_cog = MagicMock()
-        about_cog._preload_data = AsyncMock()
 
         dev_cog_inner = MagicMock()
         dev_cog_inner._preload_categories = AsyncMock()
 
         skins_cog = MagicMock()
-        skins_cog._preload_ship_skins = AsyncMock()
 
         shop_cog = MagicMock()
         shop_cache = MagicMock()
@@ -649,7 +649,8 @@ class TestReloadAutocompletePackageE:
 
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
-        admin_cog._preload_static_catalogs.assert_awaited_once()
+        admin_cog._item_catalog.clear.assert_called()
+        admin_cog._ship_catalog.clear.assert_called()
 
     # ------------------------------------------------------------------
     # Test #28 — clears ShopCog._shop_cache
@@ -702,25 +703,27 @@ class TestReloadAutocompletePackageE:
     # ------------------------------------------------------------------
 
     @patch("cogs.devCog.httpx")
-    def test_reload_invokes_bounty_preload_and_render_settings(self, mock_httpx, mock_dev_cog):
-        """reload_autocomplete invokes BountyCog._preload_data and AdminCog._preload_render_settings."""
+    def test_reload_clears_bounty_systems_and_preloads_render_settings(self, mock_httpx, mock_dev_cog):
+        """Phase 3: BountyCog._systems_cache is now CLEARED (self-heal), while the plain
+        in-code AdminCog._preload_render_settings list is still explicitly preloaded.
+        """
         interaction = self._make_interaction()
 
         about_cog = MagicMock()
-        about_cog._preload_data = AsyncMock()
 
         dev_cog_inner = MagicMock()
         dev_cog_inner._preload_categories = AsyncMock()
 
         skins_cog = MagicMock()
-        skins_cog._preload_ship_skins = AsyncMock()
 
         bounty_cog = MagicMock()
-        bounty_cog._preload_data = AsyncMock()
+        bounty_cog._systems_cache = MagicMock()
+        bounty_cog._systems_cache.clear = MagicMock()
+        bounty_cog._bounty_cache = MagicMock()
+        bounty_cog._bounty_cache.clear = MagicMock()
 
         admin_cog = MagicMock()
         admin_cog._preload_render_settings = AsyncMock()
-        admin_cog._preload_static_catalogs = AsyncMock()
 
         shop_cog = MagicMock()
         shop_cache = MagicMock()
@@ -741,7 +744,7 @@ class TestReloadAutocompletePackageE:
 
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
-        bounty_cog._preload_data.assert_awaited_once()
+        bounty_cog._systems_cache.clear.assert_called()
         admin_cog._preload_render_settings.assert_awaited_once()
 
 

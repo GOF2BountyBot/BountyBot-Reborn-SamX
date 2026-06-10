@@ -53,10 +53,28 @@ class DevCog(commands.Cog):
         flogger.error("DevCog: All preload attempts exhausted. Category autocomplete will be empty.")
         self._categories = []
 
+    def _ensure_categories_loaded(self) -> None:
+        """Size-guard self-heal: if the in-code category list is empty (e.g. after a
+        failed preload), kick off a deduped background reload so the next keystroke is
+        warm. Background (not inline) to respect the 3s autocomplete deadline.
+        """
+        try:
+            if self._categories:
+                return
+            existing = getattr(self, "_categories_preload_task", None)
+            if existing is not None and not existing.done():
+                return
+            self._categories_preload_task = asyncio.create_task(
+                self._preload_categories(), name="dev-categories-selfheal-preload"
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"_ensure_categories_loaded: failed to schedule self-heal: {type(exc).__name__}: {exc}")
+
     async def category_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         # include a virtual "All" option
+        self._ensure_categories_loaded()  # size-guard self-heal (background; degrade-then-warm)
         norm_current = normalize_for_search(current)
         choices = ["All", *self._categories]
         return [
@@ -141,14 +159,15 @@ class DevCog(commands.Cog):
         failed = []
 
         # Preload-method targets: (cog_name, method_name, friendly_name).
-        # Includes previously-missing entries (recon §7.3): BountyCog, AdminCog render settings.
+        # Phase 3: backend-sourced static AutocompleteCaches (about/bounty-systems/
+        # admin catalogs/ship-skins) are now CLEARED in cache_targets below and
+        # self-heal via their refresh_fn / size-guard — so their bulk preloads are no
+        # longer driven from here (clear-and-self-heal is the uniform mechanism). Only
+        # the plain in-code lists that are NOT AutocompleteCaches keep an explicit
+        # preload: DevCog._categories and AdminCog._render_settings.
         method_targets = [
-            ("AboutCog", "_preload_data", "about data"),
             ("DevCog", "_preload_categories", "dev categories"),
-            ("SkinsCog", "_preload_ship_skins", "ship skins"),
-            ("BountyCog", "_preload_data", "bounty data"),
             ("AdminCog", "_preload_render_settings", "render settings"),
-            ("AdminCog", "_preload_static_catalogs", "admin static catalogs"),
         ]
 
         for cog_name, method_name, label in method_targets:
@@ -171,16 +190,25 @@ class DevCog(commands.Cog):
 
         # Cache-clear targets: (cog_name, cache_attr_name, friendly_name).
         # clear() is synchronous; no await needed.
+        # Phase 3: the D-010 carve-out is GONE. Every backend-sourced static catalog
+        # now has a refresh_fn (or a handler-level size-guard), so clear() applies
+        # UNIFORMLY — a cleared key self-heals lazily on the next autocomplete keystroke.
+        # _systems_cache and the about/admin static catalogs are cleared here like any
+        # other cache; the next /check / /about / /admin_* keystroke cold-fills them.
         cache_targets = [
             ("ShopCog", "_shop_cache", "shop cache"),
             ("BountyCog", "_bounty_cache", "bounty cache"),
-            # D-010: _systems_cache is intentionally NOT cleared here. It is a static
-            # catalog (ttl=None, no refresh_fn) re-populated by BountyCog._preload_data
-            # in method_targets above; clearing it after the preload leaves it
-            # permanently empty (no lazy-fill), blanking the /check system autocomplete.
+            ("BountyCog", "_systems_cache", "bounty systems cache"),
+            ("AboutCog", "_categories_cache", "about categories cache"),
+            ("AboutCog", "_objects_cache", "about objects cache"),
+            ("AdminCog", "_item_catalog", "admin item catalog"),
+            ("AdminCog", "_ship_catalog", "admin ship catalog"),
+            ("AdminCog", "_admin_pending_duel_cache", "admin pending-duel cache"),
+            ("SkinsCog", "_ship_skins", "ship skins cache"),
             ("DuelCog", "_pending_duel_cache", "duel pending cache"),
             ("DuelCog", "_outgoing_duel_cache", "duel outgoing cache"),
             ("SchedulerCog", "_job_cache", "scheduler job cache"),
+            ("CombatLogCog", "_combatlog_cache", "combat-log cache"),
         ]
 
         for cog_name, attr_name, label in cache_targets:

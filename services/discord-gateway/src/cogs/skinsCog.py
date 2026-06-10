@@ -249,10 +249,17 @@ class SkinsCog(commands.Cog):
             base_url=BLENDER_API_BASE_URL,
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
-        # Static catalog caches — TTL=None (never expires; only reloaded on /reload_autocomplete)
+        # Static catalog caches — TTL=None. SELF-HEAL: a per-ship refresh_fn lets the
+        # KEYED lookup (skin_autocomplete) lazily re-fill one ship's skins after a
+        # clear(). The ENUMERATION handlers (ship_autocomplete / skinnable_ship_*)
+        # cannot be filled by a per-key refresh_fn (there is no key to fetch when the
+        # whole key set is empty), so they use a handler-level size-guard instead
+        # (see _ensure_ship_skins_loaded) — the documented divergence for §4 .keys()
+        # enumeration handlers.
         # map ship name → list of skin names
         self._ship_skins: AutocompleteCache[str, list[str]] = AutocompleteCache(
             ttl_seconds=None,
+            refresh_fn=self._fetch_ship_skins,
             name="skins-render-info",
         )
         # map ship name → render-info dict (for skinnable ships)
@@ -262,6 +269,40 @@ class SkinsCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
         await self.blender_client.aclose()
+
+    async def _fetch_ship_skins(self, ship_name: str) -> list[str]:
+        """Refresh one ship's skin list. Reused as _ship_skins.refresh_fn so the KEYED
+        lookup (skin_autocomplete) self-heals after a clear(). Raises on HTTP error.
+        """
+        full = await self.http_client.get(f"{api_base}/about/object/name/{ship_name}", timeout=10)
+        full.raise_for_status()
+        data = full.json()
+        skins = data.get("compatible_skins") or {}
+        return list(skins.keys())
+
+    def _ensure_ship_skins_loaded(self) -> None:
+        """Size-guard self-heal for the .keys()-enumerating handlers.
+
+        A per-key refresh_fn cannot repopulate an EMPTY key set (no key to fetch),
+        so when the whole cache is empty (e.g. right after /reload_autocomplete or a
+        failed startup preload) kick off the idempotent bulk preload.
+
+        Documented divergence from §4's "run inline": the bulk preload performs N
+        sequential per-ship GETs (one per ship) which would exceed the 3s autocomplete
+        hard deadline. Firing it as a deduped BACKGROUND task self-heals the cache for
+        the NEXT keystroke (degrade-then-warm) without risking the deadline on THIS one.
+        Only fires on the rare empty-cache path; the dedupe flag prevents a stampede.
+        """
+        try:
+            if self._ship_skins.size != 0:
+                return
+            existing = getattr(self, "_skins_preload_task", None)
+            if existing is not None and not existing.done():
+                return  # a self-heal preload is already in flight
+            coro = self._preload_ship_skins()
+            self._skins_preload_task = asyncio.create_task(coro, name="skins-selfheal")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"_ensure_ship_skins_loaded: failed to schedule self-heal: {type(exc).__name__}: {exc}")
 
     async def _preload_ship_skins(self):
         """Preload ship skin data at startup for autocomplete (with retries)."""
@@ -278,11 +319,7 @@ class SkinsCog(commands.Cog):
                     if not name:
                         continue
                     try:
-                        full = await self.http_client.get(f"{api_base}/about/object/name/{name}", timeout=10)
-                        full.raise_for_status()
-                        data = full.json()
-                        skins = data.get("compatible_skins") or {}
-                        self._ship_skins.set(name, list(skins.keys()))
+                        self._ship_skins.set(name, await self._fetch_ship_skins(name))
                     except HttpxTimeoutException as e:
                         flogger.warning(f"Timeout loading skins for {name}: {e}")
                         self._ship_skins.set(name, [])
@@ -315,6 +352,7 @@ class SkinsCog(commands.Cog):
     async def ship_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
+        self._ensure_ship_skins_loaded()  # size-guard self-heal (background; degrade-then-warm)
         return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, self._ship_skins.keys())]
 
     async def skin_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
@@ -323,7 +361,14 @@ class SkinsCog(commands.Cog):
         if not ship:
             return []
         flogger.debug(f"skin_autocomplete: ship={ship!r}, filter={current!r}")
+        # Self-heal: peek then cold-fill THIS ship's skins (per-key refresh_fn) so a
+        # cleared key re-fills on the next keystroke (D-010 fix for the keyed lookup).
         skins = self._ship_skins.peek(ship)
+        if skins is None:
+            try:
+                skins = await self._ship_skins.get_with_timeout(ship, timeout=1.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                skins = None
         if skins is None:
             return []
         if not skins:
@@ -344,6 +389,7 @@ class SkinsCog(commands.Cog):
         Ships without cached render-info are included so the list is never
         artificially truncated to only previously-rendered ships.
         """
+        self._ensure_ship_skins_loaded()  # size-guard self-heal (background; degrade-then-warm)
         skinnable_names = [
             name
             for name in self._ship_skins.keys()  # noqa: SIM118 — AutocompleteCache has no __iter__

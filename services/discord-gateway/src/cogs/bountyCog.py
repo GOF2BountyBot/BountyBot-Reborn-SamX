@@ -53,9 +53,13 @@ class BountyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        # Static catalog: star system names — TTL=None (never expires; only reloaded on /reload_autocomplete)
+        # Static catalog: star system names — TTL=None (never expires).
+        # SELF-HEAL (kills the D-010 class bug): a refresh_fn re-runs the same per-key
+        # loader the preload uses, so a clear() (from /reload_autocomplete) lazily
+        # re-fills on the next get/get_with_timeout instead of staying empty forever.
         self._systems_cache: AutocompleteCache[str, list[str]] = AutocompleteCache(
             ttl_seconds=None,
+            refresh_fn=self._fetch_systems,
             name="bounty-systems",
         )
         # Bounty cache: keyed by guild_id (int), stores list of bounty dicts, TTL=1200s (20 min)
@@ -73,6 +77,17 @@ class BountyCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
+    async def _fetch_systems(self, _key: str) -> list[str]:
+        """Refresh the star-system catalog. Reused as _systems_cache.refresh_fn AND
+        by _preload_data, so a cleared cache self-heals on the next get().
+
+        Raises on HTTP error so AutocompleteCache applies its stale-on-error policy.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories/system/objects", timeout=10)
+        resp.raise_for_status()
+        systems = resp.json()
+        return [s.get("name", "") for s in systems if s.get("name")]
+
     async def _preload_data(self):
         """Preload star system names at startup for autocomplete (with retries)."""
         await self.bot.wait_until_ready()
@@ -80,10 +95,8 @@ class BountyCog(commands.Cog):
         for attempt, delay in enumerate(delays, start=1):
             try:
                 flogger.info("BountyCog: Starting preload of system data (attempt %d/%d)...", attempt, len(delays))
-                resp = await self.http_client.get(f"{api_base}/about/categories/system/objects", timeout=10)
-                resp.raise_for_status()
-                systems = resp.json()
-                system_names = [s.get("name", "") for s in systems if s.get("name")]
+                # Use the cache's own loader so preload and self-heal share one code path.
+                system_names = await self._fetch_systems("all")
                 self._systems_cache.set("all", system_names)
                 flogger.info("BountyCog: Preloaded %d system names", len(system_names))
                 return  # Success — exit
@@ -162,8 +175,16 @@ class BountyCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for star system names — includes ALL systems (game balance)."""
-        systems = self._systems_cache.peek("all") or []
-        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, systems)]
+        # Self-heal: peek first; on a miss (e.g. right after /reload_autocomplete cleared
+        # the cache) cold-fill via the refresh_fn within the 1.0s budget so the dropdown
+        # is never permanently empty (kills the D-010 class bug).
+        systems = self._systems_cache.peek("all")
+        if systems is None:
+            try:
+                systems = await self._systems_cache.get_with_timeout("all", timeout=1.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                systems = None
+        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, systems or [])]
 
     async def bounty_autocomplete(
         self, interaction: discord.Interaction, current: str

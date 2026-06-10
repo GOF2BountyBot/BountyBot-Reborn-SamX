@@ -49,13 +49,19 @@ def is_developer():
 class AboutCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Static catalog caches — TTL=None (never expires; only reloaded on /reload_autocomplete)
+        # Static catalog caches — TTL=None. SELF-HEAL via refresh_fn so a cleared key
+        # (from /reload_autocomplete) lazily re-fills on the next get_with_timeout
+        # instead of staying empty forever (kills the D-010 class bug). Both caches are
+        # keyed by a single string ("all" / category name), so a per-key refresh_fn
+        # repopulates cleanly — no size-guard needed.
         self._categories_cache: AutocompleteCache[str, list[str]] = AutocompleteCache(
             ttl_seconds=None,
+            refresh_fn=self._fetch_categories,
             name="about-categories",
         )
         self._objects_cache: AutocompleteCache[str, list[dict]] = AutocompleteCache(
             ttl_seconds=None,
+            refresh_fn=self._fetch_objects,
             name="about-objects",
         )
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
@@ -69,6 +75,24 @@ class AboutCog(commands.Cog):
 
     async def cog_unload(self):
         await self.http_client.aclose()
+
+    async def _fetch_categories(self, _key: str) -> list[str]:
+        """Refresh the about categories list. Reused as _categories_cache.refresh_fn
+        AND by the preload so a cleared "all" key self-heals on the next get().
+        Raises on HTTP error.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _fetch_objects(self, category: str) -> list[dict]:
+        """Refresh one category's objects. Reused as _objects_cache.refresh_fn AND by
+        the preload so a cleared category key self-heals on the next get(). Raises on
+        HTTP error.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
 
     async def _preload_data(self):
         """Preload all categories and objects at startup for responsiveness.
@@ -85,9 +109,7 @@ class AboutCog(commands.Cog):
         for attempt in range(5):
             try:
                 flogger.info(f"Starting preload of about data (attempt {attempt + 1}/5)...")
-                resp = await self.http_client.get(f"{api_base}/about/categories", timeout=5)
-                resp.raise_for_status()
-                categories = resp.json()
+                categories = await self._fetch_categories("all")
                 flogger.debug(f"Preloaded categories: {categories}")
                 break
             except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -109,9 +131,7 @@ class AboutCog(commands.Cog):
         # --- Step 2: fetch objects per category (each independently, no retry needed here) ---
         for category in categories:
             try:
-                resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
-                resp.raise_for_status()
-                objects = resp.json()
+                objects = await self._fetch_objects(category)
                 self._objects_cache.set(category, objects)
                 flogger.debug(f"Preloaded {len(objects)} objects for category {category}")
             except httpx.TimeoutException as e:
@@ -135,7 +155,14 @@ class AboutCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for category selection"""
         norm_current = normalize_for_search(current)
-        categories = self._categories_cache.peek("all") or []
+        # Self-heal: peek then cold-fill so a cleared "all" key re-fills (D-010 fix).
+        categories = self._categories_cache.peek("all")
+        if categories is None:
+            try:
+                categories = await self._categories_cache.get_with_timeout("all", timeout=1.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                categories = None
+        categories = categories or []
         choices = [
             app_commands.Choice(name=cat.replace("_", " ").title(), value=cat)
             for cat in categories
@@ -147,7 +174,14 @@ class AboutCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for system name selection using preloaded data."""
-        systems = self._objects_cache.peek("system") or []
+        # Self-heal: peek then cold-fill the "system" category key (D-010 fix).
+        systems = self._objects_cache.peek("system")
+        if systems is None:
+            try:
+                systems = await self._objects_cache.get_with_timeout("system", timeout=1.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                systems = None
+        systems = systems or []
         names = [obj["name"] for obj in systems if obj.get("name")]
         return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, names)]
 
@@ -158,7 +192,13 @@ class AboutCog(commands.Cog):
         category = getattr(interaction.namespace, "category", None)
         if not category:
             return []
+        # Self-heal: peek then cold-fill the selected category key (D-010 fix).
         objects = self._objects_cache.peek(category)
+        if objects is None:
+            try:
+                objects = await self._objects_cache.get_with_timeout(category, timeout=1.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                objects = None
         if objects is None:
             return []
         names = [obj["name"] for obj in objects if obj.get("name")]

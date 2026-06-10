@@ -215,7 +215,7 @@ A cluster missile is **identical to a plain missile in every respect except that
 
 - **Accuracy snapshot semantics:** the fire-time accuracy is captured **once** per cluster fire — sourced from the pilot's §5 accuracy under Tier B/C, or from the rocket-curve evaluated against `current_distance` at fire time under Tier A. ALL N sub-munitions then roll independently against that single snapshot. A thruster ramp / cloak activation / distance change occurring after the cluster fires does NOT retroactively alter sub-munition rolls.
 - **Damage application — per-sub-munition, sequential:** each landing sub-munition deals `damage` (per-sub-munition, NOT total) and walks the shield → armour → hull stack independently. Single-target only (no AoE — cluster missiles carry no `magnitude_m`). **All K landed sub-munitions apply** even if an earlier one drops the target to HP ≤ 0; overkill is allowed (HP can go transiently negative within Appendix B step 4). EmergencySystem evaluates against the *cumulative* end-of-phase hull, not per sub-munition (§7.7) — so a cluster that goes wildly past lethal still triggers ES at most once.
-- **Combat-log condensation:** **ONE event per cluster fire** with summary fields `{weapon, fired: N, hits: K, damage_per_hit, total_damage: K × damage}`. `total_damage` reports the weapon's *swung* output (max-possible across landed sub-munitions); the actual HP absorbed (post-clamp) feeds the per-combatant `damage_dealt` rollup in §12's summary. Not N rows.
+- **Combat-log condensation:** **ONE event per cluster fire** with summary fields `{weapon, fired: N, hits: K, damage_per_hit, total_damage: K × damage}`. `total_damage` is the swung output of the **K landed** sub-munitions (`K × damage` — pre-clamp, overkill included; NOT `N × damage` max-possible); the actual HP absorbed (post-clamp) feeds the per-combatant `damage_dealt` rollup in §12's summary. Not N rows.
 - **Seed inventory (Phase-1):** Shesha (`burst_count: 3`, damage 60), Garuda-IV (`burst_count: 4`, damage 75), Patala (`burst_count: 5`, damage 90). Resolver reads `burst_count` from `extra_atts` generically.
 
 #### Nuke (`subtype: "nuke"`)
@@ -262,7 +262,7 @@ Secondary weapons are **ammo-limited consumables** as of CI-16. Key rules:
 - **`ammo=None`** → infinite (back-compat for legacy loadout paths).
 - **Player ammo persists cross-battle** in `player_ships.secondary_ammo` (JSON sidecar `{name: rounds}`); written back by `_consume_secondary_ammo` after fight. **Equip seeds the sidecar with the WHOLE cargo stack** (all rounds move cargo → ammo; re-equipping the same name tops up).
 - **Auto-unequip at 0** — post-fight only. Mid-fight just stops firing; never a live mid-tick slot mutation.
-- **Criminal side (CI-17 — LANDED):** criminals are armed at loadout-build with per-subtype round grants from `CRIMINAL_SECONDARY_ROUNDS` (defaults: nuke **1** — prevents unwinnable alpha-strikes; missile/rocket **5**; cluster-missile **3**; shock-blast **2**). Weapons with `damage ≤ CRIMINAL_SECONDARY_MIN_DAMAGE` (default 1) are excluded from criminal gear rolls (drops the 0-dmg seeds and 1-dmg Fireworks). In-fight only; criminals have no cross-fight persistence (each fight rebuilds the loadout).
+- **Criminal side (CI-17 — LANDED):** criminals are armed at **bounty creation** (`bounty_service` stores `rounds` on the criminal-ship JSON) with per-subtype round grants from `CRIMINAL_SECONDARY_ROUNDS` (defaults: nuke **1** — prevents unwinnable alpha-strikes; missile/rocket **5**; cluster-missile **3**; shock-blast **2**); `LoadoutBuilder.from_criminal_ship` reads the stored value at fight time. Both the grant and the read apply a `max(1, …)` floor, so a criminal secondary always fires at least once. Weapons with `damage ≤ CRIMINAL_SECONDARY_MIN_DAMAGE` (default 1) are excluded from criminal gear rolls (drops the 0-dmg seeds and 1-dmg Fireworks). In-fight only; criminals have no cross-fight persistence.
 - **Future per-battle-cap extension point** — limit is qty + cooldown only; no hard 1/battle rule in Phase-1.
 
 Conservation model (loadout subsystem): `owned(S) = cargo.quantity(S) + Σ_ships secondary_ammo[S]`.
@@ -461,9 +461,9 @@ trigger → run for duration_ms → cooldown begins → cooldown lasts loading_s
 - **Both sides dead at end of tick (`reason: mutual`):** draw. Same reward semantics as a time-cap stalemate, but logged distinctly so battle history reflects *how* the fight ended.
   - **PvP:** draw. Both players keep credits; no rewards.
   - **PvC:** draw, criminal escapes (mirrors the time-cap PvC path — new system selected along the route; hunt-checks reset; reuse the existing loss-path flow when coding).
-- **Time-cap, both alive (`reason: time_cap` for the resolver; `outcome: stalemate`):**
-  - **PvP (`summary.reason: draw`):** draw. Both players keep credits; no rewards.
-  - **PvC (`summary.reason: draw`):** draw, criminal escapes — new system selected along the route; hunt-checks reset. (Reuse the existing loss-path flow when coding.)
+- **Time-cap, both alive (`outcome: stalemate`, `reason: time_cap` — same value in the resolver AND in `data.summary`):**
+  - **PvP:** draw. Both players keep credits; no rewards. **No HP-ahead tiebreak** — whoever is "winning" on HP at the cap does NOT win; `winner` is `null`.
+  - **PvC:** draw, criminal escapes — new system selected along the route; hunt-checks reset. (Reuse the existing loss-path flow when coding.)
 
 **`outcome` × `reason` matrix** (§12 `data.summary` fields):
 
@@ -471,7 +471,7 @@ trigger → run for duration_ms → cooldown begins → cooldown lasts loading_s
 |---|---|---|
 | `win` | `hp_depleted` | exactly one side at HP ≤ 0 at end of tick |
 | `stalemate` | `mutual` | both sides at HP ≤ 0 on the same tick |
-| `stalemate` | `time_cap` (resolver) / `draw` (summary) | tick == `MAX_FIGHT_TICKS`, both alive |
+| `stalemate` | `time_cap` | tick == `MAX_FIGHT_TICKS`, both alive |
 
 Reward / route-progression handling for `stalemate` is identical across `mutual` and `time_cap` — the reason field is for log granularity only.
 
@@ -567,7 +567,7 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
   "schema_version": 1,
   "summary": {
     "outcome": "win",                           // win | stalemate
-    "reason": "hp_depleted",                    // hp_depleted | time_cap | mutual | draw
+    "reason": "hp_depleted",                    // hp_depleted | time_cap | mutual
     "duration_ticks": 8421,
     "winner": "Specter",
     "combatants": {
@@ -575,18 +575,22 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
         "name": "Wraith", "ship": "Specter",
         "start_hp": { "shield": 120, "armour": 300, "hull": 200 },
         "final_hp": { "shield": 0,   "armour": 0,   "hull": 140 },
-        "damage_dealt": 620, "damage_taken": 480,
+        "damage_dealt": 620, "damage_taken": 480,                    // from the per-event `absorbed` field — HP actually removed, overkill excluded
         "shots_fired": 240, "shots_hit": 168, "accuracy": 0.70,
         "module_activations": { "cloak": 2, "booster": 3 },          // lowercase_snake_case keys per §0.3; embed layer renders friendly names
-        "secondary_fired":    { "rocket": 12 }
+        "secondary_fired":    { "rocket": 12 },
+        "secondary_rounds_by_weapon": { "Intelli Jet": 4 }           // CI-16: sparse, by weapon NAME — feeds post-fight ammo write-back
       },
       "2": { /* …same shape… */ }
     }
   },
   "timeline": [ /* CombatEvent rows, in processing order */ ],
+  "key_events": [ /* P4-T7a: precomputed key-moment subset, written at persist time; legacy rows without it fall back to on-read extraction */ ],
   "metadata": { "tick_ms": 10, "total_ticks": 8421, "resolver": "tick_v1", "pvc_damage_reduction": 0.33 }
 }
 ```
+
+> **Accuracy-counting caveat:** `shots_hit` increments only on `weapon_fire` events with `hit: true`. Cluster-missiles (condensed event, `hits` count instead of `hit`) and nukes (no accuracy roll) increment `shots_fired` but never `shots_hit` — so the `accuracy` field understates for cluster/nuke-heavy loadouts (a nuke-only ship reads 0.0 accuracy regardless of damage dealt).
 
 ### Timeline — real event-ticks (NOT every tick, NOT narrative milestones)
 
@@ -610,18 +614,20 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
 
 **Representative event vocabulary** (extensible — the resolver may emit additional types for any state-changing tick-step):
 
+> **CI-20 `side` field — ubiquitous:** every event tied to a specific combatant additionally carries `side: 1|2` (the combatant slot), so consumers can disambiguate when both ships share a name. The only events without it are global ones (`fight_start`, `fight_end`, passive-closure `distance`). The payload shapes below omit it for brevity.
+
 | `type` | Emitted when | Example `data` |
 |---|---|---|
-| `fight_start` | tick 0 | combatants, ships, start HP layers, initial distance |
+| `fight_start` | tick 0 | `{combatants: [{name, display_name, ship, slot, hp: {shield, armour, hull}}, …], initial_distance}` (`display_name`/`slot` per CI-20) |
 | `regen` | shield recharge pulse or repair-bot hull/armour pulse applies | `{layer, amount, hp_after}` |
 | `weapon_fire` | a primary / secondary / turret fires (incl. miss) | Base shape `{slot, subtype, weapon, hit, accuracy}` for accuracy-roll fires. Cluster-missile, nuke, and shock-blast substitute or extend per the table below. |
-| `damage` | HP applied to a target after a hit | `{amount, breakdown:{shield,armour,hull}, hp_after, source}`. During an active EmergencySystem invuln window (§7.7), the event still emits but with `amount: 0`, `breakdown` omitted, `hp_after` unchanged, and a `blocked_by: "emergency_system_invuln"` annotation. |
+| `damage` | HP applied to a target after a hit | `{amount, absorbed, breakdown:{shield,armour,hull}, hp_after, source}`. `absorbed` (T10) = HP actually removed, overkill excluded — the authoritative input to the summary's `damage_dealt`/`damage_taken`. During an active EmergencySystem invuln window (§7.7), the event still emits but with `amount: 0`, `absorbed: 0`, `breakdown` omitted, `hp_after` unchanged, and a `blocked_by: "emergency_system_invuln"` annotation. |
 | `module_activation` | a discrete activation occurs — Phase-1: cloak / booster (HP-threshold crossing) or EmergencySystem (lethal-hull trigger). Passive modules (Repair Bot, Thruster, PrimaryWeaponMod, shield regen) do NOT emit this event. | `{module, trigger_hp_pct}` (trigger_hp_pct omitted for EmergencySystem) |
 | `cooldown_end` | a weapon or module comes off cooldown | `{system}` |
 | `layer_depleted` | a ship's shield → 0 or armour → 0 | `{layer}` |
 | `distance` | distance changes (booster push, closing, shock-blast reset) | `{from, to, cause}` |
-| `secondary_depleted` | a secondary weapon's last round fires (`remaining_ammo` → 0; CI-16) | `{weapon}` — post-fight auto-unequip signal |
-| `fight_end` | terminal | `{winner, reason, duration_ticks, final_hp}` |
+| `secondary_depleted` | a secondary weapon's last round fires (`remaining_ammo` → 0; CI-16) | `{weapon, subtype}` — post-fight auto-unequip signal |
+| `fight_end` | terminal | `{winner, reason, duration_ticks, final_hp: {c1: {…}, c2: {…}}}` |
 
 #### `weapon_fire` per-subtype payloads
 
@@ -632,7 +638,7 @@ The base `{slot, subtype, weapon, hit, accuracy}` covers per-shot accuracy-roll 
 | primary | `{slot: "primary", subtype: "primary", weapon, hit, accuracy}` |
 | rocket | `{slot: "secondary", subtype: "rocket", weapon, hit, accuracy}` |
 | missile | `{slot: "secondary", subtype: "missile", weapon, hit, accuracy, branch: "tier_a" \| "tier_bc"}` |
-| cluster-missile | `{slot: "secondary", subtype: "cluster-missile", weapon, fired, hits, damage_per_hit, total_damage}` |
+| cluster-missile | `{slot: "secondary", subtype: "cluster-missile", weapon, fired, hits, damage_per_hit, total_damage, branch, accuracy}` (`branch`/`accuracy` = the snapshot used for all sub-munition rolls) |
 | nuke | `{slot: "secondary", subtype: "nuke", weapon, epicenter, window_lo, window_hi, stack_mult, d_firer, d_opponent, opponent_damage, self_damage}` (D-014 adds `window_lo`/`window_hi`/`stack_mult`) |
 | shock-blast | `{slot: "secondary", subtype: "shock-blast", weapon, hit: true, accuracy: 1.0}` — may additionally carry `damage: 0` as a debug field (shock-blast deals no HP damage; additive debug fields are permitted). |
 | auto-turret | `{slot: "turret", subtype: "auto", weapon, hit, accuracy}` |

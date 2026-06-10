@@ -100,7 +100,7 @@ When you, a player, take on a criminal NPC for a bounty, the game gives you a bu
 A battle wraps up one of two ways:
 
 1. **A ship is destroyed** — its hull hits zero.
-2. **The clock runs out** — if neither ship falls within the time limit, the fight is called: a stalemate, or decided in favour of whoever came out ahead.
+2. **The clock runs out** — if neither ship falls within the time limit, the fight is called a **draw**. Being ahead on hull when time expires doesn't win it for you — survive the clock and nobody collects. (Both ships destroying each other on the same instant is also a draw.)
 
 ---
 

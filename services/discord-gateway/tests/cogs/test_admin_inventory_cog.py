@@ -704,8 +704,14 @@ class TestAdminAutocomplete:
         assert isinstance(result, list)
 
     def test_item_name_autocomplete_handles_error(self, mock_admin_cog):
-        """item_name_autocomplete returns empty list on network error."""
+        """item_name_autocomplete returns empty list on network error.
+
+        Phase 3: _item_catalog now has a refresh_fn, so clear() the cache first to
+        force the cold-fill path to hit the (raising) http_client and exercise the
+        error degrade — otherwise a prior test's warm catalog would be served.
+        """
         interaction = _create_mock_interaction()
+        mock_admin_cog._item_catalog.clear()
         mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Network error"))
 
         result = asyncio.run(mock_admin_cog.item_name_autocomplete(interaction, "pulse"))
@@ -722,8 +728,13 @@ class TestAdminAutocomplete:
         assert isinstance(result, list)
 
     def test_game_ship_autocomplete_handles_error(self, mock_admin_cog):
-        """game_ship_autocomplete returns empty list on error."""
+        """game_ship_autocomplete returns empty list on error.
+
+        Phase 3: _ship_catalog now has a refresh_fn; clear() first so the cold-fill
+        hits the raising http_client (otherwise a prior test's warm catalog is served).
+        """
         interaction = _create_mock_interaction()
+        mock_admin_cog._ship_catalog.clear()
         mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Network error"))
 
         result = asyncio.run(mock_admin_cog.game_ship_autocomplete(interaction, ""))
@@ -740,8 +751,16 @@ class TestAdminAutocomplete:
         assert isinstance(result, list)
 
     def test_player_ship_autocomplete_handles_error(self, mock_admin_cog):
-        """player_ship_autocomplete returns empty list on error."""
+        """player_ship_autocomplete returns empty list on error.
+
+        With no namespace.user selected the handler degrades to the _ship_catalog
+        fallback; Phase 3 gave that catalog a refresh_fn, so clear() first to force
+        the raising http_client path (otherwise a prior test's warm catalog is served).
+        """
         interaction = _create_mock_interaction()
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = None
+        mock_admin_cog._ship_catalog.clear()
         mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Network error"))
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))

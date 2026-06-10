@@ -250,6 +250,9 @@ class _CombatantState:
     prev_hp_pct: float = 1.0  # starts at 100% (§8: Phase-1 always starts at 100%)
     # T9: EmergencySystem runtime state (None = ES not equipped)
     es_runtime: _EmergencySystemRuntime | None = None
+    # D-014: per-side nuke detonation counter — drives yield interference
+    # (stack_mult = NUKE_STACK_FALLOFF ** nukes_detonated; resets each fight by construction)
+    nukes_detonated: int = 0
 
 
 def _init_combatant(
@@ -262,7 +265,8 @@ def _init_combatant(
     """Build combatant runtime state from a ShipLoadout.
 
     Called once before the tick loop begins (§1 implementation note).
-    All weapons enter at cooldown_remaining = 0; all HP layers start at max;
+    All weapons enter at cooldown_remaining = 0 EXCEPT nuke secondaries, which
+    start on full cooldown (D-014 arming delay); all HP layers start at max;
     all regen accumulators are dormant (layers at max).
 
     CI-20: ``slot`` (1|2) and ``display_name`` (pilot/criminal label) are threaded
@@ -364,7 +368,9 @@ def _init_combatant(
                 magnitude_m=sw.magnitude_m,
                 steerable=sw.steerable,
                 weapon_stats_ref=sw,
-                cooldown_remaining_ms=0,  # §1: fully ready at tick 0
+                # §1: fully ready at tick 0 — EXCEPT nukes (D-014): warheads arm during the
+                # fight (start on full cooldown) to kill the free max-range alpha-strike.
+                cooldown_remaining_ms=(raw_speed if sw.subtype == "nuke" else 0),
                 # CI-16: bake remaining_ammo from WeaponStats.ammo (None = infinite)
                 remaining_ammo=sw.ammo,
             )
@@ -931,6 +937,27 @@ def _nuke_dmg(distance: float, damage: int, effective_magnitude: float) -> float
         return 0.0
     fraction = min(1.0, distance / effective_magnitude)
     return damage * (1.0 - fraction) ** 2
+
+
+def _nuke_window(current_distance: float) -> tuple[float, float]:
+    """D-014: two-regime nuke detonation window on the 1-D combat axis (firer at 0).
+
+    Long-range (d > NUKE_RANGE_REGIME_THRESHOLD_M):
+        [NEAR_FRAC × d, d] — aimed at the target, never overshoots; short rounds
+        can fall deep toward the firer (long-range self-risk scales with the gap).
+    Close-range (d ≤ threshold):
+        [max(0, d − CR_SHORT_M), d + CR_OVERSHOOT_M] — artillery bracket with
+        overshoot past the target; epicenter can land on either ship.
+
+    Edges meet continuously at the boundary when NEAR_FRAC × threshold
+    == threshold − CR_SHORT_M (defaults: 0.40×1000 == 1000−600).
+    """
+    if current_distance > GameConstants.NUKE_RANGE_REGIME_THRESHOLD_M:
+        return (GameConstants.NUKE_LR_NEAR_FRAC * current_distance, current_distance)
+    return (
+        max(0.0, current_distance - GameConstants.NUKE_CR_SHORT_M),
+        current_distance + GameConstants.NUKE_CR_OVERSHOOT_M,
+    )
 
 
 def _shock_blast_apply(attacker: _CombatantState, current_distance: float) -> float:
@@ -1517,14 +1544,22 @@ class TickResolver:
                         _sw.cooldown_remaining_ms = _sw.loading_speed_ms
 
                     elif _sub == "nuke":
-                        # D5: no accuracy roll; epicenter sampled via injected RNG
-                        _epicenter = _rng.uniform(min_dist, float(GameConstants.STARTING_DISTANCE_M))
+                        # D5/D-014: no accuracy roll; epicenter sampled via injected RNG from the
+                        # two-regime window (one uniform draw — RNG sequence shape preserved).
+                        _win_lo, _win_hi = _nuke_window(current_distance)
+                        _epicenter = _rng.uniform(_win_lo, _win_hi)
                         _d_firer = _epicenter  # firer at position 0
                         _d_opp = abs(_epicenter - current_distance)
                         _eff_mag = _sw.magnitude_m * GameConstants.NUKE_MAGNITUDE_SCALE
-                        _opp_raw = _nuke_dmg(_d_opp, _sw.damage_per_shot, _eff_mag)
+                        # D-014 yield interference: each successive detonation by this side
+                        # multiplies yield by NUKE_STACK_FALLOFF (whole detonation, self incl.)
+                        _stack_mult = GameConstants.NUKE_STACK_FALLOFF**_attacker.nukes_detonated
+                        _attacker.nukes_detonated += 1
+                        _opp_raw = _nuke_dmg(_d_opp, _sw.damage_per_shot, _eff_mag) * _stack_mult
                         _self_raw = (
-                            _nuke_dmg(_d_firer, _sw.damage_per_shot, _eff_mag) * GameConstants.NUKE_FRIENDLY_FACTOR
+                            _nuke_dmg(_d_firer, _sw.damage_per_shot, _eff_mag)
+                            * _stack_mult
+                            * GameConstants.NUKE_FRIENDLY_FACTOR
                         )
                         _opp_dmg_int = round(_opp_raw)
                         _self_dmg_int = round(_self_raw)
@@ -1539,6 +1574,9 @@ class TickResolver:
                                     "subtype": "nuke",
                                     "weapon": _sw.name,
                                     "epicenter": _epicenter,
+                                    "window_lo": _win_lo,  # D-014
+                                    "window_hi": _win_hi,  # D-014
+                                    "stack_mult": _stack_mult,  # D-014 yield interference
                                     "d_firer": _d_firer,
                                     "d_opponent": _d_opp,
                                     "opponent_damage": _opp_dmg_int,

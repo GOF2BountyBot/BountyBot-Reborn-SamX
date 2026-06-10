@@ -91,7 +91,13 @@ class TestConstantDefaults:
     def test_module_and_nuke(self):
         assert GameConstants.EMERGENCY_SYSTEM_INVULN_S == 10
         assert pytest.approx(0.10) == GameConstants.NUKE_MAGNITUDE_SCALE
-        assert pytest.approx(0.25) == GameConstants.NUKE_FRIENDLY_FACTOR
+        # D-014 defaults
+        assert pytest.approx(0.50) == GameConstants.NUKE_FRIENDLY_FACTOR
+        assert GameConstants.NUKE_RANGE_REGIME_THRESHOLD_M == 1000
+        assert pytest.approx(0.40) == GameConstants.NUKE_LR_NEAR_FRAC
+        assert GameConstants.NUKE_CR_SHORT_M == 600
+        assert GameConstants.NUKE_CR_OVERSHOOT_M == 400
+        assert pytest.approx(0.5) == GameConstants.NUKE_STACK_FALLOFF
 
     def test_pvc_and_retention(self):
         assert pytest.approx(0.33) == GameConstants.PVC_DAMAGE_REDUCTION

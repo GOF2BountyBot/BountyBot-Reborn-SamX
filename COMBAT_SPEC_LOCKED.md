@@ -219,21 +219,26 @@ A cluster missile is **identical to a plain missile in every respect except that
 - **Seed inventory (Phase-1):** Shesha (`burst_count: 3`, damage 60), Garuda-IV (`burst_count: 4`, damage 75), Patala (`burst_count: 5`, damage 90). Resolver reads `burst_count` from `extra_atts` generically.
 
 #### Nuke (`subtype: "nuke"`)
-Area-of-effect weapon with **no accuracy roll**. Bypasses the entire §5 accuracy system (no cloak override, no thruster/booster modifiers). `range_m` is the binary fire gate (consistent with primaries).
+Area-of-effect weapon with **no accuracy roll**. Bypasses the entire §5 accuracy system (no cloak override, no thruster/booster modifiers). `range_m` is the binary fire gate (consistent with primaries). **Revised under D-014 (2026-06-10): two-regime detonation window, arming delay, yield interference.**
 
-- **Epicenter:** on fire, sample a uniform random distance `epicenter ~ U[300, 5000]` along the 1D combat-distance axis (the §2 combat-distance bounds).
+- **Arming delay (D-014, nuke-only):** nuke tubes start the fight on FULL cooldown (`cooldown_remaining_ms = loading_speed_ms` at init). First fire lands exactly one cooldown into the fight — kills the free max-range alpha-strike. All other secondary subtypes remain ready at tick 0.
+- **Epicenter (D-014 two-regime window):** on fire, sample `epicenter ~ U[window]` (one uniform draw) where the window depends on `current_distance` (`d`):
+  - **Long-range** (`d > NUKE_RANGE_REGIME_THRESHOLD_M`): `window = [NUKE_LR_NEAR_FRAC × d, d]` — aimed at the target, never overshoots; the deepest short round lands `(1−NEAR_FRAC)` of the gap back toward the firer (long-range self-risk scales with the gap).
+  - **Close-range** (`d ≤ threshold`): `window = [max(0, d − NUKE_CR_SHORT_M), d + NUKE_CR_OVERSHOOT_M]` — artillery bracket with overshoot; the epicenter can land directly on either ship. Edges meet continuously at the boundary with the defaults (0.40×1000 == 1000−600).
 - **Both ships always take damage** based on their distance from the epicenter:
   - Firer is at position 0 → `d_firer = epicenter`.
   - Opponent is at position `current_distance` → `d_opponent = |epicenter − current_distance|`.
-- **Falloff formula** (inverse-square shape, reaches 0 at the effective magnitude):
+- **Falloff formula** (squared falloff, reaches 0 at the effective magnitude):
   ```
-  dmg(d) = damage × (1 − min(1, d / effective_magnitude))²
+  dmg(d) = damage × (1 − min(1, d / effective_magnitude))² × stack_mult
   effective_magnitude = magnitude_m × NUKE_MAGNITUDE_SCALE
+  stack_mult = NUKE_STACK_FALLOFF ** prior_detonations_this_side   # yield interference
   ```
   - `NUKE_MAGNITUDE_SCALE` default **0.10** (`BOUNTYBOT_NUKE_MAGNITUDE_SCALE`). Calibrates seed `magnitude_m` (10000–40000m) down to combat-distance scale (1000–4000m effective).
+  - **Yield interference (D-014):** each side carries a per-fight detonation counter; every successive detonation by the same side multiplies the WHOLE detonation (opponent + self damage) by `NUKE_STACK_FALLOFF` (default **0.5**) per prior detonation → 1.0, 0.5, 0.25, … Total nuke damage per side per fight is hard-bounded at < 2× the best single detonation, killing the "load N nukes → alpha-win" strategy without weakening the first nuke. Counters are per-side and reset each fight.
 - **Opponent damage** = `dmg(d_opponent)`.
 - **Firer self-damage** = `dmg(d_firer) × NUKE_FRIENDLY_FACTOR`.
-  - `NUKE_FRIENDLY_FACTOR` default **0.25** (`BOUNTYBOT_NUKE_FRIENDLY_FACTOR`). Same falloff, scaled by friendly factor — nukes do not respect friend/foe, just attenuate.
+  - `NUKE_FRIENDLY_FACTOR` default **0.50** (`BOUNTYBOT_NUKE_FRIENDLY_FACTOR`; was 0.25 pre-D-014). Same falloff, scaled by friendly factor — nukes do not respect friend/foe, just attenuate.
 - **Steerable flag IGNORED Phase-1.** Liberator's `steerable: true` is data-only fidelity; all 5 nukes behave identically except for `damage` and `magnitude_m`.
 - **Seed inventory (Phase-1, direct-hit anchors):**
   - Liberator (`damage: 850`, `magnitude_m: 12500` → eff 1250m)
@@ -627,7 +632,7 @@ The base `{slot, subtype, weapon, hit, accuracy}` covers per-shot accuracy-roll 
 | rocket | `{slot: "secondary", subtype: "rocket", weapon, hit, accuracy}` |
 | missile | `{slot: "secondary", subtype: "missile", weapon, hit, accuracy, branch: "tier_a" \| "tier_bc"}` |
 | cluster-missile | `{slot: "secondary", subtype: "cluster-missile", weapon, fired, hits, damage_per_hit, total_damage}` |
-| nuke | `{slot: "secondary", subtype: "nuke", weapon, epicenter, opponent_damage, self_damage}` |
+| nuke | `{slot: "secondary", subtype: "nuke", weapon, epicenter, window_lo, window_hi, stack_mult, d_firer, d_opponent, opponent_damage, self_damage}` (D-014 adds `window_lo`/`window_hi`/`stack_mult`) |
 | shock-blast | `{slot: "secondary", subtype: "shock-blast", weapon, hit: true, accuracy: 1.0}` — may additionally carry `damage: 0` as a debug field (shock-blast deals no HP damage; additive debug fields are permitted). |
 | auto-turret | `{slot: "turret", subtype: "auto", weapon, hit, accuracy}` |
 | manual-turret | `{slot: "turret", subtype: "manual", weapon, hit, accuracy}` |
@@ -760,7 +765,7 @@ Phase-1 combat-spec corrections to seed-data structure must be reflected in user
 
 1. **EMP / physical damage distinction** — for any weapon with `emp_damage > 0` in `extra_atts`, the embed MUST surface EMP damage as a distinct labelled field, separate from physical `damage` / `damage_per_shot`. Background: seed-fix `e87db57` corrected the 3 EMP-blaster primaries (Luna/Sol/Dia EMP) from misplaced-physical to true pure-EMP (`damage_per_shot: 0`, `emp_damage: 3/5/8`). Without this distinction the embed shows "damage: 0" with no explanation, hiding the real weapon characteristic.
 2. **Cluster missile `burst_count`** — for any weapon with `subtype: "cluster-missile"`, the embed MUST surface the `burst_count` value, ideally alongside per-sub-munition `damage` AND derived `total damage on full hit = burst_count × damage`. This is the only way a player can compare cluster-missile DPS to plain-missile DPS meaningfully.
-3. **Nuke direct-hit + effective magnitude + self-damage warning** — for any weapon with `subtype: "nuke"`, the embed MUST surface (a) the direct-hit `damage` value (epicenter damage), (b) the **effective magnitude** = `magnitude_m × NUKE_MAGNITUDE_SCALE` (not the raw `magnitude_m`, which is misleading since the runtime scales it), and (c) a **self-damage warning** indicating the firer is caught in the blast at `NUKE_FRIENDLY_FACTOR × falloff_damage`. Without these the player has no way to reason about the risk/reward of nuke usage (e.g. Liberator's 850 direct damage carries a ~123 point-blank self-damage cost — that cost MUST be visible).
+3. **Nuke direct-hit + effective magnitude + self-damage warning** — for any weapon with `subtype: "nuke"`, the embed MUST surface (a) the direct-hit `damage` value (epicenter damage), (b) the **effective magnitude** = `magnitude_m × NUKE_MAGNITUDE_SCALE` (not the raw `magnitude_m`, which is misleading since the runtime scales it), and (c) a **self-damage warning** indicating the firer is caught in the blast at `NUKE_FRIENDLY_FACTOR × falloff_damage`. Without these the player has no way to reason about the risk/reward of nuke usage (e.g. Liberator's 850 direct damage carries a ~425 point-blank self-damage cost at the D-014 factor of 0.50 — that cost MUST be visible).
 4. **PrimaryWeaponMod breakdown** — for any module with `type: "PrimaryWeaponModModule"`, the embed MUST surface (a) `damage_pct`, (b) `fire_rate_pct`, AND (c) the legacy `dpsMultiplier` value (separately labelled as "net DPS shift"). Background: §7.8 honors the per-shot breakdown, but the two modules in scope (Nirai Overdrive / Overcharge) have an identical `dpsMultiplier: 1.1` despite producing mechanically distinct loadouts (lighter-faster vs heavier-slower) — surfacing all 3 fields is the only way a player sees the tradeoff at equip time rather than discovering it mid-fight.
 
 **Implementation scope** (touches both services):
@@ -799,7 +804,12 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 | `BOOSTER_HP_THRESHOLDS_PCT` | **[80, 60, 40, 20]** | §7.3 / §8 |
 | `EMERGENCY_SYSTEM_INVULN_S` | **10** | §7.7 |
 | `NUKE_MAGNITUDE_SCALE` | **0.10** | §6.2 |
-| `NUKE_FRIENDLY_FACTOR` | **0.25** | §6.2 |
+| `NUKE_FRIENDLY_FACTOR` | **0.50** | §6.2 (D-014; was 0.25) |
+| `NUKE_RANGE_REGIME_THRESHOLD_M` | **1000** | §6.2 (D-014) |
+| `NUKE_LR_NEAR_FRAC` | **0.40** | §6.2 (D-014) |
+| `NUKE_CR_SHORT_M` | **600** | §6.2 (D-014) |
+| `NUKE_CR_OVERSHOOT_M` | **400** | §6.2 (D-014) |
+| `NUKE_STACK_FALLOFF` | **0.5** | §6.2 (D-014) |
 | `PVC_DAMAGE_REDUCTION` | **0.33** | §3 (Keith T. Maxwell bonus — PvC, player side only) |
 | `COMBAT_LOG_RETENTION_HOURS` | **72** | §12 |
 
@@ -827,14 +837,21 @@ accuracy = 0.05 + 0.55 × ((range_m − current_distance) / (range_m − MIN_DIS
          → clamp [0.05, 0.60]
 ```
 
-### Nuke (AoE — no accuracy roll)
+### Nuke (AoE — no accuracy roll; D-014 two-regime window + yield interference)
 ```
-epicenter           ~ U[MIN_DISTANCE_M, STARTING_DISTANCE_M]   # [300, 5000]
-d_firer             = epicenter                                # firer at position 0
+# Arming delay: cooldown_remaining_ms = loading_speed_ms at fight init (nuke-only)
+
+window(d) = [NUKE_LR_NEAR_FRAC × d, d]                          if d > NUKE_RANGE_REGIME_THRESHOLD_M
+          = [max(0, d − NUKE_CR_SHORT_M), d + NUKE_CR_OVERSHOOT_M]  otherwise
+            # d = current_distance at fire time
+
+epicenter           ~ U[window(d)]                              # one uniform draw
+d_firer             = epicenter                                 # firer at position 0
 d_opponent          = |epicenter − current_distance|
 effective_magnitude = magnitude_m × NUKE_MAGNITUDE_SCALE
+stack_mult          = NUKE_STACK_FALLOFF ** prior_detonations_this_side  # per-side, per-fight
 
-dmg(d)              = damage × (1 − min(1, d / effective_magnitude))²
+dmg(d)              = damage × (1 − min(1, d / effective_magnitude))² × stack_mult
 
 opponent_damage     = dmg(d_opponent)
 self_damage         = dmg(d_firer) × NUKE_FRIENDLY_FACTOR

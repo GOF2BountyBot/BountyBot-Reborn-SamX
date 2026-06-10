@@ -361,9 +361,14 @@ class GameConstants:
     # EmergencySystem (§7.7)
     EMERGENCY_SYSTEM_INVULN_S: int = 10
 
-    # Nuke (§6.2)
-    NUKE_MAGNITUDE_SCALE: float = 0.10
-    NUKE_FRIENDLY_FACTOR: float = 0.25
+    # Nuke (§6.2) — two-regime detonation window + yield interference (D-014, 2026-06-10)
+    NUKE_MAGNITUDE_SCALE: float = 0.10  # R = magnitude_m × scale (world→5km-field normalization)
+    NUKE_FRIENDLY_FACTOR: float = 0.50  # self-damage global knob (firer at position 0)
+    NUKE_RANGE_REGIME_THRESHOLD_M: int = 1000  # LR/CR regime boundary
+    NUKE_LR_NEAR_FRAC: float = 0.40  # LR window = [NEAR_FRAC×d, d] — no overshoot at range
+    NUKE_CR_SHORT_M: int = 600  # CR window short edge: max(0, d − 600)
+    NUKE_CR_OVERSHOOT_M: int = 400  # CR window far edge: d + 400
+    NUKE_STACK_FALLOFF: float = 0.5  # per-side yield interference: mult = falloff ** prior_detonations
 
     # PvC damage reduction — Keith T. Maxwell bonus (§3)
     PVC_DAMAGE_REDUCTION: float = 0.33
@@ -490,7 +495,12 @@ class GameConstants:
         cls.BOOSTER_HP_THRESHOLDS_PCT = _track_int_list("BOOSTER_HP_THRESHOLDS_PCT", [80, 60, 40, 20])
         cls.EMERGENCY_SYSTEM_INVULN_S = _track_int("EMERGENCY_SYSTEM_INVULN_S", 10)
         cls.NUKE_MAGNITUDE_SCALE = _track_float("NUKE_MAGNITUDE_SCALE", 0.10)
-        cls.NUKE_FRIENDLY_FACTOR = _track_float("NUKE_FRIENDLY_FACTOR", 0.25)
+        cls.NUKE_FRIENDLY_FACTOR = _track_float("NUKE_FRIENDLY_FACTOR", 0.50)
+        cls.NUKE_RANGE_REGIME_THRESHOLD_M = _track_int("NUKE_RANGE_REGIME_THRESHOLD_M", 1000)
+        cls.NUKE_LR_NEAR_FRAC = _track_float("NUKE_LR_NEAR_FRAC", 0.40)
+        cls.NUKE_CR_SHORT_M = _track_int("NUKE_CR_SHORT_M", 600)
+        cls.NUKE_CR_OVERSHOOT_M = _track_int("NUKE_CR_OVERSHOOT_M", 400)
+        cls.NUKE_STACK_FALLOFF = _track_float("NUKE_STACK_FALLOFF", 0.5)
         cls.PVC_DAMAGE_REDUCTION = _track_float("PVC_DAMAGE_REDUCTION", 0.33)
         cls.COMBAT_LOG_RETENTION_HOURS = _track_int("COMBAT_LOG_RETENTION_HOURS", 72)
         cls.COMBAT_LAYER_REEMIT_FRACTION = _track_float("COMBAT_LAYER_REEMIT_FRACTION", 0.25)

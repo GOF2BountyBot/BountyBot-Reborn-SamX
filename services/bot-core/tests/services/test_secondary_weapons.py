@@ -5,7 +5,8 @@ Test categories (per TASK_0006.md §Test surface):
   Rocket:          1–4   (curve at min/max/midpoint; range gate)
   Missile:         5–7   (tier A/B/C branches)
   Cluster missile: 8–12  (snapshot semantics; independence; overkill; condensed log; tier-A)
-  Nuke:            13–18 (point-blank; long-range; PvC DR; steerable ignored; no acc roll; RNG seam)
+  Nuke:            13–18 (LR short round; both-whiff; PvC DR; steerable ignored; no acc roll; RNG seam)
+  Nuke D-014:      window regimes; arming delay (nuke-only initial cooldown); yield interference
   Shock-blast:     19–23 (reset; deterministic; module independence; events; seed damage ignored)
   Pure-EMP:        24    (Mamba EMP)
   Cross-subtype:   25–27 (cooldown reset; T1–T5 regression; §12 payloads)
@@ -518,92 +519,97 @@ class TestNuke:
             steerable=False,
         )
 
-    def test_liberator_point_blank(self):
-        """Liberator: epicenter near MIN_DISTANCE_M, verify damage formula. Test 13."""
+    def test_liberator_lr_window_short_round(self):
+        """Liberator first fire: LR window short round, verify damage formula. Test 13 (D-014).
+
+        _AlwaysHit.uniform returns the window low edge → worst short round.
+        All expectations derive from the event payload (window_hi == current
+        distance in the LR regime) so the exact first-fire tick doesn't matter.
+        """
         lib = self._liberator()
         l1 = _loadout(secondary_weapons=[lib], name="Firer")
         l2 = _loadout(base_armour=2000, name="Target")
-        # Fix epicenter to MIN_DISTANCE_M (AlwaysHit returns MIN_DIST from uniform)
         rng = _AlwaysHit()
         result = TickResolver().resolve(l1, l2, rng=rng)
-        t0 = [e for e in result.combat_log if e.tick == 0]
-        fires = [e for e in t0 if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
-        assert len(fires) == 1
+        fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
+        assert len(fires) >= 1
         ev = fires[0]
-        # Epicenter = MIN_DISTANCE_M = 300
+        # D-014 arming delay: first fire happens after one full cooldown, never tick 0
+        assert ev.tick > 0, "nuke must not fire at tick 0 (arming delay)"
+        # LR regime self-consistency: window = [NEAR_FRAC × d, d]
+        win_lo, win_hi = ev.data["window_lo"], ev.data["window_hi"]
+        assert win_hi > GameConstants.NUKE_RANGE_REGIME_THRESHOLD_M  # still long-range at first fire
+        assert abs(win_lo - GameConstants.NUKE_LR_NEAR_FRAC * win_hi) < 1e-6
+        # _AlwaysHit → epicenter at the window low edge (deepest short round)
         epicenter = ev.data["epicenter"]
-        assert abs(epicenter - MIN_DIST) < 1e-6
-        # Verify opponent damage: d_opponent = |epicenter - current_distance|
-        d_opp = abs(epicenter - STARTING_DIST)
+        assert abs(epicenter - win_lo) < 1e-6
+        # Verify opponent damage: d_opponent = |epicenter - current_distance| (= win_hi)
+        d_opp = abs(epicenter - win_hi)
         eff_mag = 12500.0 * GameConstants.NUKE_MAGNITUDE_SCALE
-        expected_opp = round(_nuke_dmg(d_opp, 850, eff_mag))
+        expected_opp = round(_nuke_dmg(d_opp, 850, eff_mag))  # stack_mult = 1.0 (first detonation)
+        assert ev.data["stack_mult"] == 1.0
         assert ev.data["opponent_damage"] == expected_opp
         # Self-damage: d_firer = epicenter
         expected_self = round(_nuke_dmg(epicenter, 850, eff_mag) * GameConstants.NUKE_FRIENDLY_FACTOR)
         assert ev.data["self_damage"] == expected_self
-        # Both damage events applied
-        dmg_evs = [e for e in t0 if e.type == "damage"]
+        # Both damage events applied on the fire tick
+        dmg_evs = [e for e in result.combat_log if e.tick == ev.tick and e.type == "damage"]
         assert len(dmg_evs) == 2  # one for target, one for self
 
-    def test_tormentor_long_range_opponent_outside_magnitude(self):
-        """Tormentor: opponent outside effective_magnitude → opponent damage = 0. Test 14.
+    def test_tormentor_lr_deep_short_round_whiffs_both_ways(self):
+        """Small-blast nuke, deepest LR short round: both ships outside the blast. Test 14 (D-014).
 
-        Tormentor range_m=2500m. Starting distance=5000m so it can't fire there.
-        We use a Tormentor-equivalent weapon with range_m=5000 to ensure it fires.
+        Tormentor eff_mag = 10000 × 0.10 = 1000 m. At its first fire (~3200 m out)
+        the deepest short round lands at 0.40×d ≈ 1280 m → 1920 m from the target
+        and 1280 m from the firer — both beyond the 1000 m blast → 0 damage to both.
         """
-        # eff_mag = 10000 × 0.10 = 1000m
-        # current_distance = 5000m (starting)
-        # epicenter = MIN_DIST = 300m → d_opponent = |300 - 5000| = 4700m > 1000m → dmg = 0
         tort = _secondary(
             name="AMR Tormentor",
             subtype="nuke",
             damage=150,
             speed_ms=6000,
-            range_m=5000.0,  # extended range so it fires at starting distance
+            range_m=13800.0,  # extended range so the range gate never blocks the fire
             magnitude_m=10000.0,
             steerable=False,
         )
         l1 = _loadout(secondary_weapons=[tort], name="Firer")
         l2 = _loadout(base_armour=2000, name="Target")
-        rng = _AlwaysHit()  # uniform returns MIN_DIST (epicenter = 300)
+        rng = _AlwaysHit()  # uniform returns window low edge
         result = TickResolver().resolve(l1, l2, rng=rng)
-        t0 = [e for e in result.combat_log if e.tick == 0]
-        fires = [e for e in t0 if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
-        assert len(fires) == 1
-        assert fires[0].data["opponent_damage"] == 0, "Opponent d=4700m > eff_mag=1000m → 0 damage"
-        # Firer self-damage: d_firer = 300m, eff_mag = 1000m
-        d_firer = MIN_DIST
+        fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
+        assert len(fires) >= 1
+        ev = fires[0]
         eff_mag = 10000.0 * GameConstants.NUKE_MAGNITUDE_SCALE  # 1000
-        expected_self = round(_nuke_dmg(d_firer, 150, eff_mag) * GameConstants.NUKE_FRIENDLY_FACTOR)
-        assert fires[0].data["self_damage"] == expected_self
+        # Sanity: this scenario is the both-outside-blast case
+        assert ev.data["d_opponent"] > eff_mag and ev.data["d_firer"] > eff_mag
+        assert ev.data["opponent_damage"] == 0, "d_opponent > eff_mag → 0 damage"
+        assert ev.data["self_damage"] == 0, "d_firer > eff_mag → 0 self-damage"
 
     def test_self_damage_pvc_dr_applied_once(self):
         """PvC fight: nuke self-damage applies DR once via T3 helper (NOT double-discounted). Test 15."""
         lib = self._liberator()
         l1 = _loadout(secondary_weapons=[lib], base_armour=3000, name="Player")  # player = C1
         l2 = _loadout(base_armour=100, name="NPC")
-        # Epicenter at MIN_DIST; d_firer = MIN_DIST
-        rng = _AlwaysHit()  # uniform returns MIN_DIST
+        # D-014: epicenter pinned to the window low edge (deepest short round → real self-damage)
+        rng = _FixedEpicenter(0.0)  # clamps to window_lo
         pvc_dr = 0.33
         result = TickResolver().resolve(l1, l2, pvc_damage_reduction=pvc_dr, rng=rng)
-        t0 = [e for e in result.combat_log if e.tick == 0]
-        fires = [e for e in t0 if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
+        fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
+        assert len(fires) >= 1
         ev = fires[0]
         raw_self = ev.data["self_damage"]  # T6 computes this BEFORE DR
+        assert raw_self > 0, "deepest LR short round of a Liberator must self-damage the firer"
         # DR applied once by T3 helper → applied_self = round(raw_self × 0.67)
         expected_applied = round(raw_self * (1.0 - pvc_dr))
-        # Find the self-damage event on the player (C1 = "Player")
-        dmg_evs = [e for e in t0 if e.type == "damage" and e.target == "Player"]
-        # There may be 0 or 1 depending on raw_self
-        eff_mag = 12500.0 * GameConstants.NUKE_MAGNITUDE_SCALE
-        raw_self_computed = round(_nuke_dmg(MIN_DIST, 850, eff_mag) * GameConstants.NUKE_FRIENDLY_FACTOR)
-        if raw_self_computed > 0 and dmg_evs:
-            # Verify T3 applied exactly one DR
-            applied_actual = dmg_evs[0].data["amount"]
-            assert applied_actual == expected_applied, (
-                f"Expected self-damage={expected_applied}, got {applied_actual}. "
-                "DR must be applied exactly once, not zero or twice."
-            )
+        # Find the self-damage event on the player (C1 = "Player") on the fire tick
+        dmg_evs = [e for e in result.combat_log if e.tick == ev.tick and e.type == "damage" and e.target == "Player"]
+        assert dmg_evs, "self-damage event must be applied to the firer"
+        # Verify T3 applied exactly one DR
+        applied_actual = dmg_evs[0].data["amount"]
+        assert applied_actual == expected_applied, (
+            f"Expected self-damage={expected_applied}, got {applied_actual}. "
+            "DR must be applied exactly once, not zero or twice."
+        )
 
     def test_steerable_ignored(self):
         """Liberator (steerable=True) and Tormentor (steerable=False) use identical code path. Test 16.
@@ -626,11 +632,12 @@ class TestNuke:
         l1_tort = _loadout(secondary_weapons=[tort_adj], name="Tort")
         l2 = _loadout(base_armour=2000, name="Target")
         # Use identical RNG; just check both fire with weapon_fire events
+        # (D-014: first fire comes after the arming delay, not tick 0)
         for l1, name in ((l1_lib, "Lib"), (l1_tort, "Tort")):
             result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
-            t0 = [e for e in result.combat_log if e.tick == 0]
-            fires = [e for e in t0 if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
-            assert len(fires) == 1, f"Nuke should fire for {name}"
+            fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
+            assert len(fires) >= 1, f"Nuke should fire for {name}"
+            assert fires[0].tick > 0, f"Nuke must not fire at tick 0 for {name} (arming delay)"
 
     def test_nuke_no_accuracy_roll(self):
         """Nuke fires at full damage regardless of cloak-like state — no accuracy roll path. Test 17."""
@@ -642,10 +649,9 @@ class TestNuke:
         # Even with AlwaysMiss (which would prevent primary hits), nuke still fires
         # because nukes skip the accuracy roll
         result = TickResolver().resolve(l1, l2, rng=_AlwaysMiss())
-        t0 = [e for e in result.combat_log if e.tick == 0]
-        fires = [e for e in t0 if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
-        # Nuke should fire; payload has no hit/accuracy fields
-        assert len(fires) == 1
+        fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
+        # Nuke should fire (after the D-014 arming delay); payload has no hit/accuracy fields
+        assert len(fires) >= 1
         assert "hit" not in fires[0].data
         assert "accuracy" not in fires[0].data
 
@@ -679,6 +685,137 @@ class TestNuke:
 
         assert abs(epi42a - epi42b) < 1e-12, "Same seed must reproduce same epicenter"
         assert abs(epi42a - epi99) > 1e-6, "Different seeds must produce different epicenters"
+
+
+# ===========================================================================
+# D-014: two-regime detonation window, arming delay, yield interference
+# ===========================================================================
+
+
+class TestNukeD014:
+    def _nuke(self, name: str = "TestNuke", speed_ms: int = 6000, damage: float = 850.0) -> WeaponStats:
+        return _secondary(
+            name=name, subtype="nuke", damage=damage, speed_ms=speed_ms, range_m=13800.0, magnitude_m=12500.0
+        )
+
+    def test_window_lr_regime(self):
+        """d > threshold → window = [NEAR_FRAC × d, d]; no overshoot at range."""
+        from src.services.combat_resolver import _nuke_window
+
+        assert _nuke_window(3200.0) == (1280.0, 3200.0)
+        assert _nuke_window(2000.0) == (800.0, 2000.0)
+        assert _nuke_window(5000.0) == (2000.0, 5000.0)
+
+    def test_window_cr_regime(self):
+        """d ≤ threshold → window = [max(0, d−SHORT), d+OVERSHOOT]; floor at 0."""
+        from src.services.combat_resolver import _nuke_window
+
+        assert _nuke_window(1000.0) == (400.0, 1400.0)  # boundary is CR (strict >)
+        assert _nuke_window(700.0) == (100.0, 1100.0)
+        assert _nuke_window(500.0) == (0.0, 900.0)  # short edge floored at 0
+        assert _nuke_window(300.0) == (0.0, 700.0)
+
+    def test_window_regime_boundary_continuous(self):
+        """Window low edges meet at the regime boundary (0.40×1000 == 1000−600)."""
+        from src.services.combat_resolver import _nuke_window
+
+        lo_cr, _ = _nuke_window(1000.0)
+        lo_lr, _ = _nuke_window(1000.0 + 1e-9)
+        assert abs(lo_cr - lo_lr) < 1e-3
+
+    def test_initial_cooldown_nuke_only(self):
+        """Nukes start on full cooldown (arming delay); all other subtypes start ready."""
+        nuke = self._nuke(speed_ms=6000)
+        missile = _secondary(name="M", subtype="missile", speed_ms=4000, range_m=5000.0)
+        rocket = _secondary(name="R", subtype="rocket", speed_ms=3000, range_m=5000.0)
+        state = _init_combatant(_loadout(secondary_weapons=[nuke, missile, rocket]), is_player=False)
+        by_name = {sw.name: sw for sw in state.effective_secondaries}
+        assert by_name["TestNuke"].cooldown_remaining_ms == 6000, "nuke must start on full cooldown"
+        assert by_name["M"].cooldown_remaining_ms == 0
+        assert by_name["R"].cooldown_remaining_ms == 0
+
+    def test_nuke_first_fire_after_one_full_cooldown(self):
+        """Nuke's first fire lands exactly one cooldown into the fight.
+
+        Pin without hardcoding tick arithmetic: a missile with the SAME
+        loading_speed fires at tick 0 and again one cooldown later — the nuke's
+        FIRST fire must land on the missile's SECOND fire tick.
+        """
+        speed = 6000
+        nuke = self._nuke(speed_ms=speed)
+        missile = _secondary(name="M", subtype="missile", speed_ms=speed, range_m=13800.0)
+        l1 = _loadout(secondary_weapons=[nuke, missile], base_armour=5000, name="Firer")
+        l2 = _loadout(base_armour=99_999, name="Target")
+        result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
+        nuke_fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
+        missile_fires = [
+            e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "missile"
+        ]
+        assert missile_fires[0].tick == 0, "missile must stay ready-to-fire at tick 0"
+        assert len(nuke_fires) >= 1 and len(missile_fires) >= 2
+        # Phase order is decrement-then-fire within a tick: the nuke's init cooldown
+        # (set BEFORE tick 0) expires one tick before the missile's (set DURING tick 0's
+        # fire phase). Both gaps equal exactly loading_speed_ms of game time.
+        assert nuke_fires[0].tick == speed // TICK_MS - 1, (
+            "nuke first fire must land exactly one full cooldown into the fight"
+        )
+        assert missile_fires[1].tick - missile_fires[0].tick == speed // TICK_MS
+
+    def test_stack_falloff_sequence(self):
+        """Successive detonations by one side: stack_mult = 1.0, 0.5, 0.25, ... ."""
+        n1 = self._nuke(name="NukeA", speed_ms=6000)
+        n2 = self._nuke(name="NukeB", speed_ms=6000)
+        l1 = _loadout(secondary_weapons=[n1, n2], base_armour=99_999, name="Firer")
+        l2 = _loadout(base_armour=99_999, name="Target")
+        result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
+        mults = [
+            e.data["stack_mult"] for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"
+        ]
+        assert len(mults) >= 4
+        assert mults[:4] == [1.0, 0.5, 0.25, 0.125]
+
+    def test_stack_falloff_per_side_independent(self):
+        """Each side's first detonation is full-yield — counters don't cross sides."""
+        l1 = _loadout(secondary_weapons=[self._nuke(name="N1")], base_armour=99_999, name="C1")
+        l2 = _loadout(secondary_weapons=[self._nuke(name="N2")], base_armour=99_999, name="C2")
+        result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
+        first_by_side: dict[int, float] = {}
+        for e in result.combat_log:
+            if e.type == "weapon_fire" and e.data.get("subtype") == "nuke":
+                first_by_side.setdefault(e.data["side"], e.data["stack_mult"])
+        assert first_by_side == {1: 1.0, 2: 1.0}
+
+    def test_stack_falloff_scales_both_damages(self):
+        """Second detonation: opponent AND self damage both carry the 0.5 multiplier."""
+        n1 = self._nuke(name="NukeA", speed_ms=6000)
+        n2 = self._nuke(name="NukeB", speed_ms=6000)
+        l1 = _loadout(secondary_weapons=[n1, n2], base_armour=99_999, name="Firer")
+        l2 = _loadout(base_armour=99_999, name="Target")
+        result = TickResolver().resolve(l1, l2, rng=_FixedEpicenter(0.0))  # epicenter = window_lo
+        fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
+        assert len(fires) >= 2
+        first, second = fires[0].data, fires[1].data
+        # Same tick, same window, same epicenter → only the stack multiplier differs
+        assert fires[0].tick == fires[1].tick
+        assert first["epicenter"] == second["epicenter"]
+        eff_mag = 12500.0 * GameConstants.NUKE_MAGNITUDE_SCALE
+        d_opp, d_firer = first["d_opponent"], first["d_firer"]
+        assert second["opponent_damage"] == round(_nuke_dmg(d_opp, 850, eff_mag) * 0.5)
+        assert second["self_damage"] == round(
+            _nuke_dmg(d_firer, 850, eff_mag) * 0.5 * GameConstants.NUKE_FRIENDLY_FACTOR
+        )
+
+    def test_epicenter_always_inside_window(self):
+        """Real RNG sweep: every detonation's epicenter lies inside its declared window."""
+        l1 = _loadout(secondary_weapons=[self._nuke()], base_armour=99_999, name="Firer")
+        l2 = _loadout(base_armour=99_999, name="Target")
+        for seed in (1, 7, 42, 99):
+            result = TickResolver().resolve(l1, l2, rng=random.Random(seed))
+            for e in result.combat_log:
+                if e.type == "weapon_fire" and e.data.get("subtype") == "nuke":
+                    assert e.data["window_lo"] <= e.data["epicenter"] <= e.data["window_hi"]
+                    # window edges always consistent with one of the two regimes
+                    assert e.data["window_lo"] >= 0.0
 
 
 # ===========================================================================
@@ -883,12 +1020,16 @@ class TestCrossSubtype:
             l1 = _loadout(secondary_weapons=[sw], base_armour=2000, name="Attacker")
             l2 = _loadout(base_armour=2000, name="Target")
             result = TickResolver(seed=0).resolve(l1, l2, rng=_AlwaysHit())
-            # Check secondary starts at cooldown 0
             state = _init_combatant(l1, is_player=False)
             sw_rt = state.effective_secondaries[0]
-            assert sw_rt.cooldown_remaining_ms == 0, f"{subtype_name}: should start at 0"
-            # All subtypes except shock-blast fire on tick 0
-            # Shock-blast has a range guard (< SHOCK_BLAST_TRIGGER_RANGE_M = 500m) — fires later
+            if subtype_name == "nuke":
+                # D-014: nukes start on FULL cooldown (arming delay)
+                assert sw_rt.cooldown_remaining_ms == speed, f"{subtype_name}: should start on full cooldown"
+            else:
+                assert sw_rt.cooldown_remaining_ms == 0, f"{subtype_name}: should start at 0"
+            # All subtypes except shock-blast and nuke fire on tick 0:
+            # - shock-blast has a range guard (< SHOCK_BLAST_TRIGGER_RANGE_M = 500m) — fires later
+            # - nuke has the D-014 arming delay — first fire one full cooldown in
             if subtype_name == "shock-blast":
                 # Verify it fires at some point (not tick 0, but still fires)
                 all_fires = [
@@ -900,6 +1041,20 @@ class TestCrossSubtype:
                 ]
                 assert len(all_fires) >= 1, f"{subtype_name}: should fire at some point in the fight"
                 assert all_fires[0].tick > 0, f"{subtype_name}: must NOT fire on tick 0 (FIX 2 range guard)"
+            elif subtype_name == "nuke":
+                all_fires = [
+                    e
+                    for e in result.combat_log
+                    if e.type == "weapon_fire"
+                    and e.data.get("slot") == "secondary"
+                    and e.data.get("subtype") == "nuke"
+                ]
+                assert len(all_fires) >= 2, f"{subtype_name}: should fire repeatedly after arming"
+                assert all_fires[0].tick > 0, f"{subtype_name}: must NOT fire on tick 0 (D-014 arming delay)"
+                # Cooldown reset after fire: consecutive fires exactly one cooldown apart
+                assert all_fires[1].tick - all_fires[0].tick == speed // TICK_MS, (
+                    f"{subtype_name}: cooldown must reset to loading_speed_ms after each fire"
+                )
             else:
                 t0 = [
                     e
@@ -964,10 +1119,18 @@ class TestCrossSubtype:
         assert "fired" in c and "hits" in c and "damage_per_hit" in c and "total_damage" in c
         assert "hit" not in c  # condensed — no per-shot hit boolean (that's only for single-shot weapons)
 
-        # nuke: {slot, subtype, weapon, epicenter, opponent_damage, self_damage}
-        assert "nuke" in ev_by_sub
-        n = ev_by_sub["nuke"]
+        # nuke: D-014 arming delay → NOT on tick 0; payload verified on its first-fire tick
+        # {slot, subtype, weapon, epicenter, window_lo, window_hi, stack_mult,
+        #  d_firer, d_opponent, opponent_damage, self_damage, side}
+        assert "nuke" not in ev_by_sub, "Nuke must NOT fire on tick 0 (D-014 arming delay)"
+        nuke_fire_ev = next(
+            (e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"),
+            None,
+        )
+        assert nuke_fire_ev is not None, "Nuke must fire after its arming delay"
+        n = nuke_fire_ev.data
         assert "epicenter" in n and "opponent_damage" in n and "self_damage" in n
+        assert "window_lo" in n and "window_hi" in n and "stack_mult" in n  # D-014 fields
         assert "hit" not in n and "accuracy" not in n  # no accuracy roll
 
         # shock-blast: does NOT fire on tick 0 (FIX 2 range guard; fires only inside 500m)

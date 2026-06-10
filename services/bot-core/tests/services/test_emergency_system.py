@@ -599,7 +599,7 @@ class TestESEndToEnd:
         )
         firer_loadout = ShipLoadout(
             ship_name="NukeFirer",
-            base_armour=10,  # hull=10 — nuke self-damage (≈942 at NUKE_FRIENDLY_FACTOR=0.25) is lethal
+            base_armour=10,  # hull=10 — nuke self-damage (huge payload × NUKE_FRIENDLY_FACTOR) is lethal
             modules=[_es_mod()],
             weapons=[small_primary],
             secondary_weapons=[nuke_weapon],

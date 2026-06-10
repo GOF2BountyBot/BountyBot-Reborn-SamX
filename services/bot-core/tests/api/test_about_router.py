@@ -13,6 +13,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.services.game_constants import GameConstants
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1047,7 +1049,7 @@ class TestT11CombatFieldEnrichment:
         data = resp.json()
         assert data["nuke_effective_magnitude_m"] == 1250
         assert data["nuke_direct_damage"] == 850
-        assert data["nuke_self_damage_factor"] == pytest.approx(0.25)
+        assert data["nuke_self_damage_factor"] == pytest.approx(GameConstants.NUKE_FRIENDLY_FACTOR)  # 0.50 (D-014)
 
     def test_extinctor_nuke_effective_magnitude(self, client, mock_repos):
         """AMR Extinctor nuke: nuke_effective_magnitude_m == round(40000 * 0.10) == 4000."""

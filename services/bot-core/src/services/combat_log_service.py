@@ -187,11 +187,49 @@ class CombatLogService:
                 f"c2={combatant2_name!r}(uid={combatant2_user_id}) "
                 f"winner={winner_name!r}"
             )
+            # Invalidate the gateway's per-user combat-log autocomplete cache for
+            # both HUMAN combatants. _repo.add commits the row (commit=True default),
+            # so this fires AFTER the combat_log row is durable. NPC combatants
+            # (NULL user_id, PvC criminal side) are skipped inside the helper.
+            # Fire-and-forget + strictly non-fatal: a gateway push failure must never
+            # break the fight finalizer (this is the single chokepoint for BOTH PvC
+            # and PvP; invalidate-only is rollback-safe — the next cold-fill re-reads
+            # committed state).
+            self._schedule_combatlog_invalidate(
+                combat_meta.guild_id, combatant1_user_id, combatant2_user_id
+            )
             return persisted.id
         except Exception as exc:
             flogger.error(f"CombatLog persist failed: context={context!r} guild={combat_meta.guild_id}: {exc}")
             await session.rollback()
             raise
+
+    @staticmethod
+    def _schedule_combatlog_invalidate(
+        guild_id: int, combatant1_user_id: int | None, combatant2_user_id: int | None
+    ) -> None:
+        """Fire the gateway combat-log invalidate push without blocking the finalizer.
+
+        Best-effort: schedules the push as a background task when an event loop is
+        running; degrades to a synchronous best-effort call otherwise. Any failure
+        is swallowed so the fight finalizer is never affected.
+        """
+        import asyncio
+
+        from utils.gateway_push import push_combatlog_invalidate_both
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(  # noqa: RUF006 — fire-and-forget; non-fatal push
+                push_combatlog_invalidate_both(guild_id, combatant1_user_id, combatant2_user_id),
+                name=f"combatlog-invalidate-{guild_id}",
+            )
+        except RuntimeError:
+            # No running loop (e.g. certain test contexts) — skip silently; the
+            # 120s gateway TTL still self-heals stale entries.
+            flogger.debug("_schedule_combatlog_invalidate: no running loop; skipping push")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"_schedule_combatlog_invalidate: failed to schedule push: {type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------------ #
     # Read path — /combat-log Discord command                              #

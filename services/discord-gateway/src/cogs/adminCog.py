@@ -123,6 +123,16 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         self._ship_catalog: AutocompleteCache[str, list[str]] = AutocompleteCache(
             ttl_seconds=None, name="adminCog-ship-catalog"
         )
+        # Guild-scoped pending-duel cache for /admin_duel (distinct from DuelCog's
+        # per-player caches — this is the guild-wide admin view). Consistency via
+        # invalidate-and-cold-fill + a 300s TTL dead-man switch: admin_duel is rare
+        # and low-traffic, so a 1.0s cold-fill is acceptable and avoids a second
+        # push-payload shape (documented divergence from the per-player push model).
+        self._admin_pending_duel_cache: AutocompleteCache[int, list[dict]] = AutocompleteCache(
+            ttl_seconds=float(os.getenv("AUTOCOMPLETE_ADMIN_DUEL_TTL_SECONDS", "300")),
+            refresh_fn=self._fetch_admin_pending_duels,
+            name="adminCog-pending-duels",
+        )
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         bot.loop.create_task(self._preload_render_settings())
         bot.loop.create_task(self._preload_static_catalogs())
@@ -205,6 +215,29 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 "autocomplete will be empty"
             )
             self._ship_catalog.set("all", [])
+
+    async def _fetch_admin_pending_duels(self, guild_id: int) -> list[dict]:
+        """Refresh the guild-wide pending-duel list for /admin_duel. Cache refresh_fn.
+
+        Pre-computes ``_norm`` at fill time so the hot autocomplete path performs
+        only a substring check per keystroke.
+        """
+        resp = await self.http_client.get(
+            f"{api_base}/duels/pending-all", params={"guild_id": guild_id}, timeout=3.0
+        )
+        resp.raise_for_status()
+        duels = resp.json()
+        for d in duels:
+            challenger = d.get("challenger_name") or f"Player {d.get('challenger_id', '?')}"
+            target = d.get("target_name") or f"Player {d.get('target_id', '?')}"
+            stakes = d.get("stakes", 0)
+            label = (
+                f"{challenger} vs {target} — {stakes:,} credits"
+                if stakes
+                else f"{challenger} vs {target} — friendly duel"
+            )
+            d["_norm"] = normalize_for_search(label)
+        return duels
 
     async def render_setting_autocomplete(
         self, _interaction: discord.Interaction, current: str
@@ -2182,25 +2215,32 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             # Attempt to resolve the target user from the partially-filled command
             target_user = getattr(interaction.namespace, "user", None)
             if target_user is not None:
+                from utils import autocomplete_state
                 from utils.autocomplete_helpers import resolve_player_id
 
+                # GATE 1 (cold-fill): resolve target user → bot-core player_id.
                 player_id = await resolve_player_id(
                     self.http_client, api_base, target_user.id, interaction.guild_id, timeout=3.0
                 )
                 if player_id is not None:
-                    resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=5)
-                    if resp.status_code == 200:
-                        ships = resp.json()
-                        choices = [
-                            app_commands.Choice(
-                                name=s.get("ship_name", s.get("name", "")),
-                                value=s.get("ship_name", s.get("name", "")),
-                            )
-                            for s in ships
-                            if norm_current in normalize_for_search(s.get("ship_name", s.get("name", "")))
-                        ]
+                    # GATE 2 (cold-fill): REUSE the shared ships_cache (key = (guild, player_id))
+                    # instead of a live GET per keystroke. ships_cache is already warmed for
+                    # active players and invalidated by setactive/sell-ship/give-ship/admin-remove-ship.
+                    sc = autocomplete_state.ships_cache
+                    ships_nc = sc.peek((interaction.guild_id, player_id)) if sc else None
+                    if ships_nc is None and sc is not None:
+                        ships_nc = await sc.get_with_timeout((interaction.guild_id, player_id), timeout=1.0)
+                    if ships_nc is not None:
+                        choices: list[app_commands.Choice[str]] = []
+                        for nc in ships_nc:
+                            raw = nc.raw if hasattr(nc, "raw") else nc
+                            ship_name = raw.get("ship_name") or raw.get("name") or ""
+                            if ship_name and norm_current in normalize_for_search(ship_name):
+                                choices.append(app_commands.Choice(name=ship_name, value=ship_name))
                         return choices[:25]
-                # Player resolution failed or API error — fall through to game-data fallback
+                # Player resolution failed, ships_cache miss for an un-warmed target, or guild
+                # not configured — fall through to the game-data catalog fallback (intended
+                # degrade path; not every guild member is warmed).
                 flogger.warning(
                     f"player_ship_autocomplete: could not resolve player ships for "
                     f"user={getattr(target_user, 'id', None)} guild={interaction.guild_id}; "
@@ -2615,17 +2655,20 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         """
         try:
             guild_id = interaction.guild_id
-            resp = await self.http_client.get(
-                f"{api_base}/duels/pending-all",
-                params={"guild_id": guild_id},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            duels = resp.json()
 
+            # Sentinel is ALWAYS first, even on a cold/empty cache.
             choices: list[app_commands.Choice[str]] = [
                 app_commands.Choice(name="⚠️ Cancel ALL pending duels", value="all"),
             ]
+
+            # Guild-scoped cache: peek → single 1.0s cold-fill (within budget).
+            duels = self._admin_pending_duel_cache.peek(guild_id)
+            if duels is None:
+                duels = await self._admin_pending_duel_cache.get_with_timeout(guild_id, timeout=1.0)
+            if duels is None:
+                return choices
+
+            norm_current = normalize_for_search(current)
             for d in duels[:24]:  # max 24 duels + 1 "all" = 25 total (Discord limit)
                 duel_id = d.get("id")
                 challenger = d.get("challenger_name") or f"Player {d.get('challenger_id', '?')}"
@@ -2635,6 +2678,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     label = f"{challenger} vs {target} — {stakes:,} credits"
                 else:
                     label = f"{challenger} vs {target} — friendly duel"
+                norm_label = d.get("_norm") or normalize_for_search(label)
+                if norm_current and norm_current not in norm_label:
+                    continue
                 # Discord choice names are max 100 chars
                 if len(label) > 100:
                     label = label[:97] + "..."
@@ -2685,6 +2731,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 flogger.info(
                     f"Admin {interaction.user} cancelled all {count} pending duels in guild {interaction.guild_id}"
                 )
+                # Invalidate the guild-scoped admin-duel cache (cold-fill on next keystroke).
+                self._admin_pending_duel_cache.invalidate(interaction.guild_id)
             except httpx.HTTPStatusError as e:
                 await report_api_error(interaction, e)
             except Exception as e:  # pylint: disable=broad-exception-caught
@@ -2721,6 +2769,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 flogger.info(f"Admin {interaction.user} cancelled duel_id={duel_id} in guild {interaction.guild_id}")
+                # Invalidate the guild-scoped admin-duel cache (cold-fill on next keystroke).
+                self._admin_pending_duel_cache.invalidate(interaction.guild_id)
 
             except httpx.HTTPStatusError as e:
                 await report_api_error(interaction, e)

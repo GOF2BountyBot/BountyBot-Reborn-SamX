@@ -181,6 +181,15 @@ def cog(mock_bot):
 
 
 class TestBattleAutocomplete:
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self, cog):
+        # The cog fixture is module-scoped, so the per-user _combatlog_cache persists
+        # across tests. Clear it before each test so the cold-fill path actually
+        # fetches that test's freshly-mocked http_client.get data instead of a stale
+        # cached list from a prior test (the new cache is the point of these tests).
+        cog._combatlog_cache.clear()
+        yield
+
     async def test_returns_choices_for_invoker(self, cog):
         items = [_make_list_item(row_id=1, opponent_name="General_Failure")]
         cog.http_client.get = AsyncMock(return_value=_make_mock_response(items))

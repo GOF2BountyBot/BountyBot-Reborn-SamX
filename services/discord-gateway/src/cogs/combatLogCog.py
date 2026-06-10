@@ -15,6 +15,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -76,10 +77,39 @@ class CombatLogCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        # Per-user combat-log autocomplete cache (the flagship per-user case).
+        # Key = (guild_id, discord_user_id). High key cardinality (every user who
+        # ever fought) → LRU max_entries is MANDATORY. Short TTL is a dead-man
+        # switch: even if a bot-core invalidate push is ever missed, a stale list
+        # self-corrects within the TTL window (combat-log is a read-only history).
+        self._combatlog_cache: AutocompleteCache[tuple[int, int], list[dict]] = AutocompleteCache(
+            ttl_seconds=float(os.getenv("AUTOCOMPLETE_COMBATLOG_TTL_SECONDS", "120")),
+            refresh_fn=self._fetch_combat_log,
+            name="combatlog",
+            max_entries=int(os.getenv("AUTOCOMPLETE_COMBATLOG_MAX_ENTRIES", "2000")),
+        )
         flogger.debug("CombatLogCog initialized")
 
     async def cog_unload(self):
         await self.http_client.aclose()
+
+    async def _fetch_combat_log(self, key: tuple[int, int]) -> list[dict]:
+        """Refresh one user's recent fights from bot-core. Called by _combatlog_cache.
+
+        Pre-computes ``_norm`` (lowercased choice label) at fill time so the hot
+        autocomplete path performs only a pure substring check per keystroke.
+        """
+        guild_id, user_id = key
+        resp = await self.http_client.get(
+            f"{api_base}/combat-log",
+            params={"user_id": user_id, "guild_id": guild_id, "limit": 25},
+            timeout=3.0,
+        )
+        resp.raise_for_status()
+        items = resp.json()
+        for it in items:
+            it["_norm"] = _make_choice_label(it).lower()
+        return items
 
     # ------------------------------------------------------------------
     # Autocomplete
@@ -90,12 +120,10 @@ class CombatLogCog(commands.Cog):
     ) -> list[app_commands.Choice[int]]:
         """Populate /combat-log battle param with the invoker's recent fights.
 
-        Calls GET /api/v1/combat-log?user_id=<discord_id>&guild_id=<guild_id>&limit=25.
-        The invoker's Discord user_id is used directly (no player-id resolution needed
-        for this read-only listing endpoint).
-
-        Returns up to 25 choices (Discord's autocomplete cap).
-        Values are battle IDs (int).
+        Served from the per-user ``_combatlog_cache`` (key = (guild_id, discord_user_id)).
+        On a peek miss, a single 1.0s cold-fill populates the cache (the listing
+        endpoint keys on the invoker's Discord id directly — single gate, well within
+        the 3s autocomplete budget). Values are battle IDs (int).
         """
         try:
             guild_id = interaction.guild_id
@@ -103,21 +131,19 @@ class CombatLogCog(commands.Cog):
             if guild_id is None:
                 return []
 
-            resp = await self.http_client.get(
-                f"{api_base}/combat-log",
-                params={"user_id": user_id, "guild_id": guild_id, "limit": 25},
-                timeout=5,
-            )
-            if resp.status_code != 200:
+            key = (guild_id, user_id)
+            items = self._combatlog_cache.peek(key)
+            if items is None:
+                items = await self._combatlog_cache.get_with_timeout(key, timeout=1.0)
+            if items is None:
                 return []
 
-            items = resp.json()
+            norm_current = current.lower()
             choices: list[app_commands.Choice[int]] = []
             for item in items:
-                label = _make_choice_label(item)
-                # Filter by current (case-insensitive substring)
-                if current.lower() in label.lower() or current == "":
-                    choices.append(app_commands.Choice(name=label, value=item["id"]))
+                norm_label = item.get("_norm") or _make_choice_label(item).lower()
+                if norm_current in norm_label:
+                    choices.append(app_commands.Choice(name=_make_choice_label(item), value=item["id"]))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []

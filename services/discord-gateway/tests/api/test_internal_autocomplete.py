@@ -716,3 +716,87 @@ class TestDuelCachePush:
         assert resp.status_code == 204
         peeked = mock_duel_cog._pending_duel_cache.peek((_GUILD_ID, _PLAYER_ID))
         assert peeked == v2_pending, f"Last-write-wins: expected v2, got {peeked!r}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: POST /internal/autocomplete/combatlog-cache/{guild_id}/{user_id}
+# ---------------------------------------------------------------------------
+
+
+_USER_ID = 797977840430612500
+
+
+def _make_mock_invalidatable_cache():
+    """Mock that behaves like AutocompleteCache for set/peek/invalidate."""
+    store: dict = {}
+    cache = MagicMock()
+    cache.set = lambda k, v: store.__setitem__(k, v)
+    cache.peek = lambda k: store.get(k)
+    cache.invalidate = lambda k: store.pop(k, None)
+    cache._store = store
+    return cache
+
+
+@pytest.fixture
+def mock_combatlog_cog():
+    cog = MagicMock()
+    cog._combatlog_cache = _make_mock_invalidatable_cache()
+    return cog
+
+
+def _bot_with_combatlog(cog):
+    bot = MagicMock()
+    bot.is_ready.return_value = True
+    bot.get_cog = lambda name: cog if name == "CombatLogCog" else None
+    return bot
+
+
+class TestCombatLogCacheInvalidate:
+    def test_valid_auth_drops_key_returns_204(self, mock_combatlog_cog):
+        mock_combatlog_cog._combatlog_cache.set((_GUILD_ID, _USER_ID), [{"id": 1}])
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(_bot_with_combatlog(mock_combatlog_cog))
+            client = TestClient(app, raise_server_exceptions=True)
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/combatlog-cache/{_GUILD_ID}/{_USER_ID}",
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+        assert resp.status_code == 204, resp.text
+        assert mock_combatlog_cog._combatlog_cache.peek((_GUILD_ID, _USER_ID)) is None
+
+    def test_wrong_auth_returns_401(self, mock_combatlog_cog):
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(_bot_with_combatlog(mock_combatlog_cog))
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/combatlog-cache/{_GUILD_ID}/{_USER_ID}",
+                headers={"X-Internal-Auth": "wrong"},
+            )
+        assert resp.status_code == 401
+
+    def test_no_cog_graceful_noop_returns_204(self):
+        bot = MagicMock()
+        bot.is_ready.return_value = True
+        bot.get_cog = MagicMock(return_value=None)
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(bot)
+            client = TestClient(app, raise_server_exceptions=True)
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/combatlog-cache/{_GUILD_ID}/{_USER_ID}",
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+        assert resp.status_code == 204
+
+    def test_invalidate_only_other_keys_untouched(self, mock_combatlog_cog):
+        other_key = (_GUILD_ID, 111111111)
+        mock_combatlog_cog._combatlog_cache.set((_GUILD_ID, _USER_ID), [{"id": 1}])
+        mock_combatlog_cog._combatlog_cache.set(other_key, [{"id": 2}])
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(_bot_with_combatlog(mock_combatlog_cog))
+            client = TestClient(app, raise_server_exceptions=True)
+            client.post(
+                f"/api/v1/internal/autocomplete/combatlog-cache/{_GUILD_ID}/{_USER_ID}",
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+        assert mock_combatlog_cog._combatlog_cache.peek((_GUILD_ID, _USER_ID)) is None
+        assert mock_combatlog_cog._combatlog_cache.peek(other_key) == [{"id": 2}]

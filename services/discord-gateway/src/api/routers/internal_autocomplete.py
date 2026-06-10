@@ -175,6 +175,53 @@ async def push_duel_cache(
 
 
 # ---------------------------------------------------------------------------
+# Combat-log cache invalidate (per-user)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/combatlog-cache/{guild_id}/{user_id}",
+    status_code=204,
+    summary="Invalidate one user's combat-log autocomplete cache key",
+    description=(
+        "Called by bot-core's combat finalizer (CombatLogService.persist) once per "
+        "HUMAN combatant after a fight is logged, for BOTH PvC (/check) and PvP "
+        "(/duel-accept). Drops the per-user key so the next /combat-log autocomplete "
+        "keystroke cold-fills the freshly-written history. Invalidate-only (no "
+        "payload): cheaper than a full-list push for this high-cardinality per-user "
+        "cache, and the 120s TTL is a dead-man switch if a push is ever missed. "
+        "PvC criminal combatants have no Discord id and are never pushed (the caller "
+        "skips NULL user_ids). Gracefully no-ops when CombatLogCog is absent."
+    ),
+)
+async def invalidate_combatlog_cache(
+    request: Request,
+    guild_id: int,
+    user_id: int,
+) -> Response:
+    """Invalidate the per-user combat-log autocomplete cache for one (guild, user)."""
+    await _verify_auth(request.headers.get("x-internal-auth"))
+
+    bot = getattr(request.app.state, "bot", None)
+    if bot is None:
+        flogger.warning("invalidate_combatlog_cache: app.state.bot not available")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bot not initialised")
+
+    cog = bot.get_cog("CombatLogCog")
+    if cog is None or not hasattr(cog, "_combatlog_cache"):
+        # Graceful no-op so a transient cog-load gap never 500s the fight finalizer.
+        flogger.warning(
+            f"invalidate_combatlog_cache: CombatLogCog not loaded or _combatlog_cache absent "
+            f"(guild={guild_id} user={user_id}) — graceful no-op"
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    cog._combatlog_cache.invalidate((guild_id, user_id))
+    flogger.info(f"invalidate_combatlog_cache: dropped key for guild={guild_id} user={user_id}")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
 # Autocomplete cache health check
 # ---------------------------------------------------------------------------
 

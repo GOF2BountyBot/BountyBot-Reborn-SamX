@@ -400,6 +400,113 @@ async def warm_guild_duel_caches(bot, guild_id: int) -> None:
         flogger.warning(f"warm_guild_duel_caches({guild_id}): unexpected error: {type(exc).__name__}: {exc}")
 
 
+async def warm_guild_admin_duel_cache(bot, guild_id: int) -> None:
+    """Stage-2 startup warm for the AdminCog guild-scoped pending-duel cache.
+
+    Calls cog._admin_pending_duel_cache.get(guild_id) which triggers
+    _fetch_admin_pending_duels on a miss. Non-fatal.
+    """
+    try:
+        cog = bot.get_cog("AdminCog")
+        if cog is None or not hasattr(cog, "_admin_pending_duel_cache"):
+            flogger.debug(f"warm_guild_admin_duel_cache({guild_id}): AdminCog/_admin_pending_duel_cache absent; skip")
+            return
+        await cog._admin_pending_duel_cache.get(guild_id)
+        flogger.debug(f"warm_guild_admin_duel_cache({guild_id}): admin-duel cache warmed")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"warm_guild_admin_duel_cache({guild_id}): unexpected error: {type(exc).__name__}: {exc}")
+
+
+async def refresh_admin_duel_cache(bot) -> None:
+    """Scheduled job: round-robin refresh of AdminCog's guild-scoped admin-duel caches.
+
+    Iterates currently-cached guild keys and calls get() on each to reset the TTL.
+    Non-fatal.
+    """
+    try:
+        cog = bot.get_cog("AdminCog")
+        if cog is None or not hasattr(cog, "_admin_pending_duel_cache"):
+            flogger.debug("refresh_admin_duel_cache: AdminCog/_admin_pending_duel_cache absent; skip")
+            return
+        keys = list(cog._admin_pending_duel_cache.keys())
+        for guild_id in keys:
+            try:
+                await cog._admin_pending_duel_cache.get(guild_id)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"refresh_admin_duel_cache: failed guild={guild_id}: {type(exc).__name__}: {exc}")
+        flogger.debug(f"refresh_admin_duel_cache: refreshed {len(keys)} guild admin-duel caches")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"refresh_admin_duel_cache: failed: {type(exc).__name__}: {exc}")
+
+
+async def warm_guild_combatlog_caches(bot, guild_id: int) -> None:
+    """Stage-2 startup warm for the per-user combat-log cache.
+
+    Fires AFTER player_cache warm. For each player already in player_cache for this
+    guild, schedules a background get((guild_id, discord_user_id)) on the CombatLogCog
+    cache (semaphore-throttled). Non-fatal.
+    """
+    try:
+        cog = bot.get_cog("CombatLogCog")
+        if cog is None or not hasattr(cog, "_combatlog_cache"):
+            flogger.debug(f"warm_guild_combatlog_caches({guild_id}): CombatLogCog/_combatlog_cache absent; skip")
+            return
+        if autocomplete_state.player_cache is None:
+            return
+
+        sem = _get_semaphore()
+
+        async def _warm_user(user_id: int) -> None:
+            async with sem:
+                try:
+                    await cog._combatlog_cache.get((guild_id, user_id))
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"warm_guild_combatlog_caches({guild_id}): warm failed "
+                        f"user_id={user_id}: {type(exc).__name__}: {exc}"
+                    )
+
+        user_ids = [uid for g, uid in list(autocomplete_state.player_cache.keys()) if g == guild_id]
+        if user_ids:
+            tasks = [asyncio.create_task(_warm_user(uid), name=f"combatlog-warm-{guild_id}-{uid}") for uid in user_ids]
+            await asyncio.gather(*tasks)
+            flogger.info(f"warm_guild_combatlog_caches({guild_id}): warmed {len(user_ids)} users' combat-log caches")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"warm_guild_combatlog_caches({guild_id}): unexpected error: {type(exc).__name__}: {exc}")
+
+
+async def refresh_combatlog_round_robin(bot) -> None:
+    """Scheduled job: round-robin refresh of all currently-cached combat-log keys.
+
+    Fire-and-forget via asyncio.create_task — the semaphore throttles concurrency.
+    Non-fatal. Short TTL means this mostly keeps hot keys warm; missed invalidate
+    pushes also self-heal here.
+    """
+    try:
+        cog = bot.get_cog("CombatLogCog")
+        if cog is None or not hasattr(cog, "_combatlog_cache"):
+            flogger.debug("refresh_combatlog_round_robin: CombatLogCog/_combatlog_cache absent; skip")
+            return
+
+        sem = _get_semaphore()
+
+        async def _refresh_one(key: tuple) -> None:
+            async with sem:
+                try:
+                    await cog._combatlog_cache.get(key)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"refresh_combatlog_round_robin: refresh failed key={key}: {type(exc).__name__}: {exc}"
+                    )
+
+        keys = list(cog._combatlog_cache.keys())
+        for key in keys:
+            asyncio.create_task(_refresh_one(key), name=f"combatlog-refresh-{key}")  # noqa: RUF006
+        flogger.debug(f"refresh_combatlog_round_robin: dispatched {len(keys)} combat-log refresh tasks")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"refresh_combatlog_round_robin: failed: {type(exc).__name__}: {exc}")
+
+
 async def refresh_bounty_cache(bot) -> None:
     """Scheduled job: refresh bounty cache for all guilds the bot is in.
 
@@ -550,7 +657,27 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
             id=f"warm-duel-{guild.id}",
             replace_existing=True,
         )
-    flogger.info(f"register_warm_jobs: scheduled {len(bot.guilds)} guild warm jobs + duel cache warm jobs")
+        # Wave 1b: admin-duel (guild-scoped) cache warm alongside duel warm.
+        scheduler.add_job(
+            warm_guild_admin_duel_cache,
+            "date",
+            run_date=duel_warm_date,
+            args=[bot, guild.id],
+            id=f"warm-admin-duel-{guild.id}",
+            replace_existing=True,
+        )
+        # Wave 1b: per-user combat-log cache warm (depends on warmed player_cache).
+        scheduler.add_job(
+            warm_guild_combatlog_caches,
+            "date",
+            run_date=duel_warm_date,
+            args=[bot, guild.id],
+            id=f"warm-combatlog-{guild.id}",
+            replace_existing=True,
+        )
+    flogger.info(
+        f"register_warm_jobs: scheduled {len(bot.guilds)} guild warm jobs + duel/admin-duel/combatlog cache warm jobs"
+    )
 
     # One-shot Wave 2: warm the job cache ~30s after startup so the first
     # /scheduler_* command is always a cache hit.
@@ -615,4 +742,21 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
         args=[bot],
         replace_existing=True,
     )
-    flogger.info("register_warm_jobs: registered 6 recurring refresh jobs")
+    scheduler.add_job(
+        refresh_admin_duel_cache,
+        "interval",
+        minutes=5,
+        id="admin-duel-cache-refresh",
+        args=[bot],
+        replace_existing=True,
+    )
+    combatlog_refresh_min = int(os.getenv("AUTOCOMPLETE_COMBATLOG_REFRESH_MINUTES", "5"))
+    scheduler.add_job(
+        refresh_combatlog_round_robin,
+        "interval",
+        minutes=combatlog_refresh_min,
+        id="combatlog-cache-refresh",
+        args=[bot],
+        replace_existing=True,
+    )
+    flogger.info("register_warm_jobs: registered 8 recurring refresh jobs")

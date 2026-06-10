@@ -153,6 +153,21 @@ class DuelCog(commands.Cog):
         except Exception:  # pylint: disable=broad-exception-caught
             return None
 
+    def _invalidate_admin_duel_cache(self, guild_id: int) -> None:
+        """Invalidate AdminCog's guild-scoped admin-duel cache after a player duel mutation.
+
+        The /admin_duel dropdown is a guild-wide view of all pending duels, so any
+        player-side challenge/accept/reject/cancel changes it. Invalidate-and-cold-fill
+        keeps it fresh without a second push payload (300s TTL is the dead-man switch).
+        Non-fatal: never breaks the duel mutation if AdminCog is absent.
+        """
+        try:
+            admin_cog = self.bot.get_cog("AdminCog")
+            if admin_cog is not None and hasattr(admin_cog, "_admin_pending_duel_cache"):
+                admin_cog._admin_pending_duel_cache.invalidate(guild_id)
+        except Exception:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"_invalidate_admin_duel_cache: failed for guild={guild_id}; mutation still succeeded")
+
     # ------------------------------------------------------------------
     # Autocomplete
     # ------------------------------------------------------------------
@@ -338,6 +353,7 @@ class DuelCog(commands.Cog):
             try:
                 self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
                 self._pending_duel_cache.invalidate((interaction.guild_id, target_player_id))
+                self._invalidate_admin_duel_cache(interaction.guild_id)
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
                     f"/duel-challenge: duel cache invalidation failed for duel_id={duel_id}; "
@@ -462,6 +478,7 @@ class DuelCog(commands.Cog):
                 challenger_player_id = data.get("challenger_id")
                 if challenger_player_id is not None:
                     self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+                self._invalidate_admin_duel_cache(interaction.guild_id)
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
                     f"/duel-accept: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
@@ -737,6 +754,7 @@ class DuelCog(commands.Cog):
                 challenger_player_id = data.get("challenger_id")
                 if challenger_player_id is not None:
                     self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+                self._invalidate_admin_duel_cache(interaction.guild_id)
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
                     f"/duel-reject: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
@@ -837,6 +855,7 @@ class DuelCog(commands.Cog):
                 target_player_id = data.get("target_id")
                 if target_player_id is not None:
                     self._pending_duel_cache.invalidate((interaction.guild_id, target_player_id))
+                self._invalidate_admin_duel_cache(interaction.guild_id)
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
                     f"/duel-cancel: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"

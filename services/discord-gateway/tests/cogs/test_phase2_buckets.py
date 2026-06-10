@@ -13,7 +13,7 @@ import asyncio
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -200,6 +200,18 @@ class TestAdminDuelCache:
         assert admin_cog._admin_pending_duel_cache.peek(987654321) is not None
         admin_cog._admin_pending_duel_cache.invalidate(987654321)
         assert admin_cog._admin_pending_duel_cache.peek(987654321) is None
+
+    def test_sentinel_preserved_on_exception_mid_loop(self, admin_cog):
+        """An exception AFTER the sentinel is built (e.g. in normalize_for_search)
+        must still return the Cancel-ALL sentinel, never an empty list."""
+        # Warm cache so the handler proceeds past the cold-fill into the loop.
+        admin_cog._admin_pending_duel_cache.set(
+            987654321, [{"id": 5, "challenger_name": "A", "target_name": "B", "stakes": 100}]
+        )
+        with patch("cogs.adminCog.normalize_for_search", side_effect=RuntimeError("boom")):
+            res = asyncio.run(admin_cog.admin_duel_autocomplete(_mock_interaction(), "x"))
+        assert len(res) == 1
+        assert res[0].value == "all"
 
 
 class TestPlayerShipReuse:

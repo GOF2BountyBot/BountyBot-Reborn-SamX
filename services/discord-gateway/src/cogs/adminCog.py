@@ -1837,11 +1837,18 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 else ("primary_weapon", "secondary_weapon", "turret_weapon", "module")
             )
 
-            # Collect all candidate names across categories (deduplicated)
+            # Collect all candidate names across categories (deduplicated).
+            # Budget: at most two inline 1.0s cold-fills (gold-standard ≤2s rule);
+            # remaining categories peek-only. Catalog is normally pre-warmed.
             all_names: list[str] = []
             seen: set[str] = set()
+            cold_fills = 0
             for category in categories:
-                cat_names = await self._item_catalog.get(category) or []
+                cat_names = self._item_catalog.peek(category)
+                if cat_names is None and cold_fills < 2:
+                    cat_names = await self._item_catalog.get_with_timeout(category, timeout=1.0)
+                    cold_fills += 1
+                cat_names = cat_names or []
                 for name in cat_names:
                     if name and name not in seen:
                         seen.add(name)
@@ -1927,11 +1934,19 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 "falling back to all items"
             )
 
-            # Fallback: show all game-catalog items across all equippable categories
+            # Fallback: show all game-catalog items across all equippable categories.
+            # Budget: at most two inline 1.0s cold-fills (gold-standard ≤2s rule);
+            # remaining categories peek-only (the cold-fills' shielded refresh warms
+            # them for the next keystroke). Catalog is normally pre-warmed anyway.
             choices_fb: list[app_commands.Choice[str]] = []
             seen_fb: set[str] = set()
+            cold_fills_fb = 0
             for category in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
-                names = await self._item_catalog.get(category) or []
+                names = self._item_catalog.peek(category)
+                if names is None and cold_fills_fb < 2:
+                    names = await self._item_catalog.get_with_timeout(category, timeout=1.0)
+                    cold_fills_fb += 1
+                names = names or []
                 for name in names:
                     if name and name not in seen_fb and norm_current in normalize_for_search(name):
                         seen_fb.add(name)
@@ -1945,9 +1960,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     async def game_ship_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for ship names — served from preloaded in-memory cache (zero HTTP per keystroke)."""
+        """Autocomplete for ship names — served from preloaded in-memory cache (zero HTTP per keystroke).
+
+        Cold cache (e.g. just after /reload_autocomplete) self-heals via a single
+        bounded 1.0s cold-fill rather than an unbounded get() that could blow the
+        Discord autocomplete budget.
+        """
         try:
-            names = await self._ship_catalog.get("all") or []
+            names = self._ship_catalog.peek("all")
+            if names is None:
+                names = await self._ship_catalog.get_with_timeout("all", timeout=1.0)
+            names = names or []
             return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, names)]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
@@ -2264,8 +2287,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     "falling back to all ships"
                 )
 
-            # Fallback: show all ships from preloaded catalog (user param not yet selected, or resolution failed)
-            names = await self._ship_catalog.get("all") or []
+            # Fallback: show all ships from preloaded catalog (user param not yet selected, or
+            # resolution failed). Bounded 1.0s cold-fill instead of unbounded get() (budget).
+            names = self._ship_catalog.peek("all")
+            if names is None:
+                names = await self._ship_catalog.get_with_timeout("all", timeout=1.0)
+            names = names or []
             return [
                 app_commands.Choice(name=name, value=name)
                 for name in names
@@ -2667,16 +2694,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for /admin_duel duel parameter.
 
-        First choice is always "⚠️ Cancel ALL pending duels" (value="all").
-        Remaining choices are individual pending duels for this guild.
+        First choice is always "⚠️ Cancel ALL pending duels" (value="all") —
+        including the error path, so the admin can always cancel-all even if
+        the per-duel list can't be built.
         """
+        # Sentinel is ALWAYS first, even on a cold/empty cache OR an exception.
+        # Built BEFORE the try so the except handler can return it unconditionally.
+        choices: list[app_commands.Choice[str]] = [
+            app_commands.Choice(name="⚠️ Cancel ALL pending duels", value="all"),
+        ]
         try:
             guild_id = interaction.guild_id
-
-            # Sentinel is ALWAYS first, even on a cold/empty cache.
-            choices: list[app_commands.Choice[str]] = [
-                app_commands.Choice(name="⚠️ Cancel ALL pending duels", value="all"),
-            ]
 
             # Guild-scoped cache: peek → single 1.0s cold-fill (within budget).
             duels = self._admin_pending_duel_cache.peek(guild_id)
@@ -2706,7 +2734,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             return choices
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.debug(f"admin_duel_autocomplete error: {e}")
-            return []
+            # Preserve the Cancel-ALL sentinel even on error.
+            return choices
 
     @app_commands.command(name="admin_duel", description="[ADMIN] Cancel a pending duel or all pending duels")
     @app_commands.describe(duel="Select a pending duel to cancel, or 'All' to cancel everything")

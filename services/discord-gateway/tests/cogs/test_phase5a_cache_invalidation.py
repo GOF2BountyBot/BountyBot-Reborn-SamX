@@ -603,6 +603,48 @@ class TestInventoryCogCacheInvalidation:
         assert (interaction.guild_id, target_player["id"]) in calls
         mock_inv_ships.assert_not_called()
 
+    def test_give_credits_invalidates_both_players_player(self, mock_inventory_cog):
+        """give credits: invalidates the player cache for BOTH giver and recipient.
+
+        Regression guard for the give-bug fix — the recipient's player cache was
+        previously not invalidated, so a stale credit balance could linger.
+        """
+        import discord as dc
+
+        interaction = _create_mock_interaction(user_id=111)
+        target = MagicMock(spec=dc.Member)
+        target.id = 222
+        target.display_name = "Target"
+        target.mention = "<@222>"
+
+        source_player = _make_player(player_id=1, user_id=111, credits=1000)
+        target_player = _make_player(player_id=2, user_id=222, credits=0)
+
+        source_resp = _make_response(source_player)
+        target_resp = _make_response(target_player)
+        transfer_resp = _make_response({})
+        transfer_resp.status_code = 200
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[source_resp, target_resp, transfer_resp])
+
+        with patch("utils.autocomplete_state.invalidate_player") as mock_inv_player:
+            asyncio.run(
+                mock_inventory_cog.give.callback(
+                    mock_inventory_cog,
+                    interaction,
+                    target,
+                    "credits",
+                    500,
+                    None,
+                    None,
+                )
+            )
+
+        # Both players' player caches invalidated (keyed by Discord user id).
+        calls = [call.args for call in mock_inv_player.call_args_list]
+        assert (interaction.guild_id, interaction.user.id) in calls  # giver
+        assert (interaction.guild_id, target.id) in calls  # recipient (the previously-missing side)
+
     def test_equip_cache_invalidation_failure_does_not_fail_command(self, mock_inventory_cog):
         """AC-ROB-3: equip cache invalidation failure must not abort command."""
         interaction = _create_mock_interaction()

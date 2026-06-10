@@ -687,6 +687,17 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                         continue
                     _seen_item_names.add(item_name)
 
+                    # Secondaries are consumable rounds — scale the rolled quantity
+                    # so one refresh cycle can supply multiple players.
+                    if concrete_type == "secondary_weapon":
+                        subtype = await self._get_secondary_subtype_by_name(db, item_name)
+                        scaler = (
+                            GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY
+                            if subtype in GameConstants.SHOP_HEAVY_SECONDARY_SUBTYPES
+                            else GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD
+                        )
+                        item_quantity *= scaler
+
                     # Calculate price
                     base_price = await self._get_item_base_price(db, item_name)
 
@@ -834,6 +845,22 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             return random.choice(items).name if items else None
 
         return None
+
+    async def _get_secondary_subtype_by_name(self, db: AsyncSession, item_name: str) -> str:
+        """Resolve a secondary weapon's subtype from its name.
+
+        Uses the in-memory static cache when warm (bulk-refresh path),
+        otherwise falls back to a direct repository lookup. Returns ""
+        if the item cannot be found or carries no subtype.
+        """
+        if self._static_cache is not None:
+            for sw in self._static_cache["secondary"]:
+                if sw.name == item_name:
+                    return get_secondary_subtype(sw)
+            return ""
+
+        sw = await self.secondary_weapon_repo.get_by_name(db, item_name)
+        return get_secondary_subtype(sw) if sw is not None else ""
 
     async def _get_item_base_price(self, db: AsyncSession, item_name: str) -> int:
         """Look up the item's value field. Returns 0 if not found.

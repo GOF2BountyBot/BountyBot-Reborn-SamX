@@ -195,6 +195,14 @@ class GameConstants:
     SHOP_DEFAULT_TOOLS_NUM: int = 0
     TURRET_SPAWN_PROBABILITY: int = 45  # %
 
+    # Secondary weapons are consumable rounds; scale the rolled shop quantity so a
+    # single refresh cycle (6h default) can supply multiple players. Heavy ordnance
+    # scales less than standard ammo (missile, rocket, cluster-missile, ...).
+    # An item whose subtype is missing/unknown gets the STANDARD scaler.
+    SHOP_HEAVY_SECONDARY_SUBTYPES: frozenset[str] = frozenset({"nuke", "shock-blast"})
+    SHOP_SECONDARY_QTY_SCALER_HEAVY: int = 5
+    SHOP_SECONDARY_QTY_SCALER_STANDARD: int = 10
+
     # ------------------------------------------------------------------
     # Shop Rank Counts
     # ------------------------------------------------------------------
@@ -443,6 +451,8 @@ class GameConstants:
         cls.SHOP_DEFAULT_TURRETS_NUM = _track_int("SHOP_DEFAULT_TURRETS_NUM", 2)
         cls.SHOP_DEFAULT_TOOLS_NUM = _track_int("SHOP_DEFAULT_TOOLS_NUM", 0)
         cls.TURRET_SPAWN_PROBABILITY = _track_int("TURRET_SPAWN_PROBABILITY", 45)
+        cls.SHOP_SECONDARY_QTY_SCALER_HEAVY = _track_int("SHOP_SECONDARY_QTY_SCALER_HEAVY", 5)
+        cls.SHOP_SECONDARY_QTY_SCALER_STANDARD = _track_int("SHOP_SECONDARY_QTY_SCALER_STANDARD", 10)
 
         # Duels
         cls.DUEL_LOG_MAX_LENGTH = _track_int("DUEL_LOG_MAX_LENGTH", 10)

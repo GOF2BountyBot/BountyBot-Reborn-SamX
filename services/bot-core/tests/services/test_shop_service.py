@@ -32,6 +32,7 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
 from services.exceptions import InvalidItemTypeError
+from services.game_constants import GameConstants
 from services.shop_service import ShopService
 
 # ---------------------------------------------------------------------------
@@ -1986,3 +1987,167 @@ class TestCI11SecondaryWeaponOwnRange:
                 assert name not in deferred_names, (
                     f"Deferred subtype weapon '{name}' must never appear in shop (deferred-subtype regression)"
                 )
+
+
+# ===========================================================================
+# Tests: secondary-weapon shop quantity scalers (consumable rounds)
+# ===========================================================================
+
+
+def _make_config_secondary_only(qty_min: int = 3, qty_max: int = 3) -> MagicMock:
+    """Config that generates exactly one secondary per refresh and nothing else.
+
+    Fixed quantity range (default min=max=3) makes the scaled quantity
+    deterministic: rolled 3 × scaler.
+    """
+    count_map = {
+        "ship": {"min": 0, "max": 0},
+        "weapon": {"min": 0, "max": 0},
+        "secondary_weapon": {"min": 1, "max": 1},
+        "module": {"min": 0, "max": 0},
+        "turret": {"min": 0, "max": 0},
+    }
+    config = MagicMock()
+    config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+    config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
+    config.get_quantity_range = MagicMock(return_value={"min": qty_min, "max": qty_max})
+    return config
+
+
+class TestSecondaryQuantityScalers:
+    """Secondaries are consumable rounds: refresh_shop multiplies the rolled
+    quantity by SHOP_SECONDARY_QTY_SCALER_HEAVY for nuke/shock-blast and
+    SHOP_SECONDARY_QTY_SCALER_STANDARD for everything else."""
+
+    async def _refresh_and_capture_quantity(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
+    ) -> int:
+        """Run a secondary-only refresh drawing `weapon` and return the written quantity."""
+        mock_config_repo.get_by_guild_id.return_value = _make_config_secondary_only(qty_min=3, qty_max=3)
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=weapon)
+
+        quantities: list[int] = []
+
+        async def _fake_create_or_update(db, item_data):
+            quantities.append(item_data["quantity"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        async def _fake_get_random(db, item_type, tech_level):
+            return weapon.name if item_type == "secondary_weapon" else None
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert len(quantities) == 1, f"Expected exactly 1 secondary written, got {len(quantities)}"
+        return quantities[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("subtype", ["nuke", "shock-blast"])
+    async def test_heavy_subtypes_use_heavy_scaler(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, subtype
+    ):
+        """nuke/shock-blast: rolled 3 × HEAVY scaler (5) = 15."""
+        weapon = _make_secondary_weapon("AMR Extinctor", tech_level=1, subtype=subtype)
+        qty = await self._refresh_and_capture_quantity(
+            service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
+        )
+        expected = 3 * GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY
+        assert qty == expected, f"{subtype}: expected 3×{GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY}={expected}, got {qty}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("subtype", ["missile", "rocket", "cluster-missile"])
+    async def test_standard_subtypes_use_standard_scaler(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, subtype
+    ):
+        """missile/rocket/cluster-missile: rolled 3 × STANDARD scaler (10) = 30."""
+        weapon = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype=subtype)
+        qty = await self._refresh_and_capture_quantity(
+            service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
+        )
+        expected = 3 * GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD
+        assert qty == expected, f"{subtype}: expected 3×{GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD}={expected}, got {qty}"
+
+    @pytest.mark.asyncio
+    async def test_missing_subtype_falls_back_to_standard_scaler(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo
+    ):
+        """A secondary with no subtype in extra_atts gets the STANDARD scaler."""
+        weapon = MagicMock()
+        weapon.name = "Mystery Launcher"
+        weapon.tech_level = 1
+        weapon.value = 100
+        weapon.extra_atts = {}
+        qty = await self._refresh_and_capture_quantity(
+            service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
+        )
+        assert qty == 3 * GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD
+
+    @pytest.mark.asyncio
+    async def test_non_secondary_types_are_not_scaled(
+        self, service, mock_db, mock_config_repo, mock_shop_repo
+    ):
+        """Primary weapons keep the raw rolled quantity (no scaler applied)."""
+        count_map = {
+            "ship": {"min": 0, "max": 0},
+            "weapon": {"min": 1, "max": 1},
+            "secondary_weapon": {"min": 0, "max": 0},
+            "module": {"min": 0, "max": 0},
+            "turret": {"min": 0, "max": 0},
+        }
+        config = MagicMock()
+        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+        config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
+        config.get_quantity_range = MagicMock(return_value={"min": 3, "max": 3})
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        quantities: list[int] = []
+
+        async def _fake_create_or_update(db, item_data):
+            quantities.append(item_data["quantity"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        async def _fake_get_random(db, item_type, tech_level):
+            return "Micro Gun MK I" if item_type == "primary_weapon" else None
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert quantities == [3], f"primary_weapon quantity must stay at rolled 3 (unscaled), got {quantities}"
+
+    @pytest.mark.asyncio
+    async def test_subtype_lookup_uses_static_cache_when_warm(self, service, mock_db, mock_secondary_weapon_repo):
+        """_get_secondary_subtype_by_name reads the static cache (no repo call) when preloaded."""
+        weapon = _make_secondary_weapon("AMR Extinctor", tech_level=1, subtype="nuke")
+        service._static_cache = {"secondary": [weapon]}
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(
+            side_effect=AssertionError("repo must not be queried when static cache is warm")
+        )
+
+        subtype = await service._get_secondary_subtype_by_name(mock_db, "AMR Extinctor")
+        assert subtype == "nuke"
+
+        # Name missing from cache → "" without falling back to the repo
+        assert await service._get_secondary_subtype_by_name(mock_db, "Nonexistent") == ""
+
+    @pytest.mark.asyncio
+    async def test_subtype_lookup_falls_back_to_repo_when_cache_cold(
+        self, service, mock_db, mock_secondary_weapon_repo
+    ):
+        """_get_secondary_subtype_by_name queries the repo when no static cache is loaded."""
+        weapon = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype="rocket")
+        service._static_cache = None
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=weapon)
+
+        assert await service._get_secondary_subtype_by_name(mock_db, "Jet Rocket") == "rocket"
+
+        # Unknown item → ""
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=None)
+        assert await service._get_secondary_subtype_by_name(mock_db, "Nonexistent") == ""

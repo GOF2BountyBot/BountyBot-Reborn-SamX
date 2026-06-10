@@ -6,7 +6,7 @@ These tests MUST run against real Postgres (not SQLite) because:
   - ALTER COLUMN ... TYPE JSONB USING ::jsonb is PostgreSQL-only DDL.
   - JSONB sub-path operators (->, ->>) are PostgreSQL-only.
 
-The tests use the project's dev Postgres DB (172.19.0.2:5432, creds from .env.dev).
+The tests use the project's dev Postgres DB (bountydev-net bridge IP, creds from .env.dev).
 All DDL is isolated: tests upgrade → assert → downgrade within each test.
 Seed data is never touched — tests use synthetic rows or the information_schema.
 
@@ -52,10 +52,10 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
 # ---------------------------------------------------------------------------
-# Postgres connection (dev stack: bountydev-db reachable at 172.19.0.2:5432)
+# Postgres connection (dev stack: bountydev-db at the bountydev-net bridge IP (see _PG_URL))
 # ---------------------------------------------------------------------------
 
-_PG_SYNC_URL = "postgresql+psycopg2://bounty:bounty@172.19.0.2:5432/bountydb"
+_PG_SYNC_URL = "postgresql+psycopg2://bounty:bounty@172.18.0.2:5432/bountydb"
 
 # ---------------------------------------------------------------------------
 # Migration module loader

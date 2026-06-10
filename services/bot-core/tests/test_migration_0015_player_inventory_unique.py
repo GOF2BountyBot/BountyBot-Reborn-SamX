@@ -5,7 +5,7 @@ These tests MUST run against real Postgres (not SQLite) because:
   - SQLite does not support ADD CONSTRAINT via ALTER TABLE
   - IntegrityError semantics differ between SQLite and Postgres for UNIQUE constraints
 
-The tests use the project's dev Postgres DB (172.19.0.2:5432, creds from .env.dev).
+The tests use the project's dev Postgres DB (bountydev-net bridge IP, creds from .env.dev).
 A dedicated schema prefix isolates all test objects from production data.
 
 Cases:
@@ -50,11 +50,11 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
 # ---------------------------------------------------------------------------
-# Postgres connection (dev stack: bountydev-db reachable at 172.19.0.2:5432)
+# Postgres connection (dev stack: bountydev-db at the bountydev-net bridge IP (see _PG_URL))
 # ---------------------------------------------------------------------------
 
-_PG_SYNC_URL = "postgresql+psycopg2://bounty:bounty@172.19.0.2:5432/bountydb"
-_PG_ASYNC_URL = "postgresql+asyncpg://bounty:bounty@172.19.0.2:5432/bountydb"
+_PG_SYNC_URL = "postgresql+psycopg2://bounty:bounty@172.18.0.2:5432/bountydb"
+_PG_ASYNC_URL = "postgresql+asyncpg://bounty:bounty@172.18.0.2:5432/bountydb"
 
 _TABLE = "player_inventories"
 _UQ = "uq_player_inventories_player_item"

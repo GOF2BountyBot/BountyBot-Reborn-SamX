@@ -18,7 +18,7 @@ Test matrix:
   D3  No AB-BA deadlock under duel-first + ascending-player lock ordering
   D4  Timeout-then-retry for duel accept
 
-Connection: bountydev-db at 172.19.0.2:5432 (bountydev-net bridge IP).
+Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via `sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is unreachable from this dev container).
 
 Engine / factory creation: each test creates its own engine inline (not via
 fixture) to avoid pytest-asyncio loop-binding issues with asyncpg connection
@@ -72,7 +72,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # Real Postgres connection — bountydev-db on docker bridge network
 # ---------------------------------------------------------------------------
 
-_PG_URL = "postgresql+asyncpg://bounty:bounty@172.19.0.2:5432/bountydb"
+_PG_URL = "postgresql+asyncpg://bounty:bounty@172.18.0.2:5432/bountydb"
 
 # Test-isolation constants: guild/user IDs that cannot collide with production data.
 _TEST_GUILD = 999_888_777_001

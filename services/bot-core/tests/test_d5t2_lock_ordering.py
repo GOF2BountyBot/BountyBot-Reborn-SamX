@@ -31,7 +31,7 @@ Cases:
       player → no deadlock, no double-apply (the player op serialises behind the
       bounty txn's player lock; the bounty txn never waits on the player op).
 
-Connection: bountydev-db at 172.19.0.2:5432 (bountydev-net bridge IP).
+Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via `sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is unreachable from this dev container).
 Each test creates its own engine inline (mirrors test_d5_loadout_locking.py) to
 keep the asyncpg pool bound to the test's event loop.
 """
@@ -84,7 +84,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # Real Postgres connection — bountydev-db on docker bridge network
 # ---------------------------------------------------------------------------
 
-_PG_URL = "postgresql+asyncpg://bounty:bounty@172.19.0.2:5432/bountydb"
+_PG_URL = "postgresql+asyncpg://bounty:bounty@172.18.0.2:5432/bountydb"
 
 # Test-isolation constants: guild/user IDs that cannot collide with production.
 _TEST_GUILD = 999_888_777_056

@@ -50,7 +50,7 @@ These are your bread-and-butter cannons. They fire over and over on a reload tim
 Turrets sit in a separate slot and come in three flavours:
 
 - **Automatic turrets** fire on their own at anything in range — handy as a constant trickle of damage, though a touch less accurate than a shot you aim yourself.
-- **Manual turrets** you take direct control of. While you're manning the turret your main guns fall silent — but you aim with your full piloting skill, making these great for landing precise, long-range hits (for example, while backing away from a brawl).
+- **Manual turrets** you take direct control of. While you're manning the turret your main guns fall silent — but you aim with your full piloting skill, making these great for landing precise, long-range hits (for example, while backing away from a brawl). *(The mode switch isn't available as a command yet — until it lands, every ship fights in main-gun mode and mounted manual turrets stay quiet.)*
 - **Plasma collectors** aren't weapons at all. They're mining tools for harvesting plasma from gas clouds, and they do nothing in a fight.
 
 ### Secondary weapons — the heavy ordnance
@@ -59,10 +59,15 @@ Five distinct kinds, each with its own character:
 - **Rockets** — straightforward unguided shots. The closer you are, the more reliably they connect.
 - **Guided missiles** — how dependable they are hinges on your **scanner**: a basic scanner means you still have to line the shot up, while a better scanner lets the missile lock on and track the target.
 - **Cluster missiles** — loose a *burst* of several warheads at once, each rolling to hit independently. Brutal at close range when most of them land.
-- **Nukes** — no aiming required; they detonate as a guaranteed area blast. **Both ships** take damage based on how close they are to the epicentre — which means a nuke fired at point-blank range will hurt *you* too. Best used with some distance.
-- **Shock-blasts** — deal no damage at all. Instead they hurl the enemy back out to long range — perfect for resetting a fight, breaking off, or buying time for a gadget to recharge.
+- **Nukes** — area weapons that never roll to hit. Instead, each one is *lobbed at the enemy's position* and detonates somewhere near it — sometimes a near-direct hit that devastates, sometimes a short round that falls back toward **you**. Both ships take damage based on how close they are to the blast, so a short round at long range can still singe you, and close-range nuking is genuinely dangerous for both sides. Three things every nuke pilot should know:
+  - **They arm during the fight.** Nuke tubes start the battle loading — your first shot comes one full reload in, never at the opening bell.
+  - **Big blasts are reliable; big yields are gambles.** A wide-blast nuke (Extinctor, Oppressor) lands meaningful damage nearly every time; a compact high-yield one (Liberator) can one-shot — or whiff entirely.
+  - **Don't bother stacking them.** Each detonation after your first hits at half the strength of the one before (radiation interference). One good nuke is a weapon; four nukes are a light show.
+- **Shock-blasts** — deal no damage at all. Instead they hurl the enemy back out to long range — perfect for resetting a brawl, breaking off, or buying time for a gadget to recharge. They only trigger **up close** (inside about half a kilometre); at distance the launcher simply holds its charge.
 
 *(A few weapons also carry an **EMP** charge — they may do little or no hull damage but disrupt the target instead.)*
+
+**Ammunition matters.** Secondary weapons are consumables: every trigger pull spends one round, and your rounds for each weapon ride with the ship it's mounted on (equipping moves your whole stock from cargo to the launcher). Run a launcher dry mid-fight and it simply falls silent; after the battle the empty launcher is unmounted automatically. Criminals' ships carry limited ordnance too — and a criminal never gets more than **one** nuke per fight.
 
 ---
 

@@ -34,7 +34,7 @@ When a formula uses a lowercase symbol whose value is sourced from a config knob
 - **Hard cap: 18,000 ticks per fight (3 simulated minutes).**
 - **Per-weapon cooldown:** each weapon holds `cooldown_remaining_ms`; per tick decrement by 10; fires when `≤ 0` AND in-range AND not gated; resets to `loading_speed_ms`.
 - All wiki `loading_speed_ms` values are clean multiples of 10 ms — no accumulator carry, no drift.
-- **Initial state at tick 0:** all weapons enter combat fully ready (`cooldown_remaining_ms = 0`); first-tick firing is gated only by range and any other normal checks. HP-threshold module cooldowns are also `0` at tick 0 (see §8). Regen-track dormancy and damaged-start handling: see §3.
+- **Initial state at tick 0:** all weapons enter combat fully ready (`cooldown_remaining_ms = 0`) — **EXCEPT nuke secondaries, which start on FULL cooldown (D-014 arming delay; see §6.2 Nuke)**. First-tick firing is gated only by range and any other normal checks. HP-threshold module cooldowns are also `0` at tick 0 (see §8). Regen-track dormancy and damaged-start handling: see §3.
 - **Implementation note:** initial cooldown / regen state is a *combatant init* concern (set during combatant construction, not inside the tick loop). This isolates Phase-2 "damaged-start" / "ambush" scenarios — where a combatant might enter with weapons mid-cooldown — from the tick-step logic.
 
 ---
@@ -55,7 +55,7 @@ When a formula uses a lowercase symbol whose value is sourced from a config knob
   ```
   During the boost window, passive closure is suspended; the booster's outward velocity dominates. After expiry, normal closure resumes.
 - **No upper distance bound.** `current_distance` is naturally bounded by per-module booster limits (`effect_pct × duration_ms`) and the 4-activation-per-fight cap on boosters; there is no synthetic `MAX_DISTANCE_M` cap. Weapons stop firing once they exceed their own `range_m`; otherwise no special behavior at extreme distances.
-- **Shock-blast distance reset:** instantly resets both ships to the starting distance (5000 m). 100% guaranteed (no accuracy roll). No damage. Fires on cooldown (`loading_speed_ms`); no per-fight cap; no HP-threshold gating. (Phase-1 weapons resolve same-tick, so in-flight projectile interaction is moot.)
+- **Shock-blast distance reset:** instantly resets both ships to the starting distance (5000 m). 100% guaranteed (no accuracy roll). No damage. Fires on cooldown (`loading_speed_ms`); no per-fight cap; no HP-threshold gating. **Close-range trigger gate (FIX 2):** fires only when `current_distance < SHOCK_BLAST_TRIGGER_RANGE_M` (default **500 m**) — at long range the reset is pointless and would waste a cooldown/round. (Phase-1 weapons resolve same-tick, so in-flight projectile interaction is moot.)
 
 ---
 
@@ -194,7 +194,7 @@ Per-weapon `accuracy_modifier` is permanently removed.
 
 ### 6.2 Secondary weapons
 
-**Phase-1 in-scope subtypes:** rocket, missile, cluster-missile, shock-blast.
+**Phase-1 in-scope subtypes:** rocket, missile, cluster-missile, nuke, shock-blast.
 **Phase-2 deferred:** `emp-bomb` (mechanic in scope when EMP lands; the physical track is inert in Phase-1).
 **Phase-3+ deferred:** `mine`, `sentry-gun`, `ionizing-missile` (no ionizer mechanic planned; seed `damage` is already 0 — fires, rolls accuracy, applies 0 HP delta).
 
@@ -248,7 +248,7 @@ Area-of-effect weapon with **no accuracy roll**. Bypasses the entire §5 accurac
   - Fireworks (`damage: 1`, `magnitude_m: 10000` → eff 1000m; decorative — same code path applies)
 
 #### Shock-blast
-Pure distance-reset utility (§2). No damage. 100 % guaranteed. Fires on cooldown. The seed file (`misc.shock_blast.json`) carries `damage: 140` / `emp_damage: 80` — **both IGNORED** by the Phase-1 mechanic.
+Pure distance-reset utility (§2). No damage. 100 % guaranteed. Fires on cooldown — but **only inside `SHOCK_BLAST_TRIGGER_RANGE_M` (500 m)**; outside that range it holds (the reset would be pointless and waste a cooldown/round). The seed file (`misc.shock_blast.json`) carries `damage: 140` / `emp_damage: 80` — **both IGNORED** by the Phase-1 mechanic.
 
 Weapons and modules are independent subsystems: firing shock-blast resets `current_distance` only — active cloak / booster effects continue running on their own `duration_ms`, and module cooldowns are unaffected.
 
@@ -259,10 +259,10 @@ Secondary weapons are **ammo-limited consumables** as of CI-16. Key rules:
 - **1 round per fire trigger**, regardless of subtype (including cluster-missile — burst/N munitions count as 1 trigger, 1 round).
 - **Ammo gate** — evaluated FIRST, before cooldown/range. When `remaining_ammo == 0`, weapon is silently skipped.
 - **`secondary_depleted` event** — emitted at the same tick the last round fires (when `remaining_ammo` transitions to 0).
-- **`ammo=None`** → infinite (back-compat for legacy paths and criminal ships — CI-17 arms criminals).
-- **Player ammo persists cross-battle** in `player_ships.secondary_ammo` (JSON sidecar `{name: rounds}`); written back by `_consume_secondary_ammo` after fight.
+- **`ammo=None`** → infinite (back-compat for legacy loadout paths).
+- **Player ammo persists cross-battle** in `player_ships.secondary_ammo` (JSON sidecar `{name: rounds}`); written back by `_consume_secondary_ammo` after fight. **Equip seeds the sidecar with the WHOLE cargo stack** (all rounds move cargo → ammo; re-equipping the same name tops up).
 - **Auto-unequip at 0** — post-fight only. Mid-fight just stops firing; never a live mid-tick slot mutation.
-- **Criminal side** — in-fight only (no `secondary_ammo` column on criminal JSON); no cross-fight persistence until CI-17.
+- **Criminal side (CI-17 — LANDED):** criminals are armed at loadout-build with per-subtype round grants from `CRIMINAL_SECONDARY_ROUNDS` (defaults: nuke **1** — prevents unwinnable alpha-strikes; missile/rocket **5**; cluster-missile **3**; shock-blast **2**). Weapons with `damage ≤ CRIMINAL_SECONDARY_MIN_DAMAGE` (default 1) are excluded from criminal gear rolls (drops the 0-dmg seeds and 1-dmg Fireworks). In-fight only; criminals have no cross-fight persistence (each fight rebuilds the loadout).
 - **Future per-battle-cap extension point** — limit is qty + cooldown only; no hard 1/battle rule in Phase-1.
 
 Conservation model (loadout subsystem): `owned(S) = cargo.quantity(S) + Σ_ships secondary_ammo[S]`.
@@ -294,13 +294,13 @@ Three subtypes exist; two are combat-relevant. Discriminate using the `automatic
 - **Cooldown — independent per turret.** Each manual turret runs its own `loading_speed_ms` cooldown. A ship with N manual turrets in turret-mode fires up to N shots per cycle, each rolled independently against `pilot_primary_acc`.
 - **PrimaryWeaponMod does NOT apply** to manual turrets (§7.8 excludes all turrets — auto and manual).
 
-##### Required schema / data-model enhancements (Phase-1)
-The `manual_turret_mode` flag is the canonical Phase-1 mechanism for choosing primary vs. manual-turret mode. The field does not yet exist in code; Phase-1 implementation must add it. (Decomposition into ordered implementation tasks is a later concern — this section documents the required surface.)
+##### Schema / data-model surface (IMPLEMENTED)
+The `manual_turret_mode` flag is the canonical mechanism for choosing primary vs. manual-turret mode. **Status: implemented end-to-end except the UI toggle.**
 
-1. **`ShipLoadout.manual_turret_mode: bool`** — new field on the frozen dataclass at `services/bot-core/src/services/combat_models.py`, default `false`.
-2. **`PlayerShip` persistence** — the per-ship record needs to carry the mode (top-level `"manual_turret_mode": false` in the existing JSON blob, or a dedicated column — implementer's choice; both are consistent with current `PlayerShip` patterns).
-3. **`LoadoutBuilder.from_player()` and `LoadoutBuilder.from_criminal_ship()`** — read the persisted value and surface it on the built `ShipLoadout`. Criminals default to `false` (NPCs always run primary-mode in Phase-1 — no per-criminal toggle exists yet).
-4. **No UI command in Phase-1.** Flipping the flag is deferred to a later cycle. The default-`false` ("primary mode") path is what every fight runs through until a turret-mode toggle command lands. The resolver implements both branches now so it is forward-ready when the UI exists.
+1. **`ShipLoadout.manual_turret_mode: bool`** — ✅ exists on the dataclass (`combat_models.py`), default `false`.
+2. **`PlayerShip` persistence** — ✅ dedicated `manual_turret_mode` boolean column on `player_ships` (default `false`).
+3. **`LoadoutBuilder.from_player()` / `from_criminal_ship()`** — ✅ both read the persisted value onto the built `ShipLoadout`; criminals default to `false` (no per-criminal toggle).
+4. **UI command — still DEFERRED.** No player-facing toggle exists yet; every fight runs the default-`false` ("primary mode") path. The resolver implements both branches, so only the toggle command is outstanding.
 
 #### Plasma-collector turrets (`subtype: "plasma-collector"`, `dps: 0`)
 - **Inert in combat.** Equippable for fidelity; produces no effect.
@@ -620,6 +620,7 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
 | `cooldown_end` | a weapon or module comes off cooldown | `{system}` |
 | `layer_depleted` | a ship's shield → 0 or armour → 0 | `{layer}` |
 | `distance` | distance changes (booster push, closing, shock-blast reset) | `{from, to, cause}` |
+| `secondary_depleted` | a secondary weapon's last round fires (`remaining_ammo` → 0; CI-16) | `{weapon}` — post-fight auto-unequip signal |
 | `fight_end` | terminal | `{winner, reason, duration_ticks, final_hp}` |
 
 #### `weapon_fire` per-subtype payloads
@@ -663,15 +664,15 @@ SELECT id, combatant1_name, combatant2_name, created_at
 - Indexes: `combatant1_user_id` and `combatant2_user_id` (single-column each — the PG planner OR-merges; a covering composite is not required at expected scale).
 - Combatant names are denormalized columns (frozen at fight-end, audit-log style). No JOIN to `users` / `players` is required — and the NPC case (no Users row) is handled natively.
 
-### Future battle-log dropdown — UX requirement
+### Battle-log dropdown — UX requirement (IMPLEMENTED as `/combat-log`)
 
-When the battle-log command is implemented (deferred — Discord rendering is a later cycle), the result dropdown MUST disambiguate duplicate-name fights (common for bounty caps where multiple criminals share a name). Required entry format:
+The battle-log command exists: gateway `/combat-log battle:<pick>` (`combatLogCog.py`), with a per-user autocomplete cache fed by a cross-service invalidate-push from `CombatLogService.persist` (both combatants, after-commit, non-fatal — D-013). The dropdown disambiguates duplicate-name fights (common for bounty caps where multiple criminals share a name) using the required entry format:
 
 ```
 {combatant1_name} v {combatant2_name} ({created_at, local-formatted})
 ```
 
-This is captured here so the eventual command lands with the right contract — `combatant{1,2}_name` + `created_at` are already projected to columns precisely so this dropdown query is a single indexed scan, no JOINs.
+`combatant{1,2}_name` + `created_at` are projected to columns precisely so this dropdown query is a single indexed scan, no JOINs.
 
 ### Public API: `CombatService.fight_ships(...)`
 
@@ -696,8 +697,8 @@ fight_ships(
 - Ignored when `log_result=False` (preflight passes `None` or a sentinel).
 - The service raises at the call boundary if `log_result=True` AND `context is None`.
 
-**Wire-compat parameters (retiring with `SimpleTTKResolver`):**
-- `variance_percent` and the old positional `player_armour_buff` are accepted (existing callsites may still pass them) but ignored by the tick resolver. See §3 (PvC damage reduction) and the "Why variance is dropped" note further down. Both retire when `SimpleTTKResolver` is removed.
+**Wire-compat parameters — RETIRED (T10, done):**
+- `variance_percent`, `player_armour_buff`, `SimpleTTKResolver`, and the `duel_variance_percent` / `bounty_pvc_armour_buff_factor` guild-config columns are all REMOVED (migration `0012`). The signature above is current — plus a `session: AsyncSession | None` kwarg (required when `log_result=True`). See the "Why variance is dropped" note further down for the historical rationale.
 
 **Callsite assignment (Phase-1):**
 
@@ -730,7 +731,7 @@ fight_ships(
   - `varied_dps` ← `damage_dealt / duration_s`
   - `ttk` ← `duration_s` for the loser / `None` for the winner
 
-> **Why variance is dropped:** the `variance_percent` parameter (sourced from `DUEL_VARIANCE_PERCENT`) was a TTK-era smoothing layer used by `SimpleTTKResolver` to add fight-to-fight variability on top of an otherwise-deterministic time-to-kill calculation. The tick resolver derives all randomness from per-shot accuracy rolls (one uniform draw per weapon fire) — that intrinsic RNG is already the source of fight variance, so a separate `variance_percent` would compound randomness without giving anything back. The parameter stays in the `CombatService.fight_ships(...)` signature for wire-compat (callsites unchanged), but the tick resolver ignores it. `DUEL_VARIANCE_PERCENT` and `variance_percent` retire when `SimpleTTKResolver` is removed.
+> **Why variance was dropped (historical):** the `variance_percent` parameter (sourced from `DUEL_VARIANCE_PERCENT`) was a TTK-era smoothing layer used by `SimpleTTKResolver` to add fight-to-fight variability on top of an otherwise-deterministic time-to-kill calculation. The tick resolver derives all randomness from per-shot accuracy rolls (one uniform draw per weapon fire) plus the nuke epicenter draw (§6.2) — that intrinsic RNG is the source of fight variance, so a separate `variance_percent` would compound randomness without giving anything back. **Retirement is complete (T10):** `SimpleTTKResolver`, `variance_percent`, and `DUEL_VARIANCE_PERCENT` are removed; `varied_hp = raw_hp` always (the legacy `FightStats` fields remain populated for wire-compat only).
 
 ---
 
@@ -751,7 +752,7 @@ Aggregate **lifetime** combat metrics are promoted onto the **`Player` record** 
 All 3 are **bounded-per-fight** — a single fight contributes a small finite count, so headline lifetime numbers stay meaningful rather than drifting into uninteresting-big-number territory. Existing counters (`bounty_wins`, `duel_wins`, `duel_losses`, `duel_credits_won`, `duel_credits_lost`, `lifetime_credits`, `systems_checked`, `xp`, `prestige_count`) are unchanged.
 
 - The combat processor increments these on the `Player` row(s) for any human combatant as part of the post-fight update. NPC side has no Player row → skipped.
-- Requires an Alembic migration for the 3 new columns.
+- Columns landed via migration `0011` (IMPLEMENTED).
 
 **Intentionally NOT tracked at Player level** (revisit in Phase-2+ if a leaderboard feature lands): per-subtype shot breakdowns (rocket / missile / cluster), `total_shots_fired`, `total_secondaries_fired`, any `total_damage_*` family, `bounty_losses`. Per-subtype detail is derivable from `combat_log` while inside the retention window (§12).
 
@@ -812,6 +813,10 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 | `NUKE_STACK_FALLOFF` | **0.5** | §6.2 (D-014) |
 | `PVC_DAMAGE_REDUCTION` | **0.33** | §3 (Keith T. Maxwell bonus — PvC, player side only) |
 | `COMBAT_LOG_RETENTION_HOURS` | **72** | §12 |
+| `SHOCK_BLAST_TRIGGER_RANGE_M` | **500** | §2 / §6.2 (shock-blast fires only inside this range) |
+| `COMBAT_LAYER_REEMIT_FRACTION` | **0.25** | §12 (CI-21 — `layer_depleted` re-emit latch clears when the layer recovers ≥ this fraction of max) |
+| `CRIMINAL_SECONDARY_ROUNDS` | **{nuke: 1, missile: 5, rocket: 5, cluster-missile: 3, shock-blast: 2}** | §6.2 CI-17 (criminal per-subtype round grants) |
+| `CRIMINAL_SECONDARY_MIN_DAMAGE` | **1** | §6.2 CI-17 (criminal gear-roll exclusion: damage ≤ this is skipped) |
 
 > Names with `BOUNTYBOT_` prefix are listed verbatim where the existing convention uses the prefix in the env name; others use the unprefixed `GameConstants` name (the runtime env override is `BOUNTYBOT_<NAME>` in all cases).
 

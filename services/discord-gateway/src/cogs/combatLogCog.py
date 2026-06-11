@@ -1,8 +1,15 @@
-"""combatLogCog — /combat-log Discord command with autocomplete.
+"""combatLogCog — /combat-log and /admin_combat_log Discord commands with autocomplete.
 
 The /combat-log command lets a player look up their past battles.
 Autocomplete is populated exclusively with the invoking user's fights in the
 current guild, newest-first (cap 25 — Discord's autocomplete limit).
+
+/admin_combat_log is the admin variant: a mandatory ``user`` param selects the
+player, then the ``battle`` autocomplete lists that player's fights instead of
+the invoker's.  The detail embed and ephemeral delivery are identical to
+/combat-log.  Discord cannot enforce option fill-order, so when ``user`` is
+still empty the battle autocomplete returns a single "Select a user first"
+hint choice carrying a sentinel value the command body rejects.
 
 Choice labels are disambiguated: same-opponent same-day collisions get an
 ordinal counter (most-recent = highest).  Format:
@@ -16,6 +23,7 @@ import os
 import discord
 import httpx
 from cogs._shared.autocomplete_cache import AutocompleteCache
+from cogs.adminCog import _check_is_admin
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -38,6 +46,11 @@ _OUTCOME_EMOJI: dict[str, str] = {
     "lost": "LOST",
     "stalemate": "DRAW",
 }
+
+# Sentinel battle value returned by the /admin_combat_log battle autocomplete
+# when the user param has not been filled in yet (Discord cannot enforce option
+# fill-order).  Battle IDs are positive, so -1 can never collide.
+_SELECT_USER_FIRST = -1
 
 
 def _format_date(dt_str: str) -> str:
@@ -115,36 +128,61 @@ class CombatLogCog(commands.Cog):
     # Autocomplete
     # ------------------------------------------------------------------
 
-    async def battle_autocomplete(
-        self, interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[int]]:
-        """Populate /combat-log battle param with the invoker's recent fights.
+    async def _battle_choices(self, guild_id: int, user_id: int, current: str) -> list[app_commands.Choice[int]]:
+        """Build battle autocomplete choices for one player's recent fights.
 
         Served from the per-user ``_combatlog_cache`` (key = (guild_id, discord_user_id)).
         On a peek miss, a single 1.0s cold-fill populates the cache (the listing
-        endpoint keys on the invoker's Discord id directly — single gate, well within
+        endpoint keys on the player's Discord id directly — single gate, well within
         the 3s autocomplete budget). Values are battle IDs (int).
+        """
+        key = (guild_id, user_id)
+        items = self._combatlog_cache.peek(key)
+        if items is None:
+            items = await self._combatlog_cache.get_with_timeout(key, timeout=1.0)
+        if items is None:
+            return []
+
+        norm_current = current.lower()
+        choices: list[app_commands.Choice[int]] = []
+        for item in items:
+            norm_label = item.get("_norm") or _make_choice_label(item).lower()
+            if norm_current in norm_label:
+                choices.append(app_commands.Choice(name=_make_choice_label(item), value=item["id"]))
+        return choices[:25]
+
+    async def battle_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[int]]:
+        """Populate /combat-log battle param with the invoker's recent fights."""
+        try:
+            guild_id = interaction.guild_id
+            if guild_id is None:
+                return []
+            return await self._battle_choices(guild_id, interaction.user.id, current)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def admin_battle_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[int]]:
+        """Populate /admin_combat_log battle param with the SELECTED user's fights.
+
+        The target user is read from ``interaction.namespace`` (dependent
+        autocomplete).  Per discord.py docs, in autocomplete interactions
+        Discord may omit resolved data, so the value is a Member/User OR a
+        bare ``discord.Object`` — all carry ``.id``, which is all we need.
+        ``None`` means the user param is still unfilled: return a hint choice
+        with the ``_SELECT_USER_FIRST`` sentinel instead of an empty dropdown.
         """
         try:
             guild_id = interaction.guild_id
-            user_id = interaction.user.id
             if guild_id is None:
                 return []
-
-            key = (guild_id, user_id)
-            items = self._combatlog_cache.peek(key)
-            if items is None:
-                items = await self._combatlog_cache.get_with_timeout(key, timeout=1.0)
-            if items is None:
-                return []
-
-            norm_current = current.lower()
-            choices: list[app_commands.Choice[int]] = []
-            for item in items:
-                norm_label = item.get("_norm") or _make_choice_label(item).lower()
-                if norm_current in norm_label:
-                    choices.append(app_commands.Choice(name=_make_choice_label(item), value=item["id"]))
-            return choices[:25]
+            target = interaction.namespace.user
+            if target is None:
+                return [app_commands.Choice(name="⬅️ Select a user first", value=_SELECT_USER_FIRST)]
+            return await self._battle_choices(guild_id, target.id, current)
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -193,6 +231,79 @@ class CombatLogCog(commands.Cog):
             flogger.error(
                 f"/combat-log error: guild={interaction.guild_id} user={interaction.user.id}"
                 f" battle={battle} error={exc}"
+            )
+            await interaction.followup.send("⚠️ An error occurred while fetching the battle report.", ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # /admin_combat_log <user> <battle>
+    # ------------------------------------------------------------------
+
+    @app_commands.command(
+        name="admin_combat_log", description="[ADMIN] Review the details of a player's past battle"
+    )
+    @app_commands.describe(
+        user="The player whose battle history to review",
+        battle="Select a battle from the player's history",
+    )
+    @app_commands.autocomplete(battle=admin_battle_autocomplete)
+    async def admin_combat_log(self, interaction: discord.Interaction, user: discord.User, battle: int):
+        """Show the after-action report for any player's past battle (admin only).
+
+        The detail endpoint is queried with the SELECTED user's id, so the
+        combatant authorization check and the outcome POV both resolve exactly
+        as if that player had invoked /combat-log themselves.
+        """
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
+
+        flogger.info(
+            f"/admin_combat_log invoked: guild={interaction.guild_id} admin={interaction.user.id}"
+            f" target={user.id} battle={battle}"
+        )
+
+        if battle == _SELECT_USER_FIRST:
+            await interaction.followup.send(
+                "⚠️ Please select a user first, then choose one of their battles.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/combat-log/{battle}",
+                params={"user_id": user.id},
+                timeout=10,
+            )
+
+            if resp.status_code == 404:
+                await interaction.followup.send(
+                    "❌ Battle not found or the selected user is not a combatant in that fight.",
+                    ephemeral=True,
+                )
+                return
+
+            resp.raise_for_status()
+            data = resp.json()
+
+            embed = self._build_detail_embed(data, interaction.user)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(
+                f"/admin_combat_log success: guild={interaction.guild_id} admin={interaction.user.id}"
+                f" target={user.id} battle={battle}"
+            )
+
+        except httpx.HTTPStatusError as exc:
+            flogger.error(
+                f"/admin_combat_log API error: guild={interaction.guild_id} admin={interaction.user.id}"
+                f" target={user.id} battle={battle} status={exc.response.status_code}"
+            )
+            await interaction.followup.send("⚠️ An error occurred while fetching the battle report.", ephemeral=True)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.error(
+                f"/admin_combat_log error: guild={interaction.guild_id} admin={interaction.user.id}"
+                f" target={user.id} battle={battle} error={exc}"
             )
             await interaction.followup.send("⚠️ An error occurred while fetching the battle report.", ephemeral=True)
 
@@ -304,6 +415,12 @@ class CombatLogCog(commands.Cog):
     @combat_log.error
     async def combat_log_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /combat-log", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @admin_combat_log.error
+    async def admin_combat_log_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_combat_log", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 

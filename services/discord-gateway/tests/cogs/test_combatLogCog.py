@@ -1,4 +1,4 @@
-"""Tests for combatLogCog — /combat-log command + autocomplete.
+"""Tests for combatLogCog — /combat-log and /admin_combat_log commands + autocomplete.
 
 Covers:
   - autocomplete: filters to invoker's fights, returns up to 25 choices
@@ -8,6 +8,9 @@ Covers:
   - /combat-log: 404 from API → user-friendly message
   - /combat-log: required 'battle' param (int) enforced
   - choice labels: ordinal disambiguation in label text
+  - admin autocomplete: lists the SELECTED user's fights (namespace.user)
+  - admin autocomplete: "Select a user first" sentinel when user unfilled
+  - /admin_combat_log: admin gate, sentinel rejection, target-POV detail fetch
 
 Max 2 mocks per test.
 """
@@ -458,3 +461,145 @@ class TestCombatLogCommand:
         # The 200-char detail should have been trimmed
         assert "X" * 200 not in key_field.value
         assert "…" in key_field.value
+
+
+# ---------------------------------------------------------------------------
+# Tests: /admin_combat_log autocomplete
+# ---------------------------------------------------------------------------
+
+_TARGET_USER_ID = 970691862035841048
+
+
+def _make_target_user(user_id: int = _TARGET_USER_ID):
+    user = MagicMock()
+    user.id = user_id
+    return user
+
+
+class TestAdminBattleAutocomplete:
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self, cog):
+        cog._combatlog_cache.clear()
+        yield
+
+    async def test_returns_choices_for_selected_user(self, cog):
+        """Choices come from the SELECTED user's history, keyed on namespace.user.id."""
+        items = [_make_list_item(row_id=7, opponent_name="General_Failure")]
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(items))
+        interaction = _create_interaction()
+        interaction.namespace.user = _make_target_user()
+
+        choices = await cog.admin_battle_autocomplete(interaction, current="")
+        assert len(choices) == 1
+        assert choices[0].value == 7
+        # The listing call must be keyed on the TARGET user's id, not the invoker's
+        params = cog.http_client.get.call_args.kwargs.get("params", {})
+        assert params.get("user_id") == _TARGET_USER_ID
+
+    async def test_hint_choice_when_user_unfilled(self, cog):
+        """Discord cannot enforce fill-order: unfilled user → sentinel hint choice."""
+        from cogs.combatLogCog import _SELECT_USER_FIRST
+
+        interaction = _create_interaction()
+        interaction.namespace.user = None
+
+        choices = await cog.admin_battle_autocomplete(interaction, current="")
+        assert len(choices) == 1
+        assert choices[0].value == _SELECT_USER_FIRST
+        assert "select a user" in choices[0].name.lower()
+
+    async def test_returns_empty_when_no_guild(self, cog):
+        interaction = _create_interaction()
+        interaction.guild_id = None
+
+        choices = await cog.admin_battle_autocomplete(interaction, current="")
+        assert choices == []
+
+    async def test_returns_empty_on_api_error(self, cog):
+        cog.http_client.get = AsyncMock(side_effect=Exception("connection refused"))
+        interaction = _create_interaction()
+        interaction.namespace.user = _make_target_user()
+
+        choices = await cog.admin_battle_autocomplete(interaction, current="")
+        assert choices == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: /admin_combat_log command
+# ---------------------------------------------------------------------------
+
+
+class TestAdminCombatLogCommand:
+    @pytest.fixture(autouse=True)
+    def _as_admin(self, monkeypatch):
+        # Default every test to an admin invoker; deny-path tests override.
+        import cogs.combatLogCog as clc
+
+        monkeypatch.setattr(clc, "_check_is_admin", AsyncMock(return_value=True))
+        yield
+
+    async def test_non_admin_is_denied(self, cog, monkeypatch):
+        import cogs.combatLogCog as clc
+
+        monkeypatch.setattr(clc, "_check_is_admin", AsyncMock(return_value=False))
+        cog.http_client.get = AsyncMock()
+        interaction = _create_interaction()
+
+        await cog.admin_combat_log.callback(cog, interaction, user=_make_target_user(), battle=1)
+
+        interaction.followup.send.assert_called_once()
+        args = interaction.followup.send.call_args
+        text = args.args[0] if args.args else args.kwargs.get("content", "")
+        assert "admin" in text.lower()
+        cog.http_client.get.assert_not_called()
+
+    async def test_sentinel_battle_rejected(self, cog):
+        from cogs.combatLogCog import _SELECT_USER_FIRST
+
+        cog.http_client.get = AsyncMock()
+        interaction = _create_interaction()
+
+        await cog.admin_combat_log.callback(cog, interaction, user=_make_target_user(), battle=_SELECT_USER_FIRST)
+
+        interaction.followup.send.assert_called_once()
+        args = interaction.followup.send.call_args
+        text = args.args[0] if args.args else args.kwargs.get("content", "")
+        assert "select a user" in text.lower()
+        cog.http_client.get.assert_not_called()
+
+    async def test_success_sends_embed_with_target_pov(self, cog):
+        """Detail is fetched with the SELECTED user's id so the embed renders
+        exactly as if that player had invoked /combat-log themselves."""
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_make_detail()))
+        interaction = _create_interaction()
+
+        await cog.admin_combat_log.callback(cog, interaction, user=_make_target_user(), battle=1)
+
+        params = cog.http_client.get.call_args.kwargs.get("params", {})
+        assert params.get("user_id") == _TARGET_USER_ID
+        interaction.followup.send.assert_called_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert "embed" in call_kwargs.kwargs
+        assert call_kwargs.kwargs.get("ephemeral") is True
+
+    async def test_404_sends_not_combatant_message(self, cog):
+        """Stale user/battle pair (user swapped after picking a battle) → 404 path."""
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response({}, status_code=404))
+        interaction = _create_interaction()
+
+        await cog.admin_combat_log.callback(cog, interaction, user=_make_target_user(), battle=9999)
+
+        interaction.followup.send.assert_called_once()
+        args = interaction.followup.send.call_args
+        text = args.args[0] if args.args else args.kwargs.get("content", "")
+        assert "not a combatant" in text.lower() or "not found" in text.lower()
+
+    async def test_api_error_sends_warning(self, cog):
+        resp = _make_mock_response({}, status_code=500)
+        resp.raise_for_status = MagicMock(side_effect=Exception("server error"))
+        cog.http_client.get = AsyncMock(return_value=resp)
+        interaction = _create_interaction()
+
+        await cog.admin_combat_log.callback(cog, interaction, user=_make_target_user(), battle=1)
+
+        interaction.followup.send.assert_called_once()

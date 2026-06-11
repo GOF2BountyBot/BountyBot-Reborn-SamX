@@ -1740,7 +1740,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
     @app_commands.command(
         name="admin_cooldown_reset",
-        description="Reset a player's bounty check cooldown immediately",
+        description="[ADMIN] Reset a player's bounty check cooldown immediately",
     )
     @app_commands.describe(user="The Discord member whose cooldown should be reset")
     async def admin_cooldown_reset(self, interaction: discord.Interaction, user: discord.Member):

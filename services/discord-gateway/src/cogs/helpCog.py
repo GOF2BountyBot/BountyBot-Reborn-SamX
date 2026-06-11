@@ -35,6 +35,7 @@ _ADMIN_COMMAND_NAMES: frozenset[str] = frozenset(
         "health",
         "load_data",
         "reload_autocomplete",
+        "force_reload_caches",
         "render_config",
         "render_cache_clear",
     }
@@ -47,9 +48,13 @@ _ADMIN_COMMAND_NAMES: frozenset[str] = frozenset(
 _COMMAND_CATEGORIES: dict[str, str] = {
     # Player Profile
     "profile": "Player Profile",
+    "register": "Player Profile",
     "leaderboard": "Player Profile",
     "prestige": "Player Profile",
+    "promote": "Player Profile",
+    "demote": "Player Profile",
     "notifications": "Player Profile",
+    "unregister": "Player Profile",
     # Bounty Hunting
     "check": "Bounty Hunting",
     "bounties": "Bounty Hunting",
@@ -67,6 +72,7 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "equip": "Inventory & Equipment",
     "unequip": "Inventory & Equipment",
     "give": "Inventory & Equipment",
+    "loadout": "Inventory & Equipment",
     # Ships
     "ships": "Ships",
     "ship": "Ships",
@@ -76,6 +82,9 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "duel-challenge": "Dueling",
     "duel-accept": "Dueling",
     "duel-reject": "Dueling",
+    "duel-cancel": "Dueling",
+    # Combat
+    "combat-log": "Combat",
     # Game Data
     "about": "Game Data",
     "list_category": "Game Data",
@@ -94,18 +103,20 @@ _USER_CATEGORY_ORDER: list[str] = [
     "Inventory & Equipment",
     "Ships",
     "Dueling",
+    "Combat",
     "Game Data",
     "Skins & Rendering",
 ]
 
 # Short descriptions for each user-facing category
 _USER_CATEGORY_DESCRIPTIONS: dict[str, str] = {
-    "Player Profile": "View your stats, level up, leaderboards, manage notifications",
+    "Player Profile": "Register, view your stats, change tiers, leaderboards, manage notifications",
     "Bounty Hunting": "Hunt criminals across the galaxy for credits and XP",
     "Shop & Economy": "Buy and sell ships, weapons, modules",
     "Inventory & Equipment": "Manage your items and equipped loadout",
     "Ships": "View and manage your owned ships",
     "Dueling": "Challenge other players to combat",
+    "Combat": "Review the details of your past battles",
     "Game Data": "Browse ships, weapons, criminals, and star systems",
     "Skins & Rendering": "Customize your ship appearance",
 }
@@ -124,16 +135,22 @@ _ADMIN_CATEGORY_MAPPING: dict[str, str] = {
     "admin_config_shop": "Admin — Config",
     "admin_config_validate": "Admin — Config",
     "admin_config_xp": "Admin — Config",
+    "admin_config_constants": "Admin — Config",
+    "admin_config_constants_view": "Admin — Config",
+    "admin_config_constants_reset": "Admin — Config",
     "admin_spawn_bounty": "Admin — Bounties",
     "admin_clear_bounties": "Admin — Bounties",
     "admin_cooldown_reset": "Admin — Bounties",
     "admin_config_bounty": "Admin — Bounties",
     "admin_refresh_shop": "Admin — Bounties",
+    "admin_combat_log": "Admin — Combat",
+    "admin_duel": "Admin — Combat",
     "admin_guild_stats": "Admin — Stats",
     "render_config": "Admin — Render",
     "render_cache_clear": "Admin — Render",
     "load_data": "Admin — Dev Tools",
     "reload_autocomplete": "Admin — Dev Tools",
+    "force_reload_caches": "Admin — Dev Tools",
     "ping": "Admin — Health",
     "health": "Admin — Health",
     "scheduler_list": "Admin — Scheduler",
@@ -149,6 +166,7 @@ _ADMIN_CATEGORY_ORDER: list[str] = [
     "Admin — Players",
     "Admin — Config",
     "Admin — Bounties",
+    "Admin — Combat",
     "Admin — Stats",
     "Admin — Render",
     "Admin — Health",
@@ -162,6 +180,7 @@ _ADMIN_CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "Admin — Players": "Manage player stats, credits, items, and ships",
     "Admin — Config": "View and update guild configuration settings",
     "Admin — Bounties": "Spawn, clear, and configure bounty settings",
+    "Admin — Combat": "Review player battles and manage pending duels",
     "Admin — Stats": "View guild-wide statistics and reports",
     "Admin — Render": "Configure Blender render settings and clear cache",
     "Admin — Health": "Health checks and latency probes",
@@ -301,107 +320,6 @@ def _build_detail_embed(
         embed.add_field(name=f"/{cmd.name}", value=field_value, inline=False)
 
     return embed
-
-
-def _build_user_embed(commands_list: list[app_commands.Command]) -> list[discord.Embed]:
-    """Build paginated embeds grouping user-facing commands by category (legacy overview)."""
-    # Group commands by category
-    categorised: dict[str, list[app_commands.Command]] = {}
-    uncategorised: list[app_commands.Command] = []
-
-    for cmd in sorted(commands_list, key=lambda c: c.name):
-        cat = _COMMAND_CATEGORIES.get(cmd.name)
-        if cat:
-            categorised.setdefault(cat, []).append(cmd)
-        else:
-            uncategorised.append(cmd)
-
-    embed = discord.Embed(
-        title="📖 BountyBot Commands",
-        description="Here are all the commands available to you:",
-        color=discord.Color.blurple(),
-    )
-
-    for cat in _USER_CATEGORY_ORDER:
-        cmds = categorised.get(cat)
-        if not cmds:
-            continue
-        lines = []
-        for cmd in sorted(cmds, key=lambda c: c.name):
-            desc = cmd.description or "No description"
-            lines.append(f"`/{cmd.name}` — {desc}")
-        embed.add_field(name=cat, value="\n".join(lines), inline=False)
-
-    # Any commands not in the predefined order get an "Other" section
-    extra: list[app_commands.Command] = uncategorised
-    for cat, cmds in categorised.items():
-        if cat not in _USER_CATEGORY_ORDER:
-            extra.extend(cmds)
-
-    if extra:
-        lines = []
-        for cmd in sorted(extra, key=lambda c: c.name):
-            desc = cmd.description or "No description"
-            lines.append(f"`/{cmd.name}` — {desc}")
-        embed.add_field(name="Other", value="\n".join(lines), inline=False)
-
-    embed.set_footer(text="Use /admin_help to see admin commands (admin only)")
-    return [embed]
-
-
-def _build_admin_embed(commands_list: list[app_commands.Command]) -> list[discord.Embed]:
-    """Build paginated embeds grouping admin commands by category."""
-    categorised: dict[str, list[app_commands.Command]] = {}
-    uncategorised: list[app_commands.Command] = []
-
-    for cmd in sorted(commands_list, key=lambda c: c.name):
-        cat = _ADMIN_CATEGORY_MAPPING.get(cmd.name)
-        if cat:
-            categorised.setdefault(cat, []).append(cmd)
-        else:
-            # Fall back to cog-based category
-            if cmd.binding is not None:
-                cog_name = type(cmd.binding).__name__
-                if "Scheduler" in cog_name:
-                    cat = "Admin — Scheduler"
-                elif "Dev" in cog_name:
-                    cat = "Admin — Dev Tools"
-                elif "Health" in cog_name:
-                    cat = "Admin — Health"
-                else:
-                    cat = "Admin — Other"
-            else:
-                cat = "Admin — Other"
-            categorised.setdefault(cat, []).append(cmd)
-            uncategorised.append(cmd)
-
-    embed = discord.Embed(
-        title="🔐 Admin Commands",
-        description="All commands restricted to administrators:",
-        color=discord.Color.red(),
-    )
-
-    for cat in _ADMIN_CATEGORY_ORDER:
-        cmds = categorised.get(cat)
-        if not cmds:
-            continue
-        lines = []
-        for cmd in sorted(cmds, key=lambda c: c.name):
-            desc = cmd.description or "No description"
-            lines.append(f"`/{cmd.name}` — {desc}")
-        embed.add_field(name=cat, value="\n".join(lines), inline=False)
-
-    # Remaining categories not in predefined order
-    for cat, cmds in categorised.items():
-        if cat not in _ADMIN_CATEGORY_ORDER:
-            lines = []
-            for cmd in sorted(cmds, key=lambda c: c.name):
-                desc = cmd.description or "No description"
-                lines.append(f"`/{cmd.name}` — {desc}")
-            embed.add_field(name=cat, value="\n".join(lines), inline=False)
-
-    embed.set_footer(text="Admin access required for all commands listed here")
-    return [embed]
 
 
 # ---------------------------------------------------------------------------

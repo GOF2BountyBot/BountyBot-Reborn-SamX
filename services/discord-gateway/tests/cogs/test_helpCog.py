@@ -1000,95 +1000,6 @@ class TestAutocomplete:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildUserEmbed:
-    """Unit tests for _build_user_embed helper (legacy, AC-1, AC-3)."""
-
-    def _get_fn(self):
-        _evict_cog_modules()
-        sys.modules["shared"] = _mock_shared
-        sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _build_user_embed
-
-        return _build_user_embed
-
-    def test_returns_list_of_embeds(self):
-        """_build_user_embed always returns a list (AC-3)."""
-        fn = self._get_fn()
-        result = fn([])
-        assert isinstance(result, list)
-        assert len(result) >= 1
-
-    def test_embed_has_title(self):
-        """_build_user_embed returns an embed with a title (AC-3)."""
-        fn = self._get_fn()
-        cmd = _make_mock_cmd("bounties", "List bounties", "BountyCog")
-        embeds = fn([cmd])
-        assert len(embeds) == 1
-        assert embeds[0].title is not None
-
-    def test_embed_has_footer(self):
-        """_build_user_embed embed has a footer pointing to /admin_help (AC-1)."""
-        fn = self._get_fn()
-        embeds = fn([])
-        assert len(embeds) >= 1
-        embed = embeds[0]
-        assert embed is not None
-
-    def test_uncategorised_commands_in_other_field(self):
-        """Unknown command names go to 'Other' field without crashing (AC-1)."""
-        fn = self._get_fn()
-        cmd = _make_mock_cmd("unknown_cmd_xyz", "Some command")
-        embeds = fn([cmd])
-        assert len(embeds) >= 1
-
-    def test_known_category_commands_grouped(self):
-        """Known commands appear in their mapped category (AC-1)."""
-        fn = self._get_fn()
-        shop_cmd = _make_mock_cmd("shop", "Browse shop")
-        buy_cmd = _make_mock_cmd("buy", "Buy item")
-        embeds = fn([shop_cmd, buy_cmd])
-        assert len(embeds) == 1
-        field_names = [f.name for f in embeds[0].fields]
-        assert "Shop & Economy" in field_names
-
-
-class TestBuildAdminEmbed:
-    """Unit tests for _build_admin_embed helper (AC-2)."""
-
-    def _get_fn(self):
-        _evict_cog_modules()
-        sys.modules["shared"] = _mock_shared
-        sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _build_admin_embed
-
-        return _build_admin_embed
-
-    def test_returns_list_of_embeds(self):
-        """_build_admin_embed always returns a list."""
-        fn = self._get_fn()
-        result = fn([])
-        assert isinstance(result, list)
-        assert len(result) >= 1
-
-    def test_embed_has_admin_title(self):
-        """_build_admin_embed embed has a title referencing admin (AC-2)."""
-        fn = self._get_fn()
-        cmd = _make_mock_cmd("admin_setup", "Setup guild", "AdminCog")
-        embeds = fn([cmd])
-        assert len(embeds) == 1
-        assert embeds[0].title is not None
-
-    def test_known_admin_category_commands_grouped(self):
-        """Known admin commands appear in their mapped category (AC-2)."""
-        fn = self._get_fn()
-        setup_cmd = _make_mock_cmd("admin_setup", "Setup")
-        uninstall_cmd = _make_mock_cmd("admin_uninstall", "Uninstall")
-        embeds = fn([setup_cmd, uninstall_cmd])
-        assert len(embeds) == 1
-        field_names = [f.name for f in embeds[0].fields]
-        assert "Admin — Setup" in field_names
-
-
 class TestBuildOverviewEmbed:
     """Unit tests for _build_overview_embed helper."""
 
@@ -1294,22 +1205,6 @@ class TestErrorHandlers:
 class TestEdgeCases:
     """Edge case tests for helper functions."""
 
-    def test_build_user_embed_extra_categorised_cmds(self):
-        """_build_user_embed handles commands categorised but not in order (goes to Other)."""
-        _evict_cog_modules()
-        sys.modules["shared"] = _mock_shared
-        sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _build_user_embed
-
-        # Add a command that belongs to a category not in _USER_CATEGORY_ORDER
-        # We do this by temporarily patching — but simpler is to test with an uncategorised cmd
-        cmd = _make_mock_cmd("unknown_xyz", "Some cmd")
-        embeds = _build_user_embed([cmd])
-        assert len(embeds) >= 1
-        # The "Other" field should be present
-        field_names = [f.name for f in embeds[0].fields]
-        assert "Other" in field_names
-
     def test_build_detail_embed_truncates_long_field(self):
         """_build_detail_embed truncates field values >1024 chars."""
         _evict_cog_modules()
@@ -1360,21 +1255,6 @@ class TestEdgeCases:
         # Result is either empty string or just the header (no actual params listed)
         # Either way it should not raise
         assert isinstance(result, str)
-
-    def test_build_admin_embed_cog_fallback(self):
-        """_build_admin_embed uses cog name for fallback categorization."""
-        _evict_cog_modules()
-        sys.modules["shared"] = _mock_shared
-        sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _build_admin_embed
-
-        # A command from SchedulerCog not in _ADMIN_CATEGORY_MAPPING
-        cmd = _make_mock_cmd("scheduler_pause", "Pause a job", "SchedulerCog")
-        embeds = _build_admin_embed([cmd])
-        assert len(embeds) >= 1
-        # Should appear under Admin — Scheduler
-        field_names = [f.name for f in embeds[0].fields]
-        assert "Admin — Scheduler" in field_names
 
     @pytest.mark.asyncio
     async def test_admin_help_overview_scheduler_cog_fallback(self, cog, mock_bot):
@@ -1531,3 +1411,132 @@ class TestAdminCategoryMappingIntegrity:
         # Find the field and verify it shows 6 commands
         scheduler_field = next(f for f in embed.fields if f.name == "Admin — Scheduler")
         assert "6" in scheduler_field.value
+
+
+# ---------------------------------------------------------------------------
+# Drift guard — every loaded slash command must be visible in /help or /admin_help
+# ---------------------------------------------------------------------------
+
+_COGS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "src", "cogs")
+
+
+def _scan_registered_command_names() -> dict[str, str]:
+    """AST-scan loaded cog source files for @app_commands.command(...) names.
+
+    Returns {command_name: cog_filename}. Mirrors setup_hook()'s loading rule:
+    files whose name contains "template", "disabled", or "test" are skipped.
+    """
+    import ast
+
+    names: dict[str, str] = {}
+    for fname in sorted(os.listdir(_COGS_DIR)):
+        if not fname.endswith(".py"):
+            continue
+        lower = fname.lower()
+        if any(skip in lower for skip in ("template", "disabled", "test")):
+            continue
+        path = os.path.join(_COGS_DIR, fname)
+        with open(path, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read(), filename=fname)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            for dec in node.decorator_list:
+                if not isinstance(dec, ast.Call):
+                    continue
+                func = dec.func
+                if not (isinstance(func, ast.Attribute) and func.attr == "command"):
+                    continue
+                is_app_commands = (isinstance(func.value, ast.Name) and func.value.id == "app_commands") or (
+                    isinstance(func.value, ast.Attribute) and func.value.attr == "app_commands"
+                )
+                if not is_app_commands:
+                    continue
+                cmd_name = node.name  # discord.py default when no name kwarg
+                for kw in dec.keywords:
+                    if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                        cmd_name = kw.value.value
+                names[cmd_name] = fname
+    return names
+
+
+class TestCommandSurfaceDriftGuard:
+    """Static drift guard: helpCog's category maps must cover the full command surface.
+
+    /help and /admin_help silently drop any command missing from
+    _COMMAND_CATEGORIES / _ADMIN_CATEGORY_MAPPING (the cog fallback only rescues
+    Scheduler/Dev/Health cogs), so these tests fail when a new slash command is
+    added without a help-category entry — or when a mapped command is removed
+    from the codebase but left in the map.
+    """
+
+    _HELP_COMMANDS = {"help", "admin_help"}
+
+    def _get_module(self):
+        _evict_cog_modules()
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+        import cogs.helpCog as helpCog_module
+
+        return helpCog_module
+
+    def test_every_command_has_a_help_category(self):
+        """No slash command may be invisible to both /help and /admin_help."""
+        registered = _scan_registered_command_names()
+        helpCog = self._get_module()
+        mapped = set(helpCog._COMMAND_CATEGORIES) | set(helpCog._ADMIN_CATEGORY_MAPPING)
+        missing = set(registered) - mapped - self._HELP_COMMANDS
+        assert not missing, (
+            f"Slash commands with no help category (invisible in /help AND /admin_help): {sorted(missing)}. "
+            f"Add each to _COMMAND_CATEGORIES or _ADMIN_CATEGORY_MAPPING in helpCog.py."
+        )
+
+    def test_no_stale_mapping_entries(self):
+        """Every mapped command name must exist as a real slash command."""
+        registered = _scan_registered_command_names()
+        helpCog = self._get_module()
+        mapped = set(helpCog._COMMAND_CATEGORIES) | set(helpCog._ADMIN_CATEGORY_MAPPING)
+        stale = mapped - set(registered)
+        assert not stale, f"helpCog maps reference commands that no longer exist: {sorted(stale)}"
+
+    def test_no_command_in_both_maps(self):
+        """A command must be user-facing or admin, never both."""
+        helpCog = self._get_module()
+        overlap = set(helpCog._COMMAND_CATEGORIES) & set(helpCog._ADMIN_CATEGORY_MAPPING)
+        assert not overlap, f"Commands present in both user and admin maps: {sorted(overlap)}"
+
+    def test_user_map_has_no_admin_named_commands(self):
+        """Commands the runtime classifies as admin by name must not sit in the user map."""
+        helpCog = self._get_module()
+        for name in helpCog._COMMAND_CATEGORIES:
+            assert not name.startswith(helpCog._ADMIN_NAME_PREFIXES), (
+                f"'{name}' has an admin name prefix but is mapped as user-facing"
+            )
+            assert name not in helpCog._ADMIN_COMMAND_NAMES, (
+                f"'{name}' is in _ADMIN_COMMAND_NAMES but is mapped as user-facing"
+            )
+
+    def test_admin_cog_commands_in_admin_map(self):
+        """Every command defined in an admin cog file must be in the admin map."""
+        registered = _scan_registered_command_names()
+        helpCog = self._get_module()
+        admin_files = {"adminCog.py", "schedulerCog.py", "devCog.py", "healthCog.py"}
+        for name, fname in registered.items():
+            if fname in admin_files:
+                assert name in helpCog._ADMIN_CATEGORY_MAPPING, (
+                    f"'{name}' ({fname}) is missing from _ADMIN_CATEGORY_MAPPING"
+                )
+
+    def test_user_categories_consistent(self):
+        """Every user category must appear in the order list and descriptions, and vice versa."""
+        helpCog = self._get_module()
+        cats = set(helpCog._COMMAND_CATEGORIES.values())
+        assert cats == set(helpCog._USER_CATEGORY_ORDER)
+        assert cats == set(helpCog._USER_CATEGORY_DESCRIPTIONS)
+
+    def test_admin_categories_consistent(self):
+        """Every admin category must appear in the order list and descriptions, and vice versa."""
+        helpCog = self._get_module()
+        cats = set(helpCog._ADMIN_CATEGORY_MAPPING.values())
+        assert cats == set(helpCog._ADMIN_CATEGORY_ORDER)
+        assert cats == set(helpCog._ADMIN_CATEGORY_DESCRIPTIONS)

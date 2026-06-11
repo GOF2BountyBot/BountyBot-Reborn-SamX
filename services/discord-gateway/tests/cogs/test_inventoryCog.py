@@ -246,6 +246,26 @@ class TestInventoryCommand:
         embed = call_kwargs["embed"]
         assert len(embed.fields) > 0
 
+    def test_inventory_requests_ships_included(self, mock_inventory_cog, make_mock_response):
+        """/inventory opts in to ships on both the list and summary API calls."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        items_resp = make_mock_response([_make_inventory_item("Betty", "ship", 1)])
+        summary_resp = make_mock_response(_make_summary(total_items=1, ship=1))
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, summary_resp])
+
+        asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
+
+        list_call, summary_call = mock_inventory_cog.http_client.get.call_args_list
+        assert list_call.kwargs["params"].get("include_ships") == "true"
+        assert summary_call.kwargs["params"].get("include_ships") == "true"
+        # Ship-only inventory renders an embed, NOT the "No items found" message
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
     def test_inventory_empty_inventory(self, mock_inventory_cog, make_mock_response):
         """inventory with no items should send ephemeral message."""
         interaction = _create_mock_interaction()

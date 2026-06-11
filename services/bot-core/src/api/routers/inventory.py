@@ -44,16 +44,23 @@ async def get_player_repository():
 
 @router.get("/player/{player_id}", response_model=list[InventoryItemResponse])
 async def get_player_inventory(
-    player_id: int, item_type: str | None = None, inventory_service: InventoryService = Depends(get_inventory_service)
+    player_id: int,
+    item_type: str | None = None,
+    include_ships: bool = False,
+    inventory_service: InventoryService = Depends(get_inventory_service),
 ):
     """
     Get a player's inventory, optionally filtered by item type.
+
+    ``include_ships=true`` additionally lists the player's inactive ships
+    (the active ship counts as equipped and is excluded). Default false so
+    autocomplete/search/count consumers see cargo items only.
     """
-    flogger.debug(f"Getting inventory for player {player_id}, type filter: {item_type}")
+    flogger.debug(f"Getting inventory for player {player_id}, type filter: {item_type}, include_ships={include_ships}")
 
     try:
         async with get_db_session() as db:
-            items = await inventory_service.get_player_inventory(db, player_id, item_type)
+            items = await inventory_service.get_player_inventory(db, player_id, item_type, include_ships=include_ships)
 
             return [
                 InventoryItemResponse(
@@ -77,13 +84,21 @@ async def get_player_inventory(
 
 
 @router.get("/player/{player_id}/summary", response_model=InventorySummaryResponse)
-async def get_inventory_summary(player_id: int, inventory_service: InventoryService = Depends(get_inventory_service)):
-    """Get a summary of a player's inventory by item type."""
-    flogger.debug(f"Getting inventory summary for player {player_id}")
+async def get_inventory_summary(
+    player_id: int,
+    include_ships: bool = False,
+    inventory_service: InventoryService = Depends(get_inventory_service),
+):
+    """Get a summary of a player's inventory by item type.
+
+    ``include_ships=true`` adds the inactive-ship count to ``ship`` and
+    ``total_items`` (the active ship counts as equipped and is excluded).
+    """
+    flogger.debug(f"Getting inventory summary for player {player_id}, include_ships={include_ships}")
 
     try:
         async with get_db_session() as db:
-            summary = await inventory_service.get_inventory_summary(db, player_id)
+            summary = await inventory_service.get_inventory_summary(db, player_id, include_ships=include_ships)
 
             return InventorySummaryResponse(**summary)
 

@@ -18,6 +18,7 @@ from typing import Any
 from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.module_repository import ModuleRepository
 from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.primary_weapon_repository import PrimaryWeaponRepository
 from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
 from persist.repositories.ship_repository import ShipRepository
@@ -35,6 +36,7 @@ class InventoryService:
     def __init__(self):
         self.inventory_repo = InventoryRepository()
         self.player_repo = PlayerRepository()
+        self.player_ship_repo = PlayerShipRepository()
         self.ship_repo = ShipRepository()
         self.primary_weapon_repo = PrimaryWeaponRepository()
         self.secondary_weapon_repo = SecondaryWeaponRepository()
@@ -42,7 +44,7 @@ class InventoryService:
         self.module_repo = ModuleRepository()
 
     async def get_player_inventory(
-        self, db: AsyncSession, player_id: int, item_type: str | None = None
+        self, db: AsyncSession, player_id: int, item_type: str | None = None, include_ships: bool = False
     ) -> list[dict[str, Any]]:
         """
         Get a player's inventory, optionally filtered by item type.
@@ -51,6 +53,13 @@ class InventoryService:
         alias (``"weapon"``).  Generic aliases are expanded via the normalizer to
         all currently-enabled concrete types.  An unknown or disabled type raises
         ``InvalidItemTypeError`` (mapped to HTTP 422 by the router).
+
+        *include_ships* additionally lists the player's INACTIVE ships as
+        inventory entries.  Ships live in player_ships, not player_inventories;
+        the active ship is "equipped" and excluded, mirroring the cargo-only
+        invariant for items.  Default False so existing consumers (equip/sell
+        autocomplete cache, /search, item-count resolution) are unaffected —
+        only the /inventory display opts in.
 
         Returns formatted inventory data with item details.
         """
@@ -61,6 +70,7 @@ class InventoryService:
                 raise ValueError(f"Player {player_id} not found")
 
             # Get inventory items
+            concrete_types: tuple[str, ...] | None = None
             if item_type is None:
                 items = await self.inventory_repo.get_player_items(db, player_id)
             else:
@@ -70,9 +80,15 @@ class InventoryService:
                 else:
                     items = await self.inventory_repo.get_player_items_by_types(db, player_id, concrete_types)
 
+            # Inactive ships as cargo entries (no type filter, or filter includes "ship")
+            inactive_ships: list[Any] = []
+            if include_ships and (concrete_types is None or "ship" in concrete_types):
+                player_ships = await self.player_ship_repo.get_player_ships(db, player_id)
+                inactive_ships = [ps for ps in player_ships if not ps.is_active]
+
             # Format items for response — batch-fetch all item details in 5 queries
             # (P6-T2: replaces N×5 sequential per-item lookups).
-            item_names = [item.item_name for item in items]
+            item_names = [item.item_name for item in items] + [ps.ship_name for ps in inactive_ships]
             details_by_name = await self._get_items_details_batch(db, item_names)
 
             formatted_items = []
@@ -87,7 +103,29 @@ class InventoryService:
                 }
                 formatted_items.append(formatted_item)
 
-            flogger.debug(f"Retrieved {len(formatted_items)} inventory items for player {player_id}")
+            # Aggregate duplicate inactive hulls into one entry with a quantity,
+            # matching how stacked items display. The id is the first PlayerShip id
+            # (display-only — NOT a player_inventories row id).
+            ships_by_name: dict[str, dict[str, Any]] = {}
+            for ps in inactive_ships:
+                entry = ships_by_name.get(ps.ship_name)
+                if entry is None:
+                    ships_by_name[ps.ship_name] = {
+                        "id": ps.id,
+                        "item_type": "ship",
+                        "item_name": ps.ship_name,
+                        "quantity": 1,
+                        "acquired_at": ps.created_at.isoformat(),
+                        "item_details": details_by_name.get(ps.ship_name),
+                    }
+                else:
+                    entry["quantity"] += 1
+            formatted_items.extend(ships_by_name.values())
+
+            flogger.debug(
+                f"Retrieved {len(formatted_items)} inventory items for player {player_id} "
+                f"(inactive ships included: {len(inactive_ships) if include_ships else 'off'})"
+            )
             return formatted_items
 
         except (InvalidItemTypeError, ValueError):
@@ -304,8 +342,15 @@ class InventoryService:
             flogger.error(f"Error transferring item between players: {e}")
             raise
 
-    async def get_inventory_summary(self, db: AsyncSession, player_id: int) -> dict[str, Any]:
-        """Get a summary of a player's inventory by item type."""
+    async def get_inventory_summary(
+        self, db: AsyncSession, player_id: int, include_ships: bool = False
+    ) -> dict[str, Any]:
+        """Get a summary of a player's inventory by item type.
+
+        *include_ships* adds the player's INACTIVE ship count to the ``ship``
+        key and ``total_items`` (same semantics as get_player_inventory —
+        ships live in player_ships, the active ship counts as "equipped").
+        """
         try:
             # Verify player exists
             player = await self.player_repo.get_by_id(db, player_id)
@@ -313,6 +358,12 @@ class InventoryService:
                 raise ValueError(f"Player {player_id} not found")
 
             summary = await self.inventory_repo.get_inventory_summary(db, player_id)
+
+            if include_ships:
+                player_ships = await self.player_ship_repo.get_player_ships(db, player_id)
+                inactive_count = sum(1 for ps in player_ships if not ps.is_active)
+                summary["ship"] += inactive_count
+                summary["total_items"] += inactive_count
 
             # Add player context
             summary["player_id"] = player_id

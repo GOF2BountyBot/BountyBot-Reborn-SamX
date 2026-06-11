@@ -357,8 +357,8 @@ class InventoryCog(commands.Cog):
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
-            # Get inventory
-            params = {}
+            # Get inventory (include_ships: inactive ships display as cargo here)
+            params = {"include_ships": "true"}
             if item_type:
                 params["item_type"] = item_type
 
@@ -373,8 +373,12 @@ class InventoryCog(commands.Cog):
                 )
                 return
 
-            # Get inventory summary for overview
-            summary_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}/summary", timeout=10)
+            # Get inventory summary for overview (include_ships: count inactive ships)
+            summary_resp = await self.http_client.get(
+                f"{api_base}/inventory/player/{player_id}/summary",
+                params={"include_ships": "true"},
+                timeout=10,
+            )
             summary_resp.raise_for_status()
             summary = summary_resp.json()
 

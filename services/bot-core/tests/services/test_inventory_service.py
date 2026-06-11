@@ -107,6 +107,13 @@ def mock_ship_repo() -> AsyncMock:
 
 
 @pytest.fixture
+def mock_player_ship_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_player_ships = AsyncMock(return_value=[])
+    return repo
+
+
+@pytest.fixture
 def mock_primary_weapon_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.get_by_name = AsyncMock(return_value=None)
@@ -138,6 +145,7 @@ def mock_module_repo() -> AsyncMock:
 def service(
     mock_inventory_repo,
     mock_player_repo,
+    mock_player_ship_repo,
     mock_ship_repo,
     mock_primary_weapon_repo,
     mock_secondary_weapon_repo,
@@ -147,6 +155,7 @@ def service(
     svc = InventoryService()
     svc.inventory_repo = mock_inventory_repo
     svc.player_repo = mock_player_repo
+    svc.player_ship_repo = mock_player_ship_repo
     svc.ship_repo = mock_ship_repo
     svc.primary_weapon_repo = mock_primary_weapon_repo
     svc.secondary_weapon_repo = mock_secondary_weapon_repo
@@ -233,6 +242,100 @@ class TestGetPlayerInventory:
         # Concrete types (direct) — currently-enabled ones
         for item_type in ("ship", "primary_weapon", "turret_weapon", "module"):
             await service.get_player_inventory(mock_db, player_id=1, item_type=item_type)
+
+
+# ===========================================================================
+# Tests: get_player_inventory — include_ships (inactive ships as cargo)
+# ===========================================================================
+
+
+def _make_player_ship(ship_id: int, ship_name: str, is_active: bool) -> MagicMock:
+    ps = MagicMock()
+    ps.id = ship_id
+    ps.ship_name = ship_name
+    ps.is_active = is_active
+    ps.created_at = datetime(2025, 6, 1, tzinfo=UTC)
+    return ps
+
+
+class TestGetPlayerInventoryIncludeShips:
+    """include_ships=True lists INACTIVE ships as inventory entries; active ship excluded."""
+
+    @pytest.mark.asyncio
+    async def test_inactive_ship_included_active_excluded(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_player_ship_repo
+    ):
+        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_inventory_repo.get_player_items.return_value = []
+        mock_player_ship_repo.get_player_ships.return_value = [
+            _make_player_ship(1, "Specter", is_active=True),
+            _make_player_ship(2, "Betty", is_active=False),
+        ]
+
+        result = await service.get_player_inventory(mock_db, player_id=1, include_ships=True)
+
+        assert len(result) == 1
+        assert result[0]["item_type"] == "ship"
+        assert result[0]["item_name"] == "Betty"
+        assert result[0]["quantity"] == 1
+
+    @pytest.mark.asyncio
+    async def test_duplicate_inactive_hulls_aggregate_quantity(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_player_ship_repo
+    ):
+        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_inventory_repo.get_player_items.return_value = []
+        mock_player_ship_repo.get_player_ships.return_value = [
+            _make_player_ship(1, "Betty", is_active=False),
+            _make_player_ship(2, "Betty", is_active=False),
+        ]
+
+        result = await service.get_player_inventory(mock_db, player_id=1, include_ships=True)
+
+        assert len(result) == 1
+        assert result[0]["item_name"] == "Betty"
+        assert result[0]["quantity"] == 2
+
+    @pytest.mark.asyncio
+    async def test_non_ship_filter_skips_ship_fetch(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_player_ship_repo
+    ):
+        """A type filter that excludes 'ship' must not query player_ships."""
+        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_inventory_repo.get_player_items.return_value = []
+
+        result = await service.get_player_inventory(mock_db, player_id=1, item_type="module", include_ships=True)
+
+        assert result == []
+        mock_player_ship_repo.get_player_ships.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ship_filter_returns_inactive_ships(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_player_ship_repo
+    ):
+        """item_type='ship' + include_ships returns the inactive ships."""
+        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_inventory_repo.get_player_items.return_value = []
+        mock_player_ship_repo.get_player_ships.return_value = [
+            _make_player_ship(2, "Betty", is_active=False),
+        ]
+
+        result = await service.get_player_inventory(mock_db, player_id=1, item_type="ship", include_ships=True)
+
+        assert [i["item_name"] for i in result] == ["Betty"]
+
+    @pytest.mark.asyncio
+    async def test_default_excludes_ships(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_player_ship_repo
+    ):
+        """Default include_ships=False: player_ships is never queried (autocomplete/search safety)."""
+        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_inventory_repo.get_player_items.return_value = []
+
+        result = await service.get_player_inventory(mock_db, player_id=1)
+
+        assert result == []
+        mock_player_ship_repo.get_player_ships.assert_not_awaited()
 
 
 # ===========================================================================
@@ -472,6 +575,43 @@ class TestGetInventorySummary:
         await service.get_inventory_summary(mock_db, player_id=1)
 
         mock_inventory_repo.get_inventory_summary.assert_awaited_once_with(mock_db, 1)
+
+    @pytest.mark.asyncio
+    async def test_include_ships_adds_inactive_count(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_player_ship_repo
+    ):
+        """include_ships=True adds the inactive-ship count to ship + total_items."""
+        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_inventory_repo.get_inventory_summary.return_value = {
+            "ship": 0,
+            "primary_weapon": 3,
+            "secondary_weapon": 0,
+            "turret_weapon": 0,
+            "module": 1,
+            "total_items": 4,
+        }
+        mock_player_ship_repo.get_player_ships.return_value = [
+            _make_player_ship(1, "Specter", is_active=True),
+            _make_player_ship(2, "Betty", is_active=False),
+            _make_player_ship(3, "Hatsuyuki", is_active=False),
+        ]
+
+        result = await service.get_inventory_summary(mock_db, player_id=1, include_ships=True)
+
+        assert result["ship"] == 2  # inactive only — active ship is "equipped"
+        assert result["total_items"] == 6
+
+    @pytest.mark.asyncio
+    async def test_default_summary_excludes_ships(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_player_ship_repo
+    ):
+        """Default include_ships=False: player_ships is never queried."""
+        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_inventory_repo.get_inventory_summary.return_value = {"total_items": 0}
+
+        await service.get_inventory_summary(mock_db, player_id=1)
+
+        mock_player_ship_repo.get_player_ships.assert_not_awaited()
 
 
 # ===========================================================================

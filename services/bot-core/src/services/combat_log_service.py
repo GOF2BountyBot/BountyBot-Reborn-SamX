@@ -195,9 +195,7 @@ class CombatLogService:
             # break the fight finalizer (this is the single chokepoint for BOTH PvC
             # and PvP; invalidate-only is rollback-safe — the next cold-fill re-reads
             # committed state).
-            self._schedule_combatlog_invalidate(
-                combat_meta.guild_id, combatant1_user_id, combatant2_user_id
-            )
+            self._schedule_combatlog_invalidate(combat_meta.guild_id, combatant1_user_id, combatant2_user_id)
             return persisted.id
         except Exception as exc:
             flogger.error(f"CombatLog persist failed: context={context!r} guild={combat_meta.guild_id}: {exc}")

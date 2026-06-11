@@ -18,7 +18,9 @@ Test matrix:
   D3  No AB-BA deadlock under duel-first + ascending-player lock ordering
   D4  Timeout-then-retry for duel accept
 
-Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via `sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is unreachable from this dev container).
+Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via
+`sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is
+unreachable from this dev container).
 
 Engine / factory creation: each test creates its own engine inline (not via
 fixture) to avoid pytest-asyncio loop-binding issues with asyncpg connection

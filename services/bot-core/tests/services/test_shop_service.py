@@ -674,14 +674,18 @@ class TestRefreshShop:
 
         assert result["tech_level"] == 5  # batch TL preserved for the announcement
         non_ship_rows = [
-            call.args[1] for call in mock_shop_repo.create_or_update.call_args_list if call.args[1]["item_type"] != "ship"
+            call.args[1]
+            for call in mock_shop_repo.create_or_update.call_args_list
+            if call.args[1]["item_type"] != "ship"
         ]
         assert non_ship_rows, "Test setup: expected at least one non-ship row"
         assert all(row["tech_level"] == 3 for row in non_ship_rows)
 
         # Ship rows derive TL from credit value (300 → TL1 under locked thresholds)
         ship_rows = [
-            call.args[1] for call in mock_shop_repo.create_or_update.call_args_list if call.args[1]["item_type"] == "ship"
+            call.args[1]
+            for call in mock_shop_repo.create_or_update.call_args_list
+            if call.args[1]["item_type"] == "ship"
         ]
         for row in ship_rows:
             assert row["tech_level"] == 1
@@ -2148,7 +2152,9 @@ class TestSecondaryQuantityScalers:
             service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
         )
         expected = 3 * GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY
-        assert qty == expected, f"{subtype}: expected 3×{GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY}={expected}, got {qty}"
+        assert qty == expected, (
+            f"{subtype}: expected 3×{GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY}={expected}, got {qty}"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("subtype", ["missile", "rocket", "cluster-missile"])
@@ -2161,7 +2167,9 @@ class TestSecondaryQuantityScalers:
             service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
         )
         expected = 3 * GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD
-        assert qty == expected, f"{subtype}: expected 3×{GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD}={expected}, got {qty}"
+        assert qty == expected, (
+            f"{subtype}: expected 3×{GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD}={expected}, got {qty}"
+        )
 
     @pytest.mark.asyncio
     async def test_missing_subtype_falls_back_to_standard_scaler(
@@ -2179,9 +2187,7 @@ class TestSecondaryQuantityScalers:
         assert qty == 3 * GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD
 
     @pytest.mark.asyncio
-    async def test_non_secondary_types_are_not_scaled(
-        self, service, mock_db, mock_config_repo, mock_shop_repo
-    ):
+    async def test_non_secondary_types_are_not_scaled(self, service, mock_db, mock_config_repo, mock_shop_repo):
         """Primary weapons keep the raw rolled quantity (no scaler applied)."""
         count_map = {
             "ship": {"min": 0, "max": 0},

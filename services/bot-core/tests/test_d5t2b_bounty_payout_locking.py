@@ -36,7 +36,9 @@ Cases:
       concurrent increment survives; the mutation (drop populate_existing / use
       the stale pre-loaded object) loses it.
 
-Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via `sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is unreachable from this dev container).
+Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via
+`sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is
+unreachable from this dev container).
 Each test creates its own engine inline (mirrors test_d5t2_lock_ordering.py) to
 keep the asyncpg pool bound to the test's event loop.
 """

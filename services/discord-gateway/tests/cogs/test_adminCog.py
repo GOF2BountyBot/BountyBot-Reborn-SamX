@@ -2548,9 +2548,7 @@ class TestPlayerShipAutocomplete:
                 [
                     NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
                     NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
-                    NormalizedChoice(
-                        label="Bloodstar", value="3", norm="bloodstar", raw={"ship_name": "Bloodstar"}
-                    ),
+                    NormalizedChoice(label="Bloodstar", value="3", norm="bloodstar", raw={"ship_name": "Bloodstar"}),
                 ],
             )
 

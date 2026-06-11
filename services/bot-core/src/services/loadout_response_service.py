@@ -581,6 +581,7 @@ class LoadoutResponseService:
             raw:            Raw weapon dict from criminal_ship JSON.
             include_rounds: When True, also extract the ``rounds`` field (secondary weapons).
         """
+
         def _opt_int(value) -> int | None:
             try:
                 return int(value) if value is not None else None

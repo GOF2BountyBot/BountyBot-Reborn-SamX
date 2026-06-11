@@ -249,9 +249,7 @@ class CombatLogCog(commands.Cog):
     # /admin_combat_log <user> <battle>
     # ------------------------------------------------------------------
 
-    @app_commands.command(
-        name="admin_combat_log", description="[ADMIN] Review the details of a player's past battle"
-    )
+    @app_commands.command(name="admin_combat_log", description="[ADMIN] Review the details of a player's past battle")
     @app_commands.describe(
         user="The player whose battle history to review",
         battle="Select a battle from the player's history",

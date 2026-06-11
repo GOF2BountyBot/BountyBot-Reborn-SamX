@@ -1056,7 +1056,14 @@ class TestNormalizeWeaponDict:
         return LoadoutResponseService._normalize_weapon_dict
 
     def test_primary_weapon_fields(self):
-        raw = {"name": "Rail Gun", "emoji": "<:rg:1>", "dps": 88.2, "value": 1000, "damage_per_shot": 60, "loading_speed_ms": 680}
+        raw = {
+            "name": "Rail Gun",
+            "emoji": "<:rg:1>",
+            "dps": 88.2,
+            "value": 1000,
+            "damage_per_shot": 60,
+            "loading_speed_ms": 680,
+        }
         out = self._fn()(raw)
         assert out["damage_per_shot"] == 60
         assert out["loading_speed_ms"] == 680

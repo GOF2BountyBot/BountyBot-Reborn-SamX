@@ -1838,7 +1838,7 @@ class TestTurretsAndSecondariesSections:
 # ---------------------------------------------------------------------------
 
 
-from cogs._shared.loadout_embed import (  # noqa: E402
+from cogs._shared.loadout_embed import (
     _format_module_line,
     _format_secondary_line,
     _format_weapon_line,
@@ -1850,7 +1850,13 @@ class TestWeaponCombatDetailLine:
 
     def test_primary_with_all_segments(self):
         line = _format_weapon_line(
-            {"name": "Dark Matter Laser", "emoji": "<:dml:1>", "dps": 88.23, "damage_per_shot": 60, "loading_speed_ms": 680}
+            {
+                "name": "Dark Matter Laser",
+                "emoji": "<:dml:1>",
+                "dps": 88.23,
+                "damage_per_shot": 60,
+                "loading_speed_ms": 680,
+            }
         )
         assert line == "<:dml:1> Dark Matter Laser | DPS: **88.23** | Dmg/shot: **60** | Loading: **680 ms**"
 

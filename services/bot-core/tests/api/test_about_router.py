@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from src.services.game_constants import GameConstants
 
 # ---------------------------------------------------------------------------
@@ -1403,7 +1402,9 @@ class TestD003TurretFiringMode:
     def test_turret_plasma_collector_automatic_false(self, client, mock_repos):
         """Plasma-collector turret with automatic=False: 'automatic' must be False (no special-casing)."""
         mock_repos["turret"].get_by_name = AsyncMock(
-            return_value=_make_mock_turret_with_combat(name="Mining Turret", subtype="plasma-collector", automatic=False)
+            return_value=_make_mock_turret_with_combat(
+                name="Mining Turret", subtype="plasma-collector", automatic=False
+            )
         )
 
         resp = client.get("/api/v1/about/object/name/Mining Turret")
@@ -1441,7 +1442,9 @@ class TestD003TurretFiringMode:
     def test_turret_automatic_false_via_get_by_id(self, client, mock_repos):
         """D-003 by-id path: automatic=False (Manual/collector) must round-trip via GET /object/turret_weapon/{id}."""
         mock_repos["turret"].get_by_id = AsyncMock(
-            return_value=_make_mock_turret_with_combat(name="Mining Turret", subtype="plasma-collector", automatic=False)
+            return_value=_make_mock_turret_with_combat(
+                name="Mining Turret", subtype="plasma-collector", automatic=False
+            )
         )
 
         resp = client.get("/api/v1/about/object/turret_weapon/2")

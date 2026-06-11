@@ -2436,9 +2436,7 @@ class TestD004SecondaryWeaponTypeEmbedField:
         assert ls_idx is not None and wt_idx is not None, (
             f"Expected loading speed and weapon type both present; fields={names}"
         )
-        assert ls_idx < wt_idx, (
-            f"'Weapon type' ({wt_idx}) must come after 'Loading Speed' ({ls_idx}); fields={names}"
-        )
+        assert ls_idx < wt_idx, f"'Weapon type' ({wt_idx}) must come after 'Loading Speed' ({ls_idx}); fields={names}"
 
 
 class TestD005SecondaryNoAdditionalInfoLoadingSpeed:
@@ -2505,9 +2503,7 @@ class TestD005SecondaryNoAdditionalInfoLoadingSpeed:
         # (the humanised form of the extra_atts "loading speed" key would be
         #  "**Loading Speed:** 3000\n" — without the 'ms' suffix that marks the dedicated field).
         ai_value = " ".join(f.value for f in embed.fields if f.name == "Additional Info")
-        assert "Loading Speed" not in ai_value, (
-            f"Duplicate 'Loading Speed' found in Additional Info: {ai_value!r}"
-        )
+        assert "Loading Speed" not in ai_value, f"Duplicate 'Loading Speed' found in Additional Info: {ai_value!r}"
 
     def test_secondary_dedicated_loading_speed_still_renders_with_ms(self, mock_about_cog):
         """Dedicated 'Loading Speed: <n> ms' field must still appear despite D-005 suppression."""

@@ -32,7 +32,9 @@ Cases (from D5 design §Mandatory tester cases):
   A  ANTI-VACUOUS probe: WITHOUT the _lock_player call the double-equip produces a
      lost-update / duplicate slot — proving the lock is load-bearing.
 
-Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via `sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is unreachable from this dev container).
+Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via
+`sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is
+unreachable from this dev container).
 Each test creates its own engine inline (mirrors test_concurrency_idempotency.py)
 to keep the asyncpg pool bound to the test's event loop.
 """

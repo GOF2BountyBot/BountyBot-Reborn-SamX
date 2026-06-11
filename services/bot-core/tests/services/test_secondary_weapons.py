@@ -748,9 +748,7 @@ class TestNukeD014:
         l2 = _loadout(base_armour=99_999, name="Target")
         result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
         nuke_fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"]
-        missile_fires = [
-            e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "missile"
-        ]
+        missile_fires = [e for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "missile"]
         assert missile_fires[0].tick == 0, "missile must stay ready-to-fire at tick 0"
         assert len(nuke_fires) >= 1 and len(missile_fires) >= 2
         # Phase order is decrement-then-fire within a tick: the nuke's init cooldown
@@ -769,7 +767,9 @@ class TestNukeD014:
         l2 = _loadout(base_armour=99_999, name="Target")
         result = TickResolver().resolve(l1, l2, rng=_AlwaysHit())
         mults = [
-            e.data["stack_mult"] for e in result.combat_log if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"
+            e.data["stack_mult"]
+            for e in result.combat_log
+            if e.type == "weapon_fire" and e.data.get("subtype") == "nuke"
         ]
         assert len(mults) >= 4
         assert mults[:4] == [1.0, 0.5, 0.25, 0.125]
@@ -1045,9 +1045,7 @@ class TestCrossSubtype:
                 all_fires = [
                     e
                     for e in result.combat_log
-                    if e.type == "weapon_fire"
-                    and e.data.get("slot") == "secondary"
-                    and e.data.get("subtype") == "nuke"
+                    if e.type == "weapon_fire" and e.data.get("slot") == "secondary" and e.data.get("subtype") == "nuke"
                 ]
                 assert len(all_fires) >= 2, f"{subtype_name}: should fire repeatedly after arming"
                 assert all_fires[0].tick > 0, f"{subtype_name}: must NOT fire on tick 0 (D-014 arming delay)"

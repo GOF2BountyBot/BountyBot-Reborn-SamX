@@ -239,9 +239,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         Pre-computes ``_norm`` at fill time so the hot autocomplete path performs
         only a substring check per keystroke.
         """
-        resp = await self.http_client.get(
-            f"{api_base}/duels/pending-all", params={"guild_id": guild_id}, timeout=3.0
-        )
+        resp = await self.http_client.get(f"{api_base}/duels/pending-all", params={"guild_id": guild_id}, timeout=3.0)
         resp.raise_for_status()
         duels = resp.json()
         for d in duels:
@@ -2255,8 +2253,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             # Attempt to resolve the target user from the partially-filled command
             target_user = getattr(interaction.namespace, "user", None)
             if target_user is not None:
-                from utils import autocomplete_state
                 from utils.autocomplete_helpers import resolve_player_id
+
+                from utils import autocomplete_state
 
                 # GATE 1 (cold-fill): resolve target user → bot-core player_id.
                 player_id = await resolve_player_id(

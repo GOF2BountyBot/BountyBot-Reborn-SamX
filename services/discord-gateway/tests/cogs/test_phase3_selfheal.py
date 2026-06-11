@@ -202,9 +202,7 @@ class TestSkinsSelfHeal:
         skins_cog._ship_skins.set("Betty", ["Red"])
         skins_cog._ship_skins.clear()
         # Per-ship refresh_fn re-fetches THIS ship's skins.
-        skins_cog.http_client.get = AsyncMock(
-            return_value=_resp({"compatible_skins": {"Red": {}, "Blue": {}}})
-        )
+        skins_cog.http_client.get = AsyncMock(return_value=_resp({"compatible_skins": {"Red": {}, "Blue": {}}}))
         res = asyncio.run(skins_cog.skin_autocomplete(_mock_interaction(namespace=ns), ""))
         values = [c.value for c in res]
         assert "Red" in values and "Blue" in values

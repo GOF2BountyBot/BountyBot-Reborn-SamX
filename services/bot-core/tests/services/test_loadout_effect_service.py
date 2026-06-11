@@ -99,12 +99,16 @@ class TestInnerExtraAttsMerge:
 
     def test_armour_resolves_when_only_inner_present(self):
         """ArmourModule armour key nested under inner extra_atts still resolves."""
-        result = LoadoutEffectService.format_module_effects("ArmourModule", {"builtIn": False, "extra_atts": {"armour": 40}})
+        result = LoadoutEffectService.format_module_effects(
+            "ArmourModule", {"builtIn": False, "extra_atts": {"armour": 40}}
+        )
         assert result == [EffectItem(label="Armour", value="40")]
 
     def test_outer_and_inner_duplicate_does_not_double(self):
         """Real E2 Exoclad shape: armour at BOTH levels — emits a single entry."""
-        result = LoadoutEffectService.format_module_effects("ArmourModule", {"armour": 40, "extra_atts": {"armour": 40}})
+        result = LoadoutEffectService.format_module_effects(
+            "ArmourModule", {"armour": 40, "extra_atts": {"armour": 40}}
+        )
         assert result == [EffectItem(label="Armour", value="40")]
 
 

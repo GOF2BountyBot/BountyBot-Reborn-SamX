@@ -74,8 +74,9 @@ def test_push_failure_is_swallowed():
     failing_client.__aexit__ = AsyncMock(return_value=False)
     failing_client.post = AsyncMock(side_effect=RuntimeError("gateway down"))
 
-    with patch("httpx.AsyncClient", return_value=failing_client), patch.dict(
-        os.environ, {"INTERNAL_AUTH_TOKEN": "tok"}
+    with (
+        patch("httpx.AsyncClient", return_value=failing_client),
+        patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": "tok"}),
     ):
         # Should not raise.
         asyncio.run(gateway_push.push_combatlog_invalidate(99, 1001))

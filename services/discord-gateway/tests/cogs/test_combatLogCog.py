@@ -321,6 +321,38 @@ class TestCombatLogCommand:
         # Should have sent an embed
         assert "embed" in call_kwargs.kwargs
 
+    async def test_default_is_ephemeral(self, cog):
+        """public omitted → defer and success followup are both ephemeral (current behavior)."""
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_make_detail()))
+        interaction = _create_interaction()
+
+        await cog.combat_log.callback(cog, interaction, battle=1)
+
+        assert interaction.response.defer.call_args.kwargs.get("ephemeral") is True
+        assert interaction.followup.send.call_args.kwargs.get("ephemeral") is True
+
+    async def test_public_true_sends_publicly(self, cog):
+        """public=True → same embed, but defer and success followup are non-ephemeral."""
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_make_detail()))
+        interaction = _create_interaction()
+
+        await cog.combat_log.callback(cog, interaction, battle=1, public=True)
+
+        assert interaction.response.defer.call_args.kwargs.get("ephemeral") is False
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral") is False
+        assert "embed" in call_kwargs
+
+    async def test_public_true_error_stays_ephemeral(self, cog):
+        """Errors are always ephemeral, even when public=True was requested."""
+        resp = _make_mock_response({}, status_code=404)
+        cog.http_client.get = AsyncMock(return_value=resp)
+        interaction = _create_interaction()
+
+        await cog.combat_log.callback(cog, interaction, battle=9999, public=True)
+
+        assert interaction.followup.send.call_args.kwargs.get("ephemeral") is True
+
     async def test_404_sends_not_found_message(self, cog):
         resp = _make_mock_response({}, status_code=404)
         cog.http_client.get = AsyncMock(return_value=resp)

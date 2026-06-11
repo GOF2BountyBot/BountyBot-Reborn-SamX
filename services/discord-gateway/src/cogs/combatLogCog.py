@@ -4,10 +4,13 @@ The /combat-log command lets a player look up their past battles.
 Autocomplete is populated exclusively with the invoking user's fights in the
 current guild, newest-first (cap 25 — Discord's autocomplete limit).
 
+/combat-log accepts an optional ``public`` flag (default False): the same
+embed is posted publicly instead of ephemerally; errors stay ephemeral.
+
 /admin_combat_log is the admin variant: a mandatory ``user`` param selects the
 player, then the ``battle`` autocomplete lists that player's fights instead of
-the invoker's.  The detail embed and ephemeral delivery are identical to
-/combat-log.  Discord cannot enforce option fill-order, so when ``user`` is
+the invoker's.  The detail embed is identical to /combat-log; delivery is
+always ephemeral (no ``public`` option).  Discord cannot enforce option fill-order, so when ``user`` is
 still empty the battle autocomplete returns a single "Select a user first"
 hint choice carrying a sentinel value the command body rejects.
 
@@ -191,12 +194,19 @@ class CombatLogCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @app_commands.command(name="combat-log", description="Review the details of a past battle")
-    @app_commands.describe(battle="Select a battle from your history")
+    @app_commands.describe(
+        battle="Select a battle from your history",
+        public="Make the response visible to everyone (default: False — only you see it)",
+    )
     @app_commands.autocomplete(battle=battle_autocomplete)
-    async def combat_log(self, interaction: discord.Interaction, battle: int):
+    async def combat_log(self, interaction: discord.Interaction, battle: int, public: bool = False):
         """Show the after-action report for a past battle."""
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        flogger.info(f"/combat-log invoked: guild={interaction.guild_id} user={interaction.user.id} battle={battle}")
+        # Errors always stay ephemeral regardless of `public`; success follows `public`.
+        await interaction.response.defer(thinking=True, ephemeral=not public)
+        flogger.info(
+            f"/combat-log invoked: guild={interaction.guild_id} user={interaction.user.id}"
+            f" battle={battle} public={public}"
+        )
 
         try:
             resp = await self.http_client.get(
@@ -216,9 +226,10 @@ class CombatLogCog(commands.Cog):
             data = resp.json()
 
             embed = self._build_detail_embed(data, interaction.user)
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed, ephemeral=not public)
             flogger.info(
-                f"/combat-log success: guild={interaction.guild_id} user={interaction.user.id} battle={battle}"
+                f"/combat-log success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" battle={battle} public={public}"
             )
 
         except httpx.HTTPStatusError as exc:

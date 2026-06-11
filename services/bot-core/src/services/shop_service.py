@@ -33,6 +33,7 @@ from services.bounty_service import get_secondary_subtype
 from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants
+from services.game_maths import ship_tech_level_for_value
 
 flogger = bblogger.get_logger("shop-service")
 
@@ -701,11 +702,20 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     # Calculate price
                     base_price = await self._get_item_base_price(db, item_name)
 
+                    # Row tech_level is the ITEM's actual TL (shown per-item in the
+                    # shop listing) — NOT the batch shop_tech_level: draws may land
+                    # at TL-1/TL-2, and ships are drawn by spawn-rate weight with a
+                    # value-derived TL. The batch TL lives in refresh_details below.
+                    if concrete_type == "ship":
+                        row_tech_level = ship_tech_level_for_value(base_price)
+                    else:
+                        row_tech_level = item_tech_level
+
                     # Create shop item
                     shop_item_data = {
                         "guild_id": guild_id,
                         "tier": tier,
-                        "tech_level": shop_tech_level,
+                        "tech_level": row_tech_level,
                         "item_type": item_type,
                         "item_name": item_name,
                         "quantity": item_quantity,
@@ -886,6 +896,29 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 return item.value
         return 0
 
+    async def _get_item_tech_level(self, db: AsyncSession, item_type: str, item_name: str, base_price: int) -> int:
+        """Resolve the item's actual tech level for shop-row display.
+
+        Ships have no tech_level column — theirs is derived from credit value
+        (same rule as bounty ship selection). Other types read the catalog
+        row's tech_level. Falls back to 1 when the item can't be found.
+        """
+        if item_type == "ship":
+            return ship_tech_level_for_value(base_price)
+        repo = {
+            "primary_weapon": self.primary_weapon_repo,
+            "secondary_weapon": self.secondary_weapon_repo,
+            "turret_weapon": self.turret_weapon_repo,
+            "module": self.module_repo,
+        }.get(item_type)
+        if repo is not None:
+            item = await repo.get_by_name(db, item_name)
+            tech_level = getattr(item, "tech_level", None) if item is not None else None
+            if tech_level:
+                return tech_level
+        flogger.warning(f"Could not resolve tech level for {item_name!r} ({item_type}); defaulting to 1")
+        return 1
+
     async def _add_item_to_shop(
         self,
         db: AsyncSession,
@@ -912,11 +945,13 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 new_quantity = existing_item.quantity + quantity
                 await self.shop_repo.update_quantity(db, existing_item.id, new_quantity, commit=commit)
             else:
-                # Create new shop item
+                # Create new shop item carrying the item's REAL tech level — the
+                # shop listing renders T{tech_level} per item, so the old hardcoded
+                # default of 1 displayed every freshly-sold item as T1.
                 shop_item_data = {
                     "guild_id": guild_id,
                     "tier": tier,
-                    "tech_level": 1,  # Default tech level for sold items
+                    "tech_level": await self._get_item_tech_level(db, item_type, item_name, base_price),
                     "item_type": item_type,
                     "item_name": item_name,
                     "quantity": quantity,

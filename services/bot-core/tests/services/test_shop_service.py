@@ -654,6 +654,39 @@ class TestRefreshShop:
         assert "refresh_time" in result
 
     @pytest.mark.asyncio
+    async def test_rows_carry_item_tech_level_not_batch(self, service, mock_db, mock_config_repo, mock_shop_repo):
+        """Shop rows store the ITEM's drawn tech level; the batch TL stays in refresh_details only.
+
+        Draws may land at TL-1/TL-2 of the batch level, and the listing renders
+        T{tech_level} per item — storing the batch TL mislabeled those items.
+        """
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        # Unique name per type — refresh dedupes drawn names, so a constant
+        # name would produce a single row for whichever type iterates first.
+        service._get_random_item_by_tech_level = AsyncMock(side_effect=lambda db, item_type, tl: f"{item_type}-item")
+        service._get_item_base_price = AsyncMock(return_value=300)
+        service._select_item_tech_level = MagicMock(return_value=3)  # drawn two below batch
+        mock_shop_repo.create_or_update = AsyncMock(return_value=_make_shop_item())
+
+        result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=5)
+
+        assert result["tech_level"] == 5  # batch TL preserved for the announcement
+        non_ship_rows = [
+            call.args[1] for call in mock_shop_repo.create_or_update.call_args_list if call.args[1]["item_type"] != "ship"
+        ]
+        assert non_ship_rows, "Test setup: expected at least one non-ship row"
+        assert all(row["tech_level"] == 3 for row in non_ship_rows)
+
+        # Ship rows derive TL from credit value (300 → TL1 under locked thresholds)
+        ship_rows = [
+            call.args[1] for call in mock_shop_repo.create_or_update.call_args_list if call.args[1]["item_type"] == "ship"
+        ]
+        for row in ship_rows:
+            assert row["tech_level"] == 1
+
+    @pytest.mark.asyncio
     async def test_raises_guild_not_configured_when_none_exists(
         self, service, mock_db, mock_config_repo, mock_shop_repo
     ):
@@ -1119,6 +1152,65 @@ class TestAddItemToShop:
             await service._add_item_to_shop(
                 mock_db, guild_id=999, tier="Bronze", item_type="weapon", item_name="Gun", quantity=1, base_price=100
             )
+
+    @pytest.mark.asyncio
+    async def test_new_item_carries_catalog_tech_level(self, service, mock_db, mock_shop_repo, mock_module_repo):
+        """A freshly-sold item's shop row stores the item's REAL catalog tech level, not 1."""
+        mock_shop_repo.get_shop_item_by_name.return_value = None
+        mock_module_repo.get_by_name.return_value = MagicMock(tech_level=4)
+
+        await service._add_item_to_shop(
+            mock_db, guild_id=999, tier="Silver", item_type="module", item_name="Shield", quantity=1, base_price=500
+        )
+
+        item_data = mock_shop_repo.create_or_update.call_args[0][1]
+        assert item_data["tech_level"] == 4
+
+    @pytest.mark.asyncio
+    async def test_new_ship_tech_level_derived_from_value(self, service, mock_db, mock_shop_repo):
+        """Sold-back ships (no catalog tech_level) derive TL from credit value."""
+        from services.game_maths import ship_tech_level_for_value
+
+        mock_shop_repo.get_shop_item_by_name.return_value = None
+        ship_value = 150_000  # between thresholds → TL3 with locked SHIP_PRICE_THRESHOLDS
+
+        await service._add_item_to_shop(
+            mock_db,
+            guild_id=999,
+            tier="Gold",
+            item_type="ship",
+            item_name="Hatsuyuki",
+            quantity=1,
+            base_price=ship_value,
+        )
+
+        item_data = mock_shop_repo.create_or_update.call_args[0][1]
+        assert item_data["tech_level"] == ship_tech_level_for_value(ship_value)
+        assert item_data["tech_level"] == 3
+
+    @pytest.mark.asyncio
+    async def test_unknown_item_falls_back_to_tl1(self, service, mock_db, mock_shop_repo):
+        """Items missing from the catalog fall back to TL1 (all repos return None)."""
+        mock_shop_repo.get_shop_item_by_name.return_value = None
+
+        await service._add_item_to_shop(
+            mock_db, guild_id=999, tier="Bronze", item_type="module", item_name="Ghost", quantity=1, base_price=100
+        )
+
+        item_data = mock_shop_repo.create_or_update.call_args[0][1]
+        assert item_data["tech_level"] == 1
+
+    @pytest.mark.asyncio
+    async def test_existing_item_skips_tech_level_lookup(self, service, mock_db, mock_shop_repo, mock_module_repo):
+        """Quantity-bump path never touches the catalog repos."""
+        mock_shop_repo.get_shop_item_by_name.return_value = _make_shop_item(item_id=20, quantity=3)
+
+        await service._add_item_to_shop(
+            mock_db, guild_id=999, tier="Bronze", item_type="module", item_name="Shield", quantity=1, base_price=100
+        )
+
+        mock_module_repo.get_by_name.assert_not_awaited()
+        mock_shop_repo.create_or_update.assert_not_awaited()
 
 
 # ===========================================================================

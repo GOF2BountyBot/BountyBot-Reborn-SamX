@@ -326,6 +326,8 @@ class TestBuildPlayerLoadout:
         # Second secondary: S'koon Missile with 3 rounds
         assert result.secondaries[1].name == "S'koon Missile"
         assert result.secondaries[1].rounds == 3
+        # Total value includes secondaries: 800 + 800 (no other equipment)
+        assert result.ship_stats.total_value == 1600
 
     async def test_player_no_secondaries_returns_empty_list(self):
         """build_player_loadout returns secondaries=[] when ship has none equipped (CI-28)."""

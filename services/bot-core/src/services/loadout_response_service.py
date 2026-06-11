@@ -196,6 +196,7 @@ class LoadoutResponseService:
         total_value = (
             sum(w.value or 0 for w in weapon_items)
             + sum(t.value or 0 for t in turret_items)
+            + sum(s.value or 0 for s in secondary_items)
             + sum(m.value or 0 for m in module_items)
         )
 

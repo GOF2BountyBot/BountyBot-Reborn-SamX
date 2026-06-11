@@ -406,7 +406,12 @@ class BountyCog(commands.Cog):
             bonus_won = outcome.get("bonus_won", False)
 
             if combat_won is False:
-                # Silver+ combat loss — checks reset for this bounty
+                # Silver+ combat loss or stalemate — checks reset for this bounty
+                if (outcome.get("combat_result") or {}).get("is_stalemate"):
+                    return (
+                        f"⚔️ {criminal_name}",
+                        "Stalemate — criminal escaped; system checks reset for this bounty.",
+                    )
                 return (
                     f"💀 {criminal_name}",
                     "Combat loss — system checks reset for this bounty.",
@@ -646,15 +651,26 @@ class BountyCog(commands.Cog):
             criminal_name = data.get("criminal_name", "Unknown")
 
             if combat_won is False:
-                # Criminal escaped after combat loss — checks have been reset
-                embed = discord.Embed(
-                    title="💀 Combat Defeat!",
-                    description=(
-                        f"**{criminal_name}** defeated you and escaped!\n"
-                        "All system checks have been reset — the hunt continues!"
-                    ),
-                    color=discord.Color.dark_red(),
-                )
+                # Criminal escaped after combat loss OR stalemate — checks have been reset
+                _is_stalemate = bool((data.get("combat_result") or {}).get("is_stalemate"))
+                if _is_stalemate:
+                    embed = discord.Embed(
+                        title="⚔️ Stalemate!",
+                        description=(
+                            f"**{criminal_name}** fought you to a standstill and escaped!\n"
+                            "All system checks have been reset — the hunt continues!"
+                        ),
+                        color=discord.Color.dark_red(),
+                    )
+                else:
+                    embed = discord.Embed(
+                        title="💀 Combat Defeat!",
+                        description=(
+                            f"**{criminal_name}** defeated you and escaped!\n"
+                            "All system checks have been reset — the hunt continues!"
+                        ),
+                        color=discord.Color.dark_red(),
+                    )
                 if message:
                     embed.add_field(name="Result", value=message, inline=False)
                 combat = data.get("combat_result")

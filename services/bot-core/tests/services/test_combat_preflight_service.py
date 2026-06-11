@@ -593,18 +593,22 @@ class TestP2T7OneDispatch:
 
 
 class TestP2T7WinPredicate:
-    """Win predicate: is_stalemate OR winner_side==1 counts as player win."""
+    """Win predicate: only a decisive winner_side==1 counts as a player win.
+
+    Stalemates mirror the real PvC outcome (spec §9: criminal escapes — same
+    path as a loss), so they count toward the criminal side.
+    """
 
     @pytest.mark.asyncio
-    async def test_stalemate_counts_as_player_win(self):
-        """Stalemates are counted as player wins (same semantics as old name-keyed check)."""
+    async def test_stalemate_counts_as_criminal_win(self):
+        """Stalemates count toward the criminal side (criminal escapes in a real fight)."""
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
 
-        # All stalemates → all player wins → GREEN
+        # All stalemates → all criminal wins → RED
         with (
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
@@ -617,9 +621,9 @@ class TestP2T7WinPredicate:
         ):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
-        assert result.player_win_rate == 1.0
-        assert result.criminal_win_rate == 0.0
-        assert result.verdict == PreflightVerdict.GREEN
+        assert result.player_win_rate == 0.0
+        assert result.criminal_win_rate == 1.0
+        assert result.verdict == PreflightVerdict.RED
 
     @pytest.mark.asyncio
     async def test_winner_side_1_counts_as_player_win(self):

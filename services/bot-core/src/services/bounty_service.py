@@ -1588,8 +1588,8 @@ class BountyService:
                     )
                     # P2-T8b: player is always combatant1 (loadout1 / side-1).
                     # winner_side==1 → player won; winner_side==2 → criminal won.
-                    # Stalemate counts as player win (legacy semantics preserved).
-                    combat_player_won = fight_results.is_stalemate or (fight_results.winner_side == 1)
+                    # Stalemate counts as a loss — no 2× bonus (spec §9 PvC draw semantics).
+                    combat_player_won = fight_results.winner_side == 1
                     if combat_player_won:
                         bonus_won = True
                         total_reward = winner_reward * 2
@@ -1637,8 +1637,8 @@ class BountyService:
                 )
                 # P2-T8b: player is always combatant1 (loadout1 / side-1).
                 # winner_side==1 → player won; winner_side==2 → criminal won.
-                # Stalemate counts as player win (legacy semantics preserved).
-                duel_won = fight_results.is_stalemate or (fight_results.winner_side == 1)
+                # Stalemate follows the loss path — criminal escapes, checks reset (spec §9).
+                duel_won = fight_results.winner_side == 1
 
             if duel_won:
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)
@@ -1663,13 +1663,19 @@ class BountyService:
                     (bounty, True),
                 )
 
-            # LOSS: Criminal escapes checks — reset bounty location
+            # LOSS or STALEMATE: Criminal escapes checks — reset bounty location (spec §9)
             await self._reset_bounty_checks(db, bounty)
+            _is_stalemate = fight_results is not None and fight_results.is_stalemate
+            escape_msg = (
+                f"{bounty.criminal_name} fought you to a stalemate and escaped!"
+                if _is_stalemate
+                else f"{bounty.criminal_name} defeated you in combat and escaped!"
+            )
             return (
                 CheckResponse(
                     result=CheckResult.CORRECT,
                     bounty_id=bounty.id,
-                    message=f"{bounty.criminal_name} defeated you in combat and escaped!",
+                    message=escape_msg,
                     combat_won=False,
                     division=division,
                     criminal_name=bounty.criminal_name,

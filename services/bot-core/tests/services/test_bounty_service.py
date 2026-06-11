@@ -1926,8 +1926,8 @@ async def test_check_bounty_correct_silver_player_loses_combat(combat_integratio
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_correct_stalemate_counts_as_win(combat_integration_setup):
-    """Stalemate result counts as player win (legacy behavior) — bronze bonus path."""
+async def test_check_bounty_correct_stalemate_no_bonus(combat_integration_setup):
+    """Stalemate counts as a loss for the bronze bonus — capture succeeds, no 2× bonus (spec §9)."""
     from services.bounty_service import RewardInfo
 
     service, mock_db = combat_integration_setup
@@ -1963,9 +1963,11 @@ async def test_check_bounty_correct_stalemate_counts_as_win(combat_integration_s
     result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
 
     assert result.result == CheckResult.CORRECT
-    assert result.combat_won is True
-    # Bronze: stalemate → bonus_won=True (stalemate counts as win for bonus)
-    assert result.bonus_won is True
+    assert result.combat_won is True  # Bronze capture is automatic regardless of fight outcome
+    # Bronze: stalemate → bonus_won=False (stalemate counts as a loss for the bonus)
+    assert result.bonus_won is False
+    assert result.total_reward == 600  # not doubled
+    service._award_combat_bonus.assert_not_called()
     assert "captured" in result.message.lower() or "cr" in result.message
 
 
@@ -1980,7 +1982,7 @@ async def test_check_bounty_correct_no_criminal_ship_data(combat_integration_set
     bounty = _make_active_bounty(answer="Sol")
     bounty.criminal_ship = None  # no ship data
 
-    # With both sides having 0 DPS, result is a stalemate → player wins bonus
+    # With both sides having 0 DPS, result is a stalemate → capture still succeeds (no bonus)
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
     service.bounty_repo.update.return_value = bounty
@@ -3607,8 +3609,8 @@ async def test_check_bounty_gold_mandatory_combat_win(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_silver_stalemate_counts_as_win(service, mock_db):
-    """Silver player — stalemate counts as player win (bounty captured)."""
+async def test_check_bounty_silver_stalemate_criminal_escapes(service, mock_db):
+    """Silver player — stalemate follows the loss path: criminal escapes, checks reset (spec §9)."""
     from services.bounty_service import RewardInfo
 
     service.player_repo.get_by_id = AsyncMock()
@@ -3641,11 +3643,15 @@ async def test_check_bounty_silver_stalemate_counts_as_win(service, mock_db):
         return_value=[RewardInfo(player_id=1, credits_earned=600, xp_earned=60, is_winner=True)]
     )
     service.distribute_rewards = AsyncMock(return_value=[])
+    service._reset_bounty_checks = AsyncMock()
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
 
     assert result.result == CheckResult.CORRECT
-    assert result.combat_won is True  # Stalemate = player win for silver+
+    assert result.combat_won is False  # Stalemate = criminal escapes for silver+
+    assert "stalemate" in result.message.lower()
+    service._reset_bounty_checks.assert_called_once_with(mock_db, bounty)
+    service.calc_rewards.assert_not_called()
 
 
 @pytest.mark.asyncio

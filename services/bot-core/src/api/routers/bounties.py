@@ -311,8 +311,8 @@ async def combat_bonus(
 
             # P2-T8b: player is always combatant1 (loadout1 / side-1).
             # winner_side==1 → player won; winner_side==2 → criminal won.
-            # Stalemate counts as player win (legacy semantics preserved).
-            won = fight_results.is_stalemate or (fight_results.winner_side == 1)
+            # Stalemate counts as a loss — no 2× bonus (spec §9 PvC draw semantics).
+            won = fight_results.winner_side == 1
             bonus_credits = 0
 
             if won:
@@ -322,6 +322,8 @@ async def combat_bonus(
             combat_dict = _serialize_fight_results(fight_results) or {}
             if won:
                 msg = f"Combat victory! +{bonus_credits:,}cr bonus (2x total)!"
+            elif fight_results.is_stalemate:
+                msg = "Stalemate — no bonus. You keep the base reward."
             else:
                 loser = fight_results.loser_name or player_loadout.ship_name
                 msg = f"Combat loss — {loser} was defeated. You keep the base reward."

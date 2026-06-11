@@ -1584,10 +1584,10 @@ class TestCombatBonusEndpoint:
     @patch("api.routers.bounties.get_db_session")
     @patch("services.loadout_builder.LoadoutBuilder")
     @patch("services.combat_service.CombatService")
-    def test_combat_bonus_stalemate_counts_as_win(
+    def test_combat_bonus_stalemate_no_bonus(
         self, mock_combat_cls, mock_lb_cls, mock_get_db, combat_client, mock_bounty_service
     ):
-        """Stalemate in combat-bonus endpoint counts as player win."""
+        """Stalemate in combat-bonus endpoint counts as a loss — no 2× bonus (spec §9)."""
         from types import SimpleNamespace
 
         _configure_db_mock(mock_get_db)
@@ -1631,8 +1631,9 @@ class TestCombatBonusEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["won"] is True
-        assert data["bonus_credits"] == 300
+        assert data["won"] is False
+        assert data["bonus_credits"] == 0
+        assert "stalemate" in data["message"].lower()
 
     @patch("api.routers.bounties.get_db_session")
     @patch("services.loadout_builder.LoadoutBuilder")

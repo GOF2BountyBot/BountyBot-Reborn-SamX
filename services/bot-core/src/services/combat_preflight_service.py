@@ -203,10 +203,9 @@ class CombatPreflightService:
         player_wins = 0
         criminal_wins = 0
         for winner_side, is_stalemate in sim_results:
-            # Stalemate counts as a player win (same semantics as the old
-            # `fight.is_stalemate or fight.winner_name == player_loadout.ship_name`
-            # check — stalemate was always a player win in that branch too).
-            if is_stalemate or winner_side == 1:
+            # Stalemate mirrors the real PvC outcome (spec §9: criminal escapes —
+            # same path as a loss), so it counts toward the criminal side.
+            if winner_side == 1 and not is_stalemate:
                 player_wins += 1
             else:
                 criminal_wins += 1

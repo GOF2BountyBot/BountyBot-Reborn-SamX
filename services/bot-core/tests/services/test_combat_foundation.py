@@ -3,8 +3,8 @@ T1 Foundation tests — constants, model surfaces, balance hooks.
 
 Covers:
   D1: All 25 Appendix A constants on GameConstants with locked defaults + env overrides.
-  D2: ShipLoadout.manual_turret_mode field defaults and round-trips.
-  D3: LoadoutBuilder.from_player / from_criminal_ship surface manual_turret_mode.
+  D2: ShipLoadout surface — manual_turret_mode removed (range-driven switching), frozen dataclass.
+  D3: LoadoutBuilder.from_player / from_criminal_ship build without the retired mode flag.
   D4: CombatEvent dataclass + CombatEventType vocabulary constants.
   D5: combat_balance.weapon_accuracy() passthrough + SUBTYPE_ACCURACY_MOD empty.
   D6: WeaponStats.accuracy_modifier removed; ModuleStats.accuracy_modifier intact.
@@ -237,20 +237,19 @@ class TestDataclassShape:
         assert CombatEventType.layer_depleted == "layer_depleted"
         assert CombatEventType.distance == "distance"
 
-    # ShipLoadout.manual_turret_mode (D2)
+    # ShipLoadout.manual_turret_mode removed (D2 — retired by range-driven switching)
 
-    def test_ship_loadout_manual_turret_mode_defaults_false(self):
+    def test_ship_loadout_manual_turret_mode_removed(self):
+        """manual_turret_mode no longer exists — turret/primary switching is range-driven."""
+        with pytest.raises(TypeError):
+            ShipLoadout(ship_name="Betty", base_armour=95, manual_turret_mode=True)  # type: ignore[call-arg]
         loadout = ShipLoadout(ship_name="Betty", base_armour=95)
-        assert loadout.manual_turret_mode is False
-
-    def test_ship_loadout_manual_turret_mode_explicit_true(self):
-        loadout = ShipLoadout(ship_name="Betty", base_armour=95, manual_turret_mode=True)
-        assert loadout.manual_turret_mode is True
+        assert not hasattr(loadout, "manual_turret_mode")
 
     def test_ship_loadout_is_frozen(self):
         loadout = ShipLoadout(ship_name="Betty", base_armour=95)
         with pytest.raises(AttributeError):
-            loadout.manual_turret_mode = True  # type: ignore[misc]
+            loadout.base_armour = 100  # type: ignore[misc]
 
     # WeaponStats.accuracy_modifier removed (D6)
 
@@ -271,75 +270,23 @@ class TestDataclassShape:
 
 
 class TestLoadoutBuilderPlumbing:
-    """LoadoutBuilder surfaces manual_turret_mode from criminal dict and PlayerShip."""
+    """LoadoutBuilder builds without the retired manual_turret_mode flag."""
 
-    def test_from_criminal_ship_defaults_false_when_key_absent(self):
-        """Criminal dict without manual_turret_mode → False."""
-        loadout = LoadoutBuilder.from_criminal_ship({"ship_name": "Betty", "ship_armour": 95})
-        assert loadout.manual_turret_mode is False
-
-    def test_from_criminal_ship_explicit_true(self):
-        """Criminal dict with manual_turret_mode: True → True."""
+    def test_from_criminal_ship_ignores_legacy_mode_key(self):
+        """A legacy manual_turret_mode key in the criminal dict is silently ignored."""
         loadout = LoadoutBuilder.from_criminal_ship(
             {"ship_name": "Betty", "ship_armour": 95, "manual_turret_mode": True}
         )
-        assert loadout.manual_turret_mode is True
-
-    def test_from_criminal_ship_explicit_false(self):
-        """Criminal dict with manual_turret_mode: False → False (explicit)."""
-        loadout = LoadoutBuilder.from_criminal_ship(
-            {"ship_name": "Betty", "ship_armour": 95, "manual_turret_mode": False}
-        )
-        assert loadout.manual_turret_mode is False
+        assert not hasattr(loadout, "manual_turret_mode")
+        assert loadout.ship_name == "Betty"
 
     @pytest.mark.asyncio
-    async def test_from_player_reads_manual_turret_mode_via_getattr(self):
-        """from_player reads manual_turret_mode from PlayerShip via getattr (T2 forward-compat)."""
+    async def test_from_player_builds_without_mode_flag(self):
+        """from_player builds a ShipLoadout with no manual_turret_mode surface."""
         # 1 mock: player_repo
         player = MagicMock()
         player.active_ship_id = 10
 
-        player_ship = MagicMock()
-        player_ship.ship_name = "Specter"
-        player_ship.weapons = []
-        player_ship.turrets = []
-        player_ship.modules = []
-        player_ship.manual_turret_mode = True  # simulate T2 column present
-
-        ship = MagicMock()
-        ship.armour = 200
-
-        player_repo = MagicMock()
-        player_repo.get_by_id = AsyncMock(return_value=player)
-
-        def _result(val):
-            r = MagicMock()
-            r.scalars.return_value.first.return_value = val
-            return r
-
-        db = MagicMock()
-        db.execute = AsyncMock(side_effect=[_result(player_ship), _result(ship)])
-
-        # 2nd mock: item_repo (no items equipped)
-        item_repo = MagicMock()
-        item_repo.get_by_name = AsyncMock(return_value=None)
-
-        with (
-            patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo),
-            patch("persist.repositories.item_repository.ItemRepository", return_value=item_repo),
-        ):
-            loadout = await LoadoutBuilder.from_player(db, player_id=1)
-
-        assert loadout.manual_turret_mode is True
-
-    @pytest.mark.asyncio
-    async def test_from_player_defaults_false_when_attr_absent(self):
-        """from_player falls back to False when PlayerShip lacks manual_turret_mode (pre-T2 getattr path)."""
-        # 1 mock: player_repo
-        player = MagicMock()
-        player.active_ship_id = 10
-
-        # spec excludes manual_turret_mode — getattr(..., False) must supply the default
         player_ship = MagicMock(spec=["ship_name", "weapons", "turrets", "modules"])
         player_ship.ship_name = "Specter"
         player_ship.weapons = []
@@ -368,6 +315,7 @@ class TestLoadoutBuilderPlumbing:
             patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo),
             patch("persist.repositories.item_repository.ItemRepository", return_value=item_repo),
         ):
-            loadout = await LoadoutBuilder.from_player(db, player_id=99)
+            loadout = await LoadoutBuilder.from_player(db, player_id=1)
 
-        assert loadout.manual_turret_mode is False
+        assert loadout.ship_name == "Specter"
+        assert not hasattr(loadout, "manual_turret_mode")

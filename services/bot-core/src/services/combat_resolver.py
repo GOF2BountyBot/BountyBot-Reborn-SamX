@@ -109,8 +109,8 @@ class _TurretWeaponRuntime:
 
     Discriminators (read from WeaponStats typed fields — no extra_atts blob):
         automatic=True  → auto-turret: always fires on its own cooldown alongside primaries.
-        automatic=False → manual-turret: fires only when loadout.manual_turret_mode=True,
-                          and suppresses primaries when that mode is active.
+        automatic=False → manual-turret: range-driven gap-closer — fires only while NO
+                          primary is in range; inert the moment any primary is in range.
 
     RNG draw order (§ determinism):
         Auto turrets: C1 auto-turrets (insertion order), then C2 auto-turrets.
@@ -218,7 +218,6 @@ class _CombatantState:
     weapon_cooldowns: dict[str, int]
     module_cooldowns: dict[str, int]
     # Carry-forward state for T7
-    manual_turret_mode: bool
     emergency_system_consumed: bool  # legacy field — superseded by es_runtime; kept for compat
     # CI-20: slot (1|2) + pilot/criminal display label for thread/embed naming.
     # display_name defaults to ship_name so preflight/sim callers are unchanged.
@@ -465,7 +464,6 @@ def _init_combatant(
         repair_bot_delta_per_tick=(max_hull + max_armour) * repair_rate * (tick_ms / 1000),
         weapon_cooldowns=weapon_cooldowns,
         module_cooldowns=module_cooldowns,
-        manual_turret_mode=loadout.manual_turret_mode,
         emergency_system_consumed=False,
         scanner_tier=scanner_tier,
         pilot_primary_acc=0.0,  # recomputed at start of tick 0
@@ -1340,7 +1338,7 @@ class TickResolver:
                             )
                         )
                 # T7: turret cooldowns (non-plasma only — plasma-collectors not in effective_turrets)
-                # Primary cooldown STILL decrements under manual_turret_mode=True (§6.3 note)
+                # Primary cooldowns STILL decrement while out of range / turret-phase (§6.3 note)
                 for _tw in _cs.effective_turrets:
                     _tw_prior = _tw.cooldown_remaining_ms
                     _tw.cooldown_remaining_ms = max(0, _tw_prior - tick_ms)
@@ -1385,44 +1383,39 @@ class TickResolver:
             _pending: list[tuple[_CombatantState, _CombatantState, _PrimaryWeaponRuntime]] = []
 
             for _attacker, _target in ((c1, c2), (c2, c1)):
-                # T7: Primary suppression under manual_turret_mode=True (§6.3).
-                # Fire-eval is skipped; cooldown STILL decrements (Phase 1 above).
-                if _attacker.manual_turret_mode:
-                    pass  # suppressed — skip inner loop below
-                else:
-                    for _pw in _attacker.effective_primaries:
-                        # Gate 1: cooldown ready (§6.1 / D3)
-                        if _pw.cooldown_remaining_ms > 0:
-                            continue
-                        # Gate 2: in range — binary gate (§2 / §6.1); weapon stays ready while out of range
-                        if current_distance > _pw.range_m:
-                            continue
-                        # Accuracy — T4 passthrough; clamp already applied by compute_pilot_accuracy
-                        _acc = weapon_accuracy(_attacker.pilot_primary_acc, _pw.weapon_stats_ref)
-                        # RNG draw — canonical order documented on _PrimaryWeaponRuntime
-                        _hit = _rng.random() < _acc
-                        # weapon_fire event — §12 primary payload shape (Q9 lock)
-                        events.append(
-                            CombatEvent(
-                                tick=tick,
-                                type=CombatEventType.weapon_fire,
-                                actor=_attacker.name,
-                                target=_target.name,
-                                data={
-                                    "slot": "primary",
-                                    "subtype": "primary",
-                                    "weapon": _pw.name,
-                                    "hit": _hit,
-                                    "accuracy": _acc,
-                                    "side": _attacker.slot,  # CI-20: attacker slot
-                                },
-                            )
+                for _pw in _attacker.effective_primaries:
+                    # Gate 1: cooldown ready (§6.1 / D3)
+                    if _pw.cooldown_remaining_ms > 0:
+                        continue
+                    # Gate 2: in range — binary gate (§2 / §6.1); weapon stays ready while out of range
+                    if current_distance > _pw.range_m:
+                        continue
+                    # Accuracy — T4 passthrough; clamp already applied by compute_pilot_accuracy
+                    _acc = weapon_accuracy(_attacker.pilot_primary_acc, _pw.weapon_stats_ref)
+                    # RNG draw — canonical order documented on _PrimaryWeaponRuntime
+                    _hit = _rng.random() < _acc
+                    # weapon_fire event — §12 primary payload shape (Q9 lock)
+                    events.append(
+                        CombatEvent(
+                            tick=tick,
+                            type=CombatEventType.weapon_fire,
+                            actor=_attacker.name,
+                            target=_target.name,
+                            data={
+                                "slot": "primary",
+                                "subtype": "primary",
+                                "weapon": _pw.name,
+                                "hit": _hit,
+                                "accuracy": _acc,
+                                "side": _attacker.slot,  # CI-20: attacker slot
+                            },
                         )
-                        # Queue hit for phase 4 — misses emit weapon_fire(hit=false) only (Q10 lock)
-                        if _hit:
-                            _pending.append((_attacker, _target, _pw))
-                        # Reset cooldown — happens on both hit AND miss (§6.1 D4)
-                        _pw.cooldown_remaining_ms = _pw.effective_loading_speed_ms
+                    )
+                    # Queue hit for phase 4 — misses emit weapon_fire(hit=false) only (Q10 lock)
+                    if _hit:
+                        _pending.append((_attacker, _target, _pw))
+                    # Reset cooldown — happens on both hit AND miss (§6.1 D4)
+                    _pw.cooldown_remaining_ms = _pw.effective_loading_speed_ms
 
             # ------------------------------------------------------------------
             # Phase 3 (T6): Evaluate secondary weapon firings.
@@ -1671,8 +1664,8 @@ class TickResolver:
 
             # ------------------------------------------------------------------
             # Phase 3 (T7): Evaluate turret weapon firings.
-            # Auto-turrets always fire (alongside primaries, regardless of manual_turret_mode).
-            # Manual-turrets fire only when manual_turret_mode=True; inert otherwise.
+            # Auto-turrets always fire (alongside primaries, in any phase).
+            # Manual-turrets fire only while NO primary is in range (range-driven switch).
             # RNG draw order: C1 auto-turrets, C2 auto-turrets, C1 manual-turrets, C2 manual-turrets.
             # One auto-turret accuracy per combatant per tick (§6.3 correctness statement).
             # Plasma-collectors are NOT in effective_turrets — already filtered at init.
@@ -1720,10 +1713,15 @@ class TickResolver:
                     # Cooldown resets on fire — hit OR miss (§6.3 mirror of §6.1 D4)
                     _tw.cooldown_remaining_ms = _tw.loading_speed_ms
 
-            # Manual-turrets: C1 then C2 — only when manual_turret_mode=True (§6.3)
+            # Manual-turrets: C1 then C2 — range-driven gap-closer (§6.3).
+            # A manual turret fires ONLY while no primary is in range (approach phase,
+            # post-shock-blast reset, or booster pushback). The instant any primary
+            # comes into range — cooldown state irrelevant — primaries take over and
+            # manual turrets go inert. A ship with zero primaries uses its manual
+            # turrets for the whole fight (subject to the turret's own range gate).
             for _attacker, _target in ((c1, c2), (c2, c1)):
-                if not _attacker.manual_turret_mode:
-                    continue  # primary-mode: manual turrets inert
+                if any(current_distance <= _pw.range_m for _pw in _attacker.effective_primaries):
+                    continue  # primary-phase: manual turrets inert
                 for _tw in _attacker.effective_turrets:
                     if _tw.automatic:
                         continue  # auto-turret — already handled above

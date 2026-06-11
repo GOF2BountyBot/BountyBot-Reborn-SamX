@@ -161,7 +161,6 @@ class ShipLoadout:
 
     ship_name: str
     base_armour: int
-    manual_turret_mode: bool = False
     weapons: list[WeaponStats] = field(default_factory=list)
     turrets: list[WeaponStats] = field(default_factory=list)
     modules: list[ModuleStats] = field(default_factory=list)

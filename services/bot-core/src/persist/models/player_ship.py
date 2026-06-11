@@ -34,9 +34,6 @@ class PlayerShip(Base):
     turrets: Mapped[list[str] | None] = mapped_column(_JSONB, nullable=True)  # Array of equipped turret weapon names
     secondary_weapons: Mapped[list[str] | None] = mapped_column(_JSONB, nullable=True)  # Equipped secondary weapons
 
-    # Manual turret mode: True = player controls aim; False = auto-aim (§6.3 / §10)
-    manual_turret_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-
     # CI-16: per-equipped-secondary ammo sidecar — {weapon_name: remaining_rounds}
     # None/absent = no ammo tracking (back-compat); {} = has slot(s) but all infinite or fresh equip
     # SQLAlchemy JSON/JSONB: MUST reassign the whole dict, never mutate in place, or writes are silently lost.

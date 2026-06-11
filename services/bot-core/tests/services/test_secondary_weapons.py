@@ -1340,7 +1340,6 @@ class TestBuilderFedIntegration:
         player_ship.turrets = []
         player_ship.modules = []
         player_ship.secondary_weapons = ["Jet Rocket"]
-        player_ship.manual_turret_mode = False
 
         ship = MagicMock()
         ship.name = "Specter"
@@ -1417,7 +1416,6 @@ class TestBuilderFedIntegration:
         player_ship.turrets = []
         player_ship.modules = []
         player_ship.secondary_weapons = []
-        player_ship.manual_turret_mode = False
 
         ship = MagicMock()
         ship.name = "Betty"
@@ -1485,7 +1483,6 @@ class TestBuilderFedIntegration:
         player_ship.turrets = []
         player_ship.modules = []
         player_ship.secondary_weapons = ["Shesha"]
-        player_ship.manual_turret_mode = False
 
         ship = MagicMock()
         ship.name = "Specter"
@@ -1660,7 +1657,6 @@ class TestCoverageGaps:
         player_ship.turrets = []
         player_ship.modules = []
         player_ship.secondary_weapons = ["Unknown Weapon X"]
-        player_ship.manual_turret_mode = False
 
         ship = MagicMock()
         ship.name = "Specter"

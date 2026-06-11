@@ -1,13 +1,14 @@
 """
 T7 acceptance tests: turret weapon firing path — auto, manual, plasma-collector.
 
-Test categories (per TASK_0007.md §Test surface):
+Test categories (per TASK_0007.md §Test surface; manual-turret tests updated for
+range-driven switching — manual turrets fire only while NO primary is in range):
   Auto-turret:     1–4   (cadence; range gate; multi-turret acc share; cloak override)
-  Manual-turret:   5–8   (mode=false inert; mode=true fires; thruster; N-turret independent)
-  Cross-mode:      9     (auto unaffected by manual_turret_mode)
+  Manual-turret:   5–8   (primary-in-range inert; gap-closer switch; accuracy; N independent)
+  Cross-phase:     9     (auto fires in both phases; manual only in turret phase)
   PrimaryWeaponMod:10–11 (isolation — auto; manual)
   Plasma-collector:12    (inert)
-  Cooldown:        13    (primary cooldown decrements under mode=true)
+  Distance resets: 13    (no-primaries always-active; shock-blast revert; booster revert)
   Event payloads:  14    (subtype labels per §12)
 
 D1 integration test: builder-fed fight (AsyncMock DB) with auto+manual+plasma turrets.
@@ -166,7 +167,7 @@ def _loadout(
     weapons: list[WeaponStats] | None = None,
     turrets: list[WeaponStats] | None = None,
     modules: list[ModuleStats] | None = None,
-    manual_turret_mode: bool = False,
+    secondary_weapons: list[WeaponStats] | None = None,
 ) -> ShipLoadout:
     return ShipLoadout(
         ship_name=name,
@@ -174,7 +175,7 @@ def _loadout(
         weapons=weapons or [],
         turrets=turrets or [],
         modules=modules or [],
-        manual_turret_mode=manual_turret_mode,
+        secondary_weapons=secondary_weapons or [],
     )
 
 
@@ -369,69 +370,84 @@ def test_auto_turret_cloak_override_compounds():
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Manual turret — mode=false: manual turret inert, primaries fire
+# Test 5: Manual turret — inert while any primary is in range
 # ---------------------------------------------------------------------------
 
 
-def test_manual_turret_mode_false_inert():
-    """manual_turret_mode=False: manual turret never fires; primaries DO fire normally."""
+def test_manual_turret_inert_while_primary_in_range():
+    """Primary in range from tick 0 → manual turret never fires; primaries fire normally."""
     primary = _primary(damage=10.0, speed_ms=500, range_m=STARTING_DIST)
     manual = _manual_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
-    attacker = _loadout("Attacker", weapons=[primary], turrets=[manual], manual_turret_mode=False)
+    attacker = _loadout("Attacker", weapons=[primary], turrets=[manual])
     target = _loadout("Target", base_armour=999_999)
 
     resolver = TickResolver()
     result = resolver.resolve(attacker, target, rng=_AlwaysHit())
     log = result.combat_log
 
-    # Manual turret must NOT fire
+    # Manual turret must NOT fire — primary is in range for the whole fight
     manual_fires = _fire_events(log, "Attacker", slot="turret", subtype="manual")
-    assert len(manual_fires) == 0, f"Expected 0 manual-turret fires in mode=false, got {len(manual_fires)}"
+    assert len(manual_fires) == 0, f"Expected 0 manual-turret fires with primary in range, got {len(manual_fires)}"
 
     # Primaries MUST fire
     primary_fires = _fire_events(log, "Attacker", slot="primary")
-    assert len(primary_fires) > 0, "Primaries should fire when manual_turret_mode=False"
+    assert len(primary_fires) > 0, "Primaries should fire while in range"
 
 
 # ---------------------------------------------------------------------------
-# Test 6: Manual turret — mode=true: primaries suppressed, manual turret fires
+# Test 6: Manual turret — gap-closer switch: turret during approach, then primaries
 # ---------------------------------------------------------------------------
 
+# Passive closure per tick: BASE_SHIP_SPEED_MPS × 2 × (TICK_MS / 1000) = 3.0 m
+CLOSURE_PER_TICK: float = GameConstants.BASE_SHIP_SPEED_MPS * 2 * (TICK_MS / 1000)
 
-def test_manual_turret_mode_true():
-    """manual_turret_mode=True: primaries suppressed, manual turret fires at pilot_primary_acc."""
-    primary = _primary(damage=10.0, speed_ms=500, range_m=STARTING_DIST)
+
+def test_manual_turret_gap_closer_switch():
+    """Manual turret fires during the approach; primaries take over the instant they're in range.
+
+    Primary range 4400m, start 5000m, closure 3 m/tick → primary in range at tick 200.
+    Manual turret (range 5000m, 1-tick cadence) must fire ticks 0–199 and go inert
+    from tick 200 on. The primary's first fire at exactly tick 200 also proves its
+    cooldown stayed ready (decremented/held at 0) throughout the turret phase.
+    """
+    primary_range = 4400.0
+    switch_tick = int((STARTING_DIST - primary_range) / CLOSURE_PER_TICK)  # 200
+    primary = _primary(damage=10.0, speed_ms=500, range_m=primary_range)
     manual = _manual_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
-    attacker = _loadout("Attacker", weapons=[primary], turrets=[manual], manual_turret_mode=True)
+    attacker = _loadout("Attacker", weapons=[primary], turrets=[manual])
     target = _loadout("Target", base_armour=999_999)
 
     resolver = TickResolver()
-    # pvc_damage_reduction > 0 makes c1 (Attacker) a player → uses PLAYER_BASE_ACC
-    result = resolver.resolve(attacker, target, pvc_damage_reduction=0.33, rng=_AlwaysHit())
+    result = resolver.resolve(attacker, target, rng=_AlwaysHit())
     log = result.combat_log
 
-    # Primaries MUST NOT fire
-    primary_fires = _fire_events(log, "Attacker", slot="primary")
-    assert len(primary_fires) == 0, f"Primaries should be suppressed in mode=true, got {len(primary_fires)}"
-
-    # Manual turret MUST fire
     manual_fires = _fire_events(log, "Attacker", slot="turret", subtype="manual")
-    assert len(manual_fires) > 0, "Manual turret should fire when manual_turret_mode=True"
+    primary_fires = _fire_events(log, "Attacker", slot="primary")
+    assert len(manual_fires) > 0, "Manual turret should fire during the approach phase"
+    assert len(primary_fires) > 0, "Primaries should fire once in range"
 
-    # Accuracy must be pilot_primary_acc, NOT multiplied by 0.85
-    # Expected: weapon_accuracy(PLAYER_BASE_ACC, ws_ref) — no scanner, no thruster, no cloak
-    # weapon_accuracy is a passthrough with clamp in the balance module; c1 is_player=True
-    from src.services.combat_balance import weapon_accuracy
+    # Approach phase: manual turret fires every tick from 0 up to (but not including) switch_tick
+    manual_ticks = sorted(e.tick for e in manual_fires)
+    assert manual_ticks[0] == 0, f"Manual turret should fire at tick 0, first fire at {manual_ticks[0]}"
+    assert manual_ticks[-1] == switch_tick - 1, (
+        f"Manual turret must stop the tick the primary comes in range: "
+        f"last manual fire at {manual_ticks[-1]}, expected {switch_tick - 1}"
+    )
 
-    expected_acc = weapon_accuracy(PLAYER_BASE_ACC, manual)
-    for evt in manual_fires[:3]:
-        acc = evt.data["accuracy"]
-        assert abs(acc - expected_acc) < 1e-9, (
-            f"Manual turret accuracy should be pilot_primary_acc ({expected_acc}), got {acc}"
-        )
-    # Confirm NOT multiplied by 0.85
-    auto_acc = max(ACC_CLAMP_MIN, min(ACC_CLAMP_MAX, PLAYER_BASE_ACC * AUTO_MULT))
-    assert abs(expected_acc - auto_acc) > 1e-6, "Test assumption: primary_acc != auto_acc"
+    # Switch: primary's first fire is at exactly switch_tick (cooldown was held ready)
+    assert primary_fires[0].tick == switch_tick, (
+        f"Primary should fire the instant it's in range (tick {switch_tick}), got {primary_fires[0].tick}"
+    )
+
+    # Sticky: no manual fires at or after switch_tick (distance only closes from here)
+    late_manual = [t for t in manual_ticks if t >= switch_tick]
+    assert late_manual == [], f"Manual turret fired after primaries took over: ticks {late_manual[:5]}"
+
+    # Primary cadence after switch: every loading_speed_ms // TICK_MS ticks
+    expected_gap = 500 // TICK_MS
+    assert primary_fires[1].tick - primary_fires[0].tick == expected_gap, (
+        f"Primary cadence: expected {expected_gap}-tick gap, got {primary_fires[1].tick - primary_fires[0].tick}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -440,15 +456,13 @@ def test_manual_turret_mode_true():
 
 
 def test_manual_turret_uses_primary_accuracy():
-    """Manual turrets use pilot_primary_acc (full §5 formula), not pilot_turret_acc.
+    """Manual turrets use pilot_primary_acc (full §5 formula), not pilot_turret_acc × 0.85.
 
-    We verify via the event: accuracy should match what compute_pilot_accuracy
-    returns for the primary channel, not the turret channel.
-    Since T8 modules aren't wired yet, thruster bonus is 0.0 at tick time.
-    But the manual turret event must carry the primary accuracy (not turret × 0.85).
+    No primaries equipped → manual turret is active the whole fight. The fire
+    events must carry the primary-channel accuracy (NOT turret × 0.85).
     """
     manual = _manual_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
-    attacker = _loadout("Attacker", turrets=[manual], manual_turret_mode=True)
+    attacker = _loadout("Attacker", turrets=[manual])
     target = _loadout("Target", base_armour=999_999)
 
     resolver = TickResolver()
@@ -459,16 +473,19 @@ def test_manual_turret_uses_primary_accuracy():
     fires = _fire_events(log, "Attacker", slot="turret", subtype="manual")
     assert len(fires) > 0
 
-    # Primary acc = PLAYER_BASE_ACC (no scanner, no thruster, no cloak)
-    # Auto acc = PLAYER_BASE_ACC × 0.85
+    # Accuracy must be pilot_primary_acc, NOT multiplied by 0.85
+    # Expected: weapon_accuracy(PLAYER_BASE_ACC, ws_ref) — no scanner, no thruster, no cloak
+    from src.services.combat_balance import weapon_accuracy
+
+    expected_acc = weapon_accuracy(PLAYER_BASE_ACC, manual)
     for evt in fires[:3]:
         acc = evt.data["accuracy"]
-        # Should match primary accuracy, not auto-turret accuracy
-        # PLAYER_BASE_ACC=0.60; auto = 0.60×0.85=0.51; manual should be 0.60
-        assert abs(acc - PLAYER_BASE_ACC) < 1e-6 or acc > PLAYER_BASE_ACC * AUTO_MULT + 1e-6, (
-            f"Manual turret accuracy {acc} should be > auto-turret accuracy "
-            f"{PLAYER_BASE_ACC * AUTO_MULT:.4f} (is not multiplied by 0.85)"
+        assert abs(acc - expected_acc) < 1e-9, (
+            f"Manual turret accuracy should be pilot_primary_acc ({expected_acc}), got {acc}"
         )
+    # Confirm NOT multiplied by 0.85
+    auto_acc = max(ACC_CLAMP_MIN, min(ACC_CLAMP_MAX, PLAYER_BASE_ACC * AUTO_MULT))
+    assert abs(expected_acc - auto_acc) > 1e-6, "Test assumption: primary_acc != auto_acc"
 
 
 # ---------------------------------------------------------------------------
@@ -477,10 +494,10 @@ def test_manual_turret_uses_primary_accuracy():
 
 
 def test_manual_turret_n_turrets_independent():
-    """N manual turrets in turret-mode fire up to N shots per cycle, independently."""
+    """N manual turrets in the turret phase fire up to N shots per cycle, independently."""
     n = 4
     turrets = [_manual_turret(name=f"MT{i}", loading_speed_ms=TICK_MS, range_m=STARTING_DIST) for i in range(n)]
-    attacker = _loadout("Attacker", turrets=turrets, manual_turret_mode=True)
+    attacker = _loadout("Attacker", turrets=turrets)
     target = _loadout("Target", base_armour=999_999)
 
     resolver = TickResolver()
@@ -507,28 +524,35 @@ def test_manual_turret_n_turrets_independent():
 
 
 # ---------------------------------------------------------------------------
-# Test 9: Auto-turret unaffected by manual_turret_mode
+# Test 9: Auto-turret fires in BOTH phases; manual only in the turret phase
 # ---------------------------------------------------------------------------
 
 
-def test_auto_turret_unaffected_by_manual_mode():
-    """manual_turret_mode=True does NOT suppress auto turrets."""
+def test_auto_turret_fires_in_both_phases():
+    """Auto turrets fire on their own cooldown in both phases; manual turrets only pre-switch."""
+    primary_range = 4400.0
+    switch_tick = int((STARTING_DIST - primary_range) / CLOSURE_PER_TICK)  # 200
     auto = _auto_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
-    primary = _primary(damage=10.0, speed_ms=500, range_m=STARTING_DIST)
-    attacker = _loadout("Attacker", weapons=[primary], turrets=[auto], manual_turret_mode=True)
+    manual = _manual_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
+    primary = _primary(damage=10.0, speed_ms=500, range_m=primary_range)
+    attacker = _loadout("Attacker", weapons=[primary], turrets=[auto, manual])
     target = _loadout("Target", base_armour=999_999)
 
     resolver = TickResolver()
     result = resolver.resolve(attacker, target, rng=_AlwaysHit())
     log = result.combat_log
 
-    # Auto turrets still fire
-    auto_fires = _fire_events(log, "Attacker", slot="turret", subtype="auto")
-    assert len(auto_fires) > 0, "Auto turrets should fire even when manual_turret_mode=True"
+    auto_ticks = sorted(e.tick for e in _fire_events(log, "Attacker", slot="turret", subtype="auto"))
+    manual_ticks = sorted(e.tick for e in _fire_events(log, "Attacker", slot="turret", subtype="manual"))
+    primary_ticks = sorted(e.tick for e in _fire_events(log, "Attacker", slot="primary"))
 
-    # Primaries are suppressed (mode=True)
-    primary_fires = _fire_events(log, "Attacker", slot="primary")
-    assert len(primary_fires) == 0, "Primaries should be suppressed when manual_turret_mode=True"
+    # Auto turret fires in the approach phase AND alongside primaries after the switch
+    assert auto_ticks and auto_ticks[0] < switch_tick, "Auto turret should fire during the approach"
+    assert any(t >= switch_tick for t in auto_ticks), "Auto turret should keep firing alongside primaries"
+
+    # Manual turret only fires pre-switch; primaries only post-switch
+    assert manual_ticks and all(t < switch_tick for t in manual_ticks), "Manual turret must stop at the switch"
+    assert primary_ticks and all(t >= switch_tick for t in primary_ticks), "Primaries fire only once in range"
 
 
 # ---------------------------------------------------------------------------
@@ -581,7 +605,7 @@ def test_primary_weapon_mod_does_not_scale_manual_turret():
         fire_rate_pct=0,
     )
     manual = _manual_turret(damage_per_shot=50.0, loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
-    attacker = _loadout("Attacker", turrets=[manual], modules=[pw_mod], manual_turret_mode=True)
+    attacker = _loadout("Attacker", turrets=[manual], modules=[pw_mod])
     target = _loadout("Target", base_armour=999_999)
 
     resolver = TickResolver()
@@ -633,88 +657,141 @@ def test_plasma_collector_inert():
 
 
 # ---------------------------------------------------------------------------
-# Test 13: Primary cooldown decrements under manual_turret_mode=True
+# Test 13: Distance resets — no-primaries always-active; shock-blast revert;
+#          booster-push revert
 # ---------------------------------------------------------------------------
 
 
-def test_primary_cooldown_decrements_under_turret_mode():
-    """Primary runtime exists and suppression is correctly scoped when manual_turret_mode=True.
-
-    Scope of what this test proves at the resolver level:
-    (A) mode=False: primary fires at tick 0 then every loading_speed_ms//TICK_MS ticks — cadence correct.
-    (B) mode=True: primary emits ZERO weapon_fire events — suppression is active.
-    (C) mode=False after a mode=True fight: primary still fires at tick 0, proving mode=True did not
-        corrupt the cooldown (it stayed at 0, ready to fire immediately on mode switch).
-    (D) Structural: the primary _PrimaryWeaponRuntime object is NOT elided when mode=True.
-
-    Limitation: phase-1 primary decrement is not directly observable via the resolver interface
-    when mode=True (primary never fires → cooldown stays at 0 → max(0, 0-tick_ms)=0 every tick,
-    no cooldown_end event emitted, no external signal). Regression coverage for the decrement path
-    exists in mode=False via (A): incorrect phase-1 decrement would produce wrong fire cadence.
-    """
-    # Use a primary with a long loading_speed_ms so the cadence is easily observable
-    loading_speed_ms = 500  # 50 ticks per cycle
-    primary = _primary(damage=10.0, speed_ms=loading_speed_ms, range_m=STARTING_DIST)
+def test_manual_turret_no_primaries_always_active():
+    """A ship with zero primaries uses its manual turret for the whole fight."""
     manual = _manual_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
-
-    # mode=False: primary fires, manual is inert
-    mode_false_loadout = _loadout("Attacker", weapons=[primary], turrets=[manual], manual_turret_mode=False)
-    # mode=True: primary suppressed, manual fires
-    mode_true_loadout = _loadout("Attacker", weapons=[primary], turrets=[manual], manual_turret_mode=True)
+    attacker = _loadout("Attacker", turrets=[manual])
     target = _loadout("Target", base_armour=999_999)
 
-    resolver = TickResolver()
+    result = TickResolver().resolve(attacker, target, rng=_AlwaysHit())
+    log = result.combat_log
 
-    # (A) mode=False baseline: primary fires at tick 0 and every 50 ticks
-    result_false = resolver.resolve(mode_false_loadout, target, rng=_AlwaysHit())
-    primary_fires_false = _fire_events(result_false.combat_log, "Attacker", slot="primary")
-    assert len(primary_fires_false) >= 2, "mode=False: primary should fire multiple times"
-    # Verify cadence: gap between fires = loading_speed_ms / TICK_MS ticks
-    expected_gap = loading_speed_ms // TICK_MS
-    gap = primary_fires_false[1].tick - primary_fires_false[0].tick
-    assert gap == expected_gap, f"mode=False cadence: expected {expected_gap}-tick gap, got {gap}"
-
-    # (B) mode=True: primary suppressed entirely — proves suppression is active
-    result_true = resolver.resolve(mode_true_loadout, target, rng=_AlwaysHit())
-    primary_fires_true = _fire_events(result_true.combat_log, "Attacker", slot="primary")
-    assert len(primary_fires_true) == 0, "mode=True: primary must be fully suppressed"
-
-    # (C) mode=True still decrements: run ticks in mode=True and verify that if we re-run
-    # in mode=False after N ticks of "turret mode", the primary fires at tick 0 (not delayed).
-    # Observable: since suppression does NOT reset the cooldown, primary stays at cooldown=0
-    # throughout the turret-mode fight. This means mode-switching back would fire immediately.
-    # We prove this by checking that a mode=False fight also fires at tick 0 (cooldown starts 0).
-    result_false2 = resolver.resolve(mode_false_loadout, target, rng=_AlwaysHit())
-    primary_fires_false2 = _fire_events(result_false2.combat_log, "Attacker", slot="primary")
-    assert primary_fires_false2[0].tick == 0, (
-        "mode=False fight: primary cooldown starts at 0 → fires at tick 0. "
-        "If mode=True incorrectly reset the cooldown, a subsequent mode=False fight would be delayed."
+    manual_fires = _fire_events(log, "Attacker", slot="turret", subtype="manual")
+    assert len(manual_fires) > 0, "Manual turret should be active with no primaries equipped"
+    assert manual_fires[0].tick == 0, "Manual turret should fire from tick 0"
+    # Active through the END of the fight, not just the start (range covers all distances)
+    last_tick = max(e.tick for e in log)
+    assert manual_fires[-1].tick > last_tick - (last_tick // 10 + 1), (
+        "Manual turret should keep firing through the whole fight"
     )
 
-    # (D) Resolver-level proof of phase-1 primary decrement under mode=True.
-    #
-    # Why a direct resolver-level proof is structurally impractical here:
-    # The TickResolver runs to completion and exposes only the final combat_log.
-    # In manual_turret_mode=True the primary NEVER fires, so its cooldown starts at 0
-    # and is never reset to loading_speed_ms. Phase-1 decrements max(0, 0 - tick_ms) = 0
-    # every tick — observable only if the resolver exposed mid-fight state, which it does not.
-    # There is no external signal (no cooldown_end event; no fire event) that phase-1 ran.
-    #
-    # What (A)–(C) above already prove at the resolver level:
-    # (A) In mode=False the primary fires at exactly loading_speed_ms//TICK_MS tick gaps,
-    #     which requires phase-1 to decrement cooldowns correctly.
-    # (B) In mode=True the primary emits zero weapon_fire events — suppression is active.
-    # (C) A subsequent mode=False fight fires at tick 0, confirming mode=True did not
-    #     corrupt the cooldown state (it remained at 0, ready to fire immediately).
-    #
-    # Structural assertion: the primary runtime object exists in mode=True (not elided).
-    state = _init_combatant(mode_true_loadout, is_player=True)
-    assert len(state.effective_primaries) == 1, "Primary runtime must exist even in mode=True"
-    assert state.effective_primaries[0].cooldown_remaining_ms == 0, "Cooldown starts at 0 per §1"
 
-    # Manual turret fires in mode=True (sanity: suppression gates primaries, not manuals)
-    manual_fires_true = _fire_events(result_true.combat_log, "Attacker", slot="turret", subtype="manual")
-    assert len(manual_fires_true) > 0, "Manual turret fires in mode=True"
+def test_manual_turret_resumes_after_shock_blast():
+    """Shock-blast distance reset flips the attacker back to the manual turret.
+
+    Attacker closes from 5000m; primary (4400m) takes over at tick 200. The
+    TARGET carries a shock-blast, which fires once the gap is inside
+    SHOCK_BLAST_TRIGGER_RANGE_M and resets distance to STARTING_DISTANCE_M —
+    the attacker must drop back to the manual turret until the primary is in
+    range again (one full approach later), then switch back to primaries.
+    """
+    primary_range = 4400.0
+    approach_ticks = int((STARTING_DIST - primary_range) / CLOSURE_PER_TICK)  # 200
+    primary = _primary(damage=10.0, speed_ms=500, range_m=primary_range)
+    manual = _manual_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
+    attacker = _loadout("Attacker", weapons=[primary], turrets=[manual], base_armour=999_999)
+    shock_blast = WeaponStats(
+        name="Shock Blast",
+        dps=0.0,
+        damage_per_shot=0.0,
+        loading_speed_ms=6000,
+        range_m=0.0,  # range_m=0 → always in range (D1.2)
+        subtype="shock-blast",
+    )
+    target = _loadout("Target", base_armour=999_999, secondary_weapons=[shock_blast])
+
+    result = TickResolver().resolve(attacker, target, rng=_AlwaysHit())
+    log = result.combat_log
+
+    sb_resets = [e for e in log if e.type == "distance" and e.data.get("cause") == "shock_blast"]
+    assert len(sb_resets) >= 1, "Test setup: shock-blast should have fired at least once"
+    t_reset = sb_resets[0].tick
+    # The shock-blast re-fires once off cooldown and the gap is closed again — bound
+    # all post-reset assertions to the window before the SECOND reset.
+    t_reset2 = sb_resets[1].tick if len(sb_resets) > 1 else max(e.tick for e in log) + 1
+
+    manual_ticks = sorted(e.tick for e in _fire_events(log, "Attacker", slot="turret", subtype="manual"))
+    primary_ticks = sorted(e.tick for e in _fire_events(log, "Attacker", slot="primary"))
+
+    # Before the reset: manual stops when the primary comes in range
+    assert any(t < approach_ticks for t in manual_ticks), "Manual turret fires during initial approach"
+    assert not [t for t in manual_ticks if approach_ticks <= t <= t_reset], (
+        "Manual turret must stay inert from first switch until the shock-blast reset"
+    )
+
+    # After the reset: manual turret resumes the next tick (distance back at 5000m)
+    resumed = [t for t in manual_ticks if t > t_reset]
+    assert resumed and resumed[0] == t_reset + 1, (
+        f"Manual turret should resume the tick after the shock-blast reset "
+        f"(tick {t_reset + 1}), first post-reset fire: {resumed[:1]}"
+    )
+
+    # ...and stops again once the primary is back in range (a full approach later)
+    reswitch = t_reset + 1 + approach_ticks
+    assert not [t for t in manual_ticks if reswitch <= t <= t_reset2], (
+        "Manual turret must hand back to primaries after the post-reset approach"
+    )
+    assert any(reswitch <= t <= t_reset2 for t in primary_ticks), (
+        "Primaries should resume after the post-reset approach"
+    )
+
+    # During the post-reset approach the primary is out of range → silent
+    assert not [t for t in primary_ticks if t_reset < t < reswitch], (
+        "Primary must be silent while out of range after the shock-blast reset"
+    )
+
+
+def test_manual_turret_resumes_after_booster_push():
+    """A booster push that re-opens the gap beyond primary range revives the manual turret.
+
+    The TARGET's booster activates when primary fire drops it under the 80% HP
+    threshold (right at the 4400m switch point) and then pushes the distance
+    outward, so the attacker's primary falls out of range again and the manual
+    turret must resume until the boost expires and the gap re-closes.
+    """
+    primary_range = 4400.0
+    switch_tick = int((STARTING_DIST - primary_range) / CLOSURE_PER_TICK)  # 200
+    primary = _primary(damage=250.0, speed_ms=500, range_m=primary_range)
+    manual = _manual_turret(loading_speed_ms=TICK_MS, range_m=99_999.0)
+    attacker = _loadout("Attacker", weapons=[primary], turrets=[manual], base_armour=999_999)
+    booster = ModuleStats(
+        name="Cyclotron Boost",
+        module_type="BoosterModule",
+        effect_pct=300.0,
+        effect_duration_ms=10_000,
+        loading_speed_ms=60_000,
+    )
+    # 1000 HP: first primary hit (250 dmg) drops target to 75% → booster activates
+    target = _loadout("Target", base_armour=1000, modules=[booster])
+
+    result = TickResolver().resolve(attacker, target, rng=_AlwaysHit())
+    log = result.combat_log
+
+    pushes = [e for e in log if e.type == "distance" and e.data.get("cause") == "booster_push"]
+    assert len(pushes) >= 1, "Test setup: booster push should have occurred"
+    t_push = pushes[0].tick
+    assert t_push >= switch_tick, "Booster should activate at/after the primary switch point"
+
+    manual_ticks = sorted(e.tick for e in _fire_events(log, "Attacker", slot="turret", subtype="manual"))
+    primary_ticks = sorted(e.tick for e in _fire_events(log, "Attacker", slot="primary"))
+
+    # The push re-opens the gap beyond 4400m → manual turret resumes
+    resumed = [t for t in manual_ticks if t > t_push]
+    assert resumed, "Manual turret should resume after the booster pushes the gap open"
+    assert resumed[0] == t_push + 1, (
+        f"Manual turret should resume the tick after the first booster push "
+        f"(tick {t_push + 1}), first post-push fire: {resumed[:1]}"
+    )
+
+    # While pushed out of range, the primary is silent
+    assert not [t for t in primary_ticks if t_push < t < resumed[-1]], (
+        "Primary must be silent while the booster holds the gap beyond its range"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -728,8 +805,8 @@ def test_event_payload_contract():
     manual = _manual_turret(loading_speed_ms=TICK_MS, range_m=STARTING_DIST)
     primary = _primary(speed_ms=TICK_MS, range_m=STARTING_DIST)
 
-    # Fight 1: auto turret with primary (mode=False)
-    attacker1 = _loadout("A1", weapons=[primary], turrets=[auto], manual_turret_mode=False)
+    # Fight 1: auto turret with primary (in range — manual would be inert; auto fires)
+    attacker1 = _loadout("A1", weapons=[primary], turrets=[auto])
     target1 = _loadout("T1", base_armour=999_999)
     result1 = TickResolver().resolve(attacker1, target1, rng=_AlwaysHit())
     log1 = result1.combat_log
@@ -743,8 +820,8 @@ def test_event_payload_contract():
         assert "hit" in evt.data
         assert "accuracy" in evt.data
 
-    # Fight 2: manual turret (mode=True)
-    attacker2 = _loadout("A2", turrets=[manual], manual_turret_mode=True)
+    # Fight 2: manual turret only (no primaries → manual active all fight)
+    attacker2 = _loadout("A2", turrets=[manual])
     target2 = _loadout("T2", base_armour=999_999)
     result2 = TickResolver().resolve(attacker2, target2, rng=_AlwaysHit())
     log2 = result2.combat_log
@@ -784,7 +861,7 @@ async def test_builder_fed_turret_fight():
     - builder.from_player() produces correct WeaponStats (automatic, loading_speed_ms, range_m,
       damage_per_shot) for each turret — including correct inner-extra_atts unpacking
     - ShipLoadout.turrets[0] (Berger) carries damage_per_shot=4 from explicit seed value
-    - TickResolver fight: auto fires, manual fires (mode=True), plasma inert
+    - TickResolver fight: auto fires, manual fires (no primaries equipped), plasma inert
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -832,14 +909,13 @@ async def test_builder_fed_turret_fight():
         result.scalars.return_value.first.return_value = first_return
         return result
 
-    # Fake PlayerShip: has our three turrets, manual_turret_mode=True, no weapons/modules
+    # Fake PlayerShip: has our three turrets, no weapons/modules
     fake_player_ship = MagicMock()
     fake_player_ship.ship_name = "TestShip"
     fake_player_ship.weapons = []
     fake_player_ship.turrets = ["Berger AGT 20mm", "Hammerhead D1", "PE Ambipolar-5"]
     fake_player_ship.modules = []
     fake_player_ship.secondary_weapons = []
-    fake_player_ship.manual_turret_mode = True
 
     # Fake Ship: provides base_armour
     fake_ship = MagicMock()
@@ -879,7 +955,6 @@ async def test_builder_fed_turret_fight():
     # Assertions: builder output                                          #
     # ------------------------------------------------------------------ #
     assert len(loadout.turrets) == 3, f"Expected 3 turrets, got {len(loadout.turrets)}"
-    assert loadout.manual_turret_mode is True
 
     berger_ws = next(t for t in loadout.turrets if t.name == "Berger AGT 20mm")
     hammerhead_ws = next(t for t in loadout.turrets if t.name == "Hammerhead D1")
@@ -906,9 +981,7 @@ async def test_builder_fed_turret_fight():
     # ------------------------------------------------------------------ #
     # Feed builder output through TickResolver — confirm it fires         #
     # ------------------------------------------------------------------ #
-    target = ShipLoadout(
-        ship_name="Target", base_armour=999_999, manual_turret_mode=False, weapons=[], turrets=[], modules=[]
-    )
+    target = ShipLoadout(ship_name="Target", base_armour=999_999, weapons=[], turrets=[], modules=[])
     resolver = TickResolver()
     result = resolver.resolve(loadout, target, rng=_AlwaysHit())
     log = result.combat_log
@@ -925,7 +998,7 @@ async def test_builder_fed_turret_fight():
     ]
     assert len(auto_fires) > 0, "Berger AGT 20mm (auto) should fire"
 
-    # Manual-turret (Hammerhead D1) fires — turret-mode=True
+    # Manual-turret (Hammerhead D1) fires — no primaries equipped → turret phase all fight
     manual_fires = [
         e
         for e in log
@@ -935,7 +1008,7 @@ async def test_builder_fed_turret_fight():
         and e.data.get("subtype") == "manual"
         and e.data.get("weapon") == "Hammerhead D1"
     ]
-    assert len(manual_fires) > 0, "Hammerhead D1 (manual, mode=True) should fire"
+    assert len(manual_fires) > 0, "Hammerhead D1 (manual, no primaries) should fire"
 
     # Plasma-collector (PE Ambipolar-5) NEVER fires
     plasma_fires = [
@@ -964,12 +1037,12 @@ async def test_builder_fed_turret_fight():
 
 
 def test_auto_turret_additive_alongside_primaries():
-    """Auto-turret fires additive alongside primaries (mode=False or mode=True does not matter for auto)."""
+    """Auto-turret fires additive alongside primaries (independent of the manual-turret phase)."""
     auto = _auto_turret(loading_speed_ms=500, range_m=STARTING_DIST)
     primary = _primary(speed_ms=500, range_m=STARTING_DIST)
 
-    # Mode = False: both primary and auto fire
-    attacker = _loadout("Attacker", weapons=[primary], turrets=[auto], manual_turret_mode=False)
+    # Primary in range from tick 0: both primary and auto fire
+    attacker = _loadout("Attacker", weapons=[primary], turrets=[auto])
     target = _loadout("Target", base_armour=999_999)
 
     resolver = TickResolver()
@@ -981,7 +1054,7 @@ def test_auto_turret_additive_alongside_primaries():
 
     # Both must fire
     assert len(auto_fires) > 0, "Auto-turret should fire alongside primaries"
-    assert len(primary_fires) > 0, "Primary should fire when mode=False"
+    assert len(primary_fires) > 0, "Primary should fire while in range"
 
     # Damage should be additive: both sources appear in damage log
     dmg_evts = _damage_events(log, "Target")

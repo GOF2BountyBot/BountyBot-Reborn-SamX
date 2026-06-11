@@ -76,16 +76,14 @@ def test_player_has_lifetime_counter_columns():
 
 
 # ---------------------------------------------------------------------------
-# Model schema verification — PlayerShip.manual_turret_mode
+# Model schema verification — PlayerShip.manual_turret_mode dropped (0018)
 # ---------------------------------------------------------------------------
 
 
-def test_player_ship_has_manual_turret_mode():
+def test_player_ship_manual_turret_mode_dropped():
+    """Retired by range-driven turret switching; column dropped in revision 0018."""
     cols = {c.name: c for c in PlayerShip.__table__.columns}
-    assert "manual_turret_mode" in cols
-    col = cols["manual_turret_mode"]
-    assert not col.nullable
-    assert col.server_default is not None
+    assert "manual_turret_mode" not in cols
 
 
 # ---------------------------------------------------------------------------

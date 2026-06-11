@@ -1058,7 +1058,6 @@ class TestBuilderIntegration:
         ps.turrets = []
         ps.modules = modules or []
         ps.secondary_weapons = []
-        ps.manual_turret_mode = False
         return ps
 
     async def test_cloak_module_type_and_t8_fields_populated(self):

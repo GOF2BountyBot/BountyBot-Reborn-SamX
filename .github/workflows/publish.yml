@@ -126,8 +126,12 @@ jobs:
         working-directory: services/bot-core
         run: pip install -r requirements.txt
 
-      - name: Copy shared bblogger
-        run: cp services/shared/bblogger.py services/bot-core/src/shared/bblogger.py || true
+      - name: Copy shared libs for host test imports
+        # Mirrors the image build (bot-core/Dockerfile: COPY ./services/shared
+        # /app/src/shared). Tests load the real shared.http_retry from
+        # src/shared/ (conftest.py + test_d9t1), so copy the whole package, not
+        # just bblogger. The src/shared/ mirror is intentionally untracked.
+        run: cp services/shared/*.py services/bot-core/src/shared/ || true
 
       - name: Run tests
         id: pytest

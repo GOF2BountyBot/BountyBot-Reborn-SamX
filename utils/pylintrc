@@ -29,7 +29,9 @@ good-names=i,j,k,ex,_,id,db,e,f,v
 # E0110: abstract-class-instantiated — false positive: `type("Concrete", (ABC,), {...})()`
 #         creates a fully-concrete class dynamically; pytest.raises(TypeError) wraps
 #         intentional instantiation attempts to test ABC enforcement
-# E0401: False positive on shared.bblogger (only available in Docker)
+# E0401: False positive on shared.bblogger (only available in Docker). The 'shared'
+#        package (bblogger, http_retry) is copied in at image build, so it is missing at
+#        lint time; see ignored-modules=shared in [TYPECHECK], which also covers E0611.
 # E1101: False positive on alembic.op proxy object
 # E1111: assignment-from-no-return — false positive: `__get__` on a function returns a
 #         bound method (pylint can't infer it); explicit `result = f()` then
@@ -158,3 +160,10 @@ min-similarity-lines=6
 
 [IMPORTS]
 known-third-party=fastapi,sqlalchemy,discord,httpx,pydantic,uvicorn,apscheduler,shared
+
+[TYPECHECK]
+# 'shared' (bblogger, http_retry) is copied into each image at Docker build time
+# (see the service Dockerfiles) and is therefore absent at lint time. Ignoring it
+# suppresses both import-error (E0401) and no-name-in-module (E0611) for it without
+# masking those checks for genuinely-resolvable modules elsewhere.
+ignored-modules=shared

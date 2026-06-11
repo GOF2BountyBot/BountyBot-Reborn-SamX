@@ -326,8 +326,35 @@ class TestBuildPlayerLoadout:
         # Second secondary: S'koon Missile with 3 rounds
         assert result.secondaries[1].name == "S'koon Missile"
         assert result.secondaries[1].rounds == 3
-        # Total value includes secondaries: 800 + 800 (no other equipment)
-        assert result.ship_stats.total_value == 1600
+        # Total value counts secondaries per round: 800×5 + 800×3 (no other equipment)
+        assert result.ship_stats.total_value == 6400
+
+    async def test_secondary_total_value_edge_rounds(self):
+        """Secondary value edges: 0 rounds contributes nothing; no ammo entry counts once."""
+        player = _player()
+        user = _user()
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["Edo Torpedo", "S'koon Missile"],
+            secondary_ammo={"Edo Torpedo": 0},  # depleted stack; S'koon has no sidecar entry
+        )
+        ship = _ship()
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(emoji="<:edo:1>", dps=None, value=800))
+        db = _make_db_session(player_ship=ps, ship=ship, module_factory=lambda n: None)
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        assert result is not None
+        # Edo Torpedo: 800 × 0 rounds = 0; S'koon Missile: no ammo entry → counted once = 800
+        assert result.ship_stats.total_value == 800
 
     async def test_player_no_secondaries_returns_empty_list(self):
         """build_player_loadout returns secondaries=[] when ship has none equipped (CI-28)."""

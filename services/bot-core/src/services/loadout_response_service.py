@@ -196,7 +196,9 @@ class LoadoutResponseService:
         total_value = (
             sum(w.value or 0 for w in weapon_items)
             + sum(t.value or 0 for t in turret_items)
-            + sum(s.value or 0 for s in secondary_items)
+            # Secondaries are consumable rounds — a stack's worth is value × remaining
+            # rounds (rounds=None means no ammo-sidecar entry; count the weapon once).
+            + sum((s.value or 0) * (s.rounds if s.rounds is not None else 1) for s in secondary_items)
             + sum(m.value or 0 for m in module_items)
         )
 

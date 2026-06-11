@@ -2,7 +2,7 @@
 
 A containerized, GPU-ready micro-service stack powering a Discord bot for a space combat and trading game. The bot supports bounty hunting, ship customization, PvP duels, and a full in-game economy — backed by a PostgreSQL database and optional GPU-accelerated 3D rendering via Blender.
 
-**Scale:** 228 source files · 235 test files · 3,717+ tests across all services.
+**Scale:** 254 source files · 293 test files · 8,500+ tests across all services.
 
 ---
 
@@ -38,10 +38,11 @@ The stack is composed of four services:
 **Data flow:**
 
 ```
-discord-gateway  →  blender-service  →  bot-core  →  db
+discord-gateway  ⇄  bot-core  →  db
+discord-gateway  →  blender-service
 ```
 
-Discord users interact with `discord-gateway` via slash commands. The gateway calls `bot-core` for all game state and `blender-service` for rendering operations. `bot-core` is the sole writer to the PostgreSQL database.
+Discord users interact with `discord-gateway` via slash commands. The gateway calls `bot-core` for all game state and `blender-service` for rendering operations. `bot-core` is the sole writer to the PostgreSQL database and pushes announcements and autocomplete-cache updates back to the gateway.
 
 ---
 
@@ -49,9 +50,9 @@ Discord users interact with `discord-gateway` via slash commands. The gateway ca
 
 The bot implements the following game systems:
 
-- **Bounty hunting** — Bounties spawn on NPC criminals across star systems. Players check systems, track criminals, and claim bounties for credits. Bounty spawn density is governed by a per-guild **activity temperature** that rises when bounties are claimed and decays hourly (×2/3, floored at 1.0) — idle guilds get fewer concurrent bounties; active guilds get more.
+- **Bounty hunting** — Bounties spawn on NPC criminals across star systems. Players check systems, track criminals, and claim bounties for credits. The number of simultaneously active bounties is capped per tier via the per-guild `bounty_max_per_tier` config.
 - **Ship management** — Players own ships, set an active ship, equip modules and weapons, assign custom nicknames, and browse ship catalogues.
-- **PvP duels** — Players challenge each other to credit-stake duels. Combat is resolved server-side with configurable rules.
+- **PvP duels** — Players challenge each other to credit-stake duels. Combat is resolved server-side by a tick-based combat engine with per-guild tunables; after-action reports are persisted and reviewable via `/combat-log`.
 - **Economy** — Guild-specific shops stock items at tiered prices. Players buy and sell from rotating inventory refreshed on a schedule.
 - **Ship skinning** — 3D ship previews are rendered with custom texture compositing via Blender. Textures can be converted to game-native AEI format (ETC1 for Android, DXT5 for PC).
 - **Star system navigation** — A\* pathfinding over the connected star system graph, exposed via `/make-route`.
@@ -88,6 +89,10 @@ docker compose up --build
 
 # Start with GPU support
 docker compose -f docker-compose-gpu.yml up --build
+
+# Production: pre-built GHCR images, no source build required
+docker compose -f docker-compose.prod.yml up -d        # CPU rendering
+docker compose -f docker-compose.prod-gpu.yml up -d    # GPU rendering
 ```
 
 Once running, Swagger UI is available at:
@@ -109,7 +114,7 @@ Copy `.env.example` to `.env` and configure the following categories:
 | **Service endpoints** | `BOT_API_BASE_URL`, `GATEWAY_HOST`, `GATEWAY_PORT`, `BLENDER_HOST`, `BLENDER_PORT` | Internal routing between containers. |
 | **Blender** | `DO_WARMUP`, `GAME_OBJS_FILEID` | `DO_WARMUP=true` pre-compiles CUDA shaders on first boot (~3-5 min, one-time). |
 | **Logging** | `LOG_LEVEL`, `LOG_FILE`, `LOG_TO_FILE` | Uses `bblogger` with TRACE/DEBUG/INFO/ERROR levels. |
-| **Admin** | `ADMIN_USER_IDS` | Comma-separated Discord user IDs with admin access. Leave empty to allow all (dev only). |
+| **Admin** | `ADMIN_USER_IDS`, `DEVELOPERS` | `ADMIN_USER_IDS`: comma-separated Discord user IDs allowed to call bot-core's `/admin` REST endpoints; leave empty to allow all (dev only). `DEVELOPERS`: comma-separated Discord user IDs with developer override on admin slash commands and exclusive access to super-admin commands (scheduler, data loading, render-config mutation). |
 | **Server** | `HOST`, `PORT`, `RELOAD`, `ACCESS_LOG` | `RELOAD=true` enables hot-reload for development. |
 
 ---
@@ -118,16 +123,12 @@ Copy `.env.example` to `.env` and configure the following categories:
 
 ### Running Tests
 
-Tests are run with `pytest` from the repository root. `asyncio_mode = auto` is configured in `pyproject.toml`.
+Tests are run with `pytest` from each **service directory** (not the repository root — running from the root makes the top-level `services/` package shadow each service's `src/services`, producing false `ModuleNotFoundError`s). `asyncio_mode = auto` is configured in `pyproject.toml`.
 
 ```bash
-# All services
-python -m pytest --tb=short -q
-
-# Individual services
-python -m pytest services/bot-core/tests/ --tb=short -q          # ~25s, 2,239 tests
-python -m pytest services/discord-gateway/tests/ --tb=short -q   # ~8 min, 1,374 tests
-python -m pytest services/blender-service/tests/ --tb=short -q   # ~3s, 104 tests
+cd services/bot-core         && python -m pytest tests/ --tb=short -q   # 4,951 tests
+cd services/discord-gateway  && python -m pytest tests/ --tb=short -q   # 3,327 tests
+cd services/blender-service  && python -m pytest tests/ --tb=short -q   # 271 tests
 ```
 
 ### Linting
@@ -205,13 +206,14 @@ zstd -dc "$BACKUP_FILE" | psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME
 
 A scheduled cleanup job (`db_retention_default`) runs **daily at 03:45 UTC** inside the bot-core container. It bounds the growth of high-churn tables whose terminal-state rows have no game-relevant value once per-player aggregate stats have been written to the `players` table.
 
-Three independent passes (each in its own DB session — one failure does not abort the others):
+Four independent passes (each in its own DB session — one failure does not abort the others):
 
 | Table | Filter | Default retention | Override |
 |-------|--------|--------------------|----------|
 | `bounty` | `status IN ('completed','expired','cleared')` AND `updated_at < now() - N` | **24 hours** | `BOUNTYBOT_BOUNTY_RETENTION_HOURS` |
 | `duel_requests` | `status IN ('completed','expired','cancelled','rejected','declined')` AND `created_at < now() - N` | **24 hours** | `BOUNTYBOT_DUEL_RETENTION_HOURS` |
 | `admin_audit_logs` | `timestamp < now() - N` | **30 days** | `BOUNTYBOT_AUDIT_RETENTION_DAYS` |
+| `combat_log` | `created_at < now() - N` | **72 hours** | `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` |
 
 **Per-player stats are preserved.** The following counters live on the `players` table and are never touched by retention: `bounty_wins`, `systems_checked`, `lifetime_credits`, `duel_wins`, `duel_losses`, `duel_credits_won`, `duel_credits_lost`.
 
@@ -225,8 +227,10 @@ Audit history is preserved long-term out-of-band via the `pg_backup_default` job
 
 ```
 BountyBot-Reborn-SamX/
-├── docker-compose.yml           # Standard stack
-├── docker-compose-gpu.yml       # GPU-enabled stack
+├── docker-compose.yml           # Standard stack (local builds)
+├── docker-compose-gpu.yml       # GPU-enabled stack (local builds)
+├── docker-compose.prod.yml      # Production stack (pre-built GHCR images)
+├── docker-compose.prod-gpu.yml  # Production stack with GPU rendering
 ├── .env.example                 # Environment variable template
 ├── pyproject.toml               # Ruff + pytest configuration
 ├── AGENTS.md                    # AI agent guidance (comprehensive)
@@ -253,13 +257,14 @@ Each service directory contains its own `AGENTS.md` with detailed service-specif
 
 All services expose REST endpoints under `/api/v1/`. Full interactive documentation is available via Swagger UI at `http://localhost:{port}/docs`.
 
-### bot-core (port 8000) — 15 routers
+### bot-core (port 8000) — 16 routers
 
 | Prefix | Purpose |
 |--------|---------|
 | `/about` | Bot and game data info |
 | `/admin` | Admin operations (audit-logged) |
 | `/bounties` | Bounty CRUD and lifecycle |
+| `/combat-log` | Combat after-action report list + detail |
 | `/config` | Guild configuration |
 | `/data` | Game data lookups |
 | `/discord-message` | Persistent Discord message references |
@@ -267,7 +272,7 @@ All services expose REST endpoints under `/api/v1/`. Full interactive documentat
 | `/health` | Health check |
 | `/inventory` | Player inventory management |
 | `/players` | Player game state |
-| `/jobs` | APScheduler job management |
+| `/jobs`, `/reset` | APScheduler job management (scheduler router, no shared prefix) |
 | `/ships` | Ship definitions |
 | `/shops` | Guild shop management |
 | `/systems` | Star system graph and routing |
@@ -297,17 +302,18 @@ Commands are grouped by category. All commands are Discord slash commands unless
 | Category | Commands |
 |----------|---------|
 | **Game** | `/check`, `/bounties`, `/route`, `/criminal-loadout` |
-| **Ships** | `/ships`, `/ship`, `/setactive`, `/nickname` |
-| **Combat** | `/duel-challenge`, `/duel-accept`, `/duel-reject` |
-| **Economy** | `/shop`, `/shops`, `/buy`, `/sell` |
+| **Ships** | `/ships`, `/ship`, `/setactive`, `/nickname`, `/loadout` |
+| **Combat** | `/duel-challenge`, `/duel-accept`, `/duel-reject`, `/duel-cancel`, `/combat-log` |
+| **Economy** | `/shop`, `/shops`, `/buy`, `/sell`, `/give` |
 | **Inventory** | `/inventory`, `/search`, `/item`, `/equip`, `/unequip` |
-| **Player** | `/profile`, `/leaderboard`, `/prestige` |
+| **Player** | `/profile`, `/register`, `/leaderboard`, `/promote`, `/demote`, `/prestige`, `/notifications`, `/unregister` |
 | **Skins** | `/ship_skin`, `/render_skin`, `/make_skin_texture` |
-| **Admin** | `/admin_setup`, `/admin_player`, `/admin_config`, `/admin_refresh_shop`, `/admin_guild_stats`, `/admin_uninstall`, `/render_config`, `/render_cache_clear` |
-| **Info** | `/about`, `/list_category`, `/make-route`, `/ping`, `/health` |
-| **Dev** | `/load_data`, `/reload_autocomplete` |
+| **Admin** | `/admin_setup`, `/admin_player`, `/admin_config`, `/admin_config_shop`, `/admin_config_bounty`, `/admin_config_xp`, `/admin_config_validate`, `/admin_config_constants` (+ `_view`, `_reset`), `/admin_give_item`, `/admin_remove_item`, `/admin_give_ship`, `/admin_remove_ship`, `/admin_cooldown_reset`, `/admin_spawn_bounty`, `/admin_clear_bounties`, `/admin_duel`, `/admin_combat_log`, `/admin_refresh_shop`, `/admin_guild_stats`, `/admin_check`, `/admin_uninstall`, `/admin_help`, `/render_config`, `/render_cache_clear` |
+| **Scheduler** (super-admin) | `/scheduler_list`, `/scheduler_view`, `/scheduler_update`, `/scheduler_delete`, `/admin_reset_scheduler`, `/admin_clear_scheduler` |
+| **Info** | `/about`, `/list_category`, `/make-route`, `/ping`, `/health`, `/help` |
+| **Dev** (super-admin) | `/load_data`, `/reload_autocomplete`, `/force_reload_caches` |
 
-Admin and dev commands require the invoking user to be listed in `ADMIN_USER_IDS`, hold the Discord Administrator permission, or hold the configured Bot Admin role.
+Admin commands require the invoking user to be listed in the `DEVELOPERS` environment variable, hold the Discord Administrator permission, or hold the configured Bot Admin role. Scheduler and dev commands (and `/render_config` mutations) are super-admin: `DEVELOPERS` only. See [`ADMIN.md`](./ADMIN.md) for the full admin reference.
 
 ---
 
@@ -344,7 +350,7 @@ The primary reference for contributors (human or AI) is [`AGENTS.md`](./AGENTS.m
 - Database schema and model inheritance hierarchy
 - All API endpoints with request/response details
 - Scheduled job configuration
-- Code standards (Python 3.12+, Ruff, Pydantic v2, max 2 mocks per test)
+- Code standards (Python 3.13+, Ruff, Pydantic v2, max 2 mocks per test)
 - Migration system details
 
 Each service also has its own `AGENTS.md` with service-specific conventions:

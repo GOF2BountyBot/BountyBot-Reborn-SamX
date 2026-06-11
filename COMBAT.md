@@ -50,7 +50,7 @@ These are your bread-and-butter cannons. They fire over and over on a reload tim
 Turrets sit in a separate slot and come in three flavours:
 
 - **Automatic turrets** fire on their own at anything in range — handy as a constant trickle of damage, though a touch less accurate than a shot you aim yourself.
-- **Manual turrets** you take direct control of. While you're manning the turret your main guns fall silent — but you aim with your full piloting skill, making these great for landing precise, long-range hits (for example, while backing away from a brawl). *(The mode switch isn't available as a command yet — until it lands, every ship fights in main-gun mode and mounted manual turrets stay quiet.)*
+- **Manual turrets** you take direct control of — but only when your main guns can't reach. The switch is automatic and driven purely by distance: whenever the enemy is beyond the reach of *every* main gun you carry — closing in at the start of a fight, flung apart by a shock-blast, or held at arm's length by a booster — you man the turret and aim with your full piloting skill. The instant any main gun comes back into reach, your hands return to it and the manual turret falls silent (even if that gun is still reloading). A ship with no main guns at all fights entirely from its manual turrets.
 - **Plasma collectors** aren't weapons at all. They're mining tools for harvesting plasma from gas clouds, and they do nothing in a fight.
 
 ### Secondary weapons — the heavy ordnance
@@ -83,7 +83,7 @@ Most defensive gadgets trigger **automatically** when your hull drops to set dan
 
 - **Cloak** — you all but vanish. For a window, the enemy's chance of hitting you collapses to almost nothing.
 - **Booster** — kicks you back out to long range *and* makes you harder to hit while it's active.
-- **Thruster** — steadies your hands, sharpening the accuracy of your main guns (it helps your fixed weapons, not your turrets).
+- **Thruster** — steadies your hands, sharpening the accuracy of every shot you aim yourself — main guns and manual turrets alike (automatic turrets don't benefit).
 - **Emergency System** — a one-shot lifeline. When you're on the brink, it grants a brief window of near-invulnerability to weather the storm.
 - **Repair bot / shield recharge** — slow, steady healing that ticks away in the background.
 

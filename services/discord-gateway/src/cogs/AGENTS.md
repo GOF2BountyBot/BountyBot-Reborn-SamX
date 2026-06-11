@@ -6,21 +6,31 @@ This file provides detailed guidance for AI agents working on Discord cogs in th
 
 ## A.35/A.37 Pattern: /inventory Choice + /equip Autocomplete (2026-04-22)
 
-### /inventory item_type Choice (A.35)
+### /inventory item_type Choice (A.35, superseded)
 
-`inventoryCog.inventory` now uses `@app_commands.choices(item_type=[...])` with
-4 generic value choices: `ship`, `weapon`, `module`, `turret`. The server normalizes
-these to concrete types. Do NOT pass concrete types in the choices — keep generic.
+`inventoryCog.inventory` uses `@app_commands.choices(item_type=[...])` with
+5 **concrete** value choices: `ship`, `primary_weapon`, `secondary_weapon`,
+`turret_weapon`, `module` (display names "Ship", "Primary Weapon", etc.).
+The original A.35 generic aliases (`weapon`, `turret`) are gone.
+
+`/inventory` also passes `include_ships=true` to BOTH bot-core calls
+(`GET /inventory/player/{id}` and `.../summary`) so INACTIVE ships display as
+inventory entries and count in the Ships summary line. The autocomplete cache
+(`autocomplete_state._refresh_inventory`) deliberately does NOT pass it, so
+equip/sell autocomplete stays ships-free.
 
 ### /equip autocomplete filter (A.37)
 
-The inline `equip_autocomplete` in `inventoryCog.py` now filters items by
-`_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES` (from `utils/autocomplete_helpers.py`) using
-concrete item types: `{"primary_weapon", "turret_weapon", "module"}`. The function
-also excludes already-equipped items by fetching the active ship.
+`equip_autocomplete` in `inventoryCog.py` is a thin delegate to
+`player_equippable_autocomplete` (from `utils/autocomplete_helpers.py`) — zero-HTTP,
+reads `autocomplete_state` caches. The helper filters by
+`_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES` (concrete item types:
+`{"primary_weapon", "turret_weapon", "module", "secondary_weapon"}`) and excludes
+items already equipped on the active ship.
 
-`unequip_autocomplete` now includes `secondary_weapons` slot in its loadout scan
-(for future compatibility).
+`unequip_autocomplete` is cache-based too (player_cache + ships_cache), scans all
+four loadout slots (`weapons`, `modules`, `turrets`, `secondary_weapons`), and
+prepends an `all` sentinel choice for bulk-unequip (B.90).
 
 #### Inventory model — CRITICAL for autocomplete correctness
 
@@ -56,7 +66,7 @@ Post-A.36, `GET /api/v1/inventory/player/{id}/summary` returns **concrete type k
 (`primary_weapon`, `secondary_weapon`, `turret_weapon`, `module`, `ship`, `total_items`).
 Generic alias keys (`weapon`, `turret`) no longer appear in the response.
 
-`inventoryCog.py` (around line 337) aggregates concrete types into 4 display buckets:
+`inventoryCog.py` (around line 395) aggregates concrete types into 4 display buckets:
 
 | Display Bucket | Source |
 |---|---|
@@ -76,7 +86,8 @@ from `utils/autocomplete_helpers.py`. This constant mirrors
 `GameConstants.CURRENTLY_ENABLED_TYPES` (minus "ship") in bot-core.
 Both must be updated together when new item types are enabled.
 
-As of CI-5/CI-16, `secondary_weapon` is included in `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`.
+As of CI-5/CI-16, `secondary_weapon` is included; the current value is
+`frozenset({"primary_weapon", "turret_weapon", "module", "secondary_weapon"})`.
 
 ### Canonical env var for bot-core URL
 
@@ -472,46 +483,55 @@ except httpx.HTTPStatusError as e:
 
 ### adminCog.py
 - All commands require `@is_admin()` — non-admins get a 403-style error
-- `admin_uninstall` requires the confirmation string `"CONFIRM-DELETE"` to protect against accidents
+- `admin_uninstall` requires confirming via the shared `ConfirmView` button (no confirmation string)
 - `render_config` and `render_cache_clear` call **blender-service** (not bot-core)
-- Error handlers are defined for `admin_setup` and `admin_player` to catch `MissingPermissions`
+- Per-command `@<command>.error` handlers exist for `admin_setup`, `admin_player`, `admin_cooldown_reset`, the give/remove item/ship commands, the `admin_config_constants*` commands, and `admin_duel`
 
 ### bountyCog.py
-- `bounty_autocomplete` is a **live** autocomplete that fetches current bounties on each keystroke
-- `/check` returns CORRECT/INCORRECT/ALREADY_CHECKED/NOT_FOUND result types
+- `bounty_autocomplete` reads from the per-cog `_bounty_cache` via `peek()` — no HTTP per keystroke; star systems come from `_systems_cache`
+- `/check` handles result values `correct` / `incorrect` / `already_checked` / `on_cooldown`, plus per-bounty `outcomes` (multi-bounty consolidated embed when 2+, B.12)
 - Cooldown is enforced by bot-core (returns HTTP 429); `/check` handles `resp.status_code == 429` before `raise_for_status()`
 
+### combatLogCog.py
+- `/combat-log` autocomplete lists only the invoking user's fights (per-cog `_combatlog_cache`, key `(guild_id, user_id)`)
+- `/combat-log` takes an optional `public: bool = False` — when true the embed is posted publicly; errors are always ephemeral
+- `/admin_combat_log <user> <battle>` is the admin variant (runtime `_check_is_admin`); always ephemeral, no `public` option; battle autocomplete returns a "Select a user first" sentinel until `user` is filled
+
 ### devCog.py
-- Uses `is_admin()` from `adminCog.py` (imported at top of file)
+- All three slash commands are gated to `_check_is_super_admin` (DEVELOPERS env var only) at runtime, with `@app_commands.default_permissions(administrator=True)` for Discord-side visibility
 - `load_data` with `category="All"` iterates every category and summarizes results
-- `reload_autocomplete` calls `_preload_*` methods on other loaded cogs by name
+- `reload_autocomplete` clears `autocomplete_state` and per-cog `AutocompleteCache`s (clear-and-self-heal); only `DevCog._preload_categories` and `AdminCog._preload_render_settings` are still explicit preload calls
+- Also defines prefix commands `snooze`, `wake`, `botstatus` (developer-gated)
 
 ### duelCog.py
-- `pending_duel_autocomplete` fetches live pending duels for the invoking user
+- `pending_duel_autocomplete` reads from the per-cog `_pending_duel_cache` via `peek()` (player_id resolved from `autocomplete_state.player_cache`)
 - `/duel-accept` resolves combat immediately and returns winner/loser + credit transfer details
+- `/duel-cancel` lets the challenger withdraw an outgoing challenge (`_outgoing_duel_cache` autocomplete)
 
 ### healthCog.py
-- Both `/ping` and `/health` are admin-only (use `@is_admin()`)
+- Both `/ping` and `/health` are admin-only — `/ping` via `@is_admin()`, `/health` via a runtime `_check_is_admin` call after deferring
 - `/health` calls bot-core's `/api/v1/health` endpoint and formats the response into an embed
 
 ### inventoryCog.py
 - `/inventory` with `user=<other user>` requires admin permission (runtime check via `_check_is_admin`)
-- `/equip` and `/unequip` resolve the player's **active ship** first, then modify its loadout
-- `_EQUIPMENT_TYPE_MAP` translates user-facing type names to API type names (`"weapon"` → `"weapons"`)
+- `/inventory` passes `include_ships=true` to the inventory + summary endpoints so inactive ships are listed and counted
+- `/equip` and `/unequip` resolve the player's **active ship** first, then modify its loadout; `WeaponSwapView`/`UniqueModuleSwapView` handle full-slot and unique-module conflicts
+- `/give` transfers credits, an item, or an (inactive) ship to another player
 
 ### playerCog.py
-- `/profile` uses `POST /api/v1/players/` upsert to create the player if they don't exist
-- `/prestige` requires Platinum tier and the confirmation string `"CONFIRM"` as a parameter
+- `/profile` uses `POST /api/v1/players/` upsert to create the player if they don't exist; `/register` is a full alias (see above)
+- `/prestige` requires Platinum tier and confirmation via the shared `ConfirmView` button
+- `/promote` and `/demote` are two-step `ConfirmView` flows subject to the tier-change cooldown (24h default, guild-overridable)
 
 ### setupCog.py
 - **No slash commands** — only listens to guild events
-- `on_guild_join`: initializes guild via API, creates `BountyBot` category with `bounty-board`, `shop`, `general` channels, sends welcome embed
-- `on_guild_remove`: calls best-effort cleanup API endpoint (non-fatal if it fails)
+- `on_guild_join`: sends a welcome embed directing admins to run `/admin_setup` (no channel creation here — roles/category/channels are created by `/admin_setup` via `utils/guild_setup.ensure_bountybot_infrastructure`)
+- `on_guild_remove`: best-effort `DELETE /admin/guilds/{id}/cleanup` call (non-fatal if it fails)
 
 ### skinsCog.py
 - Uses `bot.wait_for("message", ...)` to collect texture uploads interactively (120s timeout)
 - Two httpx clients: `self.http_client` (bot-core) and `self.blender_client` (blender-service)
-- `SquareCheckView` asks crop/stretch/cancel when uploaded image is non-square
+- `SquareCheckView` asks crop/stretch/cancel when uploaded image is non-square; `RegionModeView`/`RegionOptionView` handle region-overlay choices
 - `FormatDownloadView` offers AEI format conversion after render (ETC1 for Android, DXT5 for PC)
 - `_preload_ship_skins` fetches render info for ALL ships on startup
 
@@ -587,4 +607,4 @@ class TestMyCog:
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-06-11*

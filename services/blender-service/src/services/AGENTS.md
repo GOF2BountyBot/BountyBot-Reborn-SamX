@@ -6,7 +6,7 @@ This file provides guidance for AI agents working on the services layer of blend
 
 ## Overview
 
-The `services/` package contains all business logic for blender-service. There are 6 service modules plus `image_utils.py` (pure functions) and an `__init__.py`.
+The `services/` package contains all business logic for blender-service. There are 6 modules plus an `__init__.py`: 5 service classes and `image_utils.py` (pure functions).
 
 Services are intentionally decoupled from FastAPI — they accept and return Python/PIL objects, not HTTP request/response types. File I/O that requires HTTP uploads or streaming responses is handled by the router layer before calling a service.
 
@@ -81,7 +81,9 @@ Returns a `BytesIO` seeked to position 0, containing the raw AEI binary.
 
 **AEPi availability**: AEPi is a git submodule. If the submodule is not initialised or its import fails, `AEI` and `CompressionFormat` are set to `None` at module level (graceful import fallback). The service raises `AEIConversionError("AEPi library is not available...")` at runtime rather than crashing at import time.
 
-**Image handling**: Source image is auto-converted to RGBA before encoding, regardless of input mode.
+**Image handling**: Source image is auto-converted to RGBA before encoding, regardless of input mode. Dimensions are then snapped to the nearest multiple of 4 (`Image.NEAREST` resize) to satisfy AEPi's 4-pixel alignment requirement.
+
+**Input validation**: `target_format` (case-insensitive, must be in `SUPPORTED_FORMATS`) and `quality` (must be 1, 2, or 3) are validated by the service itself, raising `AEIConversionError` on bad values — in addition to the router's own checks.
 
 ---
 
@@ -134,7 +136,7 @@ JobQueueService:
   create_job(model_path, res_x, res_y, num_samples) → RenderJob
   get_job(job_id) → RenderJob | None       # None if not found or expired
   list_jobs() → list[dict]
-  submit_job(job, render_coro) → None      # schedules background asyncio.Task
+  submit_job(job, render_coro) → None      # async — schedules background asyncio.Task
   start_cleanup_loop(interval_seconds=300) # async — run as background task
   shutdown()                               # cancel cleanup + all active tasks
 ```
@@ -210,6 +212,8 @@ rejected update leaves the live config untouched. The config router maps
 
 **No persistence**: Config is in-memory. `reset()` re-reads env vars at call time.
 
+**Not yet wired up**: `max_concurrent_renders` and `job_ttl_hours` are stored, validated, and exposed via the API, but nothing consumes them — `main.py` constructs `JobQueueService(max_concurrent=2)` with a hardcoded value, and the 1-hour job TTL is hardcoded in `RenderJob.is_expired`.
+
 **Env var mapping** (read at init / reset):
 
 | Env var | `RenderConfig` field |
@@ -243,8 +247,8 @@ If `config` is `None`, a default `RenderConfig()` is used. Routers should always
 | Method | Signature | Notes |
 |--------|-----------|-------|
 | `clamp_params` | `(res_x, res_y, num_samples) → ClampResult` | B.93: clamps out-of-bounds params to the nearest valid config bound (does **not** raise); logs a WARNING per clamp. Routers call this; `render_ship` trusts its inputs are already clamped |
-| `trim` (static) | `(image: Image.Image) → Image.Image` | Crops transparent/background borders using `ImageChops.difference` |
-| `render_ship` | `(model_path, texture_path, output_path, res_x, res_y, num_samples) → Path` | Full pipeline; async. Renders at whatever params it is given — the router clamps first |
+| `trim` (static) | `(image: Image.Image) → Image.Image` | RGBA images (rendered with `film_transparent`): crops via the alpha channel's `getbbox()`, preserving anti-aliased edges. Non-RGBA fallback: `ImageChops.difference` against the top-left pixel |
+| `render_ship` | `(model_path, texture_path, output_path, res_x, res_y, num_samples) → Path` | Full pipeline; async. Re-validates `model_path` via `utils/safe_path.validate_user_path()` (defence-in-depth; raises `ValueError` on escape). Renders at whatever params it is given — the router clamps first |
 
 `ClampResult` (frozen dataclass): `res_x`, `res_y`, `num_samples` (final clamped values) + `clamped: dict[str, dict[str, int]]` (`field → {"requested", "actual"}`, empty when nothing was clamped) + `was_clamped` property.
 
@@ -255,16 +259,17 @@ If `config` is `None`, a default `RenderConfig()` is used. Routers should always
 - Non-zero return code → `RenderError`
 - Missing output file → `RenderError`
 
-**MTL handling**:
+**OBJ/MTL handling**:
+- Copies the **OBJ itself** to the temp dir (Blender resolves the `mtllib` directive relative to the OBJ, so OBJ and MTL must be co-located)
 - Looks for `{model_path}.mtl` (same stem), then `{model_path_dir}/material.mtl`
 - Copies the MTL to the temp dir for concurrent safety (each render gets its own copy)
-- Creates an empty MTL if none is found (Blender script appends `map_Kd` to it)
+- Creates an empty MTL if none is found (the Blender script injects `map_Kd` into it)
 
 **render_vars format** (6 lines, written by `render_service.py`, read by `_render.py`):
 ```
 {res_x}x{res_y}
 {output_path}
-{model_path}
+{temp_obj_path}
 {texture_path}
 {num_samples}
 {temp_mtl_path}
@@ -300,16 +305,19 @@ def composite_textures(
 
 **Compositing algorithm** (step by step):
 1. Convert `base_texture` to RGBA
-2. Alpha-composite `skinBase` on top
+2. Alpha-composite `skinBase` on top (resized LANCZOS to the base texture's size if it differs)
 3. Determine `max_layer_num = max(region_textures.keys() + disabled_regions)`
 4. For each `mask_num` in `range(1, max_layer_num + 1)`:
    - If `mask_num` in `region_textures`: use the custom texture
    - Elif `mask_num` in `disabled_regions`: use `base_texture`
    - Else: skip
    - If no mask image for the region: log warning, skip
+   - Resize the region texture and mask (LANCZOS) to the working texture's size if they differ
    - Invert the mask (Gimp convention ≠ Pillow convention)
    - `Image.composite(working_tex, new_tex, inverted_mask)`
 5. Convert final image to RGB (strip alpha) and return
+
+A static helper `ensure_image_mode(image, mode="RGBA")` handles the mode conversions (returns the image unchanged if already in the target mode).
 
 **Mask inversion**: The game's mask files follow Gimp conventions where white = transparent and black = opaque, which is the inverse of Pillow's composite convention. The service inverts every mask with `ImageOps.invert()` before use. RGBA masks are converted to RGB before inversion (Pillow's `invert` does not support RGBA).
 
@@ -360,8 +368,8 @@ def composite_textures(
 
 ## Code Standards
 
-- **Python**: 3.12+
-- **Linter/formatter**: Ruff (`target-version = "py312"`, `line-length = 120`) — `pyproject.toml` at repo root
+- **Python**: 3.13+
+- **Linter/formatter**: Ruff (`target-version = "py313"`, `line-length = 120`) — `pyproject.toml` at repo root
 - **Type hints**: Required on all public methods
 - **Docstrings**: Use Sphinx-style (`:param:`, `:return:`, `:raises:`) on public methods
 - **Pydantic**: Use `ConfigDict(from_attributes=True)` and `.model_dump()` (not deprecated `.dict()`)
@@ -370,4 +378,4 @@ def composite_textures(
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-06-11*

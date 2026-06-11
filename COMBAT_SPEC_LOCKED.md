@@ -141,7 +141,7 @@ In **PvC fights only**, the player-side combatant receives a uniform reduction o
 ```
 attacker_accuracy = combatant_base                 # 60% / 50%
                   + own_scanner_bonus              # 0 (A) / +5pp (B) / +10pp (C)
-                  + own_thruster_bonus             # primaries only; ramps 0 at 750m → max at 300m
+                  + own_thruster_bonus             # omitted in pilot_turret_acc (auto turrets); ramps 0 at 750m → max at 300m
                   − opponent_booster_debuff        # while target's boost is active
                   → clamp [0.05, 0.99]
 ```
@@ -175,7 +175,7 @@ bonus_pp = max_bonus_pp × ramp
 ```
 - `k_thruster` default **0.10** (`THRUSTER_ACCURACY_BONUS_FACTOR`).
 - `ramp` = 0 outside 750 m, linear to 1 at the 300 m floor.
-- **Primaries only.** Turrets and rockets unaffected (rockets have their own 5 % → 60 % curve).
+- **Applies to weapons firing at the full §5 result (`pilot_primary_acc`):** primaries, manual turrets (§6.3), and tracking Tier-B/C missiles / cluster snapshots (§6.2 — "fires at the pilot's current §5 accuracy" includes this term). Auto turrets and rockets unaffected (auto turrets use `pilot_turret_acc`, which excludes this term; rockets and Tier-A missiles have their own 5 % → 60 % curve).
 - Always evaluated (passive — no toggle, no HP-threshold, no cooldown). Distance gate is the only gate.
 
 ### Per-weapon accuracy modifier — DROPPED
@@ -281,26 +281,22 @@ Three subtypes exist; two are combat-relevant. Discriminate using the `automatic
   auto_turret_accuracy = clamp(pilot_current_accuracy × auto_turret_multiplier, 0.05, 0.99)
   ```
   - `auto_turret_multiplier` default **0.85** (`AUTO_TURRET_ACCURACY_MULTIPLIER`).
-  - `pilot_current_accuracy` is the §5 result **with the thruster bonus excluded** (turrets are unaffected by thrusters per §7.4 — thruster bonus is a primary-only term). Scanner bonus and opponent booster debuff still apply; cloak override still applies (see next bullet).
+  - `pilot_current_accuracy` is the §5 result **with the thruster bonus excluded** (auto turrets are unaffected by thrusters per §7.4 — the thruster bonus is a pilot-aimed term: primaries + manual turrets only). Scanner bonus and opponent booster debuff still apply; cloak override still applies (see next bullet).
   - **Auto turrets inherit the cloak set-value.** If the target is cloaked, pilot accuracy is `cloak_set_value` (0.25 default), so auto turrets fire at ~0.2125 (= 0.25 × 0.85), re-clamped.
-  - **Implementation note:** the resolver computes two pilot-accuracy values per tick — `pilot_primary_acc` (full §5, with thruster) used for primaries, and `pilot_turret_acc` (§5 minus thruster) used for auto turrets and any future turret-class accuracy lookup.
+  - **Implementation note:** the resolver computes two pilot-accuracy values per tick — `pilot_primary_acc` (full §5, with thruster) used for primaries and manual turrets, and `pilot_turret_acc` (§5 minus thruster) used for auto turrets and any future turret-class accuracy lookup.
 - **One accuracy value shared across all auto turrets on a ship** — no per-turret variation. An 8-turret battlecruiser computes one value per tick and applies it to all 8 turret shots.
 
 #### Manual turrets (`automatic: false`)
-- **Mutually exclusive with primary** via a ship-wide `manual_turret_mode: bool` flag on `ShipLoadout`. Auto turrets are **unaffected** by the flag — they always fire on their own cooldown regardless of mode.
-  - `manual_turret_mode = false` (default — "primary mode"): primaries fire normally; **manual turrets do NOT fire** this fight (the pilot is focused on the primary). Manual turrets stay equipped but inert. Auto turrets fire as usual.
-  - `manual_turret_mode = true` ("turret mode"): **primaries do NOT fire**; manual turrets fire as pilot-aimed weapons (rules below). Auto turrets fire as usual.
+- **Range-driven gap-closer — mutually exclusive with primaries by RANGE, not by a mode flag.** Each tick, a combatant's manual turrets are eligible to fire ONLY while **no primary weapon is in range**: eligibility = `any(current_distance ≤ pw.range_m for pw in effective_primaries)` is false (`combat_resolver.py`, phase-3 turret evaluation). The instant any primary comes into range, primaries take over and manual turrets go inert. **Primary cooldown state is irrelevant to the switch** — an in-range primary that is still reloading silences manual turrets all the same.
+- **Primaries are never suppressed.** Primaries evaluate every tick behind their own per-weapon gates only (cooldown ready + `current_distance ≤ range_m`, §6.1); manual-turret activity never gates them. Auto turrets are likewise unaffected by the switch — they always fire on their own cooldown in either phase.
+- **Practical firing windows:** the initial approach (before the longest-range primary closes to range), after a shock-blast distance reset (§2), and while a booster push holds the gap beyond primary range (§7.3). A ship with **zero primaries** uses its manual turrets for the whole fight (each turret still subject to its own range gate + cooldown).
 - **Accuracy when firing — treated as a primary.** Each manual turret fires at `pilot_primary_acc` (full §5 layered formula, including the thruster bonus; the cloak override still applies if the target is cloaked). The 0.85 auto-turret multiplier does **NOT** apply. Range gate per §6.1 (`current_distance ≤ range_m`).
-- **Cooldown — independent per turret.** Each manual turret runs its own `loading_speed_ms` cooldown. A ship with N manual turrets in turret-mode fires up to N shots per cycle, each rolled independently against `pilot_primary_acc`.
+- **Cooldown — independent per turret.** Each manual turret runs its own `loading_speed_ms` cooldown (resets on fire, hit OR miss; decrements every tick, including ticks where the turret is inert because a primary is in range — mirroring primaries, which keep decrementing during turret windows). A ship with N manual turrets in a turret window fires up to N shots per cycle, each rolled independently against `pilot_primary_acc`.
 - **PrimaryWeaponMod does NOT apply** to manual turrets (§7.8 excludes all turrets — auto and manual).
+- **RNG draw order (determinism):** within the phase-3 turret evaluation, C1 auto-turrets, C2 auto-turrets, C1 manual-turrets, C2 manual-turrets (each group in insertion order).
 
-##### Schema / data-model surface (IMPLEMENTED)
-The `manual_turret_mode` flag is the canonical mechanism for choosing primary vs. manual-turret mode. **Status: implemented end-to-end except the UI toggle.**
-
-1. **`ShipLoadout.manual_turret_mode: bool`** — ✅ exists on the dataclass (`combat_models.py`), default `false`.
-2. **`PlayerShip` persistence** — ✅ dedicated `manual_turret_mode` boolean column on `player_ships` (default `false`).
-3. **`LoadoutBuilder.from_player()` / `from_criminal_ship()`** — ✅ both read the persisted value onto the built `ShipLoadout`; criminals default to `false` (no per-criminal toggle).
-4. **UI command — still DEFERRED.** No player-facing toggle exists yet; every fight runs the default-`false` ("primary mode") path. The resolver implements both branches, so only the toggle command is outstanding.
+##### Schema / data-model surface
+**There is no mode flag.** The former ship-wide `manual_turret_mode: bool` is REMOVED everywhere — from `ShipLoadout` (`combat_models.py`), the resolver's `_CombatantState`, `LoadoutBuilder.from_player()` / `from_criminal_ship()`, the `PlayerShip` ORM model, and the `player_ships` DB column (dropped by migration `0018`). The primary-vs-manual-turret switch is computed per tick from range alone — there is no per-fight choice, no UI command, and nothing to persist.
 
 #### Plasma-collector turrets (`subtype: "plasma-collector"`, `dps: 0`)
 - **Inert in combat.** Equippable for fidelity; produces no effect.
@@ -349,7 +345,7 @@ Three tiers:
 
 ### 7.4 Thrusters
 - **Attacker-side primary-accuracy bonus** (the equipping ship's handling makes *itself* hit better at close range). Formula in §5.
-- **NO effect on distance / closure / weapon range / rocket accuracy / turrets.**
+- **NO effect on distance / closure / weapon range / rocket accuracy / auto turrets.** (Weapons that fire at the full §5 result — primaries, manual turrets (§6.3), tracking Tier-B/C missiles (§6.2) — DO receive the bonus; it is a term of `pilot_primary_acc`.)
 - **Passive — always active when conditions permit.** No HP-threshold gating, no `duration_ms`, no cooldown, no toggle. Evaluated every tick; gated solely by `current_distance < 750 m`.
 - Per-module max bonus at default `k_thruster` (0.10): Static +2 pp / Pendular +4 pp / D'ozzt +7 pp / Mp'zzzm +10 pp / Pulsed Plasma +13 pp.
 
@@ -680,6 +676,8 @@ The battle-log command exists: gateway `/combat-log battle:<pick>` (`combatLogCo
 
 `combatant{1,2}_name` + `created_at` are projected to columns precisely so this dropdown query is a single indexed scan, no JOINs.
 
+**Visibility:** `/combat-log` accepts an optional `public` flag (default `false`) — when `true`, the same embed is posted publicly instead of ephemerally; errors stay ephemeral regardless (`combatLogCog.py`). The admin variant `/admin_combat_log` (fetch any player's battle) is always ephemeral and has no `public` option.
+
 ### Public API: `CombatService.fight_ships(...)`
 
 ```python
@@ -841,6 +839,7 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 - **Booster debuff:** `debuff_pp = effect_pct × BOOSTER_ACCURACY_DEBUFF_FACTOR`
 - **Thruster bonus:** `bonus_pp = effect_pct × THRUSTER_ACCURACY_BONUS_FACTOR × ramp`, where `ramp = clamp((750 − current_distance) / (750 − 300), 0, 1)`
 - **Auto turret:** `acc = clamp(pilot_turret_acc × AUTO_TURRET_ACCURACY_MULTIPLIER, 0.05, 0.99)`, where `pilot_turret_acc` = §5 layered result with thruster bonus excluded (cloak override still applies if active).
+- **Manual turret:** `acc = pilot_primary_acc` (full §5 layered result, thruster included; no 0.85 multiplier). Fire-eligible only while `any(current_distance ≤ pw.range_m for pw in effective_primaries)` is false (§6.3 range-driven switch; primary cooldown state irrelevant).
 
 ### Rocket accuracy curve
 ```

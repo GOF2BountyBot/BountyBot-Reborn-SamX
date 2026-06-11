@@ -35,15 +35,15 @@ It acts as the bridge between Discord users ↔ bot-core (game logic) ↔ blende
 ```
 services/discord-gateway/
 ├── Dockerfile
+├── docker-entrypoint.sh        # Root: chown /app/data, then gosu botuser → python src/bot.py
 ├── requirements.txt
-├── pytest.ini                  # asyncio_mode=auto
+├── pytest.ini                  # asyncio_mode=auto, addopts = -n 2 --dist loadfile
 ├── .coveragerc
 ├── test-cleanup.sh             # Test artifact cleanup helper
 ├── src/
 │   ├── bot.py                  # GatewayBot class + FastAPI lifespan + create_app()
 │   ├── api-test.py             # Integration test harness (standalone runner)
 │   ├── api/
-│   │   ├── server.py           # Alternative standalone FastAPI entry point
 │   │   ├── routers/            # 12 REST API router modules (auto-discovered)
 │   │   │   ├── __init__.py
 │   │   │   ├── announcements.py        # Bounty announcement rendering (unified channel/message push)
@@ -69,9 +69,9 @@ services/discord-gateway/
 │   │       ├── permission_schemas.py   # PermissionOverwrite model
 │   │       ├── role_schemas.py         # Role model
 │   │       └── user_schemas.py         # User, Member models
-│   ├── cogs/                   # 16 Discord bot cog files (14 loaded; templateCog + testCog skipped)
+│   ├── cogs/                   # 17 Discord bot cog files (15 loaded; templateCog + testCog skipped)
 │   │   ├── _shared/            # Shared cog utilities sub-package
-│   │   │   ├── autocomplete_cache.py  # AutocompleteCache base class (peek/schedule_refresh/max_entries)
+│   │   │   ├── autocomplete_cache.py  # AutocompleteCache base class (peek/schedule_refresh/get_with_timeout/max_entries)
 │   │   │   ├── confirm_view.py        # Confirmation UI view
 │   │   │   ├── embed_pagination.py    # Paginated embed view
 │   │   │   ├── http_error_handler.py  # Shared HTTP error handling
@@ -79,13 +79,14 @@ services/discord-gateway/
 │   │   ├── aboutCog.py         # /about, /list_category, /make-route
 │   │   ├── adminCog.py         # All /admin_* and /render_* commands
 │   │   ├── bountyCog.py        # /check, /bounties, /route, /criminal-loadout
-│   │   ├── devCog.py           # /load_data, /reload_autocomplete
-│   │   ├── duelCog.py          # /duel-challenge, /duel-accept, /duel-reject
+│   │   ├── combatLogCog.py     # /combat-log, /admin_combat_log
+│   │   ├── devCog.py           # /load_data, /reload_autocomplete, /force_reload_caches
+│   │   ├── duelCog.py          # /duel-challenge, /duel-accept, /duel-reject, /duel-cancel
 │   │   ├── healthCog.py        # /ping, /health
 │   │   ├── helpCog.py          # /help, /admin_help
-│   │   ├── inventoryCog.py     # /inventory, /search, /item, /equip, /unequip
-│   │   ├── playerCog.py        # /profile, /leaderboard, /prestige
-│   │   ├── schedulerCog.py     # Scheduler management slash commands
+│   │   ├── inventoryCog.py     # /inventory, /search, /item, /equip, /unequip, /give
+│   │   ├── playerCog.py        # /profile, /register, /leaderboard, /prestige, /promote, /demote, /loadout, /notifications, /unregister
+│   │   ├── schedulerCog.py     # /scheduler_list, /scheduler_view, /scheduler_update, /scheduler_delete
 │   │   ├── setupCog.py         # Listener: on_guild_join, on_guild_remove
 │   │   ├── shipsCog.py         # /ships, /ship, /setactive, /nickname
 │   │   ├── shopCog.py          # /shop, /buy, /sell, /shops
@@ -95,20 +96,27 @@ services/discord-gateway/
 │   ├── lib/                    # Third-party libraries
 │   └── utils/                  # Shared utility modules
 │       ├── __init__.py
+│       ├── autocomplete_helpers.py # Shared player-scoped autocomplete choice builders
+│       ├── autocomplete_state.py   # Shared player/inventory/ships caches + init/getters/invalidators
+│       ├── autocomplete_utils.py   # normalize_for_search(), fuzzy_filter(), resolve_system_name()
+│       ├── autocomplete_warm.py    # Startup warm + APScheduler recurring refresh jobs
 │       ├── command_utils.py    # CommandValidator, CommandHandler, get_command_handler()
 │       ├── discord_converters.py  # Bidirectional Discord object ↔ JSON converters
 │       ├── discord_helpers.py  # resolve_bot(), get_entity_or_404(), normalize_emoji()
 │       ├── embed_converter.py  # EmbedConverter (JSON ↔ discord.Embed)
-│       └── permission_utils.py # PERMISSION_FLAGS, calculate_effective_permissions()
+│       ├── guild_setup.py      # ensure_bountybot_infrastructure(): roles/category/channels for /admin_setup
+│       ├── permission_utils.py # PERMISSION_FLAGS, calculate_effective_permissions()
+│       └── timestamp_utils.py  # iso_to_discord_ts()
 └── tests/
     ├── conftest.py             # Global fixtures: mocked bot, TestClient, Discord mocks
     ├── test_bot.py
     ├── test_bot_extended.py
     ├── test_health.py
-    ├── api/                    # Tests for REST API routers
-    ├── cogs/                   # Tests for Discord cogs (21 test files)
-    ├── schemas/                # Tests for Pydantic schemas
-    ├── utils/                  # Tests for utility modules
+    ├── api/                    # Tests for REST API routers (23 test files)
+    ├── cogs/                   # Tests for Discord cogs (34 test files)
+    │   └── _shared/            # Tests for cogs/_shared helpers (5 test files)
+    ├── schemas/                # Tests for Pydantic schemas (8 test files)
+    ├── utils/                  # Tests for utility modules (13 test files)
     └── mocks/                  # Shared mock objects
 ```
 
@@ -123,14 +131,19 @@ The service runs a Discord bot AND a FastAPI REST server **in the same process**
 ```
 uvicorn starts → create_app() → FastAPI lifespan begins
     │
+    ├── autocomplete_state.init() with a bot-owned httpx client
+    │       + bot-core health probe (3 attempts, non-fatal)
+    ├── In-process APScheduler started (MemoryJobStore) → app.state.scheduler
+    │
     ├── GatewayBot() created (commands.Bot subclass)
     │       intents: message_content=True, guilds=True, members=True
-    │       command_prefix="!"
+    │       command_prefix from COMMAND_PREFIX env (default "?p")
     │
     ├── asyncio.create_task(bot.start(token))
     │       → setup_hook() loads all cogs from src/cogs/
     │           (skips files containing "template", "disabled", or "test")
-    │       → on_ready() syncs slash commands to guilds
+    │       → on_ready() syncs slash commands to guilds (unless AUTO_SYNC_COMMANDS=false)
+    │           and registers autocomplete warm jobs on app.state.scheduler
     │
     └── FastAPI yields (routes now active)
             → Auto-discovers routers from api.routers.*
@@ -167,21 +180,22 @@ The bot auto-discovers cogs via `setup_hook()` — any `*.py` file in `src/cogs/
 | File | Class | Slash Commands | Notes |
 |------|-------|----------------|-------|
 | `aboutCog.py` | `AboutCog` | `/about`, `/list_category`, `/make-route` | Preloads all game object data on startup; autocomplete from cache |
-| `adminCog.py` | `AdminCog` | `/admin_check`, `/admin_setup`, `/admin_player`, `/admin_refresh_shop`, `/admin_guild_stats`, `/admin_config`, `/admin_uninstall`, `/admin_config_shop`, `/admin_config_validate`, `/render_config`, `/render_cache_clear` | Uses `@is_admin()` decorator; calls bot-core AND blender-service |
-| `bountyCog.py` | `BountyCog` | `/check`, `/bounties`, `/route`, `/criminal-loadout` | Preloads star system names; live autocomplete for active bounties |
-| `devCog.py` | `DevCog` | `/load_data`, `/reload_autocomplete` | Admin-only; triggers JSON→DB loads and cache reloads |
-| `duelCog.py` | `DuelCog` | `/duel-challenge`, `/duel-accept`, `/duel-reject` | Live autocomplete for pending duels |
-| `healthCog.py` | `HealthCog` | `/ping`, `/health` | Admin-only; `/health` calls bot-core health endpoint |
+| `adminCog.py` | `AdminCog` | `/admin_check`, `/admin_setup`, `/admin_player`, `/admin_refresh_shop`, `/admin_guild_stats`, `/admin_config`, `/admin_uninstall`, `/admin_config_shop`, `/admin_config_validate`, `/admin_clear_bounties`, `/admin_config_bounty`, `/admin_config_xp`, `/admin_spawn_bounty`, `/admin_cooldown_reset`, `/admin_give_item`, `/admin_remove_item`, `/admin_give_ship`, `/admin_remove_ship`, `/admin_config_constants`, `/admin_config_constants_view`, `/admin_config_constants_reset`, `/admin_duel`, `/render_config`, `/render_cache_clear` | Uses `@is_admin()` decorator; calls bot-core AND blender-service |
+| `bountyCog.py` | `BountyCog` | `/check`, `/bounties`, `/route`, `/criminal-loadout` | Star systems + active bounties served from `AutocompleteCache`s (push + periodic refresh) |
+| `combatLogCog.py` | `CombatLogCog` | `/combat-log`, `/admin_combat_log` | `/combat-log` has optional `public: bool = False` (embed posted publicly when true; errors always ephemeral); `/admin_combat_log` is admin-gated and always ephemeral |
+| `devCog.py` | `DevCog` | `/load_data`, `/reload_autocomplete`, `/force_reload_caches` | Super-admin only (`DEVELOPERS` env var via `_check_is_super_admin`); also prefix commands `snooze`/`wake`/`botstatus` |
+| `duelCog.py` | `DuelCog` | `/duel-challenge`, `/duel-accept`, `/duel-reject`, `/duel-cancel` | Pending/outgoing duel autocomplete from per-cog caches |
+| `healthCog.py` | `HealthCog` | `/ping`, `/health` | Admin-only (`/ping` via `@is_admin()`, `/health` via runtime `_check_is_admin`); `/health` calls bot-core health endpoint |
 | `helpCog.py` | `HelpCog` | `/help`, `/admin_help` | Help command listing for users and admins |
-| `inventoryCog.py` | `InventoryCog` | `/inventory`, `/search`, `/item`, `/equip`, `/unequip` | Equip/unequip modifies active ship loadout |
-| `playerCog.py` | `PlayerCog` | `/profile`, `/leaderboard`, `/prestige` | `/prestige` requires Platinum tier + confirmation |
-| `schedulerCog.py` | `SchedulerCog` | *(scheduler management commands)* | Scheduler job management slash commands |
-| `setupCog.py` | `SetupCog` | *(no slash commands)* | Listener: `on_guild_join` → API init + create channels; `on_guild_remove` → cleanup |
+| `inventoryCog.py` | `InventoryCog` | `/inventory`, `/search`, `/item`, `/equip`, `/unequip`, `/give` | Equip/unequip modifies active ship loadout; `/inventory` passes `include_ships=true` so inactive ships show as inventory entries |
+| `playerCog.py` | `PlayerCog` | `/profile`, `/register`, `/leaderboard`, `/prestige`, `/promote`, `/demote`, `/loadout`, `/notifications`, `/unregister` | `/register` is a full alias of `/profile`; `/prestige` requires Platinum tier + `ConfirmView` confirmation |
+| `schedulerCog.py` | `SchedulerCog` | `/scheduler_list`, `/scheduler_view`, `/scheduler_update`, `/scheduler_delete` | Admin-only scheduler job management |
+| `setupCog.py` | `SetupCog` | *(no slash commands)* | Listener: `on_guild_join` → welcome embed pointing admins at `/admin_setup`; `on_guild_remove` → cleanup. Channel/role creation lives in `utils/guild_setup.py`, invoked by `/admin_setup` |
 | `shipsCog.py` | `ShipsCog` | `/ships`, `/ship`, `/setactive`, `/nickname` | Ship management; respects ownership |
 | `shopCog.py` | `ShopCog` | `/shop`, `/buy`, `/sell`, `/shops` | Tier-gated shop access |
-| `skinsCog.py` | `SkinsCog` | `/ship_skin`, `/render_skin`, `/make_skin_texture` | Calls blender-service; includes `SquareCheckView` and `FormatDownloadView` UI views |
+| `skinsCog.py` | `SkinsCog` | `/ship_skin`, `/render_skin`, `/make_skin_texture` | Calls blender-service; UI views: `SquareCheckView`, `RegionModeView`, `RegionOptionView`, `FormatDownloadView` |
 | `templateCog.py` | `TemplateCog` | `/example` | **NOT loaded** (filename contains "template"); copy as scaffold |
-| `testCog.py` | `TestCog` | `!test_command` (prefix) | **NOT loaded** (filename contains "test"); prefix command only |
+| `testCog.py` | `TestCog` | `test_command` (prefix) | **NOT loaded** (filename contains "test"); prefix command only |
 
 ### Admin Permission System
 
@@ -214,7 +228,7 @@ All 12 routers are auto-discovered from `api/routers/*.py` (any module with a `r
 | `channels.py` | `/channels` | Text/voice channel CRUD, message send/edit/delete within channel |
 | `guilds.py` | `/guilds` | Guild info, role list, role create/update/delete |
 | `health.py` | `/health` | Health check: `GET /health`, `GET /health/simple`, `GET /health/liveness` |
-| `internal_autocomplete.py` | `/internal/autocomplete` | Push endpoints for in-process autocomplete cache (shop, bounty, health) |
+| `internal_autocomplete.py` | `/internal/autocomplete` | Push/invalidate endpoints for in-process autocomplete caches (shop, bounty, duel, combat-log) + cache health |
 | `messages.py` | `/messages` | Global message send, edit, delete, fetch by ID |
 | `permissions.py` | `/permissions` | Permission overwrite get/set/delete for channels |
 | `roles.py` | `/roles` | Role CRUD at guild level |
@@ -234,7 +248,7 @@ All schemas use **Pydantic v2** conventions: `model_config = ConfigDict(from_att
 | `base_schemas.py` | `BaseResponse` | Common `status`, `timestamp` fields; base for all responses |
 | `channel_schemas.py` | `Channel`, `Category`, `Thread` | Channel/thread representations |
 | `guild_schemas.py` | `Guild` | Guild metadata |
-| `internal_schemas.py` | *(internal autocomplete schemas)* | Schemas for internal autocomplete push endpoints |
+| `internal_schemas.py` | `ShopCachePush`, `BountyCachePush`, `DuelCachePush` | Schemas for internal autocomplete push endpoints |
 | `message_schemas.py` | `Message`, `MessageSummary`, `EmbedPayload`, `EmbedField` | Message and embed structures |
 | `permission_schemas.py` | `PermissionOverwrite` | Permission overwrite target/allow/deny |
 | `role_schemas.py` | `Role` | Role with permissions bitfield |
@@ -327,7 +341,7 @@ Discord user → discord.py → Cog command handler
 
 | Scope | Count |
 |-------|-------|
-| Test files | 92 |
+| Test files | 86 |
 
 ### Test Structure
 
@@ -338,7 +352,8 @@ tests/
 ├── api/                 # Router tests (TestClient-based)
 ├── cogs/                # Cog command tests
 │   ├── conftest.py      # Cog-specific fixtures: mocked interactions, HTTP responses
-│   └── test_*.py        # 21 cog test files (one per cog)
+│   ├── _shared/         # Tests for cogs/_shared helpers (5 test files)
+│   └── test_*.py        # 34 cog test files
 ├── schemas/             # Pydantic schema validation tests
 ├── utils/               # Utility function unit tests
 └── mocks/               # Shared mock objects
@@ -469,10 +484,12 @@ See `src/api/routers/AGENTS.md` for the full router development guide.
 |----------|---------|---------|
 | `BOTTOKEN` | *(required)* | Discord bot token |
 | `BOTAPPID` | `0` | Discord application ID |
+| `COMMAND_PREFIX` | `?p` | Prefix for legacy prefix commands |
+| `AUTO_SYNC_COMMANDS` | `true` | Sync slash commands on startup; `false` = skip (use `wake` to force-sync) |
 | `BOT_API_BASE_URL` | `http://bot-core:8000/api/v1` | bot-core API base URL (used by cogs) |
 | `BLENDER_API_BASE_URL` | `http://blender-service:8001/api/v1` | blender-service API base URL |
 | `GATEWAY_HOST` | `0.0.0.0` | FastAPI bind host |
-| `GATEWAY_PORT` / `PORT` | `8000` | FastAPI bind port |
+| `GATEWAY_PORT` / `PORT` | `8000` | FastAPI bind port (compose sets `7999`) |
 | `ACCESS_LOG` | `true` | Enable uvicorn access logging |
 | `DEVELOPERS` | `` | Comma-separated Discord user IDs with developer override |
 | `INTERNAL_AUTH_TOKEN` | `` | Shared secret for bot-core → gateway push endpoints; unset = dev mode (warns, allows) |
@@ -481,8 +498,14 @@ See `src/api/routers/AGENTS.md` for the full router development guide.
 | `AUTOCOMPLETE_WARM_GUILD_STAGGER_MS` | `200` | Spacing between per-guild warm jobs at startup (ms) |
 | `AUTOCOMPLETE_PLAYER_REFRESH_MINUTES` | `10` | Interval for player_cache bulk re-warm |
 | `AUTOCOMPLETE_LOADOUT_REFRESH_MINUTES` | `5` | Interval for inventory/ships round-robin re-warm |
+| `AUTOCOMPLETE_PLAYER_TTL_SECONDS` | `900` | player_cache TTL |
+| `AUTOCOMPLETE_LOADOUT_TTL_SECONDS` | `600` | inventory_cache/ships_cache TTL |
 | `AUTOCOMPLETE_INVENTORY_MAX_ENTRIES` | *(unset)* | LRU cap on inventory_cache; unset = no cap |
 | `AUTOCOMPLETE_SHIPS_MAX_ENTRIES` | *(unset)* | LRU cap on ships_cache; unset = no cap |
+| `AUTOCOMPLETE_COMBATLOG_TTL_SECONDS` | `120` | combatLogCog `_combatlog_cache` TTL |
+| `AUTOCOMPLETE_COMBATLOG_MAX_ENTRIES` | `2000` | LRU cap on `_combatlog_cache` |
+| `AUTOCOMPLETE_COMBATLOG_REFRESH_MINUTES` | `5` | Interval for combat-log round-robin re-warm |
+| `AUTOCOMPLETE_ADMIN_DUEL_TTL_SECONDS` | `300` | adminCog `_admin_pending_duel_cache` TTL |
 
 ---
 
@@ -490,18 +513,24 @@ See `src/api/routers/AGENTS.md` for the full router development guide.
 
 The gateway runs a proactively-warmed in-process autocomplete cache that eliminates all HTTP calls on the Discord autocomplete hot path (≤100ms p99, target ~50ms).
 
-### Three-tier cache model
+### Cache model
+
+Shared caches (in `utils/autocomplete_state.py`) plus per-cog `AutocompleteCache` instances. TTLs are dead-man switches — recurring APScheduler refresh jobs and bot-core push endpoints normally reset entries well before expiry.
 
 | Cache | Module | Key | TTL | Refresh |
 |-------|--------|-----|-----|---------|
 | `player_cache` | `utils/autocomplete_state.py` | `(guild_id, user_id)` | 15 min | Every 10 min (APScheduler) |
 | `inventory_cache` | `utils/autocomplete_state.py` | `(guild_id, player_id)` | 10 min | Every 5 min round-robin |
 | `ships_cache` | `utils/autocomplete_state.py` | `(guild_id, player_id)` | 10 min | Every 5 min round-robin |
-| `_shop_cache` | `shopCog` (per-cog) | `(guild_id, tier)` | push-only | bot-core push on refresh |
-| `_bounty_cache` | `bountyCog` (per-cog) | `guild_id` | 60s | bot-core push on spawn/expire |
-| `_pending_duel_cache` | `duelCog` (per-cog) | `(guild_id, player_id)` | 30s | explicit invalidation |
-| `_outgoing_duel_cache` | `duelCog` (per-cog) | `(guild_id, player_id)` | 30s | explicit invalidation |
-| `_job_cache` | `schedulerCog` (per-cog) | `"all"` | 120s | Every 60s (APScheduler) |
+| `_shop_cache` | `shopCog` (per-cog) | `(guild_id, tier)` | 60 min | Every 6 min + bot-core push on refresh |
+| `_systems_cache` | `bountyCog` (per-cog) | `"all"` | none | Self-heal via `refresh_fn` |
+| `_bounty_cache` | `bountyCog` (per-cog) | `guild_id` | 20 min | Every 10 min + bot-core push on spawn/expire |
+| `_pending_duel_cache` | `duelCog` (per-cog) | `(guild_id, player_id)` | 30 min | Every 5 min + bot-core push |
+| `_outgoing_duel_cache` | `duelCog` (per-cog) | `(guild_id, player_id)` | 30 min | Every 5 min + bot-core push |
+| `_job_cache` | `schedulerCog` (per-cog) | `"all"` | 10 min | Every 2 min (APScheduler) |
+| `_combatlog_cache` | `combatLogCog` (per-cog) | `(guild_id, user_id)` | 120s | Every 5 min round-robin + bot-core push invalidation |
+| `_item_catalog` / `_ship_catalog` | `adminCog` (per-cog) | `"all"` | none | Self-heal via `refresh_fn` |
+| `_admin_pending_duel_cache` | `adminCog` (per-cog) | `guild_id` | 300s | Every 5 min + invalidate-and-cold-fill |
 
 ### Hot-path pattern (copy into new autocomplete handlers)
 
@@ -537,17 +566,17 @@ except Exception:
 | `src/utils/autocomplete_state.py` | Shared caches, init(), getters, invalidators |
 | `src/utils/autocomplete_warm.py` | Startup warm + APScheduler recurring jobs |
 | `src/utils/autocomplete_helpers.py` | Shared per-user helpers (peek-first; signatures preserved) |
-| `src/cogs/_shared/autocomplete_cache.py` | `AutocompleteCache` base class with peek/schedule_refresh/max_entries |
-| `src/api/routers/internal_autocomplete.py` | Internal push endpoints (shop, bounty, health) |
+| `src/cogs/_shared/autocomplete_cache.py` | `AutocompleteCache` base class with peek/schedule_refresh/get_with_timeout/max_entries |
+| `src/api/routers/internal_autocomplete.py` | Internal push endpoints (shop, bounty, duel, combat-log) + cache health |
 
 ---
 
 ## Docker
 
-- **Port**: `7999` (host) → `8000` (container, GATEWAY_PORT)
-- **Volume**: Gateway data mapped via `mappings/discord-gateway/`
-- **Image**: Python 3.13, copies `shared/bblogger.py` into `/app/shared/`
-- **Entry point**: `python bot.py` from within `src/`
+- **Port**: `GATEWAY_PORT` (default `7999`), mapped host:container at the same number by docker-compose
+- **Volume**: `./mappings/discord-gateway` → `/app/data`
+- **Image**: Python 3.13 slim, copies `services/shared/` into `/app/src/shared/`
+- **Entry point**: `docker-entrypoint.sh` — runs as root to chown `/app/data`, then drops to `botuser` via gosu and runs `python /app/src/bot.py`
 
 ---
 
@@ -555,8 +584,8 @@ except Exception:
 
 - **Endpoint**: `GET /api/v1/health` — returns service status, environment info, system checks
 - **Simple check**: `GET /api/v1/health/simple` — minimal status for load balancers
-- **Liveness probe**: `GET /api/v1/health/liveness` — returns `{"status": "alive"}`
+- **Liveness probe**: `GET /api/v1/healthliveness` — returns `{"status": "alive"}` (route path is `"liveness"` without a leading slash, so it concatenates with the `/health` prefix)
 
 ---
 
-*Last updated: 2026-05-24*
+*Last updated: 2026-06-11*

@@ -20,7 +20,7 @@ app.include_router(router, prefix="/api/v1", tags=[modname])
 
 **Consequence**: Drop a new `.py` file here with a `router = APIRouter(...)` and it is automatically live at the next startup. No edits to `main.py` required.
 
-**Requirement**: Every router module **must** expose a module-level `router` attribute of type `APIRouter`. If the attribute is missing, `main.py` logs a warning and skips the module.
+**Requirement**: Every router module **must** expose a module-level `router` attribute of type `APIRouter`. If the attribute is missing, `main.py` logs a message ("⚠ No 'router' attribute found...", at INFO level) and skips the module.
 
 ---
 
@@ -68,6 +68,20 @@ If you add a new shared service, initialise it in the `lifespan()` function in `
 
 ---
 
+## User-Supplied Path Validation
+
+Any endpoint parameter that names a filesystem path (`model_path`, `ship_path`, `base_texture_path`) **must** be validated before use:
+
+```python
+from utils.safe_path import validate_user_path_http
+
+validated = validate_user_path_http(model_path, description="model_path")
+```
+
+`validate_user_path_http()` resolves the path with `os.path.realpath` and requires it to be a descendant of `BLENDER_DATA_ROOT` (env var, default `/app/data`). Empty paths, null bytes, and paths escaping the data root all raise `HTTPException` 400. `render.py` and `textures.py` both follow this pattern; the service layer re-validates with the `ValueError`-raising variant (`validate_user_path`) as defence-in-depth.
+
+---
+
 ## Temp File Management Conventions
 
 Render operations write temporary files to `/tmp/blender_render_{uuid}/`. Follow these rules:
@@ -75,7 +89,7 @@ Render operations write temporary files to `/tmp/blender_render_{uuid}/`. Follow
 | Scenario | Cleanup responsibility |
 |----------|----------------------|
 | **Sync render** (`POST /render/`) | Router cleans up temp dir in a `finally` block after reading bytes |
-| **Async render** (`POST /render/async`) | Temp dir is **not** cleaned by the router — background job needs the texture file. `JobQueueService` cleanup loop removes the result file when the job expires; OS or a future GC pass reclaims the dir |
+| **Async render** (`POST /render/async`) | Temp dir is **not** cleaned by the router — background job needs the texture file (except on texture-upload failure, which cleans up immediately). `JobQueueService` cleanup loop removes the result file when the job expires; OS or a future GC pass reclaims the dir |
 | **Render failure** | `RenderService` **preserves** the temp dir on failure (for debugging); the router still cleans the upload dir in its `finally` |
 | **Cache clear** | `POST /cache/clear` uses `shutil.rmtree` to delete all `/tmp/blender_render_*` dirs manually |
 
@@ -99,8 +113,11 @@ Routers are responsible for mapping service exceptions to HTTP responses:
 
 | Exception / condition | HTTP status | Notes |
 |-----------------------|-------------|-------|
+| Invalid user path (empty, null bytes, escapes `BLENDER_DATA_ROOT`) | 400 Bad Request | Raised by `validate_user_path_http()` |
+| `PUT /config/render` with no recognised field | 422 Unprocessable Entity | B.32: defence-in-depth check in `config.py` |
 | `RenderConfigError` from `RenderConfigService.update()` | 422 Unprocessable Entity | B.91: config-invariant violation on `PUT /config/render` |
 | `RenderError` from `RenderService` | 500 Internal Server Error | Blender subprocess failed |
+| Job queue full (`ValueError` from `create_job()`) | 500 Internal Server Error | Currently unhandled by `render.py` — propagates as a generic 500 |
 | `AEIConversionError` with "not available" | 422 Unprocessable Entity | AEPi library missing |
 | `AEIConversionError` (other) | 400 Bad Request | Codec failure |
 | File/path not found | 404 Not Found | Job expired, ship_path missing, etc. |
@@ -200,13 +217,13 @@ Always include identifying context (job IDs, file paths, sizes) in log messages.
 | Method | Path | Status | Response |
 |--------|------|--------|----------|
 | `GET` | `/api/v1/config/render` | 200 | `RenderConfig.to_dict()` |
-| `PUT` | `/api/v1/config/render` | 200 | Updated `RenderConfig.to_dict()` |
+| `PUT` | `/api/v1/config/render` | 200/422 | Updated `RenderConfig.to_dict()` — 422 if no recognised field (B.32) or invariant violation (B.91) |
 | `POST` | `/api/v1/config/render/reset` | 200 | Reset `RenderConfig.to_dict()` |
 
 ### `health.py`
 | Method | Path | Status | Response |
 |--------|------|--------|----------|
-| `GET` | `/api/v1/health/` | 200/503 | `HealthResponse` (status, timestamp, version, environment, checks) |
+| `GET` | `/api/v1/health/` | 200/503 | `HealthResponse` (status, timestamp, version, service, environment, checks) |
 | `GET` | `/api/v1/health/simple` | 200 | `SimpleHealthResponse` (status, timestamp) |
 | `GET` | `/api/v1/health/liveness` | 200 | `{"status": "alive"}` |
 
@@ -215,7 +232,7 @@ Always include identifying context (job IDs, file paths, sizes) in log messages.
 |--------|------|--------|----------|
 | `GET` | `/api/v1/jobs/` | 200 | `list[RenderJob.to_dict()]` |
 | `GET` | `/api/v1/jobs/{job_id}` | 200/404 | `RenderJob.to_dict()` |
-| `GET` | `/api/v1/jobs/{job_id}/result` | 200/404/409 | `StreamingResponse` (image/png) |
+| `GET` | `/api/v1/jobs/{job_id}/result` | 200/404/409/500 | `StreamingResponse` (image/png) — 500 if the result file exists but cannot be read |
 
 ### `render.py`
 | Method | Path | Status | Response |
@@ -226,7 +243,7 @@ Always include identifying context (job IDs, file paths, sizes) in log messages.
 ### `textures.py`
 | Method | Path | Status | Response |
 |--------|------|--------|----------|
-| `POST` | `/api/v1/textures/composite` | 200/400/404/422 | `StreamingResponse` (image/png) |
+| `POST` | `/api/v1/textures/composite` | 200/400/404/422/500 | `StreamingResponse` (image/png) — base texture comes from the `base_texture` upload OR the `base_texture_path` form field (422 if neither); masks load `mask{N}.png` first, falling back to `mask{N}.jpg`; 500 on compositing failure |
 | `POST` | `/api/v1/textures/convert` | 200/400/422/500 | `StreamingResponse` (application/octet-stream) |
 | `GET` | `/api/v1/textures/health` | 200 | `{"status": "ok"}` |
 
@@ -266,4 +283,4 @@ Always include identifying context (job IDs, file paths, sizes) in log messages.
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-06-11*

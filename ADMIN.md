@@ -2,10 +2,14 @@
 
 This document covers every per-guild tunable, how to view and update each setting, and how to reset to safe defaults when something goes wrong.
 
-All slash commands require the invoking user to be one of:
-- Listed in the `ADMIN_USER_IDS` environment variable (comma-separated Discord user IDs)
+All admin slash commands require the invoking user to be one of:
+- Listed in the `DEVELOPERS` environment variable (comma-separated Discord user IDs — developer override)
 - Holding the Discord **Administrator** permission
 - Holding the configured **Bot Admin role** for the guild
+
+**Super-admin commands** (scheduler management, data loading, cache reloads, render-config mutation) accept **only** users listed in `DEVELOPERS` — no Administrator or Bot Admin role fallback.
+
+Separately, bot-core's `/api/v1/admin/*` REST endpoints are gated by the `ADMIN_USER_IDS` environment variable (the caller passes `user_id`; an empty `ADMIN_USER_IDS` allows all — dev mode only). This matters when calling the API directly, e.g. via `curl`.
 
 ---
 
@@ -46,8 +50,12 @@ All slash commands require the invoking user to be one of:
 - [Bounty Management](#bounty-management)
   - [Clearing Active Bounties](#clearing-active-bounties)
   - [Force-Spawning Bounties](#force-spawning-bounties)
+- [Duel Management](#duel-management)
+- [Combat Log Review](#combat-log-review)
 - [Shop Management](#shop-management)
 - [Render Service Management](#render-service-management)
+- [Scheduler Management](#scheduler-management)
+- [Developer / Data Commands](#developer--data-commands)
 - [Guild Diagnostics](#guild-diagnostics)
 - [Permission Checking](#permission-checking)
 - [Emergency Procedures](#emergency-procedures)
@@ -69,7 +77,7 @@ This creates all required Discord infrastructure (channels, roles, category) and
 | Type | Name |
 |------|------|
 | Category | BountyBot |
-| Channels | `#bronze-bounty-board`, `#silver-bounty-board`, `#gold-bounty-board`, `#platinum-bounty-board`, `#shop`, `#bounty-hunting`, `#bounty-discussions`, `#bot-images` (private) |
+| Channels | `#bronze-bounty-board`, `#silver-bounty-board`, `#gold-bounty-board`, `#platinum-bounties`, `#shop`, `#bounty-hunting`, `#bounty-discussions`, `#bot-images` (private) |
 | Roles | `Bounty Hunter`, `Bounty Hunter Bronze`, `Bounty Hunter Silver`, `Bounty Hunter Gold`, `Bounty Hunter Platinum`, `Shop Announcements` |
 
 After setup, run `/admin_config_validate` to confirm the config is clean.
@@ -193,7 +201,7 @@ Controls how much XP players need to advance to each tier.
 
 ### Max Active Bounties
 
-The maximum number of simultaneously active bounties per tier. The actual cap is `min(max_per_tier, temperature_cap)` — see [Activity Temperature System](#activity-temperature-system).
+The maximum number of simultaneously active bounties per tier. This is the sole active cap — the activity temperature no longer factors in (see [Activity Temperature System](#activity-temperature-system)).
 
 | | |
 |---|---|
@@ -248,7 +256,7 @@ Each division has a stored **activity temperature** (`GuildConfig.division_tempe
 | Cap formula `min(max_per_tier, max(1, floor(temperature)))` | **REMOVED** from the spawn path. `TemperatureService.get_max_bounties()` still exists but is not consulted by the spawn orchestrator. The active cap is `bounty_max_per_tier[tier]` only. | `utils/executors/bounty_spawn_executor.py` (see "C3" comment block) |
 | `calculate_spawn_delay()` helper | **Dead code** — defined in `temperature_service.py` but no callers | Grep |
 
-**Net effect today:** each guild's per-division temperatures monotonically decay from their initial value and pin at `min_guild_activity`. They never rise and never influence the spawn cap. The displayed temperatures in `/admin_config_bounty action:View` are informational only.
+**Net effect today:** each guild's per-division temperatures monotonically decay from their initial value and pin at `min_guild_activity`. They never rise and never influence the spawn cap. They are not surfaced by any slash command or config API response — they exist only in the `guild_configs.division_temperatures` column.
 
 ### Per-guild temperature overrides (set via `/admin_config_constants`)
 
@@ -259,8 +267,6 @@ These overrides are still accepted and persisted, but only the first two actuall
 | `guild_activity_decay_rate` | `0.667` | Hourly decay multiplier (`0` = instant decay, `1.0` = no decay). **Active** in the decay executor. |
 | `min_guild_activity` | `1.0` | Temperature floor. **Active** in the decay executor. |
 | `activity_temp_per_player` | `1` | Intended: temperature increase per player system check. **Currently inert** — no callsite raises temperature. |
-
-**Current temperatures** are shown in `/admin_config_bounty action:View`.
 
 ---
 
@@ -276,7 +282,7 @@ Controls how many distinct item types appear in the shop on each refresh.
 | **Set** | `/admin_config_shop ship_count_min:2 ship_count_max:5 weapon_count_min:3 weapon_count_max:6` |
 | **Reset** | `/admin_config action:Reset to Defaults` (all reset to min `3`, max `5`) |
 
-**Available parameters:** `ship_count_min/max`, `weapon_count_min/max`, `module_count_min/max`, `turret_count_min/max`
+**Available parameters:** `ship_count_min/max`, `weapon_count_min/max`, `secondary_weapon_count_min/max`, `module_count_min/max`, `turret_count_min/max`
 
 **Constraint:** `min >= 1`, `min <= max`. Min and max must be provided together per item type.
 
@@ -284,17 +290,20 @@ Controls how many distinct item types appear in the shop on each refresh.
 
 Controls how many copies of each item are stocked per listing.
 
-Set via direct API call or `/admin_config_constants`:
+Not settable via slash command — set via the API: `PUT /api/v1/config/guild/{guild_id}/shop` with a `quantity_ranges` body field (same endpoint as tech-level probabilities).
 
 **Defaults:**
 | Item Type | Min Qty | Max Qty |
 |-----------|---------|---------|
 | Ships | 1 | 1 |
-| Weapons | 2 | 4 |
+| Primary weapons | 2 | 4 |
+| Secondary weapons | 2 | 4 |
 | Modules | 2 | 4 |
 | Turrets | 2 | 4 |
 
 **Constraint:** `min >= 1`, `min <= max`.
+
+**Note:** Secondary weapons are consumable rounds, so the rolled quantity is scaled up at refresh time: ×10 for standard secondaries, ×5 for heavy subtypes (`nuke`, `shock-blast`). Governed by `GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD` / `SHOP_SECONDARY_QTY_SCALER_HEAVY`.
 
 ### Tech Level Probabilities
 
@@ -302,7 +311,7 @@ When generating shop stock, the probability distribution for item tech level rel
 
 | | |
 |---|---|
-| **View** | `/admin_config action:View Config` |
+| **View** | Via API: `GET /api/v1/config/guild/{guild_id}` (`shop_config.tech_level_probabilities`) |
 | **Set** | Via API: `PUT /api/v1/config/guild/{guild_id}/shop` with `{"tech_level_probabilities": {"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10}}` |
 | **Reset** | `/admin_config action:Reset to Defaults` |
 
@@ -314,12 +323,12 @@ When generating shop stock, the probability distribution for item tech level rel
 
 ## Per-Guild Game Constant Overrides
 
-Any of the 28 global `GameConstants` values can be overridden per-guild. When set to `NULL` (the default), the global constant applies. When set to a value, only this guild uses that value.
+26 global `GameConstants` values can be overridden per-guild via the API (`_OVERRIDE_FIELDS` in bot-core's config router); 25 of them are settable through the `/admin_config_constants` slash command (`demotion_credit_penalty_pct` is API-only — it is missing from the gateway's field list). When set to `NULL` (the default), the global constant applies. When set to a value, only this guild uses that value.
 
 ### Viewing Overrides
 
 ```
-# List all 28 constants with current values (NULL shown as *default*)
+# List the 25 slash-settable constants with current values (NULL shown as *default*)
 /admin_config_constants
 
 # See only constants that have been explicitly set for this guild
@@ -366,18 +375,18 @@ Use `int_value` for integer fields, `float_value` for float fields, `json_value`
 | `criminal_max_gear_upgrade` | int | `1` | TL levels | Max TL above criminal's base TL their gear can be |
 | `bounty_reward_to_xp_gain_mult` | float | `0.1` | multiplier | XP = reward_credits × this multiplier |
 | `bounty_winner_reserve_factor` | float | `0.25` | fraction | Fraction of reward guaranteed to winner (rest split as consolation) |
-| `bounty_pvc_armour_buff_factor` | float | `1.5` | multiplier | Player armour multiplier in player-vs-criminal combat (1.5 = +50%) |
-| `duel_variance_percent` | float | `0.05` | fraction | Random variance on duel TTK calculations (0.05 = ±5%) |
-| `duel_cloak_chance` | int | `20` | percent | **Placeholder / not yet implemented.** Defined and overridable, but combat code does not currently consult it (the active `SimpleTTKResolver` has no cloak mechanic). |
+| `duel_cloak_chance` | int | `20` | percent | **Inert override.** Cloak itself IS implemented (the tick-based combat resolver activates an equipped cloak module per its own stats), but this chance constant is not consulted by any combat code. |
 | `division_max_tl` | dict | `{"bronze":2,"silver":4,"gold":7,"platinum":10}` | TL | Max criminal tech level per division |
 | `shop_default_ships_num` | int | `5` | count | **Inert override** — `ShopService` reads the per-guild `shop_*_count_min/max` ranges (see [Shop Tunables](#shop-tunables)) and does not consult this constant. Defined and persisted for completeness. |
 | `shop_default_weapons_num` | int | `5` | count | Inert override (see above). |
 | `shop_default_modules_num` | int | `5` | count | Inert override (see above). |
 | `shop_default_turrets_num` | int | `2` | count | Inert override (see above). |
 | `turret_spawn_probability` | int | `45` | percent | **Inert override** — not consumed by `ShopService`. Defined and persisted for completeness. |
-| `kaamo_max_capacity` | int | `70` | items | Max items a player can store in Kaamo station |
-| `demotion_credit_penalty_pct` | int | `10` | percent | % of credits deducted on tier demotion |
-| `classic_credits_per_check` | int | `1000` | credits | Credits per system check for classic-mode players |
+| `kaamo_max_capacity` | int | `70` | items | Intended: max items a player can store in Kaamo station. **Inert override** — no bot-core code consults it (Kaamo storage is not implemented). |
+| `demotion_credit_penalty_pct` | int | `10` | percent | % of credits deducted on tier demotion. **API-only** — accepted by `PUT /api/v1/config/guild/{guild_id}` but not offered/validated by the `/admin_config_constants` slash command. |
+| `classic_credits_per_check` | int | `1000` | credits | Intended: credit floor per system check. **Effectively inert** — only consumed by the deprecated `reward_per_sys_check()` formula, which the spawn path no longer calls. |
+
+> `bounty_pvc_armour_buff_factor` and `duel_variance_percent` were retired in the T10 combat migration (the old `SimpleTTKResolver` was removed) and are no longer overridable.
 
 ---
 
@@ -427,6 +436,9 @@ Resets credits to `starting_credits`, XP to 0, tier to Bronze, all win/loss coun
 
 # Clear tier-change cooldown
 /admin_player user:@Player action:Reset Tier-Change Cooldown
+
+# Standalone shortcut for the bounty check cooldown (same effect as Reset Bounty Cooldown)
+/admin_cooldown_reset user:@Player
 ```
 
 ### Giving and Removing Items
@@ -451,7 +463,7 @@ Ships cannot be given via this command — use `/admin_give_ship`.
 /admin_remove_ship user:@Player ship_name:Interceptor MK2
 ```
 
-**Note:** You cannot remove a player's only ship.
+**Note:** You cannot remove the player's active ship when it is their only ship.
 
 ---
 
@@ -471,7 +483,7 @@ Shows a confirmation dialog. Deletes active bounties and associated Discord anno
 
 ### Force-Spawning Bounties
 
-Bypasses temperature and count checks — spawns bounties immediately regardless of activity level.
+Bypasses the per-tier active-bounty cap and the spawn schedule — spawns bounties immediately.
 
 ```
 # Spawn 1 bounty on each tier
@@ -481,7 +493,35 @@ Bypasses temperature and count checks — spawns bounties immediately regardless
 /admin_spawn_bounty tier:Silver quantity:3
 ```
 
-**Constraint:** quantity `1–10`.
+**Constraint:** quantity `1–10` (per tier).
+
+---
+
+## Duel Management
+
+Cancel a pending duel (or all of them) without either player's involvement:
+
+```
+# Cancel one pending duel (autocomplete lists pending duels)
+/admin_duel duel:<pick from autocomplete>
+
+# Cancel ALL pending duels for this guild
+/admin_duel duel:All
+```
+
+---
+
+## Combat Log Review
+
+Review any player's persisted after-action combat reports:
+
+```
+/admin_combat_log user:@Player battle:<pick from autocomplete>
+```
+
+The `battle` autocomplete lists the selected player's recent battles. The report renders exactly as if that player had run `/combat-log` themselves. The response is always ephemeral.
+
+(The player-facing `/combat-log` accepts an optional `public:` flag, default `False`, to post the report publicly; errors stay ephemeral. Combat logs are retained for 72 hours by default — see `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS`.)
 
 ---
 
@@ -500,7 +540,7 @@ Bypasses temperature and count checks — spawns bounties immediately regardless
 /admin_refresh_shop tier:Bronze force_tech_level:3
 ```
 
-After refresh, the shop announcement is posted to `#shop` and the autocomplete cache is updated.
+After refresh, the shop announcement is posted to `#shop` and the gateway's shop autocomplete cache is updated (both best-effort — a failed announcement or cache push does not fail the refresh).
 
 ---
 
@@ -523,6 +563,53 @@ These commands target the **blender-service** (not bot-core).
 ```
 
 **Note:** `set` and `reset` actions require the invoking user to be in the `DEVELOPERS` environment variable — regular bot-admin role is not sufficient.
+
+---
+
+## Scheduler Management
+
+All scheduler commands are **super-admin only** (`DEVELOPERS` env var — no Administrator/Bot Admin fallback). They operate on bot-core's APScheduler job store.
+
+```
+# List all scheduled jobs (default recurring jobs + one-time jobs)
+/scheduler_list
+
+# View details of one job (autocomplete on job IDs)
+/scheduler_view job_id:<id>
+
+# Replace an existing job's payload (JSON string)
+/scheduler_update job_id:<id> payload_json:{"...": ...}
+
+# Delete a specific job
+/scheduler_delete job_id:<id>
+
+# Delete all one-time jobs scoped to THIS guild
+/admin_clear_scheduler
+
+# Wipe ALL jobs and re-register the default recurring jobs
+/admin_reset_scheduler
+```
+
+> **Warning:** `/admin_reset_scheduler` is global, not per-guild — it calls bot-core's `POST /api/v1/reset`, which removes every job and re-registers the default recurring jobs from `main.py` (bounty spawn, shop refresh, temperature decay, bounty failsafe cleanup, pg backup, db retention).
+
+---
+
+## Developer / Data Commands
+
+Super-admin only (`DEVELOPERS` env var):
+
+```
+# Trigger a JSON → DB seed load for a data category (ship, module, criminal, …)
+/load_data category:<category>
+
+# Force-reload autocomplete source data in other cogs
+/reload_autocomplete
+
+# Drop and re-warm the gateway's in-process autocomplete caches
+/force_reload_caches
+```
+
+The devCog also registers three prefix text commands gated to `DEVELOPERS` (bot command prefix: `COMMAND_PREFIX` env var, default `?p`): `snooze` (hide this bot's slash commands in the current guild), `wake` (reload all cogs and re-sync slash commands in the current guild), and `botstatus` (per-guild command-registration counts).
 
 ---
 
@@ -567,7 +654,7 @@ Returns which rule grants them access: developer override, Discord Administrator
 ### Bounties Stuck / Not Spawning
 
 1. Run `/admin_config_bounty action:View` — check `next_spawn_check_at` and active counts
-2. If temperature is low, `/admin_spawn_bounty` to force-seed activity
+2. `/admin_spawn_bounty` to force-spawn immediately (bypasses the cap and schedule)
 3. If counts are wrong, `/admin_clear_bounties` then `/admin_spawn_bounty`
 
 ### Too Many / Too Few Bounties
@@ -594,12 +681,14 @@ After a `/admin_config action:Reset to Defaults`, channel and role IDs are set t
 The bot-core API supports a guild reset that preserves player records:
 
 ```bash
-# Via bot-core API directly (not a slash command):
-curl -X POST http://localhost:8000/api/v1/admin/guilds/{guild_id}/reset?preserve_players=true
+# Via bot-core API directly (not a slash command).
+# user_id is required and must pass the ADMIN_USER_IDS check
+# (empty ADMIN_USER_IDS = dev mode, any user_id accepted):
+curl -X POST "http://localhost:8000/api/v1/admin/guilds/{guild_id}/reset?user_id={admin_user_id}&preserve_players=true"
 ```
 
-This resets config to defaults and clears bounties/shops but leaves player accounts, XP, credits, and inventory intact.
+This resets config to defaults (cancelling the guild's scheduled jobs first) and clears bounties/shops but leaves player accounts, XP, credits, and inventory intact. `preserve_players` defaults to `true`.
 
 ---
 
-*Last updated: 2026-05-24 (audit pass: temperature system status, spawn-cron clarification, override count, unused-constant flagging)*
+*Last updated: 2026-06-11 (full code reconciliation: permission model, new commands — cooldown reset / duel / combat-log / scheduler / dev, shop secondary-weapon config + quantity scaling, retired constants)*

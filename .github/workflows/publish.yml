@@ -133,6 +133,50 @@ jobs:
         # just bblogger. The src/shared/ mirror is intentionally untracked.
         run: cp services/shared/*.py services/bot-core/src/shared/ || true
 
+      - name: Migrate CI database to head
+        # The concurrency-locking and migration test modules run against a real
+        # Postgres (tests/pg_env.py) and skip themselves unless the schema is
+        # present, so the service container must be at alembic head before
+        # pytest starts. Same invocation as auto-migrations.yml.
+        working-directory: services/bot-core/src
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: bountydb
+          POSTGRES_USER: bounty
+          POSTGRES_PASSWORD: bounty
+          PYTHONPATH: ${{ github.workspace }}/services/bot-core/src
+        run: python -m persist.database.run_migration upgrade
+
+      - name: Seed CI database from import_data
+        # The JSONB migration tests verify round-trips over real seed rows, so
+        # populate the game-data tables the same way app startup does (the
+        # seeder is idempotent — it only fills empty tables).
+        working-directory: services/bot-core/src
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: bountydb
+          POSTGRES_USER: bounty
+          POSTGRES_PASSWORD: bounty
+          PYTHONPATH: ${{ github.workspace }}/services/bot-core/src
+        run: |
+          python - <<'EOF'
+          import asyncio
+
+          from persist.database.manager import db_manager
+          from utils.auto_seeder import auto_seed_data
+
+
+          async def main():
+              await db_manager.initialize()
+              await auto_seed_data()
+              await db_manager.shutdown()
+
+
+          asyncio.run(main())
+          EOF
+
       - name: Run tests
         id: pytest
         working-directory: services/bot-core

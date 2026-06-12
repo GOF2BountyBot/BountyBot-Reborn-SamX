@@ -6,9 +6,11 @@ These tests MUST run against real Postgres (not SQLite) because:
   - ALTER COLUMN ... TYPE JSONB USING ::jsonb is PostgreSQL-only DDL.
   - JSONB sub-path operators (->, ->>) are PostgreSQL-only.
 
-The tests use the project's dev Postgres DB (bountydev-net bridge IP, creds from .env.dev).
-All DDL is isolated: tests upgrade → assert → downgrade within each test.
-Seed data is never touched — tests use synthetic rows or the information_schema.
+The tests run against the Postgres resolved by tests/pg_env.py (CI service
+container or the dev stack). All DDL lives inside a transaction that is ALWAYS
+rolled back (_rollback_conn), so a test run leaves the database schema exactly
+as it found it — at alembic head. The synthetic_player fixture commits its
+rows (and deletes them in teardown) so they are visible to the tests' txns.
 
 Cases:
   (a) upgrade(): every player_ships JSON column becomes 'jsonb' in information_schema.
@@ -27,6 +29,7 @@ Cases:
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import importlib.util
 import json
@@ -57,10 +60,15 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
 # ---------------------------------------------------------------------------
-# Postgres connection (dev stack: bountydev-db at the bountydev-net bridge IP (see _PG_URL))
+# Postgres connection — resolved from POSTGRES_* env vars (CI service
+# container) with the bountydev-db docker-bridge dev stack as the fallback.
 # ---------------------------------------------------------------------------
 
-_PG_SYNC_URL = "postgresql+psycopg2://bounty:bounty@172.18.0.2:5432/bountydb"
+from tests.pg_env import PG_SYNC_URL as _PG_SYNC_URL
+from tests.pg_env import pg_skip_reason
+
+_PG_SKIP = pg_skip_reason()
+pytestmark = pytest.mark.skipif(bool(_PG_SKIP), reason=_PG_SKIP or "")
 
 # ---------------------------------------------------------------------------
 # Migration module loader
@@ -167,6 +175,25 @@ def pg_sync_engine():
     engine.dispose()
 
 
+@contextlib.contextmanager
+def _rollback_conn(engine):
+    """Connection inside a transaction that is ALWAYS rolled back.
+
+    Postgres DDL is transactional, so upgrade()/downgrade() exercised through
+    this connection leaves zero trace in the target database. These tests
+    previously committed their final state, silently drifting whatever DB they
+    ran against away from alembic head (columns reverted to json) — every
+    schema-touching statement must go through this rollback-only connection.
+    """
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            yield conn
+        finally:
+            if trans.is_active:
+                trans.rollback()
+
+
 @pytest.fixture(scope="function")
 def synthetic_player(pg_sync_engine):
     """Insert a synthetic user + player + player_ship for round-trip tests.
@@ -268,7 +295,7 @@ class TestMigration0017JsonToJsonbFragile:
         """After upgrade(), all player_ships JSON columns report data_type='jsonb'."""
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
@@ -276,9 +303,6 @@ class TestMigration0017JsonToJsonbFragile:
             for table, column in _PLAYER_SHIP_COLS:
                 col_type = _col_type(conn, table, column)
                 assert col_type == "jsonb", f"Expected {table}.{column} to be 'jsonb' after upgrade, got '{col_type}'"
-
-            # Cleanup: downgrade immediately so the DB is left consistent
-            mod.downgrade()
 
     # ------------------------------------------------------------------ #
     # (b) downgrade() restores every player_ships column to json          #
@@ -288,7 +312,7 @@ class TestMigration0017JsonToJsonbFragile:
         """After upgrade() + downgrade(), all player_ships columns report data_type='json'."""
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
@@ -345,15 +369,15 @@ class TestMigration0017JsonToJsonbFragile:
         with pg_sync_engine.connect() as conn:
             before_row = _fetch_ship(conn)
 
-        # Upgrade → downgrade
-        with pg_sync_engine.begin() as conn:
+        # Upgrade → downgrade → read back, all inside one rolled-back txn. The
+        # casts are genuinely applied to the row within the transaction, so
+        # the comparison still proves value fidelity.
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
             mod.downgrade()
 
-        # Verify after state matches before (parsed values, not string repr)
-        with pg_sync_engine.connect() as conn:
             after_row = _fetch_ship(conn)
 
         col_names = ["weapons", "modules", "turrets", "secondary_weapons", "secondary_ammo"]
@@ -379,14 +403,13 @@ class TestMigration0017JsonToJsonbFragile:
         mod = _load_migration_module()
         _player_id, ship_id, exp_weapons, exp_modules, exp_turrets, exp_secondaries, _ = synthetic_player
 
-        # Upgrade → downgrade
-        with pg_sync_engine.begin() as conn:
+        # Upgrade → downgrade → read back, all inside one rolled-back txn
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
             mod.downgrade()
 
-        with pg_sync_engine.connect() as conn:
             result = conn.execute(
                 text("SELECT weapons, modules, turrets, secondary_weapons FROM player_ships WHERE id = :sid"),
                 {"sid": ship_id},
@@ -420,14 +443,13 @@ class TestMigration0017JsonToJsonbFragile:
         mod = _load_migration_module()
         _player_id, ship_id, *_, exp_ammo = synthetic_player
 
-        # Upgrade → downgrade
-        with pg_sync_engine.begin() as conn:
+        # Upgrade → downgrade → read back, all inside one rolled-back txn
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
             mod.downgrade()
 
-        with pg_sync_engine.connect() as conn:
             result = conn.execute(
                 text("SELECT secondary_ammo FROM player_ships WHERE id = :sid"),
                 {"sid": ship_id},
@@ -506,16 +528,14 @@ class TestMigration0017JsonToJsonbFragile:
             )
             return {row[0] for row in result.fetchall()}
 
-        with pg_sync_engine.connect() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             indexes_before = _get_player_ship_indexes(conn)
 
-        with pg_sync_engine.begin() as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
             mod.downgrade()
 
-        with pg_sync_engine.connect() as conn:
             indexes_after = _get_player_ship_indexes(conn)
 
         new_indexes = indexes_after - indexes_before
@@ -538,15 +558,14 @@ class TestMigration0017JsonToJsonbFragile:
         mod = _load_migration_module()
         player_id, ship_id, *_ = synthetic_player
 
-        # Upgrade → downgrade
-        with pg_sync_engine.begin() as conn:
+        # Upgrade → downgrade → read back, all inside one rolled-back txn
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
             mod.downgrade()
 
-        # Read back cargo and equipped counts
-        with pg_sync_engine.connect() as conn:
+            # Read back cargo and equipped counts
             inv_result = conn.execute(
                 text("SELECT quantity FROM player_inventories WHERE player_id = :pid AND item_name = 'Micro Gun MK I'"),
                 {"pid": player_id},

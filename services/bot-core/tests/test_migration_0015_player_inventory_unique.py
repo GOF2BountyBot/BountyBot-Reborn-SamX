@@ -20,6 +20,7 @@ Cases:
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import importlib.util
 import os
@@ -50,11 +51,16 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
 # ---------------------------------------------------------------------------
-# Postgres connection (dev stack: bountydev-db at the bountydev-net bridge IP (see _PG_URL))
+# Postgres connection — resolved from POSTGRES_* env vars (CI service
+# container) with the bountydev-db docker-bridge dev stack as the fallback.
 # ---------------------------------------------------------------------------
 
-_PG_SYNC_URL = "postgresql+psycopg2://bounty:bounty@172.18.0.2:5432/bountydb"
-_PG_ASYNC_URL = "postgresql+asyncpg://bounty:bounty@172.18.0.2:5432/bountydb"
+from tests.pg_env import PG_ASYNC_URL as _PG_ASYNC_URL
+from tests.pg_env import PG_SYNC_URL as _PG_SYNC_URL
+from tests.pg_env import pg_skip_reason
+
+_PG_SKIP = pg_skip_reason()
+pytestmark = pytest.mark.skipif(bool(_PG_SKIP), reason=_PG_SKIP or "")
 
 _TABLE = "player_inventories"
 _UQ = "uq_player_inventories_player_item"
@@ -190,6 +196,25 @@ def pg_sync_engine():
     engine.dispose()
 
 
+@contextlib.contextmanager
+def _rollback_conn(engine):
+    """Connection inside a transaction that is ALWAYS rolled back.
+
+    Postgres DDL is transactional, so upgrade()/downgrade() exercised through
+    this connection leaves zero trace in the target database. These tests
+    previously committed their final state, silently drifting whatever DB they
+    ran against away from alembic head (constraint dropped, columns reverted) —
+    every statement must go through this rollback-only connection instead.
+    """
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            yield conn
+        finally:
+            if trans.is_active:
+                trans.rollback()
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -206,7 +231,7 @@ class TestMigration0015PlayerInventoryUnique:
         """upgrade() creates uq_player_inventories_player_item on Postgres."""
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             _disable_fk(conn)
             _drop_constraint_if_exists(conn)
             _delete_test_rows(conn, _TEST_PLAYER_ID)
@@ -218,10 +243,6 @@ class TestMigration0015PlayerInventoryUnique:
             uqs = _get_unique_names(conn)
             assert _UQ in uqs, f"Expected {_UQ} in unique constraints, got: {uqs}"
 
-            # Cleanup
-            _drop_constraint_if_exists(conn)
-            _enable_fk(conn)
-
     # ------------------------------------------------------------------ #
     # (b) duplicate insert raises IntegrityError after upgrade            #
     # ------------------------------------------------------------------ #
@@ -230,7 +251,9 @@ class TestMigration0015PlayerInventoryUnique:
         """After upgrade(), inserting a duplicate (player_id, item_type, item_name) raises IntegrityError."""
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        # A non-deferred unique constraint is enforced within the transaction
+        # that created it, so the whole scenario fits in one rolled-back txn.
+        with _rollback_conn(pg_sync_engine) as conn:
             _disable_fk(conn)
             _drop_constraint_if_exists(conn)
             _delete_test_rows(conn, _TEST_PLAYER_ID)
@@ -239,21 +262,9 @@ class TestMigration0015PlayerInventoryUnique:
             mod.op = mock_op
             mod.upgrade()
 
-        # Attempt a duplicate insert in a separate transaction so the constraint is visible.
-        with pg_sync_engine.begin() as conn:
-            _disable_fk(conn)
             _raw_insert(conn, _TEST_PLAYER_ID, "primary_weapon", "Laser", 1)
-
-        with pytest.raises(sa.exc.IntegrityError), pg_sync_engine.begin() as conn:
-            _disable_fk(conn)
-            _raw_insert(conn, _TEST_PLAYER_ID, "primary_weapon", "Laser", 1)
-
-        # Cleanup
-        with pg_sync_engine.begin() as conn:
-            _disable_fk(conn)
-            _drop_constraint_if_exists(conn)
-            _delete_test_rows(conn, _TEST_PLAYER_ID)
-            _enable_fk(conn)
+            with pytest.raises(sa.exc.IntegrityError):
+                _raw_insert(conn, _TEST_PLAYER_ID, "primary_weapon", "Laser", 1)
 
     # ------------------------------------------------------------------ #
     # (c) InventoryRepository.add_item twice → ONE row, summed quantity   #
@@ -270,19 +281,23 @@ class TestMigration0015PlayerInventoryUnique:
 
         repo = InventoryRepository()
 
-        mod = _load_migration_module()
+        # The constraint ships with alembic head (0015) — require it instead of
+        # re-creating it, so this test never has to commit DDL.
+        with pg_sync_engine.connect() as conn:
+            assert _UQ in _get_unique_names(conn), (
+                f"{_UQ} missing — DB is not at alembic head; repair the schema before running this test"
+            )
 
-        with pg_sync_engine.begin() as conn:
-            _disable_fk(conn)
-            _drop_constraint_if_exists(conn)
-            _delete_test_rows(conn, _TEST_PLAYER_ID)
-
-            mock_op = _build_mock_op(conn)
-            mod.op = mock_op
-            mod.upgrade()
-
-        # Use async engine + session for the repository calls.
+        # Use async engine + session for the repository calls. add_item()
+        # commits internally, so the synthetic player's rows must be swept
+        # before and after (committed, data-only, scoped to _TEST_PLAYER_ID).
         import asyncio
+
+        def _clean_test_rows():
+            with pg_sync_engine.begin() as conn:
+                _disable_fk(conn)
+                _delete_test_rows(conn, _TEST_PLAYER_ID)
+                _enable_fk(conn)
 
         async def _run():
             async_engine = create_async_engine(_PG_ASYNC_URL, echo=False)
@@ -300,14 +315,11 @@ class TestMigration0015PlayerInventoryUnique:
             finally:
                 await async_engine.dispose()
 
-        asyncio.run(_run())
-
-        # Cleanup
-        with pg_sync_engine.begin() as conn:
-            _disable_fk(conn)
-            _drop_constraint_if_exists(conn)
-            _delete_test_rows(conn, _TEST_PLAYER_ID)
-            _enable_fk(conn)
+        _clean_test_rows()
+        try:
+            asyncio.run(_run())
+        finally:
+            _clean_test_rows()
 
     # ------------------------------------------------------------------ #
     # (d) dedup pre-flight merges duplicate rows then creates constraint  #
@@ -321,17 +333,15 @@ class TestMigration0015PlayerInventoryUnique:
         """
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             _disable_fk(conn)
             _drop_constraint_if_exists(conn)
             _delete_test_rows(conn, _TEST_PLAYER_ID)
 
-            # Insert two duplicates BEFORE the constraint exists.
+            # Insert two duplicates while the constraint is absent (in-txn).
             _raw_insert(conn, _TEST_PLAYER_ID, "module", "Ketar-I", 3)
             _raw_insert(conn, _TEST_PLAYER_ID, "module", "Ketar-I", 5)
 
-        with pg_sync_engine.begin() as conn:
-            _disable_fk(conn)
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
@@ -345,11 +355,6 @@ class TestMigration0015PlayerInventoryUnique:
             total_qty = _sum_quantity(conn, _TEST_PLAYER_ID, "module", "Ketar-I")
             assert total_qty == 8, f"Expected quantity=8 (3+5), got {total_qty}"
 
-            # Cleanup
-            _drop_constraint_if_exists(conn)
-            _delete_test_rows(conn, _TEST_PLAYER_ID)
-            _enable_fk(conn)
-
     # ------------------------------------------------------------------ #
     # (e) downgrade() removes the constraint                              #
     # ------------------------------------------------------------------ #
@@ -358,7 +363,7 @@ class TestMigration0015PlayerInventoryUnique:
         """downgrade() drops uq_player_inventories_player_item."""
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             _disable_fk(conn)
             _drop_constraint_if_exists(conn)
             _delete_test_rows(conn, _TEST_PLAYER_ID)
@@ -371,8 +376,6 @@ class TestMigration0015PlayerInventoryUnique:
             mod.downgrade()
             assert _UQ not in _get_unique_names(conn), "Constraint should be removed after downgrade"
 
-            _enable_fk(conn)
-
     # ------------------------------------------------------------------ #
     # (f) idempotency: upgrade() twice does not raise                     #
     # ------------------------------------------------------------------ #
@@ -381,7 +384,7 @@ class TestMigration0015PlayerInventoryUnique:
         """upgrade() called twice must not raise (idempotency guard)."""
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             _disable_fk(conn)
             _drop_constraint_if_exists(conn)
             _delete_test_rows(conn, _TEST_PLAYER_ID)
@@ -393,7 +396,3 @@ class TestMigration0015PlayerInventoryUnique:
 
             uqs = _get_unique_names(conn)
             assert _UQ in uqs, f"Constraint missing after idempotent double upgrade: {uqs}"
-
-            # Cleanup
-            _drop_constraint_if_exists(conn)
-            _enable_fk(conn)

@@ -31,9 +31,9 @@ Cases:
       player → no deadlock, no double-apply (the player op serialises behind the
       bounty txn's player lock; the bounty txn never waits on the player op).
 
-Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via
-`sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is
-unreachable from this dev container).
+Connection: resolved from POSTGRES_* env vars, falling back to the dev stack
+(bountydev-db on the docker bridge) — see tests/pg_env.py. CI provisions its own
+migrated + seeded postgres service container; without a usable DB the module skips.
 Each test creates its own engine inline (mirrors test_d5_loadout_locking.py) to
 keep the asyncpg pool bound to the test's event loop.
 """
@@ -82,11 +82,17 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from tests.pg_env import PG_ASYNC_URL, pg_skip_reason
+
 # ---------------------------------------------------------------------------
-# Real Postgres connection — bountydev-db on docker bridge network
+# Real Postgres connection — resolved from POSTGRES_* env vars (CI service
+# container) with the bountydev-db docker-bridge dev stack as the fallback.
 # ---------------------------------------------------------------------------
 
-_PG_URL = "postgresql+asyncpg://bounty:bounty@172.18.0.2:5432/bountydb"
+_PG_URL = PG_ASYNC_URL
+
+_PG_SKIP = pg_skip_reason()
+pytestmark = pytest.mark.skipif(bool(_PG_SKIP), reason=_PG_SKIP or "")
 
 # Test-isolation constants: guild/user IDs that cannot collide with production.
 _TEST_GUILD = 999_888_777_056

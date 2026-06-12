@@ -6,9 +6,10 @@ These tests MUST run against real Postgres (not SQLite) because:
   - ALTER COLUMN ... TYPE JSONB USING ::jsonb is PostgreSQL-only DDL.
   - JSONB sub-path operators (->, ->>) are PostgreSQL-only.
 
-The tests use the project's dev Postgres DB (bountydev-net bridge IP, creds from .env.dev).
-All DDL is isolated: tests upgrade → assert → downgrade within each test.
-Seed data is never touched — tests use synthetic rows or the information_schema.
+The tests run against the Postgres resolved by tests/pg_env.py (CI service
+container or the dev stack). All DDL and synthetic rows live inside a
+transaction that is ALWAYS rolled back (_rollback_conn), so a test run leaves
+the database schema and data exactly as it found them — at alembic head.
 
 Cases:
   (a) upgrade(): every affected column becomes 'jsonb' in information_schema.
@@ -22,6 +23,7 @@ Cases:
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import importlib.util
 import os
@@ -52,10 +54,15 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
 # ---------------------------------------------------------------------------
-# Postgres connection (dev stack: bountydev-db at the bountydev-net bridge IP (see _PG_URL))
+# Postgres connection — resolved from POSTGRES_* env vars (CI service
+# container) with the bountydev-db docker-bridge dev stack as the fallback.
 # ---------------------------------------------------------------------------
 
-_PG_SYNC_URL = "postgresql+psycopg2://bounty:bounty@172.18.0.2:5432/bountydb"
+from tests.pg_env import PG_SYNC_URL as _PG_SYNC_URL
+from tests.pg_env import pg_skip_reason
+
+_PG_SKIP = pg_skip_reason()
+pytestmark = pytest.mark.skipif(bool(_PG_SKIP), reason=_PG_SKIP or "")
 
 # ---------------------------------------------------------------------------
 # Migration module loader
@@ -194,6 +201,25 @@ def pg_sync_engine():
     engine.dispose()
 
 
+@contextlib.contextmanager
+def _rollback_conn(engine):
+    """Connection inside a transaction that is ALWAYS rolled back.
+
+    Postgres DDL is transactional, so upgrade()/downgrade() exercised through
+    this connection leaves zero trace in the target database. These tests
+    previously committed their final state, silently drifting whatever DB they
+    ran against away from alembic head (columns reverted to json) — every
+    statement must go through this rollback-only connection instead.
+    """
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            yield conn
+        finally:
+            if trans.is_active:
+                trans.rollback()
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -210,7 +236,7 @@ class TestMigration0016JsonToJsonb:
         """After upgrade(), all affected columns report data_type='jsonb'."""
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
@@ -218,9 +244,6 @@ class TestMigration0016JsonToJsonb:
             for table, column in _EXPECTED_COLUMNS:
                 col_type = _col_type(conn, table, column)
                 assert col_type == "jsonb", f"Expected {table}.{column} to be 'jsonb' after upgrade, got '{col_type}'"
-
-            # Cleanup: downgrade immediately so the DB is left consistent
-            mod.downgrade()
 
     # ------------------------------------------------------------------ #
     # (b) downgrade() restores every affected column to json              #
@@ -230,7 +253,7 @@ class TestMigration0016JsonToJsonb:
         """After upgrade() + downgrade(), all affected columns report data_type='json'."""
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
@@ -245,20 +268,26 @@ class TestMigration0016JsonToJsonb:
     # ------------------------------------------------------------------ #
 
     def test_c_player_ship_cols_untouched(self, pg_sync_engine):
-        """player_ships.* columns must remain 'json' — they are P4-T9 scope."""
+        """player_ships.* columns must not be MODIFIED by 0016 — they are P4-T9 scope.
+
+        Relative assertion: whatever type the columns have before upgrade()
+        (jsonb at head, json on a pre-0017 DB), they must be identical after.
+        """
         mod = _load_migration_module()
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
+            types_before = {(t, c): _col_type(conn, t, c) for t, c in _UNTOUCHED_PLAYER_SHIP_COLS}
+
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
 
             for table, column in _UNTOUCHED_PLAYER_SHIP_COLS:
                 col_type = _col_type(conn, table, column)
-                assert col_type == "json", f"Expected {table}.{column} to remain 'json' (P4-T9 scope), got '{col_type}'"
-
-            # Cleanup
-            mod.downgrade()
+                assert col_type == types_before[(table, column)], (
+                    f"{table}.{column} changed from '{types_before[(table, column)]}' to "
+                    f"'{col_type}' — 0016 must not touch P4-T9-scope columns"
+                )
 
     # ------------------------------------------------------------------ #
     # (d) JSONB sub-path operator resolves against combat_log.data        #
@@ -288,14 +317,14 @@ class TestMigration0016JsonToJsonb:
             }
         )
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
 
             _disable_fk(conn)
 
-            # Insert a synthetic combat_log row
+            # Insert a synthetic combat_log row (rolled back with everything else)
             result = conn.execute(
                 text(
                     "INSERT INTO combat_log "
@@ -309,10 +338,8 @@ class TestMigration0016JsonToJsonb:
             )
             inserted_id = result.fetchone()[0]
 
-        # Sub-path query MUST use a fresh connection (after COMMIT) so the
-        # type change is fully visible.
-        with pg_sync_engine.connect() as conn:
-            # JSONB sub-path: data->'summary' returns the nested object
+            # JSONB sub-path queries see the in-transaction type change —
+            # Postgres DDL is visible to the transaction that performed it.
             result = conn.execute(
                 text("SELECT data->'summary' FROM combat_log WHERE id = :id"),
                 {"id": inserted_id},
@@ -333,15 +360,6 @@ class TestMigration0016JsonToJsonb:
             assert ke_row is not None
             key_events = ke_row[0]
             assert key_events == ["event_a", "event_b"], f"Expected ['event_a', 'event_b'], got {key_events}"
-
-        # Cleanup: delete test row, then downgrade
-        with pg_sync_engine.begin() as conn:
-            _disable_fk(conn)
-            conn.execute(text("DELETE FROM combat_log WHERE id = :id"), {"id": inserted_id})
-            mock_op2 = _build_mock_op(conn)
-            mod.op = mock_op2
-            mod.downgrade()
-            _enable_fk(conn)
 
     # ------------------------------------------------------------------ #
     # (e) value-identical round-trip: all affected columns                #
@@ -373,17 +391,17 @@ class TestMigration0016JsonToJsonb:
                 rows = _fetch_values(conn, table, column)
                 before_values[(table, column)] = rows
 
-        # Upgrade → downgrade
-        with pg_sync_engine.begin() as conn:
+        # Upgrade → downgrade → compare, all inside one rolled-back txn. The
+        # casts are genuinely applied to the rows within the transaction, so
+        # the comparison still proves value fidelity.
+        import json
+
+        with _rollback_conn(pg_sync_engine) as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
             mod.downgrade()
 
-        # Verify after state matches before state (parsed values)
-        import json
-
-        with pg_sync_engine.connect() as conn:
             for table, column in _EXPECTED_COLUMNS:
                 after_rows = _fetch_values(conn, table, column)
                 before_rows = before_values[(table, column)]
@@ -421,9 +439,10 @@ class TestMigration0016JsonToJsonb:
         test_route = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
         test_checked = {s: -1 for s in test_route}
 
-        with pg_sync_engine.begin() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             _disable_fk(conn)
-            # Insert synthetic bounty — all NOT NULL columns must be supplied
+            # Insert synthetic bounty — all NOT NULL columns must be supplied.
+            # The row is rolled back with the rest of the transaction.
             result = conn.execute(
                 text(
                     "INSERT INTO bounty "
@@ -441,33 +460,24 @@ class TestMigration0016JsonToJsonb:
             )
             bounty_id = result.fetchone()[0]
 
-        try:
-            # Upgrade then downgrade
-            with pg_sync_engine.begin() as conn:
-                mock_op = _build_mock_op(conn)
-                mod.op = mock_op
-                mod.upgrade()
-                mod.downgrade()
+            # Upgrade then downgrade — the casts are applied to the row in-txn
+            mock_op = _build_mock_op(conn)
+            mod.op = mock_op
+            mod.upgrade()
+            mod.downgrade()
 
             # Read back route and verify order preserved
-            with pg_sync_engine.connect() as conn:
-                result = conn.execute(
-                    text("SELECT route FROM bounty WHERE id = :id"),
-                    {"id": bounty_id},
-                )
-                row = result.fetchone()
-                assert row is not None, "Synthetic bounty row not found after up+down"
-                route_val = row[0]
-                route_parsed = json.loads(route_val) if isinstance(route_val, str) else route_val
-                assert route_parsed == test_route, (
-                    f"Array order changed after up+down.\n  expected: {test_route}\n  got:      {route_parsed}"
-                )
-        finally:
-            # Clean up the test bounty
-            with pg_sync_engine.begin() as conn:
-                _disable_fk(conn)
-                conn.execute(text("DELETE FROM bounty WHERE id = :id"), {"id": bounty_id})
-                _enable_fk(conn)
+            result = conn.execute(
+                text("SELECT route FROM bounty WHERE id = :id"),
+                {"id": bounty_id},
+            )
+            row = result.fetchone()
+            assert row is not None, "Synthetic bounty row not found after up+down"
+            route_val = row[0]
+            route_parsed = json.loads(route_val) if isinstance(route_val, str) else route_val
+            assert route_parsed == test_route, (
+                f"Array order changed after up+down.\n  expected: {test_route}\n  got:      {route_parsed}"
+            )
 
     # ------------------------------------------------------------------ #
     # (g) SQLite table-creation smoke test (models still work on SQLite)  #
@@ -547,16 +557,14 @@ class TestMigration0016JsonToJsonb:
             )
             return {row[0] for row in result.fetchall()}
 
-        with pg_sync_engine.connect() as conn:
+        with _rollback_conn(pg_sync_engine) as conn:
             indexes_before = _get_json_col_indexes(conn)
 
-        with pg_sync_engine.begin() as conn:
             mock_op = _build_mock_op(conn)
             mod.op = mock_op
             mod.upgrade()
             mod.downgrade()
 
-        with pg_sync_engine.connect() as conn:
             indexes_after = _get_json_col_indexes(conn)
 
         new_indexes = indexes_after - indexes_before

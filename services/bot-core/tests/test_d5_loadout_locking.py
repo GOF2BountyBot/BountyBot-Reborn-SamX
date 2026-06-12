@@ -32,9 +32,9 @@ Cases (from D5 design §Mandatory tester cases):
   A  ANTI-VACUOUS probe: WITHOUT the _lock_player call the double-equip produces a
      lost-update / duplicate slot — proving the lock is load-bearing.
 
-Connection: bountydev-db at 172.18.0.2:5432 (bountydev-net bridge IP — re-check via
-`sudo docker inspect bountydev-db` after a stack rebuild; host-published localhost:15432 is
-unreachable from this dev container).
+Connection: resolved from POSTGRES_* env vars, falling back to the dev stack
+(bountydev-db on the docker bridge) — see tests/pg_env.py. CI provisions its own
+migrated + seeded postgres service container; without a usable DB the module skips.
 Each test creates its own engine inline (mirrors test_concurrency_idempotency.py)
 to keep the asyncpg pool bound to the test's event loop.
 """
@@ -82,11 +82,17 @@ from services.loadout_consistency_service import LoadoutConsistencyService
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from tests.pg_env import PG_ASYNC_URL, pg_skip_reason
+
 # ---------------------------------------------------------------------------
-# Real Postgres connection — bountydev-db on docker bridge network
+# Real Postgres connection — resolved from POSTGRES_* env vars (CI service
+# container) with the bountydev-db docker-bridge dev stack as the fallback.
 # ---------------------------------------------------------------------------
 
-_PG_URL = "postgresql+asyncpg://bounty:bounty@172.18.0.2:5432/bountydb"
+_PG_URL = PG_ASYNC_URL
+
+_PG_SKIP = pg_skip_reason()
+pytestmark = pytest.mark.skipif(bool(_PG_SKIP), reason=_PG_SKIP or "")
 
 # Test-isolation constants: guild/user IDs that cannot collide with production data.
 _TEST_GUILD = 999_888_777_055
@@ -748,6 +754,43 @@ async def _seed_player_with_duplicate_cargo(
     return player.id, ship.id
 
 
+async def _suspend_inventory_unique_constraint(factory) -> bool:
+    """Drop uq_player_inventories_player_item (committed) if present.
+
+    Duplicate (player_id, item_type, item_name) rows are exactly the legacy
+    corruption ``consolidate_inventory`` exists to merge — and the 0015 unique
+    constraint (part of alembic head) now prevents seeding them. The drop must
+    COMMIT because all of the test's concurrent sessions must see it. Returns
+    whether the constraint was present so the caller's ``finally`` can restore
+    the schema to exactly the state it found.
+    """
+    async with factory() as db, db.begin():
+        res = await db.execute(
+            text("SELECT count(*) FROM pg_constraint WHERE conname = 'uq_player_inventories_player_item'")
+        )
+        existed = bool(res.scalar())
+        if existed:
+            await db.execute(text("ALTER TABLE player_inventories DROP CONSTRAINT uq_player_inventories_player_item"))
+    return existed
+
+
+async def _restore_inventory_unique_constraint(factory, was_present: bool) -> None:
+    """Re-add the 0015 unique constraint dropped by the suspend helper.
+
+    Must run AFTER ``_cleanup`` so no leftover duplicate test rows can make the
+    re-add fail.
+    """
+    if not was_present:
+        return
+    async with factory() as db, db.begin():
+        await db.execute(
+            text(
+                "ALTER TABLE player_inventories ADD CONSTRAINT uq_player_inventories_player_item "
+                "UNIQUE (player_id, item_type, item_name)"
+            )
+        )
+
+
 async def _consolidate_via_route_path(factory, player_id: int) -> None:
     """Drive the EXACT D5-T3 router shape for ``consolidate_inventory``.
 
@@ -806,7 +849,9 @@ async def test_case8_consolidate_serialises_behind_equip_lock():
     merged to a single row.
     """
     engine, factory = _make_pg_factory()
+    _uq_was_present = False
     try:
+        _uq_was_present = await _suspend_inventory_unique_constraint(factory)
         await _cleanup(factory)
         # Two duplicate cargo rows (qty 1 each) → cargo total 2, plus an empty ship.
         async with factory() as db, db.begin():
@@ -851,6 +896,7 @@ async def test_case8_consolidate_serialises_behind_equip_lock():
         assert row_count == 1, f"consolidate must merge duplicate rows to one, got {row_count} rows"
     finally:
         await _cleanup(factory)
+        await _restore_inventory_unique_constraint(factory, _uq_was_present)
         await engine.dispose()
 
 
@@ -993,7 +1039,9 @@ async def test_anti_vacuous_consolidate_lock_is_load_bearing_for_lost_update():
     the update too (cargo 8), failing the ``== 7`` assertion.
     """
     engine, factory = _make_pg_factory()
+    _uq_was_present = False
     try:
+        _uq_was_present = await _suspend_inventory_unique_constraint(factory)
         unlocked_cargo = await _run_decrement_vs_consolidate(factory, take_lock=False)
         assert unlocked_cargo == 8, (
             "ANTI-VACUOUS FAILED: the UNLOCKED consolidate did NOT lose the concurrent "
@@ -1009,6 +1057,7 @@ async def test_anti_vacuous_consolidate_lock_is_load_bearing_for_lost_update():
         )
     finally:
         await _cleanup(factory)
+        await _restore_inventory_unique_constraint(factory, _uq_was_present)
         await engine.dispose()
 
 
@@ -1035,7 +1084,9 @@ async def test_anti_vacuous_consolidate_db_begin_is_load_bearing_for_durability(
     1, failing the ``row_count == 2`` assertion.
     """
     engine, factory = _make_pg_factory()
+    _uq_was_present = False
     try:
+        _uq_was_present = await _suspend_inventory_unique_constraint(factory)
         # ---- Arm 1: NO db.begin() → flush-only merge rolled back on close --------
         await _cleanup(factory)
         async with factory() as db, db.begin():
@@ -1062,6 +1113,7 @@ async def test_anti_vacuous_consolidate_db_begin_is_load_bearing_for_durability(
         assert cargo_total == 8, f"merged total must conserve quantity at 8, got {cargo_total}"
     finally:
         await _cleanup(factory)
+        await _restore_inventory_unique_constraint(factory, _uq_was_present)
         await engine.dispose()
 
 
@@ -1075,7 +1127,9 @@ async def test_case18_consolidate_failure_in_db_begin_rolls_back_cleanly():
     duplicate rows (no partial merge, no half-deleted state).
     """
     engine, factory = _make_pg_factory()
+    _uq_was_present = False
     try:
+        _uq_was_present = await _suspend_inventory_unique_constraint(factory)
         await _cleanup(factory)
         async with factory() as db, db.begin():
             player_id, _ = await _seed_player_with_duplicate_cargo(db, _TEST_USER_A, qty_a=3, qty_b=5)
@@ -1099,6 +1153,7 @@ async def test_case18_consolidate_failure_in_db_begin_rolls_back_cleanly():
         assert cargo_total == 8, f"rollback must preserve original total 8, got {cargo_total}"
     finally:
         await _cleanup(factory)
+        await _restore_inventory_unique_constraint(factory, _uq_was_present)
         await engine.dispose()
 
 

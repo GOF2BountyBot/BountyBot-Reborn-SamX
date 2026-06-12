@@ -2023,9 +2023,7 @@ class TestDeleteChannelMessage:
         # module object than discord_mock_utils, breaking `except discord.NotFound`'s
         # identity check; resolving the class from the router itself is leak-proof.
         _resp = types.SimpleNamespace(status=404, reason="Not Found")
-        text_ch.fetch_message = AsyncMock(
-            side_effect=channels_module.discord.NotFound(_resp, "Not found")
-        )
+        text_ch.fetch_message = AsyncMock(side_effect=channels_module.discord.NotFound(_resp, "Not found"))
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None

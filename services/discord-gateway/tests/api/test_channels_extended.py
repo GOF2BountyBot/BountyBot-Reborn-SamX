@@ -2014,11 +2014,18 @@ class TestDeleteChannelMessage:
 
     def test_delete_channel_message_not_found_returns_200(self):
         """DELETE message that doesn't exist (404 from Discord) should still return 200 (already deleted)."""
-        from tests.mocks.discord_mock_utils import create_discord_not_found
+        import api.routers.channels as channels_module
 
         text_ch = create_mock_text_channel(1234567890)
-        # fetch_message raises real discord.NotFound so it's caught by except discord.NotFound
-        text_ch.fetch_message = AsyncMock(side_effect=create_discord_not_found("Not found"))
+        # Raise the *exact* discord.NotFound class the router resolves at runtime
+        # (channels_module.discord.NotFound) rather than the factory's copy. Test
+        # module-isolation can leave the cached router bound to a different discord
+        # module object than discord_mock_utils, breaking `except discord.NotFound`'s
+        # identity check; resolving the class from the router itself is leak-proof.
+        _resp = types.SimpleNamespace(status=404, reason="Not Found")
+        text_ch.fetch_message = AsyncMock(
+            side_effect=channels_module.discord.NotFound(_resp, "Not found")
+        )
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None

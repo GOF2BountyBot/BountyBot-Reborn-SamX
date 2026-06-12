@@ -93,6 +93,22 @@ jobs:
           older-than: 14 days
           validate: true
 
+      - name: Prune sha-* tagged images to the newest 5
+        # The per-push sha-<short> tags are never re-pointed, so they pile up
+        # forever and (especially the CUDA image) are where the storage really
+        # goes. Keep the 5 newest per package as rollback candidates; latest
+        # and the semver release tags are excluded outright. No older-than
+        # here on purpose — the bound is a count, not an age. Deleting a
+        # tagged index also removes its now-unreferenced children.
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          packages: "${{ env.IMAGE_REPO }}/bot-core,${{ env.IMAGE_REPO }}/discord-gateway,${{ env.IMAGE_REPO }}/blender-service,${{ env.IMAGE_REPO }}/blender-service-gpu"
+          owner: ${{ env.IMAGE_OWNER }}
+          delete-tags: "sha-*"
+          keep-n-tagged: 5
+          exclude-tags: "latest,*.*.*"
+          validate: true
+
 # ── Phase 1: Lint ────────────────────────────────────────────────────────────
 
   lint:

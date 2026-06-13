@@ -609,7 +609,7 @@ class PlayerCog(commands.Cog):
                         f"\n**Power Check** {verdict_emoji} "
                         f"You win **{pre['player_win_rate']:.0%}** of "
                         f"{pre['sims_run']} simulated fights against "
-                        f"active {target_tier} criminals."
+                        f"{target_tier} criminals."
                     )
                 else:
                     # NO_DATA: player has no active ship (should not occur in normal play)

@@ -371,30 +371,28 @@ class TestRuntimeRejectionPreflightPath:
     async def test_estimate_with_orm_in_player_loadout_is_rejected(self):
         """estimate() raises AssertionError when player_loadout is a live ORM (end-to-end guard path).
 
-        We patch LoadoutBuilder.from_player to return a fake ORM object so the
-        guard fires in the actual estimate() code path.
+        We patch _synthesize_criminals to return one synthetic criminal so the code
+        path reaches matchup construction, then patch LoadoutBuilder.from_player to
+        return a fake ORM object so the guard fires in the actual estimate() code path.
         """
         from types import SimpleNamespace
 
         from services.combat_preflight_service import CombatPreflightService
 
         svc = CombatPreflightService.__new__(CombatPreflightService)
-        svc.bounty_repo = MagicMock()
 
-        # Active criminal pool — needs at least one entry so we reach the matchup section.
+        # One synthetic criminal — enough to pass the empty-pool guard.
         criminal_ship = {"ship_name": "Raider", "ship_armour": 80, "weapons": [], "turrets": []}
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(
-            return_value=[SimpleNamespace(criminal_ship=criminal_ship)]
-        )
+        synthetic_criminal = SimpleNamespace(criminal_ship=criminal_ship)
 
         # Construct a mapper-bearing object to return as the player's "loadout".
         fake_orm = MagicMock()
         type(fake_orm).__mapper__ = MagicMock()
-        # Also give it criminal_ship-compatible attributes so from_criminal_ship doesn't crash.
 
         db_mock = AsyncMock()
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=[synthetic_criminal])),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=fake_orm),

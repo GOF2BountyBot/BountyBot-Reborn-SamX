@@ -29,7 +29,6 @@ from services.combat_preflight_service import CombatPreflightService, PreflightV
 
 def _make_service() -> CombatPreflightService:
     svc = CombatPreflightService.__new__(CombatPreflightService)
-    svc.bounty_repo = MagicMock()
     return svc
 
 
@@ -66,7 +65,7 @@ def _all_stalemates(num_sims: int) -> list[tuple]:
 
 
 # ===========================================================================
-# Tests: NO_DATA verdict — now only reached when synthesis also fails
+# Tests: NO_DATA verdict — only reached when synthesis fails completely
 # ===========================================================================
 
 
@@ -75,30 +74,16 @@ class TestEstimateNoData:
 
     @pytest.mark.asyncio
     async def test_synthesis_failure_returns_no_data(self):
-        """Returns NO_DATA when no active bounties exist AND synthesis fails."""
+        """Returns NO_DATA when synthesis returns empty on all attempts."""
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
 
-        # Both bounty repo empty AND _synthesize_criminals returns empty
+        # Both initial synthesis AND top-up return empty
         with patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=[])):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver")
 
         assert result.verdict == PreflightVerdict.NO_DATA
         assert result.sims_run == 0
         assert result.sample_size == 0
-
-    @pytest.mark.asyncio
-    async def test_bounties_without_criminal_ship_synthesis_fails_returns_no_data(self):
-        """Returns NO_DATA when bounties exist but none have criminal_ship AND synthesis fails."""
-        svc = _make_service()
-        empty_bounty = SimpleNamespace(id=1, criminal_ship=None)
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[empty_bounty])
-
-        with patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=[])):
-            result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver")
-
-        assert result.verdict == PreflightVerdict.NO_DATA
-        assert result.sims_run == 0
 
     @pytest.mark.asyncio
     async def test_loadout_builder_failure_returns_no_data(self):
@@ -108,11 +93,14 @@ class TestEstimateNoData:
         at the service layer. Covered defensively.
         """
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
+        synthetics = [_make_synthetic_criminal() for _ in range(20)]
 
-        with patch(
-            "services.combat_preflight_service.LoadoutBuilder.from_player",
-            new=AsyncMock(side_effect=RuntimeError("no active ship")),
+        with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
+            patch(
+                "services.combat_preflight_service.LoadoutBuilder.from_player",
+                new=AsyncMock(side_effect=RuntimeError("no active ship")),
+            ),
         ):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver")
 
@@ -121,26 +109,26 @@ class TestEstimateNoData:
 
 
 # ===========================================================================
-# Tests: No active bounties — synthesis kicks in
+# Tests: Synthesis ALWAYS runs — active-bounty pool is never consulted
 # ===========================================================================
 
 
 class TestEstimateNoBountiesSynthesis:
-    """estimate() synthesizes criminals and runs sims when no active bounties exist."""
+    """estimate() always synthesizes criminals; the active-bounty pool is never consulted."""
 
     @pytest.mark.asyncio
-    async def test_no_active_bounties_synthesis_runs_sims(self):
-        """No active bounties → synthesis provides criminals → sims run → real verdict returned."""
+    async def test_synthesis_always_runs(self):
+        """estimate() calls _synthesize_criminals regardless of any external state."""
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
 
-        # Synthesis returns 5 synthetic criminals
-        synthetics = [_make_synthetic_criminal() for _ in range(5)]
+        # Synthesis returns 20 synthetic criminals (full pool, no top-up needed)
+        synthetics = [_make_synthetic_criminal(f"Synth{i}") for i in range(20)]
+        synth_mock = AsyncMock(return_value=synthetics)
         with (
-            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
+            patch.object(svc, "_synthesize_criminals", new=synth_mock),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -152,20 +140,24 @@ class TestEstimateNoBountiesSynthesis:
         ):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
+        assert synth_mock.called, "_synthesize_criminals must always be called"
         assert result.verdict != PreflightVerdict.NO_DATA
         assert result.sims_run == 20
-        assert result.sample_size == 5
 
     @pytest.mark.asyncio
-    async def test_no_active_bounties_synthesis_green_verdict(self):
-        """No bounties + synthesis + player wins all → GREEN verdict."""
+    async def test_bounty_repo_never_called(self):
+        """estimate() does NOT call get_active_by_guild_and_division — it is synthesis-only."""
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
 
-        synthetics = [_make_synthetic_criminal() for _ in range(5)]
+        synthetics = [_make_synthetic_criminal() for _ in range(20)]
+        # Confirm the service has no bounty_repo attribute after D-018 fix
+        assert not hasattr(svc, "bounty_repo"), (
+            "CombatPreflightService must not hold a bounty_repo reference after D-018 fix"
+        )
+
         with (
             patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
@@ -180,21 +172,34 @@ class TestEstimateNoBountiesSynthesis:
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
         assert result.verdict == PreflightVerdict.GREEN
-        assert result.player_win_rate >= 0.75
 
     @pytest.mark.asyncio
-    async def test_no_bounties_synthesis_called_with_correct_division(self):
+    async def test_synthesis_called_with_num_sims_count(self):
+        """_synthesize_criminals is called with count=num_sims."""
+        svc = _make_service()
+
+        synth_mock = AsyncMock(return_value=[])
+        with patch.object(svc, "_synthesize_criminals", new=synth_mock):
+            await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Gold", num_sims=20)
+
+        # First call must pass count=num_sims (20); count is passed as a keyword arg.
+        first_call = synth_mock.call_args_list[0]
+        count_val = first_call[1].get("count")
+        assert count_val == 20, f"Expected count=20, got {count_val}"
+
+    @pytest.mark.asyncio
+    async def test_synthesis_called_with_correct_division(self):
         """_synthesize_criminals is called with the lowercased division name."""
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
 
         synth_mock = AsyncMock(return_value=[])
         with patch.object(svc, "_synthesize_criminals", new=synth_mock):
             await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Gold")
 
-        # Should be called with lowercase "gold"
-        call_args = synth_mock.call_args
-        assert call_args[0][1] == "gold" or call_args[1].get("division") == "gold"
+        # Should be called with lowercase "gold"; division is the second positional arg.
+        call_args = synth_mock.call_args_list[0]
+        division_val = call_args[0][1]  # positional: (db, division)
+        assert division_val == "gold", f"Expected 'gold', got {division_val}"
 
 
 # ===========================================================================
@@ -211,10 +216,11 @@ class TestEstimateVerdicts:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(20)]
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -235,10 +241,11 @@ class TestEstimateVerdicts:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=50)
+        synthetics = [_make_synthetic_criminal() for _ in range(20)]
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -259,10 +266,11 @@ class TestEstimateVerdicts:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=100)
+        synthetics = [_make_synthetic_criminal() for _ in range(20)]
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -282,10 +290,11 @@ class TestEstimateVerdicts:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(5)]
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -300,20 +309,20 @@ class TestEstimateVerdicts:
         assert result.sims_run == 5
 
     @pytest.mark.asyncio
-    async def test_sample_size_excludes_bounties_without_criminal_ship(self):
-        """sample_size counts only bounties that have criminal_ship data."""
+    async def test_sample_size_reflects_synthesized_pool(self):
+        """sample_size counts the criminals in the final pool passed to the sim.
+
+        When synthesis succeeds for all num_sims entries, sample_size == num_sims.
+        """
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        bounties = [
-            _criminal_bounty("Raider"),
-            _criminal_bounty("Guardian"),
-            SimpleNamespace(id=3, criminal_ship=None),
-        ]
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=bounties)
+        # Synthesis returns exactly num_sims=4 criminals (full pool, no top-up needed)
+        synthetics = [_make_synthetic_criminal(f"C{i}") for i in range(4)]
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -325,18 +334,20 @@ class TestEstimateVerdicts:
         ):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=4)
 
-        assert result.sample_size == 2  # 3 bounties, only 2 have criminal_ship
+        assert result.sample_size == 4  # 4 synthesized criminals
 
     @pytest.mark.asyncio
-    async def test_division_is_lowercased_before_query(self):
-        """target_tier is lowercased when passed to bounty_repo."""
+    async def test_division_is_lowercased_before_synthesis(self):
+        """target_tier is lowercased when passed to _synthesize_criminals."""
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(1)]
 
+        synth_mock = AsyncMock(return_value=synthetics)
         with (
+            patch.object(svc, "_synthesize_criminals", new=synth_mock),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -348,11 +359,10 @@ class TestEstimateVerdicts:
         ):
             await svc.estimate(MagicMock(), player_id=1, guild_id=7, target_tier="Gold", num_sims=1)
 
-        svc.bounty_repo.get_active_by_guild_and_division.assert_awaited_once_with(
-            svc.bounty_repo.get_active_by_guild_and_division.call_args[0][0],
-            7,
-            "gold",
-        )
+        # First call division argument must be "gold" (lowercased); division is second positional arg.
+        first_call = synth_mock.call_args_list[0]
+        division_val = first_call[0][1]  # positional: (db, division)
+        assert division_val == "gold", f"Expected 'gold', got {division_val}"
 
     @pytest.mark.asyncio
     async def test_target_tier_preserved_in_result(self):
@@ -360,10 +370,11 @@ class TestEstimateVerdicts:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(2)]
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -498,7 +509,6 @@ class TestSynthesizeCriminals:
         Ensures DIVISION_MAX_TL.get(division) cannot miss due to capitalisation.
         """
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
 
         received_divisions: list[str] = []
 
@@ -509,7 +519,110 @@ class TestSynthesizeCriminals:
         with patch.object(svc, "_synthesize_criminals", new=_capture_division):
             await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver")
 
-        assert received_divisions == ["silver"], f"Expected lowercase 'silver', got {received_divisions}"
+        assert "silver" in received_divisions, f"Expected lowercase 'silver' in calls, got {received_divisions}"
+
+    @pytest.mark.asyncio
+    async def test_partial_synthesis_topup_ensures_num_sims_loadouts(self):
+        """If initial synthesis returns < num_sims, top-up loop brings the pool to num_sims.
+
+        Simulates generate_loadout failing on the first call in each _synthesize_criminals
+        invocation: initial call(count=4) yields 3; top-up call(count=1) yields 1 → total 4.
+        """
+        from services.combat_models import ShipLoadout
+
+        svc = _make_service()
+        player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+
+        call_count = [0]
+        captured_counts: list[int] = []
+
+        # First call to _synthesize_criminals returns 3 (one failure inside)
+        # Second call (top-up) returns 1 → total reaches num_sims=4
+        initial_synthetics = [_make_synthetic_criminal(f"S{i}") for i in range(3)]
+        topup_synthetics = [_make_synthetic_criminal("STopup")]
+
+        synth_results = [initial_synthetics, topup_synthetics]
+
+        async def _mock_synthesize(db, division, count=5):
+            captured_counts.append(count)
+            idx = call_count[0]
+            call_count[0] += 1
+            return synth_results[idx] if idx < len(synth_results) else []
+
+        with (
+            patch.object(svc, "_synthesize_criminals", new=_mock_synthesize),
+            patch(
+                "services.combat_preflight_service.LoadoutBuilder.from_player",
+                new=AsyncMock(return_value=player_loadout),
+            ),
+            patch(
+                "services.combat_preflight_service.offload_cpu",
+                new=AsyncMock(return_value=_all_player_wins(4)),
+            ),
+        ):
+            result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=4)
+
+        # Top-up brought pool to 4 → sample_size == 4, sims_run == 4
+        assert result.sample_size == 4
+        assert result.sims_run == 4
+        assert result.verdict != PreflightVerdict.NO_DATA
+        # Top-up must pass count == shortage (1), not count == num_sims (4).
+        assert len(captured_counts) == 2, f"Expected 2 synthesis calls, got {captured_counts}"
+        assert captured_counts[0] == 4, f"Initial call count should be num_sims=4, got {captured_counts[0]}"
+        assert captured_counts[1] == 1, f"Top-up call count should be shortage=1, got {captured_counts[1]}"
+
+    @pytest.mark.asyncio
+    async def test_partial_synthesis_modulo_guard_no_index_error(self):
+        """When synthesis returns < num_sims even after top-up, modulo prevents IndexError.
+
+        Pool of 2 criminals for num_sims=5 → sims[0,1,2,3,4] map to criminals[0,1,0,1,0].
+        Asserts: 5 sims run, no IndexError, verdict is non-NO_DATA (pool not empty).
+        Also verifies flogger.warning is called to flag the degraded pool.
+        """
+        from services.combat_models import ShipLoadout
+
+        svc = _make_service()
+        player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+
+        # Both synthesis calls return only 1 criminal each → pool stays at 2 < num_sims=5
+        small_pool = [_make_synthetic_criminal("Alpha"), _make_synthetic_criminal("Beta")]
+        synth_mock = AsyncMock(return_value=small_pool[:1])  # each call returns only 1
+
+        captured_matchups: list = []
+
+        async def _capture_offload(fn, matchups, **kwargs):
+            captured_matchups.extend(matchups)
+            return _all_player_wins(len(matchups))
+
+        import services.combat_preflight_service as _svc_mod
+
+        warn_calls: list = []
+        orig_warning = _svc_mod.flogger.warning
+
+        def _capture_warning(msg, *args, **kwargs):
+            warn_calls.append(msg)
+            return orig_warning(msg, *args, **kwargs)
+
+        _svc_mod.flogger.warning = _capture_warning
+        try:
+            with (
+                patch.object(svc, "_synthesize_criminals", new=synth_mock),
+                patch(
+                    "services.combat_preflight_service.LoadoutBuilder.from_player",
+                    new=AsyncMock(return_value=player_loadout),
+                ),
+                patch("services.combat_preflight_service.offload_cpu", new=_capture_offload),
+            ):
+                result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=5)
+        finally:
+            _svc_mod.flogger.warning = orig_warning
+
+        # 5 sims must have run (modulo guard, no IndexError)
+        assert len(captured_matchups) == 5
+        assert result.sims_run == 5
+        assert result.verdict != PreflightVerdict.NO_DATA
+        # Warning about degraded pool must have been logged
+        assert any("degraded" in str(w) for w in warn_calls), f"Expected a 'degraded pool' warning; got: {warn_calls}"
 
 
 # ===========================================================================
@@ -526,11 +639,12 @@ class TestP2T7OneDispatch:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(10)]
 
         offload_mock = AsyncMock(return_value=_all_player_wins(10))
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -548,11 +662,12 @@ class TestP2T7OneDispatch:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(4)]
 
         offload_mock = AsyncMock(return_value=_all_player_wins(4))
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -571,8 +686,8 @@ class TestP2T7OneDispatch:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal(f"S{i}") for i in range(7)]
 
         captured_matchups: list = []
 
@@ -581,6 +696,7 @@ class TestP2T7OneDispatch:
             return _all_player_wins(len(matchups))
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -605,11 +721,12 @@ class TestP2T7WinPredicate:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(20)]
 
         # All stalemates → all criminal wins → RED
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -631,10 +748,11 @@ class TestP2T7WinPredicate:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(20)]
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -655,10 +773,11 @@ class TestP2T7WinPredicate:
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[_criminal_bounty()])
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(20)]
 
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -684,14 +803,13 @@ class TestP2T7WinPredicate:
 
         svc = _make_service()
         # Criminal has the SAME ship name as the player
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(
-            return_value=[_criminal_bounty(ship_name="Player")]
-        )
+        synthetics = [_make_synthetic_criminal(ship_name="Player") for _ in range(20)]
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
 
         # side 2 wins (criminal) — with the OLD name-keyed check this would have been
         # mis-attributed as a player win since winner_name == "Player"
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -709,31 +827,21 @@ class TestP2T7WinPredicate:
 
 
 class TestP2T7CriminalDrawDistribution:
-    """Criminal draw distribution is unchanged: random.choice(criminals) with replacement, num_sims draws."""
+    """Criminal draw distribution: 1:1 pairing — each sim uses criminals[i] (not random.choice)."""
 
     @pytest.mark.asyncio
-    async def test_draw_order_matches_fixed_rng_sequence(self):
-        """With a fixed RNG seed, the criminal draw sequence is identical to the old loop."""
-        import random as _random
+    async def test_each_sim_uses_distinct_synthesized_criminal(self):
+        """With N distinct synthesized criminals and num_sims=N, each criminal appears exactly once.
 
+        Verifies 1:1 pairing: criminals[0] → sim[0], criminals[1] → sim[1], etc.
+        """
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        criminal_a = _criminal_bounty("Alpha")
-        criminal_b = _criminal_bounty("Beta")
-        criminal_c = _criminal_bounty("Gamma")
-        criminals = [criminal_a, criminal_b, criminal_c]
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=criminals)
+        # 8 uniquely-named synthetic criminals
+        synthetics = [_make_synthetic_criminal(f"Criminal{i}") for i in range(8)]
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
 
-        # Simulate what the OLD code's draw loop would produce with a fixed seed
-        _random.seed(12345)
-        expected_names: list[str] = []
-        for _ in range(8):
-            b = _random.choice(criminals)
-            expected_names.append((b.criminal_ship or {}).get("ship_name", ""))
-
-        # Now run estimate() with the same seed, capture actual matchup criminal names
         actual_names: list[str] = []
 
         async def _capture_offload(fn, matchups, **kwargs):
@@ -741,8 +849,8 @@ class TestP2T7CriminalDrawDistribution:
                 actual_names.append(_c.ship_name)
             return _all_player_wins(len(matchups))
 
-        _random.seed(12345)
         with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
@@ -751,39 +859,61 @@ class TestP2T7CriminalDrawDistribution:
         ):
             await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=8)
 
+        # 1:1 pairing: each criminal should appear exactly once, in order
+        expected_names = [f"Criminal{i}" for i in range(8)]
         assert actual_names == expected_names, (
-            f"Criminal draw sequence mismatch.\nExpected: {expected_names}\nActual:   {actual_names}"
+            f"Expected 1:1 pairing in order.\nExpected: {expected_names}\nActual:   {actual_names}"
         )
 
     @pytest.mark.asyncio
-    async def test_all_criminals_drawn_with_replacement(self):
-        """Criminal pool has 2 entries; with enough sims both should appear (replacement)."""
+    async def test_modulo_pairing_used_when_pool_smaller_than_num_sims(self):
+        """When synthesis pool < num_sims, modulo pairing is used (no IndexError, 20 sims run).
+
+        Pool of 3 criminals, num_sims=9 → criminals[i % 3] for i in range(9).
+        The pool wraps around: [0,1,2,0,1,2,0,1,2].
+        """
         from services.combat_models import ShipLoadout
 
         svc = _make_service()
-        criminals = [_criminal_bounty("Alpha"), _criminal_bounty("Beta")]
-        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=criminals)
+        # Pool of 3, but num_sims=9; synthesis always returns only 3
+        small_pool = [_make_synthetic_criminal(f"C{i}") for i in range(3)]
         player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
 
-        seen_names: set[str] = set()
+        actual_names: list[str] = []
 
         async def _capture_offload(fn, matchups, **kwargs):
             for _p, _c, _seed, _l1, _l2 in matchups:
-                seen_names.add(_c.ship_name)
+                actual_names.append(_c.ship_name)
             return _all_player_wins(len(matchups))
 
-        # 50 sims — near-certain to hit both criminals under any RNG
+        # Both initial synthesis and top-up calls return the same small pool (3 each).
+        # After combining: pool stays at 3 (first 3) + top-up returns 3 → 6 total still < 9.
+        # We simulate the real modulo path by giving a pool of exactly 3 on the first call
+        # and 0 on the top-up (so the pool stays at 3 < num_sims=9).
+        call_idx = [0]
+        return_vals = [small_pool, []]  # first call returns 3, top-up returns 0
+
+        async def _mock_synthesize(db, division, count=5):
+            idx = call_idx[0]
+            call_idx[0] += 1
+            return return_vals[idx] if idx < len(return_vals) else []
+
         with (
+            patch.object(svc, "_synthesize_criminals", new=_mock_synthesize),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",
                 new=AsyncMock(return_value=player_loadout),
             ),
             patch("services.combat_preflight_service.offload_cpu", new=_capture_offload),
         ):
-            await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=50)
+            result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=9)
 
-        assert "Alpha" in seen_names
-        assert "Beta" in seen_names
+        # 9 sims must have run, no IndexError
+        assert result.sims_run == 9
+        assert len(actual_names) == 9
+        # Modulo pairing: [C0, C1, C2, C0, C1, C2, C0, C1, C2]
+        expected = [f"C{i % 3}" for i in range(9)]
+        assert actual_names == expected, f"Expected modulo pairing.\nExpected: {expected}\nActual:   {actual_names}"
 
 
 class TestP2T7WinRateParity:
@@ -818,9 +948,10 @@ class TestP2T7WinRateParity:
         assert len(results) == 1
         winner_side, is_stalemate = results[0]
         assert is_stalemate is True
-        # Stalemate: winner_side is None but is_stalemate flag is True
-        # new predicate: is_stalemate or winner_side==1 → True (player win)
-        assert (is_stalemate or winner_side == 1) is True
+        # Stalemate: winner_side is None, is_stalemate is True.
+        # Production counts a player win only when winner_side==1 AND NOT is_stalemate.
+        # A stalemate must NOT count as a player win — verify the real predicate.
+        assert not (winner_side == 1 and not is_stalemate), "stalemate must not count as a player win"
 
     def test_run_fight_batch_player_win_side1(self):
         """Asymmetric loadout (player vastly stronger): winner_side==1, not stalemate."""

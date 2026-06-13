@@ -170,10 +170,18 @@ class InventoryService:
             if quantity <= 0:
                 raise ValueError("Quantity must be positive")
 
-            # Verify player exists — wrap repo call so DB/ORM exceptions surface as
-            # friendly ValueError (maps to HTTP 400) rather than leaking as raw 500s.
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE), before
+            # the inventory read-modify-write in inventory_repo.add_item (read qty
+            # → +delta → write).  This serialises the naked entry points that reach
+            # this method without an outer lock — POST /inventory/add and the admin
+            # add-item / give-item routes — against any other same-player cargo
+            # mutation, closing the add-side lost-update window.  When this method
+            # is reached from transfer_item_between_players (which already holds
+            # this player's lock from its ascending-order acquisition) the re-lock
+            # is an intra-transaction no-op.  Wrap so DB/ORM exceptions surface as a
+            # friendly ValueError (HTTP 400) rather than leaking as raw 500s.
             try:
-                player = await self.player_repo.get_by_id(db, player_id)
+                player = await self.player_repo.get_by_id_for_update(db, player_id)
             except Exception as exc:
                 flogger.error(f"DB error fetching player_id={player_id}: {exc}", exc_info=True)
                 raise ValueError(f"Player with ID {player_id} could not be retrieved.") from exc
@@ -242,10 +250,19 @@ class InventoryService:
             if quantity <= 0:
                 raise ValueError("Quantity must be positive")
 
-            # Verify player exists — wrap repo call so DB/ORM exceptions surface as
-            # friendly ValueError (maps to HTTP 400) rather than leaking as raw 500s.
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE), before
+            # the get_player_item read that feeds the inventory_repo.remove_item
+            # read-modify-write (read qty → −delta → write/delete).  This serialises
+            # the naked entry points that reach this method without an outer lock —
+            # POST /inventory/remove and the admin remove-item route — against any
+            # other same-player cargo mutation, closing the remove-side lost-update
+            # window (and the last-copy duplication window when paired with the add
+            # side via transfer).  When reached from transfer_item_between_players
+            # (which already holds this player's lock) the re-lock is an
+            # intra-transaction no-op.  Wrap so DB/ORM exceptions surface as a
+            # friendly ValueError (HTTP 400) rather than leaking as raw 500s.
             try:
-                player = await self.player_repo.get_by_id(db, player_id)
+                player = await self.player_repo.get_by_id_for_update(db, player_id)
             except Exception as exc:
                 flogger.error(f"DB error fetching player_id={player_id}: {exc}", exc_info=True)
                 raise ValueError(f"Player with ID {player_id} could not be retrieved.") from exc
@@ -302,12 +319,36 @@ class InventoryService:
         Returns transfer details.
         """
         try:
-            # Validate both players exist and are in same guild
-            from_player = await self.player_repo.get_by_id(db, from_player_id)
-            to_player = await self.player_repo.get_by_id(db, to_player_id)
+            # D5-T2 (D-015): LOCK ORDERING — acquire BOTH players' aggregate-root
+            # rows FOR UPDATE FIRST, in ascending player_id order, BEFORE any read
+            # that feeds the cargo read-modify-write.  This is the same rule used by
+            # ``player_service.transfer_credits`` and ``duel_service.accept_duel``.
+            #
+            # Why this fixes the live-confirmed item-duplication bug: previously
+            # both players were read UNLOCKED (get_by_id), so two concurrent
+            # transfers of a player's LAST copy both passed the source cargo check
+            # and both committed (remove 1 on the source, add 1 on each target) —
+            # net +1 item minted out of nothing.  Holding the source player's row
+            # lock serialises the two transfers: the second one reads the already
+            # decremented cargo and fails the "insufficient quantity" guard.
+            #
+            # Ascending-ID ordering avoids the AB-BA deadlock that call-order
+            # locking (source-then-target) would create against a reverse-direction
+            # transfer (target-then-source).  The remove/add helpers below also take
+            # the per-player lock as their first act; because we already hold both
+            # locks in ascending order, those re-acquisitions are intra-transaction
+            # no-ops in the already-established order (Postgres FOR UPDATE on a row
+            # the txn already locks is a no-op) — no new ordering hazard.
+            ids_ordered = sorted({from_player_id, to_player_id})
+            locked: dict[int, Any] = {}
+            for pid in ids_ordered:
+                player = await self.player_repo.get_by_id_for_update(db, pid)
+                if not player:
+                    raise ValueError("One or both players not found")
+                locked[pid] = player
 
-            if not from_player or not to_player:
-                raise ValueError("One or both players not found")
+            from_player = locked[from_player_id]
+            to_player = locked[to_player_id]
 
             if from_player.guild_id != to_player.guild_id:
                 raise ValueError("Players must be in the same guild to trade")

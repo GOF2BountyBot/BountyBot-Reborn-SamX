@@ -347,7 +347,7 @@ class TestUpdatePlayerCredits:
         player = _make_player(credits=500)
         player.new_credits = 500
         player.lifetime_credits = 500
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         await service.update_player_credits(mock_db, player_id=1, new_credits=800)
 
@@ -358,7 +358,7 @@ class TestUpdatePlayerCredits:
     @pytest.mark.asyncio
     async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
         """ValueError raised when player does not exist."""
-        mock_player_repo.get_by_id.return_value = None
+        mock_player_repo.get_by_id_for_update.return_value = None
 
         with pytest.raises(ValueError, match="Player 99 not found"):
             await service.update_player_credits(mock_db, player_id=99, new_credits=100)
@@ -367,7 +367,7 @@ class TestUpdatePlayerCredits:
     async def test_raises_when_credits_negative(self, service, mock_db, mock_player_repo):
         """ValueError raised for negative credits."""
         player = _make_player()
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         with pytest.raises(ValueError, match="Credits cannot be negative"):
             await service.update_player_credits(mock_db, player_id=1, new_credits=-50)
@@ -378,7 +378,7 @@ class TestUpdatePlayerCredits:
         player = _make_player()
         player.new_credits = 500
         player.lifetime_credits = 500
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         await service.update_player_credits(mock_db, player_id=1, new_credits=700, update_lifetime=True)
 
@@ -390,7 +390,7 @@ class TestUpdatePlayerCredits:
         player = _make_player()
         player.new_credits = 500
         player.lifetime_credits = 500
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         await service.update_player_credits(mock_db, player_id=1, new_credits=300, update_lifetime=True)
 
@@ -402,7 +402,7 @@ class TestUpdatePlayerCredits:
         player = _make_player()
         player.new_credits = 500
         player.lifetime_credits = 500
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         await service.update_player_credits(mock_db, player_id=1, new_credits=1000, update_lifetime=False)
 
@@ -422,7 +422,7 @@ class TestUpdatePlayerXp:
         """XP is set on the player object and committed."""
         player = _make_player(xp=0, tier="Bronze")
         player.tier = "Bronze"
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         await service.update_player_xp(mock_db, player_id=1, xp=500)
 
@@ -432,7 +432,7 @@ class TestUpdatePlayerXp:
     @pytest.mark.asyncio
     async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
         """ValueError raised when player does not exist."""
-        mock_player_repo.get_by_id.return_value = None
+        mock_player_repo.get_by_id_for_update.return_value = None
 
         with pytest.raises(ValueError, match="Player 7 not found"):
             await service.update_player_xp(mock_db, player_id=7, xp=100)
@@ -441,7 +441,7 @@ class TestUpdatePlayerXp:
     async def test_clamps_negative_xp_to_zero(self, service, mock_db, mock_player_repo):
         """Negative XP is clamped to 0."""
         player = _make_player(xp=100)
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         await service.update_player_xp(mock_db, player_id=1, xp=-50)
 
@@ -451,7 +451,7 @@ class TestUpdatePlayerXp:
     async def test_clamps_xp_to_max(self, service, mock_db, mock_player_repo):
         """XP above 1,000,000 is clamped to 1,000,000."""
         player = _make_player(xp=0)
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         await service.update_player_xp(mock_db, player_id=1, xp=9_999_999)
 
@@ -1450,7 +1450,7 @@ class TestPromotePlayer:
     async def test_promotes_bronze_to_silver_when_eligible(self, service, mock_db, mock_player_repo, mock_config_repo):
         """Bronze player with 1500 XP promotes to Silver."""
         player = _make_player(xp=1500, tier="Bronze")
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _make_config(
             xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
         )
@@ -1468,7 +1468,7 @@ class TestPromotePlayer:
     async def test_promotes_silver_to_gold_when_eligible(self, service, mock_db, mock_player_repo, mock_config_repo):
         """Silver player with 6000 XP promotes to Gold."""
         player = _make_player(xp=6000, tier="Silver")
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _make_config(
             xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
         )
@@ -1483,7 +1483,7 @@ class TestPromotePlayer:
     async def test_promote_does_not_skip_tier(self, service, mock_db, mock_player_repo, mock_config_repo):
         """Bronze player with 20000 XP promotes to Silver only (no skipping)."""
         player = _make_player(xp=20000, tier="Bronze")
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _make_config(
             xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
         )
@@ -1499,7 +1499,7 @@ class TestPromotePlayer:
     async def test_raises_when_at_platinum(self, service, mock_db, mock_player_repo):
         """Platinum player cannot promote further."""
         player = _make_player(xp=20000, tier="Platinum")
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         with pytest.raises(ValueError, match="Already at maximum tier"):
             await service.promote_player(mock_db, player_id=1)
@@ -1508,7 +1508,7 @@ class TestPromotePlayer:
     async def test_raises_when_not_eligible(self, service, mock_db, mock_player_repo, mock_config_repo):
         """Bronze player with insufficient XP gets clear error message."""
         player = _make_player(xp=500, tier="Bronze")
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _make_config(
             xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
         )
@@ -1522,7 +1522,7 @@ class TestPromotePlayer:
     ):
         """Error message includes XP threshold and current XP."""
         player = _make_player(xp=500, tier="Bronze")
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _make_config(
             xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
         )
@@ -1533,7 +1533,7 @@ class TestPromotePlayer:
     @pytest.mark.asyncio
     async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
         """ValueError raised when player does not exist."""
-        mock_player_repo.get_by_id.return_value = None
+        mock_player_repo.get_by_id_for_update.return_value = None
 
         with pytest.raises(ValueError, match="Player 99 not found"):
             await service.promote_player(mock_db, player_id=99)
@@ -1542,7 +1542,7 @@ class TestPromotePlayer:
     async def test_xp_preserved_after_promotion(self, service, mock_db, mock_player_repo, mock_config_repo):
         """XP is not modified during promotion (AC-7)."""
         player = _make_player(xp=2500, tier="Bronze")
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _make_config(
             xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
         )
@@ -1558,7 +1558,7 @@ class TestPromotePlayer:
     ):
         """After promoting, eligible_for_next is False if XP doesn't reach the tier after next."""
         player = _make_player(xp=1500, tier="Bronze")
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _make_config(
             xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
         )
@@ -1573,7 +1573,7 @@ class TestPromotePlayer:
     async def test_uses_default_thresholds_when_no_config(self, service, mock_db, mock_player_repo, mock_config_repo):
         """When no guild config, default thresholds determine eligibility."""
         player = _make_player(xp=1200, tier="Bronze")
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = None
 
         result = await service.promote_player(mock_db, player_id=1)
@@ -1684,7 +1684,7 @@ class TestDemotePlayer:
         """Happy path: Silver player demotes to Bronze."""
         player = _make_player(tier="Silver")
         player.tier_change_cooldown_end = None
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = None
         service._scrub_orphaned_checks_after_tier_change = AsyncMock(return_value=0)
 
@@ -1698,7 +1698,7 @@ class TestDemotePlayer:
         """Happy path: Gold player demotes to Silver."""
         player = _make_player(tier="Gold")
         player.tier_change_cooldown_end = None
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = None
         service._scrub_orphaned_checks_after_tier_change = AsyncMock(return_value=0)
 
@@ -1712,7 +1712,7 @@ class TestDemotePlayer:
         """ValueError raised when player is already at Bronze (minimum tier)."""
         player = _make_player(tier="Bronze")
         player.tier_change_cooldown_end = None
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         with pytest.raises(ValueError, match="minimum tier"):
             await service.demote_player(mock_db, player_id=1)
@@ -1720,7 +1720,7 @@ class TestDemotePlayer:
     @pytest.mark.asyncio
     async def test_demote_player_not_found_raises(self, service, mock_db, mock_player_repo):
         """ValueError raised when player does not exist."""
-        mock_player_repo.get_by_id.return_value = None
+        mock_player_repo.get_by_id_for_update.return_value = None
 
         with pytest.raises(ValueError, match="not found"):
             await service.demote_player(mock_db, player_id=99)
@@ -1734,7 +1734,7 @@ class TestDemotePlayer:
 
         player = _make_player(tier="Silver")
         player.tier_change_cooldown_end = datetime.now(UTC) + timedelta(hours=12)
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
 
         with pytest.raises(TierChangeCooldownError):
             await service.demote_player(mock_db, player_id=1)
@@ -1744,7 +1744,7 @@ class TestDemotePlayer:
         """After demotion, _scrub_orphaned_checks_after_tier_change is called once."""
         player = _make_player(tier="Gold")
         player.tier_change_cooldown_end = None
-        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_config_repo.get_by_guild_id.return_value = None
         service._scrub_orphaned_checks_after_tier_change = AsyncMock(return_value=3)
 

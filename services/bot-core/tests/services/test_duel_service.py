@@ -198,7 +198,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=500)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -252,7 +252,7 @@ class TestCreateChallenge:
         router returns 400 with a safe message.
         """
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+        player_repo.get_by_id_for_update.side_effect = RuntimeError("DB connection lost")
 
         svc = make_service(player_repo=player_repo)
         with pytest.raises(ValueError, match="could not be retrieved"):
@@ -270,7 +270,7 @@ class TestCreateChallenge:
                 return challenger
             raise RuntimeError("DB connection lost")
 
-        player_repo.get_by_id.side_effect = _side_effect
+        player_repo.get_by_id_for_update.side_effect = _side_effect
 
         svc = make_service(player_repo=player_repo)
         with pytest.raises(ValueError, match="could not be retrieved"):
@@ -287,7 +287,7 @@ class TestCreateChallenge:
     async def test_challenger_not_found_raises(self):
         """Challenger player not in DB raises ValueError."""
         player_repo = AsyncMock()
-        player_repo.get_by_id.return_value = None  # challenger not found
+        player_repo.get_by_id_for_update.return_value = None  # challenger not found
 
         svc = make_service(player_repo=player_repo)
         with pytest.raises(ValueError, match="Challenger player"):
@@ -299,7 +299,7 @@ class TestCreateChallenge:
         challenger = make_player(1, credits=100)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else None
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else None
 
         svc = make_service(player_repo=player_repo)
         with pytest.raises(ValueError, match="Target player"):
@@ -312,7 +312,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=500)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -331,7 +331,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=30)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -350,7 +350,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=500)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -370,7 +370,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=0)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -1165,7 +1165,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         # 8k pending for challenger, 0 for target
@@ -1189,7 +1189,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         # 0 for challenger, 5k pending for target
@@ -1213,7 +1213,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         duel_repo.get_total_pending_stakes_for_player.return_value = 3_000
@@ -1237,7 +1237,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
@@ -1258,7 +1258,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         duel_repo.get_total_pending_stakes_for_player.return_value = 0

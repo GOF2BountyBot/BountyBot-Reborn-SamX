@@ -95,6 +95,7 @@ def mock_inventory_repo() -> AsyncMock:
 def mock_player_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.get_by_id = AsyncMock(return_value=None)
+    repo.get_by_id_for_update = AsyncMock(return_value=None)
     return repo
 
 
@@ -349,7 +350,7 @@ class TestAddItemToInventory:
     @pytest.mark.asyncio
     async def test_adds_item_successfully(self, service, mock_db, mock_player_repo, mock_inventory_repo):
         """Returns transaction details on successful item addition with concrete type (A.36 fix)."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
 
         added_item = _make_inventory_item(item_type="primary_weapon", quantity=3)
         mock_inventory_repo.add_item.return_value = added_item
@@ -367,7 +368,7 @@ class TestAddItemToInventory:
     @pytest.mark.asyncio
     async def test_raises_for_invalid_item_type(self, service, mock_db, mock_player_repo):
         """InvalidItemTypeError raised for unrecognised item type (A.33 fix)."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
 
         with pytest.raises(InvalidItemTypeError):
             await service.add_item_to_inventory(mock_db, player_id=1, item_type="potato", item_name="Laser", quantity=1)
@@ -375,7 +376,7 @@ class TestAddItemToInventory:
     @pytest.mark.asyncio
     async def test_raises_for_zero_quantity(self, service, mock_db, mock_player_repo):
         """ValueError raised when quantity is 0."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
 
         with pytest.raises(ValueError, match="Quantity must be positive"):
             await service.add_item_to_inventory(
@@ -385,7 +386,7 @@ class TestAddItemToInventory:
     @pytest.mark.asyncio
     async def test_raises_for_negative_quantity(self, service, mock_db, mock_player_repo):
         """ValueError raised for negative quantity."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
 
         with pytest.raises(ValueError, match="Quantity must be positive"):
             await service.add_item_to_inventory(
@@ -395,7 +396,7 @@ class TestAddItemToInventory:
     @pytest.mark.asyncio
     async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
         """ValueError raised when player does not exist."""
-        mock_player_repo.get_by_id.return_value = None
+        mock_player_repo.get_by_id_for_update.return_value = None
 
         with pytest.raises(ValueError, match="Player 55 not found"):
             await service.add_item_to_inventory(
@@ -405,7 +406,7 @@ class TestAddItemToInventory:
     @pytest.mark.asyncio
     async def test_calls_repo_with_correct_args(self, service, mock_db, mock_player_repo, mock_inventory_repo):
         """Repository add_item is called with the correct arguments."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         mock_inventory_repo.add_item.return_value = _make_inventory_item(quantity=2)
 
         await service.add_item_to_inventory(mock_db, player_id=1, item_type="module", item_name="Shield", quantity=2)
@@ -415,7 +416,7 @@ class TestAddItemToInventory:
     @pytest.mark.asyncio
     async def test_raises_when_item_does_not_exist(self, service, mock_db, mock_player_repo):
         """ValueError raised when _validate_item_exists returns False."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         # Override _validate_item_exists to return False
         service._validate_item_exists = AsyncMock(return_value=False)
 
@@ -436,7 +437,7 @@ class TestRemoveItemFromInventory:
     @pytest.mark.asyncio
     async def test_removes_item_successfully(self, service, mock_db, mock_player_repo, mock_inventory_repo):
         """Returns transaction details on successful removal (concrete type, A.36 fix)."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
 
         existing = _make_inventory_item(item_type="primary_weapon", quantity=5)
         updated = _make_inventory_item(item_type="primary_weapon", quantity=4)
@@ -456,7 +457,7 @@ class TestRemoveItemFromInventory:
         self, service, mock_db, mock_player_repo, mock_inventory_repo
     ):
         """item_completely_removed is True when item is fully removed."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
 
         existing = _make_inventory_item(item_type="primary_weapon", quantity=1)
         mock_inventory_repo.get_player_item.side_effect = [existing, None]
@@ -471,7 +472,7 @@ class TestRemoveItemFromInventory:
     @pytest.mark.asyncio
     async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
         """ValueError raised when player does not exist."""
-        mock_player_repo.get_by_id.return_value = None
+        mock_player_repo.get_by_id_for_update.return_value = None
 
         with pytest.raises(ValueError, match="Player 3 not found"):
             await service.remove_item_from_inventory(
@@ -481,7 +482,7 @@ class TestRemoveItemFromInventory:
     @pytest.mark.asyncio
     async def test_raises_when_quantity_zero(self, service, mock_db, mock_player_repo):
         """ValueError raised when quantity is 0 in remove_item_from_inventory."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
 
         with pytest.raises(ValueError, match="Quantity must be positive"):
             await service.remove_item_from_inventory(
@@ -491,7 +492,7 @@ class TestRemoveItemFromInventory:
     @pytest.mark.asyncio
     async def test_raises_for_invalid_item_type(self, service, mock_db, mock_player_repo):
         """InvalidItemTypeError raised for unrecognised item type (A.33 fix)."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
 
         with pytest.raises(InvalidItemTypeError):
             await service.remove_item_from_inventory(
@@ -501,7 +502,7 @@ class TestRemoveItemFromInventory:
     @pytest.mark.asyncio
     async def test_raises_when_item_not_in_inventory(self, service, mock_db, mock_player_repo, mock_inventory_repo):
         """ValueError raised when player does not own the item."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         mock_inventory_repo.get_player_item.return_value = None
 
         with pytest.raises(ValueError, match="does not have"):
@@ -512,7 +513,7 @@ class TestRemoveItemFromInventory:
     @pytest.mark.asyncio
     async def test_raises_when_insufficient_quantity(self, service, mock_db, mock_player_repo, mock_inventory_repo):
         """ValueError raised when player has fewer than requested quantity."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         existing = _make_inventory_item(item_type="primary_weapon", quantity=1)
         mock_inventory_repo.get_player_item.return_value = existing
 
@@ -524,7 +525,7 @@ class TestRemoveItemFromInventory:
     @pytest.mark.asyncio
     async def test_calls_repo_remove_with_correct_args(self, service, mock_db, mock_player_repo, mock_inventory_repo):
         """Repository remove_item is called with concrete type (A.36 fix)."""
-        mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         existing = _make_inventory_item(item_type="primary_weapon", quantity=3)
         updated = _make_inventory_item(item_type="primary_weapon", quantity=1)
         mock_inventory_repo.get_player_item.side_effect = [existing, updated]
@@ -765,7 +766,12 @@ class TestTransferItemBetweenPlayers:
     @pytest.mark.asyncio
     async def test_raises_when_either_player_not_found(self, service, mock_db, mock_player_repo):
         """ValueError raised when one player is missing."""
-        mock_player_repo.get_by_id.side_effect = [_make_player(player_id=1), None]
+
+        # sorted([1, 2]) → player 1 locked first, then player 2 (None)
+        async def _lookup(db, pid):
+            return {1: _make_player(player_id=1), 2: None}.get(pid)
+
+        mock_player_repo.get_by_id_for_update.side_effect = _lookup
 
         with pytest.raises(ValueError, match="One or both players not found"):
             await service.transfer_item_between_players(mock_db, 1, 2, "weapon", "Gun", 1)
@@ -775,7 +781,11 @@ class TestTransferItemBetweenPlayers:
         """ValueError raised when players are in different guilds."""
         from_player = _make_player(player_id=1, guild_id=100)
         to_player = _make_player(player_id=2, guild_id=200)
-        mock_player_repo.get_by_id.side_effect = [from_player, to_player]
+
+        async def _lookup(db, pid):
+            return {1: from_player, 2: to_player}.get(pid)
+
+        mock_player_repo.get_by_id_for_update.side_effect = _lookup
 
         with pytest.raises(ValueError, match="same guild"):
             await service.transfer_item_between_players(mock_db, 1, 2, "weapon", "Gun", 1)
@@ -783,7 +793,7 @@ class TestTransferItemBetweenPlayers:
     @pytest.mark.asyncio
     async def test_raises_when_both_players_not_found(self, service, mock_db, mock_player_repo):
         """ValueError raised when both players are missing."""
-        mock_player_repo.get_by_id.side_effect = [None, None]
+        mock_player_repo.get_by_id_for_update.return_value = None
 
         with pytest.raises(ValueError, match="One or both players not found"):
             await service.transfer_item_between_players(mock_db, 1, 2, "weapon", "Gun", 1)
@@ -793,7 +803,12 @@ class TestTransferItemBetweenPlayers:
         """Successful transfer returns details with from/to player results."""
         from_player = _make_player(player_id=1, guild_id=500)
         to_player = _make_player(player_id=2, guild_id=500)
-        mock_player_repo.get_by_id.side_effect = [from_player, to_player]
+
+        # sorted([1, 2]) → player 1 locked first, then player 2
+        async def _lookup(db, pid):
+            return {1: from_player, 2: to_player}.get(pid)
+
+        mock_player_repo.get_by_id_for_update.side_effect = _lookup
 
         # Mock remove_item_from_inventory and add_item_to_inventory on the service
         remove_result = {"quantity_removed": 1, "item_name": "Gun"}
@@ -1298,15 +1313,15 @@ class TestInventoryServiceDbExceptionHandling:
 
     @pytest.mark.asyncio
     async def test_add_item_db_error_on_player_lookup_raises_value_error(self, service, mock_db, mock_player_repo):
-        """B.15: RuntimeError from player_repo.get_by_id during add_item → ValueError."""
-        mock_player_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+        """B.15: RuntimeError from player_repo.get_by_id_for_update during add_item → ValueError."""
+        mock_player_repo.get_by_id_for_update.side_effect = RuntimeError("DB connection lost")
         with pytest.raises(ValueError, match="could not be retrieved"):
             await service.add_item_to_inventory(mock_db, player_id=1, item_type="primary_weapon", item_name="Laser")
 
     @pytest.mark.asyncio
     async def test_remove_item_db_error_on_player_lookup_raises_value_error(self, service, mock_db, mock_player_repo):
-        """B.15: RuntimeError from player_repo.get_by_id during remove_item → ValueError."""
-        mock_player_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+        """B.15: RuntimeError from player_repo.get_by_id_for_update during remove_item → ValueError."""
+        mock_player_repo.get_by_id_for_update.side_effect = RuntimeError("DB connection lost")
         with pytest.raises(ValueError, match="could not be retrieved"):
             await service.remove_item_from_inventory(
                 mock_db, player_id=1, item_type="primary_weapon", item_name="Laser"

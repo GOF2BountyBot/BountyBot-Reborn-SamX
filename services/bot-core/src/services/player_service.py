@@ -226,7 +226,16 @@ class PlayerService:
     ) -> Player:
         """Update player credits and optionally lifetime credits."""
         try:
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE) before the
+            # credits/lifetime_credits read-modify-write.  PUT /players/{id}/credits
+            # and the admin credits route reach this method as naked entry points
+            # with no outer lock, so without this lock two concurrent admin credit
+            # sets on the same player could interleave and lose an update (e.g. the
+            # lifetime_credits accumulation, computed from the pre-read balance).
+            # This method owns its own transaction (it commits below), so the lock
+            # is held by the session autobegin until that commit — no router
+            # db.begin() is required (and would conflict with the internal commit).
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -271,7 +280,12 @@ class PlayerService:
     async def update_player_xp(self, db: AsyncSession, player_id: int, xp: int) -> Player:
         """Update player XP. Tier is NOT auto-advanced; use promote_player() to advance tier."""
         try:
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE) before the
+            # XP write.  PUT /players/{id}/xp and the admin xp route are naked entry
+            # points (no outer lock); the lock serialises concurrent same-player XP
+            # sets so neither clobbers the other.  This method owns its transaction
+            # (commits below); the lock is held by autobegin until that commit.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -412,7 +426,13 @@ class PlayerService:
         FORFEITED_CHECK sentinel (see BountyService.scrub_player_checks_outside_tier).
         """
         try:
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE) before the
+            # tier/cooldown read-modify-write.  PUT /players/{id}/promote is a naked
+            # entry point; the lock serialises a concurrent promote/demote on the
+            # same player so the cooldown check-then-set and tier change cannot race
+            # (e.g. a double promotion past the intended tier).  This method owns its
+            # transaction (commits below); autobegin holds the lock until commit.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -481,7 +501,13 @@ class PlayerService:
         ValueError.
         """
         try:
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE) before the
+            # tier/cooldown/credit-penalty read-modify-write.  PUT /players/{id}/demote
+            # is a naked entry point; the lock serialises a concurrent promote/demote
+            # (and the demotion credit penalty, an RMW on credits) on the same player.
+            # This method owns its transaction (commits below); autobegin holds the
+            # lock until commit.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 

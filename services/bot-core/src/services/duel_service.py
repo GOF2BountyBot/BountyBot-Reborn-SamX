@@ -104,22 +104,38 @@ class DuelService:
             flogger.warning(f"Invalid stakes attempted: {stakes} (must be non-negative)")
             raise ValueError(f"Stakes must be non-negative, got {stakes}.")
 
-        # Fetch players — wrap repository calls so DB/ORM exceptions surface as
-        # friendly 400 errors rather than leaking as raw 500s.
-        try:
-            challenger = await self.player_repo.get_by_id(db, challenger_id)
-        except Exception as exc:
-            flogger.error(f"DB error fetching challenger player_id={challenger_id}: {exc}", exc_info=True)
-            raise ValueError(f"Challenger player with ID {challenger_id} could not be retrieved.") from exc
+        # D5-T2: lock BOTH players' aggregate-root rows FOR UPDATE in ascending
+        # player_id order (mirrors accept_duel / transfer_credits) before reading
+        # credits + pending stakes for the available-credit validation.
+        #
+        # DEFENSE-IN-DEPTH / HARDENING — NOT a live exploit: the stake is only
+        # actually DEDUCTED at accept_duel, which is lock-protected and FULLY
+        # re-validates available credits net of OTHER pending stakes under its own
+        # FOR UPDATE locks (duel_service.accept_duel, "Re-validate available credits
+        # at accept-time").  So even if two challenges race at create-time and both
+        # pass an unlocked available-credit check, at most one can be ACCEPTED while
+        # underfunded — the other accept fails its re-validation.  Locking here keeps
+        # create_challenge consistent with the canonical D5-T2 lock-ordering rule and
+        # removes the inconsistent-read window for the create-time advisory check.
+        #
+        # Wrap repository calls so DB/ORM exceptions surface as friendly 400 errors
+        # rather than leaking as raw 500s.
+        ids_ordered = sorted({challenger_id, target_id})
+        locked: dict[int, object] = {}
+        for pid in ids_ordered:
+            try:
+                player = await self.player_repo.get_by_id_for_update(db, pid)
+            except Exception as exc:
+                flogger.error(f"DB error fetching player_id={pid} for challenge: {exc}", exc_info=True)
+                raise ValueError(f"Player with ID {pid} could not be retrieved.") from exc
+            locked[pid] = player
+
+        challenger = locked[challenger_id]
         if challenger is None:
             flogger.error(f"Challenger not found: player_id={challenger_id}")
             raise ValueError(f"Challenger player with ID {challenger_id} not found.")
 
-        try:
-            target = await self.player_repo.get_by_id(db, target_id)
-        except Exception as exc:
-            flogger.error(f"DB error fetching target player_id={target_id}: {exc}", exc_info=True)
-            raise ValueError(f"Target player with ID {target_id} could not be retrieved.") from exc
+        target = locked[target_id]
         if target is None:
             flogger.error(f"Target not found: player_id={target_id}")
             raise ValueError(f"Target player with ID {target_id} not found.")

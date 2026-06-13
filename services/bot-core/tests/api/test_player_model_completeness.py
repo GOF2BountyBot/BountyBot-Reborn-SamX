@@ -323,7 +323,7 @@ class TestServiceCreditsFieldFix:
         player.lifetime_credits = 500
 
         mock_player_repo = AsyncMock()
-        mock_player_repo.get_by_id = AsyncMock(return_value=player)
+        mock_player_repo.get_by_id_for_update = AsyncMock(return_value=player)
         service.player_repo = mock_player_repo
 
         await service.update_player_credits(mock_db, player_id=1, new_credits=700, update_lifetime=True)
@@ -351,7 +351,7 @@ class TestServiceCreditsFieldFix:
         player.lifetime_credits = 500
 
         mock_player_repo = AsyncMock()
-        mock_player_repo.get_by_id = AsyncMock(return_value=player)
+        mock_player_repo.get_by_id_for_update = AsyncMock(return_value=player)
         service.player_repo = mock_player_repo
 
         await service.update_player_credits(mock_db, player_id=1, new_credits=800)

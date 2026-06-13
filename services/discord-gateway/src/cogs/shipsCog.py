@@ -130,10 +130,11 @@ class ShipsCog(commands.Cog):
 
                 # Count loadout
                 weapons_count = len(ship["weapons"]) if ship["weapons"] else 0
+                secondaries_count = len(ship["secondary_weapons"]) if ship.get("secondary_weapons") else 0
                 modules_count = len(ship["modules"]) if ship["modules"] else 0
                 turrets_count = len(ship["turrets"]) if ship["turrets"] else 0
 
-                loadout_summary = f"W:{weapons_count} | M:{modules_count} | T:{turrets_count}"
+                loadout_summary = f"W:{weapons_count} | S:{secondaries_count} | M:{modules_count} | T:{turrets_count}"
 
                 ship_info = (
                     f"{status}{nickname}\nLoadout: {loadout_summary}\n"

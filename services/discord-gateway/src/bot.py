@@ -135,37 +135,41 @@ async def lifespan(app: FastAPI):
 
     # CI-19: Startup health probe with retry — surface misconfigured api_base at startup
     # rather than silently degrading to empty autocomplete caches.  Non-fatal: the bot
-    # starts regardless so Discord commands still work; only autocomplete warm jobs will
-    # fail if bot-core is unreachable.
-    # Retries mirror the cog preload retry pattern: a few attempts with backoff so a
-    # normal full --force-recreate cold start doesn't log a false alarm.
-    _probe_attempts = 3
-    _probe_backoff_s = (1.0, 2.0)  # per-attempt wait BEFORE retry (used for attempts 1 and 2 only)
-    _probe_ok = False
-    _last_probe_exc: Exception | None = None
-    for _attempt in range(1, _probe_attempts + 1):
-        try:
-            probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
-            probe_resp.raise_for_status()
-            flogger.info(f"Autocomplete health probe OK (attempt {_attempt}): api_base={api_base}")
-            _probe_ok = True
-            break
-        except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
-            _last_probe_exc = _probe_exc
-            if _attempt < _probe_attempts:
-                _wait = _probe_backoff_s[_attempt - 1]
-                flogger.info(
-                    f"Autocomplete health probe attempt {_attempt}/{_probe_attempts} failed "
-                    f"(api_base={api_base!r}): {_probe_exc!r}. Retrying in {_wait:.0f}s…"
-                )
-                await asyncio.sleep(_wait)
-    if not _probe_ok:
-        flogger.error(
+    # starts regardless so Discord commands still work.
+    # Runs as a BACKGROUND task (not awaited inline) so it never blocks the lifespan
+    # before `yield`. A blocking probe stalls the gateway HTTP server from coming up,
+    # which in turn delays bot-core (its compose depends_on waits on the gateway's
+    # healthcheck). On a full cold start bot-core is not up yet, so the probe is
+    # expected to fail there; on a single-container gateway restart bot-core is already
+    # up and the probe confirms reachability.
+    # Retries mirror the cog preload retry pattern: a few attempts with backoff.
+    async def _autocomplete_health_probe() -> None:
+        _probe_attempts = 3
+        _probe_backoff_s = (1.0, 2.0)  # per-attempt wait BEFORE retry (used for attempts 1 and 2 only)
+        _last_probe_exc: Exception | None = None
+        for _attempt in range(1, _probe_attempts + 1):
+            try:
+                probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
+                probe_resp.raise_for_status()
+                flogger.info(f"Autocomplete health probe OK (attempt {_attempt}): api_base={api_base}")
+                return
+            except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
+                _last_probe_exc = _probe_exc
+                if _attempt < _probe_attempts:
+                    _wait = _probe_backoff_s[_attempt - 1]
+                    flogger.info(
+                        f"Autocomplete health probe attempt {_attempt}/{_probe_attempts} failed "
+                        f"(api_base={api_base!r}): {_probe_exc!r}. Retrying in {_wait:.0f}s…"
+                    )
+                    await asyncio.sleep(_wait)
+        flogger.warning(
             f"Autocomplete health probe FAILED after {_probe_attempts} attempts — "
-            f"autocomplete warm jobs will not reach bot-core. "
-            f"api_base={api_base!r} last_error={_last_probe_exc!r}. "
-            "Check BOT_API_BASE_URL env var."
+            f"bot-core not reachable at gateway startup (expected on a full cold start). "
+            f"Recurring warm jobs will populate the autocomplete caches once bot-core is up. "
+            f"api_base={api_base!r} last_error={_last_probe_exc!r}."
         )
+
+    app.state.probe_task = asyncio.create_task(_autocomplete_health_probe())
 
     # In-process APScheduler (MemoryJobStore — no persistence needed for warm jobs)
     scheduler = AsyncIOScheduler(
@@ -197,6 +201,14 @@ async def lifespan(app: FastAPI):
     # Shutdown
     flogger.info("🛑 API shutting down…")
     await bot.close()
+    # Cancel the background health probe if it is still retrying.
+    probe_task = getattr(app.state, "probe_task", None)
+    if probe_task is not None:
+        probe_task.cancel()
+        try:
+            await probe_task
+        except asyncio.CancelledError:
+            pass
     app.state.bot_task.cancel()
     try:
         await app.state.bot_task

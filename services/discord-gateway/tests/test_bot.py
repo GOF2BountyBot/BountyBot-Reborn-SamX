@@ -447,17 +447,20 @@ class TestAutocompleteStateEnvVar:
 
 
 class TestAutocompleteHealthProbe:
-    """Verify the startup health probe logs ERROR when bot-core is unreachable (CI-19).
+    """Verify the startup health probe behaviour (CI-19).
 
-    The probe is non-fatal — the bot must not crash.  On unreachable base, an ERROR
-    must be emitted (not just a warning) to surface misconfigured BOT_API_BASE_URL early.
+    The probe runs as a non-blocking background task — the bot must not crash and the
+    lifespan must not stall.  When bot-core is unreachable (expected on a full cold
+    start, since bot-core starts AFTER the gateway), the probe logs a WARNING rather
+    than ERROR: it is non-fatal and the recurring warm jobs populate the caches once
+    bot-core comes up.
     """
 
-    async def test_health_probe_logs_error_on_connect_failure(self, monkeypatch, caplog):
-        """When the health endpoint returns a connection error, flogger.error is called.
+    async def test_health_probe_logs_warning_on_connect_failure(self, monkeypatch, caplog):
+        """When the health endpoint returns a connection error, flogger.warning is called.
 
         We test the probe logic in isolation: build the probe block inputs (a fake
-        async http client that raises ConnectError) and verify the error path.
+        async http client that raises ConnectError) and verify the failure path.
         """
         import httpx
 
@@ -467,8 +470,11 @@ class TestAutocompleteHealthProbe:
             def info(self, msg, *a, **kw):
                 pass
 
-            def error(self, msg, *a, **kw):
+            def warning(self, msg, *a, **kw):
                 flogger_calls.append(msg)
+
+            def error(self, msg, *a, **kw):
+                pass
 
             def critical(self, msg, *a, **kw):
                 pass
@@ -493,15 +499,15 @@ class TestAutocompleteHealthProbe:
             probe_resp.raise_for_status()
             fake_flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
         except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
-            fake_flogger.error(
-                f"Autocomplete health probe FAILED — autocomplete warm jobs will not reach bot-core. "
-                f"api_base={api_base!r} error={_probe_exc!r}. "
-                "Check BOT_API_BASE_URL env var."
+            fake_flogger.warning(
+                f"Autocomplete health probe FAILED after 3 attempts — "
+                f"bot-core not reachable at gateway startup (expected on a full cold start). "
+                f"Recurring warm jobs will populate the autocomplete caches once bot-core is up. "
+                f"api_base={api_base!r} last_error={_probe_exc!r}."
             )
 
         assert len(flogger_calls) == 1
         assert "FAILED" in flogger_calls[0]
-        assert "BOT_API_BASE_URL" in flogger_calls[0]
         assert api_base in flogger_calls[0]
 
     async def test_health_probe_logs_info_on_success(self):
@@ -509,14 +515,14 @@ class TestAutocompleteHealthProbe:
         import httpx
 
         info_calls: list[str] = []
-        error_calls: list[str] = []
+        warning_calls: list[str] = []
 
         class _FakeLogger:
             def info(self, msg, *a, **kw):
                 info_calls.append(msg)
 
-            def error(self, msg, *a, **kw):
-                error_calls.append(msg)
+            def warning(self, msg, *a, **kw):
+                warning_calls.append(msg)
 
         fake_flogger = _FakeLogger()
         api_base = "http://bot-core:18000/api/v1"
@@ -532,14 +538,15 @@ class TestAutocompleteHealthProbe:
             probe_resp.raise_for_status()
             fake_flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
         except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
-            fake_flogger.error(
-                f"Autocomplete health probe FAILED — autocomplete warm jobs will not reach bot-core. "
-                f"api_base={api_base!r} error={_probe_exc!r}. "
-                "Check BOT_API_BASE_URL env var."
+            fake_flogger.warning(
+                f"Autocomplete health probe FAILED after 3 attempts — "
+                f"bot-core not reachable at gateway startup (expected on a full cold start). "
+                f"Recurring warm jobs will populate the autocomplete caches once bot-core is up. "
+                f"api_base={api_base!r} last_error={_probe_exc!r}."
             )
 
         assert any("OK" in m for m in info_calls)
-        assert error_calls == [], f"No error expected on success, but got: {error_calls}"
+        assert warning_calls == [], f"No warning expected on success, but got: {warning_calls}"
 
 
 if __name__ == "__main__":

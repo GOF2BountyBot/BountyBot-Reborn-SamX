@@ -655,6 +655,32 @@ class TestListCategoryCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "not found" in call_kwargs[0][0].lower()
 
+    def test_list_category_cold_cache_self_heals(self, mock_about_cog):
+        """D-020: a cold-cache miss for a VALID category must cold-fill via
+        get_with_timeout and render — NOT false-negative with 'not found'.
+        (Regression: /list_category used a bare peek() with no self-heal, so a
+        valid category reported 'not found' right after /reload_autocomplete
+        cleared the objects cache.)"""
+        interaction = _create_mock_interaction()
+
+        # Cold cache: peek("system") -> None ...
+        mock_about_cog._objects_cache.clear()
+        # ... but the cold-fill resolves the valid category.
+        mock_about_cog._objects_cache.get_with_timeout = AsyncMock(
+            return_value=[{"name": "S'Kolptorr", "emoji": None}, {"name": "Mido", "emoji": None}]
+        )
+
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "system"))
+
+        # The self-heal cold-fill was attempted with the requested category.
+        mock_about_cog._objects_cache.get_with_timeout.assert_awaited_once_with("system", timeout=1.0)
+        # And it rendered an embed rather than a "not found" text error.
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert "embed" in call_args[1]
+        sent_text = call_args[0][0] if call_args[0] else ""
+        assert "not found" not in str(sent_text).lower()
+
     def test_list_category_empty_category(self, mock_about_cog):
         """list_category with empty category should send ephemeral message."""
         interaction = _create_mock_interaction()

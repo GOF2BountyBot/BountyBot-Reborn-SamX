@@ -605,7 +605,17 @@ class AboutCog(commands.Cog):
         )
 
         try:
+            # D-020: cold-cache self-heal. A bare peek() miss must NOT be reported
+            # as "not found" — a valid-but-unwarmed category (e.g. right after
+            # /reload_autocomplete clears _objects_cache, or on fresh startup) would
+            # false-negative. Mirror the autocomplete cold-fill: peek → on miss,
+            # get_with_timeout() to populate, then only treat as not-found/empty.
             objects = self._objects_cache.peek(category)
+            if objects is None:
+                try:
+                    objects = await self._objects_cache.get_with_timeout(category, timeout=1.0)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    objects = None
             if objects is None:
                 await interaction.followup.send(f"❌ Category '{category}' not found.", ephemeral=True)
                 return

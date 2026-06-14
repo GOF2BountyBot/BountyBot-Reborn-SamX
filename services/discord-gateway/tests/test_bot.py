@@ -4,6 +4,7 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 
 # Import discord_mock_utils for consistent mock patterns
@@ -547,6 +548,117 @@ class TestAutocompleteHealthProbe:
 
         assert any("OK" in m for m in info_calls)
         assert warning_calls == [], f"No warning expected on success, but got: {warning_calls}"
+
+
+class TestWarmOnBoot:
+    """Tests for the one-shot startup pre-warm task (_warm_on_boot).
+
+    It waits for the Discord bot AND bot-core to be reachable, then runs a single warm
+    pass over the autocomplete caches. It must self-terminate (and warm nothing) if
+    either readiness gate fails, leaving the recurring scheduler jobs to self-heal.
+    """
+
+    _WARM_FN_NAMES = (
+        "warm_guild_shop_cache",
+        "warm_guild_bounty_cache",
+        "warm_guild_players",
+        "warm_guild_duel_caches",
+        "warm_guild_admin_duel_cache",
+        "warm_guild_combatlog_caches",
+        "refresh_jobs_cache",
+    )
+
+    def _install_fake_warm(self, monkeypatch):
+        """Inject a fake utils.autocomplete_warm so _warm_on_boot's inner import resolves
+        to AsyncMocks instead of the real warm coroutines. Returns the fake module."""
+        import utils  # real package (already imported by `import bot`)
+
+        fake_warm = types.ModuleType("utils.autocomplete_warm")
+        for name in self._WARM_FN_NAMES:
+            setattr(fake_warm, name, AsyncMock())
+        monkeypatch.setitem(sys.modules, "utils.autocomplete_warm", fake_warm)
+        monkeypatch.setattr(utils, "autocomplete_warm", fake_warm, raising=False)
+        return fake_warm
+
+    @staticmethod
+    def _make_bot(guild_ids=(123,)):
+        bot = MagicMock()
+        bot.wait_until_ready = AsyncMock()
+        bot.guilds = [MagicMock(id=gid) for gid in guild_ids]
+        return bot
+
+    @staticmethod
+    def _make_http(ok=True):
+        http = MagicMock()
+        if ok:
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            http.get = AsyncMock(return_value=resp)
+        else:
+            http.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+        return http
+
+    async def test_happy_path_warms_each_cache_once(self, monkeypatch):
+        """Bot ready + bot-core reachable → every warm coroutine is called once per guild,
+        with the jobs cache warmed once overall."""
+        import bot as bot_mod
+
+        fake_warm = self._install_fake_warm(monkeypatch)
+        bot = self._make_bot(guild_ids=(123,))
+        http = self._make_http(ok=True)
+
+        await bot_mod._warm_on_boot(bot, http, "http://bot-core:18000/api/v1")
+
+        bot.wait_until_ready.assert_awaited_once()
+        http.get.assert_awaited()  # readiness probe happened
+        fake_warm.warm_guild_shop_cache.assert_awaited_once_with(bot, 123)
+        fake_warm.warm_guild_bounty_cache.assert_awaited_once_with(bot, 123)
+        fake_warm.warm_guild_players.assert_awaited_once_with(123)
+        fake_warm.warm_guild_duel_caches.assert_awaited_once_with(bot, 123)
+        fake_warm.warm_guild_admin_duel_cache.assert_awaited_once_with(bot, 123)
+        fake_warm.warm_guild_combatlog_caches.assert_awaited_once_with(bot, 123)
+        fake_warm.refresh_jobs_cache.assert_awaited_once_with(bot)
+
+    async def test_botcore_unreachable_skips_warm(self, monkeypatch):
+        """If bot-core never responds, the task gives up at the deadline and warms nothing."""
+        import bot as bot_mod
+
+        # Deadline 0 + poll 0 → bail on the first failed probe.
+        monkeypatch.setenv("AUTOCOMPLETE_PREWARM_BOTCORE_DEADLINE_S", "0")
+        monkeypatch.setenv("AUTOCOMPLETE_PREWARM_POLL_INTERVAL_S", "0")
+
+        fake_warm = self._install_fake_warm(monkeypatch)
+        bot = self._make_bot()
+        http = self._make_http(ok=False)
+
+        await bot_mod._warm_on_boot(bot, http, "http://bot-core:18000/api/v1")
+
+        bot.wait_until_ready.assert_awaited_once()
+        http.get.assert_awaited()  # probe attempted
+        for name in self._WARM_FN_NAMES:
+            getattr(fake_warm, name).assert_not_awaited()
+
+    async def test_bot_not_ready_skips_warm(self, monkeypatch):
+        """If the Discord bot never becomes ready, the task gives up before probing
+        bot-core and warms nothing."""
+        import bot as bot_mod
+
+        monkeypatch.setenv("AUTOCOMPLETE_PREWARM_BOT_READY_TIMEOUT_S", "0.01")
+
+        fake_warm = self._install_fake_warm(monkeypatch)
+
+        async def _never():
+            await asyncio.sleep(10)
+
+        bot = self._make_bot()
+        bot.wait_until_ready = AsyncMock(side_effect=_never)
+        http = self._make_http(ok=True)
+
+        await bot_mod._warm_on_boot(bot, http, "http://bot-core:18000/api/v1")
+
+        http.get.assert_not_awaited()  # never reached the bot-core probe
+        for name in self._WARM_FN_NAMES:
+            getattr(fake_warm, name).assert_not_awaited()
 
 
 if __name__ == "__main__":

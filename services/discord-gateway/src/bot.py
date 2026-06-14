@@ -4,7 +4,7 @@ import os
 import pkgutil
 import sys
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 import discord
@@ -110,6 +110,100 @@ GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", os.getenv("PORT", "8000")))
 ACCESS_LOG = os.getenv("ACCESS_LOG", "true").lower() == "true"
 
 
+async def _warm_on_boot(bot, autocomplete_http: httpx.AsyncClient, api_base: str) -> None:
+    """One-shot startup pre-warm of the autocomplete caches.
+
+    On a full `compose up --force-recreate`, bot-core boots AFTER the gateway, so the
+    scheduler's fixed-offset initial warm waves fire before bot-core is reachable and
+    fail; the caches then stay cold until the recurring refresh jobs cycle (minutes).
+    This task closes that gap: it waits for the Discord bot AND bot-core to be ready,
+    then runs a SINGLE warm pass so autocomplete is hot ASAP after a redeploy/restart.
+
+    Intentionally one-and-done: ongoing cache freshness/self-heal is owned by the
+    recurring scheduler jobs in register_warm_jobs(), which this does NOT touch. Runs
+    as a non-blocking background task and self-terminates on completion or deadline.
+    """
+    flogger = bblogger.get_logger("discord-gateway-api-server")
+    ready_timeout_s = float(os.getenv("AUTOCOMPLETE_PREWARM_BOT_READY_TIMEOUT_S", "60"))
+    botcore_deadline_s = float(os.getenv("AUTOCOMPLETE_PREWARM_BOTCORE_DEADLINE_S", "180"))
+    poll_interval_s = float(os.getenv("AUTOCOMPLETE_PREWARM_POLL_INTERVAL_S", "5"))
+    stagger_ms = int(os.getenv("AUTOCOMPLETE_WARM_GUILD_STAGGER_MS", "200"))
+
+    # 1) Wait for the Discord bot to connect (so bot.guilds is populated). Bounded,
+    #    mirroring the existing discord_helpers.resolve_bot pattern.
+    try:
+        await asyncio.wait_for(bot.wait_until_ready(), timeout=ready_timeout_s)
+    except TimeoutError:
+        flogger.warning(
+            f"warm-on-boot: Discord bot not ready within {ready_timeout_s:.0f}s — "
+            "skipping startup pre-warm (recurring scheduler jobs will warm the caches)."
+        )
+        return
+
+    # 2) Wait for bot-core to become reachable, bounded by a deadline.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + botcore_deadline_s
+    while True:
+        try:
+            resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
+            resp.raise_for_status()
+            break
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            if loop.time() >= deadline:
+                flogger.warning(
+                    f"warm-on-boot: bot-core not reachable within {botcore_deadline_s:.0f}s "
+                    f"({api_base!r}, last_error={exc!r}) — skipping startup pre-warm "
+                    "(recurring scheduler jobs will warm the caches once it is up)."
+                )
+                return
+            await asyncio.sleep(poll_interval_s)
+
+    # 3) Single warm pass, in dependency order, lightly staggered per guild.
+    # NOTE: this reuses the warm coroutines from autocomplete_warm directly; the call
+    # list MIRRORS the initial waves in register_warm_jobs() — if a new initial-warm
+    # cache is added there, add it here too. We deliberately register NO scheduler jobs;
+    # ongoing freshness remains the scheduler's responsibility.
+    from utils.autocomplete_warm import (
+        refresh_jobs_cache,
+        warm_guild_admin_duel_cache,
+        warm_guild_bounty_cache,
+        warm_guild_combatlog_caches,
+        warm_guild_duel_caches,
+        warm_guild_players,
+        warm_guild_shop_cache,
+    )
+
+    guilds = list(bot.guilds)
+    flogger.info(f"warm-on-boot: bot-core reachable; pre-warming autocomplete caches for {len(guilds)} guild(s)")
+    for i, guild in enumerate(guilds):
+        if i and stagger_ms:
+            await asyncio.sleep(stagger_ms / 1000)
+        gid = guild.id
+        warm_steps = (
+            ("shop", warm_guild_shop_cache, (bot, gid)),
+            ("bounty", warm_guild_bounty_cache, (bot, gid)),
+            ("players", warm_guild_players, (gid,)),
+            ("duel", warm_guild_duel_caches, (bot, gid)),
+            ("admin-duel", warm_guild_admin_duel_cache, (bot, gid)),
+            ("combatlog", warm_guild_combatlog_caches, (bot, gid)),
+        )
+        # Each warm fn is individually non-fatal, but guard anyway so one failing cache
+        # never aborts the rest of the pass.
+        for label, fn, fn_args in warm_steps:
+            try:
+                await fn(*fn_args)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"warm-on-boot: {label} warm failed for guild {gid}: {exc!r}")
+
+    # Jobs cache is guild-agnostic — warm once.
+    try:
+        await refresh_jobs_cache(bot)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"warm-on-boot: jobs cache warm failed: {exc!r}")
+
+    flogger.info("warm-on-boot: startup pre-warm complete")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     flogger = bblogger.get_logger("discord-gateway-api-server")
@@ -196,19 +290,24 @@ async def lifespan(app: FastAPI):
     app.state.bot_task = asyncio.create_task(bot_task_wrapper())
     flogger.info("✅ Discord bot task launched")
 
+    # One-shot startup pre-warm (non-blocking, self-terminating). Closes the cold-cache
+    # gap on a full cold start where bot-core boots after the gateway. Does NOT touch the
+    # scheduler's recurring warm/refresh jobs.
+    app.state.warm_on_boot_task = asyncio.create_task(_warm_on_boot(bot, autocomplete_http, api_base))
+    flogger.info("warm-on-boot pre-warm task launched")
+
     yield  # ←── your routes run here
 
     # Shutdown
     flogger.info("🛑 API shutting down…")
     await bot.close()
-    # Cancel the background health probe if it is still retrying.
-    probe_task = getattr(app.state, "probe_task", None)
-    if probe_task is not None:
-        probe_task.cancel()
-        try:
-            await probe_task
-        except asyncio.CancelledError:
-            pass
+    # Cancel the background health probe and warm-on-boot task if still running.
+    for _task_name in ("probe_task", "warm_on_boot_task"):
+        _bg_task = getattr(app.state, _task_name, None)
+        if _bg_task is not None:
+            _bg_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _bg_task
     app.state.bot_task.cancel()
     try:
         await app.state.bot_task

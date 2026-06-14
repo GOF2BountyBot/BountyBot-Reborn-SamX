@@ -144,30 +144,49 @@ class TestNotificationsBountyEnable:
 
     @pytest.mark.asyncio
     async def test_bounty_enable_assigns_tier_role(self, cog):
-        """Should add the Bronze tier role when player has Bronze tier."""
+        """Should add the Bronze tier role AND persist the flag (D-019).
+
+        Without mocking http_client.put as AsyncMock, the await inside
+        _persist_notification_preference raises a TypeError that the outer
+        except-swallow hides — the persist call never actually runs.  Mocking
+        put as AsyncMock and asserting it was called proves _persist_notification_preference
+        executed with the correct player_id and flag value.
+        """
         interaction = _make_mock_interaction()
 
         config_data = _make_config_data(bronze_role_id=2001)
         player_data = _make_player_data(tier="Bronze")
+        player_data["id"] = 1  # explicit player id for PUT assertion
 
         tier_role = _make_mock_role(2001, "Bounty Hunter Bronze")
         interaction.guild.get_role.return_value = tier_role
         interaction.user.roles = []  # Role not yet assigned
 
-        # Config GET → 200, Player POST → 200
+        # Config GET, Player POST, persist PUT
         config_resp = _make_http_resp(200, config_data)
         player_resp = _make_http_resp(200, player_data)
+        put_resp = _make_http_resp(200, {})
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
 
         await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
+        # (a) tier role was added
         interaction.user.add_roles.assert_awaited_once_with(tier_role, reason="BountyBot bounty notification opt-in")
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
         assert "enabled" in embed.title.lower()
+        # (b) PUT /players/1/notifications called with enabled=True
+        cog.http_client.put.assert_awaited_once()
+        put_call = cog.http_client.put.call_args
+        put_url = put_call[0][0] if put_call[0] else put_call[1].get("url", "")
+        assert put_url.endswith("/players/1/notifications"), f"Expected /players/1/notifications, got: {put_url}"
+        put_json = put_call[1].get("json", {})
+        assert put_json.get("notification_type") == "bounty", f"Got: {put_json}"
+        assert put_json.get("enabled") is True, f"Got: {put_json}"
 
     @pytest.mark.asyncio
     async def test_bounty_enable_skips_role_already_assigned(self, cog):
@@ -199,11 +218,17 @@ class TestNotificationsBountyDisable:
 
     @pytest.mark.asyncio
     async def test_bounty_disable_removes_tier_role(self, cog):
-        """Should remove the Bronze tier role when player opts out."""
+        """Should remove the Bronze tier role AND persist enabled=False (D-019).
+
+        Mirrors test_bounty_enable_assigns_tier_role: http_client.put must be an
+        AsyncMock so _persist_notification_preference actually executes.  The PUT
+        assertion proves the persist call was not silently skipped.
+        """
         interaction = _make_mock_interaction()
 
         config_data = _make_config_data(bronze_role_id=2001)
         player_data = _make_player_data(tier="Bronze")
+        player_data["id"] = 7  # explicit player id for PUT assertion
 
         tier_role = _make_mock_role(2001, "Bounty Hunter Bronze")
         interaction.guild.get_role.return_value = tier_role
@@ -211,17 +236,28 @@ class TestNotificationsBountyDisable:
 
         config_resp = _make_http_resp(200, config_data)
         player_resp = _make_http_resp(200, player_data)
+        put_resp = _make_http_resp(200, {})
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
 
         await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=0)
 
+        # (a) tier role was removed
         interaction.user.remove_roles.assert_awaited_once_with(
             tier_role, reason="BountyBot bounty notification opt-out"
         )
         call_kwargs = interaction.followup.send.call_args[1]
         embed = call_kwargs["embed"]
         assert "disabled" in embed.title.lower()
+        # (b) PUT /players/7/notifications called with enabled=False
+        cog.http_client.put.assert_awaited_once()
+        put_call = cog.http_client.put.call_args
+        put_url = put_call[0][0] if put_call[0] else put_call[1].get("url", "")
+        assert put_url.endswith("/players/7/notifications"), f"Expected /players/7/notifications, got: {put_url}"
+        put_json = put_call[1].get("json", {})
+        assert put_json.get("notification_type") == "bounty", f"Got: {put_json}"
+        assert put_json.get("enabled") is False, f"Got: {put_json}"
 
     @pytest.mark.asyncio
     async def test_bounty_disable_skips_remove_when_not_assigned(self, cog):
@@ -265,8 +301,14 @@ class TestNotificationsShopEnable:
         interaction.user.roles = []
 
         config_resp = _make_http_resp(200, config_data)
+        # D-019: shop branch now POSTs to /players/ to resolve player before persisting pref
+        shop_player_resp = _make_http_resp(200, {"id": 1, "discord_id": 111, "guild_id": 999})
+        # D-019: PUT /players/{id}/notifications to persist the pref (non-fatal)
+        put_resp = _make_http_resp(200, {})
+
         cog.http_client.get = AsyncMock(return_value=config_resp)
-        cog.http_client.post = AsyncMock()  # Not called for shop type
+        cog.http_client.post = AsyncMock(return_value=shop_player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
 
         await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
@@ -286,7 +328,12 @@ class TestNotificationsShopEnable:
         interaction.user.roles = [shop_role]  # Already has role
 
         config_resp = _make_http_resp(200, config_data)
+        shop_player_resp = _make_http_resp(200, {"id": 1, "discord_id": 111, "guild_id": 999})
+        put_resp = _make_http_resp(200, {})
+
         cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=shop_player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
 
         await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
@@ -308,7 +355,12 @@ class TestNotificationsShopDisable:
         interaction.user.roles = [shop_role]
 
         config_resp = _make_http_resp(200, config_data)
+        shop_player_resp = _make_http_resp(200, {"id": 1, "discord_id": 111, "guild_id": 999})
+        put_resp = _make_http_resp(200, {})
+
         cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=shop_player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
 
         await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=0)
 
@@ -393,7 +445,13 @@ class TestNotificationsErrorCases:
         interaction.user.add_roles.side_effect = Exception("403 Forbidden: Missing Permissions")
 
         config_resp = _make_http_resp(200, config_data)
+        # D-019: shop branch POSTs to resolve player before persisting pref
+        shop_player_resp = _make_http_resp(200, {"id": 1, "discord_id": 111, "guild_id": 999})
+        put_resp = _make_http_resp(200, {})
+
         cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=shop_player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
 
         await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
@@ -515,7 +573,13 @@ class TestNotificationsShopDisableNoOp:
         interaction.user.roles = []  # User does NOT have the shop role
 
         config_resp = _make_http_resp(200, config_data)
+        # D-019: shop branch POSTs to resolve player before persisting pref
+        shop_player_resp = _make_http_resp(200, {"id": 1, "discord_id": 111, "guild_id": 999})
+        put_resp = _make_http_resp(200, {})
+
         cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=shop_player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
 
         await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=0)
 
@@ -571,7 +635,13 @@ class TestNotificationsDiscordForbidden:
         interaction.user.add_roles.side_effect = self._make_discord_forbidden()
 
         config_resp = _make_http_resp(200, config_data)
+        # D-019: shop branch POSTs to resolve player before persisting pref
+        shop_player_resp = _make_http_resp(200, {"id": 1, "discord_id": 111, "guild_id": 999})
+        put_resp = _make_http_resp(200, {})
+
         cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=shop_player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
 
         await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
@@ -682,3 +752,209 @@ class TestNotificationsBountyNonBronzeTiers:
         interaction.user.remove_roles.assert_awaited_once_with(
             gold_role, reason="BountyBot bounty notification opt-out"
         )
+
+
+# ---------------------------------------------------------------------------
+# D-019: _persist_notification_preference PUT assertion tests
+# ---------------------------------------------------------------------------
+
+
+class TestNotificationsPersistPutCall:
+    """D-019: Verify that _persist_notification_preference PUTs to the correct endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_bounty_enable_puts_to_player_notifications_endpoint(self, cog):
+        """Enabling bounty notifications calls PUT .../players/{id}/notifications with correct JSON."""
+        interaction = _make_mock_interaction()
+
+        config_data = _make_config_data(bronze_role_id=2001)
+        player_data = _make_player_data(tier="Bronze")
+        player_data["id"] = 42  # explicit player id
+
+        tier_role = _make_mock_role(2001, "Bounty Hunter Bronze")
+        interaction.guild.get_role.return_value = tier_role
+        interaction.user.roles = []
+
+        config_resp = _make_http_resp(200, config_data)
+        player_resp = _make_http_resp(200, player_data)
+        put_resp = _make_http_resp(200, {})
+
+        cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
+
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
+
+        cog.http_client.put.assert_awaited_once()
+        call_args = cog.http_client.put.call_args
+        url = call_args[0][0] if call_args[0] else call_args[1].get("url", "")
+        assert url.endswith("/players/42/notifications"), f"Expected /players/42/notifications, got: {url}"
+        json_body = call_args[1].get("json", {})
+        assert json_body.get("notification_type") == "bounty"
+        assert json_body.get("enabled") is True
+
+    @pytest.mark.asyncio
+    async def test_bounty_disable_puts_correct_json(self, cog):
+        """Disabling bounty notifications PUTs with enabled=False."""
+        interaction = _make_mock_interaction()
+
+        config_data = _make_config_data(bronze_role_id=2001)
+        player_data = _make_player_data(tier="Bronze")
+        player_data["id"] = 7
+
+        tier_role = _make_mock_role(2001, "Bounty Hunter Bronze")
+        interaction.guild.get_role.return_value = tier_role
+        interaction.user.roles = [tier_role]
+
+        config_resp = _make_http_resp(200, config_data)
+        player_resp = _make_http_resp(200, player_data)
+        put_resp = _make_http_resp(200, {})
+
+        cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
+
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=0)
+
+        cog.http_client.put.assert_awaited_once()
+        call_args = cog.http_client.put.call_args
+        url = call_args[0][0] if call_args[0] else ""
+        assert url.endswith("/players/7/notifications")
+        json_body = call_args[1].get("json", {})
+        assert json_body.get("notification_type") == "bounty"
+        assert json_body.get("enabled") is False
+
+    @pytest.mark.asyncio
+    async def test_shop_enable_puts_to_player_notifications_endpoint(self, cog):
+        """Enabling shop notifications calls PUT .../players/{id}/notifications with correct JSON."""
+        interaction = _make_mock_interaction()
+
+        config_data = _make_config_data(shop_announcements_role_id=3001)
+        shop_role = _make_mock_role(3001, "Shop Announcements")
+        interaction.guild.get_role.return_value = shop_role
+        interaction.user.roles = []
+
+        config_resp = _make_http_resp(200, config_data)
+        shop_player_resp = _make_http_resp(200, {"id": 55, "discord_id": 111, "guild_id": 999})
+        put_resp = _make_http_resp(200, {})
+
+        cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=shop_player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
+
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
+
+        cog.http_client.put.assert_awaited_once()
+        call_args = cog.http_client.put.call_args
+        url = call_args[0][0] if call_args[0] else ""
+        assert url.endswith("/players/55/notifications"), f"Expected /players/55/notifications, got: {url}"
+        json_body = call_args[1].get("json", {})
+        assert json_body.get("notification_type") == "shop"
+        assert json_body.get("enabled") is True
+
+    @pytest.mark.asyncio
+    async def test_shop_disable_puts_correct_json(self, cog):
+        """Disabling shop notifications PUTs with enabled=False."""
+        interaction = _make_mock_interaction()
+
+        config_data = _make_config_data(shop_announcements_role_id=3001)
+        shop_role = _make_mock_role(3001, "Shop Announcements")
+        interaction.guild.get_role.return_value = shop_role
+        interaction.user.roles = [shop_role]
+
+        config_resp = _make_http_resp(200, config_data)
+        shop_player_resp = _make_http_resp(200, {"id": 99, "discord_id": 111, "guild_id": 999})
+        put_resp = _make_http_resp(200, {})
+
+        cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=shop_player_resp)
+        cog.http_client.put = AsyncMock(return_value=put_resp)
+
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=0)
+
+        cog.http_client.put.assert_awaited_once()
+        call_args = cog.http_client.put.call_args
+        url = call_args[0][0] if call_args[0] else ""
+        assert url.endswith("/players/99/notifications")
+        json_body = call_args[1].get("json", {})
+        assert json_body.get("notification_type") == "shop"
+        assert json_body.get("enabled") is False
+
+
+# ---------------------------------------------------------------------------
+# D-019: _persist_notification_preference is non-fatal (Note 4)
+# ---------------------------------------------------------------------------
+
+
+class TestNotificationsPersistNonFatal:
+    """D-019: PUT /players/{id}/notifications failure must not block the role change.
+
+    The _persist_notification_preference docstring explicitly documents this:
+    "Non-fatal: a persist failure is logged but does not block the user-visible
+    role change."  These tests prove it for the bounty path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_bounty_enable_persist_fails_role_still_added(self, cog):
+        """If PUT /players/{id}/notifications raises, the tier role is still added and
+        no exception propagates to the user (they see the success embed, not an error)."""
+        interaction = _make_mock_interaction()
+
+        config_data = _make_config_data(bronze_role_id=2001)
+        player_data = _make_player_data(tier="Bronze")
+        player_data["id"] = 5
+
+        tier_role = _make_mock_role(2001, "Bounty Hunter Bronze")
+        interaction.guild.get_role.return_value = tier_role
+        interaction.user.roles = []  # Role not yet assigned
+
+        config_resp = _make_http_resp(200, config_data)
+        player_resp = _make_http_resp(200, player_data)
+        # PUT raises — persistence is broken
+        cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=player_resp)
+        cog.http_client.put = AsyncMock(side_effect=Exception("Connection refused"))
+
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
+
+        # The role change must still have happened
+        interaction.user.add_roles.assert_awaited_once_with(tier_role, reason="BountyBot bounty notification opt-in")
+        # The user must see the success embed (not an error)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs, "Expected success embed, got positional/content response"
+        embed = call_kwargs["embed"]
+        assert "enabled" in embed.title.lower(), f"Expected 'enabled' in title, got: {embed.title!r}"
+
+    @pytest.mark.asyncio
+    async def test_bounty_disable_persist_fails_role_still_removed(self, cog):
+        """If PUT /players/{id}/notifications raises on disable, the tier role is still
+        removed and no exception propagates — the user sees the disabled embed."""
+        interaction = _make_mock_interaction()
+
+        config_data = _make_config_data(bronze_role_id=2001)
+        player_data = _make_player_data(tier="Bronze")
+        player_data["id"] = 6
+
+        tier_role = _make_mock_role(2001, "Bounty Hunter Bronze")
+        interaction.guild.get_role.return_value = tier_role
+        interaction.user.roles = [tier_role]  # Has the role
+
+        config_resp = _make_http_resp(200, config_data)
+        player_resp = _make_http_resp(200, player_data)
+        cog.http_client.get = AsyncMock(return_value=config_resp)
+        cog.http_client.post = AsyncMock(return_value=player_resp)
+        cog.http_client.put = AsyncMock(side_effect=Exception("Timeout"))
+
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=0)
+
+        # The role removal must still have happened
+        interaction.user.remove_roles.assert_awaited_once_with(
+            tier_role, reason="BountyBot bounty notification opt-out"
+        )
+        # The user must see the disabled embed (not an error)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs, "Expected success embed, got positional/content response"
+        embed = call_kwargs["embed"]
+        assert "disabled" in embed.title.lower(), f"Expected 'disabled' in title, got: {embed.title!r}"

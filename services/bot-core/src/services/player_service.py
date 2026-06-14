@@ -146,6 +146,10 @@ class PlayerService:
                 classic_mode=False,
                 guild_transfer_cooldown=None,
                 bounty_cooldown_end=None,
+                # D-019: new players default opted-in to both announcement streams,
+                # matching the historical default (and the model/server defaults).
+                bounty_notifications_enabled=True,
+                shop_notifications_enabled=True,
             )
 
             player = await self.player_repo.add(db, player, commit=False)
@@ -304,6 +308,50 @@ class PlayerService:
 
         except Exception as e:
             flogger.error(f"Error updating XP for player {player_id}: {e}")
+            raise
+
+    async def update_notification_preference(
+        self, db: AsyncSession, player_id: int, notification_type: str, enabled: bool
+    ) -> Player:
+        """Persist a player's notification preference (D-019).
+
+        ``notification_type`` is ``"bounty"`` or ``"shop"`` and selects which
+        boolean flag to write. The stored flag is the source of truth; the gateway
+        projects it onto the corresponding Discord role after this returns.
+
+        D5-T2 lock pattern: lock the aggregate-root Player row FIRST (FOR UPDATE)
+        before the read-modify-write. ``PUT /players/{id}/notifications`` is a naked
+        entry point with no outer lock, so the lock serialises concurrent preference
+        writes (e.g. a /notifications toggle racing a /profile-driven write) against
+        every other same-player mutation. This method owns its transaction (it commits
+        below); the lock is held by autobegin until that commit, so no router
+        ``db.begin()`` is required (and would conflict with the internal commit).
+        """
+        try:
+            if notification_type not in ("bounty", "shop"):
+                raise ValueError(f"Invalid notification_type: {notification_type!r}. Must be 'bounty' or 'shop'")
+
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
+
+            if notification_type == "bounty":
+                player.bounty_notifications_enabled = enabled
+            else:
+                player.shop_notifications_enabled = enabled
+
+            await db.commit()
+            await db.refresh(player)
+
+            flogger.info(
+                f"Updated {notification_type} notification preference for player {player_id}: enabled={enabled}"
+            )
+            return player
+
+        except ValueError:
+            raise
+        except Exception as e:
+            flogger.error(f"Error updating notification preference for player {player_id}: {e}")
             raise
 
     def _calculate_tier_from_xp(self, xp: int, thresholds: dict[str, int]) -> str:

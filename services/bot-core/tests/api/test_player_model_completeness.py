@@ -441,3 +441,145 @@ class TestNewFieldsInApiResponse:
         assert response.guild_transfer_cooldown is None
         assert response.classic_mode is False
         assert response.bounty_cooldown_end is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: D-019 notification-preference columns on Player model (new)
+# ---------------------------------------------------------------------------
+
+
+class TestD019NotificationModelFields:
+    """Verify that the Player model has the D-019 notification-preference columns."""
+
+    def test_player_model_has_bounty_notifications_enabled_column(self):
+        """Player model declares bounty_notifications_enabled as a mapped column."""
+        from persist.models.player import Player
+
+        assert hasattr(Player, "bounty_notifications_enabled"), "Player model must have bounty_notifications_enabled"
+        col = Player.__table__.c.get("bounty_notifications_enabled")
+        assert col is not None, "bounty_notifications_enabled must be a database column"
+
+    def test_player_model_has_shop_notifications_enabled_column(self):
+        """Player model declares shop_notifications_enabled as a mapped column."""
+        from persist.models.player import Player
+
+        assert hasattr(Player, "shop_notifications_enabled"), "Player model must have shop_notifications_enabled"
+        col = Player.__table__.c.get("shop_notifications_enabled")
+        assert col is not None, "shop_notifications_enabled must be a database column"
+
+    def test_bounty_notifications_enabled_is_non_nullable(self):
+        """bounty_notifications_enabled is non-nullable."""
+        from persist.models.player import Player
+
+        col = Player.__table__.c.get("bounty_notifications_enabled")
+        assert col is not None
+        assert not col.nullable, "bounty_notifications_enabled must be non-nullable"
+
+    def test_shop_notifications_enabled_is_non_nullable(self):
+        """shop_notifications_enabled is non-nullable."""
+        from persist.models.player import Player
+
+        col = Player.__table__.c.get("shop_notifications_enabled")
+        assert col is not None
+        assert not col.nullable, "shop_notifications_enabled must be non-nullable"
+
+    def test_bounty_notifications_enabled_has_server_default(self):
+        """bounty_notifications_enabled has a server_default so existing rows opt-in."""
+        from persist.models.player import Player
+
+        col = Player.__table__.c.get("bounty_notifications_enabled")
+        assert col is not None
+        assert col.server_default is not None, "bounty_notifications_enabled must have a server_default"
+
+    def test_shop_notifications_enabled_has_server_default(self):
+        """shop_notifications_enabled has a server_default so existing rows opt-in."""
+        from persist.models.player import Player
+
+        col = Player.__table__.c.get("shop_notifications_enabled")
+        assert col is not None
+        assert col.server_default is not None, "shop_notifications_enabled must have a server_default"
+
+
+# ---------------------------------------------------------------------------
+# Tests: D-019 notification fields in PlayerResponse schema (new)
+# ---------------------------------------------------------------------------
+
+
+class TestD019PlayerResponseSchema:
+    """Verify PlayerResponse exposes both D-019 notification fields with True defaults."""
+
+    def test_player_response_has_bounty_notifications_enabled_field(self):
+        """PlayerResponse schema exposes bounty_notifications_enabled."""
+        from api.schemas.players_schema import PlayerResponse
+
+        assert "bounty_notifications_enabled" in PlayerResponse.model_fields
+
+    def test_player_response_has_shop_notifications_enabled_field(self):
+        """PlayerResponse schema exposes shop_notifications_enabled."""
+        from api.schemas.players_schema import PlayerResponse
+
+        assert "shop_notifications_enabled" in PlayerResponse.model_fields
+
+    def test_player_response_bounty_notifications_enabled_default_is_true(self):
+        """PlayerResponse.bounty_notifications_enabled defaults to True (opt-in)."""
+        from api.schemas.players_schema import PlayerResponse
+
+        field = PlayerResponse.model_fields["bounty_notifications_enabled"]
+        assert field.default is True
+
+    def test_player_response_shop_notifications_enabled_default_is_true(self):
+        """PlayerResponse.shop_notifications_enabled defaults to True (opt-in)."""
+        from api.schemas.players_schema import PlayerResponse
+
+        field = PlayerResponse.model_fields["shop_notifications_enabled"]
+        assert field.default is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: D-019 fields in make_mock_player helper (new)
+# ---------------------------------------------------------------------------
+
+
+class TestD019MakeMockPlayerHelper:
+    """Verify make_mock_player returns both D-019 notification flags."""
+
+    def test_make_mock_player_has_bounty_notifications_enabled_true(self):
+        """make_mock_player sets bounty_notifications_enabled=True by default."""
+        from conftest import make_mock_player
+
+        player = make_mock_player()
+        assert player.bounty_notifications_enabled is True
+
+    def test_make_mock_player_has_shop_notifications_enabled_true(self):
+        """make_mock_player sets shop_notifications_enabled=True by default."""
+        from conftest import make_mock_player
+
+        player = make_mock_player()
+        assert player.shop_notifications_enabled is True
+
+    def test_make_mock_player_overrides_bounty_notifications_enabled(self):
+        """make_mock_player accepts bounty_notifications_enabled=False override."""
+        from conftest import make_mock_player
+
+        player = make_mock_player(bounty_notifications_enabled=False)
+        assert player.bounty_notifications_enabled is False
+
+    def test_make_mock_player_overrides_shop_notifications_enabled(self):
+        """make_mock_player accepts shop_notifications_enabled=False override."""
+        from conftest import make_mock_player
+
+        player = make_mock_player(shop_notifications_enabled=False)
+        assert player.shop_notifications_enabled is False
+
+    def test_make_mock_player_roundtrips_both_flags_false(self):
+        """PlayerResponse.model_validate round-trips both flags as False when overridden."""
+        from api.schemas.players_schema import PlayerResponse
+        from conftest import make_mock_player
+
+        player = make_mock_player(bounty_notifications_enabled=False, shop_notifications_enabled=False)
+        # PlayerResponse.created_at/updated_at are str fields; coerce the datetime defaults.
+        player.created_at = player.created_at.isoformat()
+        player.updated_at = player.updated_at.isoformat()
+        response = PlayerResponse.model_validate(player)
+        assert response.bounty_notifications_enabled is False
+        assert response.shop_notifications_enabled is False

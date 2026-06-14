@@ -1752,3 +1752,100 @@ class TestDemotePlayer:
 
         assert result["new_tier"] == "Silver"
         service._scrub_orphaned_checks_after_tier_change.assert_called_once()
+
+
+# ===========================================================================
+# Tests: update_notification_preference (D-019)
+# ===========================================================================
+
+
+class TestUpdateNotificationPreference:
+    """Tests for PlayerService.update_notification_preference (D-019)."""
+
+    @pytest.mark.asyncio
+    async def test_bounty_type_uses_get_by_id_for_update(self, service, mock_db, mock_player_repo):
+        """update_notification_preference calls get_by_id_for_update (D5-T2 lock), not get_by_id."""
+        player = _make_player()
+        player.bounty_notifications_enabled = True
+        player.shop_notifications_enabled = True
+        mock_player_repo.get_by_id_for_update.return_value = player
+
+        await service.update_notification_preference(mock_db, player_id=1, notification_type="bounty", enabled=False)
+
+        mock_player_repo.get_by_id_for_update.assert_awaited_once_with(mock_db, 1)
+        mock_player_repo.get_by_id.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_bounty_type_sets_bounty_flag_only(self, service, mock_db, mock_player_repo):
+        """notification_type='bounty' sets bounty_notifications_enabled; shop flag is untouched."""
+        player = _make_player()
+        player.bounty_notifications_enabled = True
+        player.shop_notifications_enabled = True
+        mock_player_repo.get_by_id_for_update.return_value = player
+
+        await service.update_notification_preference(mock_db, player_id=1, notification_type="bounty", enabled=False)
+
+        assert player.bounty_notifications_enabled is False
+        # shop flag must not have been touched
+        assert player.shop_notifications_enabled is True
+
+    @pytest.mark.asyncio
+    async def test_shop_type_sets_shop_flag_only(self, service, mock_db, mock_player_repo):
+        """notification_type='shop' sets shop_notifications_enabled; bounty flag is untouched."""
+        player = _make_player()
+        player.bounty_notifications_enabled = True
+        player.shop_notifications_enabled = True
+        mock_player_repo.get_by_id_for_update.return_value = player
+
+        await service.update_notification_preference(mock_db, player_id=1, notification_type="shop", enabled=False)
+
+        assert player.shop_notifications_enabled is False
+        assert player.bounty_notifications_enabled is True
+
+    @pytest.mark.asyncio
+    async def test_commits_and_refreshes_after_update(self, service, mock_db, mock_player_repo):
+        """Service commits then refreshes the player after updating the flag."""
+        player = _make_player()
+        player.bounty_notifications_enabled = True
+        player.shop_notifications_enabled = True
+        mock_player_repo.get_by_id_for_update.return_value = player
+
+        await service.update_notification_preference(mock_db, player_id=1, notification_type="shop", enabled=True)
+
+        mock_db.commit.assert_awaited_once()
+        mock_db.refresh.assert_awaited_once_with(player)
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_when_player_missing(self, service, mock_db, mock_player_repo):
+        """ValueError is raised when get_by_id_for_update returns None."""
+        mock_player_repo.get_by_id_for_update.return_value = None
+
+        with pytest.raises(ValueError, match="Player 99 not found"):
+            await service.update_notification_preference(
+                mock_db, player_id=99, notification_type="bounty", enabled=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_for_invalid_notification_type(self, service, mock_db, mock_player_repo):
+        """ValueError is raised immediately for an invalid notification_type (before DB lock)."""
+        with pytest.raises(ValueError, match="invalid_type"):
+            await service.update_notification_preference(
+                mock_db, player_id=1, notification_type="invalid_type", enabled=True
+            )
+
+        # No DB lock was acquired
+        mock_player_repo.get_by_id_for_update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_returns_updated_player(self, service, mock_db, mock_player_repo):
+        """update_notification_preference returns the player object after commit+refresh."""
+        player = _make_player()
+        player.bounty_notifications_enabled = True
+        player.shop_notifications_enabled = True
+        mock_player_repo.get_by_id_for_update.return_value = player
+
+        result = await service.update_notification_preference(
+            mock_db, player_id=1, notification_type="bounty", enabled=False
+        )
+
+        assert result is player

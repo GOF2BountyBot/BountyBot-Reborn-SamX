@@ -433,6 +433,8 @@ class TestP6T3DBPagination:
             duel_credits_won=0,
             duel_credits_lost=0,
             active_ship_id=None,
+            bounty_notifications_enabled=True,
+            shop_notifications_enabled=True,
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
             updated_at=datetime(2025, 1, 1, tzinfo=UTC),
         )

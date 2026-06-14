@@ -28,6 +28,10 @@ class PlayerResponse(BaseModel):
     guild_transfer_cooldown: datetime | None = None
     classic_mode: bool = False
     bounty_cooldown_end: datetime | None = None
+    # Notification preferences (D-019) — persisted source of truth, projected onto
+    # Discord roles by the gateway. Default opted-in (True) to match historical default.
+    bounty_notifications_enabled: bool = True
+    shop_notifications_enabled: bool = True
     created_at: str
     updated_at: str
 
@@ -61,6 +65,22 @@ class UpdateCreditsRequest(BaseModel):
 
 class UpdateXPRequest(BaseModel):
     xp: int = Field(ge=0, le=1000000, description="XP must be between 0 and 1,000,000")
+
+
+class NotificationPreferenceUpdate(BaseModel):
+    """Request body for ``PUT /players/{id}/notifications`` (D-019).
+
+    ``notification_type`` selects which persisted flag to write:
+    - ``"bounty"`` → ``bounty_notifications_enabled``
+    - ``"shop"``   → ``shop_notifications_enabled``
+
+    The stored flag is the source of truth; the gateway syncs the corresponding
+    Discord role (tier role for bounty, shop_announcements_role_id for shop) to
+    match after persisting here.
+    """
+
+    notification_type: str = Field(pattern="^(bounty|shop)$", description="Must be 'bounty' or 'shop'")
+    enabled: bool = Field(description="Whether the player wants these announcement @-mentions")
 
 
 class UpdateTierRequest(BaseModel):

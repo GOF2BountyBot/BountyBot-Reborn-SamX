@@ -296,6 +296,10 @@ class AboutCog(commands.Cog):
         name = obj_data.get("name", "Unknown")
         category = obj_data.get("category", "Unknown")
 
+        # Weapon stats like range_m live in the inner (double-nested) extra_atts dict;
+        # unlike dps/loading_speed_ms/subtype they are NOT flattened to the top level.
+        inner_atts = (obj_data.get("extra_atts") or {}).get("extra_atts") or {}
+
         # Create embed with appropriate color based on category
         color_map = {
             "module": discord.Color.blue(),
@@ -358,6 +362,9 @@ class AboutCog(commands.Cog):
             emp_dmg = obj_data.get("emp_damage")
             if emp_dmg is not None and emp_dmg > 0:
                 embed.add_field(name="EMP damage", value=str(emp_dmg), inline=True)
+            range_m = inner_atts.get("range_m")
+            if range_m is not None:
+                embed.add_field(name="Range", value=f"{range_m:,} m", inline=True)
             # D-002: per-shot breakdown fields
             dps_shot = obj_data.get("damage_per_shot")
             if dps_shot is not None and dps_shot > 0:
@@ -370,6 +377,9 @@ class AboutCog(commands.Cog):
                 embed.add_field(name="Weapon type", value=weapon_subtype.replace("-", " ").title(), inline=True)
 
         elif category == "secondary_weapon":
+            range_m = inner_atts.get("range_m")
+            if range_m is not None:
+                embed.add_field(name="Range", value=f"{range_m:,} m", inline=True)
             # §14 / T11: Cluster-missile burst fields — show before generic damage to keep context clear
             burst = obj_data.get("burst_count")
             if burst is not None:
@@ -415,6 +425,9 @@ class AboutCog(commands.Cog):
         elif category == "turret_weapon":
             if obj_data.get("dps") is not None:
                 embed.add_field(name="DPS", value=f"{obj_data['dps']:.1f}", inline=True)
+            range_m = inner_atts.get("range_m")
+            if range_m is not None:
+                embed.add_field(name="Range", value=f"{range_m:,} m", inline=True)
             # D-002: per-shot breakdown fields
             dps_shot = obj_data.get("damage_per_shot")
             if dps_shot is not None and dps_shot > 0:

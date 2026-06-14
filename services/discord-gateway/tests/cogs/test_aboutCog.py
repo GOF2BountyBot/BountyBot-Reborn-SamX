@@ -1053,6 +1053,74 @@ class TestCreateObjectEmbed:
         mc.embed_to_payload.assert_called_once()
         assert result is not None
 
+    # ── Range field (range_m lives in the inner / double-nested extra_atts) ──────
+
+    @staticmethod
+    def _range_fields(mc):
+        """Return the 'Range' fields of the pre-grid embed passed to embed_to_payload."""
+        pre_grid_embed = mc.embed_to_payload.call_args[0][0]
+        return [f for f in pre_grid_embed.fields if f.name == "Range"]
+
+    def test_embed_primary_weapon_range(self, mock_about_cog):
+        """primary_weapon with nested range_m should render a thousands-formatted Range field."""
+        obj_data = {
+            **_make_object_data("Pulse Laser", "primary_weapon", 20),
+            "dps": 42.5,
+            "extra_atts": {"extra_atts": {"range_m": 3000}},
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        range_fields = self._range_fields(mc)
+        assert len(range_fields) == 1
+        assert range_fields[0].value == "3,000 m"
+
+    def test_embed_secondary_weapon_range(self, mock_about_cog):
+        """secondary_weapon with nested range_m should render a Range field."""
+        obj_data = {
+            **_make_object_data("Missile", "secondary_weapon", 90),
+            "extra_atts": {"extra_atts": {"range_m": 3100}},
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        range_fields = self._range_fields(mc)
+        assert len(range_fields) == 1
+        assert range_fields[0].value == "3,100 m"
+
+    def test_embed_turret_weapon_range(self, mock_about_cog):
+        """turret_weapon with nested range_m should render a Range field."""
+        obj_data = {
+            **_make_object_data("Turret", "turret_weapon", 91),
+            "dps": 12.0,
+            "extra_atts": {"extra_atts": {"range_m": 5000}},
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        range_fields = self._range_fields(mc)
+        assert len(range_fields) == 1
+        assert range_fields[0].value == "5,000 m"
+
+    def test_embed_weapon_range_omitted_when_absent(self, mock_about_cog):
+        """A weapon without nested range_m should not render a Range field."""
+        obj_data = {
+            **_make_object_data("Pulse Laser", "primary_weapon", 20),
+            "dps": 42.5,
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        assert self._range_fields(mc) == []
+
     def test_embed_commodity_category(self, mock_about_cog):
         """_create_object_embed for 'commodity' renders subcategory + price fields,
         suppresses raw_infobox from the generic dump, and still shows lore."""

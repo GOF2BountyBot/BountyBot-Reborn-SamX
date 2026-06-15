@@ -53,9 +53,12 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          # security-extended adds higher-confidence security queries beyond the default suite.
-          # Use 'security-and-quality' for even broader (noisier) coverage.
-          queries: security-extended
+          # security-and-quality runs both the security-extended and code-quality packs.
+          # Query selection and path exclusions are managed in .github/codeql/codeql-config.yml.
+          #
+          # NOTE: GitHub Default Setup (repo Settings → Code security) must be DISABLED for
+          # this advanced-setup config-file to take effect — Default Setup overrides it when enabled.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v4

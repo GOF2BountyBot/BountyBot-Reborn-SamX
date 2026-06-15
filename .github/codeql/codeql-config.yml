@@ -1,0 +1,14 @@
+name: "BountyBot CodeQL config"
+
+# Run security + quality intentionally (Tier-1 security-extended produced 0;
+# the live quality findings come from the code-quality pack). security-and-quality
+# is the superset that runs both on purpose.
+queries:
+  - uses: security-and-quality
+
+paths-ignore:
+  # Vendored third-party git submodule (github.com/Trimatix/AEPi) — not our code.
+  - 'services/blender-service/src/lib/AEPi/**'
+  # Alembic migration revisions: revision/down_revision/branch_labels/depends_on are
+  # framework-required module globals that CodeQL reports as unused (false positives).
+  - 'services/bot-core/src/persist/database/revisions/versions/**'

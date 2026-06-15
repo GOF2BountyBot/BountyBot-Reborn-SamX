@@ -170,7 +170,7 @@ class SystemGraphService:
         """Calculate Euclidean distance between two system nodes."""
         dx = sys_b.coordinates[0] - sys_a.coordinates[0]
         dy = sys_b.coordinates[1] - sys_a.coordinates[1]
-        return math.sqrt(dx * dx + dy * dy)
+        return math.hypot(dx, dy)
 
     def is_loaded(self) -> bool:
         """Return True if the graph has been loaded from the database."""

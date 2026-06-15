@@ -530,7 +530,7 @@ class TestEuclideanDistance:
         """Distance between Aquila (549,131) and V'Ikka (430,522) is calculable."""
         aquila = SystemNode(name="Aquila", coordinates=(549, 131), neighbours=[], faction="terran", security=2)
         vikka = SystemNode(name="V'Ikka", coordinates=(430, 522), neighbours=[], faction="vossk", security=1)
-        expected = math.sqrt((430 - 549) ** 2 + (522 - 131) ** 2)
+        expected = math.hypot(430 - 549, 522 - 131)
         assert SystemGraphService.euclidean_distance(aquila, vikka) == pytest.approx(expected)
 
     def test_distance_is_always_non_negative(self):
@@ -555,7 +555,7 @@ class TestEuclideanDistance:
         service._loaded = True
         aquila = service.get_system("Aquila")
         nesla = service.get_system("Nesla")
-        expected = math.sqrt((310 - 549) ** 2 + (205 - 131) ** 2)
+        expected = math.hypot(310 - 549, 205 - 131)
         assert SystemGraphService.euclidean_distance(aquila, nesla) == pytest.approx(expected)
 
 

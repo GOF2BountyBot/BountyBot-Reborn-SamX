@@ -138,7 +138,6 @@ class MigrationManager:
         flogger.debug("from_env: Building MigrationManager from environment variables")
         sync_url = _build_sync_url_from_env()
         # Extract password from URL for masking
-        _user = os.getenv("POSTGRES_USER", "bounty")
         pw = os.getenv("POSTGRES_PASSWORD", "bounty")
         masked_url = sync_url.replace(pw, "***") if pw else sync_url
         flogger.debug(f"from_env: Connection URL: {masked_url}")

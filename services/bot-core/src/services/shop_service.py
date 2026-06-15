@@ -782,7 +782,6 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         """Select item tech level based on shop tech level and probability distribution."""
         same_level_prob = probabilities.get("same_level", 0.7)
         one_lower_prob = probabilities.get("one_lower", 0.2)
-        _two_lower_prob = probabilities.get("two_lower", 0.1)
 
         rand = random.random()
 

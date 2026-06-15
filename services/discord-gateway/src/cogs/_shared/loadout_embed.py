@@ -143,7 +143,7 @@ def build_loadout_embed(
 
     # Trailing suffix fields (e.g. Route, Checked Systems for bounty announcements).
     if suffix_fields:
-        used = _render_extra_fields(embed, suffix_fields, budget, used)
+        _render_extra_fields(embed, suffix_fields, budget, used)
 
     return embed
 

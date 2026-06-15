@@ -13,6 +13,7 @@ LoadoutResponse fetching via `LoadoutResponseService.build_bounty_loadout`.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -421,13 +422,11 @@ def _project_checked(bounty) -> dict | None:
             continue
         is_recently_spotted = False
         if answer_idx is not None and route:
-            try:
+            with contextlib.suppress(ValueError, IndexError):
                 sys_idx = route.index(system_name)
                 distance = answer_idx - sys_idx
                 if 1 <= distance <= 2:
                     is_recently_spotted = True
-            except (ValueError, IndexError):
-                pass
         out[system_name] = "recently_spotted" if is_recently_spotted else "checked"
     return out or None
 

@@ -70,8 +70,11 @@ class _SafeLogger(logging.LoggerAdapter):
     # LoggerAdapter doesn't proxy our custom TRACE level — add it explicitly.
     def trace(self, msg, *args, **kwargs):
         if self.isEnabledFor(TRACE_LEVEL_NUM):
+            # Route positional %-format args through process() so they are scrubbed too.
+            kwargs["args"] = args
             msg, kwargs = self.process(msg, kwargs)
-            self.logger._log(TRACE_LEVEL_NUM, msg, args, **kwargs)
+            scrubbed_args = kwargs.pop("args", ())
+            self.logger._log(TRACE_LEVEL_NUM, msg, scrubbed_args, **kwargs)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -113,7 +116,9 @@ def get_logger(module_name: str) -> logging.LoggerAdapter:
 
     # ---- Base logger --------------------------------------------------------
     logger = logging.getLogger(module_name)
-    logger.setLevel(log_level)
+    # Fall back to INFO for unrecognised LOG_LEVEL values (incl. the custom TRACE);
+    # getLevelNamesMapping() avoids the ValueError that a raw setLevel(str) would raise.
+    logger.setLevel(logging.getLevelNamesMapping().get(log_level, logging.INFO))
     logger.propagate = False  # avoid double logging if root handlers exist
 
     # Return early if handlers already attached (singleton behaviour)

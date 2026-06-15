@@ -52,5 +52,9 @@
     "/app/data/game-objects/items/ships/Vossk/Na'Srrk.bbship/Na'Srrk_Full.obj",
     "/app/data/game-objects/items/ships/Vossk/Na'Srrk.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Vossk/Na'Srrk.bbship/sn_ship_054_vossk_diffuse.png"
-  ]
+  ],
+  "extra_atts": {
+    "dlc": "Supernova",
+    "price_credits_android": 3085714
+  }
 }

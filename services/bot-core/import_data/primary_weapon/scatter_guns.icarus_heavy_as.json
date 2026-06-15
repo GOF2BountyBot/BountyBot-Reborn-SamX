@@ -12,8 +12,14 @@
   "icon": "https://i.postimg.cc/85gTZYxC/icarus-heavy-as.png",
   "name": "Icarus Heavy AS",
   "techLevel": 9,
-  "value": 356787,
+  "value": 323024,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Icarus_Heavy_AS",
   "type": "PrimaryWeapon",
-  "subtype": "scatter_guns"
+  "extra_atts": {
+    "loading_speed_ms": 900,
+    "range_m": 5000,
+    "damage_per_shot": 30,
+    "speed_km_h": 7000,
+    "subtype": "scatter-gun"
+  }
 }

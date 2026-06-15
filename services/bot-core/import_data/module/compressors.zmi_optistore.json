@@ -9,6 +9,9 @@
   "name": "ZMI Optistore",
   "techLevel": 1,
   "type": "CompressorModule",
-  "value": 2576,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/ZMI_Optistore"
+  "value": 2316,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/ZMI_Optistore",
+  "extra_atts": {
+    "effect_pct": 15.0
+  }
 }

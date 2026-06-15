@@ -1,7 +1,11 @@
 from typing import Any
 
 from sqlalchemy import JSON, ForeignKey, Integer
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+
+# Portable JSON type: Postgres uses JSONB; SQLite unit-test suite falls back to JSON.
+_JSONB = JSON().with_variant(JSONB(), "postgresql")
 
 from persist.database.tablenames import TableNames
 from persist.models.item import Item
@@ -13,7 +17,7 @@ class Module(Item):
     id: Mapped[int] = mapped_column(Integer, ForeignKey(f"{TableNames.Item.value}.id"), primary_key=True)
     tech_level: Mapped[int] = mapped_column(Integer)
     max_equipped: Mapped[int] = mapped_column(Integer, nullable=True)
-    extra_atts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=True, default=dict)
+    extra_atts: Mapped[dict[str, Any]] = mapped_column(_JSONB, nullable=True, default=dict)
 
     __mapper_args__ = {
         "polymorphic_identity": "module",

@@ -41,7 +41,6 @@ from unittest.mock import patch
 from services.duel_service import DuelService
 from services.loadout_builder import LoadoutBuilder
 from src.services.combat_models import (
-    CombatStats,
     FightResults,
     FightStats,
     ShipLoadout,
@@ -131,113 +130,57 @@ def make_service(*, duel_repo=None, player_repo=None, user_repo=None, combat_ser
 
 
 # ---------------------------------------------------------------------------
-# Deterministic custom combat resolvers
+# Deterministic fight_ships mock factories (T10: fight_ships is now async)
 # ---------------------------------------------------------------------------
 
 
-class ChallengerWinsResolver:
-    """Combat resolver: ship1 (challenger) always wins decisively."""
+def _make_fight_results(
+    winner: str | None,
+    loser: str | None,
+    is_stalemate: bool = False,
+    *,
+    winner_side: int | None = None,
+) -> FightResults:
+    """Build a deterministic FightResults for unit tests (no real DB needed).
 
-    def resolve(
-        self,
-        ship1_stats: CombatStats,
-        ship2_stats: CombatStats,
-        variance_percent: float,
-    ) -> FightResults:
-        fs1 = FightStats(
-            ship_name=ship1_stats.ship_name,
-            raw_hp=ship1_stats.total_hp,
-            raw_dps=100.0,
-            varied_hp=ship1_stats.total_hp,
-            varied_dps=100.0,
-            ttk=10.0,
-        )
-        fs2 = FightStats(
-            ship_name=ship2_stats.ship_name,
-            raw_hp=ship2_stats.total_hp,
-            raw_dps=1.0,
-            varied_hp=ship2_stats.total_hp,
-            varied_dps=1.0,
-            ttk=1.0,
-        )
-        return FightResults(
-            winner_name=ship1_stats.ship_name,
-            loser_name=ship2_stats.ship_name,
-            is_stalemate=False,
-            ship1_stats=fs1,
-            ship2_stats=fs2,
-            variance_percent=0.0,
-        )
-
-
-class TargetWinsResolver:
-    """Combat resolver: ship2 (target) always wins decisively."""
-
-    def resolve(
-        self,
-        ship1_stats: CombatStats,
-        ship2_stats: CombatStats,
-        variance_percent: float,
-    ) -> FightResults:
-        fs1 = FightStats(
-            ship_name=ship1_stats.ship_name,
-            raw_hp=ship1_stats.total_hp,
-            raw_dps=1.0,
-            varied_hp=ship1_stats.total_hp,
-            varied_dps=1.0,
-            ttk=1.0,
-        )
-        fs2 = FightStats(
-            ship_name=ship2_stats.ship_name,
-            raw_hp=ship2_stats.total_hp,
-            raw_dps=100.0,
-            varied_hp=ship2_stats.total_hp,
-            varied_dps=100.0,
-            ttk=10.0,
-        )
-        return FightResults(
-            winner_name=ship2_stats.ship_name,
-            loser_name=ship1_stats.ship_name,
-            is_stalemate=False,
-            ship1_stats=fs1,
-            ship2_stats=fs2,
-            variance_percent=0.0,
-        )
-
-
-class StalemateResolver:
-    """Combat resolver: always stalemate."""
-
-    def resolve(
-        self,
-        ship1_stats: CombatStats,
-        ship2_stats: CombatStats,
-        variance_percent: float,
-    ) -> FightResults:
-        fs1 = FightStats(
-            ship_name=ship1_stats.ship_name,
-            raw_hp=ship1_stats.total_hp,
-            raw_dps=0.0,
-            varied_hp=ship1_stats.total_hp,
-            varied_dps=0.0,
-            ttk=None,
-        )
-        fs2 = FightStats(
-            ship_name=ship2_stats.ship_name,
-            raw_hp=ship2_stats.total_hp,
-            raw_dps=0.0,
-            varied_hp=ship2_stats.total_hp,
-            varied_dps=0.0,
-            ttk=None,
-        )
-        return FightResults(
-            winner_name=None,
-            loser_name=None,
-            is_stalemate=True,
-            ship1_stats=fs1,
-            ship2_stats=fs2,
-            variance_percent=0.0,
-        )
+    P2-T8a: winner_side is now required for correct winner decoding.
+    Pass winner_side=1 when challenger wins, winner_side=2 when target wins,
+    winner_side=None for stalemate.  The default None is kept for back-compat
+    with any test that doesn't call accept_duel (e.g. router tests that only
+    check presentation fields).
+    """
+    fs1 = FightStats(ship_name=winner or "ShipA", raw_hp=100, raw_dps=10.0, varied_hp=100, varied_dps=10.0, ttk=None)
+    fs2 = FightStats(
+        ship_name=loser or "ShipB",
+        raw_hp=50,
+        raw_dps=5.0,
+        varied_hp=50,
+        varied_dps=5.0,
+        ttk=5.0 if not is_stalemate else None,
+    )
+    return FightResults(
+        winner_name=winner,
+        loser_name=loser,
+        is_stalemate=is_stalemate,
+        winner_side=winner_side,
+        ship1_stats=fs1,
+        ship2_stats=fs2,
+        combat_log=[],
+        metadata={
+            "schema_version": 1,
+            "summary": {
+                "outcome": "stalemate" if is_stalemate else "win",
+                "reason": "time_cap" if is_stalemate else "hp_depleted",
+                "duration_ticks": 100,
+                "winner": winner,
+                "combatants": {
+                    "1": {"name": winner or "ShipA", "ship": "ShipA", "damage_dealt": 50, "damage_taken": 10},
+                    "2": {"name": loser or "ShipB", "ship": "ShipB", "damage_dealt": 10, "damage_taken": 50},
+                },
+            },
+            "metadata": {"tick_ms": 10, "total_ticks": 100, "resolver": "tick_v1", "pvc_damage_reduction": 0.0},
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +198,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=500)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -309,7 +252,7 @@ class TestCreateChallenge:
         router returns 400 with a safe message.
         """
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+        player_repo.get_by_id_for_update.side_effect = RuntimeError("DB connection lost")
 
         svc = make_service(player_repo=player_repo)
         with pytest.raises(ValueError, match="could not be retrieved"):
@@ -327,7 +270,7 @@ class TestCreateChallenge:
                 return challenger
             raise RuntimeError("DB connection lost")
 
-        player_repo.get_by_id.side_effect = _side_effect
+        player_repo.get_by_id_for_update.side_effect = _side_effect
 
         svc = make_service(player_repo=player_repo)
         with pytest.raises(ValueError, match="could not be retrieved"):
@@ -344,7 +287,7 @@ class TestCreateChallenge:
     async def test_challenger_not_found_raises(self):
         """Challenger player not in DB raises ValueError."""
         player_repo = AsyncMock()
-        player_repo.get_by_id.return_value = None  # challenger not found
+        player_repo.get_by_id_for_update.return_value = None  # challenger not found
 
         svc = make_service(player_repo=player_repo)
         with pytest.raises(ValueError, match="Challenger player"):
@@ -356,7 +299,7 @@ class TestCreateChallenge:
         challenger = make_player(1, credits=100)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else None
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else None
 
         svc = make_service(player_repo=player_repo)
         with pytest.raises(ValueError, match="Target player"):
@@ -369,7 +312,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=500)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -388,7 +331,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=30)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -407,7 +350,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=500)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -427,7 +370,7 @@ class TestCreateChallenge:
         target = make_player(2, credits=0)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger,
             2: target,
         }.get(pid)
@@ -462,6 +405,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.update_status.return_value = duel
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
@@ -472,11 +416,12 @@ class TestAcceptDuel:
             2: target,
         }.get(pid)
 
-        svc = make_service(
-            duel_repo=duel_repo,
-            player_repo=player_repo,
-            combat_service=CombatService(resolver=ChallengerWinsResolver()),
+        # T10: fight_ships is async; inject deterministic result via AsyncMock
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner="ChallengerShip", loser="TargetShip", winner_side=1)
         )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
 
         # LoadoutBuilder.from_player now needs DB; mock it to return deterministic loadouts
         async def mock_from_player(db, player_id):
@@ -509,6 +454,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.update_status.return_value = duel
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
@@ -519,11 +465,11 @@ class TestAcceptDuel:
             2: target,
         }.get(pid)
 
-        svc = make_service(
-            duel_repo=duel_repo,
-            player_repo=player_repo,
-            combat_service=CombatService(resolver=TargetWinsResolver()),
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner="TargetShip", loser="ChallengerShip", winner_side=2)
         )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
 
         async def mock_from_player(db, player_id):
             return make_ship_loadout("ChallengerShip" if player_id == 1 else "TargetShip")
@@ -553,6 +499,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.update_status.return_value = duel
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
@@ -563,11 +510,11 @@ class TestAcceptDuel:
             2: target,
         }.get(pid)
 
-        svc = make_service(
-            duel_repo=duel_repo,
-            player_repo=player_repo,
-            combat_service=CombatService(resolver=StalemateResolver()),
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner=None, loser=None, is_stalemate=True)
         )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
 
         async def mock_from_player(db, player_id):
             return make_ship_loadout("ShipA" if player_id == 1 else "ShipB")
@@ -623,6 +570,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
@@ -646,6 +594,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
         player_repo = AsyncMock()
@@ -670,6 +619,7 @@ class TestAcceptDuel:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
         duel_repo.update_status.return_value = duel
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
 
@@ -680,10 +630,15 @@ class TestAcceptDuel:
             2: target,
         }.get(pid)
 
+        # T10: fight_ships is async. Mock it to return a deterministic stalemate.
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner=None, loser=None, is_stalemate=True)
+        )
         svc = make_service(
             duel_repo=duel_repo,
             player_repo=player_repo,
-            combat_service=CombatService(),  # real, 0% variance applied
+            combat_service=mock_combat_svc,
         )
 
         # LoadoutBuilder.from_player needs DB access; mock it to return 0-DPS unarmed ships
@@ -1210,7 +1165,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         # 8k pending for challenger, 0 for target
@@ -1234,7 +1189,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         # 0 for challenger, 5k pending for target
@@ -1258,7 +1213,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         duel_repo.get_total_pending_stakes_for_player.return_value = 3_000
@@ -1282,7 +1237,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
@@ -1303,7 +1258,7 @@ class TestCreateChallengeAvailableBalance:
         target.display_name = "Bob"
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else target
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: challenger if pid == 1 else target
 
         duel_repo = AsyncMock()
         duel_repo.get_total_pending_stakes_for_player.return_value = 0
@@ -1340,6 +1295,8 @@ class TestAcceptDuelAvailableBalance:
 
         duel_repo = AsyncMock()
         duel_repo.get_by_id.return_value = duel
+        # X3-duel: accept_duel now re-reads duel under FOR UPDATE lock after player locks.
+        duel_repo.get_by_id_for_update.return_value = duel
 
         def pending_stakes(db, pid, *, exclude_duel_id=None):
             if pid == 1:
@@ -1390,11 +1347,10 @@ class TestAcceptDuelAvailableBalance:
         with patch("services.duel_service.LoadoutBuilder") as mock_lb:
             mock_lb.from_player = AsyncMock(return_value=make_ship_loadout("ShipA"))
             svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
-            # combat_service will run — use a deterministic resolver
+            # T10: fight_ships is async; use AsyncMock for deterministic stalemate result
             svc.combat_service = MagicMock()
-            svc.combat_service.fight_ships.return_value = MagicMock(
-                is_stalemate=True,
-                winner_name=None,
+            svc.combat_service.fight_ships = AsyncMock(
+                return_value=_make_fight_results(winner=None, loser=None, is_stalemate=True)
             )
             result = await svc.accept_duel(db=self._make_db(), duel_id=5)
 
@@ -1515,3 +1471,354 @@ class TestCancelUnderfundedDuels:
 
         assert cancelled == []
         duel_repo.update_status.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# P2-T8a: Winner decoded from winner_side (snowflake), not from ship name
+# ---------------------------------------------------------------------------
+
+
+def _make_accept_duel_scaffolding(
+    *,
+    challenger_id: int,
+    target_id: int,
+    challenger_ship: str,
+    target_ship: str,
+    stakes: int = 200,
+    duel_id: int = 99,
+):
+    """Return (challenger, target, duel, duel_repo, player_repo) for accept_duel tests."""
+    ch = make_player(challenger_id, credits=1000)
+    ch.display_name = f"Player{challenger_id}"
+    tg = make_player(target_id, credits=1000)
+    tg.display_name = f"Player{target_id}"
+
+    duel = make_duel(duel_id=duel_id, challenger_id=challenger_id, target_id=target_id, stakes=stakes)
+
+    duel_repo = AsyncMock()
+    duel_repo.get_by_id.return_value = duel
+    # X3-duel: accept_duel now re-reads duel under FOR UPDATE lock after player locks.
+    duel_repo.get_by_id_for_update.return_value = duel
+    duel_repo.update_status.return_value = duel
+    duel_repo.get_total_pending_stakes_for_player.return_value = 0
+
+    player_repo = AsyncMock()
+    player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
+        challenger_id: ch,
+        target_id: tg,
+    }.get(pid)
+
+    return ch, tg, duel, duel_repo, player_repo
+
+
+class TestWinnerDecodedBySnowflake:
+    """P2-T8a: winner decoded from winner_side (immutable snowflake), never by ship name.
+
+    D6 same-name decisive tests prove a name-compare implementation would be
+    ambiguous/wrong, while the snowflake-based implementation is unambiguous.
+    """
+
+    # ------------------------------------------------------------------
+    # D6 — same-name decisive (core test)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_same_name_challenger_wins_side1(self):
+        """D6/side-1: Both players fly IDENTICALLY-named ships and share the SAME display name.
+        winner_side=1 → challenger wins.  A name-compare would be ambiguous.
+        """
+        SHARED_SHIP = "Betty"
+        SHARED_DISPLAY = "Pilot"
+        CHALLENGER_ID = 1001
+        TARGET_ID = 1002
+
+        ch, tg, duel, duel_repo, player_repo = _make_accept_duel_scaffolding(
+            challenger_id=CHALLENGER_ID,
+            target_id=TARGET_ID,
+            challenger_ship=SHARED_SHIP,
+            target_ship=SHARED_SHIP,
+            stakes=200,
+        )
+        # Both share the same display name
+        ch.display_name = SHARED_DISPLAY
+        tg.display_name = SHARED_DISPLAY
+
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(
+                winner=SHARED_SHIP,
+                loser=SHARED_SHIP,
+                winner_side=1,  # challenger (side 1) wins
+            )
+        )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
+
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout(SHARED_SHIP)
+
+        mock_db = AsyncMock()
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=mock_db, duel_id=duel.id)
+
+        # Challenger (player_id=1001) won — credits transferred TO challenger
+        assert ch.credits == 1200, f"challenger credits should be 1200, got {ch.credits}"
+        assert tg.credits == 800, f"target credits should be 800, got {tg.credits}"
+        assert ch.duel_wins == 1
+        assert ch.duel_losses == 0
+        assert tg.duel_wins == 0
+        assert tg.duel_losses == 1
+        assert result["credits_transferred"] == 200
+
+    @pytest.mark.asyncio
+    async def test_same_name_target_wins_side2(self):
+        """D6/side-2: Both players fly IDENTICALLY-named ships and share the SAME display name.
+        winner_side=2 → target wins.  A name-compare would give the wrong player here.
+        """
+        SHARED_SHIP = "Betty"
+        SHARED_DISPLAY = "Pilot"
+        CHALLENGER_ID = 2001
+        TARGET_ID = 2002
+
+        ch, tg, duel, duel_repo, player_repo = _make_accept_duel_scaffolding(
+            challenger_id=CHALLENGER_ID,
+            target_id=TARGET_ID,
+            challenger_ship=SHARED_SHIP,
+            target_ship=SHARED_SHIP,
+            stakes=200,
+        )
+        ch.display_name = SHARED_DISPLAY
+        tg.display_name = SHARED_DISPLAY
+
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(
+                winner=SHARED_SHIP,
+                loser=SHARED_SHIP,
+                winner_side=2,  # target (side 2) wins
+            )
+        )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
+
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout(SHARED_SHIP)
+
+        mock_db = AsyncMock()
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=mock_db, duel_id=duel.id)
+
+        # Target (player_id=2002) won — credits transferred TO target
+        assert tg.credits == 1200, f"target credits should be 1200, got {tg.credits}"
+        assert ch.credits == 800, f"challenger credits should be 800, got {ch.credits}"
+        assert tg.duel_wins == 1
+        assert tg.duel_losses == 0
+        assert ch.duel_wins == 0
+        assert ch.duel_losses == 1
+        assert result["credits_transferred"] == 200
+
+    @pytest.mark.asyncio
+    async def test_same_name_anti_vacuous_name_compare_fails(self):
+        """Anti-vacuous: behavioral proof that the service uses winner_side, not name comparison.
+
+        Both ships are named "Betty" and both players share the display name "Pilot".
+        winner_side=2 → target wins.  A name-keyed implementation would compare
+        winner_name ("Betty") to challenger_ship_name ("Betty") → always True → always
+        credits the challenger, which is WRONG here.
+
+        This test calls accept_duel and asserts that credits moved TO the target (not
+        the challenger).  Reverting duel_service to a name-compare implementation
+        would credit the challenger instead, making this test fail.
+        """
+        SHARED_SHIP = "Betty"
+        SHARED_DISPLAY = "Pilot"
+        CHALLENGER_ID = 3001
+        TARGET_ID = 3002
+
+        ch, tg, duel, duel_repo, player_repo = _make_accept_duel_scaffolding(
+            challenger_id=CHALLENGER_ID,
+            target_id=TARGET_ID,
+            challenger_ship=SHARED_SHIP,
+            target_ship=SHARED_SHIP,
+            stakes=200,
+        )
+        ch.display_name = SHARED_DISPLAY
+        tg.display_name = SHARED_DISPLAY
+
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(
+                winner=SHARED_SHIP,
+                loser=SHARED_SHIP,
+                winner_side=2,  # target (side 2) wins
+            )
+        )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
+
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout(SHARED_SHIP)
+
+        mock_db = AsyncMock()
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=mock_db, duel_id=duel.id)
+
+        # Target (player_id=3002) won — credits must flow TO target.
+        # A name-compare implementation would credit challenger (wrong) instead.
+        assert tg.credits == 1200, (
+            f"target should have 1200 credits after winning (got {tg.credits}); "
+            "a name-compare revert would credit challenger instead"
+        )
+        assert ch.credits == 800, f"challenger should have 800 credits after losing (got {ch.credits})"
+        assert tg.duel_wins == 1
+        assert ch.duel_losses == 1
+        assert result["credits_transferred"] == 200
+
+    # ------------------------------------------------------------------
+    # Distinct-name regression tests
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_distinct_name_challenger_wins(self):
+        """Regression: distinct ship names, challenger wins → correct player credited."""
+        CHALLENGER_ID = 4001
+        TARGET_ID = 4002
+
+        ch, tg, duel, duel_repo, player_repo = _make_accept_duel_scaffolding(
+            challenger_id=CHALLENGER_ID,
+            target_id=TARGET_ID,
+            challenger_ship="Viper",
+            target_ship="Cobra",
+            stakes=150,
+        )
+
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner="Viper", loser="Cobra", winner_side=1)
+        )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
+
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout("Viper" if player_id == CHALLENGER_ID else "Cobra")
+
+        mock_db = AsyncMock()
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=mock_db, duel_id=duel.id)
+
+        assert ch.credits == 1150
+        assert tg.credits == 850
+        assert ch.duel_wins == 1
+        assert tg.duel_losses == 1
+        assert result["credits_transferred"] == 150
+
+    @pytest.mark.asyncio
+    async def test_distinct_name_target_wins(self):
+        """Regression: distinct ship names, target wins → correct player credited."""
+        CHALLENGER_ID = 5001
+        TARGET_ID = 5002
+
+        ch, tg, duel, duel_repo, player_repo = _make_accept_duel_scaffolding(
+            challenger_id=CHALLENGER_ID,
+            target_id=TARGET_ID,
+            challenger_ship="Viper",
+            target_ship="Cobra",
+            stakes=150,
+        )
+
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner="Cobra", loser="Viper", winner_side=2)
+        )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
+
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout("Viper" if player_id == CHALLENGER_ID else "Cobra")
+
+        mock_db = AsyncMock()
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=mock_db, duel_id=duel.id)
+
+        assert tg.credits == 1150
+        assert ch.credits == 850
+        assert tg.duel_wins == 1
+        assert ch.duel_losses == 1
+        assert result["credits_transferred"] == 150
+
+    # ------------------------------------------------------------------
+    # Stalemate / draw
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_stalemate_no_credits_transferred(self):
+        """Stalemate (winner_side=None): no credits move, stats unchanged."""
+        CHALLENGER_ID = 6001
+        TARGET_ID = 6002
+
+        ch, tg, duel, duel_repo, player_repo = _make_accept_duel_scaffolding(
+            challenger_id=CHALLENGER_ID,
+            target_id=TARGET_ID,
+            challenger_ship="Iron",
+            target_ship="Steel",
+            stakes=300,
+        )
+
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner=None, loser=None, is_stalemate=True, winner_side=None)
+        )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
+
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout("Iron" if player_id == CHALLENGER_ID else "Steel")
+
+        mock_db = AsyncMock()
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=mock_db, duel_id=duel.id)
+
+        assert result["credits_transferred"] == 0
+        assert ch.credits == 1000
+        assert tg.credits == 1000
+        assert ch.duel_wins == 0
+        assert ch.duel_losses == 0
+        assert tg.duel_wins == 0
+        assert tg.duel_losses == 0
+        fight = result["fight_results"]
+        assert fight.is_stalemate is True
+
+    # ------------------------------------------------------------------
+    # Embed presentation: names still surfaced (not removed)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_winner_name_still_present_in_result_for_embed(self):
+        """Embed presentation: winner_name and loser_name are still present in fight_results
+        for use by the embed — only the winner DECISION changed to snowflake.
+        """
+        CHALLENGER_ID = 7001
+        TARGET_ID = 7002
+
+        ch, tg, duel, duel_repo, player_repo = _make_accept_duel_scaffolding(
+            challenger_id=CHALLENGER_ID,
+            target_id=TARGET_ID,
+            challenger_ship="Panther",
+            target_ship="Jaguar",
+            stakes=50,
+        )
+
+        mock_combat_svc = MagicMock()
+        mock_combat_svc.fight_ships = AsyncMock(
+            return_value=_make_fight_results(winner="Panther", loser="Jaguar", winner_side=1)
+        )
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, combat_service=mock_combat_svc)
+
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout("Panther" if player_id == CHALLENGER_ID else "Jaguar")
+
+        mock_db = AsyncMock()
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=mock_db, duel_id=duel.id)
+
+        # Presentation fields still present
+        fight = result["fight_results"]
+        assert fight.winner_name == "Panther", "winner_name must remain for embed presentation"
+        assert fight.loser_name == "Jaguar", "loser_name must remain for embed presentation"
+        # Snowflake-based decision was correct
+        assert ch.duel_wins == 1
+        assert tg.duel_losses == 1

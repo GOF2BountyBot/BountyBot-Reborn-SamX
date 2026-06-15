@@ -39,57 +39,65 @@ obj = MyRequest.model_validate(raw_dict)       # ← Pydantic v2
 ### Field Validation
 
 ```python
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field
 
+# Real examples from players_schema.py:
 class UpdateCreditsRequest(BaseModel):
-    credits: int = Field(ge=0, description="Must be non-negative")
-    tier: str = Field(pattern="^(Bronze|Silver|Gold|Platinum)$")
+    credits: int = Field(ge=0, description="Credits must be non-negative")
+    update_lifetime: bool = Field(default=True, description="Whether to update lifetime credits")
+
+class UpdateTierRequest(BaseModel):
+    tier: str = Field(
+        pattern="^(Bronze|Silver|Gold|Platinum)$", description="Must be Bronze, Silver, Gold, or Platinum"
+    )
 ```
 
 ---
 
 ## Schema Organization Conventions
 
-Each schema module is named `<router_name>_schema.py` and mirrors its corresponding router.
+Each schema module is named `<router_name>_schema.py` and mirrors its corresponding router, with two exceptions: `loadout_schema.py` (shared `LoadoutResponse` used by both `/players/{id}/loadout` and `/bounties/{id}/loadout`) has no router of its own, and `data.py` / the `announcements/` routers have no dedicated schema module.
 
 ### Naming Pattern
 
-- **Request models**: `<Action><Resource>Request` (e.g., `CreatePlayerRequest`, `UpdateCreditsRequest`)
+- **Request models**: usually `<Action><Resource>Request` (e.g., `CreatePlayerRequest`, `UpdateCreditsRequest`); a few modules deviate (`BountyCreateRequest`, `DuelRequestCreate`)
 - **Response models**: `<Resource>Response` (e.g., `PlayerResponse`, `ShipResponse`)
 - **Result models**: `<Action>Response` (e.g., `PrestigeResponse`, `TransferCreditsResponse`)
-- **List responses**: Either `list[XxxResponse]` returned directly, or a `XxxListResponse` wrapper
+- **List responses**: returned as `list[XxxResponse]` directly (there are no `XxxListResponse` wrappers)
 
 ### Request vs Response
 
 - **Request schemas** represent the JSON body of incoming POST/PUT requests. They should be strict with validation (`Field(ge=0)`, `pattern=...`).
-- **Response schemas** represent the JSON body returned. They typically have `model_config = ConfigDict(from_attributes=True)` to support direct ORM-to-schema mapping.
+- **Response schemas** represent the JSON body returned. Those populated from ORM objects carry `model_config = ConfigDict(from_attributes=True)` (not every response model does — e.g. `admin_schema.py`, `health_schema.py`, and `shops_schema.py` build their responses field-by-field and use plain `BaseModel`).
 
 ---
 
-## All 13 Schema Modules
+## All 15 Schema Modules
 
 | File | Key Request Models | Key Response Models |
 |---|---|---|
-| `about_schema.py` | — | `ShipResponse`, `ModuleResponse`, `PrimaryWeaponResponse`, `SecondaryWeaponResponse`, `TurretWeaponResponse`, `CriminalResponse`, `SystemResponse` |
-| `admin_schema.py` | `GuildResetRequest`, `CreditUpdateRequest` | `AuditLogResponse`, `AdminActionResponse` |
-| `bounty_schema.py` | `SpawnBountyRequest`, `CheckSystemRequest` | `BountyResponse`, `BountyCheckResponse` |
-| `config_schema.py` | `CreateConfigRequest`, `UpdateConfigRequest` | `GuildConfigResponse` |
-| `discord_message_schema.py` | `CreateDiscordMessageRequest` | `DiscordMessageResponse` |
-| `duel_schema.py` | `DuelChallengeRequest`, `DuelResolutionRequest` | `DuelResponse`, `DuelResultResponse` |
+| `about_schema.py` | — | `ItemResponse` (base) + `ModuleResponse`, `WeaponResponse`, `PrimaryWeaponResponse`, `SecondaryWeaponResponse`, `TurretWeaponResponse`, `ShipResponse`, `CriminalResponse`, `SystemResponse`, `CommodityResponse` |
+| `admin_schema.py` | `InitializeGuildRequest`, `UpdatePlayerCreditsRequest`, `UpdatePlayerXPRequest`, `AddInventoryItemRequest`, `RemoveInventoryItemRequest`, `RefreshShopRequest`, `UpdateShopConfigRequest`, `AdminGiveItemRequest`, `AdminRemoveItemRequest`, `AdminGiveShipRequest`, `AdminRemoveShipRequest`, `TransferShipRequest` | `GuildInitializationResponse`, `SystemHealthResponse` |
+| `bounty_schema.py` | `BountyCreateRequest`, `BountyCheckRequest`, `CombatBonusRequest` | `BountyResponse`, `BountyPublicResponse`, `BountyCheckOutcome`, `BountyCheckResponse`, `CombatBonusResponse`, `ClearBountiesResponse`, `AdminSpawnResponse` |
+| `combat_log_schema.py` | — | `CombatLogListItem`, `KeyEvent`, `CombatantSummary`, `CombatLogDetail` |
+| `config_schema.py` | `UpdateConfigRequest`, `UpdateShopConfigRequest`, `UpdateXPThresholdsRequest`, `UpdateBountyConfigRequest`, `ResetGameConstantsRequest` | `GameConstantsOverridesMixin` (shared base), `GuildConfigResponse`, `ConfigValidationResponse`, `BountyConfigResponse`, `BountyConfigStatusResponse` |
+| `discord_message_schema.py` | `DiscordMessageRequest` | `DiscordMessageResponse`, `EmbedPayloadDict` |
+| `duel_schema.py` | `DuelRequestCreate` | `DuelRequestResponse`, `DuelResultResponse` |
 | `health_schema.py` | — | `HealthResponse`, `SimpleHealthResponse` |
-| `inventory_schema.py` | `EquipRequest`, `UnequipRequest`, `SellRequest`, `TransferItemRequest` | `InventoryResponse`, `InventoryItemResponse` |
-| `players_schema.py` | `CreatePlayerRequest`, `UpdateCreditsRequest`, `UpdateXPRequest`, `UpdateTierRequest`, `TransferCreditsRequest` | `PlayerResponse`, `PlayerStatisticsResponse`, `PrestigeResponse`, `TransferCreditsResponse` |
+| `inventory_schema.py` | `AddItemRequest`, `RemoveItemRequest`, `TransferItemRequest` | `InventoryItemResponse`, `InventorySummaryResponse`, `ItemTransactionResponse` |
+| `loadout_schema.py` | — | `LoadoutResponse` + parts: `EffectItem`, `LoadoutWeaponItem`, `LoadoutModuleItem`, `CargoItem`, `ShipStats` |
+| `players_schema.py` | `CreatePlayerRequest`, `UpdateCreditsRequest`, `UpdateXPRequest`, `UpdateTierRequest`, `TransferCreditsRequest` | `PlayerResponse`, `PlayerStatisticsResponse`, `TransferCreditsResponse`, `PrestigeResponse`, `PromotionStatusResponse`, `PromoteResponse`, `DemoteResponse`, `TierChangeCooldownResponse` |
 | `scheduler_schema.py` | `OneTimeJob`, `RecurringJob`, `UpdateJob` | `JobInfo` |
-| `ships_schema.py` | — | `ShipResponse`, `ShipListResponse` |
-| `shops_schema.py` | `BuyRequest`, `SellToShopRequest` | `ShopResponse`, `ShopItemResponse`, `BuyResponse` |
-| `users_schema.py` | `CreateUserRequest` | `UserResponse`, `UserWithPlayersResponse` |
+| `ships_schema.py` | `CreateShipRequest`, `UpdateLoadoutRequest`, `UpdateNicknameRequest`, `EquipItemRequest`, `UnequipItemRequest`, `EquipCheckRequest`, `TransferShipRequest` | `ShipResponse`, `ShipLoadoutSummaryResponse`, `EquipCheckResponse`, `TransferShipResponse` |
+| `shops_schema.py` | `PurchaseRequest`, `SellRequest`, `RefreshShopRequest`, `ShipPurchaseRequest`, `ShipSellRequest` | `ShopItemResponse`, `ShopSummaryResponse`, `TransactionResponse` |
+| `users_schema.py` | `CreateUserRequest`, `UpdateUserRequest` | `UserResponse` |
 
 ---
 
-## Example: Full Schema Module
+## Example: Schema Module Excerpt
 
 ```python
-# api/schemas/players_schema.py
+# api/schemas/players_schema.py (abridged — see the file for the full field list)
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -101,21 +109,23 @@ class PlayerResponse(BaseModel):
     user_id: int
     guild_id: int
     credits: int
-    tier: str
+    lifetime_credits: int
     xp: int
+    tier: str
+    prestige_count: int
+    active_ship_id: int | None
+    display_name: str | None = None
+    guild_transfer_cooldown: datetime | None = None
     created_at: str
     updated_at: str
+    # ... plus bounty/duel stat counters, xp_surplus, classic_mode, bounty_cooldown_end
 
 
 class CreatePlayerRequest(BaseModel):
     discord_id: int
     guild_id: int
     discord_username: str | None = None
-
-
-class UpdateCreditsRequest(BaseModel):
-    credits: int = Field(ge=0, description="Credits must be non-negative")
-    update_lifetime: bool = Field(default=True)
+    display_name: str | None = None
 
 
 class TransferCreditsRequest(BaseModel):
@@ -148,10 +158,10 @@ class PrestigeResponse(BaseModel):
 - **Never import Pydantic v1 APIs** (`from pydantic import validator`, `class Config`, `.dict()`, `.parse_obj()`)
 - **Always add `model_config = ConfigDict(from_attributes=True)`** to response schemas that will be populated from ORM objects
 - **Use `Field()` for validation** — `ge`, `gt`, `le`, `lt`, `pattern`, `min_length`, `max_length`
-- **Datetime fields**: Return as `str` (`.isoformat()`) in responses for consistent serialization; accept `datetime` in requests
+- **Datetime fields**: `created_at`/`updated_at` are returned as `str` (`.isoformat()`); some newer fields (e.g. `PlayerResponse.guild_transfer_cooldown`, `bounty_cooldown_end`) are typed `datetime | None` — match the convention of the surrounding module
 - **Optional fields**: Use `field: SomeType | None = None` (Python 3.10+ union syntax)
 - **BigInteger Discord IDs**: Map to `int` in Python (Pydantic handles large ints correctly)
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-06-11*

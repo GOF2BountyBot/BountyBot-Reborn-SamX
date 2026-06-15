@@ -10,6 +10,11 @@
   "name": "Linear Boost",
   "techLevel": 4,
   "type": "BoosterModule",
-  "value": 5704,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Linear_Boost"
+  "value": 5215,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Linear_Boost",
+  "extra_atts": {
+    "effect_pct": 60.0,
+    "duration_ms": 3000,
+    "loading_speed_ms": 8000
+  }
 }

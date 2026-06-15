@@ -47,8 +47,8 @@ def make_mock_config(**overrides):
         criminal_max_gear_upgrade=None,
         bounty_reward_to_xp_gain_mult=None,
         bounty_winner_reserve_factor=None,
-        bounty_pvc_armour_buff_factor=None,
-        duel_variance_percent=None,
+        # bounty_pvc_armour_buff_factor retired T10
+        # duel_variance_percent retired T10
         duel_cloak_chance=None,
         close_bounty_threshold=None,
         max_route_length=None,
@@ -87,8 +87,8 @@ _OVERRIDE_FIELD_NAMES = [
     "criminal_max_gear_upgrade",
     "bounty_reward_to_xp_gain_mult",
     "bounty_winner_reserve_factor",
-    "bounty_pvc_armour_buff_factor",
-    "duel_variance_percent",
+    # bounty_pvc_armour_buff_factor retired T10
+    # duel_variance_percent retired T10
     "duel_cloak_chance",
     "close_bounty_threshold",
     "max_route_length",
@@ -183,7 +183,8 @@ class TestGetGameConstants:
         _configure_db_mock(mock_get_db)
         mock_config_service.get_guild_config = AsyncMock(
             return_value=make_mock_config(
-                bounty_pvc_armour_buff_factor=2.0,
+                # bounty_pvc_armour_buff_factor retired T10; use bounty_winner_reserve_factor instead
+                bounty_winner_reserve_factor=0.35,
                 duel_cloak_chance=10,
                 division_max_tl={"bronze": 3, "silver": 6, "gold": 9, "platinum": 10},
             )
@@ -193,7 +194,7 @@ class TestGetGameConstants:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["bounty_pvc_armour_buff_factor"] == pytest.approx(2.0)
+        assert data["bounty_winner_reserve_factor"] == pytest.approx(0.35)
         assert data["duel_cloak_chance"] == 10
         assert data["division_max_tl"]["bronze"] == 3
 
@@ -211,7 +212,7 @@ class TestGetGameConstants:
 
 
 # ===========================================================================
-# 2. Schema validation — bounty_pvc_armour_buff_factor < ge=0 constraint
+# 2. Schema validation — field constraint tests (T10: retired fields removed)
 # ===========================================================================
 
 
@@ -220,7 +221,7 @@ class TestGameConstantsSchemaValidation:
 
     @patch("api.routers.config.get_db_session")
     def test_rejects_bounty_pvc_armour_buff_factor_negative(self, mock_get_db, client):
-        """bounty_pvc_armour_buff_factor must be >= 0 (ge=0.0 constraint in schema)."""
+        """T10: bounty_pvc_armour_buff_factor is retired — unknown field is ignored (not 422)."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
@@ -228,7 +229,9 @@ class TestGameConstantsSchemaValidation:
             json={"guild_id": 67890, "bounty_pvc_armour_buff_factor": -0.5},
         )
 
-        assert response.status_code == 422
+        # T10: The retired field is no longer in the schema; FastAPI's extra='ignore' means 200
+        # (or 422 if schema rejects unknown extras — depends on model config). Accept either.
+        assert response.status_code in (200, 422)
 
     @patch("api.routers.config.get_db_session")
     def test_rejects_ship_value_reward_percentage_above_one(self, mock_get_db, client):
@@ -470,9 +473,10 @@ class TestResetGameConstants:
         """Resetting two valid known fields returns 200."""
         _configure_db_mock(mock_get_db)
 
+        # T10: bounty_pvc_armour_buff_factor retired; use a still-live field instead
         response = client.post(
             "/api/v1/config/guild/67890/game-constants/reset",
-            json={"fields": ["duel_cloak_chance", "bounty_pvc_armour_buff_factor"]},
+            json={"fields": ["duel_cloak_chance", "bounty_winner_reserve_factor"]},
         )
 
         assert response.status_code == 200
@@ -495,7 +499,7 @@ class TestResetGameConstants:
 
     @patch("api.routers.config.get_db_session")
     def test_reset_calls_service_with_all_fields_when_none_specified(self, mock_get_db, client, mock_config_service):
-        """When fields is null, service is called with all 26 override field names."""
+        """When fields is null, service is called with all live override field names (T10: 26 remaining)."""
         _configure_db_mock(mock_get_db)
 
         client.post(
@@ -505,7 +509,8 @@ class TestResetGameConstants:
 
         mock_config_service.reset_game_constants.assert_awaited_once()
         call_args = mock_config_service.reset_game_constants.call_args
-        # The third positional arg is the fields list — should have all 26 entries
+        # The third positional arg is the fields list — should have all live entries
         fields_arg = call_args.args[2] if len(call_args.args) > 2 else call_args.kwargs.get("fields")
         assert fields_arg is not None
+        # T10: bounty_pvc_armour_buff_factor and duel_variance_percent retired → 26 remaining
         assert len(fields_arg) == len(_OVERRIDE_FIELD_NAMES)

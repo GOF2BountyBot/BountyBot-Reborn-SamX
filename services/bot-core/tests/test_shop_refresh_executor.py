@@ -303,7 +303,10 @@ class TestBulkRefreshAllGuilds:
             patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
             patch("services.shop_service.ShopService.refresh_shop", side_effect=_fake_refresh),
             patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
-            patch("utils.shop_announcement.announce_shop_refresh", new=AsyncMock()),
+            # `from ... import announce_shop_refresh as _shared_announce` binds the
+            # callable into this executor's namespace at import time; patch the
+            # local binding so no real httpx call (~4s DNS timeout) fires.
+            patch("utils.executors.shop_refresh_executor._shared_announce", new=AsyncMock()),
         ):
             result = await execute_shop_refresh_job("job-bulk", {})
 
@@ -658,7 +661,9 @@ class TestDiagnosticLogging:
                 patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
                 patch("services.shop_service.ShopService.refresh_shop", new=AsyncMock(return_value=fake_result)),
                 patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
-                patch("utils.shop_announcement.announce_shop_refresh", new=AsyncMock()),
+                # Patch the executor's local binding (not the source module) — see
+                # bulk-refresh test for rationale.
+                patch("utils.executors.shop_refresh_executor._shared_announce", new=AsyncMock()),
             ):
                 result = await execute_shop_refresh_job("job-logging", {})
         finally:

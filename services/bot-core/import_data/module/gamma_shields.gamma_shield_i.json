@@ -11,6 +11,9 @@
   "name": "Gamma Shield I",
   "techLevel": 8,
   "type": "GammaShieldModule",
-  "value": 27526,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Gamma_Shield_I"
+  "value": 27011,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Gamma_Shield_I",
+  "extra_atts": {
+    "effect_pct": 40.0
+  }
 }

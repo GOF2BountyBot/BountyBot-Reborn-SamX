@@ -5,16 +5,16 @@
 # For CPU-only dev: use docker-compose.yml
 # For production (pre-built GHCR images): use docker-compose.prod-gpu.yml
 
-name: bountybot-stack
+name: ${COMPOSE_PROJECT_NAME:-bountybot-stack}
 services:
   db:
     image: postgres:18
-    container_name: bountybot-db
+    container_name: ${STACK_PREFIX:-bountybot}-db
     restart: unless-stopped
     networks:
       - botnetv2
     env_file:
-      - path: ./.env
+      - path: ${ENV_FILE:-.env}
         required: false 
     environment:
       - PUID=${PUID:-1000}
@@ -30,17 +30,18 @@ services:
       retries: 20
       start_period: 30s
     ports:
-      - "5432:5432"
+      - "${HOST_DB_PORT:-5432}:5432"
+
 
   bot-core:
     build:
       context: ./
       dockerfile: ./services/bot-core/Dockerfile
-    container_name: bountybot-bot-core
+    container_name: ${STACK_PREFIX:-bountybot}-bot-core
     networks:
       - botnetv2
     ports:
-      - 8000:8000
+      - "${BOT_PORT:-8000}:${BOT_PORT:-8000}"
     depends_on:
       db:
         condition: service_healthy
@@ -49,7 +50,7 @@ services:
         condition: service_healthy
         restart: true
     env_file:
-      - path: ./.env
+      - path: ${ENV_FILE:-.env}
         required: false 
     environment:
       - PUID=${PUID:-1000}
@@ -58,23 +59,29 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
       - ./mappings/bot-core:/app/data
+    healthcheck:
+      test: curl -s -o /dev/null -f http://localhost:${BOT_PORT:-8000}/api/v1/health/ || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
     restart: unless-stopped
 
   discord-gateway:
     build:
       context: ./
       dockerfile: ./services/discord-gateway/Dockerfile
-    container_name: bountybot-discord-gateway
+    container_name: ${STACK_PREFIX:-bountybot}-discord-gateway
     networks:
       - botnetv2
     ports:
-      - 7999:7999
+      - "${GATEWAY_PORT:-7999}:${GATEWAY_PORT:-7999}"
     depends_on:
       db:
         condition: service_healthy
         restart: true
     env_file:
-      - path: ./.env
+      - path: ${ENV_FILE:-.env}
         required: false 
     environment:
       - PUID=${PUID:-1000}
@@ -84,13 +91,19 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
       - ./mappings/discord-gateway:/app/data
+    healthcheck:
+      test: curl -s -o /dev/null -f http://localhost:${GATEWAY_PORT:-7999}/api/v1/health || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   blender-service:
     build:
       context: ./
       dockerfile: ./services/blender-service/Dockerfile.gpu
-    container_name: bountybot-blender-service
+    container_name: ${STACK_PREFIX:-bountybot}-blender-service
     depends_on:
       db:
         condition: service_healthy
@@ -109,9 +122,9 @@ services:
     networks:
       - botnetv2
     ports:
-      - 8001:8001
+      - "${BLENDER_PORT:-8001}:${BLENDER_PORT:-8001}"
     env_file:
-      - path: ./.env
+      - path: ${ENV_FILE:-.env}
         required: false 
     environment:
       - PUID=${PUID:-1000}
@@ -121,7 +134,7 @@ services:
       #- /etc/timezone:/etc/timezone:ro     # timezone is baked into the image via tzdata at build time (UTC)
       - ./mappings/blender-renderer:/app/data
     healthcheck:
-      test: curl -s -o /dev/null -f http://localhost:8001/api/v1/health/ || exit 1
+      test: curl -s -o /dev/null -f http://localhost:${BLENDER_PORT:-8001}/api/v1/health/ || exit 1
       interval: 30s
       timeout: 5s
       retries: 3
@@ -130,7 +143,7 @@ services:
 
 networks:
   botnetv2:
-    name: bountybot-net
+    name: ${STACK_PREFIX:-bountybot}-net
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: bountybot-br
+      com.docker.network.bridge.name: ${BRIDGE_NAME:-bountybot-br}

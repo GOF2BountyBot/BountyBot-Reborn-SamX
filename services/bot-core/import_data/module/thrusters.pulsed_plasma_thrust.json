@@ -7,6 +7,10 @@
   "name": "Pulsed Plasma Thrust",
   "techLevel": 8,
   "type": "ThrusterModule",
-  "value": 31015,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Pulsed_Plasma_Thrust"
+  "value": 29202,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Pulsed_Plasma_Thrust",
+  "extra_atts": {
+    "effect_pct": 130.0,
+    "handling_multiplier": 2.3
+  }
 }

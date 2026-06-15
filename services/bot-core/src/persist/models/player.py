@@ -44,6 +44,21 @@ class Player(Base):
     # Display name (server nickname or global display name, updated on each interaction)
     display_name: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
 
+    # Notification preferences (D-019). Persisted source of truth for whether the
+    # player wants to be @-mentioned in bounty / shop announcements. Discord role
+    # membership (tier role for bounties, shop_announcements_role_id for shop) is a
+    # PROJECTION of these flags — the role still exists because the @-mention is the
+    # delivery mechanism, but every role-sync path (/profile, /register, /promote,
+    # /demote, /prestige, /notifications) consults THESE flags, never role presence.
+    # Default opted-in (True) to preserve today's behaviour. server_default backfills
+    # existing rows to True on the additive migration (revision 0019).
+    bounty_notifications_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    shop_notifications_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+
     # Extended progression fields
     xp_surplus: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     guild_transfer_cooldown: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -55,6 +70,20 @@ class Player(Base):
     active_ship_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey(f"{TableNames.PlayerShips.value}.id", use_alter=True), nullable=True
     )
+
+    # Combat lifetime counters (Phase-1; incremented by T10 post-fight)
+    total_fights: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    total_nukes_fired: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    total_module_activations: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    # Combat damage-state hooks (Phase-2 OOC recovery; Phase-1 is read-only).
+    # All nullable: NULL == "at full HP, never been damaged". Populated by the
+    # tick-resolver post-fight; consumed by the OOC-recovery scheduled job
+    # (25%/hr player recovery, guild-configurable). Added in revision 0009.
+    current_hull: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_armour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_shield: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_damage_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

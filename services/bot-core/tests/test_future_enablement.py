@@ -59,16 +59,17 @@ class TestFutureEnablementFlip:
         assert "secondary_weapon" in GameConstants.CURRENTLY_ENABLED_TYPES
 
     def test_shop_generation_includes_secondary_when_enabled(self, monkeypatch):
-        """With secondary_weapon enabled, _CONCRETE_TO_CONFIG_KEY would include it once added."""
+        """secondary_weapon is now in _CONCRETE_TO_CONFIG_KEY mapped to its own 'secondary_weapon' key."""
         monkeypatch.setattr(GameConstants, "CURRENTLY_ENABLED_TYPES", _ENABLED_WITH_SECONDARY)
         from services.shop_service import _CONCRETE_TO_CONFIG_KEY
 
-        # Today secondary_weapon is not in _CONCRETE_TO_CONFIG_KEY (no GuildConfig support yet)
-        # This test documents the state — when GuildConfig supports it, add to _CONCRETE_TO_CONFIG_KEY
+        # CI-11: secondary_weapon now has its own dedicated config key
+        assert "secondary_weapon" in _CONCRETE_TO_CONFIG_KEY
+        assert _CONCRETE_TO_CONFIG_KEY["secondary_weapon"] == "secondary_weapon"
+
         enabled_with_config_key = {t for t in GameConstants.CURRENTLY_ENABLED_TYPES if t in _CONCRETE_TO_CONFIG_KEY}
-        # secondary_weapon is NOT in _CONCRETE_TO_CONFIG_KEY yet — that's expected
-        # This test ensures the generation loop is aware of CURRENTLY_ENABLED_TYPES
         assert "ship" in enabled_with_config_key
         assert "primary_weapon" in enabled_with_config_key
+        assert "secondary_weapon" in enabled_with_config_key
         assert "module" in enabled_with_config_key
         assert "turret_weapon" in enabled_with_config_key

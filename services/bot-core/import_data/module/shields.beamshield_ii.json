@@ -10,6 +10,10 @@
   "shield": 150,
   "techLevel": 7,
   "type": "ShieldModule",
-  "value": 39331,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Beamshield_II"
+  "value": 36734,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Beamshield_II",
+  "extra_atts": {
+    "shield_capacity": 150,
+    "shield_recharge_ms": 45000
+  }
 }

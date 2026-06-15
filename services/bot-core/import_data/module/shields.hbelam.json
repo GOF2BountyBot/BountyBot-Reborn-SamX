@@ -1,14 +1,18 @@
 {
-    "aliases": [
-        "HBelam"
-    ],
-    "builtIn": false,
-    "emoji": "<:hbelam:723706780139520019>",
-    "icon": "https://i.postimg.cc/T3kzysTs/h-belam.png",
-    "name": "H'Belam",
-    "shield": 120,
-    "techLevel": 5,
-    "type": "ShieldModule",
-    "value": 13043,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/H%27Belam"
+  "aliases": [
+    "HBelam"
+  ],
+  "builtIn": false,
+  "emoji": "<:hbelam:723706780139520019>",
+  "icon": "https://i.postimg.cc/T3kzysTs/h-belam.png",
+  "name": "H'Belam",
+  "shield": 120,
+  "techLevel": 6,
+  "type": "ShieldModule",
+  "value": 31991,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/H%27Belam",
+  "extra_atts": {
+    "shield_capacity": 120,
+    "shield_recharge_ms": 58000
+  }
 }

@@ -14,17 +14,17 @@
 # For GPU rendering: use docker-compose.prod-gpu.yml
 # For local dev builds: use docker-compose.yml
 
-name: bountybot-stack
+name: ${COMPOSE_PROJECT_NAME:-bountybot-stack}
 
 services:
   db:
     image: postgres:18
-    container_name: bountybot-db
+    container_name: ${STACK_PREFIX:-bountybot}-db
     restart: unless-stopped
     networks:
       - botnetv2
     env_file:
-      - path: ./.env
+      - path: ${ENV_FILE:-.env}
         required: false
     environment:
       - PUID=${PUID:-1000}
@@ -42,7 +42,7 @@ services:
 
   bot-core:
     image: ghcr.io/gof2bountybot/bountybot-reborn-samx/bot-core:${BOUNTYBOT_VERSION:-latest}
-    container_name: bountybot-bot-core
+    container_name: ${STACK_PREFIX:-bountybot}-bot-core
     networks:
       - botnetv2
     depends_on:
@@ -53,7 +53,7 @@ services:
         condition: service_healthy
         restart: true
     env_file:
-      - path: ./.env
+      - path: ${ENV_FILE:-.env}
         required: false
     environment:
       - PUID=${PUID:-1000}
@@ -66,7 +66,7 @@ services:
 
   discord-gateway:
     image: ghcr.io/gof2bountybot/bountybot-reborn-samx/discord-gateway:${BOUNTYBOT_VERSION:-latest}
-    container_name: bountybot-discord-gateway
+    container_name: ${STACK_PREFIX:-bountybot}-discord-gateway
     networks:
       - botnetv2
     depends_on:
@@ -74,7 +74,7 @@ services:
         condition: service_healthy
         restart: true
     env_file:
-      - path: ./.env
+      - path: ${ENV_FILE:-.env}
         required: false
     environment:
       - PUID=${PUID:-1000}
@@ -88,7 +88,7 @@ services:
 
   blender-service:
     image: ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service:${BOUNTYBOT_VERSION:-latest}
-    container_name: bountybot-blender-service
+    container_name: ${STACK_PREFIX:-bountybot}-blender-service
     networks:
       - botnetv2
     depends_on:
@@ -99,7 +99,7 @@ services:
         condition: service_healthy
         restart: true
     env_file:
-      - path: ./.env
+      - path: ${ENV_FILE:-.env}
         required: false
     environment:
       - PUID=${PUID:-1000}
@@ -118,7 +118,7 @@ services:
 
 networks:
   botnetv2:
-    name: bountybot-net
+    name: ${STACK_PREFIX:-bountybot}-net
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: bountybot-br
+      com.docker.network.bridge.name: ${BRIDGE_NAME:-bountybot-br}

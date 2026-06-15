@@ -9,7 +9,11 @@ and current status.
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, BigInteger, DateTime, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+
+# Portable JSON type: Postgres uses JSONB; SQLite unit-test suite falls back to JSON.
+_JSONB = JSON().with_variant(JSONB(), "postgresql")
 
 from persist.database.tablenames import TableNames
 from persist.models.base import Base
@@ -25,7 +29,7 @@ class Bounty(Base):
     criminal_faction: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Route and answer
-    route: Mapped[list] = mapped_column(JSON, nullable=False)
+    route: Mapped[list] = mapped_column(_JSONB, nullable=False)
     answer: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Rewards
@@ -33,7 +37,7 @@ class Bounty(Base):
     reward_per_sys: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Tracking dict: system_name -> user_id (-1 = unchecked)
-    checked: Mapped[dict] = mapped_column(JSON, nullable=False)
+    checked: Mapped[dict] = mapped_column(_JSONB, nullable=False)
 
     # Timing
     issue_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
@@ -41,13 +45,23 @@ class Bounty(Base):
 
     # Criminal details
     tech_level: Mapped[int] = mapped_column(Integer, nullable=False)
-    criminal_ship: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    criminal_ship: Mapped[dict | None] = mapped_column(_JSONB, nullable=True)
 
     # Status tracking
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     escape_count: Mapped[int] = mapped_column(Integer, default=0)
     win_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     respawn_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Criminal damage-state hooks (Phase-2 OOC recovery; Phase-1 is read-only).
+    # Symmetric to Player.current_* — NULL == "at full HP, never damaged".
+    # Populated by the tick-resolver after a failed bounty attempt; consumed
+    # by the criminal-recovery scheduled job (12.5%/hr by default,
+    # guild-configurable). Added in revision 0009.
+    criminal_current_hull: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    criminal_current_armour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    criminal_current_shield: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    criminal_last_damage_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

@@ -1,0 +1,28 @@
+{
+  "_name": "Mechanical Supplies",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/MT9pP5wf/mechanical-supplies.png",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Mechanical_Supplies",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Mechanical Supplies",
+    "Type": "Commodity",
+    "Tech Level": "4",
+    "Known Price Range": "-> 57$ (K'ontrr)\n-> 210$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 4,
+    "price_range_min_credits": 57,
+    "price_range_min_system": "K'Ontrr",
+    "price_range_max_credits": 210,
+    "price_range_max_system": "Eanya",
+    "value": 134,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Screws, chains, gears, gaskets and everything that is used for power transmission or coupling.",
+  "mechanics_text": [
+    "Required for blueprints: 1t Intelli Jet, 5t 128MJ Railgun, 5t AMR Extinctor, 9t H'nookk, 16t Mass Driver MD 10, 20t Fluxed Matter Shield, 40t T'yol, 50t Rhoda Blackhole, 70t Khador Drive, 80t Gunant's Drill."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 4", "GOF2", "Technical commodities", "Blueprints", "Freelance Missions", "GOF2HD"]
+}

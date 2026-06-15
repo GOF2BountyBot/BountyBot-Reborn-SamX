@@ -6,7 +6,7 @@ This file provides guidance for AI agents working on this codebase. Each service
 
 ## Project Overview
 
-**BountyBot-Reborn-SamX** is a containerized, GPU-ready micro-service stack powering a game-related Discord bot. The project uses FastAPI, PostgreSQL, Discord.py, CUDA, Blender, Alembic, PIL, and Docker-Compose. The stack has 228 source files and 235 test files across all services.
+**BountyBot-Reborn-SamX** is a containerized, GPU-ready micro-service stack powering a game-related Discord bot. The project uses FastAPI, PostgreSQL, Discord.py, CUDA, Blender, Alembic, PIL, and Docker-Compose. The stack has 254 source files and 293 test files across all services.
 
 ---
 
@@ -24,17 +24,20 @@ This file provides guidance for AI agents working on this codebase. Each service
 ### Data Flow
 
 ```
-discord-gateway → blender-service → bot-core → db
+discord-gateway ⇄ bot-core → db
+discord-gateway → blender-service
 ```
+
+`discord-gateway` calls `bot-core` for all game state and `blender-service` for rendering. `bot-core` is the only service that talks to the database, and it pushes back to `discord-gateway` (announcements + autocomplete-cache invalidation via the `/internal/autocomplete/*` endpoints). `blender-service` calls no other service.
 
 ### Codebase Statistics
 
 | Service | Source files | Test files | Routers | Models | Repos | Services | Cogs | Schemas |
 |---------|-------------|------------|---------|--------|-------|----------|------|---------|
-| bot-core | 148 | 124 | 15 | 21 | 20 | 24 | — | 14 |
-| discord-gateway | 61 | 92 | 12 | — | — | — | 16 | 9 |
+| bot-core | 174 | 177 | 16 | 23 | 22 | 27 | — | 15 |
+| discord-gateway | 61 | 97 | 12 | — | — | — | 17 | 9 |
 | blender-service | 19 | 19 | 6 | — | — | 6 | — | — |
-| **TOTAL** | **228** | **235** | **33** | **21** | **20** | **30** | **16** | **23** |
+| **TOTAL** | **254** | **293** | **34** | **23** | **22** | **33** | **17** | **24** |
 
 ---
 
@@ -42,16 +45,19 @@ discord-gateway → blender-service → bot-core → db
 
 ```
 BountyBot-Reborn-SamX/
-├── docker-compose.yml              # Standard stack
-├── docker-compose-gpu.yml          # GPU-enabled stack
+├── docker-compose.yml              # Standard stack (local builds)
+├── docker-compose-gpu.yml          # GPU-enabled stack (local builds)
+├── docker-compose.prod.yml         # Prod stack (pre-built GHCR images, CPU blender)
+├── docker-compose.prod-gpu.yml     # Prod stack with GPU rendering
 ├── .env.example                    # Environment template
+├── .env.dev                        # Isolated dev stack config (bountydev-* containers, 1xxxx ports)
 ├── .gitmodules                     # Git submodules
 ├── AGENTS.md                       # This file
 ├── README.md                       # Project documentation
 ├── pyproject.toml                  # Ruff config, shared tool settings
 ├── mappings/                       # Persistent data volumes (bind-mounted)
 │   ├── postgres-data/              # PostgreSQL data directory
-│   ├── bot-core/                   # bot-core logs
+│   ├── bot-core/                   # bot-core logs + backups
 │   ├── discord-gateway/            # Gateway data
 │   └── blender-renderer/           # Blender render output
 └── services/
@@ -64,30 +70,38 @@ BountyBot-Reborn-SamX/
     │   │   ├── primary_weapon/
     │   │   ├── secondary_weapon/
     │   │   ├── turret_weapon/
+    │   │   ├── commodity/
     │   │   ├── criminal/
     │   │   └── system/
     │   ├── src/
     │   │   ├── main.py             # App entrypoint, lifespan, router registration
     │   │   ├── api/
-│   │   │   ├── routers/        # 15 FastAPI routers (auto-discovered)
-│   │   │   └── schemas/        # 14 Pydantic schema modules
+    │   │   │   ├── routers/        # 16 FastAPI routers (auto-discovered) + announcements/ subpackage
+    │   │   │   └── schemas/        # 15 Pydantic schema modules
+    │   │   ├── compute/            # Process-pool combat worker (CPU offload)
     │   │   ├── persist/
     │   │   │   ├── database/       # DB engine, MigrationManager, Alembic config
     │   │   │   │   ├── manager.py
     │   │   │   │   ├── migration_manager.py
     │   │   │   │   ├── run_migration.py
+    │   │   │   │   ├── tablenames.py
     │   │   │   │   ├── alembic.ini
     │   │   │   │   └── revisions/  # Alembic env + version scripts
     │   │   │   ├── interfaces/     # Abstract repository protocols
-    │   │   │   ├── models/         # 21 SQLAlchemy ORM models
-│   │   │   └── repositories/   # 20 CRUD repositories
-│   │   ├── services/           # 24 business-logic service modules
+    │   │   │   ├── models/         # 23 SQLAlchemy ORM model modules
+    │   │   │   └── repositories/   # 22 CRUD repositories
+    │   │   ├── services/           # 27 business-logic service modules
     │   │   ├── message_builders/   # Discord embed builder framework
+    │   │   ├── shared/             # bblogger + http_retry (build-time copy of services/shared)
     │   │   └── utils/
     │   │       ├── auto_seeder.py
+    │   │       ├── bounty_announcement_payload.py
     │   │       ├── data_loader.py
     │   │       ├── emoji_service.py
+    │   │       ├── gateway_push.py
     │   │       ├── job_executor.py
+    │   │       ├── offload.py / executor_holder.py / scheduler_holder.py
+    │   │       ├── shop_announcement.py
     │   │       └── executors/      # 10 APScheduler job executors
     │   └── tests/
     ├── discord-gateway/            # Discord bot + internal REST API
@@ -96,11 +110,11 @@ BountyBot-Reborn-SamX/
     │   ├── src/
     │   │   ├── bot.py              # Discord.py bot setup
     │   │   ├── api/
-│   │   │   ├── routers/        # 12 internal REST routers
-│   │   │   ├── schemas/        # 9 Pydantic schema modules
-│   │   │   └── server.py       # FastAPI app factory
-│   │   ├── cogs/               # 16 Discord slash-command cog files (14 loaded; templateCog + testCog skipped)
-    │   │   └── utils/              # Helpers: embeds, converters, permissions
+    │   │   │   ├── routers/        # 12 internal REST routers
+    │   │   │   ├── schemas/        # 9 Pydantic schema modules
+    │   │   │   └── server.py       # FastAPI app factory
+    │   │   ├── cogs/               # 17 Discord slash-command cog files (15 loaded; templateCog + testCog skipped)
+    │   │   └── utils/              # Helpers: guild setup, autocomplete cache, converters, permissions
     │   └── tests/
     ├── blender-service/            # Blender render + texture pipeline
     │   ├── Dockerfile
@@ -115,9 +129,10 @@ BountyBot-Reborn-SamX/
     │   │   │   └── AEPi/           # Git submodule: AEI format library
     │   │   └── utils/
     │   └── tests/
-    ├── database/                   # Empty placeholder (uses stock postgres image)
+    ├── database/                   # Placeholder (empty Dockerfile; stack uses stock postgres image)
     └── shared/
-        └── bblogger.py             # Dependency-free logging utility (copied into each service)
+        ├── bblogger.py             # Dependency-free logging utility (copied into each service)
+        └── http_retry.py           # Shared HTTP retry helper (copied into each service)
 ```
 
 ---
@@ -126,10 +141,10 @@ BountyBot-Reborn-SamX/
 
 - **FastAPI** — Web framework for bot-core, discord-gateway, and blender-service
 - **Discord.py** — Discord bot library (slash commands via cogs)
-- **SQLAlchemy** — Async ORM with declarative base and single-table inheritance
+- **SQLAlchemy** — Async ORM with declarative base and joined-table inheritance for items
 - **Alembic** — Database migrations managed by `MigrationManager`; auto-applied on startup
 - **APScheduler** — In-process scheduled jobs (bounty spawn, shop refresh, temperature decay)
-- **PostgreSQL 18** — Primary database (19 application tables + `apscheduler_jobs`)
+- **PostgreSQL 18** — Primary database (22 application tables + `apscheduler_jobs`)
 - **Blender** — 3D rendering, GPU-accelerated via CUDA
 - **PIL / Pillow** — Texture compositing pipeline
 - **AEPi** (submodule) — AEI image format conversion library
@@ -145,7 +160,7 @@ BountyBot-Reborn-SamX/
 
 - Docker + Docker-Compose
 - (Optional) NVIDIA drivers + `nvidia-docker` for GPU rendering
-- Python 3.12+ for local development
+- Python 3.13+ for local development
 - PostgreSQL client for database work
 
 ### Initial Setup
@@ -180,12 +195,15 @@ Located in `services/bot-core/import_data/`:
 - `primary_weapon/` — Primary weapons
 - `secondary_weapon/` — Secondary weapons
 - `turret_weapon/` — Turret weapons
+- `commodity/` — Tradeable commodities
 - `criminal/` — NPC criminal data
 - `system/` — Star system definitions
 
 ### Shared Library
 
-`services/shared/bblogger.py` — dependency-free logging utility with TRACE level, colored console output, and optional rotating file handler. Configured via `LOG_LEVEL`, `LOG_FILE`, and `LOG_TO_FILE` environment variables. Copied into each service image at build time.
+`services/shared/` is copied into each service image at build time (and mirrored at `services/bot-core/src/shared/` for local runs):
+- `bblogger.py` — dependency-free logging utility with TRACE level, colored console output, and optional rotating file handler. Configured via `LOG_LEVEL`, `LOG_FILE`, and `LOG_TO_FILE` environment variables.
+- `http_retry.py` — shared HTTP retry helper.
 
 ### blender-service Asset Pipeline
 
@@ -206,7 +224,7 @@ bot-core uses **Alembic** managed through `MigrationManager`.
 - Manual migration commands are available via `run_migration.py` CLI.
 - Alembic config lives in `services/bot-core/src/persist/database/alembic.ini`.
 - Migration version scripts live in `services/bot-core/src/persist/database/revisions/versions/`.
-- The `schema_version` table tracks applied revisions.
+- The `alembic_version` table tracks the applied revision (queried by `MigrationManager`). The legacy `schema` table (`SchemaVersion` model) predates Alembic and is still present.
 
 **Adding a new migration:**
 ```bash
@@ -219,45 +237,49 @@ python run_migration.py upgrade head
 
 ## Database Schema
 
-### Application Tables (19)
+### Application Tables (22)
 
 | Table | Model | Notes |
 |-------|-------|-------|
 | `admin_audit_logs` | AdminAuditLog | Audit trail for all admin mutations |
 | `bounty` | Bounty | Active bounties on criminals |
+| `combat_log` | CombatLog | Persisted after-action combat reports |
+| `commodity` | Commodity | Tradeable commodity items |
 | `criminal` | Criminal | NPC criminal definitions |
 | `discord_message` | DiscordMessage | Persistent Discord message references |
 | `duel_requests` | DuelRequest | Duel challenge lifecycle |
 | `guild_configs` | GuildConfig | Per-guild bot configuration |
 | `guild_shops` | GuildShop | Per-guild shop item listings |
-| `item` | Item (abstract) | Single-table inheritance root |
+| `item` | Item | Joined-table inheritance root |
 | `module` | Module | Ship module items |
 | `player_inventories` | PlayerInventory | Player → item ownership |
 | `player_ships` | PlayerShip | Player → ship associations |
 | `players` | Player | Player game state |
 | `primary_weapon` | PrimaryWeapon | Primary weapon items |
-| `schema` | SchemaVersion | Alembic migration tracking |
+| `schema` | SchemaVersion | Legacy schema-version tracking (Alembic uses `alembic_version`) |
 | `secondary_weapon` | SecondaryWeapon | Secondary weapon items |
 | `ship` | Ship | Ship definitions |
 | `system` | System | Star system nodes |
 | `turret_weapon` | TurretWeapon | Turret weapon items |
 | `users` | User | Discord user accounts |
-| `weapon` | Weapon (abstract) | Weapon inheritance intermediate |
+| `weapon` | Weapon | Weapon inheritance intermediate |
 
-**Plus:** `apscheduler_jobs` — managed automatically by APScheduler.
+**Plus:** `apscheduler_jobs` — managed automatically by APScheduler, and `alembic_version` — managed by Alembic.
 
 ### Model Inheritance Hierarchy
 
 ```
 Base
-├── Item  (single-table inheritance, discriminator: item_type)
+├── Item  (joined-table inheritance: subclass tables FK onto item.id)
 │   ├── Module
-│   └── Weapon  (abstract intermediate)
+│   ├── Commodity
+│   └── Weapon  (intermediate)
 │       ├── PrimaryWeapon
 │       ├── SecondaryWeapon
 │       └── TurretWeapon
 ├── AdminAuditLog
 ├── Bounty
+├── CombatLog
 ├── Criminal
 ├── DiscordMessage
 ├── DuelRequest
@@ -294,10 +316,11 @@ Additional executors (triggered on demand or by other jobs):
 - `time_announcement_executor` — posts time-based announcements
 
 `db_retention_default` deletes terminal-state rows older than configurable
-windows: bounties/duels at 24h, audit logs at 30 days. Override via
-`BOUNTYBOT_BOUNTY_RETENTION_HOURS`, `BOUNTYBOT_DUEL_RETENTION_HOURS`,
-`BOUNTYBOT_AUDIT_RETENTION_DAYS`. Per-player aggregate stats (bounty_wins,
-duel_wins, etc.) live on the `players` table and are unaffected.
+windows: bounties/duels at 24h, audit logs at 30 days, combat logs at 72h.
+Override via `BOUNTYBOT_BOUNTY_RETENTION_HOURS`, `BOUNTYBOT_DUEL_RETENTION_HOURS`,
+`BOUNTYBOT_AUDIT_RETENTION_DAYS`, `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS`.
+Per-player aggregate stats (bounty_wins, duel_wins, etc.) live on the
+`players` table and are unaffected.
 
 ---
 
@@ -310,6 +333,7 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 | about | `/about` | Bot/server info |
 | admin | `/admin` | Admin operations (audit-logged) |
 | bounties | `/bounties` | Bounty CRUD and lifecycle |
+| combat_log | `/combat-log` | Combat after-action report list + detail |
 | config | `/config` | Guild configuration |
 | data | `/data` | Game data lookups |
 | discord_message | `/discord-message` | Discord message persistence |
@@ -317,7 +341,7 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 | health | `/health` | Health check |
 | inventory | `/inventory` | Player inventory management |
 | players | `/players` | Player game state |
-| scheduler | `/jobs` | APScheduler job management (router file: `scheduler.py`, tag: `job-scheduler`) |
+| scheduler | *(no prefix)* | APScheduler job management — routes `/jobs*` and `/reset` (router file: `scheduler.py`, tag: `job-scheduler`) |
 | ships | `/ships` | Ship definitions |
 | shops | `/shops` | Guild shop management |
 | systems | `/systems` | Star system graph |
@@ -349,6 +373,7 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 | GET | `/textures/health` | Texture service health check |
 | POST | `/render/` | Synchronous Blender render |
 | POST | `/render/async` | Async render (returns job ID) |
+| GET | `/jobs/` | List active render jobs |
 | GET | `/jobs/{job_id}` | Poll async job status |
 | GET | `/jobs/{job_id}/result` | Download completed render |
 | GET | `/config/render` | Get current render config |
@@ -369,7 +394,8 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 | aboutCog | Bot and server information |
 | adminCog | Admin commands (requires elevated permissions) |
 | bountyCog | Bounty hunting commands |
-| devCog | Developer/debug utilities |
+| combatLogCog | `/combat-log` and `/admin_combat_log` after-action reports |
+| devCog | Developer/debug utilities (DEVELOPERS-gated) |
 | duelCog | Duel challenge and resolution |
 | healthCog | Health check slash command |
 | helpCog | `/help` and `/admin_help` slash commands |
@@ -389,15 +415,14 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 
 ### Adding a New API Endpoint (bot-core)
 
-1. Create a new router file in `services/bot-core/src/api/routers/`
+1. Create a new router file in `services/bot-core/src/api/routers/` exposing a module-level `router` (routers are auto-discovered and included by `include_routers()` in `main.py` — no manual registration)
 2. Define schemas in `services/bot-core/src/api/schemas/`
-3. Register the router in `services/bot-core/src/main.py`
-4. Add tests in `services/bot-core/tests/`
+3. Add tests in `services/bot-core/tests/`
 
 ### Adding a New Discord Cog
 
-1. Create a new cog file in `services/discord-gateway/src/cogs/`
-2. Register it in the bot setup in `src/bot.py`
+1. Create a new cog file in `services/discord-gateway/src/cogs/` (cogs are auto-discovered by `bot.py`'s `setup_hook`; filenames containing `template`, `test`, or `disabled` are skipped)
+2. Implement the module-level `async def setup(bot)` entry point
 3. Add tests in `services/discord-gateway/tests/`
 
 ### Adding a New Database Model
@@ -416,10 +441,9 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 
 ### Adding a blender-service Endpoint
 
-1. Create or update router in `services/blender-service/src/routers/`
+1. Create or update router in `services/blender-service/src/routers/` (routers are auto-discovered by `include_routers()` in `main.py`)
 2. Implement service logic in `services/blender-service/src/services/`
-3. Register router in `services/blender-service/src/main.py`
-4. Add tests in `services/blender-service/tests/`
+3. Add tests in `services/blender-service/tests/`
 
 ---
 
@@ -461,7 +485,7 @@ duel_wins, etc.) live on the `players` table and are unaffected.
 
 ### Docker Access
 
-All commands require `sudo docker`. Containers:
+All commands require `sudo docker`. Containers (default `STACK_PREFIX=bountybot`):
 
 | Container | Port | Exec curl base |
 |-----------|------|----------------|
@@ -472,14 +496,17 @@ All commands require `sudo docker`. Containers:
 
 Logs: `sudo docker logs bountybot-<service> --tail N 2>&1`
 
+> **Multi-instance**: container + network names are parameterized via `STACK_PREFIX` (default `bountybot`), `COMPOSE_PROJECT_NAME`, and `BRIDGE_NAME`. The db host port comes from `HOST_DB_PORT`; the service ports come from `BOT_PORT` / `GATEWAY_PORT` / `BLENDER_PORT` (these shift both the in-container bind port and the published host port — `docker-compose.yml` maps `${BOT_PORT}:${BOT_PORT}` etc.). The isolated dev stack in this checkout uses `.env.dev` (`STACK_PREFIX=bountydev`, `COMPOSE_PROJECT_NAME=bountybot-dev`, `BRIDGE_NAME=bountydev-br`, ports `15432`/`18000`/`17999`/`18001`, separate dev Discord app): `sudo docker compose --env-file .env.dev ...`. Exec-curl into a dev container uses the shifted port, e.g. `sudo docker exec bountydev-bot-core curl -s http://localhost:18000/api/v1/...`.
+
 ### Dev Discord Server
 
 | Entity | ID |
 |--------|----|
-| Dev server (guild) | `1490693399307616276` |
-| Owner/main account | `402296276617527306` |
+| Dev server (guild) | `699744305274945650` (BountyBot Dev Server) |
+| Owner/main account | `402296276617527306` (samx.ai) |
 | Alt-user (normal perms) | `970691862035841048` |
-| Bot user | `1379827884851593256` (BountyBot-SamX) |
+| Dev-stack bot user | `1508865507749789716` (BountyBot-Dev-SamX, `.env.dev`) |
+| Prod bot user | `1379827884851593256` (BountyBot-SamX, `.env`) |
 
 ### Key Discord Gateway API Endpoints (for testing/verification)
 
@@ -497,11 +524,12 @@ GET  /api/v1/messages/{message_id}                     — Get specific message
 
 ```
 GET  /api/v1/config/guild/{guild_id}                   — Guild config (channels, roles, settings)
-GET  /api/v1/players/{guild_id}/{user_id}              — Player state
-GET  /api/v1/bounties/guild/{guild_id}                 — Active bounties
+POST /api/v1/players/                                  — Get-or-create player (body: discord_id, guild_id, …)
+GET  /api/v1/players/{player_id}                       — Player state (by DB player id)
+GET  /api/v1/bounties/?guild_id={guild_id}             — Active bounties
 GET  /api/v1/health                                    — Health check
 ```
 
 ---
 
-*Last updated: 2026-05-24*
+*Last updated: 2026-06-11*

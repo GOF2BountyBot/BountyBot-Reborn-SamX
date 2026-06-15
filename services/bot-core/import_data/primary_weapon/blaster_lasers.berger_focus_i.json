@@ -8,8 +8,15 @@
   "icon": "https://i.postimg.cc/jdc991nj/berger-focus-i.png",
   "name": "Berger Focus I",
   "techLevel": 5,
-  "value": 22816,
+  "value": 20524,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_Focus_I",
   "type": "PrimaryWeapon",
-  "subtype": "blaster_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 900,
+    "range_m": 3300,
+    "damage_per_shot": 16,
+    "speed_km_h": 5500,
+    "subtype": "laser",
+    "mechanics_text": "The Berger company is one of the pioneers of stellar weapons technology, including lasers. The company flooded the market every 50 years with a series of new weapons in various designs to suit every budget.\n\nTrivia: This is the weakest of laser of the Berger company. Like all the Berger lasers it has got a slow firing rate but it packs a punch. NPC Void ships fire shots that are identical to this weapon"
+  }
 }

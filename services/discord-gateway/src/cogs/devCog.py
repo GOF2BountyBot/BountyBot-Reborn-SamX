@@ -53,10 +53,28 @@ class DevCog(commands.Cog):
         flogger.error("DevCog: All preload attempts exhausted. Category autocomplete will be empty.")
         self._categories = []
 
+    def _ensure_categories_loaded(self) -> None:
+        """Size-guard self-heal: if the in-code category list is empty (e.g. after a
+        failed preload), kick off a deduped background reload so the next keystroke is
+        warm. Background (not inline) to respect the 3s autocomplete deadline.
+        """
+        try:
+            if self._categories:
+                return
+            existing = getattr(self, "_categories_preload_task", None)
+            if existing is not None and not existing.done():
+                return
+            self._categories_preload_task = asyncio.create_task(
+                self._preload_categories(), name="dev-categories-selfheal-preload"
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"_ensure_categories_loaded: failed to schedule self-heal: {type(exc).__name__}: {exc}")
+
     async def category_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         # include a virtual "All" option
+        self._ensure_categories_loaded()  # size-guard self-heal (background; degrade-then-warm)
         norm_current = normalize_for_search(current)
         choices = ["All", *self._categories]
         return [
@@ -141,14 +159,15 @@ class DevCog(commands.Cog):
         failed = []
 
         # Preload-method targets: (cog_name, method_name, friendly_name).
-        # Includes previously-missing entries (recon §7.3): BountyCog, AdminCog render settings.
+        # Phase 3: backend-sourced static AutocompleteCaches (about/bounty-systems/
+        # admin catalogs/ship-skins) are now CLEARED in cache_targets below and
+        # self-heal via their refresh_fn / size-guard — so their bulk preloads are no
+        # longer driven from here (clear-and-self-heal is the uniform mechanism). Only
+        # the plain in-code lists that are NOT AutocompleteCaches keep an explicit
+        # preload: DevCog._categories and AdminCog._render_settings.
         method_targets = [
-            ("AboutCog", "_preload_data", "about data"),
             ("DevCog", "_preload_categories", "dev categories"),
-            ("SkinsCog", "_preload_ship_skins", "ship skins"),
-            ("BountyCog", "_preload_data", "bounty data"),
             ("AdminCog", "_preload_render_settings", "render settings"),
-            ("AdminCog", "_preload_static_catalogs", "admin static catalogs"),
         ]
 
         for cog_name, method_name, label in method_targets:
@@ -171,13 +190,25 @@ class DevCog(commands.Cog):
 
         # Cache-clear targets: (cog_name, cache_attr_name, friendly_name).
         # clear() is synchronous; no await needed.
+        # Phase 3: the D-010 carve-out is GONE. Every backend-sourced static catalog
+        # now has a refresh_fn (or a handler-level size-guard), so clear() applies
+        # UNIFORMLY — a cleared key self-heals lazily on the next autocomplete keystroke.
+        # _systems_cache and the about/admin static catalogs are cleared here like any
+        # other cache; the next /check / /about / /admin_* keystroke cold-fills them.
         cache_targets = [
             ("ShopCog", "_shop_cache", "shop cache"),
             ("BountyCog", "_bounty_cache", "bounty cache"),
             ("BountyCog", "_systems_cache", "bounty systems cache"),
+            ("AboutCog", "_categories_cache", "about categories cache"),
+            ("AboutCog", "_objects_cache", "about objects cache"),
+            ("AdminCog", "_item_catalog", "admin item catalog"),
+            ("AdminCog", "_ship_catalog", "admin ship catalog"),
+            ("AdminCog", "_admin_pending_duel_cache", "admin pending-duel cache"),
+            ("SkinsCog", "_ship_skins", "ship skins cache"),
             ("DuelCog", "_pending_duel_cache", "duel pending cache"),
             ("DuelCog", "_outgoing_duel_cache", "duel outgoing cache"),
             ("SchedulerCog", "_job_cache", "scheduler job cache"),
+            ("CombatLogCog", "_combatlog_cache", "combat-log cache"),
         ]
 
         for cog_name, attr_name, label in cache_targets:
@@ -304,6 +335,88 @@ class DevCog(commands.Cog):
         flogger.exception("Error in /force_reload_caches", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    # ── Bot management prefix commands ──────────────────────────────────────
+
+    def _is_developer(self, user_id: int) -> bool:
+        devs = {int(uid.strip()) for uid in os.getenv("DEVELOPERS", "").split(",") if uid.strip()}
+        return user_id in devs
+
+    @commands.command(name="snooze")
+    async def snooze(self, ctx: commands.Context):
+        """Hide this bot's slash commands in the current guild only (owner only).
+
+        Pushes an empty command list to Discord scoped to ``ctx.guild`` via
+        the HTTP bulk-upsert endpoint. Other guilds and global commands are
+        untouched, and the in-memory command tree stays intact so ``wake``
+        can re-sync it.
+        """
+        if not self._is_developer(ctx.author.id):
+            return
+        if ctx.guild is None:
+            await ctx.send("⚠ `snooze` must be run inside a guild.", delete_after=15)
+            return
+        app_id = self.bot.application_id
+        await self.bot.http.bulk_upsert_guild_commands(app_id, ctx.guild.id, [])
+        flogger.info(
+            f"snooze: commands cleared in guild {ctx.guild.name} ({ctx.guild.id}) by {ctx.author} ({ctx.author.id})"
+        )
+        await ctx.send(
+            f"💤 **{self.bot.user.name}** commands cleared in **{ctx.guild.name}**.",
+            delete_after=30,
+        )
+
+    @commands.command(name="wake")
+    async def wake(self, ctx: commands.Context):
+        """Re-sync this bot's slash commands in the current guild only (owner only).
+
+        Reloads every loaded extension first so the in-memory command tree
+        is rebuilt from cog definitions, then copies the global tree into
+        ``ctx.guild`` and syncs that guild only. This makes wake idempotent
+        and self-healing: it can recover from any prior state where the
+        tree was cleared or partially populated, without disturbing
+        registrations in other guilds.
+        """
+        if not self._is_developer(ctx.author.id):
+            return
+        if ctx.guild is None:
+            await ctx.send("⚠ `wake` must be run inside a guild.", delete_after=15)
+            return
+        flogger.info(f"wake: invoked in guild {ctx.guild.name} ({ctx.guild.id}) by {ctx.author} ({ctx.author.id})")
+        for ext_name in list(self.bot.extensions.keys()):
+            try:
+                await self.bot.reload_extension(ext_name)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                flogger.error(f"wake: failed to reload extension {ext_name}: {exc}")
+        try:
+            self.bot.tree.copy_global_to(guild=ctx.guild)
+            synced = await self.bot.tree.sync(guild=discord.Object(id=ctx.guild.id))
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.exception(f"wake: sync failed for guild {ctx.guild.id}: {exc}")
+            await ctx.send(f"❌ wake failed: `{type(exc).__name__}: {exc}`", delete_after=60)
+            return
+        flogger.info(
+            f"wake: synced {len(synced)} commands in guild {ctx.guild.name} ({ctx.guild.id}) "
+            f"by {ctx.author} ({ctx.author.id})"
+        )
+        await ctx.send(
+            f"✅ **{self.bot.user.name}** synced {len(synced)} command(s) in **{ctx.guild.name}**.",
+            delete_after=30,
+        )
+
+    @commands.command(name="botstatus")
+    async def botstatus(self, ctx: commands.Context):
+        """Show this bot's command registration status per guild (owner only)."""
+        if not self._is_developer(ctx.author.id):
+            return
+        lines = [f"**{self.bot.user.name}** (`{self.bot.user.id}`)"]
+        for guild in self.bot.guilds:
+            cmds = await self.bot.tree.fetch_commands(guild=discord.Object(id=guild.id))
+            lines.append(f"• {guild.name}: {len(cmds)} command(s)")
+        global_cmds = await self.bot.tree.fetch_commands()
+        lines.append(f"• Global: {len(global_cmds)} command(s)")
+        flogger.info(f"botstatus: queried by {ctx.author} ({ctx.author.id})")
+        await ctx.send("\n".join(lines), delete_after=60)
 
 
 async def setup(bot: commands.Bot):

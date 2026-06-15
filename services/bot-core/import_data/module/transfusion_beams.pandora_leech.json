@@ -11,6 +11,11 @@
   "name": "Pandora Leech",
   "techLevel": 8,
   "type": "TransfusionBeamModule",
-  "value": 80537,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Pandora_Leech"
+  "value": 78988,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Pandora_Leech",
+  "extra_atts": {
+    "heal_per_pulse": 100.0,
+    "pulse_count": 3,
+    "range_m": 1000
+  }
 }

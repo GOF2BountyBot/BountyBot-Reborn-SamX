@@ -90,21 +90,21 @@ async def execute_time_announcement_job(job_id: str, payload: dict):
 
     flogger.info(f"TimeJob[{job_id}] {method} succeeded, message_id={data.get('message_id')}")
 
-    # 4) If first-time creation, update the job args for future PUTs
+    # 4) If first-time creation, update the job args for future PUTs — direct
+    #    in-process call (P6-T8: no HTTP loopback).  Uses the same scheduler
+    #    instance registered by main.py lifespan via scheduler_holder.set_scheduler.
     if not exists:
         try:
             new_payload = {**payload, "message_id": data["message_id"]}
-            url = f"http://{API_HOST}:{API_PORT}/api/v1/jobs/{job_id}"
-            # fire off the PUT to our scheduler API
-            async with httpx.AsyncClient() as client:
-                await client.put(
-                    url,
-                    json={"payload": new_payload},  # <-- use "payload" instead of "args"
-                    timeout=10,
-                )
-            flogger.debug(f"TimeJob[{job_id}] PUT {url} payload updated")
+            from utils.scheduler_holder import get_scheduler
+
+            _ta_scheduler = get_scheduler()
+            if _ta_scheduler is None:
+                raise RuntimeError("scheduler not available via holder")
+            _ta_scheduler.modify_job(job_id, args=[job_id, new_payload])
+            flogger.debug(f"TimeJob[{job_id}] payload updated via direct scheduler.modify_job")
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"TimeJob[{job_id}] failed to update job args via API: {e}")
+            flogger.error(f"TimeJob[{job_id}] failed to update job args via scheduler: {e}")
             flogger.trace(traceback.format_exc())
 
     elapsed = (datetime.now(UTC) - start_ts).total_seconds()

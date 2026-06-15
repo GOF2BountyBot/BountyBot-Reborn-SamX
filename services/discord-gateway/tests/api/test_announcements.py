@@ -195,7 +195,7 @@ def announcements_test_app(mock_bot):
             "message_type": "default",
         }
 
-        from api.routers.announcements import router
+        from api.routers.announcements import router  # pylint: disable=no-name-in-module
 
         app.include_router(router, prefix="/api/v1")
         yield app

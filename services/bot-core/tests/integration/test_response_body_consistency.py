@@ -236,15 +236,20 @@ class TestSellItemResponseCreditsMatchDB:
 
         app.include_router(shops_router, prefix="/api/v1")
 
-        # Mock 1: item base price (static item table not in SQLite integration schema).
+        # Mocks 1+2: item base price + tech level (static item table not in SQLite integration schema).
         from services.shop_service import ShopService
 
         original_get_price = ShopService._get_item_base_price
+        original_tech_level = ShopService._get_item_tech_level
 
         async def _mock_price(self, db, item_name):
             return sale_unit_price
 
+        async def _mock_tech_level(self, db, item_type, item_name, base_price):
+            return 2
+
         ShopService._get_item_base_price = _mock_price
+        ShopService._get_item_tech_level = _mock_tech_level
 
         try:
             async with factory() as router_db:
@@ -263,6 +268,7 @@ class TestSellItemResponseCreditsMatchDB:
                         )
         finally:
             ShopService._get_item_base_price = original_get_price
+            ShopService._get_item_tech_level = original_tech_level
 
         assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
         data = response.json()

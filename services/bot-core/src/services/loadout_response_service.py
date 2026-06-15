@@ -172,10 +172,13 @@ class LoadoutResponseService:
         equipped_weapons = player_ship.weapons or []
         equipped_modules = player_ship.modules or []
         equipped_turrets = player_ship.turrets or []
+        equipped_secondaries = getattr(player_ship, "secondary_weapons", None) or []
+        secondary_ammo: dict = getattr(player_ship, "secondary_ammo", None) or {}
 
         # Build weapon/turret items (shared helper)
         weapon_items, weapon_dps = await self._build_weapon_items(db, equipped_weapons, "primary_weapon")
         turret_items, turret_dps = await self._build_weapon_items(db, equipped_turrets, "turret_weapon")
+        secondary_items = await self._build_secondary_items(db, equipped_secondaries, secondary_ammo)
         total_dps = round(weapon_dps + turret_dps, 1)
 
         # Build module items (with effects + combat_tier) and compute HP bonuses
@@ -193,6 +196,9 @@ class LoadoutResponseService:
         total_value = (
             sum(w.value or 0 for w in weapon_items)
             + sum(t.value or 0 for t in turret_items)
+            # Secondaries are consumable rounds — a stack's worth is value × remaining
+            # rounds (rounds=None means no ammo-sidecar entry; count the weapon once).
+            + sum((s.value or 0) * (s.rounds if s.rounds is not None else 1) for s in secondary_items)
             + sum(m.value or 0 for m in module_items)
         )
 
@@ -231,7 +237,9 @@ class LoadoutResponseService:
             ship_stats=ship_stats,
             weapons=weapon_items,
             turrets=turret_items,
+            secondaries=secondary_items,
             modules=module_items,
+            modules_total_count=len(module_items),
             cargo=cargo_items,
             cargo_total_count=cargo_total_count,
         )
@@ -246,6 +254,29 @@ class LoadoutResponseService:
             flogger.debug(f"User lookup failed for player {player.id}: {e}")
         return f"Player {player.id}"
 
+    @staticmethod
+    def _weapon_combat_fields(item) -> tuple[int | None, int | None]:
+        """Extract (damage_per_shot, loading_speed_ms) from a weapon's extra_atts.
+
+        Combat fields live in the nested inner ``extra_atts`` dict (DB nesting
+        pattern); falls back to the outer dict for flat layouts. Secondary
+        weapons may store per-shot damage under ``damage`` instead of
+        ``damage_per_shot``. Non-numeric/missing values yield None.
+        """
+        raw = getattr(item, "extra_atts", None) if item else None
+        if not isinstance(raw, dict):
+            return None, None
+        inner = raw.get("extra_atts")
+        src = inner if isinstance(inner, dict) else raw
+
+        def _to_int(value) -> int | None:
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        return _to_int(src.get("damage_per_shot", src.get("damage"))), _to_int(src.get("loading_speed_ms"))
+
     async def _build_weapon_items(
         self, db: AsyncSession, names: list[str], item_type: str
     ) -> tuple[list[LoadoutWeaponItem], float]:
@@ -258,15 +289,53 @@ class LoadoutResponseService:
             dps = getattr(item, "dps", None) if item else None
             if dps:
                 total_dps += dps
+            dmg_shot, loading_ms = self._weapon_combat_fields(item)
             items.append(
                 LoadoutWeaponItem(
                     name=name,
                     emoji=item.emoji if item else None,
                     dps=dps,
                     value=item.value if item else None,
+                    damage_per_shot=dmg_shot,
+                    loading_speed_ms=loading_ms,
                 )
             )
         return items, total_dps
+
+    async def _build_secondary_items(
+        self, db: AsyncSession, names: list[str], ammo: dict[str, int]
+    ) -> list[LoadoutWeaponItem]:
+        """Build secondary-weapon items for a player's loadout, attaching ammo counts.
+
+        Args:
+            names: Ordered list of equipped secondary weapon names
+                   (from ``PlayerShip.secondary_weapons``).
+            ammo:  Per-weapon ammo sidecar (``PlayerShip.secondary_ammo``),
+                   mapping weapon name → remaining rounds.  May be empty.
+
+        Returns:
+            List of ``LoadoutWeaponItem`` with ``rounds`` populated from *ammo*
+            (or ``None`` when the weapon is not in the ammo sidecar).
+        """
+        items: list[LoadoutWeaponItem] = []
+        for name in names:
+            item = await self.item_repo.get_by_name(db, name, item_type="secondary_weapon")
+            if item is None:
+                item = await self.item_repo.get_by_name(db, name)
+            rounds = ammo.get(name) if ammo else None
+            dmg_shot, loading_ms = self._weapon_combat_fields(item)
+            items.append(
+                LoadoutWeaponItem(
+                    name=name,
+                    emoji=item.emoji if item else None,
+                    dps=getattr(item, "dps", None) if item else None,
+                    value=item.value if item else None,
+                    rounds=rounds,
+                    damage_per_shot=dmg_shot,
+                    loading_speed_ms=loading_ms,
+                )
+            )
+        return items
 
     async def _build_player_module_items(
         self, db: AsyncSession, names: list[str]
@@ -395,13 +464,17 @@ class LoadoutResponseService:
             except Exception as e:
                 flogger.debug(f"Ship lookup failed for {ship_name!r}: {e}")
 
-        # Weapons / turrets (already fully formed in the JSON)
+        # Weapons / turrets / secondaries (already fully formed in the JSON)
         weapons_raw = criminal_ship.get("weapons") or []
         turrets_raw = criminal_ship.get("turrets") or []
+        secondaries_raw = criminal_ship.get("secondaries") or []
         modules_raw = criminal_ship.get("modules") or []
 
         weapon_items = [LoadoutWeaponItem(**self._normalize_weapon_dict(w)) for w in weapons_raw]
         turret_items = [LoadoutWeaponItem(**self._normalize_weapon_dict(t)) for t in turrets_raw]
+        secondary_items = [
+            LoadoutWeaponItem(**self._normalize_weapon_dict(s, include_rounds=True)) for s in secondaries_raw
+        ]
 
         module_items: list[LoadoutModuleItem] = []
         compressor_multiplier = 1.0
@@ -431,6 +504,7 @@ class LoadoutResponseService:
         # both /criminal-loadout AND bounty announcements (both are criminal
         # rendering surfaces). Player loadouts go through build_player_loadout
         # which never invokes this helper.
+        modules_total_count = len(module_items)  # Capture pre-dedup count for 'Modules <N/M>' header
         module_items = _apply_criminal_module_dedup(module_items)
 
         # DPS
@@ -492,17 +566,37 @@ class LoadoutResponseService:
             ship_stats=ship_stats,
             weapons=weapon_items,
             turrets=turret_items,
+            secondaries=secondary_items,
             modules=module_items,
+            modules_total_count=modules_total_count,
             cargo=[],
             cargo_total_count=0,
         )
 
     @staticmethod
-    def _normalize_weapon_dict(raw: dict) -> dict:
-        """Project the fields LoadoutWeaponItem needs out of a criminal_ship JSON weapon dict."""
-        return {
+    def _normalize_weapon_dict(raw: dict, *, include_rounds: bool = False) -> dict:
+        """Project the fields LoadoutWeaponItem needs out of a criminal_ship JSON weapon dict.
+
+        Args:
+            raw:            Raw weapon dict from criminal_ship JSON.
+            include_rounds: When True, also extract the ``rounds`` field (secondary weapons).
+        """
+
+        def _opt_int(value) -> int | None:
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        result = {
             "name": raw.get("name", "Unknown"),
             "emoji": raw.get("emoji"),
             "dps": raw.get("dps"),
             "value": raw.get("value"),
+            # Secondaries store per-shot damage under `damage`; weapons under `damage_per_shot`.
+            "damage_per_shot": _opt_int(raw.get("damage_per_shot", raw.get("damage"))),
+            "loading_speed_ms": _opt_int(raw.get("loading_speed_ms")),
         }
+        if include_rounds:
+            result["rounds"] = raw.get("rounds")
+        return result

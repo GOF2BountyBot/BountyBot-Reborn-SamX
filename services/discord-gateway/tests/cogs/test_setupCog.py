@@ -249,7 +249,6 @@ class TestOnGuildRemove:
         asyncio.run(mock_setup_cog.on_guild_remove(guild))
 
         # Module-level logger should have logged an info message
-        global _module_logger
         if _module_logger is not None:
             _module_logger.info.assert_called()
 

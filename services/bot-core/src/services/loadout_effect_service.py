@@ -24,6 +24,7 @@ flogger = bblogger.get_logger("loadout-effect-service")
 _FORMATTERS = {
     "int": lambda v: str(int(v)),
     "int_pct": lambda v: f"{round(float(v) * 100)}%",
+    "signed_pct": lambda v: f"{'+' if float(v) >= 0 else '-'}{abs(round(float(v)))}%",
     "float": lambda v: f"{float(v):g}",
     "seconds": lambda v: f"{int(v)}s",
     "x": lambda v: f"×{float(v):g}",
@@ -53,11 +54,18 @@ MODULE_EFFECT_MAP: dict[str, list[tuple[str, str, str]]] = {
     "CabinModule": [("cabinSize", "Crew", "int")],
     "CloakModule": [("duration", "Duration", "seconds")],
     "CompressorModule": [("cargoMultiplier", "Cargo Bonus", "x")],
-    # Undocumented — render name only (13 types)
+    # PrimaryWeaponMod (Overcharge/Overdrive): damage_pct/fire_rate_pct live in the
+    # nested inner extra_atts; dpsMultiplier is camelCase at the outer level. Both
+    # are resolved via the merged lookup in format_module_effects().
+    "PrimaryWeaponModModule": [
+        ("damage_pct", "Damage", "signed_pct"),
+        ("fire_rate_pct", "Fire Rate", "signed_pct"),
+        ("dpsMultiplier", "Net DPS", "x"),
+    ],
+    # Undocumented — render name only
     "EmergencySystemModule": [],
     "JumpDriveModule": [],
     "MiningDrillModule": [],
-    "PrimaryWeaponModModule": [],
     "RepairBeamModule": [],
     "RepairBotModule": [],
     "ScannerModule": [],
@@ -140,11 +148,19 @@ class LoadoutEffectService:
         if not isinstance(extra_atts, dict) or not extra_atts:
             return []
 
+        # The DB nests combat-relevant keys under an inner `extra_atts` dict
+        # (e.g. PrimaryWeaponMod damage_pct/fire_rate_pct), while some scalar keys
+        # (e.g. dpsMultiplier, armour) sit at the outer level. Merge both levels so
+        # a spec key resolves from either. Inner wins on the rare duplicate, which
+        # always carries the same value (e.g. ArmourModule armour at both levels).
+        inner = extra_atts.get("extra_atts")
+        lookup = {**extra_atts, **inner} if isinstance(inner, dict) else extra_atts
+
         items: list[EffectItem] = []
         for key, label, fmt_name in spec:
-            if key not in extra_atts:
+            if key not in lookup:
                 continue
-            raw_value = extra_atts[key]
+            raw_value = lookup[key]
             if raw_value is None:
                 continue
             formatter = _FORMATTERS.get(fmt_name)

@@ -1,295 +1,88 @@
 """
 Combat Service for BountyBot.
 
-Implements the legacy-compatible DPS-vs-HP combat model with a
-future-proof architecture that separates stat collection from
-combat resolution.
+Implements the tick-based Phase-1 combat resolver (TickResolver) plus
+legacy-compatible stat collection helpers (get_dps, get_armour, get_shield).
 
-Stat collection (get_dps, get_armour, get_shield, collect_stats)
-follows the legacy formulas documented in docs/analysis/03b-combat-system.md.
+T10: fight_ships is now async and routes exclusively through TickResolver.
+SimpleTTKResolver and variance helpers are retired.
 
-Combat resolution is delegated to a CombatResolver implementation.
-The default SimpleTTKResolver implements the single-shot analytical
-TTK comparison from the legacy system.
+P2-T2: fight_ships routes through offload_cpu(run_fight, ...) to run combat
+in a process-pool worker, keeping the event loop free. The worker returns a
+plain-dict result.
+
+P2-T6: fight_ships passes the worker's list[dict] timeline straight into
+FightResults.combat_log (no re-hydration into CombatEvent objects).
+CombatLogService.persist accepts both list[dict] (passthrough) and
+list[CombatEvent] (asdict via is_dataclass guard) for legacy/in-process callers.
 """
 
-import random
+from typing import TYPE_CHECKING
 
+from compute.combat_worker import run_fight
 from shared import bblogger
+from utils.offload import offload_cpu
 
 from services.combat_models import (
-    CombatResolver,
+    CombatMeta,
     CombatStats,
     FightResults,
     FightStats,
     ShipLoadout,
 )
-from services.game_constants import GameConstants, resolve_constant
+from services.combat_resolver import TickResolver
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# SimpleTTKResolver — Legacy-compatible combat resolution
-# ---------------------------------------------------------------------------
 
+def _is_orm_model(obj: object) -> bool:
+    """Return True if *obj* is a live SQLAlchemy ORM model instance.
 
-class SimpleTTKResolver:
-    """Single-shot analytical TTK combat resolver.
-
-    Implements the legacy fightShips() algorithm:
-    1. Apply uniform random variance to HP and DPS (4 independent rolls)
-    2. Calculate TTK = varied_HP / opponent_varied_DPS
-    3. Longer-surviving ship wins
-    4. Zero-DPS edge cases and stalemate handling
-
-    This class satisfies the CombatResolver protocol.
+    Used by fight_ships to guard the offload boundary (C1a-4): ORM rows carry
+    lazy-load proxies that are not picklable and must never cross a process
+    boundary.  The check is duck-typed (no SQLAlchemy import at call time)
+    so it remains safe in forkserver child processes.
     """
-
-    def resolve(
-        self,
-        ship1_stats: CombatStats,
-        ship2_stats: CombatStats,
-        variance_percent: float,
-    ) -> FightResults:
-        """Resolve combat using single-shot TTK comparison.
-
-        Args:
-            ship1_stats: Combat stats for ship 1 (initiator).
-            ship2_stats: Combat stats for ship 2 (receiver).
-            variance_percent: Symmetric variance range (e.g. 0.05 = +/-5%).
-
-        Returns:
-            FightResults with winner determined by longest TTK.
-        """
-        flogger.debug(
-            f"Combat resolution initiated: {ship1_stats.ship_name} (hp={ship1_stats.total_hp}, "
-            f"dps={ship1_stats.dps:.1f}) vs {ship2_stats.ship_name} (hp={ship2_stats.total_hp}, "
-            f"dps={ship2_stats.dps:.1f}), variance={variance_percent * 100:.1f}%"
-        )
-
-        # 1. Apply variance to HP (2 rolls)
-        ship1_hp_varied = _apply_variance(ship1_stats.total_hp, variance_percent)
-        ship2_hp_varied = _apply_variance(ship2_stats.total_hp, variance_percent)
-
-        # 2. Apply variance to DPS (2 rolls)
-        ship1_dps_varied = _apply_variance_float(ship1_stats.dps, variance_percent)
-        ship2_dps_varied = _apply_variance_float(ship2_stats.dps, variance_percent)
-
-        flogger.debug(
-            f"Variance applied: {ship1_stats.ship_name} hp={ship1_stats.total_hp}→{ship1_hp_varied}"
-            f" dps={ship1_stats.dps:.1f}→{ship1_dps_varied:.1f};"
-            f" {ship2_stats.ship_name} hp={ship2_stats.total_hp}→{ship2_hp_varied}"
-            f" dps={ship2_stats.dps:.1f}→{ship2_dps_varied:.1f}"
-        )
-
-        flogger.trace(
-            f"Variance calculation step: ship1_hp_varied={ship1_hp_varied}, ship2_hp_varied={ship2_hp_varied}"
-        )
-        flogger.trace(
-            f"Variance calculation step: ship1_dps_varied={ship1_dps_varied:.1f}, "
-            f"ship2_dps_varied={ship2_dps_varied:.1f}"
-        )
-
-        # 3. Handle zero-DPS edge cases
-        ship1_ttk: float | None = None
-        ship2_ttk: float | None = None
-
-        both_zero = ship1_stats.dps == 0 and ship2_stats.dps == 0
-        flogger.trace(
-            f"Zero-DPS edge case check: ship1_dps={ship1_stats.dps}, ship2_dps={ship2_stats.dps}, both_zero={both_zero}"
-        )
-
-        if both_zero:
-            # Neither ship can deal damage — stalemate
-            flogger.info(
-                f"Fight result: STALEMATE due to zero DPS for both {ship1_stats.ship_name} and {ship2_stats.ship_name}"
-            )
-            return FightResults(
-                winner_name=None,
-                loser_name=None,
-                is_stalemate=True,
-                ship1_stats=FightStats(
-                    ship_name=ship1_stats.ship_name,
-                    raw_hp=ship1_stats.total_hp,
-                    raw_dps=ship1_stats.dps,
-                    varied_hp=ship1_hp_varied,
-                    varied_dps=ship1_dps_varied,
-                    ttk=None,
-                ),
-                ship2_stats=FightStats(
-                    ship_name=ship2_stats.ship_name,
-                    raw_hp=ship2_stats.total_hp,
-                    raw_dps=ship2_stats.dps,
-                    varied_hp=ship2_hp_varied,
-                    varied_dps=ship2_dps_varied,
-                    ttk=None,
-                ),
-                variance_percent=variance_percent,
-            )
-
-        # Calculate TTK for each ship
-        # ship1_ttk = how long ship1 survives ship2's fire
-        ship1_ttk = ship1_hp_varied / ship2_dps_varied if ship2_dps_varied > 0 else None
-        flogger.trace(f"TTK calculation: ship1_ttk = {ship1_hp_varied} / {ship2_dps_varied} = {ship1_ttk}")
-
-        # ship2_ttk = how long ship2 survives ship1's fire
-        ship2_ttk = ship2_hp_varied / ship1_dps_varied if ship1_dps_varied > 0 else None
-        flogger.trace(f"TTK calculation: ship2_ttk = {ship2_hp_varied} / {ship1_dps_varied} = {ship2_ttk}")
-
-        # 4. Determine winner (longest survivor wins)
-        winner_name: str | None = None
-        loser_name: str | None = None
-        is_stalemate = False
-
-        flogger.trace(f"Winner determination: comparing TTKs — ship1_ttk={ship1_ttk}, ship2_ttk={ship2_ttk}")
-
-        if ship1_ttk is None and ship2_ttk is None:
-            # Both survive indefinitely (shouldn't happen if both_zero handled above)
-            is_stalemate = True
-            flogger.debug("Both ships survive indefinitely — stalemate condition")
-        elif ship1_ttk is None:
-            # Ship1 survives indefinitely, ship2 doesn't → ship1 wins
-            winner_name = ship1_stats.ship_name
-            loser_name = ship2_stats.ship_name
-            flogger.debug(f"{ship1_stats.ship_name} survives indefinitely vs {ship2_stats.ship_name}")
-        elif ship2_ttk is None:
-            # Ship2 survives indefinitely → ship2 wins
-            winner_name = ship2_stats.ship_name
-            loser_name = ship1_stats.ship_name
-            flogger.debug(f"{ship2_stats.ship_name} survives indefinitely vs {ship1_stats.ship_name}")
-        elif ship1_ttk > ship2_ttk:
-            winner_name = ship1_stats.ship_name
-            loser_name = ship2_stats.ship_name
-            flogger.debug(f"{ship1_stats.ship_name} TTK {ship1_ttk:.2f} > {ship2_stats.ship_name} TTK {ship2_ttk:.2f}")
-        elif ship2_ttk > ship1_ttk:
-            winner_name = ship2_stats.ship_name
-            loser_name = ship1_stats.ship_name
-            flogger.debug(f"{ship2_stats.ship_name} TTK {ship2_ttk:.2f} > {ship1_stats.ship_name} TTK {ship1_ttk:.2f}")
-        else:
-            # Exact tie
-            is_stalemate = True
-            flogger.debug(f"Exact tie: both ships have TTK {ship1_ttk:.2f}")
-
-        ttk1_str = f"{ship1_ttk:.2f}" if ship1_ttk is not None else "∞"
-        ttk2_str = f"{ship2_ttk:.2f}" if ship2_ttk is not None else "∞"
-        if is_stalemate:
-            flogger.info(
-                f"Fight result: STALEMATE between {ship1_stats.ship_name} and {ship2_stats.ship_name}"
-                f" (ttk1={ttk1_str}, ttk2={ttk2_str})"
-            )
-        else:
-            flogger.info(f"Fight result: winner={winner_name} loser={loser_name} ttk1={ttk1_str} ttk2={ttk2_str}")
-
-        return FightResults(
-            winner_name=winner_name,
-            loser_name=loser_name,
-            is_stalemate=is_stalemate,
-            ship1_stats=FightStats(
-                ship_name=ship1_stats.ship_name,
-                raw_hp=ship1_stats.total_hp,
-                raw_dps=ship1_stats.dps,
-                varied_hp=ship1_hp_varied,
-                varied_dps=ship1_dps_varied,
-                ttk=ship1_ttk,
-            ),
-            ship2_stats=FightStats(
-                ship_name=ship2_stats.ship_name,
-                raw_hp=ship2_stats.total_hp,
-                raw_dps=ship2_stats.dps,
-                varied_hp=ship2_hp_varied,
-                varied_dps=ship2_dps_varied,
-                ttk=ship2_ttk,
-            ),
-            variance_percent=variance_percent,
-        )
+    if obj is None:
+        return False
+    cls = type(obj)
+    # SQLAlchemy mapped classes carry a '__mapper__' attribute set by the
+    # mapper registry at class-definition time.  Plain dataclasses, Pydantic
+    # models, and primitive values do not have it.
+    return hasattr(cls, "__mapper__")
 
 
 # ---------------------------------------------------------------------------
-# Variance helpers (module-level, used by resolvers)
-# ---------------------------------------------------------------------------
-
-
-def _apply_variance(value: int, variance_percent: float) -> int:
-    """Apply symmetric uniform random variance to an integer value.
-
-    Matches legacy behavior: int-truncated range, inclusive randint.
-
-    Args:
-        value: Raw stat value.
-        variance_percent: Fraction (e.g. 0.05 for +/-5%).
-
-    Returns:
-        Varied value as int. Returns 0 if value is 0.
-    """
-    if value == 0 or variance_percent == 0.0:
-        flogger.trace(f"_apply_variance(int): value={value}, variance_percent={variance_percent}, no variance applied")
-        return value
-    delta = int(value * variance_percent)
-    varied = random.randint(value - delta, value + delta)
-    flogger.trace(
-        f"_apply_variance(int): value={value}, variance_percent={variance_percent}, delta={delta}, result={varied}"
-    )
-    return varied
-
-
-def _apply_variance_float(value: float, variance_percent: float) -> float:
-    """Apply symmetric uniform random variance to a float value.
-
-    Uses int-truncated range + randint to match legacy behavior where
-    DPS variance uses random.randint on int-cast bounds.
-
-    Args:
-        value: Raw stat value.
-        variance_percent: Fraction (e.g. 0.05 for +/-5%).
-
-    Returns:
-        Varied value as float. Returns 0.0 if value is 0.
-    """
-    if value == 0 or variance_percent == 0.0:
-        flogger.trace(f"_apply_variance_float: value={value}, variance_percent={variance_percent}, no variance applied")
-        return value
-    low = int(value - value * variance_percent)
-    high = int(value + value * variance_percent)
-    flogger.trace(f"_apply_variance_float: value={value}, variance_percent={variance_percent}, low={low}, high={high}")
-    if low > high:
-        low, high = high, low
-        flogger.trace(f"_apply_variance_float: bounds swapped — low={low}, high={high}")
-    if low == high:
-        flogger.trace(f"_apply_variance_float: low==high, returning {float(low)}")
-        return float(low)
-    varied = float(random.randint(low, high))
-    flogger.trace(f"_apply_variance_float: random selection in [{low}, {high}] = {varied}")
-    return varied
-
-
-# ---------------------------------------------------------------------------
-# CombatService — stat collection + fight orchestration
+# CombatService — stat collection + fight orchestration (T10: async, TickResolver)
 # ---------------------------------------------------------------------------
 
 
 class CombatService:
     """Service for ship combat stat computation and fight resolution.
 
-    Separates stat collection (deterministic formulas) from combat
-    resolution (randomized fight). The resolver can be swapped to
-    change the combat model without affecting stat computation.
+    T10: fight_ships now routes exclusively through TickResolver (async).
+    SimpleTTKResolver is retired. Per-fight DB persistence and Player stat
+    increments happen inside fight_ships when log_result=True.
 
     Usage:
         service = CombatService()
-        stats1 = service.collect_stats(loadout1)
-        stats2 = service.collect_stats(loadout2)
-        result = service.fight_ships(loadout1, loadout2)
+        result = await service.fight_ships(
+            loadout1, loadout2,
+            context="duel", log_result=True, pvc_damage_reduction=0.0,
+            session=db,
+            combatant1_user_id=player1.user_id,
+            combatant2_user_id=None,
+            guild_id=guild_id,
+        )
     """
 
-    def __init__(self, resolver: CombatResolver | None = None) -> None:
-        """Initialize CombatService with an optional custom resolver.
-
-        Args:
-            resolver: Combat resolution strategy. Defaults to
-                      SimpleTTKResolver if not provided.
-        """
-        self._resolver: CombatResolver = resolver or SimpleTTKResolver()
-        flogger.debug(f"CombatService initialized with resolver: {self._resolver.__class__.__name__}")
+    def __init__(self) -> None:
+        """Initialize CombatService with the tick-based resolver."""
+        self._tick_resolver = TickResolver()
+        flogger.debug("CombatService initialized with TickResolver")
 
     # ------------------------------------------------------------------
     # Stat Collection — Legacy-compatible formulas
@@ -453,75 +246,336 @@ class CombatService:
         )
 
     # ------------------------------------------------------------------
-    # Fight Resolution
+    # Fight Resolution (T10: async, routes through TickResolver)
     # ------------------------------------------------------------------
 
-    def fight_ships(
+    async def fight_ships(
         self,
         loadout1: ShipLoadout,
         loadout2: ShipLoadout,
-        variance_percent: float | None = None,
-        player_armour_buff: float = 1.0,
+        *,
+        context: str | None = None,
+        log_result: bool = True,
+        pvc_damage_reduction: float = 0.0,
         guild_config=None,
+        # DB context required when log_result=True
+        session: "AsyncSession | None" = None,
+        guild_id: int | None = None,
+        combatant1_user_id: int | None = None,
+        combatant2_user_id: int | None = None,
+        # CI-20: display labels for thread naming / dropdown
+        combatant1_label: str = "",
+        combatant2_label: str = "",
     ) -> FightResults:
-        """Simulate a fight between two ship loadouts.
-
-        Collects stats for both ships, then delegates to the configured
-        CombatResolver for the actual fight computation.
+        """Simulate a fight between two ship loadouts via TickResolver.
 
         Args:
-            loadout1: First ship (initiator / player in PvC combat).
-            loadout2: Second ship (receiver / criminal in PvC combat).
-            variance_percent: Random variance to apply. Defaults to
-                              GameConstants.DUEL_VARIANCE_PERCENT.
-            player_armour_buff: Multiplier applied to loadout1's armour before
-                                combat resolution. 1.0 = no buff (default).
-                                Used by PvC (bounty) combat to give the player
-                                a +50% armour advantage over criminals.
-                                Only armour is buffed — shield and DPS are
-                                unaffected. Has no effect in PvP duels.
+            loadout1: C1 — challenger (player in PvC when pvc_damage_reduction > 0).
+            loadout2: C2 — opponent (NPC in PvC; player2 in PvP).
+            context: Fight context string ("duel"|"bounty_pvc"|"bounty_bonus").
+                     Required when log_result=True.
+            log_result: When True, persist the combat_log row and update Player stats.
+                        When False (preflight Monte-Carlo), no DB writes are made.
+            pvc_damage_reduction: Keith T. Maxwell DR (§3). 0.33 for PvC, 0.0 for PvP.
+            guild_config: Per-guild config for constant overrides (reserved).
+            session: Async SQLAlchemy session — required when log_result=True.
+            guild_id: Guild ID for combat_log.guild_id — required when log_result=True.
+            combatant1_user_id: Discord user_id for C1 (None = NPC).
+            combatant2_user_id: Discord user_id for C2 (None = NPC).
 
         Returns:
-            FightResults with winner, loser, stats, and stalemate flag.
+            FightResults with combat_log timeline, metadata, and combat_log_id.
+
+        Raises:
+            ValueError: if log_result=True and context is None.
         """
-        flogger.debug(f"fight_ships initiated: {loadout1.ship_name} vs {loadout2.ship_name}")
-        if variance_percent is None:
-            variance_percent = resolve_constant(
-                guild_config, "duel_variance_percent", GameConstants.DUEL_VARIANCE_PERCENT
-            )
-            source = "per-guild override" if guild_config is not None else "GameConstants"
-            flogger.debug(
-                f"Variance percent not specified, using {source}.DUEL_VARIANCE_PERCENT={variance_percent * 100:.1f}%"
-            )
+        if log_result and context is None:
+            raise ValueError("fight_ships: context is required when log_result=True")
 
-        flogger.debug(f"Collecting combat stats for {loadout1.ship_name} (initiator)")
-        stats1 = self.collect_stats(loadout1)
-
-        # Apply optional armour buff to loadout1 (player in PvC combat).
-        # Only armour is modified — shield and DPS are unchanged.
-        if player_armour_buff != 1.0:
-            buffed_armour = int(stats1.armour * player_armour_buff)
-            flogger.debug(
-                f"PvC armour buff applied to {loadout1.ship_name}: "
-                f"armour {stats1.armour} → {buffed_armour} (×{player_armour_buff})"
-            )
-            stats1 = CombatStats(
-                ship_name=stats1.ship_name,
-                dps=stats1.dps,
-                armour=buffed_armour,
-                shield=stats1.shield,
-                total_hp=buffed_armour + stats1.shield,
-                accuracy=stats1.accuracy,
-                evasion=stats1.evasion,
-            )
-
-        flogger.debug(f"Collecting combat stats for {loadout2.ship_name} (receiver)")
-        stats2 = self.collect_stats(loadout2)
-
-        flogger.debug(f"Delegating to resolver: {self._resolver.__class__.__name__}")
-        result = self._resolver.resolve(stats1, stats2, variance_percent)
         flogger.debug(
-            f"fight_ships completed: winner={result.winner_name}, "
-            f"loser={result.loser_name}, stalemate={result.is_stalemate}"
+            f"fight_ships: {loadout1.ship_name} vs {loadout2.ship_name} "
+            f"context={context!r} log_result={log_result} pvc_dr={pvc_damage_reduction}"
         )
-        return result
+
+        # C1a-4: guard — guild_config MUST NOT cross the process boundary as an ORM row.
+        # Extract any needed scalar fields before offload; pass None for now (reserved).
+        # If guild_config were an SQLAlchemy model its lazy-load proxies are not picklable.
+        assert not _is_orm_model(guild_config), (
+            "fight_ships: guild_config must not be a live ORM model — extract scalar fields before offload (C1a-4)"
+        )
+
+        # P2-T2: run the tick resolver in a process-pool worker via offload_cpu.
+        # seed=None matches current default-RNG behaviour (non-deterministic production).
+        # compact=False → full result dict with timeline, summary, metadata, stats.
+        raw = await offload_cpu(
+            run_fight,
+            loadout1,
+            loadout2,
+            pvc_damage_reduction=pvc_damage_reduction,
+            seed=None,
+            combatant1_label=combatant1_label,
+            combatant2_label=combatant2_label,
+            compact=False,
+        )
+
+        # Reconstruct FightStats from the plain-dict slices returned by the worker.
+        def _stats_from_dict(d: dict) -> FightStats:
+            return FightStats(
+                ship_name=d["ship_name"],
+                raw_hp=d["raw_hp"],
+                raw_dps=d["raw_dps"],
+                varied_hp=d["varied_hp"],
+                varied_dps=d["varied_dps"],
+                ttk=d["ttk"],
+            )
+
+        fight_results = FightResults(
+            winner_name=raw["winner_name"],
+            loser_name=raw["loser_name"],
+            is_stalemate=raw["is_stalemate"],
+            ship1_stats=_stats_from_dict(raw["ship1_stats"]),
+            ship2_stats=_stats_from_dict(raw["ship2_stats"]),
+            winner_side=raw["winner_side"],
+            combat_log=raw["timeline"],  # P2-T6: list[dict] passthrough — no asdict needed
+            metadata=raw["metadata"],
+        )
+
+        if not log_result:
+            # Preflight / simulation path — no DB writes
+            flogger.debug(
+                f"fight_ships (log_result=False): winner={fight_results.winner_name} "
+                f"stalemate={fight_results.is_stalemate}"
+            )
+            return fight_results
+
+        # ------------------------------------------------------------------ #
+        # log_result=True path: persist + Player stat increments             #
+        # ------------------------------------------------------------------ #
+        if session is None:
+            raise ValueError("fight_ships: session is required when log_result=True")
+        if guild_id is None:
+            raise ValueError("fight_ships: guild_id is required when log_result=True")
+
+        # Annotate metadata with combatant user_ids so CombatLogService can project them
+        fight_results.metadata["combatant_user_ids"] = {
+            "c1": combatant1_user_id,
+            "c2": combatant2_user_id,
+        }
+
+        # Persist combat_log row
+        from services.combat_log_service import CombatLogService  # deferred to avoid circular import
+
+        combat_log_svc = CombatLogService()
+        meta = CombatMeta(guild_id=guild_id)
+        combat_log_id = await combat_log_svc.persist(meta, fight_results, context, session)
+
+        # Rebuild FightResults with combat_log_id populated (frozen dataclass — replace)
+        fight_results = FightResults(
+            winner_name=fight_results.winner_name,
+            loser_name=fight_results.loser_name,
+            is_stalemate=fight_results.is_stalemate,
+            ship1_stats=fight_results.ship1_stats,
+            ship2_stats=fight_results.ship2_stats,
+            winner_side=fight_results.winner_side,  # P2-T0b: carry through rebuild
+            combat_log_id=combat_log_id,
+            combat_log=fight_results.combat_log,
+            metadata=fight_results.metadata,
+        )
+
+        # Player stat increments (§13) — one per HUMAN combatant
+        await self._increment_player_stats(
+            session=session,
+            fight_results=fight_results,
+            combatant1_user_id=combatant1_user_id,
+            combatant2_user_id=combatant2_user_id,
+            guild_id=guild_id,
+        )
+
+        # CI-16: secondary ammo write-back — must be AFTER _increment_player_stats,
+        # inside log_result=True branch (sim guard returns at ~line 2137 before this)
+        await self._consume_secondary_ammo(
+            session=session,
+            fight_results=fight_results,
+            combatant1_user_id=combatant1_user_id,
+            combatant2_user_id=combatant2_user_id,
+            guild_id=guild_id,
+        )
+
+        flogger.info(
+            f"fight_ships: persisted combat_log_id={combat_log_id} "
+            f"winner={fight_results.winner_name} stalemate={fight_results.is_stalemate}"
+        )
+        return fight_results
+
+    async def _increment_player_stats(
+        self,
+        *,
+        session: "AsyncSession",
+        fight_results: FightResults,
+        combatant1_user_id: int | None,
+        combatant2_user_id: int | None,
+        guild_id: int,
+    ) -> None:
+        """Increment Player combat-stat counters for human combatants (§13).
+
+        total_fights += 1 always.
+        total_nukes_fired += secondary_fired["nuke"] from the side-keyed summary block.
+        total_module_activations += sum of module_activations values from the side-keyed summary block.
+
+        Counts are read from the pre-built per-combatant summary block (§12 data.summary.combatants)
+        rather than re-scanning the full event timeline. The summary is already side-keyed (slot "1"/"2"),
+        so attribution is correct even when both combatants share the same ship name.
+
+        COUPLING NOTE: module_activations in the summary is built via the hard-coded _ACTIVATION_MODULES
+        allowlist in combat_resolver._build_fight_summary (currently: cloak, booster, emergency_system).
+        The deleted full-timeline scan counted ANY module_activation event regardless of module key;
+        today only those 3 modules emit module_activation events (all are in the allowlist), so counts
+        match exactly. ANY FUTURE activation-emitting module MUST be added to _ACTIVATION_MODULES in
+        combat_resolver.py or it will be silently excluded from total_module_activations stats.
+
+        NPC side (user_id is None): skip cleanly, no DB call.
+        """
+        from persist.repositories.player_repository import PlayerRepository
+
+        player_repo = PlayerRepository()
+
+        summary = fight_results.metadata.get("summary", {})
+        combatants_summary = summary.get("combatants", {})
+
+        # Map slot key → user_id
+        slot_map: list[tuple[str, int | None]] = [
+            ("1", combatant1_user_id),
+            ("2", combatant2_user_id),
+        ]
+
+        for slot_key, user_id in slot_map:
+            if user_id is None:
+                continue  # NPC side — skip cleanly
+
+            cb_block = combatants_summary.get(slot_key, {})
+
+            # Read counts from side-keyed summary block (P2-T4: replaces full-timeline scan).
+            # secondary_fired is sparse {subtype: count}; "nuke" key absent means 0 nukes.
+            nukes_fired: int = cb_block.get("secondary_fired", {}).get("nuke", 0)
+            # module_activations is sparse {module_key: count}; sum all present values.
+            module_activations: int = sum(cb_block.get("module_activations", {}).values())
+
+            try:
+                player = await player_repo.get_by_user_and_guild(session, user_id, guild_id)
+                if player is None:
+                    flogger.warning(
+                        f"fight_ships stat increment: player not found user_id={user_id} guild_id={guild_id} — skipping"
+                    )
+                    continue
+                player.total_fights += 1
+                player.total_nukes_fired += nukes_fired
+                player.total_module_activations += module_activations
+                await session.flush()
+                flogger.debug(
+                    f"Player stats incremented: user_id={user_id} guild_id={guild_id} "
+                    f"total_fights={player.total_fights} nukes_fired+={nukes_fired} "
+                    f"module_activations+={module_activations}"
+                )
+            except Exception as exc:
+                # Non-fatal — stat increment failure should not abort the fight
+                flogger.error(f"Player stat increment failed: user_id={user_id} guild_id={guild_id}: {exc}")
+
+    async def _consume_secondary_ammo(
+        self,
+        *,
+        session: "AsyncSession",
+        fight_results: FightResults,
+        combatant1_user_id: int | None,
+        combatant2_user_id: int | None,
+        guild_id: int,
+    ) -> None:
+        """Write back per-secondary ammo consumption for human combatants (CI-16).
+
+        Reads per-weapon secondary round counts from the side-keyed summary block
+        (summary.combatants[slot]["secondary_rounds_by_weapon"]) populated by
+        _build_fight_summary (P2-T3).  Decrements secondary_ammo on the player's
+        active ship and auto-unequips (removes name + ammo key) if rounds reach 0.
+
+        Using the side-keyed summary fixes the PvC name-mismatch bug: the old
+        full-timeline scan matched events by ev.actor (ship name) against
+        combatant_name (display_name), which zeroed counts whenever the two
+        differed.  The summary is always slot-keyed and correct regardless of
+        whether display_name matches ship name.
+
+        Criminal side (user_id is None): skip — no cross-fight persistence for NPCs (CI-17 deferred).
+        Mirrors the non-fatal try/except style of _increment_player_stats.
+        """
+        from persist.repositories.player_repository import PlayerRepository
+        from persist.repositories.player_ship_repository import PlayerShipRepository
+
+        player_repo = PlayerRepository()
+        player_ship_repo = PlayerShipRepository()
+
+        summary = fight_results.metadata.get("summary", {})
+        combatants_summary = summary.get("combatants", {})
+
+        slot_map: list[tuple[str, int | None]] = [
+            ("1", combatant1_user_id),
+            ("2", combatant2_user_id),
+        ]
+
+        for slot_key, user_id in slot_map:
+            if user_id is None:
+                continue  # NPC side — no cross-fight ammo persistence
+
+            cb_block = combatants_summary.get(slot_key, {})
+
+            # Read per-weapon secondary round counts from the side-keyed summary block
+            # (populated by _build_fight_summary, P2-T3).  Keys are weapon names, matching
+            # the secondary_ammo dict on the player ship — no timeline re-scan needed.
+            rounds_fired: dict[str, int] = dict(cb_block.get("secondary_rounds_by_weapon", {}))
+
+            if not rounds_fired:
+                continue  # no secondary fires — nothing to write back
+
+            try:
+                player = await player_repo.get_by_user_and_guild(session, user_id, guild_id)
+                if player is None:
+                    flogger.warning(
+                        f"_consume_secondary_ammo: player not found user_id={user_id} guild_id={guild_id} — skipping"
+                    )
+                    continue
+
+                ship = await player_ship_repo.get_active_ship(session, player.id)
+                if ship is None:
+                    flogger.warning(f"_consume_secondary_ammo: no active ship for player_id={player.id} — skipping")
+                    continue
+
+                # Read current ammo dict; never mutate in-place (JSON SQLAlchemy gotcha — must reassign)
+                ammo: dict[str, int] = dict(ship.secondary_ammo or {})
+                sw_names: list[str] = list(ship.secondary_weapons or [])
+
+                for w_name, fired in rounds_fired.items():
+                    if w_name not in ammo:
+                        flogger.debug(
+                            f"_consume_secondary_ammo: weapon {w_name!r} not in ammo dict for ship {ship.id} — skip"
+                        )
+                        continue
+                    new_qty = max(0, ammo[w_name] - fired)
+                    ammo[w_name] = new_qty
+                    if new_qty == 0:
+                        # Auto-unequip: remove name from secondary_weapons and del from ammo
+                        sw_names = [n for n in sw_names if n != w_name]
+                        del ammo[w_name]
+                        flogger.info(
+                            f"_consume_secondary_ammo: {w_name!r} depleted — auto-unequipped "
+                            f"from ship {ship.id} (player_id={player.id})"
+                        )
+
+                # Reassign both JSON columns (never in-place mutation — SQLAlchemy JSON gotcha)
+                ship.secondary_ammo = ammo
+                ship.secondary_weapons = sw_names
+                await session.flush()
+
+                flogger.debug(
+                    f"_consume_secondary_ammo: ship {ship.id} ammo updated: {ammo!r}, secondary_weapons={sw_names!r}"
+                )
+
+            except Exception as exc:
+                # Non-fatal — ammo write-back failure should not abort the fight record
+                flogger.error(f"_consume_secondary_ammo failed: user_id={user_id} guild_id={guild_id}: {exc}")

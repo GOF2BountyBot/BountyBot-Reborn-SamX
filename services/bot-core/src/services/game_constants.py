@@ -14,6 +14,7 @@ limits) remain hardcoded to maintain game balance integrity.
 """
 
 import os
+from typing import Any
 
 from shared import bblogger
 
@@ -42,6 +43,14 @@ class GameConstants:
     def _env_float(key: str, default: float) -> float:
         """Return *float* value from ``BOUNTYBOT_{key}`` env var, or *default*."""
         return float(os.environ.get(f"BOUNTYBOT_{key}", default))
+
+    @staticmethod
+    def _env_int_list(key: str, default: list[int]) -> list[int]:
+        """Return list[int] from ``BOUNTYBOT_{key}`` env var (comma-separated), or *default*."""
+        raw = os.environ.get(f"BOUNTYBOT_{key}")
+        if raw is None or not raw.strip():
+            return default
+        return [int(x.strip()) for x in raw.split(",") if x.strip()]
 
     # ------------------------------------------------------------------
     # Tech Levels
@@ -114,6 +123,27 @@ class GameConstants:
     MAX_ROUTE_LENGTH: int = 50  # A* pathfinding limit
 
     # ------------------------------------------------------------------
+    # CI-17: Criminal secondary weapons (owner-decision knobs #1–#3)
+    # All four constants are tunable here; nowhere else.
+    # ------------------------------------------------------------------
+
+    # Knob #1 / #2 — rounds granted per subtype for criminal secondaries.
+    # nuke=1 prevents unwinnable alpha-strikes; other subtypes use flat counts.
+    CRIMINAL_SECONDARY_ROUNDS: dict[str, int] = {
+        "nuke": 1,
+        "missile": 5,
+        "rocket": 5,
+        "cluster-missile": 3,
+        "shock-blast": 2,
+    }
+
+    # Knob #3 — exclude secondary weapons whose damage column is ≤ this value.
+    # Default 1 drops damage==0 (zero-damage, never fires) AND damage==1 (dmg=1
+    # Fireworks — a 1-dmg nuke is pure dead weight; owner may lower to 0 to
+    # include it).
+    CRIMINAL_SECONDARY_MIN_DAMAGE: int = 1
+
+    # ------------------------------------------------------------------
     # Activity / Temperature
     # ------------------------------------------------------------------
 
@@ -165,6 +195,14 @@ class GameConstants:
     SHOP_DEFAULT_TOOLS_NUM: int = 0
     TURRET_SPAWN_PROBABILITY: int = 45  # %
 
+    # Secondary weapons are consumable rounds; scale the rolled shop quantity so a
+    # single refresh cycle (6h default) can supply multiple players. Heavy ordnance
+    # scales less than standard ammo (missile, rocket, cluster-missile, ...).
+    # An item whose subtype is missing/unknown gets the STANDARD scaler.
+    SHOP_HEAVY_SECONDARY_SUBTYPES: frozenset[str] = frozenset({"nuke", "shock-blast"})
+    SHOP_SECONDARY_QTY_SCALER_HEAVY: int = 5
+    SHOP_SECONDARY_QTY_SCALER_STANDARD: int = 10
+
     # ------------------------------------------------------------------
     # Shop Rank Counts
     # ------------------------------------------------------------------
@@ -178,18 +216,10 @@ class GameConstants:
     # Duels
     # ------------------------------------------------------------------
 
-    DUEL_VARIANCE_PERCENT: float = 0.05  # ±5%
     DUEL_LOG_MAX_LENGTH: int = 10
     DUEL_CLOAK_CHANCE: int = 20  # %
-
-    # ------------------------------------------------------------------
-    # Bounty PvC Combat (player vs criminal) — armour buff
-    # Applied to the player's armour when fighting a criminal.
-    # 1.5 = +50% armour buff; 1.0 = no buff.
-    # Override via: BOUNTYBOT_BOUNTY_PVC_ARMOUR_BUFF_FACTOR=1.5
-    # ------------------------------------------------------------------
-
-    BOUNTY_PVC_ARMOUR_BUFF_FACTOR: float = 1.5
+    # DUEL_VARIANCE_PERCENT — retired in T10 (SimpleTTKResolver removed; TickResolver has no variance).
+    # BOUNTY_PVC_ARMOUR_BUFF_FACTOR — retired in T10 (replaced by PVC_DAMAGE_REDUCTION §3).
 
     # ------------------------------------------------------------------
     # Item Type Vocabulary
@@ -207,11 +237,13 @@ class GameConstants:
     )
 
     # Concrete item types exposed on the user-facing economy/equip surface TODAY.
-    # secondary_weapon is excluded until secondary-weapon mechanics ship.
-    # To enable secondary weapons: add "secondary_weapon" to this set.
-    # This is the SINGLE lever that gates secondary-weapon exposure across all
+    # secondary_weapon is included; the shop excludes deferred subtypes (emp-bomb,
+    # mine, sentry-gun) via DEFERRED_SECONDARY_SUBTYPES in combat_models.py.
+    # This is the SINGLE lever that gates item-type exposure across all
     # economy/loadout flows — no scattered if-branches needed.
-    CURRENTLY_ENABLED_TYPES: frozenset[str] = frozenset({"ship", "primary_weapon", "turret_weapon", "module"})
+    CURRENTLY_ENABLED_TYPES: frozenset[str] = frozenset(
+        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+    )
 
     # Generic alias → concrete type expansion (catalog-flavoured; includes all types).
     # Playable-flavoured expansion is derived at runtime by filtering against CURRENTLY_ENABLED_TYPES.
@@ -299,6 +331,64 @@ class GameConstants:
     PERSISTENT_DAMAGE_DECAY_RATE: float = 0.0
 
     # ------------------------------------------------------------------
+    # Combat System — Phase-1 Constants (Appendix A, COMBAT_SPEC_LOCKED.md)
+    # All overridable via BOUNTYBOT_<NAME> env var and per-guild override.
+    # ------------------------------------------------------------------
+
+    # Accuracy system (§5)
+    CLOAK_SET_VALUE: float = 0.25
+    BOOSTER_ACCURACY_DEBUFF_FACTOR: float = 0.10
+    THRUSTER_ACCURACY_BONUS_FACTOR: float = 0.10
+    AUTO_TURRET_ACCURACY_MULTIPLIER: float = 0.85
+    PLAYER_BASE_ACCURACY: float = 0.60
+    NPC_BASE_ACCURACY: float = 0.50
+    ACCURACY_CLAMP_MIN: float = 0.05
+    ACCURACY_CLAMP_MAX: float = 0.99
+    SCANNER_TIER_B_BONUS_PP: int = 5
+    SCANNER_TIER_C_BONUS_PP: int = 10
+
+    # Repair bots (§3 / §7.6)
+    KETAR_I_REPAIR_PCT_PER_SEC: float = 0.025
+    KETAR_II_REPAIR_PCT_PER_SEC: float = 0.050
+
+    # Tick / timing (§1)
+    TICK_MS: int = 10
+    MAX_FIGHT_TICKS: int = 18000
+
+    # Distance model (§2)
+    STARTING_DISTANCE_M: int = 5000
+    BASE_SHIP_SPEED_MPS: int = 150
+    MIN_DISTANCE_M: int = 300
+    THRUSTER_WINDOW_M: int = 750
+    SHOCK_BLAST_TRIGGER_RANGE_M: int = 500  # shock-blast only fires inside this range (m)
+
+    # HP-threshold activation lists (§7.2 / §7.3 / §8)
+    CLOAK_HP_THRESHOLDS_PCT: list[int] = [66, 33]
+    BOOSTER_HP_THRESHOLDS_PCT: list[int] = [80, 60, 40, 20]
+
+    # EmergencySystem (§7.7)
+    EMERGENCY_SYSTEM_INVULN_S: int = 10
+
+    # Nuke (§6.2) — two-regime detonation window + yield interference (D-014, 2026-06-10)
+    NUKE_MAGNITUDE_SCALE: float = 0.10  # R = magnitude_m × scale (world→5km-field normalization)
+    NUKE_FRIENDLY_FACTOR: float = 0.50  # self-damage global knob (firer at position 0)
+    NUKE_RANGE_REGIME_THRESHOLD_M: int = 1000  # LR/CR regime boundary
+    NUKE_LR_NEAR_FRAC: float = 0.40  # LR window = [NEAR_FRAC×d, d] — no overshoot at range
+    NUKE_CR_SHORT_M: int = 600  # CR window short edge: max(0, d − 600)
+    NUKE_CR_OVERSHOOT_M: int = 400  # CR window far edge: d + 400
+    NUKE_STACK_FALLOFF: float = 0.5  # per-side yield interference: mult = falloff ** prior_detonations
+
+    # PvC damage reduction — Keith T. Maxwell bonus (§3)
+    PVC_DAMAGE_REDUCTION: float = 0.33
+
+    # Combat log retention (§12)
+    COMBAT_LOG_RETENTION_HOURS: int = 72
+
+    # CI-21: layer_depleted re-emit fraction (latch clears when layer recovers ≥ this fraction of max).
+    # Override via: BOUNTYBOT_COMBAT_LAYER_REEMIT_FRACTION=0.25
+    COMBAT_LAYER_REEMIT_FRACTION: float = 0.25
+
+    # ------------------------------------------------------------------
     # Environment variable overrides (operational constants only)
     # ------------------------------------------------------------------
 
@@ -361,14 +451,13 @@ class GameConstants:
         cls.SHOP_DEFAULT_TURRETS_NUM = _track_int("SHOP_DEFAULT_TURRETS_NUM", 2)
         cls.SHOP_DEFAULT_TOOLS_NUM = _track_int("SHOP_DEFAULT_TOOLS_NUM", 0)
         cls.TURRET_SPAWN_PROBABILITY = _track_int("TURRET_SPAWN_PROBABILITY", 45)
+        cls.SHOP_SECONDARY_QTY_SCALER_HEAVY = _track_int("SHOP_SECONDARY_QTY_SCALER_HEAVY", 5)
+        cls.SHOP_SECONDARY_QTY_SCALER_STANDARD = _track_int("SHOP_SECONDARY_QTY_SCALER_STANDARD", 10)
 
         # Duels
-        cls.DUEL_VARIANCE_PERCENT = _track_float("DUEL_VARIANCE_PERCENT", 0.05)
         cls.DUEL_LOG_MAX_LENGTH = _track_int("DUEL_LOG_MAX_LENGTH", 10)
         cls.DUEL_CLOAK_CHANCE = _track_int("DUEL_CLOAK_CHANCE", 20)
-
-        # PvC combat armour buff
-        cls.BOUNTY_PVC_ARMOUR_BUFF_FACTOR = _track_float("BOUNTY_PVC_ARMOUR_BUFF_FACTOR", 1.5)
+        # DUEL_VARIANCE_PERCENT and BOUNTY_PVC_ARMOUR_BUFF_FACTOR retired in T10.
 
         # Inventory
         cls.MAX_SHIP_NICKNAME_LENGTH = _track_int("MAX_SHIP_NICKNAME_LENGTH", 30)
@@ -386,13 +475,50 @@ class GameConstants:
         # Bounty winner reserve factor
         cls.BOUNTY_WINNER_RESERVE_FACTOR = _track_float("BOUNTY_WINNER_RESERVE_FACTOR", 0.25)
 
+        def _track_int_list(key: str, default: list[int]) -> list[int]:
+            val = cls._env_int_list(key, default)
+            if os.environ.get(f"BOUNTYBOT_{key}") is not None:
+                _overrides.append(f"{key}={val}")
+            return val
+
+        # Combat System — Phase-1 Constants (Appendix A)
+        cls.CLOAK_SET_VALUE = _track_float("CLOAK_SET_VALUE", 0.25)
+        cls.BOOSTER_ACCURACY_DEBUFF_FACTOR = _track_float("BOOSTER_ACCURACY_DEBUFF_FACTOR", 0.10)
+        cls.THRUSTER_ACCURACY_BONUS_FACTOR = _track_float("THRUSTER_ACCURACY_BONUS_FACTOR", 0.10)
+        cls.AUTO_TURRET_ACCURACY_MULTIPLIER = _track_float("AUTO_TURRET_ACCURACY_MULTIPLIER", 0.85)
+        cls.PLAYER_BASE_ACCURACY = _track_float("PLAYER_BASE_ACCURACY", 0.60)
+        cls.NPC_BASE_ACCURACY = _track_float("NPC_BASE_ACCURACY", 0.50)
+        cls.ACCURACY_CLAMP_MIN = _track_float("ACCURACY_CLAMP_MIN", 0.05)
+        cls.ACCURACY_CLAMP_MAX = _track_float("ACCURACY_CLAMP_MAX", 0.99)
+        cls.SCANNER_TIER_B_BONUS_PP = _track_int("SCANNER_TIER_B_BONUS_PP", 5)
+        cls.SCANNER_TIER_C_BONUS_PP = _track_int("SCANNER_TIER_C_BONUS_PP", 10)
+        cls.KETAR_I_REPAIR_PCT_PER_SEC = _track_float("KETAR_I_REPAIR_PCT_PER_SEC", 0.025)
+        cls.KETAR_II_REPAIR_PCT_PER_SEC = _track_float("KETAR_II_REPAIR_PCT_PER_SEC", 0.050)
+        cls.TICK_MS = _track_int("TICK_MS", 10)
+        cls.MAX_FIGHT_TICKS = _track_int("MAX_FIGHT_TICKS", 18000)
+        cls.STARTING_DISTANCE_M = _track_int("STARTING_DISTANCE_M", 5000)
+        cls.BASE_SHIP_SPEED_MPS = _track_int("BASE_SHIP_SPEED_MPS", 150)
+        cls.MIN_DISTANCE_M = _track_int("MIN_DISTANCE_M", 300)
+        cls.THRUSTER_WINDOW_M = _track_int("THRUSTER_WINDOW_M", 750)
+        cls.SHOCK_BLAST_TRIGGER_RANGE_M = _track_int("SHOCK_BLAST_TRIGGER_RANGE_M", 500)
+        cls.CLOAK_HP_THRESHOLDS_PCT = _track_int_list("CLOAK_HP_THRESHOLDS_PCT", [66, 33])
+        cls.BOOSTER_HP_THRESHOLDS_PCT = _track_int_list("BOOSTER_HP_THRESHOLDS_PCT", [80, 60, 40, 20])
+        cls.EMERGENCY_SYSTEM_INVULN_S = _track_int("EMERGENCY_SYSTEM_INVULN_S", 10)
+        cls.NUKE_MAGNITUDE_SCALE = _track_float("NUKE_MAGNITUDE_SCALE", 0.10)
+        cls.NUKE_FRIENDLY_FACTOR = _track_float("NUKE_FRIENDLY_FACTOR", 0.50)
+        cls.NUKE_RANGE_REGIME_THRESHOLD_M = _track_int("NUKE_RANGE_REGIME_THRESHOLD_M", 1000)
+        cls.NUKE_LR_NEAR_FRAC = _track_float("NUKE_LR_NEAR_FRAC", 0.40)
+        cls.NUKE_CR_SHORT_M = _track_int("NUKE_CR_SHORT_M", 600)
+        cls.NUKE_CR_OVERSHOOT_M = _track_int("NUKE_CR_OVERSHOOT_M", 400)
+        cls.NUKE_STACK_FALLOFF = _track_float("NUKE_STACK_FALLOFF", 0.5)
+        cls.PVC_DAMAGE_REDUCTION = _track_float("PVC_DAMAGE_REDUCTION", 0.33)
+        cls.COMBAT_LOG_RETENTION_HOURS = _track_int("COMBAT_LOG_RETENTION_HOURS", 72)
+        cls.COMBAT_LAYER_REEMIT_FRACTION = _track_float("COMBAT_LAYER_REEMIT_FRACTION", 0.25)
+
         if _overrides:
             _flogger.info(f"GameConstants env overrides detected: {', '.join(_overrides)}")
         else:
             _flogger.info("GameConstants.load() — no env overrides, using defaults")
-
-
-from typing import Any
 
 
 def resolve_constant[T](guild_config: Any | None, field: str, fallback: T) -> T:

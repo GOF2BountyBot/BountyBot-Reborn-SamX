@@ -9,6 +9,10 @@
   "name": "Nirai Overcharge",
   "techLevel": 5,
   "type": "PrimaryWeaponModModule",
-  "value": 29224,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Overcharge"
+  "value": 27049,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Overcharge",
+  "extra_atts": {
+    "damage_pct": 20.0,
+    "fire_rate_pct": -10.0
+  }
 }

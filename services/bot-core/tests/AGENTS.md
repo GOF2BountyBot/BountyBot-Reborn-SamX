@@ -8,14 +8,16 @@ Test conventions for the bot-core service.
 
 ```
 tests/
-├── conftest.py             # Service-level fixtures (mocked bblogger, mock_db_manager)
+├── conftest.py             # Root fixtures (mocked shared.bblogger, real shared.http_retry,
+│                           #   mock_db_manager, test_app/client, seed_* game-data fixtures)
 ├── fixtures/
-│   └── game_data.py        # Real game data fixtures
-├── api/                    # Router-level tests (one file per router)
-├── services/               # Service-level tests (one file per service)
+│   ├── game_data.py        # Real game data fixtures
+│   └── golden_route_abc.png  # Golden image for map-renderer tests
+├── api/                    # Router-level tests (one file per router; own conftest.py)
+├── services/               # Service-level tests (one file per service; own conftest.py)
 ├── repositories/           # Repository-level tests
-├── integration/            # Integration tests with real SQLite-in-memory DB
-└── test_*.py               # Top-level: executor, migration, startup tests
+├── integration/            # Integration tests with real SQLite-in-memory DB (own conftest.py)
+└── test_*.py               # Top-level: executor, migration, concurrency/locking, startup tests
 ```
 
 ---
@@ -25,7 +27,7 @@ tests/
 - **Max 2 mocks per test** — prefer real objects with deterministic inputs.
 - See `tests/services/test_combat_service.py` as the reference pattern for service tests.
 - Use `tests/fixtures/game_data.py` for real game entity fixtures.
-- `pytest` with `asyncio_mode = auto` (configured in root `pyproject.toml`).
+- `pytest` with `asyncio_mode = auto` (configured in `services/bot-core/pytest.ini`, which governs the canonical from-bot-core invocation; the repo-root `pyproject.toml` sets the same value).
 
 ---
 
@@ -114,9 +116,10 @@ let B.34 land in production. Mock-based service tests can add coverage
 but they do NOT substitute for the cross-session-reload integration
 assertion.
 
-The 20 cross-table operations covered by AC-8 are enumerated in
-`/proj/recon/B34-remediation-spec.md` §6.1 and implemented in
-`tests/integration/test_cross_session_persistence.py`. Future
+The 20 cross-table operations covered by AC-8 are implemented in
+`tests/integration/test_cross_session_persistence.py` (the original
+enumeration lived in the B.34 remediation spec, which no longer exists
+in the repo — the test file is now the canonical list). Future
 cross-table operations must extend that file (or a sibling) with a
 matching test.
 
@@ -148,12 +151,15 @@ masked entire defect classes (capacity-gate arithmetic, ORM identity-map
 confusion, eligibility-guard logic, HTTP body shape).
 
 The S2 pattern below replaces that anti-pattern. **All new executor tests
-written from 2026-05 onward MUST follow this pattern.** Sprint 3 will
-rewrite the existing executor test files against this pattern.
+written from 2026-05 onward MUST follow this pattern.** The S3 rewrite has
+landed: `test_bounty_spawn_executor.py` was rewritten against this pattern
+(real SQLite + respx, 0 repo mocks) and the interim
+`test_bounty_spawn_executor_ref.py` reference file was folded into it and
+deleted.
 
-The canonical reference test lives at:
+The canonical reference suite is now:
 
-> `tests/test_bounty_spawn_executor_ref.py`
+> `tests/test_bounty_spawn_executor.py`
 
 Read it first before writing or modifying any executor test.
 
@@ -163,7 +169,7 @@ Read it first before writing or modifying any executor test.
 |------|----------------|-------------|
 | **A — Pure unit** | Pure helpers in the executor module: `_is_guild_fully_configured`, `_get_division_channel_id`, `_get_division_role_id`, payload-validation early returns (e.g. missing `guild_id` / `tier` in `execute_bounty_spawn_one_job`). | **0 mocks.** Pass `SimpleNamespace` or plain dicts; assert on the return value. |
 | **B — SQLite integration** | ORM read/write paths reachable from the executor: `count_active_by_guild_and_division`, `ConfigRepository.list_all`, `ConfigRepository.get_by_guild_id`, capacity-reached short-circuits, eligibility-guard skips. | **1 patch only:** `persist.database.manager.db_manager` is patched to yield a real `AsyncSession` from a SQLite-in-memory engine. NO repositories or services are mocked. |
-| **C — respx HTTP boundary** | The two outbound HTTP surfaces: (1) self-scheduling at `EXECUTOR_HOST:EXECUTOR_PORT/api/v1/jobs`; (2) gateway announcement at `DISCORD_GATEWAY_HOST:GATEWAY_PORT/api/v1/announcements/...` plus map upload to `/channels/{cid}/upload`. | **respx** intercepts `httpx.AsyncClient` calls. Assert on URL, JSON body shape, request count. The `assert_all_called=False, assert_all_mocked=True` defaults are recommended — known calls are matched, unexpected calls fail loudly. |
+| **C — respx HTTP boundary** | The outbound HTTP surfaces: (1) self-scheduling at `EXECUTOR_HOST:EXECUTOR_PORT/api/v1/jobs` — note this is now only the FALLBACK path; since P6-T8 the primary scheduling path is a direct in-process `scheduler_holder.get_scheduler().add_job(...)` call, exercised by patching `utils.scheduler_holder.get_scheduler` (see Mock Policy below); (2) gateway announcement at `DISCORD_GATEWAY_HOST:GATEWAY_PORT/api/v1/announcements/...` plus map upload to `/channels/{cid}/upload`. | **respx** intercepts `httpx.AsyncClient` calls. Assert on URL, JSON body shape, request count. The `assert_all_called=False, assert_all_mocked=True` defaults are recommended — known calls are matched, unexpected calls fail loudly. |
 
 A single test may legitimately span Tier B + Tier C (the reference test
 does so). Tier A tests typically live as small standalone functions
@@ -189,6 +195,13 @@ that take no fixtures.
    inserts a real `Bounty` ORM instance into the SQLite session and
    returns it. Document the patch with a comment citing this AGENTS.md
    section.
+4. **`patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler)`**
+   for the direct in-process scheduling path (P6-T8): the orchestrator
+   counts queued jobs via `get_scheduler().get_jobs()` and schedules
+   one-time jobs via `get_scheduler().add_job(...)`. A `MagicMock`
+   scheduler with a stubbed `get_jobs()` return is the supported way to
+   seed the queued count or capture `add_job` calls; returning `None`
+   exercises the HTTP fallback (then assert via respx).
 
 #### Forbidden at the executor layer
 
@@ -237,19 +250,20 @@ demonstrating measurable wall-clock improvement.
 
 ### SQLite Compatibility
 
-The integration conftest's SQLite schema includes only tables with
+The integration conftest's SQLite schema (`_SQLITE_TABLES` in
+`tests/integration/conftest.py`) includes only tables with
 SQLite-compatible column types: `User`, `Player`, `GuildConfig`,
-`GuildShop`, `PlayerInventory`, `PlayerShip`. **For executor tests, also
-include `Bounty` and `GuildConfig`** (Bounty is JSON-only and
-SQLite-safe).
+`GuildShop`, `PlayerInventory`, `PlayerShip`, and `Bounty` (Bounty is
+JSON-only and SQLite-safe — already part of the shared list, so executor
+tests get it for free).
 
 Tables that contain `sqlalchemy.dialects.postgresql.ARRAY` columns
 **cannot** be created on SQLite:
 
 - `Criminal` (`aliases: ARRAY(String)`)
-- `System` (`coordinates: ARRAY(Integer)`, `neighbours: ARRAY(String)`)
+- `System` (`aliases: ARRAY(String)`, `coordinates: ARRAY(Integer)`, `neighbours: ARRAY(String)`)
 - `Item` / STI children (`aliases: ARRAY(String)`)
-- `Ship` (`aliases`, `assets`, `compatible_skins`, `builtin_modules`)
+- `Ship` (`aliases`, `builtin_modules`, `assets` — note `compatible_skins` is `JSON`, not ARRAY)
 
 Tests that need these tables must either (a) live in
 `tests/integration/` against a containerised PostgreSQL test database
@@ -257,22 +271,22 @@ Tests that need these tables must either (a) live in
 method that would otherwise need them (`BountyService.spawn_bounty` is
 the canonical example — see "Mock Policy" above).
 
-For PostgreSQL-specific functions used by the executor (`func.now()`,
-`text("SELECT ... LIKE :pattern")` against `apscheduler_jobs`),
+For PostgreSQL-specific functions used by the executor (`func.now()`),
 SQLite's parser is forgiving — `func.now()` resolves to
-`CURRENT_TIMESTAMP`, and the `text()` pattern simply returns 0 rows
-when the `apscheduler_jobs` table does not exist (the executor reads
-the count, not the rows themselves, so 0 is a safe default for
-single-tier tests). If a test needs the orchestrator's queued-jobs
-count to be non-zero, create the `apscheduler_jobs` table manually
-inside the test.
+`CURRENT_TIMESTAMP`. The orchestrator's queued-jobs count no longer
+queries `apscheduler_jobs` with raw SQL (P0-T3): it reads
+`scheduler_holder.get_scheduler().get_jobs()`, which returns 0 queued
+jobs when the holder is unset in tests. If a test needs the queued
+count to be non-zero, patch `utils.scheduler_holder.get_scheduler`
+with a mock scheduler whose `get_jobs()` returns fake job objects
+(see Mock Policy item 4).
 
-### Bounty-Spawn Specific Behaviours to Cover (S3 backlog)
+### Bounty-Spawn Behaviours Covered (S3 — implemented)
 
-When Sprint 3 rewrites `test_bounty_spawn_executor.py`, the following
-behaviours should be covered using the three-tier pattern. None of
-these belong in the reference test, but every one should appear in the
-rewritten suite.
+The S3 rewrite of `test_bounty_spawn_executor.py` covers the following
+behaviours using the three-tier pattern (the file header carries its own
+coverage table). Use this list as the regression checklist when touching
+the executor or its tests.
 
 | # | Behaviour | Tier | Notes |
 |---|-----------|------|-------|
@@ -280,9 +294,9 @@ rewritten suite.
 | 2 | `_get_division_channel_id` and `_get_division_role_id` mappings (incl. tier-role fallback to `bounty_hunter_role_id`) | A | Pure dispatch, no DB. |
 | 3 | Orchestrator skips guilds that fail eligibility | B | Persist a partially-configured guild; assert `tier_results` empty. |
 | 4 | Orchestrator skips tiers when `bounty_max_per_tier[tier] == 0` | B | Verify `reason: "tier_disabled"` in result. |
-| 5 | Orchestrator skips when `active + queued >= max_for_tier` | B + manual `apscheduler_jobs` row | Test capacity-with-queued accounting. |
-| 6 | Orchestrator schedules one-time jobs via HTTP POST to `/jobs` | B + C | respx asserts URL, payload shape, run_at ISO format. |
-| 7 | Orchestrator continues across tiers when one schedule call fails | B + C | respx returns 503 for one route; assert other tiers still queued. |
+| 5 | Orchestrator skips when `active + queued >= max_for_tier` | B + scheduler_holder mock | Queued count comes from `get_scheduler().get_jobs()` (P0-T3) — seed it via the mock. |
+| 6 | Orchestrator schedules one-time jobs via direct `add_job` (P6-T8) | B + scheduler_holder mock | Assert `add_job` call args (run_date, `bounty_spawn_one` payload shape). |
+| 7 | Orchestrator continues across tiers when one schedule call fails | B + scheduler_holder mock | Make `add_job` raise for one tier; assert other tiers still queued (`reason: "schedule_error"` for the failed one). |
 | 8 | `execute_bounty_spawn_one_job` rejects payload missing `guild_id` / `tier` | A | Returns `{"success": False, "reason": "missing_payload"}` — no DB. |
 | 9 | `execute_bounty_spawn_one_job` returns `guild_not_configured` when GuildConfig absent or partially configured | B | Persist no row / partial row. |
 | 10 | `execute_bounty_spawn_one_job` returns `tier_not_configured` when channel/role missing for the tier | B | |
@@ -308,4 +322,4 @@ Before merging an executor test:
 
 ---
 
-*Last updated: 2026-05-07*
+*Last updated: 2026-06-11 — doc-vs-code reconciliation: S3 executor-test rewrite recorded (canonical reference is now `test_bounty_spawn_executor.py`; `_ref` file deleted); scheduler_holder mock added to the Mock Policy (P6-T8 direct scheduling / P0-T3 no raw apscheduler_jobs SQL); SQLite table list updated (Bounty included in `_SQLITE_TABLES`); Ship/System ARRAY-column lists corrected; B.34 spec path removed (file no longer exists).*

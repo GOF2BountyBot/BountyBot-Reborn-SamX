@@ -117,11 +117,25 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         self.bot = bot
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
         self._render_settings: list[str] = []
+        # Static catalogs — TTL=None. SELF-HEAL via refresh_fn: a cleared key
+        # (from /reload_autocomplete) lazily re-fills on the next get() instead of
+        # staying empty forever (kills the D-010 class bug). The handlers already use
+        # `await cache.get(category)`, so no handler change is needed for self-heal.
         self._item_catalog: AutocompleteCache[str, list[str]] = AutocompleteCache(
-            ttl_seconds=None, name="adminCog-item-catalog"
+            ttl_seconds=None, refresh_fn=self._fetch_item_catalog, name="adminCog-item-catalog"
         )
         self._ship_catalog: AutocompleteCache[str, list[str]] = AutocompleteCache(
-            ttl_seconds=None, name="adminCog-ship-catalog"
+            ttl_seconds=None, refresh_fn=self._fetch_ship_catalog, name="adminCog-ship-catalog"
+        )
+        # Guild-scoped pending-duel cache for /admin_duel (distinct from DuelCog's
+        # per-player caches — this is the guild-wide admin view). Consistency via
+        # invalidate-and-cold-fill + a 300s TTL dead-man switch: admin_duel is rare
+        # and low-traffic, so a 1.0s cold-fill is acceptable and avoids a second
+        # push-payload shape (documented divergence from the per-player push model).
+        self._admin_pending_duel_cache: AutocompleteCache[int, list[dict]] = AutocompleteCache(
+            ttl_seconds=float(os.getenv("AUTOCOMPLETE_ADMIN_DUEL_TTL_SECONDS", "300")),
+            refresh_fn=self._fetch_admin_pending_duels,
+            name="adminCog-pending-duels",
         )
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         bot.loop.create_task(self._preload_render_settings())
@@ -150,12 +164,29 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 await asyncio.sleep(wait)
         flogger.error("Failed to preload render settings after 3 attempts")
 
+    async def _fetch_item_catalog(self, category: str) -> list[str]:
+        """Refresh one item-type catalog. Reused as _item_catalog.refresh_fn AND by
+        the preload, so a cleared key self-heals on the next get(). Raises on HTTP error.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
+        resp.raise_for_status()
+        return [obj["name"] for obj in resp.json() if obj.get("name")]
+
+    async def _fetch_ship_catalog(self, _key: str) -> list[str]:
+        """Refresh the game-ship catalog. Reused as _ship_catalog.refresh_fn AND by the
+        preload, so a cleared key self-heals on the next get(). Raises on HTTP error.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
+        resp.raise_for_status()
+        return [s["name"] for s in resp.json() if s.get("name")]
+
     async def _preload_static_catalogs(self) -> None:
         """Preload item catalogs (4 categories) and ship catalog from bot-core.
 
         Uses 5-attempt exponential-backoff retry (5s, 10s, 20s, 40s, 60s) mirroring
         the pattern in bountyCog._preload_data.  On terminal failure leaves the cache
         empty for that category so autocomplete degrades gracefully to an empty list.
+        Each loader is shared with the cache refresh_fn so self-heal and preload agree.
         """
         await self.bot.wait_until_ready()
 
@@ -163,9 +194,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         for category in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
             for attempt in range(5):
                 try:
-                    resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
-                    resp.raise_for_status()
-                    names = [obj["name"] for obj in resp.json() if obj.get("name")]
+                    names = await self._fetch_item_catalog(category)
                     self._item_catalog.set(category, names)
                     flogger.info(f"_preload_static_catalogs: loaded {len(names)} items for category={category}")
                     break
@@ -186,9 +215,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         # Preload ship catalog.
         for attempt in range(5):
             try:
-                resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
-                resp.raise_for_status()
-                names = [s["name"] for s in resp.json() if s.get("name")]
+                names = await self._fetch_ship_catalog("all")
                 self._ship_catalog.set("all", names)
                 flogger.info(f"_preload_static_catalogs: loaded {len(names)} ships")
                 break
@@ -205,6 +232,27 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 "autocomplete will be empty"
             )
             self._ship_catalog.set("all", [])
+
+    async def _fetch_admin_pending_duels(self, guild_id: int) -> list[dict]:
+        """Refresh the guild-wide pending-duel list for /admin_duel. Cache refresh_fn.
+
+        Pre-computes ``_norm`` at fill time so the hot autocomplete path performs
+        only a substring check per keystroke.
+        """
+        resp = await self.http_client.get(f"{api_base}/duels/pending-all", params={"guild_id": guild_id}, timeout=3.0)
+        resp.raise_for_status()
+        duels = resp.json()
+        for d in duels:
+            challenger = d.get("challenger_name") or f"Player {d.get('challenger_id', '?')}"
+            target = d.get("target_name") or f"Player {d.get('target_id', '?')}"
+            stakes = d.get("stakes", 0)
+            label = (
+                f"{challenger} vs {target} — {stakes:,} credits"
+                if stakes
+                else f"{challenger} vs {target} — friendly duel"
+            )
+            d["_norm"] = normalize_for_search(label)
+        return duels
 
     async def render_setting_autocomplete(
         self, _interaction: discord.Interaction, current: str
@@ -953,8 +1001,10 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     @app_commands.describe(
         ship_count_min="Minimum number of ship types in shop",
         ship_count_max="Maximum number of ship types in shop",
-        weapon_count_min="Minimum number of weapon types in shop",
-        weapon_count_max="Maximum number of weapon types in shop",
+        weapon_count_min="Minimum number of primary weapon types in shop",
+        weapon_count_max="Maximum number of primary weapon types in shop",
+        secondary_weapon_count_min="Minimum number of secondary weapon types in shop",
+        secondary_weapon_count_max="Maximum number of secondary weapon types in shop",
         module_count_min="Minimum number of module types in shop",
         module_count_max="Maximum number of module types in shop",
         turret_count_min="Minimum number of turret types in shop",
@@ -968,6 +1018,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         ship_count_max: int | None = None,
         weapon_count_min: int | None = None,
         weapon_count_max: int | None = None,
+        secondary_weapon_count_min: int | None = None,
+        secondary_weapon_count_max: int | None = None,
         module_count_min: int | None = None,
         module_count_max: int | None = None,
         turret_count_min: int | None = None,
@@ -988,6 +1040,11 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             item_count_ranges["ships"] = {"min": ship_count_min, "max": ship_count_max}
         if weapon_count_min is not None and weapon_count_max is not None:
             item_count_ranges["weapons"] = {"min": weapon_count_min, "max": weapon_count_max}
+        if secondary_weapon_count_min is not None and secondary_weapon_count_max is not None:
+            item_count_ranges["secondary_weapons"] = {
+                "min": secondary_weapon_count_min,
+                "max": secondary_weapon_count_max,
+            }
         if module_count_min is not None and module_count_max is not None:
             item_count_ranges["modules"] = {"min": module_count_min, "max": module_count_max}
         if turret_count_min is not None and turret_count_max is not None:
@@ -1039,6 +1096,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
             embed.add_field(name="Ships", value=_range_str("ships"), inline=True)
             embed.add_field(name="Weapons", value=_range_str("weapons"), inline=True)
+            embed.add_field(name="Secondary Weapons", value=_range_str("secondary_weapons"), inline=True)
             embed.add_field(name="Modules", value=_range_str("modules"), inline=True)
             embed.add_field(name="Turrets", value=_range_str("turrets"), inline=True)
             sale_pf = cfg.get("sale_price_factor")
@@ -1635,7 +1693,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             resp = await self.http_client.post(
                 f"{api_base}/bounties/guild/{interaction.guild_id}/admin-spawn",
                 params=params,
-                timeout=30,
+                timeout=60,
             )
             resp.raise_for_status()
             result = resp.json()
@@ -1680,7 +1738,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
     @app_commands.command(
         name="admin_cooldown_reset",
-        description="Reset a player's bounty check cooldown immediately",
+        description="[ADMIN] Reset a player's bounty check cooldown immediately",
     )
     @app_commands.describe(user="The Discord member whose cooldown should be reset")
     async def admin_cooldown_reset(self, interaction: discord.Interaction, user: discord.Member):
@@ -1777,11 +1835,18 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 else ("primary_weapon", "secondary_weapon", "turret_weapon", "module")
             )
 
-            # Collect all candidate names across categories (deduplicated)
+            # Collect all candidate names across categories (deduplicated).
+            # Budget: at most two inline 1.0s cold-fills (gold-standard ≤2s rule);
+            # remaining categories peek-only. Catalog is normally pre-warmed.
             all_names: list[str] = []
             seen: set[str] = set()
+            cold_fills = 0
             for category in categories:
-                cat_names = await self._item_catalog.get(category) or []
+                cat_names = self._item_catalog.peek(category)
+                if cat_names is None and cold_fills < 2:
+                    cat_names = await self._item_catalog.get_with_timeout(category, timeout=1.0)
+                    cold_fills += 1
+                cat_names = cat_names or []
                 for name in cat_names:
                     if name and name not in seen:
                         seen.add(name)
@@ -1824,42 +1889,42 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             guild_id = interaction.guild_id
             target_user_id = target_user.id
 
-            # HOT PATH: peek player_cache for target user — no HTTP
+            # GATE 1 (cold-fill): resolve target player from player_cache so the 0th
+            # keystroke is never empty for a cold-but-resolvable target.
             if autocomplete_state.player_cache is not None:
                 player_entry = autocomplete_state.player_cache.peek((guild_id, target_user_id))
+                if player_entry is None:
+                    player_entry = await autocomplete_state.player_cache.get_with_timeout(
+                        (guild_id, target_user_id), timeout=1.0
+                    )
                 if player_entry is not None:
                     player_id = player_entry.get("id")
-                    if player_id is not None:
-                        # HOT PATH: peek inventory_cache for target player — no HTTP
-                        if autocomplete_state.inventory_cache is not None:
-                            items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
-                            if items is not None:
-                                choices: list[app_commands.Choice[str]] = []
-                                seen: set[str] = set()
-                                for nc in items:
-                                    raw = nc.raw if hasattr(nc, "raw") else nc
-                                    item_name = raw.get("item_name") or ""
-                                    item_type = raw.get("item_type") or ""
-                                    quantity = raw.get("quantity") or 0
-                                    if not item_name or item_name in seen:
-                                        continue
-                                    qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
-                                    type_label = item_type.replace("_", " ").title() or "Item"
-                                    label = f"{item_name} ({type_label}){qty_suffix}"
-                                    norm_label = normalize_for_search(label)
-                                    norm_name = normalize_for_search(item_name)
-                                    if norm_current in norm_label or norm_current in norm_name:
-                                        seen.add(item_name)
-                                        choices.append(app_commands.Choice(name=label[:100], value=item_name))
-                                return choices[:25]
-                            # Inventory cache cold miss — schedule refresh
-                            autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
-                    else:
-                        # Player has no id field — schedule refresh
-                        autocomplete_state.player_cache.schedule_refresh((guild_id, target_user_id))
-                else:
-                    # Player cache cold miss — schedule refresh
-                    autocomplete_state.player_cache.schedule_refresh((guild_id, target_user_id))
+                    if player_id is not None and autocomplete_state.inventory_cache is not None:
+                        # GATE 2 (cold-fill): target player's inventory. Two 1.0s gates ≈ 2s.
+                        items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
+                        if items is None:
+                            items = await autocomplete_state.inventory_cache.get_with_timeout(
+                                (guild_id, player_id), timeout=1.0
+                            )
+                        if items is not None:
+                            choices: list[app_commands.Choice[str]] = []
+                            seen: set[str] = set()
+                            for nc in items:
+                                raw = nc.raw if hasattr(nc, "raw") else nc
+                                item_name = raw.get("item_name") or ""
+                                item_type = raw.get("item_type") or ""
+                                quantity = raw.get("quantity") or 0
+                                if not item_name or item_name in seen:
+                                    continue
+                                qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
+                                type_label = item_type.replace("_", " ").title() or "Item"
+                                label = f"{item_name} ({type_label}){qty_suffix}"
+                                norm_label = normalize_for_search(label)
+                                norm_name = normalize_for_search(item_name)
+                                if norm_current in norm_label or norm_current in norm_name:
+                                    seen.add(item_name)
+                                    choices.append(app_commands.Choice(name=label[:100], value=item_name))
+                            return choices[:25]
 
             flogger.warning(
                 f"remove_item_autocomplete: could not resolve inventory for "
@@ -1867,11 +1932,19 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 "falling back to all items"
             )
 
-            # Fallback: show all game-catalog items across all equippable categories
+            # Fallback: show all game-catalog items across all equippable categories.
+            # Budget: at most two inline 1.0s cold-fills (gold-standard ≤2s rule);
+            # remaining categories peek-only (the cold-fills' shielded refresh warms
+            # them for the next keystroke). Catalog is normally pre-warmed anyway.
             choices_fb: list[app_commands.Choice[str]] = []
             seen_fb: set[str] = set()
+            cold_fills_fb = 0
             for category in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
-                names = await self._item_catalog.get(category) or []
+                names = self._item_catalog.peek(category)
+                if names is None and cold_fills_fb < 2:
+                    names = await self._item_catalog.get_with_timeout(category, timeout=1.0)
+                    cold_fills_fb += 1
+                names = names or []
                 for name in names:
                     if name and name not in seen_fb and norm_current in normalize_for_search(name):
                         seen_fb.add(name)
@@ -1885,9 +1958,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     async def game_ship_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for ship names — served from preloaded in-memory cache (zero HTTP per keystroke)."""
+        """Autocomplete for ship names — served from preloaded in-memory cache (zero HTTP per keystroke).
+
+        Cold cache (e.g. just after /reload_autocomplete) self-heals via a single
+        bounded 1.0s cold-fill rather than an unbounded get() that could blow the
+        Discord autocomplete budget.
+        """
         try:
-            names = await self._ship_catalog.get("all") or []
+            names = self._ship_catalog.peek("all")
+            if names is None:
+                names = await self._ship_catalog.get_with_timeout("all", timeout=1.0)
+            names = names or []
             return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, names)]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
@@ -2174,31 +2255,43 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             if target_user is not None:
                 from utils.autocomplete_helpers import resolve_player_id
 
+                from utils import autocomplete_state
+
+                # GATE 1 (cold-fill): resolve target user → bot-core player_id.
                 player_id = await resolve_player_id(
                     self.http_client, api_base, target_user.id, interaction.guild_id, timeout=3.0
                 )
                 if player_id is not None:
-                    resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=5)
-                    if resp.status_code == 200:
-                        ships = resp.json()
-                        choices = [
-                            app_commands.Choice(
-                                name=s.get("ship_name", s.get("name", "")),
-                                value=s.get("ship_name", s.get("name", "")),
-                            )
-                            for s in ships
-                            if norm_current in normalize_for_search(s.get("ship_name", s.get("name", "")))
-                        ]
+                    # GATE 2 (cold-fill): REUSE the shared ships_cache (key = (guild, player_id))
+                    # instead of a live GET per keystroke. ships_cache is already warmed for
+                    # active players and invalidated by setactive/sell-ship/give-ship/admin-remove-ship.
+                    sc = autocomplete_state.ships_cache
+                    ships_nc = sc.peek((interaction.guild_id, player_id)) if sc else None
+                    if ships_nc is None and sc is not None:
+                        ships_nc = await sc.get_with_timeout((interaction.guild_id, player_id), timeout=1.0)
+                    if ships_nc is not None:
+                        choices: list[app_commands.Choice[str]] = []
+                        for nc in ships_nc:
+                            raw = nc.raw if hasattr(nc, "raw") else nc
+                            ship_name = raw.get("ship_name") or raw.get("name") or ""
+                            if ship_name and norm_current in normalize_for_search(ship_name):
+                                choices.append(app_commands.Choice(name=ship_name, value=ship_name))
                         return choices[:25]
-                # Player resolution failed or API error — fall through to game-data fallback
+                # Player resolution failed, ships_cache miss for an un-warmed target, or guild
+                # not configured — fall through to the game-data catalog fallback (intended
+                # degrade path; not every guild member is warmed).
                 flogger.warning(
                     f"player_ship_autocomplete: could not resolve player ships for "
                     f"user={getattr(target_user, 'id', None)} guild={interaction.guild_id}; "
                     "falling back to all ships"
                 )
 
-            # Fallback: show all ships from preloaded catalog (user param not yet selected, or resolution failed)
-            names = await self._ship_catalog.get("all") or []
+            # Fallback: show all ships from preloaded catalog (user param not yet selected, or
+            # resolution failed). Bounded 1.0s cold-fill instead of unbounded get() (budget).
+            names = self._ship_catalog.peek("all")
+            if names is None:
+                names = await self._ship_catalog.get_with_timeout("all", timeout=1.0)
+            names = names or []
             return [
                 app_commands.Choice(name=name, value=name)
                 for name in names
@@ -2303,8 +2396,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "criminal_max_gear_upgrade",
         "bounty_reward_to_xp_gain_mult",
         "bounty_winner_reserve_factor",
-        "bounty_pvc_armour_buff_factor",
-        "duel_variance_percent",
+        # bounty_pvc_armour_buff_factor — retired T10 (dropped from guild_config)
+        # duel_variance_percent — retired T10 (SimpleTTKResolver removed)
         "duel_cloak_chance",
         "close_bounty_threshold",
         "max_route_length",
@@ -2600,22 +2693,26 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for /admin_duel duel parameter.
 
-        First choice is always "⚠️ Cancel ALL pending duels" (value="all").
-        Remaining choices are individual pending duels for this guild.
+        First choice is always "⚠️ Cancel ALL pending duels" (value="all") —
+        including the error path, so the admin can always cancel-all even if
+        the per-duel list can't be built.
         """
+        # Sentinel is ALWAYS first, even on a cold/empty cache OR an exception.
+        # Built BEFORE the try so the except handler can return it unconditionally.
+        choices: list[app_commands.Choice[str]] = [
+            app_commands.Choice(name="⚠️ Cancel ALL pending duels", value="all"),
+        ]
         try:
             guild_id = interaction.guild_id
-            resp = await self.http_client.get(
-                f"{api_base}/duels/pending-all",
-                params={"guild_id": guild_id},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            duels = resp.json()
 
-            choices: list[app_commands.Choice[str]] = [
-                app_commands.Choice(name="⚠️ Cancel ALL pending duels", value="all"),
-            ]
+            # Guild-scoped cache: peek → single 1.0s cold-fill (within budget).
+            duels = self._admin_pending_duel_cache.peek(guild_id)
+            if duels is None:
+                duels = await self._admin_pending_duel_cache.get_with_timeout(guild_id, timeout=1.0)
+            if duels is None:
+                return choices
+
+            norm_current = normalize_for_search(current)
             for d in duels[:24]:  # max 24 duels + 1 "all" = 25 total (Discord limit)
                 duel_id = d.get("id")
                 challenger = d.get("challenger_name") or f"Player {d.get('challenger_id', '?')}"
@@ -2625,6 +2722,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     label = f"{challenger} vs {target} — {stakes:,} credits"
                 else:
                     label = f"{challenger} vs {target} — friendly duel"
+                norm_label = d.get("_norm") or normalize_for_search(label)
+                if norm_current and norm_current not in norm_label:
+                    continue
                 # Discord choice names are max 100 chars
                 if len(label) > 100:
                     label = label[:97] + "..."
@@ -2633,7 +2733,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             return choices
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.debug(f"admin_duel_autocomplete error: {e}")
-            return []
+            # Preserve the Cancel-ALL sentinel even on error.
+            return choices
 
     @app_commands.command(name="admin_duel", description="[ADMIN] Cancel a pending duel or all pending duels")
     @app_commands.describe(duel="Select a pending duel to cancel, or 'All' to cancel everything")
@@ -2675,6 +2776,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 flogger.info(
                     f"Admin {interaction.user} cancelled all {count} pending duels in guild {interaction.guild_id}"
                 )
+                # Invalidate the guild-scoped admin-duel cache (cold-fill on next keystroke).
+                self._admin_pending_duel_cache.invalidate(interaction.guild_id)
             except httpx.HTTPStatusError as e:
                 await report_api_error(interaction, e)
             except Exception as e:  # pylint: disable=broad-exception-caught
@@ -2711,6 +2814,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 flogger.info(f"Admin {interaction.user} cancelled duel_id={duel_id} in guild {interaction.guild_id}")
+                # Invalidate the guild-scoped admin-duel cache (cold-fill on next keystroke).
+                self._admin_pending_duel_cache.invalidate(interaction.guild_id)
 
             except httpx.HTTPStatusError as e:
                 await report_api_error(interaction, e)

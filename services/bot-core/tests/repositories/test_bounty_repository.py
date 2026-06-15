@@ -476,3 +476,81 @@ class TestClearActiveByGuild:
             await repo.clear_active_by_guild(mock_db, guild_id=777)
 
         mock_db.rollback.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# delete_by_guild_id
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteByGuildId:
+    """Tests for BountyRepository.delete_by_guild_id (uninstall hard-delete)."""
+
+    @pytest.fixture
+    def repo(self):
+        return BountyRepository()
+
+    @pytest.fixture
+    def mock_db(self):
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        db.rollback = AsyncMock()
+        return db
+
+    def _make_delete_result(self, rowcount: int) -> MagicMock:
+        result = MagicMock()
+        result.rowcount = rowcount
+        return result
+
+    @pytest.mark.asyncio
+    async def test_returns_deleted_row_count(self, repo, mock_db):
+        """delete_by_guild_id returns the number of deleted rows."""
+        mock_db.execute = AsyncMock(return_value=self._make_delete_result(3))
+
+        count = await repo.delete_by_guild_id(mock_db, guild_id=111222333)
+
+        assert count == 3
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_rows(self, repo, mock_db):
+        """Returns 0 when the guild has no bounty rows."""
+        mock_db.execute = AsyncMock(return_value=self._make_delete_result(0))
+
+        count = await repo.delete_by_guild_id(mock_db, guild_id=999000)
+
+        assert count == 0
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_sql_filters_by_guild_id(self, repo, mock_db):
+        """The emitted DELETE statement filters on guild_id."""
+        mock_db.execute = AsyncMock(return_value=self._make_delete_result(1))
+
+        await repo.delete_by_guild_id(mock_db, guild_id=424242)
+
+        call_args = mock_db.execute.call_args
+        stmt = call_args[0][0]
+        stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "guild_id" in stmt_str.lower()
+
+    @pytest.mark.asyncio
+    async def test_rollback_on_error(self, repo, mock_db):
+        """On database error, rollback is called and exception re-raised."""
+        mock_db.execute = AsyncMock(side_effect=Exception("DB gone"))
+
+        with pytest.raises(Exception, match="DB gone"):
+            await repo.delete_by_guild_id(mock_db, guild_id=555666)
+
+        mock_db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_commit_when_commit_false(self, repo, mock_db):
+        """When commit=False, flush is called but commit is not."""
+        mock_db.flush = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=self._make_delete_result(2))
+
+        await repo.delete_by_guild_id(mock_db, guild_id=777888, commit=False)
+
+        mock_db.flush.assert_awaited_once()
+        mock_db.commit.assert_not_awaited()

@@ -52,7 +52,16 @@ class TestListDataCategories:
 
         assert response.status_code == 200
         data = response.json()
-        expected = {"module", "primary_weapon", "secondary_weapon", "turret_weapon", "ship", "criminal", "system"}
+        expected = {
+            "module",
+            "primary_weapon",
+            "secondary_weapon",
+            "turret_weapon",
+            "ship",
+            "criminal",
+            "system",
+            "commodity",
+        }
         returned = set(data)
         assert expected == returned
 

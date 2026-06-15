@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import io
 import os
+from collections import OrderedDict
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PIL import Image
 
 # ---------------------------------------------------------------------------
@@ -247,6 +249,18 @@ class TestRenderRouteForBounty:
 class TestBountyMapEndpoint:
     """GET /api/v1/bounties/{bounty_id}/map should return a PNG response."""
 
+    @pytest.fixture(autouse=True)
+    def _reset_map_cache(self):
+        """Save and restore _map_cache so no plain-dict replacement leaks out."""
+        import api.routers.bounties as bounty_module
+
+        original = bounty_module._map_cache
+        bounty_module._map_cache = OrderedDict()
+        try:
+            yield
+        finally:
+            bounty_module._map_cache = original
+
     def _make_app(self, mock_bounty_service, mock_renderer, mock_graph):
         """Build a test FastAPI app with dependency overrides."""
         import api.routers.bounties as bounty_module
@@ -259,10 +273,10 @@ class TestBountyMapEndpoint:
         app.include_router(bounty_router, prefix="/api/v1")
         app.dependency_overrides[get_bounty_service] = lambda: mock_bounty_service
 
-        # Patch module-level singletons used by the endpoint.
-        bounty_module._map_renderer = mock_renderer
-        bounty_module._system_graph = mock_graph
-        bounty_module._map_cache = {}  # clear cache between tests
+        # Wire shared singletons on app.state (P3-T7: no module-level singletons).
+        app.state.map_renderer = mock_renderer
+        app.state.system_graph = mock_graph
+        bounty_module._map_cache.clear()  # clear the OrderedDict (not replace it)
 
         return TestClient(app)
 
@@ -286,10 +300,10 @@ class TestBountyMapEndpoint:
         mock_service.bounty_repo = AsyncMock()
         mock_service.bounty_repo.get_by_id = AsyncMock(return_value=mock_bounty)
 
-        # Mock renderer (returns fake PNG bytes).
+        # Mock renderer — endpoint now calls render_route_offloaded (async), not render_route_for_bounty.
         _fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
         mock_renderer = MagicMock()
-        mock_renderer.render_route_for_bounty.return_value = _fake_png
+        mock_renderer.render_route_offloaded = AsyncMock(return_value=_fake_png)
 
         # Mock graph (already loaded).
         mock_graph = MagicMock()

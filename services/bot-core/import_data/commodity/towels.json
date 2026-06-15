@@ -1,0 +1,29 @@
+{
+  "_name": "Towels",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/XvwZ89X9/towels.png",
+  "_subcategory": "standard",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Towels",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Towels",
+    "Type": "Commodity",
+    "Tech Level": "2",
+    "Price Range": "-> 4$ (Aquila)\n-> 210$ (Pan)"
+  },
+  "stats": {
+    "tech_level": 2,
+    "price_range_min_credits": 4,
+    "price_range_min_system": "Aquila",
+    "price_range_max_credits": 210,
+    "price_range_max_system": "Pan",
+    "value": 107,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "A towel is one of the most useful objects a space traveller can have. You can wrap yourself in it for warmth; use it as a blanket; use it as a sail, a weapon, a mask, a flag, or even just to dry your body.",
+  "mechanics_text": [
+    "One of the largest profit margins of any standard commodity: 4$ min to 210$ max (>5000%).",
+    "Description and inclusion are a reference to The Hitchhiker's Guide to the Galaxy by Douglas Adams."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 2", "GOF2", "Standard commodities", "Trading commodities", "Freelance Missions", "GOF2HD"]
+}

@@ -11,6 +11,10 @@
   "name": "Yin Co. Shadow Ninja",
   "techLevel": 10,
   "type": "CloakModule",
-  "value": 69183,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Yin_Co._Shadow_Ninja"
+  "value": 63412,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Yin_Co._Shadow_Ninja",
+  "extra_atts": {
+    "duration_ms": 40000,
+    "loading_speed_ms": 3500
+  }
 }

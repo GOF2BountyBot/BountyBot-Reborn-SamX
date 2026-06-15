@@ -4,6 +4,8 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -72,7 +74,9 @@ def mock_config_service():
     service.create_or_update_config = AsyncMock()
     service.clear_guild_players = AsyncMock()
     service.reset_to_defaults = AsyncMock()
-    service.uninstall_guild = AsyncMock(return_value={"players": 5, "configs": 1, "shops": 40})
+    service.uninstall_guild = AsyncMock(
+        return_value={"players": 5, "shop_items": "all", "bounties": 3, "combat_log": 7, "config": 1}
+    )
     service.update_shop_config = AsyncMock(return_value={"sale_price_factor": 0.5})
     return service
 
@@ -481,7 +485,12 @@ class TestUninstallBot:
         assert response.status_code == 200
         data = response.json()
         assert data["guild_id"] == 67890
-        assert data["removed_counts"] == {"players": 5, "configs": 1, "shops": 40}
+        removed = data["removed_counts"]
+        assert removed["players"] == 5
+        assert removed["bounties"] == 3
+        assert removed["combat_log"] == 7
+        assert removed["config"] == 1
+        assert removed["shop_items"] == "all"
         assert "67890" in data["message"]
         assert "warning" in data
         mock_config_service.uninstall_guild.assert_awaited_once()
@@ -662,7 +671,12 @@ class TestCleanupGuildOnRemove:
         assert response.status_code == 200
         data = response.json()
         assert data["guild_id"] == 67890
-        assert data["removed_counts"] == {"players": 5, "configs": 1, "shops": 40}
+        removed = data["removed_counts"]
+        assert removed["players"] == 5
+        assert removed["bounties"] == 3
+        assert removed["combat_log"] == 7
+        assert removed["config"] == 1
+        assert removed["shop_items"] == "all"
         assert data["bounties_cleared"] == 2
         assert "complete" in data["message"].lower()
         mock_config_service.uninstall_guild.assert_awaited_once()
@@ -1457,6 +1471,69 @@ class TestRefreshShop:
         data = response.json()
         assert "announcement_warning" in data
 
+    @patch("api.routers.admin.get_db_session")
+    def test_refresh_shop_orm_items_are_serialized(self, mock_get_db, client, mock_shop_service):
+        """Returns 200 with serializable body when service returns ORM-like objects in 'items'.
+
+        Regression test for CI-10 (admin endpoint): the endpoint crashed with
+        PydanticSerializationError when refresh_shop() returned a dict whose
+        'items' key contained raw GuildShop ORM objects rather than plain dicts.
+        Verifies that the admin path uses ShopItemResponse serialization and
+        returns the same item shape as the public GET endpoints.
+        """
+        _configure_db_mock(mock_get_db)
+        # Simulate what the real ShopService.refresh_shop() returns:
+        # a dict with 'items' being a list of ORM-like objects (not plain dicts).
+        orm_item = SimpleNamespace(
+            id=2,
+            guild_id=67890,
+            tier="Silver",
+            tech_level=5,
+            item_type="module",
+            item_name="Shield Booster",
+            quantity=3,
+            price=500,
+            last_restocked=datetime(2026, 3, 10, 9, 30, 0, tzinfo=UTC),
+            refresh_interval_hours=24,
+            # Enrichment fields absent on real GuildShop ORM object (no attr → None)
+        )
+        mock_shop_service.refresh_shop = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "tier": "Silver",
+                "tech_level": 5,
+                "items_generated": 1,
+                "items": [orm_item],  # ORM-like object — would cause PydanticSerializationError without the fix
+                "refresh_time": "2026-03-10T09:30:00+00:00",
+            }
+        )
+        payload = {"guild_id": 67890, "tier": "Silver"}
+
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["guild_id"] == 67890
+        assert data["tier"] == "Silver"
+        assert data["items_generated"] == 1
+        assert "message" in data  # admin endpoint adds this field
+        items = data["items"]
+        assert isinstance(items, list)
+        assert len(items) == 1
+        item = items[0]
+        assert item["item_name"] == "Shield Booster"
+        assert item["price"] == 500
+        # Timezone-aware datetime serializes with +00:00 offset
+        assert item["last_restocked"] == "2026-03-10T09:30:00+00:00"
+        # ShopItemResponse shape: optional enrichment fields present as null
+        assert "emoji" in item
+        assert "dps" in item
+        assert "shield" in item
+        assert "armour" in item
+        assert "hull_hp" in item
+        assert item["emoji"] is None
+        assert item["dps"] is None
+
 
 # ===========================================================================
 # 8. PUT /admin/shops/config
@@ -1644,18 +1721,26 @@ class TestGetSystemHealth:
 
 
 class TestGetGuildStatistics:
-    """Tests for GET /api/v1/admin/guilds/{guild_id}/stats."""
+    """Tests for GET /api/v1/admin/guilds/{guild_id}/stats.
+
+    P6-T4: endpoint now calls player_repo.get_guild_stats (DB-side aggregates)
+    instead of loading all players into Python.  Test mocks updated accordingly.
+    """
 
     @patch("api.routers.admin.get_db_session")
     def test_get_guild_statistics_happy_path(self, mock_get_db, client, mock_player_service):
         """Returns 200 with correct statistics for a guild with players."""
         _configure_db_mock(mock_get_db)
-        # 2 players: Bronze with 100 credits/50 xp, Silver with 200 credits/150 xp
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(
-            return_value=[
-                make_mock_player(id=1, credits=100, xp=50, tier="Bronze"),
-                make_mock_player(id=2, credits=200, xp=150, tier="Silver"),
-            ]
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "total_players": 2,
+                "tier_distribution": {"Bronze": 1, "Silver": 1},
+                "total_credits": 300,
+                "total_xp": 200,
+                "average_credits": 150.0,
+                "average_xp": 100.0,
+            }
         )
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
@@ -1675,12 +1760,16 @@ class TestGetGuildStatistics:
     def test_get_guild_statistics_multiple_players_same_tier(self, mock_get_db, client, mock_player_service):
         """Correctly counts tier distribution when multiple players share a tier."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(
-            return_value=[
-                make_mock_player(id=1, credits=100, xp=50, tier="Bronze"),
-                make_mock_player(id=2, credits=150, xp=75, tier="Bronze"),
-                make_mock_player(id=3, credits=500, xp=500, tier="Silver"),
-            ]
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "total_players": 3,
+                "tier_distribution": {"Bronze": 2, "Silver": 1},
+                "total_credits": 750,
+                "total_xp": 625,
+                "average_credits": 250.0,
+                "average_xp": 208.3,
+            }
         )
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
@@ -1695,7 +1784,17 @@ class TestGetGuildStatistics:
     def test_get_guild_statistics_empty_guild(self, mock_get_db, client, mock_player_service):
         """Returns zero averages and empty tier_distribution for guild with no players."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(return_value=[])
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "total_players": 0,
+                "tier_distribution": {},
+                "total_credits": 0,
+                "total_xp": 0,
+                "average_credits": 0,
+                "average_xp": 0,
+            }
+        )
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
 
@@ -1711,20 +1810,31 @@ class TestGetGuildStatistics:
 
     @patch("api.routers.admin.get_db_session")
     def test_get_guild_statistics_calls_repo_with_correct_guild_id(self, mock_get_db, client, mock_player_service):
-        """Passes the correct guild_id to player_repo.get_players_by_guild."""
+        """Passes the correct guild_id to player_repo.get_guild_stats."""
         _configure_db_mock(mock_get_db)
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 99999,
+                "total_players": 0,
+                "tier_distribution": {},
+                "total_credits": 0,
+                "total_xp": 0,
+                "average_credits": 0,
+                "average_xp": 0,
+            }
+        )
 
         client.get("/api/v1/admin/guilds/99999/stats?user_id=67890")
 
-        mock_player_service.player_repo.get_players_by_guild.assert_awaited_once()
-        call_args = mock_player_service.player_repo.get_players_by_guild.call_args
+        mock_player_service.player_repo.get_guild_stats.assert_awaited_once()
+        call_args = mock_player_service.player_repo.get_guild_stats.call_args
         assert 99999 in call_args.args or call_args.kwargs.get("guild_id") == 99999
 
     @patch("api.routers.admin.get_db_session")
     def test_get_guild_statistics_server_error_returns_500(self, mock_get_db, client, mock_player_service):
         """Returns 500 when player_repo raises an unexpected exception."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(side_effect=RuntimeError("Query timeout"))
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(side_effect=RuntimeError("Query timeout"))
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
 
@@ -1735,12 +1845,16 @@ class TestGetGuildStatistics:
     def test_get_guild_statistics_correct_average_calculation(self, mock_get_db, client, mock_player_service):
         """Calculates average_credits and average_xp correctly."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_players_by_guild = AsyncMock(
-            return_value=[
-                make_mock_player(id=1, credits=100, xp=0, tier="Bronze"),
-                make_mock_player(id=2, credits=300, xp=200, tier="Bronze"),
-                make_mock_player(id=3, credits=200, xp=100, tier="Bronze"),
-            ]
+        mock_player_service.player_repo.get_guild_stats = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "total_players": 3,
+                "tier_distribution": {"Bronze": 3},
+                "total_credits": 600,
+                "total_xp": 300,
+                "average_credits": 200.0,
+                "average_xp": 100.0,
+            }
         )
 
         response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")

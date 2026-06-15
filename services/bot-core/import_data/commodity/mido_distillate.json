@@ -1,0 +1,34 @@
+{
+  "_name": "Mido Distillate",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/bJFr3g0V/mido-distillate.png",
+  "_subcategory": "booze",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Booze",
+  "_extracted_at": "2026-05-27T22:30:00Z",
+  "raw_infobox": {
+    "Type": "Booze",
+    "Tech Level": "1",
+    "Named System Price": "431$ (Mido)",
+    "Highest Non-Loma Sale": "683$ (Ni'mrrod)",
+    "Loma Price": "701$"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 431,
+    "price_range_max_credits": 701,
+    "value": 431,
+    "price_source": "origin_system_price",
+    "origin_system": "Mido",
+    "price_range_min_system": "Mido",
+    "price_range_max_system": "Loma",
+    "highest_non_loma_price": 683,
+    "highest_non_loma_system": "Ni'Mrrod"
+  },
+  "in_game_description": "Alcoholic beverages always sell well; each beverage is named after the system where it's produced, where its price is lowest and where it is normally most available.",
+  "mechanics_text": [
+    "Origin system: Mido (cheapest at 431cr).",
+    "Highest non-Loma sale: 683cr (Ni'mrrod).",
+    "Loma price: 701cr."
+  ],
+  "wiki_categories": ["Commodities", "GOF2", "Tech level 1", "Standard commodities", "GOF2HD"]
+}

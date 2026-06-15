@@ -12,8 +12,15 @@
   "icon": "https://i.postimg.cc/Y21TN0pY/berger-converge-iv.png",
   "name": "Berger Converge IV",
   "techLevel": 8,
-  "value": 88969,
+  "value": 83552,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_Converge_IV",
   "type": "PrimaryWeapon",
-  "subtype": "blaster_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 850,
+    "range_m": 3000,
+    "damage_per_shot": 28,
+    "speed_km_h": 5500,
+    "subtype": "laser",
+    "mechanics_text": "The Converge IV is the most powerful of the Berger weapons, and an effective late-game choice for the primary weapon slots. Although it is only a barely more than half as powerful as the similarly-priced Tyrfing Blaster, it has an extremely large advantage in terms of range over the Tyrfing Blaster (about 2.5x as much range). The Converge IV gives you the same range as the weapons that the enemy carries, giving you ability to exchange fire with them evenly rather than close in. Its damage is not up to standards with its price, but its range makes up for the damage lost since you can begin firing 2.5 times earlier. The Converge IV is a slow-firing weapon though, so it is not advised for players with poor accuracy.\n\nThe Converge IV is an effective mid-game alternative to more expensive Kaamo Club weapons such as the Dark Matter Laser and M6 A4 Raccoon.\n\nThis weapon has a slow fire rate, yet it packs a really powerful punch."
+  }
 }

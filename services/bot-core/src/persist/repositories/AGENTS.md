@@ -1,6 +1,6 @@
 # AGENTS.md - persist/repositories
 
-Data access layer for bot-core. All 19 repository classes live here.
+Data access layer for bot-core. All 22 repository classes (incl. `GenericRepository`) live here.
 
 ---
 
@@ -41,12 +41,13 @@ class IRepository(ABC, Generic[T]):
 
 | Method | Implementation |
 |---|---|
-| `add(db, obj)` | `db.add(obj)` → `commit()` → `refresh(obj)` → return |
+| `add(db, obj, *, commit=True)` | `db.add(obj)` → `commit()`/`flush()` → `refresh(obj)` → return |
 | `get_by_id(db, id)` | `db.get(model, id)` |
-| `get_by_name(db, name)` | `select(model).filter_by(name=name)` |
+| `get_by_name(db, name)` | `select(model).filter_by(name=name)` → `one_or_none()` |
+| `get_by_names(db, names)` | batch `WHERE name IN (...)` (P6-T2 — replaces N×`get_by_name`); result order is DB order, missing names silently omitted |
 | `get_by_alias(db, alias)` | `select(model).where(model.aliases.any(alias))` — PostgreSQL ARRAY contains |
 | `list_all(db)` | `select(model)` → `scalars().all()` |
-| `remove(db, obj)` | `db.delete(obj)` → `commit()` |
+| `remove(db, obj, *, commit=True)` | `db.delete(obj)` → `commit()`/`flush()` |
 | `create_or_update(db, raw)` | **Not implemented** — subclasses must override |
 
 ---
@@ -117,10 +118,14 @@ Current documented exceptions:
 - **`bounty_repository.delete_terminal_older_than`** — bulk-DELETEs terminal-status
   bounty rows older than the retention window. Uses Core DELETE +
   `synchronize_session="fetch"`. Returns row count only.
+- **`bounty_repository.delete_by_guild_id`** — bulk-DELETEs all bounty rows for a
+  guild (guild reset). Same pattern.
 - **`duel_repository.delete_terminal_older_than`** — bulk-DELETEs terminal-status
   duel rows older than the retention window. Same pattern.
 - **`admin_audit_log_repository.delete_older_than`** — bulk-DELETEs audit-log
   rows older than the retention window. Same pattern.
+- **`combat_log_repository.delete_by_guild_id`** / **`delete_older_than`** —
+  bulk-DELETE combat-log rows per guild (guild reset) / past retention. Same pattern.
 
 When adding a new bulk-update exception, document it in the method docstring
 AND in this AGENTS.md.
@@ -167,7 +172,7 @@ async with db_manager.get_session() as db:
     bounties = await bounty_repo.get_active_by_guild(db, guild_id)
 ```
 
-`get_db_session()` is a FastAPI dependency alias for `db_manager.get_session()`.
+`get_db_session()` is a module-level convenience alias for `db_manager.get_session()`.
 
 ---
 
@@ -187,30 +192,32 @@ This is constructor injection. Repositories hold no state other than the model c
 
 ---
 
-## All 20 Repositories
+## All 22 Repositories
 
 | File | Class | Model | Key Custom Methods |
 |---|---|---|---|
-| `generic_repository.py` | `GenericRepository[T]` | Generic | Base: add, get_by_id, get_by_name, get_by_alias, list_all, remove |
+| `generic_repository.py` | `GenericRepository[T]` | Generic | Base: add, get_by_id, get_by_name, get_by_names, get_by_alias, list_all, remove |
 | `admin_audit_log_repository.py` | `AdminAuditLogRepository` | `AdminAuditLog` | `count`, `delete_older_than` — does NOT implement `IRepository[T]`. Append-only via `AuditService.log_action`; this repo exists only to support the `db_retention_default` executor's retention pass. |
-| `bounty_repository.py` | `BountyRepository` | `Bounty` | get_active_by_guild, get_active_by_guild_and_division, count_active_by_guild_and_division, create, update, delete, `delete_terminal_older_than` (bulk DELETE for data retention — uses `synchronize_session="fetch"`) |
-| `config_repository.py` | `ConfigRepository` | `GuildConfig` | get_by_guild_id, create_or_get_default |
-| `criminal_repository.py` | `CriminalRepository` | `Criminal` | get_by_faction, get_by_tech_level_range |
-| `discord_message_repository.py` | `DiscordMessageRepository` | `DiscordMessage` | get_by_guild_and_type, delete_by_guild_and_type |
-| `duel_repository.py` | `DuelRepository` | `DuelRequest` | get_pending_by_guild, get_by_challenger_and_target, expire_old_duels, `delete_terminal_older_than` (bulk DELETE for data retention) |
-| `inventory_repository.py` | `InventoryRepository` | `PlayerInventory` | get_by_player, get_player_item, get_equipped_items, update_quantity, remove_player_item |
-| `item_repository.py` | `ItemRepository` | `Item` | get_by_type |
-| `module_repository.py` | `ModuleRepository` | `Module` | get_by_tech_level (subtype queries use `Item.type` STI discriminator; there is no `module_type` column and no `get_by_module_type` method) |
-| `player_repository.py` | `PlayerRepository` | `Player` | get_by_user_and_guild, get_players_by_guild, get_players_by_user, update_credits (with FOR UPDATE lock variant), update_xp, update_tier, update_active_ship, count |
-| `player_ship_repository.py` | `PlayerShipRepository` | `PlayerShip` | get_by_player, get_by_player_and_ship, update_loadout |
-| `primary_weapon_repository.py` | `PrimaryWeaponRepository` | `PrimaryWeapon` | get_by_tech_level, list_by_tech_range |
-| `secondary_weapon_repository.py` | `SecondaryWeaponRepository` | `SecondaryWeapon` | get_by_tech_level, list_by_tech_range |
-| `ship_repository.py` | `ShipRepository` | `Ship` | get_by_manufacturer, get_skinnable, get_by_value_range |
-| `shop_repository.py` | `ShopRepository` | `GuildShop` | get_by_guild, clear_guild_shop, get_item_by_guild_and_name |
-| `system_repository.py` | `SystemRepository` | `System` | get_connected_systems, get_all_with_connections |
-| `turret_weapon_repository.py` | `TurretWeaponRepository` | `TurretWeapon` | get_by_tech_level |
-| `user_repository.py` | `UserRepository` | `User` | get_by_discord_id, get_or_create_user |
-| `weapon_repository.py` | `WeaponRepository` | `Weapon` | get_by_tech_level (base weapon queries) |
+| `bounty_repository.py` | `BountyRepository` | `Bounty` | get_by_id_for_update (FOR UPDATE + `populate_existing=True`, P2-T10), get_active_by_guild, get_active_by_guild_and_division, count_active_by_guild_and_division, create, update, delete, count, delete_by_guild_id (bulk DELETE, guild reset), clear_active_by_guild, `delete_terminal_older_than` (bulk DELETE for data retention — uses `synchronize_session="fetch"`) |
+| `combat_log_repository.py` | `CombatLogRepository` | `CombatLog` | add, get_subpath_for_detail (JSONB sub-path projection for the detail view), list_for_player, delete_by_guild_id, delete_older_than (retention). `get_by_name` and `create_or_update` raise `NotImplementedError` — rows are immutable post-insert |
+| `commodity_repository.py` | `CommodityRepository` | `Commodity` | create_or_update (seed mapper: `_name`/`_subcategory` + `stats` → columns and `extra_atts`) |
+| `config_repository.py` | `ConfigRepository` | `GuildConfig` | get_by_guild_id, create_default_config, reset_to_defaults, update_shop_config, update_admin_role, update_starting_credits, update_xp_thresholds, update_division_temperatures, get_config_summary, get_all_guild_configs, delete_guild_config, count |
+| `criminal_repository.py` | `CriminalRepository` | `Criminal` | create_or_update only (faction/tech-level filtering happens in the service layer, not here) |
+| `discord_message_repository.py` | `DiscordMessageRepository` | `DiscordMessage` | get_by_composite_key, get_by_type, list_by_guild, list_by_channel, list_by_guild_and_channel, list_by_guild_and_type, delete_by_composite_key, get_by_guild_type_and_reference, delete_by_guild_type_and_reference |
+| `duel_repository.py` | `DuelRepository` | `DuelRequest` | get_by_id_for_update (FOR UPDATE + `populate_existing=True`, P2-T10), create, get_pending_by_players, update_status, delete_expired, get_active_by_guild, get_pending_by_challenger, get_pending_by_target, get_total_pending_stakes_for_player, get_all_pending_involving_player, get_all_pending_by_guild, `delete_terminal_older_than` (bulk DELETE for data retention) |
+| `inventory_repository.py` | `InventoryRepository` | `PlayerInventory` | get_player_items, get_player_items_by_types, get_player_item_by_types, get_player_items_by_name, get_player_item, add_item, remove_item, update_quantity, get_item_count_by_type, clear_player_inventory, get_inventory_summary |
+| `item_repository.py` | `ItemRepository` | `Item` | Polymorphic facade over Ship/PrimaryWeapon/SecondaryWeapon/TurretWeapon/Module: get_by_name_any_type, get_by_name(name, item_type), get_all_by_tech_level, get_random_by_tech_level, get_count |
+| `module_repository.py` | `ModuleRepository` | `Module` | get_by_name override, create_or_update (subtype queries use the `Item.type` discriminator; there is no `module_type` column) |
+| `player_repository.py` | `PlayerRepository` | `Player` | get_by_id_for_update (FOR UPDATE + `populate_existing=True`), get_by_ids, get_by_user_and_guild, get_players_by_guild, get_players_by_user, get_guild_stats, update_credits, update_xp, update_tier, update_active_ship, count |
+| `player_ship_repository.py` | `PlayerShipRepository` | `PlayerShip` | get_player_ships, get_active_ship, set_active_ship, update_loadout, add_equipment, remove_equipment, update_nickname, get_ships_by_name, get_ship_loadout_summary |
+| `primary_weapon_repository.py` | `PrimaryWeaponRepository` | `PrimaryWeapon` | get_by_name override, create_or_update |
+| `secondary_weapon_repository.py` | `SecondaryWeaponRepository` | `SecondaryWeapon` | get_by_name override, create_or_update |
+| `ship_repository.py` | `ShipRepository` | `Ship` | create_or_update (JSON-seed mapper) |
+| `shop_repository.py` | `ShopRepository` | `GuildShop` | get_shop_items, get_shop_items_by_types, get_shop_item_by_name, update_quantity, clear_shop_tier, clear_all_guild_shops, get_guild_shops_summary, get_items_by_tech_level, update_prices, get_items_due_for_refresh, get_shop_statistics, count |
+| `system_repository.py` | `SystemRepository` | `System` | create_or_update (JSON-seed mapper) |
+| `turret_weapon_repository.py` | `TurretWeaponRepository` | `TurretWeapon` | get_by_name override, create_or_update |
+| `user_repository.py` | `UserRepository` | `User` | get_by_discord_id, get_by_ids, get_or_create_user, count |
+| `weapon_repository.py` | `WeaponRepository` | `Weapon` | No custom methods — inherited generic CRUD only |
 
 ---
 
@@ -223,12 +230,121 @@ Used when reading-then-modifying credits to prevent TOCTOU race conditions:
 ```python
 async def get_by_id_for_update(self, db: AsyncSession, obj_id: int) -> Player | None:
     result = await db.execute(
-        select(Player).where(Player.id == obj_id).with_for_update()
+        select(Player).where(Player.id == obj_id)
+        .with_for_update().execution_options(populate_existing=True)
     )
     return result.scalars().first()
 ```
 
-Use this inside an explicit `async with db.begin()` transaction block when the caller will later modify and commit.
+Use this inside an explicit `async with db.begin()` transaction block when the
+caller will later modify and commit. The `populate_existing=True` is **required**,
+not cosmetic — see the **Refresh-under-lock** rule under "Global lock-ordering
+rule" below for why.
+
+### Global lock-ordering rule (D5 — deadlock safety)
+
+Any transaction that locks **more than one** row MUST acquire locks in this order:
+
+1. **Aggregate row first** — the `Bounty` row (`/check`) or `Duel` row (`/accept`)
+   is locked via `get_by_id_for_update` **before** any `Player` lock the same
+   transaction takes. No path may lock a `Player` row *before* the aggregate row
+   it also touches (doing so would create an AB-BA cycle against `/check` /
+   `/accept`, which lock aggregate-then-player).
+2. **Then `Player` row(s) in ascending `player_id` order** — matches
+   `transfer_credits` (`player_service.py`). The only multi-player transactions
+   are `transfer_credits`, `duel accept`, and `ships.transfer_ship`; all lock
+   players in ascending id order.
+3. **In any single-player credit/inventory/loadout mutation, the FIRST lock
+   acquired MUST be the `Player` row** (`get_by_id_for_update`), taken before any
+   unlocked read whose value feeds a read-modify-write (credit balance, cargo
+   quantity, slot list, slot caps). "First lock = most restrictive mode that will
+   be needed" (PostgreSQL deadlocks guidance).
+4. The **loadout lock and the credit lock are the SAME `Player` row** and so
+   collapse into one lock class. Re-acquiring the same player's row lock later in
+   the same transaction (e.g. the loadout choke-point's `_lock_player` after a
+   shop service already locked for credits) is permitted and is an
+   **intra-transaction no-op** — a transaction may re-hold its own row lock.
+
+Audited lock-first sites (D5-T1 + D5-T2): the `LoadoutConsistencyService`
+choke-point (`equip_one`, `unequip_one`, `transfer_loadout_to_new_ship`,
+`evacuate_ship_loadout_to_inventory`, `reconcile_active_ship_slots`,
+`activate_ship`, `repair_player`),
+`shop_service.{purchase_item, purchase_ship, sell_item, sell_ship}`, and
+`ships.transfer_ship` all take the `Player` lock as the first player access.
+
+> Note (D5-T2b, IMPLEMENTED): `bounty_service.distribute_rewards` previously
+> mutated each rewarded player's credits from an **unlocked** `get_by_id` read —
+> a lost-update gap for concurrent credit ops (NOT a lock-ordering/deadlock
+> hazard, since loadout/credit ops never lock a `Bounty` row so no cycle exists).
+> D5-T2b closed it: `distribute_rewards` now acquires each rewarded player's row
+> `FOR UPDATE` via `get_by_id_for_update` **before** the credit RMW, locking
+> players in **ascending `player_id` order** (it iterates `sorted(rewards,
+> key=lambda r: r.player_id)`) to preserve rule 2. It runs inside `check_bounty`,
+> which already holds the `Bounty` row lock (P2-T10), so the composed order is
+> Bounty → Players-ascending (rule 1, aggregate-first) — no Player → Bounty cycle
+> is introduced. `get_by_id_for_update`'s `populate_existing=True` (D5-T1) means
+> the locked re-fetch refreshes `check_bounty`'s pre-loaded (unlocked) player
+> object with the freshly-committed credits, so the increment lands on fresh
+> state under the lock. (`_award_combat_bonus`, the bronze 2x bonus, re-reads the
+> winner via unlocked `get_by_id` *after* `distribute_rewards` has already locked
+> that same row in the same transaction — an identity-map hit on an
+> already-locked row — so it is serialised by transitivity and needs no separate
+> lock.)
+
+**Refresh-under-lock (D5-T1).** A locked read MUST go through
+`get_by_id_for_update`, which emits
+`select(...).with_for_update().execution_options(populate_existing=True)`. The
+`populate_existing=True` is **required**, not cosmetic: our sessions run with
+`expire_on_commit=False` (production default), so an instance already present in
+the identity map (e.g. pre-loaded by an earlier unlocked `get_by_id` in the same
+transaction — as `shop_service.{sell_ship,purchase_ship}` and
+`ships.transfer_ship` do) would be returned **from cache**. Without
+`populate_existing`, the `FOR UPDATE` re-read acquires the row lock but the
+guard then reads the **stale pre-commit** attributes — the classic "lock looks
+correct, tests green" trap. `populate_existing=True` makes the ORM
+unconditionally overwrite the in-memory object with the row just fetched under
+the lock — *"the corresponding instances in the Session will be fully refreshed –
+erasing any existing data within the objects (including pending changes) and
+replacing with the data loaded from the result"*
+([SQLAlchemy 2.0 — Populate Existing](https://docs.sqlalchemy.org/en/20/orm/queryguide/api.html#populate-existing)).
+So the lock-holder always evaluates its guards against committed state.
+
+**Transaction boundary (D5-T3).** A PostgreSQL `FOR UPDATE` row lock is held
+until the current transaction ends: *"Row-level locks are released at
+transaction end or during savepoint rollback"* and `FOR UPDATE` *"prevents them
+from being locked, modified or deleted by other transactions until the current
+transaction ends"*
+([PostgreSQL 13.3.2 — Row-Level Locks](https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS)).
+Wrapping the lock acquisition in `async with db.begin():` does **not** change
+that *duration*, because an explicit `Session.begin()` is not a separate or
+nested transaction from the one the session would autobegin on its first DB
+statement — *"The `Session.begin()` method and the session's "autobegin" process
+use the same sequence of steps to begin the transaction"*
+([SQLAlchemy 2.0 — Explicit Begin](https://docs.sqlalchemy.org/en/20/orm/session_transaction.html#explicit-begin)).
+`db.begin()` is still **mandatory** for any route that calls a flush-only
+(`commit=False`) service: it makes the lock acquisition and the flush-only
+writes one explicit unit of work that commits/rolls back together (atomicity),
+and it is the contract enforced by `tests/test_transaction_discipline.py`
+(relying on `get_db_session`'s clean-exit auto-commit instead is not acceptable —
+the boundary must be explicit). Within that unit of work, acquire the `Player`
+lock (`get_by_id_for_update`) **FIRST**, before any read whose value feeds the
+read-modify-write (rule 1 above).
+
+**Bypass routes are closed (D5-T3).** The two routes that used to mutate the
+loadout/inventory aggregate *without* the choke-point —
+`inventory.consolidate_inventory` (POST `/inventory/player/{id}/consolidate`) and
+`ships.update_ship_loadout` (PUT `/ships/{id}/loadout`, admin/maintenance JSON
+overwrite) — now both open an explicit `db.begin()` and take the `Player` row
+`FOR UPDATE` before any read whose value feeds the read-modify-write (rule 3
+above). For `consolidate_inventory` the `get_by_id_for_update` IS the first DB
+statement in the block. For `update_ship_loadout` the lock is preceded by one
+unlocked `player_ship_repo.get_by_id(ship_id)` read — a non-RMW lookup that only
+resolves the ship's immutable `player_id` so the route knows *which* aggregate to
+lock; its value never feeds the protected invariant, so it does not violate rule
+3 (which governs reads that feed the RMW, not the read that selects the lock
+target). They are the canonical **worked examples** of applying this rule
+outside the `LoadoutConsistencyService` choke-point; copy their inline comment
+pattern when adding any new route that touches the aggregate directly.
 
 ### update_credits with commit=False
 
@@ -265,6 +381,12 @@ Game data repositories implement `create_or_update(db, raw: dict)` to support id
 Post-A.36, `player_inventories.item_type` stores only concrete types — generic aliases
 (`"weapon"`, `"turret"`) are never persisted. The summary dict was updated to match
 (DEF-A42-001 fix, 2026-04-22).
+
+The repo-level summary is **cargo-only** (it counts `player_inventories` rows;
+the `"ship"` key counts ships sitting in cargo). Inactive ships are merged in
+at the SERVICE layer only: `InventoryService` methods take an
+`include_ships: bool = False` parameter and append the player's inactive
+`player_ships` rows when it is true — the repository method is unchanged.
 
 Callers that display a human-readable summary should aggregate concrete types into
 display buckets on their side. The Discord cog uses these 4 display buckets:
@@ -358,11 +480,19 @@ The full inventory after the B.34 remediation:
 
 **`BountyRepository`** (B.34 expansion):
 - `add`, `create_or_update`, `remove`, `create`, `update`, `delete`,
-  `clear_active_by_guild` (B.34 closeout, 2026-04-30)
+  `clear_active_by_guild` (B.34 closeout, 2026-04-30),
+  `delete_by_guild_id`, `delete_terminal_older_than`
 
 **`DuelRepository`** (B.34 expansion):
 - `add`, `create_or_update`, `remove`, `create`,
-  `update_status`, `delete_expired`
+  `update_status`, `delete_expired`, `delete_terminal_older_than`
+
+**`CombatLogRepository`** (combat rewrite, rev 0011):
+- `add`, `remove`, `delete_by_guild_id`, `delete_older_than`
+  (`create_or_update` raises `NotImplementedError`)
+
+**`AdminAuditLogRepository`**:
+- `delete_older_than`
 
 **`ConfigRepository`** (B.34 expansion):
 - `add`, `create_or_update`, `remove`,
@@ -434,8 +564,9 @@ specific architectural reason in the same commit.
 
 `services/_transaction_guards.py` provides `@requires_transaction` which
 raises `RuntimeError` immediately if invoked outside an active transaction.
-Applied to all 6 public methods of `LoadoutConsistencyService` (the
-choke-point). This catches dynamic-dispatch bypasses that the static
+Applied to all 7 public methods of `LoadoutConsistencyService` (the
+choke-point — the 7th, `transfer_loadout_to_new_ship`, was added after the
+original 6). This catches dynamic-dispatch bypasses that the static
 linter cannot reason about.
 
 ### Layer 3 — Session manager auto-commit (exit-time)
@@ -449,9 +580,9 @@ in bot-core as of the AC-7 callsite audit).
 
 ### Layer 4 — Cross-session integration tests (CI-time)
 
-`tests/integration/test_cross_session_persistence.py` covers all 20
-cross-table operations enumerated in
-`/proj/recon/B34-remediation-spec.md` §6.1. Each test:
+`tests/integration/test_cross_session_persistence.py` covers 20 cross-table
+operations (one test per operation; enumerated in the B.34 remediation spec).
+Each test:
 
   1. Opens session A, performs the operation.
   2. Closes session A entirely.
@@ -472,4 +603,8 @@ add coverage but do not substitute for the integration assertion.
 
 ---
 
-*Last updated: 2026-04-30*
+*Last updated: 2026-06-11 (true-to-source audit: corrected repository count
+to 22, added CombatLogRepository + CommodityRepository, fixed stale
+per-repository method lists against current signatures, recorded the
+service-layer-only `include_ships` summary behaviour, and updated the
+choke-point method count to 7)*

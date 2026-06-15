@@ -1,0 +1,28 @@
+{
+  "_name": "Green Plasma",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/MZfCrtzk/green-plasma.png",
+  "_subcategory": "plasma",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Green_Plasma",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Plasma",
+    "Tech Level": "9",
+    "Price": "-> 42$ (Mido)\n-> 61$ (Aquila)"
+  },
+  "stats": {
+    "tech_level": 9,
+    "price_range_min_credits": 42,
+    "price_range_min_system": "Mido",
+    "price_range_max_credits": 61,
+    "price_range_max_system": "Aquila",
+    "value": 52,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "A special kind of gas cloud plasma characterized by its green glimmer. Can be harvested in the Midorian border territory. Also appears in the Shima system.",
+  "mechanics_text": [
+    "This is the plasma you need to collect in the plasma collection tutorial.",
+    "Because the Mido Sector is dangerous, it's easier to harvest green plasma at Shima."
+  ],
+  "wiki_categories": ["Plasma", "Supernova", "Tech level 9", "Gas Cloud Mining", "GOF2", "GOF2HD", "Minigames"]
+}

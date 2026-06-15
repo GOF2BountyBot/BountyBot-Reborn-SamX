@@ -24,6 +24,7 @@ Notes:
 
 from __future__ import annotations
 
+import asyncio
 import math
 import sys
 import types
@@ -556,3 +557,233 @@ class TestEuclideanDistance:
         nesla = service.get_system("Nesla")
         expected = math.sqrt((310 - 549) ** 2 + (205 - 131) ** 2)
         assert SystemGraphService.euclidean_distance(aquila, nesla) == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# TestLoadGraphConcurrency
+# ---------------------------------------------------------------------------
+
+
+class TestLoadGraphConcurrency:
+    """Adversarial concurrency tests for the asyncio.Lock double-checked pattern.
+
+    Race determinism:
+        The mocked list_all uses an asyncio.Event rendezvous.  The first call
+        suspends at ``await started_event.wait()`` (an await point that yields
+        control back to the event loop).  The test driver then sets the event
+        so both callers can proceed.  Because ``list_all`` is async and awaited
+        inside the lock, the second coroutine blocks at ``async with
+        self._load_lock:`` until the first finishes — so it never reaches
+        ``list_all`` at all.
+
+        Without the lock (the regression path tested in
+        ``test_no_lock_regression_both_enter``), both coroutines enter the build
+        body and both call ``list_all``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_cold_load_builds_exactly_once(self):
+        """Two concurrent first-load calls result in list_all called exactly once.
+
+        The mock uses an asyncio.Event so the first coroutine suspends inside
+        the lock at a genuine await point, forcing a deterministic interleave.
+        """
+        service = SystemGraphService()
+        mock_db = MagicMock()
+        systems = _seed_systems()
+
+        # Rendezvous: first call suspends here; second is waiting on the lock.
+        proceed_event = asyncio.Event()
+        call_count = 0
+
+        async def slow_list_all(_db):
+            nonlocal call_count
+            call_count += 1
+            # Yield control so the second coroutine can attempt to acquire the lock.
+            await proceed_event.wait()
+            return systems
+
+        with patch.object(service.system_repo, "list_all", side_effect=slow_list_all):
+            # Schedule both calls concurrently before awaiting either.
+            task1 = asyncio.create_task(service.load_graph(mock_db))
+            task2 = asyncio.create_task(service.load_graph(mock_db))
+
+            # Let both tasks start; the first will suspend at proceed_event.wait(),
+            # the second will block on the asyncio.Lock.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            # Unblock the first task so it finishes the build and releases the lock.
+            proceed_event.set()
+
+            await asyncio.gather(task1, task2)
+
+        assert call_count == 1, f"list_all called {call_count} times; expected exactly 1"
+        assert service.is_loaded() is True
+        assert len(service.get_all_systems()) == 5
+
+    @pytest.mark.asyncio
+    async def test_loaded_flag_set_last_graph_complete_when_visible(self):
+        """When _loaded becomes True the graph is already fully populated.
+
+        We check this by reading the graph immediately after _loaded flips to
+        True inside a concurrent task — it must contain all systems.
+        """
+        service = SystemGraphService()
+        mock_db = MagicMock()
+        systems = _seed_systems()
+
+        proceed_event = asyncio.Event()
+
+        async def slow_list_all(_db):
+            await proceed_event.wait()
+            return systems
+
+        observations: list[tuple[bool, int]] = []
+
+        async def observing_load():
+            """Load and then record (_loaded, graph_size) immediately after."""
+            await service.load_graph(mock_db)
+            observations.append((service._loaded, len(service._graph)))
+
+        with patch.object(service.system_repo, "list_all", side_effect=slow_list_all):
+            task1 = asyncio.create_task(observing_load())
+            task2 = asyncio.create_task(observing_load())
+
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            proceed_event.set()
+            await asyncio.gather(task1, task2)
+
+        # Both tasks finished; every observation must see a complete graph.
+        assert len(observations) == 2
+        for loaded_flag, graph_size in observations:
+            assert loaded_flag is True
+            assert graph_size == 5, f"Observed incomplete graph (size={graph_size}) when _loaded was True"
+
+    @pytest.mark.asyncio
+    async def test_subsequent_reads_are_cache_hits(self):
+        """After the graph is warm, additional load_graph calls are no-ops."""
+        service = SystemGraphService()
+        mock_db = MagicMock()
+        systems = _seed_systems()
+        call_count = 0
+
+        async def counting_list_all(_db):
+            nonlocal call_count
+            call_count += 1
+            return systems
+
+        with patch.object(service.system_repo, "list_all", side_effect=counting_list_all):
+            # First load (cold).
+            await service.load_graph(mock_db)
+            # Three more calls — all should be fast-path cache hits.
+            await service.load_graph(mock_db)
+            await service.load_graph(mock_db)
+            await service.load_graph(mock_db)
+
+        assert call_count == 1, f"list_all called {call_count} times; expected exactly 1"
+
+    @pytest.mark.asyncio
+    async def test_no_lock_regression_both_enter(self):
+        """Regression proof: without the lock, concurrent callers BOTH call list_all.
+
+        This test temporarily monkey-patches load_graph to remove the double-
+        checked lock (bare check-then-build), runs the same concurrent gather,
+        and asserts that list_all IS called twice — confirming the test catches
+        the regression.  The lock-guarded implementation (the real code) passes
+        only because it prevents the second entry.
+
+        Note: this test asserts the BROKEN behaviour so we can prove the test is
+        a genuine regression catcher.  It is labelled ``_regression_`` so it is
+        easy to identify in the report.
+        """
+        service = SystemGraphService()
+        mock_db = MagicMock()
+        systems = _seed_systems()
+
+        proceed_event = asyncio.Event()
+        call_count = 0
+
+        async def slow_list_all(_db):
+            nonlocal call_count
+            call_count += 1
+            await proceed_event.wait()
+            return systems
+
+        # Unguarded (bare check-then-build) version of load_graph.
+        async def unguarded_load_graph(db):
+            if service._loaded:
+                return
+            # No lock — both coroutines race past this check.
+            result_systems = await service.system_repo.list_all(db)
+            graph: dict = {}
+            edge_count = 0
+            for s in result_systems:
+                neighbours = list(s.neighbours) if s.neighbours else []
+                node = SystemNode(
+                    name=s.name,
+                    coordinates=tuple(s.coordinates) if s.coordinates else (0, 0),
+                    neighbours=neighbours,
+                    faction=s.faction or "",
+                    security=s.security or 1,
+                )
+                graph[s.name] = node
+                edge_count += len(neighbours)
+            validated: dict = {}
+            jump_gates: list = []
+            for name, node in graph.items():
+                valid = [n for n in node.neighbours if n in graph]
+                validated[name] = valid
+                if node.neighbours:
+                    jump_gates.append(name)
+            service._graph = graph
+            service._validated_neighbours = validated
+            service._jump_gate_systems = jump_gates
+            service._loaded = True
+
+        with patch.object(service.system_repo, "list_all", side_effect=slow_list_all):
+            # Bind the unguarded version directly onto the instance.
+            service.load_graph = unguarded_load_graph  # type: ignore[method-assign]
+
+            task1 = asyncio.create_task(service.load_graph(mock_db))
+            task2 = asyncio.create_task(service.load_graph(mock_db))
+
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            proceed_event.set()
+            await asyncio.gather(task1, task2)
+
+        # Without the lock BOTH coroutines enter the build — call_count must be 2.
+        assert call_count == 2, (
+            f"Expected 2 list_all calls without the lock (got {call_count}); "
+            "the race-detection test is not catching the regression"
+        )
+
+    @pytest.mark.asyncio
+    async def test_many_concurrent_calls_build_exactly_once(self):
+        """10 concurrent cold loads → list_all called exactly once."""
+        service = SystemGraphService()
+        mock_db = MagicMock()
+        systems = _seed_systems()
+
+        proceed_event = asyncio.Event()
+        call_count = 0
+
+        async def slow_list_all(_db):
+            nonlocal call_count
+            call_count += 1
+            await proceed_event.wait()
+            return systems
+
+        with patch.object(service.system_repo, "list_all", side_effect=slow_list_all):
+            tasks = [asyncio.create_task(service.load_graph(mock_db)) for _ in range(10)]
+            # Give all tasks time to start and queue up on the lock.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            proceed_event.set()
+            await asyncio.gather(*tasks)
+
+        assert call_count == 1, f"list_all called {call_count} times; expected exactly 1"
+        assert service.is_loaded() is True
+        assert len(service.get_all_systems()) == 5

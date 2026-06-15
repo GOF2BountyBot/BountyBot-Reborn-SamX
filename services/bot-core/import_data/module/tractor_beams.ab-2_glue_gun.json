@@ -11,6 +11,9 @@
   "techLevel": 5,
   "timeToLock": 1.8,
   "type": "TractorBeamModule",
-  "value": 27464,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-2_\"Glue Gun\""
+  "value": 25638,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-2_\"Glue Gun\"",
+  "extra_atts": {
+    "time_to_lock_s": 1.8
+  }
 }

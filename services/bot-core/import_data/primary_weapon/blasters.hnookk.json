@@ -1,15 +1,22 @@
 {
-    "aliases":  [
-                    "Hnookk"
-                ],
-    "builtIn":  false,
-    "dps":  27.27,
-    "emoji":  "<:hnookk:723709619989512302>",
-    "icon":  "https://i.postimg.cc/MTfdpPG1/h-nookk.png",
-    "name":  "H'nookk",
-    "techLevel":  5,
-    "value":  47478,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/H%27nookk",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blasters"
+  "aliases": [
+    "Hnookk"
+  ],
+  "builtIn": false,
+  "dps": 27.27,
+  "emoji": "<:hnookk:723709619989512302>",
+  "icon": "https://i.postimg.cc/MTfdpPG1/h-nookk.png",
+  "name": "H'nookk",
+  "techLevel": 5,
+  "value": 45046,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/H%27nookk",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 330,
+    "range_m": 1600,
+    "damage_per_shot": 9,
+    "speed_km_h": 4000,
+    "subtype": "blaster",
+    "mechanics_text": "## In-Game Description\nThe H'nookk is one of the Vossk's deadliest blasters. It consumes so much energy that the old H'Soc fighter had to be rebuilt because all the Vossk warriors wanted to equip their ships with this weapon. That was before the Hervarar series hit the market, which offers greater power with less energy consumption.\n\n## Notes\n1t H'nookk is required for the HH-AT \"Archimedes\" blueprint."
+  }
 }

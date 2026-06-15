@@ -4,7 +4,7 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -531,6 +531,66 @@ class TestRefreshShop:
         response = client.post("/api/v1/shops/refresh", json=payload)
 
         assert response.status_code == 422
+
+    @patch("api.routers.shops.get_db_session")
+    def test_refresh_shop_orm_items_are_serialized(self, mock_get_db, client, mock_shop_service):
+        """Returns 200 with serializable body when service returns ORM-like objects in 'items'.
+
+        Regression test for CI-10: the endpoint crashed with
+        PydanticSerializationError when refresh_shop() returned a dict whose
+        'items' key contained raw GuildShop ORM objects rather than plain dicts.
+        """
+        _configure_db_mock(mock_get_db)
+        # Simulate what the real ShopService.refresh_shop() returns:
+        # a dict with 'items' being a list of ORM-like objects (not plain dicts).
+        orm_item = SimpleNamespace(
+            id=1,
+            guild_id=67890,
+            tier="Bronze",
+            tech_level=3,
+            item_type="weapon",
+            item_name="Pulse Laser",
+            quantity=5,
+            price=200,
+            last_restocked=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
+            refresh_interval_hours=12,
+            # Enrichment fields absent on real GuildShop ORM object (no attr → None)
+        )
+        mock_shop_service.refresh_shop = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "tier": "Bronze",
+                "tech_level": 3,
+                "items_generated": 1,
+                "items": [orm_item],  # ORM-like object — would cause PydanticSerializationError without the fix
+                "refresh_time": "2026-01-15T12:00:00+00:00",
+            }
+        )
+        payload = {"guild_id": 67890, "tier": "Bronze"}
+
+        response = client.post("/api/v1/shops/refresh", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["guild_id"] == 67890
+        assert data["tier"] == "Bronze"
+        assert data["items_generated"] == 1
+        items = data["items"]
+        assert isinstance(items, list)
+        assert len(items) == 1
+        item = items[0]
+        assert item["item_name"] == "Pulse Laser"
+        assert item["price"] == 200
+        # Timezone-aware datetime serializes with +00:00 offset
+        assert item["last_restocked"] == "2026-01-15T12:00:00+00:00"
+        # ShopItemResponse shape: optional enrichment fields present as null
+        assert "emoji" in item
+        assert "dps" in item
+        assert "shield" in item
+        assert "armour" in item
+        assert "hull_hp" in item
+        assert item["emoji"] is None
+        assert item["dps"] is None
 
 
 # ===========================================================================

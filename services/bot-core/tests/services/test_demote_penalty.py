@@ -87,7 +87,7 @@ class TestDemotePlayerPenalty:
         player = _make_player(tier="Silver", credits=1000)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):
@@ -103,7 +103,7 @@ class TestDemotePlayerPenalty:
         player = _make_player(tier="Silver", credits=0)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):
@@ -120,7 +120,7 @@ class TestDemotePlayerPenalty:
         player = _make_player(tier="Silver", credits=5)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):
@@ -136,7 +136,7 @@ class TestDemotePlayerPenalty:
         player = _make_player(tier="Gold", credits=2500)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):
@@ -151,7 +151,7 @@ class TestDemotePlayerPenalty:
         player = _make_player(tier="Gold", credits=800)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):
@@ -168,7 +168,7 @@ class TestDemotePlayerPenalty:
         """Bronze players cannot be demoted — raises ValueError."""
         player = _make_player(tier="Bronze", credits=500)
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
 
         with pytest.raises(ValueError, match="minimum tier"):
             await service.demote_player(mock_db, player_id=1)
@@ -179,7 +179,7 @@ class TestDemotePlayerPenalty:
         player = _make_player(tier="Platinum", credits=50000)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):
@@ -199,7 +199,7 @@ class TestDemotePlayerPenaltyAdversarial:
         player = _make_player(tier="Silver", credits=1)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):
@@ -214,7 +214,7 @@ class TestDemotePlayerPenaltyAdversarial:
         player = _make_player(tier="Gold", credits=9)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):
@@ -229,7 +229,7 @@ class TestDemotePlayerPenaltyAdversarial:
         player = _make_player(tier="Silver", credits=10)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):
@@ -246,7 +246,7 @@ class TestDemotePlayerPenaltyAdversarial:
         player = _make_player(tier="Platinum", credits=0)
         config = _make_config()
 
-        service.player_repo.get_by_id.return_value = player
+        service.player_repo.get_by_id_for_update.return_value = player
         service.config_repo.get_by_guild_id.return_value = config
 
         with unittest.mock.patch(_SCRUB_TARGET, new=AsyncMock(return_value=0)):

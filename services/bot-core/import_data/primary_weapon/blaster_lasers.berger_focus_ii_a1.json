@@ -13,8 +13,15 @@
   "icon": "https://i.postimg.cc/fRgPW0Kn/berger-focus-ii-a1.png",
   "name": "Berger Focus II A1",
   "techLevel": 6,
-  "value": 31946,
+  "value": 29424,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_Focus_II_A1",
   "type": "PrimaryWeapon",
-  "subtype": "blaster_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 850,
+    "range_m": 3600,
+    "damage_per_shot": 17,
+    "speed_km_h": 6000,
+    "subtype": "laser",
+    "mechanics_text": "## In-Game Description\nThe Berger company is one of the pioneers of stellar weapons technology, including lasers. The company flooded the market every 50 years with a series of new weapons in various designs to suit every budget.\n\n## Notes\n*The Berger Focus II A1 is the successor of the Berger Focus I laser gun.\n*It looks like a Dark Matter Laser."
+  }
 }

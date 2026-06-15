@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Hera.bbship/ship_026_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Hera.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Hera.bbship/ship_026_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Hera.bbship/ship_026_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 84744,
+    "mechanics_text": "## In-Game Description\nA relatively old Terran design, this ship is average in all respects, but some regard it as a classic.\n\n## Trivia\n*The Hera looks similar to a Icarus Scout Class II from GOF3D.\n*This evident from the the wings, nose and rear section.\n*It is a Starter Ship.\n*In Greek mythology, Hera is the goddess of marriage."
+  }
 }

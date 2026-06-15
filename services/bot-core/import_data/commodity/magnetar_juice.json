@@ -1,0 +1,35 @@
+{
+  "_name": "Magnetar Juice",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/d10D2pCT/magnetar-juice.png",
+  "_subcategory": "booze",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Booze",
+  "_extracted_at": "2026-05-27T22:30:00Z",
+  "raw_infobox": {
+    "Type": "Booze",
+    "Tech Level": "1",
+    "Named System Price": "251$ (Magnetar)",
+    "Highest Non-Loma Sale": "509$ (Pan)",
+    "Loma Price": "511$"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 251,
+    "price_range_max_credits": 511,
+    "value": 251,
+    "price_source": "origin_system_price",
+    "origin_system": "Magnetar",
+    "price_range_min_system": "Magnetar",
+    "price_range_max_system": "Loma",
+    "highest_non_loma_price": 509,
+    "highest_non_loma_system": "Pan"
+  },
+  "in_game_description": "Alcoholic beverages always sell well; each beverage is named after the system where it's produced, where its price is lowest and where it is normally most available.",
+  "mechanics_text": [
+    "Origin system: Magnetar (cheapest at 251cr).",
+    "Highest non-Loma sale: 509cr (Pan).",
+    "Loma price: 511cr.",
+    "Required item: 1t needed for a Supernova mission (bring to Nepis space lounge in Aquila to find Moonsprocket and Lampeter)."
+  ],
+  "wiki_categories": ["Commodities", "GOF2", "Tech level 1", "Standard commodities", "GOF2HD"]
+}

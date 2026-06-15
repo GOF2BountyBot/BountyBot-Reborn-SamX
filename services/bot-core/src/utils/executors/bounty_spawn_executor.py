@@ -19,7 +19,6 @@ the module can be safely imported in test environments without a live database
 or all ORM dependencies being present.
 """
 
-import contextlib
 import os
 import traceback
 import uuid
@@ -208,8 +207,7 @@ def _compute_next_fire_time(
 
     # Step 3: never schedule in the past
     min_fire = now_dt + timedelta(seconds=_MIN_LEAD_SECONDS)
-    if target_time < min_fire:
-        target_time = min_fire
+    target_time = max(target_time, min_fire)
 
     # Step 4: bounded jitter — matches legacy window calc
     window_minutes = min(15.0, 0.25 * interval_minutes)
@@ -217,8 +215,7 @@ def _compute_next_fire_time(
     fire_time = target_time + timedelta(seconds=jitter_seconds)
 
     # Re-clamp post-jitter so jitter can never push us into the past either.
-    if fire_time < min_fire:
-        fire_time = min_fire
+    fire_time = max(fire_time, min_fire)
 
     # Step 5: collision-avoidance nudge against queued fires.
     for _ in range(_MAX_NUDGE_ITERATIONS):
@@ -340,22 +337,21 @@ async def execute_bounty_spawn_orchestrate_job(job_id: str, payload: dict) -> di
                     # Read already-queued one-time spawn jobs in scheduler.
                     # We need BOTH the count (for capacity gate) AND the
                     # fire times (for gap-aware scheduling, Fix C).
+                    # Uses the APScheduler API instead of raw SQL so that all
+                    # DB access goes through SQLAlchemy / the scheduler layer.
                     # --------------------------------------------------
-                    from sqlalchemy import text
+                    from utils.scheduler_holder import get_scheduler
 
-                    pattern = f"bounty_spawn_{gid}_{tier_lower}_%"
-                    queued_rows = (
-                        await db.execute(
-                            text(
-                                "SELECT next_run_time FROM apscheduler_jobs "
-                                "WHERE id LIKE :pattern AND next_run_time IS NOT NULL"
-                            ),
-                            {"pattern": pattern},
-                        )
-                    ).all()
-                    queued_fire_times: list[datetime] = [
-                        datetime.fromtimestamp(row[0], tz=UTC) for row in queued_rows if row[0] is not None
-                    ]
+                    _scheduler = get_scheduler()
+                    _job_id_prefix = f"bounty_spawn_{gid}_{tier_lower}_"
+                    if _scheduler is not None:
+                        queued_fire_times: list[datetime] = [
+                            job.next_run_time
+                            for job in _scheduler.get_jobs()
+                            if job.id.startswith(_job_id_prefix) and job.next_run_time is not None
+                        ]
+                    else:
+                        queued_fire_times = []
                     queued_count = len(queued_fire_times)
 
                     if active_count + queued_count >= max_for_tier:
@@ -385,7 +381,10 @@ async def execute_bounty_spawn_orchestrate_job(job_id: str, payload: dict) -> di
                     )
 
                     # --------------------------------------------------
-                    # Schedule one-time bounty_spawn_one job
+                    # Schedule one-time bounty_spawn_one job — direct
+                    # in-process call (P6-T8: no HTTP loopback).
+                    # Uses the same scheduler instance registered by
+                    # main.py lifespan via scheduler_holder.set_scheduler.
                     # --------------------------------------------------
                     spawn_job_id = f"bounty_spawn_{gid}_{tier_lower}_{uuid.uuid4()}"
                     one_time_payload = {
@@ -393,20 +392,21 @@ async def execute_bounty_spawn_orchestrate_job(job_id: str, payload: dict) -> di
                         "guild_id": gid,
                         "tier": tier_lower,
                     }
-                    body = {
-                        "run_at": fire_time.isoformat(),
-                        "payload": one_time_payload,
-                        "job_id": spawn_job_id,
-                    }
 
                     try:
-                        async with httpx.AsyncClient() as client:
-                            resp = await client.post(
-                                f"{_SELF_BASE_URL}/jobs",
-                                json=body,
-                                timeout=10,
-                            )
-                        resp.raise_for_status()
+                        from utils.job_executor import run_job
+                        from utils.scheduler_holder import get_scheduler
+
+                        _spawn_scheduler = get_scheduler()
+                        if _spawn_scheduler is None:
+                            raise RuntimeError("scheduler not available via holder")
+                        _spawn_scheduler.add_job(
+                            run_job,
+                            trigger="date",
+                            run_date=fire_time,
+                            args=[spawn_job_id, one_time_payload],
+                            id=spawn_job_id,
+                        )
                         guild_queued += 1
                         total_queued += 1
                         flogger.info(
@@ -499,6 +499,10 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
 
     tier_lower = tier.lower()
 
+    # Session A: all DB work — config, eligibility, spawn, commit, expiry schedule,
+    # cache push, and pre-fetching of announcement data.  The session is released
+    # back to the pool as soon as this block exits, BEFORE any external httpx call
+    # is made (P6-T7: don't pin a DB connection across network I/O).
     async with db_manager.get_session() as db:
         config_repo = ConfigRepository()
         bounty_repo = BountyRepository()
@@ -543,14 +547,15 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
             return {"success": False, "reason": "tier_not_configured"}
 
         # ------------------------------------------------------------------
-        # 5. Re-check active count (benign race handling)
+        # 5. Re-check active count (cadence-overlap / restart guard)
         # ------------------------------------------------------------------
         active_count = await bounty_repo.count_active_by_guild_and_division(db, guild_id, tier_lower)
         bounty_max_per_tier: dict = getattr(config, "bounty_max_per_tier", None) or {}
         max_for_tier: int = (bounty_max_per_tier or {}).get(tier_lower, DEFAULT_MAX) or DEFAULT_MAX
 
         if active_count >= max_for_tier:
-            # Benign race — another job already filled the slot.  Not a warning.
+            # Slot already full — a prior cadence tick filled it, or the
+            # scheduler re-fired this job after a restart.  Not a warning.
             flogger.info(
                 f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
                 f"capacity reached at fire time ({active_count}/{max_for_tier}) — benign race, skipping"
@@ -571,14 +576,14 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
             return {"success": False, "reason": "spawn_failed"}
 
         # ------------------------------------------------------------------
-        # Fix B: EARLY COMMIT. Make the new bounty visible to other sessions
-        # *before* the long-running announce step. Shrinks the TOCTOU race
-        # window for any concurrent select_criminal call from "until session
-        # exits after Discord round-trip" (which can be 10+ s on slow Discord)
-        # to roughly the duration of the spawn_bounty INSERT itself (~tens of
-        # ms). Combined with the gap-aware fire-time spacing (Fix C, ≥10s
-        # apart minimum), concurrent same-criminal selection is effectively
-        # impossible without DB outage.
+        # Fix B: EARLY COMMIT. Make the new bounty visible to subsequent DB
+        # reads *before* the long-running announce step. Shrinks the TOCTOU
+        # window for a back-to-back cadence tick (two spawn jobs scheduled
+        # close together) from "until session exits after Discord round-trip"
+        # (which can be 10+ s on slow Discord) to roughly the duration of the
+        # spawn_bounty INSERT itself (~tens of ms). Combined with the
+        # gap-aware fire-time spacing (Fix C, ≥10s apart minimum), same-
+        # criminal double-selection is effectively impossible without DB outage.
         # ------------------------------------------------------------------
         await db.commit()
         bounty_id = spawned_bounty.id  # capture in case rollback expires the instance
@@ -607,56 +612,110 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
         await _push_bounty_cache(job_id, guild_id, db)
 
         # ------------------------------------------------------------------
-        # 9. Announce to Discord. Fix B: now CRITICAL. The announce helper
-        # returns a structured result so the executor can perform a
-        # compensating rollback (delete post, delete bounty row, cancel
-        # expiry) if either the HTTP announce OR the DiscordMessage write
-        # fails. Without this, the bounty would be orphaned in the DB and
-        # users would see an unmanageable post until the failsafe cleanup
-        # at :30 reaps it.
+        # P6-T7: Pre-fetch announcement data while the session is still open
+        # so the session can be released before the external httpx announce
+        # call.  criminal_icon and pre_built_announcement are passed to
+        # _announce_bounty which will use them directly (skipping its own DB
+        # reads) and open a fresh short-lived session only for the
+        # DiscordMessage write.
         # ------------------------------------------------------------------
+        _pre_criminal_icon: str | None = None
         try:
-            announce_result = await _announce_bounty(job_id, spawned_bounty, config, db)
-        except Exception as ann_err:  # pylint: disable=broad-exception-caught
-            # Unexpected exception from announce — treat as announce failure.
-            flogger.error(
-                f"BountySpawnOne[{job_id}] unexpected exception in _announce_bounty "
-                f"for bounty id={bounty_id}: {type(ann_err).__name__}: {ann_err}"
-            )
-            flogger.trace(traceback.format_exc())
-            announce_result = {
-                "success": False,
-                "failure_phase": "announce",
-                "discord_message_id": None,
-                "channel_id": _get_division_channel_id(config, tier_lower),
-            }
+            from persist.repositories.criminal_repository import CriminalRepository
 
-        if not announce_result.get("success"):
-            failure_phase = announce_result.get("failure_phase") or "unknown"
-            flogger.error(
-                f"BountySpawnOne[{job_id}] announce failed (phase={failure_phase}) "
-                f"for bounty id={bounty_id} guild={guild_id} tier={tier_lower} — "
-                f"performing compensating rollback"
+            _criminal_repo = CriminalRepository()
+            _criminal = await _criminal_repo.get_by_name(db, spawned_bounty.criminal_name)
+            if _criminal is not None:
+                _pre_criminal_icon = getattr(_criminal, "icon", None) or None
+        except Exception as _icon_exc:  # pylint: disable=broad-exception-caught
+            flogger.debug(
+                f"BountySpawnOne[{job_id}] pre-fetch: could not fetch criminal icon "
+                f"for {spawned_bounty.criminal_name!r}: {_icon_exc}"
             )
-            rollback_result = await _compensate_failed_spawn(
-                db=db,
-                parent_job_id=job_id,
-                bounty_id=bounty_id,
-                guild_id=guild_id,
-                expiry_job_id=expiry_job_id,
-                discord_message_id=announce_result.get("discord_message_id"),
-                channel_id=announce_result.get("channel_id"),
-            )
-            return {
-                "success": False,
-                "reason": "announce_failed_rolled_back",
-                "failure_phase": failure_phase,
-                "bounty_id": bounty_id,
-                "rollback": rollback_result,
-                "tier": tier_lower,
-            }
 
-        return {"success": True, "bounty_id": bounty_id, "tier": tier_lower}
+        _pre_bounty_hunter_role_id: int | None = _get_division_role_id(config, tier_lower)
+        _pre_announcement: dict | None = None
+        try:
+            from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+            _pre_announcement = await build_bounty_announcement_request(
+                db,
+                spawned_bounty,
+                criminal_icon=_pre_criminal_icon,
+                route_map_url=None,  # route map upload happens outside the session
+                bounty_hunter_role_id=_pre_bounty_hunter_role_id,
+                captured=False,
+            )
+        except Exception as _ann_pre_exc:  # pylint: disable=broad-exception-caught
+            flogger.warning(
+                f"BountySpawnOne[{job_id}] pre-fetch: announcement pre-build failed "
+                f"for bounty id={bounty_id}: {_ann_pre_exc} — announce will fall back to inline build"
+            )
+
+    # Session A is now closed; DB connection returned to pool (P6-T7).
+
+    # ------------------------------------------------------------------
+    # 9. Announce to Discord. Fix B: now CRITICAL. The announce helper
+    # returns a structured result so the executor can perform a
+    # compensating rollback (delete post, delete bounty row, cancel
+    # expiry) if either the HTTP announce OR the DiscordMessage write
+    # fails. Without this, the bounty would be orphaned in the DB and
+    # users would see an unmanageable post until the failsafe cleanup
+    # at :30 reaps it.
+    #
+    # P6-T7: called with pre_built_announcement + db=None so no DB
+    # connection is held across the external httpx announce POST.
+    # _announce_bounty opens its own short-lived session only for the
+    # DiscordMessage write (step 5 of its flow).
+    # ------------------------------------------------------------------
+    try:
+        announce_result = await _announce_bounty(
+            job_id,
+            spawned_bounty,
+            config,
+            db=None,
+            pre_built_announcement=_pre_announcement,
+        )
+    except Exception as ann_err:  # pylint: disable=broad-exception-caught
+        # Unexpected exception from announce — treat as announce failure.
+        flogger.error(
+            f"BountySpawnOne[{job_id}] unexpected exception in _announce_bounty "
+            f"for bounty id={bounty_id}: {type(ann_err).__name__}: {ann_err}"
+        )
+        flogger.trace(traceback.format_exc())
+        announce_result = {
+            "success": False,
+            "failure_phase": "announce",
+            "discord_message_id": None,
+            "channel_id": _get_division_channel_id(config, tier_lower),
+        }
+
+    if not announce_result.get("success"):
+        failure_phase = announce_result.get("failure_phase") or "unknown"
+        flogger.error(
+            f"BountySpawnOne[{job_id}] announce failed (phase={failure_phase}) "
+            f"for bounty id={bounty_id} guild={guild_id} tier={tier_lower} — "
+            f"performing compensating rollback"
+        )
+        # P6-T7: _compensate_failed_spawn opens its own session (no db passed).
+        rollback_result = await _compensate_failed_spawn(
+            parent_job_id=job_id,
+            bounty_id=bounty_id,
+            guild_id=guild_id,
+            expiry_job_id=expiry_job_id,
+            discord_message_id=announce_result.get("discord_message_id"),
+            channel_id=announce_result.get("channel_id"),
+        )
+        return {
+            "success": False,
+            "reason": "announce_failed_rolled_back",
+            "failure_phase": failure_phase,
+            "bounty_id": bounty_id,
+            "rollback": rollback_result,
+            "tier": tier_lower,
+        }
+
+    return {"success": True, "bounty_id": bounty_id, "tier": tier_lower}
 
 
 # ---------------------------------------------------------------------------
@@ -764,8 +823,9 @@ async def _announce_bounty(
     parent_job_id: str,
     bounty,
     config,
-    db,
+    db=None,
     pre_resolved_route_map_url: str | None = None,
+    pre_built_announcement: dict | None = None,
 ) -> dict:
     """POST a bounty announcement to the discord-gateway per-division channel.
 
@@ -789,7 +849,20 @@ async def _announce_bounty(
         bounty: Bounty ORM object (or mock with same attributes).
         config: GuildConfig object with per-division channel IDs,
                 image_channel_id, and bounty_hunter_role_id.
-        db: AsyncSession for persisting the DiscordMessage record.
+        db: AsyncSession for persisting the DiscordMessage record, or
+            ``None`` (P6-T7 executor path).  When ``None``, steps 2/3/4
+            (DB reads) are skipped if ``pre_built_announcement`` is
+            provided; step 6 (DiscordMessage write) opens its own
+            short-lived session so no DB connection is held across the
+            external httpx announce POST.
+        pre_resolved_route_map_url: Already-uploaded route map CDN URL;
+            when provided the per-bounty upload (step 2) is skipped.
+        pre_built_announcement: Announcement dict pre-built by the
+            executor inside its session block (P6-T7).  When provided,
+            steps 3 and 4 (criminal icon + build_bounty_announcement_request)
+            are skipped.  The route map URL (step 2) is still fetched if
+            needed — it updates ``pre_built_announcement["metadata"]["image_url"]``
+            in-place so the announce POST includes the image.
 
     Returns:
         Dict with keys:
@@ -805,10 +878,7 @@ async def _announce_bounty(
               (or was attempted in), if any.
     """
     # Deferred imports to match the executor's deferred-import pattern.
-    from persist.repositories.criminal_repository import CriminalRepository
     from persist.repositories.discord_message_repository import DiscordMessageRepository
-
-    from utils.bounty_announcement_payload import build_bounty_announcement_request
 
     target_channel_id = _get_division_channel_id(config, bounty.division)
 
@@ -865,37 +935,56 @@ async def _announce_bounty(
             )
             route_map_url = None
 
-    # ------------------------------------------------------------------
-    # Step 2: Look up criminal icon (non-fatal if not found)
-    # ------------------------------------------------------------------
-    criminal_icon: str | None = None
-    try:
-        criminal_repo = CriminalRepository()
-        criminal = await criminal_repo.get_by_name(db, bounty.criminal_name)
-        if criminal is not None:
-            criminal_icon = getattr(criminal, "icon", None) or None
+    if pre_built_announcement is not None:
+        # P6-T7 executor path: announcement was built inside the session block
+        # (with route_map_url=None).  Patch the image_url now that the route
+        # map upload has resolved (or remained None).
+        if route_map_url is not None:
+            meta = pre_built_announcement.get("metadata")
+            if isinstance(meta, dict):
+                meta["image_url"] = route_map_url
+        announcement = pre_built_announcement
+    else:
+        # Standard path (router caller with a live db session).
+        from persist.repositories.criminal_repository import CriminalRepository
+
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        # ------------------------------------------------------------------
+        # Step 2: Look up criminal icon (non-fatal if not found)
+        # ------------------------------------------------------------------
+        criminal_icon: str | None = None
+        try:
+            criminal_repo = CriminalRepository()
+            criminal = await criminal_repo.get_by_name(db, bounty.criminal_name)
+            if criminal is not None:
+                criminal_icon = getattr(criminal, "icon", None) or None
+                flogger.debug(
+                    f"BountySpawnJob[{parent_job_id}] criminal icon for {bounty.criminal_name!r}: {criminal_icon!r}"
+                )
+        except Exception as _icon_exc:  # pylint: disable=broad-exception-caught
             flogger.debug(
-                f"BountySpawnJob[{parent_job_id}] criminal icon for {bounty.criminal_name!r}: {criminal_icon!r}"
+                f"BountySpawnJob[{parent_job_id}] could not fetch criminal icon "
+                f"for {bounty.criminal_name!r}: {_icon_exc}"
             )
-    except Exception as _icon_exc:  # pylint: disable=broad-exception-caught
-        flogger.debug(
-            f"BountySpawnJob[{parent_job_id}] could not fetch criminal icon for {bounty.criminal_name!r}: {_icon_exc}"
+
+        # ------------------------------------------------------------------
+        # Step 3: Build the unified announcement request body (A.48).
+        # ------------------------------------------------------------------
+        announcement = await build_bounty_announcement_request(
+            db,
+            bounty,
+            criminal_icon=criminal_icon,
+            route_map_url=route_map_url,
+            bounty_hunter_role_id=bounty_hunter_role_id,
+            captured=False,
         )
 
     # ------------------------------------------------------------------
-    # Step 3: Build the unified announcement request body (A.48).
-    # ------------------------------------------------------------------
-    announcement = await build_bounty_announcement_request(
-        db,
-        bounty,
-        criminal_icon=criminal_icon,
-        route_map_url=route_map_url,
-        bounty_hunter_role_id=bounty_hunter_role_id,
-        captured=False,
-    )
-
-    # ------------------------------------------------------------------
-    # Step 4: POST announcement to the gateway's bounty-announcement endpoint
+    # Step 4: POST announcement to the gateway's bounty-announcement endpoint.
+    # No DB session is held across this call on the P6-T7 executor path
+    # (session A was already released before _announce_bounty was invoked;
+    # session B for the DiscordMessage write opens only AFTER this POST).
     # ------------------------------------------------------------------
     discord_message_id: int | None = None
 
@@ -927,50 +1016,74 @@ async def _announce_bounty(
         }
 
     # ------------------------------------------------------------------
-    # Step 5: Persist DiscordMessage record
+    # Step 5: Persist DiscordMessage record.
+    # P6-T7 executor path (db=None): open a short-lived session for this
+    # write only — no connection has been held across the announce POST.
+    # Router path (db provided): use the caller's session as before.
     # ------------------------------------------------------------------
     if discord_message_id is not None:
-        try:
-            import json
+        import json
 
-            msg_repo = DiscordMessageRepository()
-            await msg_repo.create_or_update(
-                db,
-                {
-                    "guild_id": bounty.guild_id,
+        msg_repo = DiscordMessageRepository()
+        msg_data = {
+            "guild_id": bounty.guild_id,
+            "channel_id": target_channel_id,
+            "message_id": discord_message_id,
+            "message_type": "bounty_announcement",
+            "reference_id": bounty.id,
+            # Persist the structured request body (loadout_response + metadata)
+            # rather than a rendered embed dict; the gateway is now the
+            # rendering authority.
+            "embed_payload": json.dumps(announcement),
+        }
+
+        if db is not None:
+            # Router path: use caller's session.
+            try:
+                await msg_repo.create_or_update(db, msg_data)
+                flogger.debug(
+                    f"BountySpawnJob[{parent_job_id}] persisted DiscordMessage for "
+                    f"bounty id={bounty.id} guild={bounty.guild_id}"
+                )
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.error(
+                    f"BountySpawnJob[{parent_job_id}] failed to persist DiscordMessage for "
+                    f"bounty id={bounty.id} guild={bounty.guild_id} "
+                    f"channel={target_channel_id} msg_id={discord_message_id}: {e} "
+                    f"— triggering compensating rollback"
+                )
+                flogger.trace(traceback.format_exc())
+                return {
+                    "success": False,
+                    "failure_phase": "msg_db",
+                    "discord_message_id": discord_message_id,
                     "channel_id": target_channel_id,
-                    "message_id": discord_message_id,
-                    "message_type": "bounty_announcement",
-                    "reference_id": bounty.id,
-                    # Persist the structured request body (loadout_response + metadata)
-                    # rather than a rendered embed dict; the gateway is now the
-                    # rendering authority.
-                    "embed_payload": json.dumps(announcement),
-                },
-            )
-            flogger.debug(
-                f"BountySpawnJob[{parent_job_id}] persisted DiscordMessage for "
-                f"bounty id={bounty.id} guild={bounty.guild_id}"
-            )
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            # Fix B: DiscordMessage write failure is now CRITICAL — the bot
-            # uses message_id to update the post on system-checks/captures.
-            # Without the DB row, the post is live but unmanageable. The
-            # caller will perform a compensating rollback (delete the post,
-            # delete the bounty row).
-            flogger.error(
-                f"BountySpawnJob[{parent_job_id}] failed to persist DiscordMessage for "
-                f"bounty id={bounty.id} guild={bounty.guild_id} "
-                f"channel={target_channel_id} msg_id={discord_message_id}: {e} "
-                f"— triggering compensating rollback"
-            )
-            flogger.trace(traceback.format_exc())
-            return {
-                "success": False,
-                "failure_phase": "msg_db",
-                "discord_message_id": discord_message_id,
-                "channel_id": target_channel_id,
-            }
+                }
+        else:
+            # P6-T7 executor path: open own session for the DiscordMessage write.
+            from persist.database.manager import db_manager
+
+            try:
+                async with db_manager.get_session() as msg_db:
+                    await msg_repo.create_or_update(msg_db, msg_data)
+                flogger.debug(
+                    f"BountySpawnJob[{parent_job_id}] persisted DiscordMessage for "
+                    f"bounty id={bounty.id} guild={bounty.guild_id}"
+                )
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.error(
+                    f"BountySpawnJob[{parent_job_id}] failed to persist DiscordMessage for "
+                    f"bounty id={bounty.id} guild={bounty.guild_id} "
+                    f"channel={target_channel_id} msg_id={discord_message_id}: {e} "
+                    f"— triggering compensating rollback"
+                )
+                flogger.trace(traceback.format_exc())
+                return {
+                    "success": False,
+                    "failure_phase": "msg_db",
+                    "discord_message_id": discord_message_id,
+                    "channel_id": target_channel_id,
+                }
 
     return {
         "success": True,
@@ -986,7 +1099,6 @@ async def _announce_bounty(
 
 
 async def _compensate_failed_spawn(
-    db,
     parent_job_id: str,
     bounty_id: int,
     guild_id: int,
@@ -1006,8 +1118,11 @@ async def _compensate_failed_spawn(
     prevent the others from running. No retries — orphans from this path
     are caught by the failsafe cleanup at :30 as a last resort.
 
+    P6-T7: the ``db`` parameter was removed.  Step 3 (bounty row DELETE)
+    and step 4 (cache re-push) now open their own short-lived sessions so
+    no DB connection is held across the external httpx calls in steps 1/2.
+
     Args:
-        db: An open AsyncSession (caller owns the transaction).
         parent_job_id: Job ID for log correlation.
         bounty_id: The committed bounty row's ID — must be DELETEd.
         guild_id: Guild ID — used for the cache re-push.
@@ -1023,6 +1138,8 @@ async def _compensate_failed_spawn(
         Dict summarising which steps succeeded / failed (used by tests
         and by the executor's structured return value).
     """
+    from persist.database.manager import db_manager
+
     result = {
         "post_deleted": False,
         "expiry_cancelled": False,
@@ -1098,34 +1215,35 @@ async def _compensate_failed_spawn(
             )
 
     # Step 3: DELETE the bounty row. Independent try/except.
+    # P6-T7: opens own session (no db parameter any more).
     try:
         from persist.repositories.bounty_repository import BountyRepository
 
         bounty_repo = BountyRepository()
-        bounty_row = await bounty_repo.get_by_id(db, bounty_id)
-        if bounty_row is not None:
-            await db.delete(bounty_row)
-            await db.commit()
-            result["bounty_deleted"] = True
-            flogger.info(f"BountySpawnRollback[{parent_job_id}] deleted bounty row id={bounty_id}")
-        else:
-            # Already gone — treat as success.
-            result["bounty_deleted"] = True
-            flogger.debug(
-                f"BountySpawnRollback[{parent_job_id}] bounty row id={bounty_id} already absent — nothing to delete"
-            )
+        async with db_manager.get_session() as del_db:
+            bounty_row = await bounty_repo.get_by_id(del_db, bounty_id)
+            if bounty_row is not None:
+                await del_db.delete(bounty_row)
+                await del_db.commit()
+                result["bounty_deleted"] = True
+                flogger.info(f"BountySpawnRollback[{parent_job_id}] deleted bounty row id={bounty_id}")
+            else:
+                # Already gone — treat as success.
+                result["bounty_deleted"] = True
+                flogger.debug(
+                    f"BountySpawnRollback[{parent_job_id}] bounty row id={bounty_id} already absent — nothing to delete"
+                )
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(
             f"BountySpawnRollback[{parent_job_id}] failed to delete bounty row "
             f"id={bounty_id}: {type(e).__name__}: {e} — failsafe cleanup will reap"
         )
-        with contextlib.suppress(Exception):
-            await db.rollback()
 
     # Step 4: Re-push the now-shortened bounty cache to the gateway so
     # autocomplete reflects the rollback. Independent try/except.
+    # P6-T7: db=None path — _push_bounty_cache opens its own session.
     try:
-        await _push_bounty_cache(parent_job_id, guild_id, db)
+        await _push_bounty_cache(parent_job_id, guild_id, db=None)
         result["cache_repushed"] = True
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.warning(
@@ -1141,7 +1259,7 @@ async def _compensate_failed_spawn(
 # ---------------------------------------------------------------------------
 
 
-async def _push_bounty_cache(parent_job_id: str, guild_id: int, db) -> None:
+async def _push_bounty_cache(parent_job_id: str, guild_id: int, db=None) -> None:
     """Non-fatal push of the current active bounty list to the gateway autocomplete cache.
 
     Fetches the full active bounty list for the guild and POSTs it to the
@@ -1151,13 +1269,22 @@ async def _push_bounty_cache(parent_job_id: str, guild_id: int, db) -> None:
     Args:
         parent_job_id: Job ID for log correlation.
         guild_id: The Discord guild ID to push bounties for.
-        db: An open AsyncSession (within the caller's db_manager.get_session() block).
+        db: An open AsyncSession, or ``None`` (P6-T7 executor path).  When
+            ``None`` the function opens its own short-lived session for the
+            DB read so that no connection is held across the gateway POST.
     """
     try:
         from persist.repositories.bounty_repository import BountyRepository
 
         bounty_repo = BountyRepository()
-        bounties_raw = await bounty_repo.get_active_by_guild(db, guild_id)
+
+        if db is None:
+            from persist.database.manager import db_manager
+
+            async with db_manager.get_session() as own_db:
+                bounties_raw = await bounty_repo.get_active_by_guild(own_db, guild_id)
+        else:
+            bounties_raw = await bounty_repo.get_active_by_guild(db, guild_id)
 
         # Serialise ORM objects to plain dicts (exclude SQLAlchemy internal keys)
         bounty_dicts: list[dict] = []
@@ -1182,13 +1309,15 @@ async def _push_bounty_cache(parent_job_id: str, guild_id: int, db) -> None:
         token = os.getenv("INTERNAL_AUTH_TOKEN", "")
         headers = {"X-Internal-Auth": token} if token else {}
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
+            from shared.http_retry import with_transient_retry  # deferred — avoids forkserver mock-shared collision
+
+            await with_transient_retry(
+                client.post,
                 gateway_url,
                 json={"bounties": bounty_dicts},
                 headers=headers,
                 timeout=5.0,
             )
-            resp.raise_for_status()
         flogger.debug(
             f"BountySpawnJob[{parent_job_id}] pushed bounty cache for guild={guild_id} count={len(bounty_dicts)}"
         )

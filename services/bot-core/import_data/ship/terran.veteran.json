@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Veteran.bbship/Veteran_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Veteran.bbship/Veteran_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Veteran.bbship/ship_028_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Veteran.bbship/ship_028_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 1642343,
+    "mechanics_text": "## Trivia\n*The empennage of the Veteran is similar to that of the SR-71 Blackbird.\n*The Veteran's front resembles that of a Y-Wing Fighter from Star Wars.\n*The Veteran can look like the YSS-1000 Sabre starfighter from Halo: Reach at certain angles. The four secondary weapon pods bear homage to the Sabre's two engine pods on its wings.\n*The Veteran bears a resemblance to the Mig-31 from the film [http://en.wikipedia.org/wiki/Firefox_(film) Firefox].\n*The Veteran is a ultimate ship limited to 3 primary weapons, the other being Scimitar. It does, however, have a turret slot to counteract this, something that no other ultimate ship had before the S'Kanarr/Bloodstar.\n*A Veteran equipped with three primary weapons and an auto-turret (ex. HH-AT \"Archimedes\") is arguably better than ships with four primary weapons, due to the turret's ability to fight without much input of the player.\n*Despite its description saying that it is quite expensive, at some high-tech level stations, at least two Veterans can be seen in the security force. It is also the least expensive ultimate ship.\n*Terran wingmen will occasionally pilot this ship.\n*This starship is used as the Terran's Mk II Interceptor in the game Galaxy on Fire: Alliances.\n*Unlike the Aegir and the Bloodstar, the Veteran's structural design in Galaxy on Fire 3 remained almost completely unchanged. It even retains some non-functional secondary slots."
+  }
 }

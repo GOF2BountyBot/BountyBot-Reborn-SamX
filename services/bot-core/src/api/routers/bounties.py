@@ -12,17 +12,16 @@ Handles bounty-related operations including:
 
 import asyncio
 import os
+from collections import OrderedDict
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from persist.database.manager import db_manager, get_db_session
 from persist.repositories.config_repository import ConfigRepository
 from services.audit_service import AuditService
 from services.bounty_service import BountyService
 from services.loadout_response_service import LoadoutResponseService
-from services.map_renderer import MapRenderer
-from services.system_graph_service import SystemGraphService
 from shared import bblogger
 from utils.bounty_announcement_payload import _project_checked
 
@@ -43,14 +42,36 @@ from api.schemas.loadout_schema import LoadoutResponse
 flogger = bblogger.get_logger("bounty-router")
 
 # ---------------------------------------------------------------------------
-# Module-level singletons — created once, reused across requests.
+# Bounded LRU in-process cache: (bounty_id, route_tuple) -> PNG bytes
+#
+# Memory math: each PNG is ~1.9 MB.  Cap of 32 ≈ 60 MB worst case — large
+# enough to cover typical multi-guild deployments (4 divisions × ~8 guilds)
+# while preventing unbounded growth from accumulated unique bounty keys.
+#
+# Implementation: OrderedDict with move-to-end on access (LRU) and
+# popitem(last=False) on overflow (evict oldest).  ALL mutations (write,
+# move-to-end, evict) happen on the event-loop thread ONLY — never from
+# inside an offloaded render worker.
 # ---------------------------------------------------------------------------
+_MAP_CACHE_MAX = 32
+_map_cache: OrderedDict[tuple[int, tuple[str, ...]], bytes] = OrderedDict()
 
-_map_renderer = MapRenderer()
-_system_graph = SystemGraphService()
 
-# Simple in-process cache: (bounty_id, route_tuple) -> PNG bytes
-_map_cache: dict[tuple[int, tuple[str, ...]], bytes] = {}
+def _map_cache_get(key: tuple[int, tuple[str, ...]], default: bytes | None = None) -> bytes | None:
+    """Loop-thread LRU read: return value and move the entry to MRU position."""
+    if key not in _map_cache:
+        return default
+    _map_cache.move_to_end(key)
+    return _map_cache[key]
+
+
+def _map_cache_set(key: tuple[int, tuple[str, ...]], value: bytes) -> None:
+    """Loop-thread LRU write: insert/update and evict LRU entry on overflow."""
+    if key in _map_cache:
+        _map_cache.move_to_end(key)
+    _map_cache[key] = value
+    if len(_map_cache) > _MAP_CACHE_MAX:
+        _map_cache.popitem(last=False)
 
 
 def get_bounty_service() -> BountyService:
@@ -59,6 +80,53 @@ def get_bounty_service() -> BountyService:
 
 def get_loadout_response_service() -> LoadoutResponseService:
     return LoadoutResponseService()
+
+
+def _get_map_renderer(request: Request):
+    """Return the shared MapRenderer from app.state (set at startup).
+
+    Raises HTTP 503 when the renderer is absent so the endpoint fails fast
+    rather than returning a misleading result.
+    """
+    renderer = getattr(request.app.state, "map_renderer", None)
+    if renderer is None:
+        flogger.warning("map_renderer not found on app.state — service may still be starting up")
+        raise HTTPException(status_code=503, detail="Map renderer not yet available")
+    return renderer
+
+
+def _get_system_graph(request: Request):
+    """Return the shared SystemGraphService from app.state (set at startup).
+
+    Raises HTTP 503 when the graph is absent so the endpoint fails fast
+    rather than returning a misleading result.
+    """
+    graph = getattr(request.app.state, "system_graph", None)
+    if graph is None:
+        flogger.warning("system_graph not found on app.state — service may still be starting up")
+        raise HTTPException(status_code=503, detail="System graph not yet available")
+    return graph
+
+
+def _get_map_renderer_optional(request: Request):
+    """Return the shared MapRenderer from app.state, or None if absent.
+
+    Used by multi-phase write endpoints (e.g. admin-spawn) where map rendering
+    is best-effort: the primary operation (spawn + audit log) must succeed
+    regardless of renderer availability.  Hard-failing Depends would abort the
+    entire endpoint on a renderer outage — that is not acceptable for writes.
+    """
+    return getattr(request.app.state, "map_renderer", None)
+
+
+def _get_system_graph_optional(request: Request):
+    """Return the shared SystemGraphService from app.state, or None if absent.
+
+    Used by multi-phase write endpoints (e.g. admin-spawn) where graph access
+    is best-effort: the primary operation must succeed even when the graph is
+    temporarily unavailable (e.g. during startup).
+    """
+    return getattr(request.app.state, "system_graph", None)
 
 
 router = APIRouter(
@@ -146,7 +214,7 @@ async def check_bounty(
     )
     try:
         async with get_db_session() as db:
-            multi = await service.check_bounty(db, request.player_id, request.system_name, guild_id)
+            multi = await service.check_bounty(db, request.player_id, request.system_name, guild_id)  # noqa: TRANSACTION_DISCIPLINE — fight_ships owns its commit via CombatLogService.persist
         flogger.info(
             f"Bounty check result: player_id={request.player_id}"
             f" system={request.system_name!r} result_count={len(multi.outcomes)}"
@@ -209,34 +277,53 @@ async def combat_bonus(
                 flogger.info(f"combat_bonus: player_id={request.player_id} not found — returning 404")
                 raise HTTPException(status_code=404, detail=f"Player {request.player_id} not found")
 
-            # Load per-guild config for PvC armour buff override (B.49)
+            # Load per-guild config for PvC DR override (T10: pvc_damage_reduction replaces pvc_armour_buff_factor)
             guild_cfg = None
             if hasattr(player, "guild_id") and player.guild_id:
                 guild_cfg = await ConfigRepository().get_by_guild_id(db, player.guild_id)
-            _pvc_buff = resolve_constant(
-                guild_cfg, "bounty_pvc_armour_buff_factor", GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
-            )
+            _pvc_dr = resolve_constant(guild_cfg, "pvc_damage_reduction", GameConstants.PVC_DAMAGE_REDUCTION)
 
             # Build loadouts
             player_loadout = await LoadoutBuilder.from_player(db, request.player_id)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(request.criminal_ship)
 
-            # Run combat with PvC armour buff applied to the player (loadout1 = ship1).
-            # PvP duels use the same CombatService.fight_ships() with default buff=1.0.
-            combat_svc = CombatService()
-            fight_results = combat_svc.fight_ships(player_loadout, criminal_loadout, player_armour_buff=_pvc_buff)
+            # CI-20: resolve display labels for combat-log thread naming
+            from services.bounty_service import _resolve_combat_label
 
-            # Determine outcome (stalemate = player wins for bounties)
-            won = fight_results.is_stalemate or (fight_results.winner_name == player_loadout.ship_name)
+            _player_label = await _resolve_combat_label(db, player)
+            _criminal_label = request.criminal_ship.get("criminal_name") or criminal_loadout.ship_name
+
+            # Run combat via TickResolver (T10: async, persists combat_log, increments Player stats)
+            combat_svc = CombatService()
+            fight_results = await combat_svc.fight_ships(  # noqa: TRANSACTION_DISCIPLINE — fight_ships owns its commit via CombatLogService.persist
+                player_loadout,
+                criminal_loadout,
+                context="bounty_bonus",
+                log_result=True,
+                pvc_damage_reduction=_pvc_dr,
+                session=db,
+                guild_id=player.guild_id,
+                combatant1_user_id=player.user_id,
+                combatant2_user_id=None,  # NPC side
+                combatant1_label=_player_label,
+                combatant2_label=_criminal_label,
+            )
+
+            # P2-T8b: player is always combatant1 (loadout1 / side-1).
+            # winner_side==1 → player won; winner_side==2 → criminal won.
+            # Stalemate counts as a loss — no 2× bonus (spec §9 PvC draw semantics).
+            won = fight_results.winner_side == 1
             bonus_credits = 0
 
             if won:
                 await service._award_combat_bonus(db, request.player_id, request.base_reward)
                 bonus_credits = request.base_reward
 
-            combat_dict = _serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff) or {}
+            combat_dict = _serialize_fight_results(fight_results) or {}
             if won:
                 msg = f"Combat victory! +{bonus_credits:,}cr bonus (2x total)!"
+            elif fight_results.is_stalemate:
+                msg = "Stalemate — no bonus. You keep the base reward."
             else:
                 loser = fight_results.loser_name or player_loadout.ship_name
                 msg = f"Combat loss — {loser} was defeated. You keep the base reward."
@@ -380,6 +467,8 @@ async def get_bounty_loadout(
 async def get_bounty_map(
     bounty_id: int,
     service: BountyService = Depends(get_bounty_service),
+    map_renderer=Depends(_get_map_renderer),
+    system_graph=Depends(_get_system_graph),
 ):
     """Return a PNG image of the star map with the bounty route overlaid."""
     async with get_db_session() as db:
@@ -390,23 +479,25 @@ async def get_bounty_map(
         route: list[str] = list(bounty.route) if bounty.route else []
         cache_key = (bounty_id, tuple(route))
 
-        if cache_key in _map_cache:
+        cached = _map_cache_get(cache_key)
+        if cached is not None:
             flogger.debug(f"Map cache hit for bounty_id={bounty_id}")
         else:
             flogger.debug(f"Map cache miss for bounty_id={bounty_id}, rendering")
-            # Ensure system graph is populated.
-            if not _system_graph.is_loaded():
-                await _system_graph.load_graph(db)
+            # Ensure system graph is populated (should already be at startup).
+            if not system_graph.is_loaded():
+                await system_graph.load_graph(db)
 
             try:
-                png_bytes = _map_renderer.render_route_for_bounty(route, _system_graph)
-                _map_cache[cache_key] = png_bytes
+                png_bytes = await map_renderer.render_route_offloaded(route, system_graph)
+                _map_cache_set(cache_key, png_bytes)  # loop-thread write; safe
+                cached = png_bytes
                 flogger.info(f"Map rendered for bounty_id={bounty_id} route={len(route)} systems")
             except Exception as e:
                 flogger.error(f"Map render failed for bounty_id={bounty_id}: {e}")
                 raise
 
-        return Response(content=_map_cache[cache_key], media_type="image/png")
+        return Response(content=cached, media_type="image/png")
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +571,8 @@ async def admin_spawn_bounties(
     user_id: int = Query(..., description="Admin Discord user ID for audit log"),
     quantity: int = Query(1, ge=1, le=10, description="Number of bounties to spawn per tier (1-10)"),
     service: BountyService = Depends(get_bounty_service),
+    _map_renderer=Depends(_get_map_renderer_optional),
+    _system_graph=Depends(_get_system_graph_optional),
 ):
     """Admin-triggered bounty spawn — bypasses max-bounty cap.
 
@@ -548,31 +641,60 @@ async def admin_spawn_bounties(
             )
 
         # ----------------------------------------------------------------
-        # Phase 2a — batch-render all route maps in-process (no HTTP self-call).
+        # Phase 2a — parallel fan-out render for all route maps.
+        #
+        # For each spawned bounty, resolve its route list on the loop (cheap,
+        # read-only graph access), then fan out ALL PIL renders concurrently
+        # via the T3 offload seam (render_route_offloaded).  Coord resolution
+        # happens inside render_route_offloaded Phase-1 (on the loop thread);
+        # the pure PIL work runs concurrently on the thread pool.
+        #
+        # CACHE WRITE DISCIPLINE: _map_cache is written ON THE LOOP THREAD
+        # ONLY — after gather() resolves, in the loop body below.  Worker
+        # threads must never write to this dict (no thread-safety guarantee).
+        # Bounded-LRU eviction (_MAP_CACHE_MAX=32) is handled by _map_cache_set.
+        #
+        # Dead-check removed: newly-spawned bounties cannot already be in
+        # _map_cache (their IDs are fresh from Phase 1), so the old
+        # ``if cache_key in _map_cache`` branch was always-missing dead code.
+        #
+        # _map_renderer / _system_graph come from Depends (optional — None when
+        # the renderer/graph is not yet available at startup).
         # ----------------------------------------------------------------
         bounty_pngs: dict[int, bytes] = {}  # bounty_id -> PNG bytes
-        if spawned_orm:
+        if spawned_orm and _map_renderer is not None and _system_graph is not None:
             try:
                 async with get_db_session() as render_db:
                     if not _system_graph.is_loaded():
                         await _system_graph.load_graph(render_db)
-                for b in spawned_orm:
+
+                # Build one render coroutine per bounty (coords resolved on loop inside
+                # render_route_offloaded Phase-1; PIL work offloaded to thread pool).
+                async def _render_one(b) -> tuple[int, list[str], bytes]:
+                    route = list(b.route) if b.route else []
                     try:
-                        route = list(b.route) if b.route else []
-                        cache_key = (b.id, tuple(route))
-                        if cache_key in _map_cache:
-                            bounty_pngs[b.id] = _map_cache[cache_key]
-                        else:
-                            png = _map_renderer.render_route_for_bounty(route, _system_graph)
-                            _map_cache[cache_key] = png
-                            bounty_pngs[b.id] = png
+                        png = await _map_renderer.render_route_offloaded(route, _system_graph)
                     except Exception as render_exc:  # pylint: disable=broad-exception-caught
                         flogger.warning(
                             f"Admin spawn: map render failed for bounty {b.id}: {render_exc} — "
                             "will announce without route map image"
                         )
+                        return (b.id, route, b"")
+                    return (b.id, route, png)
+
+                render_results = await asyncio.gather(*[_render_one(b) for b in spawned_orm])
+
+                # Write cache ON THE LOOP THREAD ONLY — after gather resolves.
+                for bounty_id, route, png in render_results:
+                    if png:
+                        cache_key = (bounty_id, tuple(route))
+                        _map_cache_set(cache_key, png)  # loop-thread write; bounded LRU
+                        bounty_pngs[bounty_id] = png
+
             except Exception as graph_exc:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"Admin spawn: system graph load failed: {graph_exc} — skipping all map images")
+        elif spawned_orm:
+            flogger.warning("Admin spawn: map_renderer or system_graph not on app.state — skipping map rendering")
 
         # ----------------------------------------------------------------
         # Phase 2b — batch-upload route maps to gateway image channel.

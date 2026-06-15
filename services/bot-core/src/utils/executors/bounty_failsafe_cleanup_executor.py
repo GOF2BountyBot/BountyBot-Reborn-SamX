@@ -285,67 +285,82 @@ async def _sweep_channel(
     orphan_cutoff = datetime.now(UTC) - timedelta(seconds=orphan_threshold_seconds)
 
     # ------------------------------------------------------------------
-    # Step 2: For each message, run Pass 1 (DB lookup) then Pass 2
+    # Step 2: For each message, run Pass 1 (DB lookup) then Pass 2.
+    # Open ONE session for the whole channel sweep (P6-T9d) — avoids
+    # per-message session churn.  Each message is still processed
+    # independently; errors are caught per-message and do not abort the
+    # channel sweep.
     # ------------------------------------------------------------------
-    for msg in messages_data:
-        discord_message_id: int | None = None
-        try:
-            raw_id = msg.get("id")
-            if raw_id is None:
+    from persist.database.manager import db_manager
+    from persist.repositories.bounty_repository import BountyRepository
+    from persist.repositories.discord_message_repository import DiscordMessageRepository
+
+    msg_repo = DiscordMessageRepository()
+    bounty_repo = BountyRepository()
+
+    async with db_manager.get_session() as db:
+        for msg in messages_data:
+            discord_message_id: int | None = None
+            try:
+                raw_id = msg.get("id")
+                if raw_id is None:
+                    continue
+                discord_message_id = int(raw_id)
+            except (TypeError, ValueError):
                 continue
-            discord_message_id = int(raw_id)
-        except (TypeError, ValueError):
-            continue
 
-        inspected += 1
+            inspected += 1
 
-        try:
-            action, bounty_id = await _classify_and_clean_message(
-                job_id=job_id,
-                guild_id=guild_id,
-                channel_id=channel_id,
-                discord_message_id=discord_message_id,
-            )
-            if action == "cleaned":
-                cleaned += 1
-                flogger.info(
-                    f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
-                    f"channel={channel_id}: cleaned post msg_id={discord_message_id} "
-                    f"bounty_id={bounty_id}"
-                )
-            elif action == "live":
-                flogger.trace(
-                    f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
-                    f"channel={channel_id}: msg_id={discord_message_id} is live — skip"
-                )
-            elif action == "skip":
-                # Pass 1 found no DB record. Run Pass 2: if the message was
-                # posted by the bot and is old enough, treat it as an untracked
-                # stale bounty post and delete it from Discord only (no DB record
-                # to clean up).
-                flogger.trace(
-                    f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
-                    f"channel={channel_id}: msg_id={discord_message_id} not in DB — checking orphan heuristic"
-                )
-                orphan_cleaned = await _maybe_delete_untracked_bot_message(
+            try:
+                action, bounty_id = await _classify_and_clean_message(
                     job_id=job_id,
                     guild_id=guild_id,
-                    division=division,
                     channel_id=channel_id,
                     discord_message_id=discord_message_id,
-                    msg=msg,
-                    orphan_cutoff=orphan_cutoff,
+                    db=db,
+                    msg_repo=msg_repo,
+                    bounty_repo=bounty_repo,
                 )
-                if orphan_cleaned:
+                if action == "cleaned":
                     cleaned += 1
+                    flogger.info(
+                        f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
+                        f"channel={channel_id}: cleaned post msg_id={discord_message_id} "
+                        f"bounty_id={bounty_id}"
+                    )
+                elif action == "live":
+                    flogger.trace(
+                        f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
+                        f"channel={channel_id}: msg_id={discord_message_id} is live — skip"
+                    )
+                elif action == "skip":
+                    # Pass 1 found no DB record. Run Pass 2: if the message was
+                    # posted by the bot and is old enough, treat it as an untracked
+                    # stale bounty post and delete it from Discord only (no DB record
+                    # to clean up).
+                    flogger.trace(
+                        f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
+                        f"channel={channel_id}: msg_id={discord_message_id} not in DB — checking orphan heuristic"
+                    )
+                    orphan_cleaned = await _maybe_delete_untracked_bot_message(
+                        job_id=job_id,
+                        guild_id=guild_id,
+                        division=division,
+                        channel_id=channel_id,
+                        discord_message_id=discord_message_id,
+                        msg=msg,
+                        orphan_cutoff=orphan_cutoff,
+                    )
+                    if orphan_cleaned:
+                        cleaned += 1
 
-        except Exception as msg_err:  # pylint: disable=broad-exception-caught
-            errors += 1
-            flogger.warning(
-                f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
-                f"channel={channel_id}: error processing msg_id={discord_message_id} — {msg_err}"
-            )
-            flogger.trace(traceback.format_exc())
+            except Exception as msg_err:  # pylint: disable=broad-exception-caught
+                errors += 1
+                flogger.warning(
+                    f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
+                    f"channel={channel_id}: error processing msg_id={discord_message_id} — {msg_err}"
+                )
+                flogger.trace(traceback.format_exc())
 
     return inspected, cleaned, errors
 
@@ -443,8 +458,15 @@ async def _classify_and_clean_message(
     guild_id: int,
     channel_id: int,
     discord_message_id: int,
+    db,
+    msg_repo,
+    bounty_repo,
 ) -> tuple[str, int | None]:
     """Classify a Discord message and clean it up if it is a non-live bounty post.
+
+    The caller (``_sweep_channel``) owns the session and passes it in; this
+    function does NOT open its own session (P6-T9d: batch per-channel instead
+    of per-message session churn).
 
     Classification logic
     --------------------
@@ -462,75 +484,66 @@ async def _classify_and_clean_message(
     tuple[str, int | None]
         (action, bounty_id) where action is "live", "skip", or "cleaned".
     """
-    # Deferred imports
-    from persist.database.manager import db_manager
-    from persist.repositories.bounty_repository import BountyRepository
-    from persist.repositories.discord_message_repository import DiscordMessageRepository
+    # ------------------------------------------------------------------
+    # Step 1: Look up the discord_message record by composite key
+    # ------------------------------------------------------------------
+    discord_msg = await msg_repo.get_by_composite_key(db, guild_id, channel_id, discord_message_id)
 
-    async with db_manager.get_session() as db:
-        msg_repo = DiscordMessageRepository()
-        bounty_repo = BountyRepository()
+    if discord_msg is None:
+        # No record for this message — not a managed bounty announcement.
+        return "skip", None
 
-        # ------------------------------------------------------------------
-        # Step 1: Look up the discord_message record by composite key
-        # ------------------------------------------------------------------
-        discord_msg = await msg_repo.get_by_composite_key(db, guild_id, channel_id, discord_message_id)
+    if discord_msg.message_type != "bounty_announcement":
+        # Managed message but not a bounty announcement.
+        return "skip", None
 
-        if discord_msg is None:
-            # No record for this message — not a managed bounty announcement.
-            return "skip", None
+    bounty_id: int | None = discord_msg.reference_id
 
-        if discord_msg.message_type != "bounty_announcement":
-            # Managed message but not a bounty announcement.
-            return "skip", None
-
-        bounty_id: int | None = discord_msg.reference_id
-
-        if bounty_id is None:
-            # Announcement record has no bounty reference — treat as orphan.
-            flogger.warning(
-                f"BountyFailsafeCleanup[{job_id}] discord_message id={discord_msg.id} "
-                f"has null reference_id — treating as orphan"
-            )
-            await _delete_post_and_db_record(job_id, channel_id, discord_message_id, db, msg_repo, discord_msg)
-            return "cleaned", None
-
-        # ------------------------------------------------------------------
-        # Step 2: Fetch the bounty
-        # ------------------------------------------------------------------
-        bounty = await bounty_repo.get_by_id(db, bounty_id)
-
-        # ------------------------------------------------------------------
-        # Step 3: Classify
-        # ------------------------------------------------------------------
-        now_utc = datetime.now(UTC)
-
-        if bounty is not None and bounty.status == "active":
-            end_time = bounty.end_time
-            if end_time is not None:
-                # Make end_time timezone-aware for comparison if needed
-                if end_time.tzinfo is None:
-                    end_time = end_time.replace(tzinfo=UTC)
-                if end_time > now_utc:
-                    # Genuinely live — leave it alone.
-                    return "live", bounty_id
-
-            # Active but end_time has passed (or is None — defensive): stale active.
-            flogger.info(
-                f"BountyFailsafeCleanup[{job_id}] bounty_id={bounty_id} is active but "
-                f"end_time={bounty.end_time} has passed — marking expired"
-            )
-            # Mark the bounty expired in DB
-            try:
-                bounty.status = "expired"
-                await db.commit()
-                flogger.info(f"BountyFailsafeCleanup[{job_id}] bounty_id={bounty_id} status set to 'expired'")
-            except Exception as upd_err:  # pylint: disable=broad-exception-caught
-                flogger.error(f"BountyFailsafeCleanup[{job_id}] failed to expire bounty_id={bounty_id}: {upd_err}")
-                await db.rollback()
-
-        # For all non-live cases: delete the Discord post and clean the DB record.
+    if bounty_id is None:
+        # Announcement record has no bounty reference — treat as orphan.
+        flogger.warning(
+            f"BountyFailsafeCleanup[{job_id}] discord_message id={discord_msg.id} "
+            f"has null reference_id — treating as orphan"
+        )
         await _delete_post_and_db_record(job_id, channel_id, discord_message_id, db, msg_repo, discord_msg)
+        return "cleaned", None
+
+    # ------------------------------------------------------------------
+    # Step 2: Fetch the bounty
+    # ------------------------------------------------------------------
+    bounty = await bounty_repo.get_by_id(db, bounty_id)
+
+    # ------------------------------------------------------------------
+    # Step 3: Classify
+    # ------------------------------------------------------------------
+    now_utc = datetime.now(UTC)
+
+    if bounty is not None and bounty.status == "active":
+        end_time = bounty.end_time
+        if end_time is not None:
+            # Make end_time timezone-aware for comparison if needed
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=UTC)
+            if end_time > now_utc:
+                # Genuinely live — leave it alone.
+                return "live", bounty_id
+
+        # Active but end_time has passed (or is None — defensive): stale active.
+        flogger.info(
+            f"BountyFailsafeCleanup[{job_id}] bounty_id={bounty_id} is active but "
+            f"end_time={bounty.end_time} has passed — marking expired"
+        )
+        # Mark the bounty expired in DB
+        try:
+            bounty.status = "expired"
+            await db.commit()
+            flogger.info(f"BountyFailsafeCleanup[{job_id}] bounty_id={bounty_id} status set to 'expired'")
+        except Exception as upd_err:  # pylint: disable=broad-exception-caught
+            flogger.error(f"BountyFailsafeCleanup[{job_id}] failed to expire bounty_id={bounty_id}: {upd_err}")
+            await db.rollback()
+
+    # For all non-live cases: delete the Discord post and clean the DB record.
+    await _delete_post_and_db_record(job_id, channel_id, discord_message_id, db, msg_repo, discord_msg)
 
     return "cleaned", bounty_id
 

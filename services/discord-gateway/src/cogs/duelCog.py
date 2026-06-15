@@ -153,6 +153,21 @@ class DuelCog(commands.Cog):
         except Exception:  # pylint: disable=broad-exception-caught
             return None
 
+    def _invalidate_admin_duel_cache(self, guild_id: int) -> None:
+        """Invalidate AdminCog's guild-scoped admin-duel cache after a player duel mutation.
+
+        The /admin_duel dropdown is a guild-wide view of all pending duels, so any
+        player-side challenge/accept/reject/cancel changes it. Invalidate-and-cold-fill
+        keeps it fresh without a second push payload (300s TTL is the dead-man switch).
+        Non-fatal: never breaks the duel mutation if AdminCog is absent.
+        """
+        try:
+            admin_cog = self.bot.get_cog("AdminCog")
+            if admin_cog is not None and hasattr(admin_cog, "_admin_pending_duel_cache"):
+                admin_cog._admin_pending_duel_cache.invalidate(guild_id)
+        except Exception:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"_invalidate_admin_duel_cache: failed for guild={guild_id}; mutation still succeeded")
+
     # ------------------------------------------------------------------
     # Autocomplete
     # ------------------------------------------------------------------
@@ -170,21 +185,24 @@ class DuelCog(commands.Cog):
             guild_id = interaction.guild_id
             user_id = interaction.user.id
 
-            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            # GATE 1 (cold-fill): resolve player_id from shared player cache.
             if autocomplete_state.player_cache is None:
                 return []
             player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
             if player_entry is None:
-                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+            if player_entry is None:
                 return []
             player_id = player_entry.get("id")
             if not player_id:
                 return []
 
-            # HOT PATH: peek pending duel cache — no HTTP
+            # GATE 2 (cold-fill): pending duel cache. Two 1.0s gates ≈ 2s worst case,
+            # within the 3s autocomplete budget.
             duels = self._pending_duel_cache.peek((guild_id, player_id))
             if duels is None:
-                self._pending_duel_cache.schedule_refresh((guild_id, player_id))
+                duels = await self._pending_duel_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+            if duels is None:
                 return []
 
             norm_current = normalize_for_search(current)
@@ -220,21 +238,24 @@ class DuelCog(commands.Cog):
             guild_id = interaction.guild_id
             user_id = interaction.user.id
 
-            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            # GATE 1 (cold-fill): resolve player_id from shared player cache.
             if autocomplete_state.player_cache is None:
                 return []
             player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
             if player_entry is None:
-                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+            if player_entry is None:
                 return []
             player_id = player_entry.get("id")
             if not player_id:
                 return []
 
-            # HOT PATH: peek outgoing duel cache — no HTTP
+            # GATE 2 (cold-fill): outgoing duel cache. Two 1.0s gates ≈ 2s worst case,
+            # within the 3s autocomplete budget.
             duels = self._outgoing_duel_cache.peek((guild_id, player_id))
             if duels is None:
-                self._outgoing_duel_cache.schedule_refresh((guild_id, player_id))
+                duels = await self._outgoing_duel_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+            if duels is None:
                 return []
 
             norm_current = normalize_for_search(current)
@@ -332,6 +353,7 @@ class DuelCog(commands.Cog):
             try:
                 self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
                 self._pending_duel_cache.invalidate((interaction.guild_id, target_player_id))
+                self._invalidate_admin_duel_cache(interaction.guild_id)
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
                     f"/duel-challenge: duel cache invalidation failed for duel_id={duel_id}; "
@@ -437,7 +459,7 @@ class DuelCog(commands.Cog):
             resp = await self.http_client.post(
                 f"{api_base}/duels/{duel_id}/accept",
                 params={"user_id": player_id},
-                timeout=10,
+                timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -456,6 +478,7 @@ class DuelCog(commands.Cog):
                 challenger_player_id = data.get("challenger_id")
                 if challenger_player_id is not None:
                     self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+                self._invalidate_admin_duel_cache(interaction.guild_id)
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
                     f"/duel-accept: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
@@ -486,14 +509,106 @@ class DuelCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while accepting the duel.", ephemeral=True)
 
     def _build_accept_embed(self, duel_id: int, data: dict) -> discord.Embed:
-        """Build an embed for a completed duel (accept result)."""
+        """Build an embed for a completed duel (accept result).
+
+        Renders actual after-action stats (final HP, damage dealt, accuracy, duration)
+        from the tick-resolver summary when available.  Falls back gracefully to the
+        legacy TTK-comparison approach for old responses without summary data.
+        """
         is_stalemate = data.get("is_stalemate", False)
         credits_transferred = data.get("credits_transferred", 0)
         stakes = data.get("stakes", 0)
 
+        challenger_id = data.get("challenger_id")
+        challenger_name = data.get("challenger_name") or f"Player {challenger_id}"
+        challenger_credits = data.get("challenger_credits", 0)
+        target_id = data.get("target_id")
+        target_name = data.get("target_name") or f"Player {target_id}"
+        target_credits = data.get("target_credits", 0)
+
+        # ------------------------------------------------------------------
+        # Determine winner/loser display names.
+        #
+        # When the tick-resolver summary is present (combatants block), resolve
+        # winner by who survived (final_hp.hull > 0), NOT by ship-name equality.
+        # Ship-name equality is unreliable when both players fly the same ship
+        # (e.g. both in "Betty") — whoever won, c1 hull > 0 iff challenger survived.
+        #
+        # Slot mapping (invariant from duel_service / fight_ships call order):
+        #   combatants["1"] = challenger (loadout1)
+        #   combatants["2"] = target     (loadout2)
+        #
+        # Stalemate / both-survive / both-zero: caller must set is_stalemate=True
+        # before reaching this block; we honour that flag above and never fabricate
+        # a winner in ambiguous hull states.
+        #
+        # Legacy TTK heuristic is preserved for old responses that have no
+        # combatants block.
+        # ------------------------------------------------------------------
+        combatants = data.get("combatants") or {}
+        c1 = combatants.get("1") or {}
+        c2 = combatants.get("2") or {}
+
+        winner_ship = data.get("winner_name", "")
+
+        try:
+            if c1 or c2:
+                # Tick-resolver path: winner resolved by final hull HP.
+                c1_hull = (c1.get("final_hp") or {}).get("hull", 0) or 0
+                c2_hull = (c2.get("final_hp") or {}).get("hull", 0) or 0
+                if c1_hull > 0 and c2_hull <= 0:
+                    # Challenger survived; target did not.
+                    winner_display, loser_display = challenger_name, target_name
+                elif c2_hull > 0 and c1_hull <= 0:
+                    # Target survived; challenger did not.
+                    winner_display, loser_display = target_name, challenger_name
+                else:
+                    # Both alive, both dead, or missing data — treat as stalemate.
+                    # is_stalemate should already be True in this case; fall back
+                    # gracefully so the embed still shows something sensible.
+                    winner_display = winner_ship or "Unknown"
+                    loser_display = data.get("loser_name", "Unknown") or "Unknown"
+            else:
+                # Legacy TTK heuristic (pre-summary data, no combatants block)
+                challenger_hp = data.get("challenger_hp", 0) or 0
+                challenger_dps = data.get("challenger_dps", 0) or 0
+                target_hp = data.get("target_hp", 0) or 0
+                target_dps = data.get("target_dps", 0) or 0
+                if challenger_dps > 0 and target_dps > 0:
+                    challenger_ttk = challenger_hp / target_dps
+                    target_ttk = target_hp / challenger_dps
+                    if challenger_ttk > target_ttk:
+                        winner_display, loser_display = challenger_name, target_name
+                    else:
+                        winner_display, loser_display = target_name, challenger_name
+                else:
+                    winner_display = winner_ship or "Unknown"
+                    loser_display = data.get("loser_name", "Unknown") or "Unknown"
+        except Exception:  # pylint: disable=broad-exception-caught
+            winner_display = winner_ship or "Unknown"
+            loser_display = data.get("loser_name", "Unknown") or "Unknown"
+
+        # ------------------------------------------------------------------
+        # Duration line
+        # ------------------------------------------------------------------
+        duration_s: float | None = data.get("duration_s")
+        if is_stalemate:
+            if duration_s is not None:
+                outcome_str = f"⚔️ Duel Complete — Stalemate in {duration_s:.1f}s"
+            else:
+                outcome_str = "⚔️ Duel Complete — Stalemate"
+        else:
+            if duration_s is not None:
+                outcome_str = f"⚔️ Duel Complete — {winner_display} won in {duration_s:.1f}s"
+            else:
+                outcome_str = f"⚔️ Duel Complete — {winner_display} won"
+
+        # ------------------------------------------------------------------
+        # Build embed
+        # ------------------------------------------------------------------
         if is_stalemate:
             embed = discord.Embed(
-                title="⚔️ Duel Complete — Stalemate!",
+                title=outcome_str,
                 description=(
                     f"**Duel #{duel_id}** ended in a stalemate!\n\n"
                     "Neither combatant could overcome the other.\n"
@@ -502,43 +617,8 @@ class DuelCog(commands.Cog):
                 color=discord.Color.yellow(),
             )
         else:
-            challenger_id = data.get("challenger_id")
-            challenger_name = data.get("challenger_name") or f"Player {challenger_id}"
-            challenger_credits = data.get("challenger_credits", 0)
-            challenger_hp = data.get("challenger_hp", 0)
-            challenger_dps = data.get("challenger_dps", 0)
-
-            target_id = data.get("target_id")
-            target_name = data.get("target_name") or f"Player {target_id}"
-            target_credits = data.get("target_credits", 0)
-            target_hp = data.get("target_hp", 0)
-            target_dps = data.get("target_dps", 0)
-
-            # Determine which PLAYER won using time-to-kill (TTK) comparison.
-            # fight_ships(challenger_loadout, target_loadout) always assigns challenger
-            # as ship1, so challenger_hp/challenger_dps belong to ship1.
-            # The ship with the higher TTK wins (the opponent dies first).
-            # Fall back to the raw ship names when stats are unavailable.
-            try:
-                if challenger_dps > 0 and target_dps > 0:
-                    challenger_ttk = challenger_hp / target_dps
-                    target_ttk = target_hp / challenger_dps
-                    if challenger_ttk > target_ttk:
-                        winner_display = challenger_name
-                        loser_display = target_name
-                    else:
-                        winner_display = target_name
-                        loser_display = challenger_name
-                else:
-                    # Fallback: ship names from the API response
-                    winner_display = data.get("winner_name", "Unknown")
-                    loser_display = data.get("loser_name", "Unknown")
-            except Exception:  # pylint: disable=broad-exception-caught
-                winner_display = data.get("winner_name", "Unknown")
-                loser_display = data.get("loser_name", "Unknown")
-
             embed = discord.Embed(
-                title="⚔️ Duel Complete — Victory!",
+                title=outcome_str,
                 description=(
                     f"**Duel #{duel_id}** has been resolved!\n\n"
                     f"🏆 **Winner:** {winner_display}\n"
@@ -555,6 +635,48 @@ class DuelCog(commands.Cog):
                     ),
                     inline=False,
                 )
+
+        # ------------------------------------------------------------------
+        # After-action combat summary field (actual stats from tick resolver)
+        # Compact worded format — no "You" (duel uses real player names), no header line.
+        # ------------------------------------------------------------------
+        def _hp_str_duel(hp_block: dict) -> str:
+            shield = hp_block.get("shield", 0)
+            armour = hp_block.get("armour", 0)
+            hull = hp_block.get("hull", 0)
+            return f"Shield {shield} · Armour {armour} · Hull {hull}"
+
+        def _combatant_block_duel(cb: dict, label: str, survived: bool) -> str:
+            """Render one combatant block for a duel.
+
+            label already contains the ship name in the format '{Name} (Ship)' so
+            no extra ship suffix is appended here.
+            """
+            final_hp = cb.get("final_hp") or {}
+            hp_str = _hp_str_duel(final_hp)
+            dealt = cb.get("damage_dealt", 0)
+            fired = cb.get("shots_fired", 0)
+            hit = cb.get("shots_hit", 0)
+            acc_pct = round((cb.get("accuracy") or 0) * 100)
+            acc_str = f"{acc_pct}% acc ({hit}/{fired})" if fired > 0 else "n/a"
+            status = "survived" if survived else "destroyed"
+            return f"**{label}** — {status}\n  {hp_str}  ·  dealt {dealt} · {acc_str}"
+
+        if c1 or c2:
+            c1_hull_val = ((c1.get("final_hp") or {}).get("hull") or 0) if c1 else 0
+            c2_hull_val = ((c2.get("final_hp") or {}).get("hull") or 0) if c2 else 0
+            c1_survived_duel = c1_hull_val > 0
+            c2_survived_duel = c2_hull_val > 0
+            c1_ship_duel = c1.get("ship") or "?"
+            c2_ship_duel = c2.get("ship") or "?"
+            summary_lines = [
+                _combatant_block_duel(c1, f"{challenger_name} ({c1_ship_duel})", c1_survived_duel),
+                _combatant_block_duel(c2, f"{target_name} ({c2_ship_duel})", c2_survived_duel),
+            ]
+            summary_text = "\n".join(summary_lines)
+            if len(summary_text) > 1024:
+                summary_text = summary_text[:1021] + "…"
+            embed.add_field(name="⚔️ Combat Stats", value=summary_text, inline=False)
 
         return embed
 
@@ -632,6 +754,7 @@ class DuelCog(commands.Cog):
                 challenger_player_id = data.get("challenger_id")
                 if challenger_player_id is not None:
                     self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+                self._invalidate_admin_duel_cache(interaction.guild_id)
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
                     f"/duel-reject: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
@@ -732,6 +855,7 @@ class DuelCog(commands.Cog):
                 target_player_id = data.get("target_id")
                 if target_player_id is not None:
                     self._pending_duel_cache.invalidate((interaction.guild_id, target_player_id))
+                self._invalidate_admin_duel_cache(interaction.guild_id)
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
                     f"/duel-cancel: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"

@@ -98,25 +98,28 @@ class TestCatalogContext:
 class TestPlayableContext:
     """Tests for context='playable' (economy/equip write paths)."""
 
-    def test_playable_context_excludes_secondary_weapon_today(self):
-        """secondary_weapon raises InvalidItemTypeError in playable context today."""
-        assert "secondary_weapon" not in GameConstants.CURRENTLY_ENABLED_TYPES
-        with pytest.raises(InvalidItemTypeError, match="not currently enabled"):
-            expand_item_type_to_concrete("secondary_weapon", context="playable")
+    def test_playable_context_includes_secondary_weapon(self):
+        """secondary_weapon is now in CURRENTLY_ENABLED_TYPES (CI-5: shop sells canonical secondaries)."""
+        assert "secondary_weapon" in GameConstants.CURRENTLY_ENABLED_TYPES
+        result = expand_item_type_to_concrete("secondary_weapon", context="playable")
+        assert result == ("secondary_weapon",)
 
     def test_concrete_type_raises_if_disabled_playable(self):
         """Concrete type that is not in CURRENTLY_ENABLED_TYPES raises InvalidItemTypeError."""
-        assert "secondary_weapon" not in GameConstants.CURRENTLY_ENABLED_TYPES
-        with pytest.raises(InvalidItemTypeError):
-            expand_item_type_to_concrete("secondary_weapon", context="playable")
+        # Use a type that is genuinely not in CURRENTLY_ENABLED_TYPES for this invariant test.
+        # (secondary_weapon was the example before CI-5 enabled it; now we use a hypothetical type.)
+        from services.exceptions import InvalidItemTypeError as _ITE
+
+        with pytest.raises(_ITE):
+            expand_item_type_to_concrete("commodity", context="playable")
 
     def test_generic_weapon_expansion_playable(self):
-        """'weapon' in playable context expands to primary_weapon + turret_weapon (no secondary today)."""
+        """'weapon' in playable context expands to primary_weapon + secondary_weapon + turret_weapon."""
         result = expand_item_type_to_concrete("weapon", context="playable")
-        assert "secondary_weapon" not in result
+        assert "secondary_weapon" in result
         assert "primary_weapon" in result
         assert "turret_weapon" in result
-        assert len(result) == 2
+        assert len(result) == 3
 
     def test_all_enabled_concrete_types_accepted_playable(self):
         """All CURRENTLY_ENABLED_TYPES pass through in playable context."""

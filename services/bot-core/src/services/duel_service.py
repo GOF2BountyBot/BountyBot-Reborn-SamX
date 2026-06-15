@@ -44,6 +44,11 @@ class DuelService:
 
         Preference order: player.display_name → user.discord_username → "Player {id}".
         Always returns a string — never raises.
+
+        NOTE: bounty_service._resolve_combat_label is a near-identical copy.
+        A shared extraction was deferred because this method accesses self.user_repo
+        while the bounty version is a module-level function with an optional user_repo
+        arg.  If a third caller appears, extract to services/combat_label_utils.py.
         """
         try:
             if getattr(player, "display_name", None):
@@ -99,22 +104,38 @@ class DuelService:
             flogger.warning(f"Invalid stakes attempted: {stakes} (must be non-negative)")
             raise ValueError(f"Stakes must be non-negative, got {stakes}.")
 
-        # Fetch players — wrap repository calls so DB/ORM exceptions surface as
-        # friendly 400 errors rather than leaking as raw 500s.
-        try:
-            challenger = await self.player_repo.get_by_id(db, challenger_id)
-        except Exception as exc:
-            flogger.error(f"DB error fetching challenger player_id={challenger_id}: {exc}", exc_info=True)
-            raise ValueError(f"Challenger player with ID {challenger_id} could not be retrieved.") from exc
+        # D5-T2: lock BOTH players' aggregate-root rows FOR UPDATE in ascending
+        # player_id order (mirrors accept_duel / transfer_credits) before reading
+        # credits + pending stakes for the available-credit validation.
+        #
+        # DEFENSE-IN-DEPTH / HARDENING — NOT a live exploit: the stake is only
+        # actually DEDUCTED at accept_duel, which is lock-protected and FULLY
+        # re-validates available credits net of OTHER pending stakes under its own
+        # FOR UPDATE locks (duel_service.accept_duel, "Re-validate available credits
+        # at accept-time").  So even if two challenges race at create-time and both
+        # pass an unlocked available-credit check, at most one can be ACCEPTED while
+        # underfunded — the other accept fails its re-validation.  Locking here keeps
+        # create_challenge consistent with the canonical D5-T2 lock-ordering rule and
+        # removes the inconsistent-read window for the create-time advisory check.
+        #
+        # Wrap repository calls so DB/ORM exceptions surface as friendly 400 errors
+        # rather than leaking as raw 500s.
+        ids_ordered = sorted({challenger_id, target_id})
+        locked: dict[int, object] = {}
+        for pid in ids_ordered:
+            try:
+                player = await self.player_repo.get_by_id_for_update(db, pid)
+            except Exception as exc:
+                flogger.error(f"DB error fetching player_id={pid} for challenge: {exc}", exc_info=True)
+                raise ValueError(f"Player with ID {pid} could not be retrieved.") from exc
+            locked[pid] = player
+
+        challenger = locked[challenger_id]
         if challenger is None:
             flogger.error(f"Challenger not found: player_id={challenger_id}")
             raise ValueError(f"Challenger player with ID {challenger_id} not found.")
 
-        try:
-            target = await self.player_repo.get_by_id(db, target_id)
-        except Exception as exc:
-            flogger.error(f"DB error fetching target player_id={target_id}: {exc}", exc_info=True)
-            raise ValueError(f"Target player with ID {target_id} could not be retrieved.") from exc
+        target = locked[target_id]
         if target is None:
             flogger.error(f"Target not found: player_id={target_id}")
             raise ValueError(f"Target player with ID {target_id} not found.")
@@ -213,9 +234,37 @@ class DuelService:
             flogger.error(f"Duel not found for accept: duel_id={duel_id}")
             raise ValueError(f"Duel request with ID {duel_id} not found.")
 
+        # Fast-fail on the unlocked stale object — avoids acquiring any lock for
+        # clearly terminal duels (completed, expired, etc.).  This check is NOT
+        # the idempotency guard; the authoritative guard is the re-read under lock
+        # below.
         if duel.status != "pending":
             flogger.error(
                 f"Invalid duel status for accept: duel_id={duel_id} status={duel.status} (expected 'pending')"
+            )
+            raise ValueError(f"Duel {duel_id} cannot be accepted — current status is {duel.status!r}.")
+
+        # CONCURRENCY FIX (X3-duel): LOCK ORDERING — acquire the Duel row lock
+        # FIRST, then Player rows in ascending player_id order.  This global
+        # ordering (aggregate first, then players ascending) prevents AB-BA
+        # deadlocks with other paths that also lock Player rows.
+        #
+        # populate_existing=True is MANDATORY because expire_on_commit=False means
+        # the duel row is already in the session identity map from the unlocked
+        # get_by_id above.  Without it, SQLAlchemy returns the cached stale object
+        # and the status guard reads pre-commit state even though the lock was
+        # acquired — the classic "lock looks correct, tests green" trap.
+        duel = await self.duel_repo.get_by_id_for_update(db, duel_id)
+        if duel is None:
+            flogger.error(f"Duel disappeared between load and lock: duel_id={duel_id}")
+            raise ValueError(f"Duel request with ID {duel_id} not found.")
+
+        # Idempotency guard under lock: if a concurrent accept already completed
+        # this duel, the second accept is a NO-OP rather than a double-payout.
+        if duel.status != "pending":
+            flogger.info(
+                f"accept_duel idempotent NO-OP: duel_id={duel_id} status={duel.status!r} "
+                f"(already resolved by a concurrent accept)"
             )
             raise ValueError(f"Duel {duel_id} cannot be accepted — current status is {duel.status!r}.")
 
@@ -277,16 +326,40 @@ class DuelService:
         challenger_loadout = await LoadoutBuilder.from_player(db, challenger.id)
         target_loadout = await LoadoutBuilder.from_player(db, target.id)
 
-        # Resolve combat
-        fight_results = self.combat_service.fight_ships(challenger_loadout, target_loadout)
+        # CI-20: resolve display labels for combat-log thread naming
+        _c1_label = await self._resolve_player_label(db, challenger)
+        _c2_label = await self._resolve_player_label(db, target)
+
+        # Resolve combat via TickResolver (T10: async, routes through persist + stat increment)
+        fight_results = await self.combat_service.fight_ships(
+            challenger_loadout,
+            target_loadout,
+            context="duel",
+            log_result=True,
+            pvc_damage_reduction=0.0,
+            session=db,
+            guild_id=duel.guild_id,
+            combatant1_user_id=challenger.user_id,
+            combatant2_user_id=target.user_id,
+            combatant1_label=_c1_label,
+            combatant2_label=_c2_label,
+        )
 
         credits_transferred = 0
 
         if not fight_results.is_stalemate:
-            # Determine winner and loser by matching ship names
-            if fight_results.winner_name == challenger_loadout.ship_name:
+            # P2-T8a: Decode winner via winner_side (1 = challenger/loadout1, 2 = target/loadout2).
+            # NEVER by ship name — ship names are presentation-only and are not unique within a guild.
+            # winner_side == 1 → challenger passed as loadout1; winner_side == 2 → target passed as loadout2.
+            if fight_results.winner_side == 1:
                 winner, loser = challenger, target
             else:
+                # winner_side == 2 (or unexpected None with is_stalemate=False — log and treat target as winner)
+                if fight_results.winner_side != 2:
+                    flogger.warning(
+                        f"Duel {duel_id}: is_stalemate=False but winner_side={fight_results.winner_side!r} "
+                        f"— expected 1 or 2; defaulting to target wins"
+                    )
                 winner, loser = target, challenger
 
             # Transfer credits and update stats
@@ -554,6 +627,10 @@ class DuelService:
 
         Used by the Discord gateway for admin autocomplete on /admin_duel.
 
+        P6-T4: replaces N×2 sequential player+user ``get_by_id`` calls with two
+        batched ``WHERE id IN (...)`` fetches (one for players, one for users),
+        capping the query count to 3 regardless of how many pending duels exist.
+
         Args:
             db: SQLAlchemy async session.
             guild_id: Guild the duels are scoped to.
@@ -563,30 +640,39 @@ class DuelService:
             Either name is None if it cannot be resolved.
         """
         duels = await self.duel_repo.get_all_pending_by_guild(db, guild_id)
+        if not duels:
+            return []
 
-        result = []
-        for duel in duels:
-            challenger_name: str | None = None
-            target_name: str | None = None
-            try:
-                challenger = await self.player_repo.get_by_id(db, duel.challenger_id)
-                if challenger is not None:
-                    user = await self.user_repo.get_by_id(db, challenger.user_id)
-                    if user and user.discord_username:
-                        challenger_name = user.discord_username
-            except Exception as exc:  # defensive — lookup failures must never break autocomplete
-                flogger.debug(f"Could not resolve challenger name for duel {duel.id}: {exc}")
-            try:
-                target = await self.player_repo.get_by_id(db, duel.target_id)
-                if target is not None:
-                    user = await self.user_repo.get_by_id(db, target.user_id)
-                    if user and user.discord_username:
-                        target_name = user.discord_username
-            except Exception as exc:  # defensive — lookup failures must never break autocomplete
-                flogger.debug(f"Could not resolve target name for duel {duel.id}: {exc}")
-            result.append((duel, challenger_name, target_name))
+        # Collect all player IDs we need to resolve in one shot.
+        player_ids = list({duel.challenger_id for duel in duels} | {duel.target_id for duel in duels})
+        try:
+            players_list = await self.player_repo.get_by_ids(db, player_ids)
+        except Exception as exc:  # defensive — lookup failures must never break autocomplete
+            flogger.debug(f"Batch player lookup failed for guild {guild_id}: {exc}")
+            players_list = []
 
-        return result
+        player_by_id: dict[int, object] = {p.id: p for p in players_list}
+
+        # Collect all user_ids from resolved players.
+        user_ids = list({p.user_id for p in players_list})
+        try:
+            users_list = await self.user_repo.get_by_ids(db, user_ids)
+        except Exception as exc:  # defensive — lookup failures must never break autocomplete
+            flogger.debug(f"Batch user lookup failed for guild {guild_id}: {exc}")
+            users_list = []
+
+        user_by_id: dict[int, object] = {u.id: u for u in users_list}
+
+        def _resolve_name(player_id: int) -> str | None:
+            player = player_by_id.get(player_id)
+            if player is None:
+                return None
+            user = user_by_id.get(player.user_id)
+            if user and user.discord_username:
+                return user.discord_username
+            return None
+
+        return [(duel, _resolve_name(duel.challenger_id), _resolve_name(duel.target_id)) for duel in duels]
 
     # ------------------------------------------------------------------
     # Admin: cancel all pending duels for a guild

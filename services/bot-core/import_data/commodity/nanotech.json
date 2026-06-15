@@ -1,0 +1,29 @@
+{
+  "_name": "Nanotech",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/Gh8mKv59/nanotech.png",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Nanotech",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Nanotech",
+    "Type": "Commodity",
+    "Tech Level": "7",
+    "Price Range": "-> 143$ (Suteo)\n-> 417$ (Ni'mrrod)",
+    "GoF 3D™ Price Range": "270-650 Cr."
+  },
+  "stats": {
+    "tech_level": 7,
+    "price_range_min_credits": 143,
+    "price_range_min_system": "Suteo",
+    "price_range_max_credits": 417,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 280,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Tiny particles that remain hidden from the naked eye that can be very useful. For example, there are nanobots that can transport medicine to certain hard-to-reach parts of the body and cure contagious diseases.",
+  "mechanics_text": [
+    "Required for blueprints: 7t Icarus Heavy AS, 7t Gamma Shield II, 8t 128MJ Railgun, 25t Disruptor Laser, 65t Fluxed Matter Shield, 65t Particle Shield, 90t Gunant's Drill."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 7", "GoF1", "GOF2", "Technical commodities", "Blueprints", "Freelance Missions", "GOF2HD", "GOF3D"]
+}

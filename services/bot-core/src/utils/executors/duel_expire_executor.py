@@ -118,13 +118,15 @@ async def _push_duel_cache(parent_job_id: str, guild_id: int, player_id: int) ->
             f"/{quote(str(safe_guild), safe='')}/{quote(str(safe_player), safe='')}"
         )
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
+            from shared.http_retry import with_transient_retry  # deferred — avoids forkserver mock-shared collision
+
+            await with_transient_retry(
+                client.post,
                 cache_url,
                 json={"pending_duels": [], "outgoing_duels": []},
                 headers=headers,
                 timeout=5,
             )
-        resp.raise_for_status()
         flogger.debug(f"DuelExpireJob[{parent_job_id}] duel cache push OK for guild={guild_id} player={player_id}")
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.warning(

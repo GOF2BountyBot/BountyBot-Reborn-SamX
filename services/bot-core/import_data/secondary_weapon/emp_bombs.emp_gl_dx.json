@@ -5,12 +5,20 @@
     "GL DX"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 4,
   "icon": "https://i.postimg.cc/65YfVJFB/emp-gl-dx.png",
-  "loading speed": 0,
+  "loading speed": 5200,
   "name": "EMP GL DX",
-  "value": 0,
+  "value": 346,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "emp_bombs"
+  "techLevel": 6,
+  "extra_atts": {
+    "loading_speed_ms": 5200,
+    "range_m": 3600,
+    "speed_km_h": 2500,
+    "subtype": "emp-bomb",
+    "magnitude_m": 18500,
+    "emp_damage": 300
+  }
 }

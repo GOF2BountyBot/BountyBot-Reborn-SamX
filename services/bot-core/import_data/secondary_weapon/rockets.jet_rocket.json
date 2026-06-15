@@ -1,12 +1,20 @@
 {
   "aliases": [],
   "builtIn": false,
-  "damage": 0,
+  "damage": 70,
   "icon": "https://i.postimg.cc/LsZW08Mt/jet-rocket.png",
-  "loading speed": 0,
+  "loading speed": 900,
   "name": "Jet Rocket",
-  "value": 0,
+  "value": 31,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "rockets"
+  "techLevel": 3,
+  "extra_atts": {
+    "loading_speed_ms": 900,
+    "range_m": 1100,
+    "speed_km_h": 3500,
+    "subtype": "rocket",
+    "steerable": false,
+    "emp_damage": 0
+  }
 }

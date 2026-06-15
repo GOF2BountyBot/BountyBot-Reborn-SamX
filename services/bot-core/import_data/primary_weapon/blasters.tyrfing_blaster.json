@@ -8,8 +8,15 @@
   "icon": "https://i.postimg.cc/DwCgdkJq/tyrfing-blaster.png",
   "name": "Tyrfing Blaster",
   "techLevel": 9,
-  "value": 97683,
+  "value": 91455,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Tyrfing_Blaster",
   "type": "PrimaryWeapon",
-  "subtype": "blasters"
+  "extra_atts": {
+    "loading_speed_ms": 220,
+    "range_m": 1300,
+    "damage_per_shot": 13,
+    "speed_km_h": 4750,
+    "subtype": "blaster",
+    "mechanics_text": "## In-Game Description\nThis weapon is the pinnacle of the Hervarar series - almost as deadly as the Gram Blaster, but much faster. In the wrong hands, this weapon poses an enormous threat.\n\n## Notes\nLike the Ridil Blaster, the game's description of this weapon falsely implies that this weapon deals less damage than the Gram Blaster. In reality, the Tyrfing Blaster surpasses the Gram and Ridil Blasters in both damage and loading speed. Like the Ridil Blaster though, the Tyrfing Blaster has less range than the Gram Blaster, something that the Gram Blaster lacks in the first place. In terms of damage, the M6 series all do more, but less per second. Its range makes it only useful once you have closed in on the target."
+  }
 }

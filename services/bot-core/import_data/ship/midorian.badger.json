@@ -52,5 +52,9 @@
     "/app/data/game-objects/items/ships/Midorian/Badger.bbship/ship_003_midorian_normal_specular.png",
     "/app/data/game-objects/items/ships/Midorian/Badger.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Midorian/Badger.bbship/ship_003_midorian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Badger.bbship/ship_003_midorian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 38709,
+    "mechanics_text": "## In-Game Description\nThe Badger is a solid ship built by the Mido. With primary and secondary weapon slots, it can be a formidable opponent.\n\n## Trivia\n*The Badger is a Starter Ship.\n*It has the name of a Terran animal.\n*It has the typical 'nose down' cockpit Mido design.\n*The Badger resembles the Nuyang II, with a similar cockpit and a similar engine layout."
+  }
 }

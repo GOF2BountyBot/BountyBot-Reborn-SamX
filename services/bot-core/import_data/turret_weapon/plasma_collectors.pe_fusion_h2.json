@@ -9,9 +9,14 @@
   "icon": "https://i.postimg.cc/k5651K4T/pe-fusion-h2.png",
   "name": "PE Fusion H2",
   "techLevel": 9,
-  "value": 631720,
+  "value": 619804,
   "automatic": false,
   "wiki": "https://galaxyonfire.fandom.com/wiki/PE_Fusion_H2",
   "type": "TurretWeapon",
-  "subtype": "plasma_collectors"
+  "extra_atts": {
+    "range_m": 6000,
+    "speed_km_h": 1500,
+    "subtype": "plasma-collector",
+    "autonomous": false
+  }
 }

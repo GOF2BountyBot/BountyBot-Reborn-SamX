@@ -42,7 +42,7 @@
   "shopSpawnRate": 9.585,
   "skinnable": true,
   "textureRegions": 1,
-  "value": 16038,
+  "value": 16200,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Betty",
   "assets": [
     "/app/data/game-objects/items/ships/Midorian/Betty.bbship/Betty_Full.mtl",
@@ -52,5 +52,8 @@
     "/app/data/game-objects/items/ships/Midorian/Betty.bbship/ship_000_midorian_normal_specular.png",
     "/app/data/game-objects/items/ships/Midorian/Betty.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Midorian/Betty.bbship/ship_000_midorian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Betty.bbship/ship_000_midorian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 16038
+  }
 }

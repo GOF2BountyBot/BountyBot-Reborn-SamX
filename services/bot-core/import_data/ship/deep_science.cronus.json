@@ -23,5 +23,9 @@
   "textureRegions": -1,
   "value": 1200000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Cronus",
-  "assets": null
+  "assets": null,
+  "extra_atts": {
+    "dlc": "Valkyrie",
+    "price_credits_android": 0
+  }
 }

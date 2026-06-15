@@ -1,12 +1,20 @@
 {
   "aliases": [],
   "builtIn": false,
-  "damage": 0,
+  "damage": 72,
   "icon": "https://i.postimg.cc/KjbCTSwn/armour-rocket.png",
-  "loading speed": 0,
+  "loading speed": 2000,
   "name": "Armour Rocket",
-  "value": 0,
+  "value": 54,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "rockets"
+  "techLevel": 5,
+  "extra_atts": {
+    "loading_speed_ms": 2000,
+    "range_m": 1100,
+    "speed_km_h": 4000,
+    "subtype": "rocket",
+    "steerable": false,
+    "emp_damage": 24
+  }
 }

@@ -1,0 +1,25 @@
+{
+  "_name": "Iron Core",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/rsyQc87Y/iron-core.png",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Iron_Core",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Ore core",
+    "Tech level": "3",
+    "Known Price Range": "-> 114$ (Suteo)\n-> 174$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 114,
+    "price_range_min_system": "Suteo",
+    "price_range_max_credits": 174,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 144,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Asteroids are divided into different classes, which are visible after scanning. Ore cores are only found in the Class A variety and are the precious essence of asteroids.",
+  "mechanics_text": [],
+  "wiki_categories": ["Commodities", "Core", "GOF2", "Trading commodities", "Tech level 3", "GOF2HD", "Minigames", "Mining"]
+}

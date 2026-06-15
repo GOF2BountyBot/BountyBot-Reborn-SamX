@@ -10,9 +10,15 @@
   "icon": "https://i.postimg.cc/K8KFxF2z/hammerhead-d2a2.png",
   "name": "Hammerhead D2A2",
   "techLevel": 6,
-  "value": 77097,
+  "value": 71150,
   "automatic": false,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Hammerhead_D2A2",
   "type": "TurretWeapon",
-  "subtype": "manual"
+  "extra_atts": {
+    "loading_speed_ms": 280,
+    "range_m": 5500,
+    "speed_km_h": 8000,
+    "autonomous": false,
+    "damage_per_shot": 10
+  }
 }

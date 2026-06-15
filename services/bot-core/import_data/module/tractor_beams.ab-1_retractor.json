@@ -11,6 +11,9 @@
   "techLevel": 4,
   "timeToLock": 4,
   "type": "TractorBeamModule",
-  "value": 8962,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-1_\"Retractor\""
+  "value": 8516,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-1_\"Retractor\"",
+  "extra_atts": {
+    "time_to_lock_s": 4.0
+  }
 }

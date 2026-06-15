@@ -6,7 +6,7 @@ This file provides detailed guidance for AI agents working on utility modules in
 
 ## New Autocomplete Helpers (A.37, 2026-04-22)
 
-`autocomplete_helpers.py` now exports two new helpers:
+`autocomplete_helpers.py` exports two equip-flow helpers:
 
 - **`player_equippable_autocomplete`** — items in player inventory that can be equipped
   (item_type in `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`, not already on active ship)
@@ -15,24 +15,26 @@ This file provides detailed guidance for AI agents working on utility modules in
 
 **Surface gating constant** `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES` mirrors
 `GameConstants.CURRENTLY_ENABLED_TYPES` (minus "ship"). Currently:
-`{"primary_weapon", "turret_weapon", "module"}` — secondary_weapon excluded.
+`{"primary_weapon", "turret_weapon", "module", "secondary_weapon"}` —
+secondary_weapon was added in CI-5/CI-16.
 
-When secondary weapons ship: update BOTH this constant AND bot-core's
+When new item types are enabled: update BOTH this constant AND bot-core's
 `GameConstants.CURRENTLY_ENABLED_TYPES` in the same PR.
 
 ---
 
 ## Overview
 
-This directory contains **9 utility modules** shared across cogs and REST routers. They provide:
+This directory contains **11 utility modules** shared across cogs and REST routers. They provide:
 - Bidirectional conversion between Discord objects and JSON/API payloads
 - Discord exception → HTTP exception mapping
 - Permission evaluation and flag registry
 - Embed formatting utilities
 - Command validation and cooldown management
-- Autocomplete normalization and shared autocomplete helpers
+- Autocomplete normalization, shared caches, warm jobs, and shared autocomplete helpers
+- Guild infrastructure setup (roles/category/channels) for `/admin_setup`
 
-These modules contain **no business logic** — they are pure conversion and validation utilities.
+Most modules contain **no business logic** — they are conversion and validation utilities. The exceptions are `guild_setup.py` (game-channel/role provisioning) and the autocomplete modules (cache state + warm scheduling).
 
 ---
 
@@ -40,15 +42,17 @@ These modules contain **no business logic** — they are pure conversion and val
 
 | File | Key Classes/Functions | Consumer |
 |------|-----------------------|----------|
-| `autocomplete_utils.py` | `normalize_for_search()` | Cogs — accent/apostrophe/hyphen-insensitive string normalization for autocomplete filters |
+| `autocomplete_utils.py` | `normalize_for_search()`, `fuzzy_filter()`, `resolve_system_name()` | Cogs — accent/apostrophe/hyphen-insensitive string normalization and fuzzy matching for autocomplete filters |
 | `autocomplete_helpers.py` | `resolve_player_id()`, `player_ships_autocomplete()`, `player_inventory_autocomplete()`, `player_equippable_autocomplete()`, `player_equipped_autocomplete()` | Cogs — shared autocomplete logic for player-scoped ships and inventory items |
-| `autocomplete_state.py` | `init()`, `player_cache`, `inventory_cache`, `ships_cache`, `get_player()`, `get_player_id()`, `set_player()`, `set_inventory()`, `set_ships()`, `invalidate_player()`, `invalidate_inventory()`, `invalidate_ships()`, `clear_all()`, `NormalizedChoice` | All cogs — shared module-level cache state; must be initialized once from `bot.py` lifespan |
-| `autocomplete_warm.py` | `warm_autocomplete_caches()`, APScheduler job registration | `bot.py` — startup warm + recurring APScheduler re-warm jobs for `player_cache`, `inventory_cache`, `ships_cache` |
+| `autocomplete_state.py` | `init()`, `player_cache`, `inventory_cache`, `ships_cache`, `get_player()`, `get_player_id()`, `set_player()`, `set_inventory()`, `set_ships()`, `invalidate_player()`, `invalidate_inventory()`, `invalidate_ships()`, `clear_all()`, `get_http_client()`, `get_api_base()`, `NormalizedChoice` | All cogs — shared module-level cache state; must be initialized once from `bot.py` lifespan |
+| `autocomplete_warm.py` | `register_warm_jobs()`, `warm_guild_*()`, `refresh_*()` | `GatewayBot.on_ready` — startup warm waves + 8 recurring APScheduler refresh jobs (player, loadout, jobs, shop, bounty, duel, admin-duel, combat-log) |
 | `command_utils.py` | `CommandValidator`, `CommandHandler`, `get_command_handler()` | `bot.py`, prefix commands |
 | `discord_converters.py` | `GuildConverter`, `ChannelConverter`, `RoleConverter`, `UserConverter`, `MessageConverter`, `PermissionConverter` | REST routers |
 | `discord_helpers.py` | `resolve_bot()`, `get_entity_or_404()`, `handle_discord_exception()`, `normalize_emoji()`, `tag_to_dict()`, `tags_to_edit_payload()` | REST routers |
 | `embed_converter.py` | `EmbedConverter` | Cogs, REST routers, `discord_converters.py` |
+| `guild_setup.py` | `ensure_bountybot_infrastructure()` | `adminCog` `/admin_setup` — creates/repairs Bounty Hunter + tier + Shop Announcements roles, `BountyBot` category, and the game channels (bounty boards per tier, shop, bounty-hunting, bounty-discussions, bot-images) |
 | `permission_utils.py` | `PERMISSION_FLAGS`, `calculate_effective_permissions()`, `check_permission()`, `evaluate_user_guild_permissions()`, etc. | REST routers |
+| `timestamp_utils.py` | `iso_to_discord_ts()` | Cogs — ISO timestamp → Discord `<t:...>` markup |
 
 ---
 
@@ -63,10 +67,13 @@ single source of truth.
 ### Key properties
 - **Silent degradation.** Every helper returns `[]` on any error — Discord
   autocomplete has no user-visible error surface.
-- **Short timeout (3s default).** Keystroke-triggered, so snappy responses
-  matter more than completeness.
-- **No module-level state.** All helpers accept the caller's `httpx.AsyncClient`
-  so tests can substitute a mocked client without monkeypatching.
+- **Cache-backed (Phase 4).** The `*_autocomplete` helpers read from
+  `autocomplete_state.player_cache` / `ships_cache` / `inventory_cache` —
+  zero HTTP on the keystroke hot path. The `http_client`, `api_base`, and
+  `timeout` parameters are **unused** and retained only for call-site
+  backward compatibility.
+- **No helper-owned module state.** Shared state lives in
+  `autocomplete_state`, initialized once from the `bot.py` lifespan.
 
 ### Functions
 
@@ -77,7 +84,7 @@ from utils.autocomplete_helpers import (
     player_inventory_autocomplete,
 )
 
-# Upsert-style player ID lookup (returns None on any failure)
+# Player ID lookup via player_cache (returns None on any failure)
 player_id = await resolve_player_id(
     http_client, api_base, user_id, guild_id, timeout=3.0
 )
@@ -97,11 +104,12 @@ choices = await player_inventory_autocomplete(
 
 ### Consumers
 - `shipsCog`: `/ship`, `/nickname`, `/setactive` (all delegate to `player_ships_autocomplete`)
-- `inventoryCog`: `/item` (delegates to `player_inventory_autocomplete`)
+- `inventoryCog`: `/item` (`player_inventory_autocomplete`), `/equip`
+  (`player_equippable_autocomplete`), `/give` ship param
+  (`player_ships_autocomplete` with `exclude_active=True`)
 
-Migration of `/equip`/`/unequip`/`/give` autocompletes to this helper is
-deferred — keep their existing inline implementations unless a targeted
-refactor is scoped.
+`/unequip` keeps an inline cache-based implementation in `inventoryCog.py`
+(scans the active ship's loadout slots and prepends the B.90 `all` sentinel).
 
 ---
 
@@ -555,7 +563,7 @@ All converters use `getattr(obj, "attr", default)` to handle partially initializ
 `permission_utils.py` mirrors Discord's own permission model exactly (bitfield arithmetic, overwrite precedence, Administrator bypass). Do not simplify or change the permission evaluation order.
 
 ### 4. No circular imports
-Utility modules import only from `api/schemas/` — they never import from `cogs/` or `api/routers/`. Cogs and routers import from `utils/` but not vice versa.
+Utility modules import only from `api/schemas/` — never from `api/routers/` or cog command modules. One sanctioned exception: `autocomplete_state.py` imports the `AutocompleteCache` base class from `cogs/_shared/autocomplete_cache.py` (a non-cog helper sub-package). Cogs and routers import from `utils/`, not vice versa.
 
 ---
 
@@ -565,11 +573,19 @@ All utility modules have corresponding test files in `tests/utils/`:
 
 ```
 tests/utils/
+├── test_autocomplete_helpers.py
+├── test_autocomplete_state.py
+├── test_autocomplete_utils.py
+├── test_autocomplete_warm.py
 ├── test_command_utils.py
+├── test_d9t3_warm_retry.py
 ├── test_discord_converters.py
 ├── test_discord_helpers.py
 ├── test_embed_converter.py
-└── test_permission_utils.py
+├── test_guild_setup.py
+├── test_guild_setup_shop_role.py
+├── test_permission_utils.py
+└── test_timestamp_utils.py
 ```
 
 For `discord_converters.py` tests, use the `mocks/` directory for pre-built Discord object mocks that mirror real Discord.py object structure.
@@ -578,4 +594,4 @@ For `embed_converter.py`, use `EmbedConverter.test_round_trip_consistency()` to 
 
 ---
 
-*Last updated: 2026-05-16*
+*Last updated: 2026-06-11*

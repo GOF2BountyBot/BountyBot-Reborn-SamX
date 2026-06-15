@@ -36,7 +36,7 @@ if "shared" not in sys.modules:
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
 
-from services.bounty_service import BountyService, CheckResult
+from services.bounty_service import BountyService, CheckResult, _extract_secondary_combat_fields, get_secondary_subtype
 
 # ---------------------------------------------------------------------------
 # Module-level autouse fixture: patch LoadoutBuilder.from_player
@@ -88,6 +88,7 @@ def _make_ship(
     max_primaries: int = 1,
     max_modules: int = 3,
     max_turrets: int = 0,
+    max_secondaries: int = 0,
 ) -> SimpleNamespace:
     """Return a Ship-like SimpleNamespace."""
     return SimpleNamespace(
@@ -96,6 +97,7 @@ def _make_ship(
         max_primaries=max_primaries,
         max_modules=max_modules,
         max_turrets=max_turrets,
+        max_secondaries=max_secondaries,
     )
 
 
@@ -120,6 +122,45 @@ def _make_module(
     return SimpleNamespace(name=name, value=value, tech_level=tech_level, type=type, extra_atts=extra_atts)
 
 
+def _make_secondary(
+    name: str = "Nuke",
+    value: int = 10000,
+    dps: float = 0.0,
+    tech_level: int = 1,
+    damage: int = 800,
+    subtype: str = "nuke",
+    loading_speed_ms: int = 3000,
+    range_m: float = 2000.0,
+    burst_count: int = 0,
+    emp_damage: int = 0,
+    magnitude_m: float = 500.0,
+    steerable: bool = True,
+) -> SimpleNamespace:
+    """Return a SecondaryWeapon-like SimpleNamespace for CI-17 tests.
+
+    The extra_atts dict uses the DB nesting pattern: combat-relevant fields
+    live in the inner extra_atts dict.
+    """
+    inner = {
+        "subtype": subtype,
+        "loading_speed_ms": loading_speed_ms,
+        "range_m": range_m,
+        "burst_count": burst_count,
+        "emp_damage": emp_damage,
+        "magnitude_m": magnitude_m,
+        "steerable": steerable,
+    }
+    return SimpleNamespace(
+        name=name,
+        value=value,
+        dps=dps,
+        tech_level=tech_level,
+        damage=damage,
+        emoji=None,
+        extra_atts={"extra_atts": inner},
+    )
+
+
 def _setup_mock_db_query(mock_db, return_value):
     """Configure mock_db.execute() to return a value via .scalars().all()."""
     scalars = MagicMock()
@@ -142,6 +183,14 @@ def service() -> BountyService:
     B.49: config_repo is also replaced so that check_bounty / spawn_bounty can
     call get_by_guild_id without going to the real DB.  The default return value
     is None which causes resolve_constant to fall back to global GameConstants.
+
+    X3-bounty: bounty_repo.get_by_id_for_update is configured as an AsyncMock
+    with a side_effect that looks up the bounty by ID from whatever
+    get_active_by_guild_and_division.return_value is set to at call time.
+    This means tests that set get_active_by_guild_and_division.return_value = [bounty]
+    automatically get the correct bounty returned by get_by_id_for_update without
+    needing an extra line in every test.  Tests that need a specific override can
+    overwrite get_by_id_for_update.side_effect or return_value directly.
     """
     svc = BountyService()
     svc.bounty_repo = MagicMock()
@@ -150,6 +199,26 @@ def service() -> BountyService:
     svc.player_repo = MagicMock()
     svc.config_repo = MagicMock()
     svc.config_repo.get_by_guild_id = AsyncMock(return_value=None)
+
+    # X3-bounty: auto-route get_by_id_for_update to the correct bounty from the
+    # active-bounties list configured via get_active_by_guild_and_division.return_value.
+    # The side_effect runs at call-time, so it reads whatever return_value the test set.
+    async def _for_update_side_effect(_db, bounty_id):
+        rv = svc.bounty_repo.get_active_by_guild_and_division.return_value
+        if rv is None:
+            return None
+        # rv may be a coroutine return value (from AsyncMock) or a plain list
+        active = rv if isinstance(rv, list) else []
+        for b in active:
+            if getattr(b, "id", None) == bounty_id:
+                return b
+        return None
+
+    svc.bounty_repo.get_by_id_for_update = AsyncMock(side_effect=_for_update_side_effect)
+    # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids (batched).
+    # Default to empty list; tests that need payout breakdown content can override.
+    svc.player_repo.get_by_ids = AsyncMock(return_value=[])
+
     return svc
 
 
@@ -432,9 +501,11 @@ async def test_generate_loadout_returns_valid_dict(service, mock_db):
         "ship_max_primaries",
         "ship_max_modules",
         "ship_max_turrets",
+        "ship_max_secondaries",
         "weapons",
         "modules",
         "turrets",
+        "secondaries",
         "total_value",
     }
     assert expected_keys == set(result.keys())
@@ -1183,8 +1254,17 @@ def check_bounty_setup(service, mock_db):
 
     LoadoutBuilder.from_player is already mocked globally by the _mock_loadout_builder_from_player
     autouse fixture, so tests here don't need real DB calls inside the loadout builder.
+
+    X3-bounty: get_by_id_for_update is now called inside _process_single_bounty_check to acquire
+    a row-level lock before reading the checked map.  The service() fixture configures a smart
+    side_effect on get_by_id_for_update that auto-routes by ID from the active bounties list.
+    Tests only need to set get_active_by_guild_and_division.return_value = [bounty] and the
+    lock lookup automatically finds the correct bounty.
     """
     service.player_repo.get_by_id = AsyncMock()
+    # P6-T1: _build_payout_breakdown now calls get_by_ids (batched) instead of get_by_id.
+    # Default to empty list; tests that assert on payout content can override.
+    service.player_repo.get_by_ids = AsyncMock(return_value=[])
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
     service.bounty_repo.update = AsyncMock()
     return service, mock_db
@@ -1197,9 +1277,14 @@ def _make_player(
     bounty_cooldown_end=None,
     active_ship=None,
 ) -> SimpleNamespace:
-    """Return a Player-like SimpleNamespace."""
+    """Return a Player-like SimpleNamespace.
+
+    T10: guild_id and user_id added so fight_ships callsites can extract them.
+    """
     return SimpleNamespace(
         id=player_id,
+        user_id=player_id * 1000,  # T10: Discord user_id for combat_log
+        guild_id=9999,  # T10: guild_id for combat_log
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
@@ -1225,6 +1310,7 @@ def _make_active_bounty(
         answer=answer,
         criminal_name=criminal_name,
         checked=checked,
+        status="active",  # X3-bounty: _process_single_bounty_check now checks status under lock
     )
 
 
@@ -1265,6 +1351,7 @@ async def test_check_bounty_cooldown_expired(check_bounty_setup):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Beta", guild_id=1)
@@ -1281,6 +1368,7 @@ async def test_check_bounty_not_found(check_bounty_setup):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Nonexistent", guild_id=1)
 
@@ -1297,6 +1385,7 @@ async def test_check_bounty_already_checked(check_bounty_setup):
     bounty = _make_active_bounty(checked={"Alpha": -1, "Beta": 42, "Gamma": -1, "Sol": -1, "Omega": -1})
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Beta", guild_id=1)
 
@@ -1313,6 +1402,7 @@ async def test_check_bounty_incorrect(check_bounty_setup):
     bounty = _make_active_bounty(route=["Alpha", "Beta", "Gamma", "Sol", "Omega"], answer="Sol")
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
@@ -1333,6 +1423,7 @@ async def test_check_bounty_correct(check_bounty_setup):
     bounty.criminal_ship = {}
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
     service.calc_rewards = AsyncMock(
         return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
@@ -1358,6 +1449,7 @@ async def test_check_bounty_applies_cooldown(check_bounty_setup):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     before = datetime.now(UTC)
@@ -1375,6 +1467,7 @@ async def test_check_bounty_updates_checked_dict(check_bounty_setup):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     await service.check_bounty(mock_db, player_id=7, system_name="Alpha", guild_id=1)
@@ -1395,6 +1488,7 @@ async def test_check_bounty_proximity_hint(check_bounty_setup):
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty: lock before read
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Gamma", guild_id=1)
@@ -1419,6 +1513,7 @@ async def test_check_bounty_no_proximity_hint_far(service, mock_db):
     )
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.get_by_id_for_update = AsyncMock(return_value=bounty)  # X3-bounty
     service.bounty_repo.update = AsyncMock(return_value=bounty)
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="A", guild_id=1)
@@ -1435,6 +1530,7 @@ async def test_check_bounty_classic_mode_uses_bronze(service, mock_db):
     bounty = _make_active_bounty()
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.get_by_id_for_update = AsyncMock(return_value=bounty)  # X3-bounty
     service.bounty_repo.update = AsyncMock(return_value=bounty)
 
     await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
@@ -1448,6 +1544,7 @@ async def test_check_bounty_recently_spotted_when_1_stop_behind(service, mock_db
     """Returns recently_spotted=True when checked system is 1 stop behind the answer."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player()
@@ -1459,6 +1556,7 @@ async def test_check_bounty_recently_spotted_when_1_stop_behind(service, mock_db
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Gamma", guild_id=1)
@@ -1473,6 +1571,7 @@ async def test_check_bounty_recently_spotted_when_2_stops_behind(service, mock_d
     """Returns recently_spotted=True when checked system is 2 stops behind the answer."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player()
@@ -1484,6 +1583,7 @@ async def test_check_bounty_recently_spotted_when_2_stops_behind(service, mock_d
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="B", guild_id=1)
@@ -1497,6 +1597,7 @@ async def test_check_bounty_not_recently_spotted_when_3_or_more_stops_behind(ser
     """Returns recently_spotted=False when checked system is 3+ stops behind the answer."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player()
@@ -1508,6 +1609,7 @@ async def test_check_bounty_not_recently_spotted_when_3_or_more_stops_behind(ser
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="A", guild_id=1)
@@ -1521,6 +1623,7 @@ async def test_check_bounty_not_recently_spotted_when_ahead_of_answer(service, m
     """Returns recently_spotted=False when checked system is AHEAD of the answer on the route."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player()
@@ -1532,6 +1635,7 @@ async def test_check_bounty_not_recently_spotted_when_ahead_of_answer(service, m
     )
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="B", guild_id=1)
@@ -1561,12 +1665,14 @@ async def test_check_bounty_not_on_cooldown_cooldown_until_is_none(service, mock
     """Returns cooldown_until=None when player is not on cooldown."""
     service.player_repo.get_by_id = AsyncMock()
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
     service.bounty_repo.update = AsyncMock()
 
     player = _make_player(bounty_cooldown_end=None)
     bounty = _make_active_bounty()
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty  # X3-bounty
     service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
@@ -1589,11 +1695,31 @@ def combat_integration_setup(service, mock_db):
 
     LoadoutBuilder.from_player is already mocked globally by the _mock_loadout_builder_from_player
     autouse fixture. Individual tests override this patch when they need a specific ship name.
+
+    X3-bounty: get_by_id_for_update is now called inside _process_single_bounty_check.
+    The service() fixture's smart side_effect auto-routes by bounty ID from whatever
+    get_active_by_guild_and_division.return_value is set to.
     """
     service.player_repo.get_by_id = AsyncMock()
+    # P6-T1: _build_payout_breakdown now calls get_by_ids (batched) instead of get_by_id.
+    # Default to empty list so check_bounty tests that don't assert on payout content still pass.
+    service.player_repo.get_by_ids = AsyncMock(return_value=[])
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
     service.bounty_repo.update = AsyncMock()
     service.combat_service = MagicMock()
+    # T10: fight_ships is async — default stalemate (caller can override)
+    _fs = SimpleNamespace(ship_name="Ship", raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None)
+    service.combat_service.fight_ships = AsyncMock(
+        return_value=SimpleNamespace(
+            winner_name=None,
+            loser_name=None,
+            is_stalemate=True,
+            ship1_stats=_fs,
+            ship2_stats=_fs,
+            combat_log_id=None,
+            winner_side=None,
+        )
+    )
     return service, mock_db
 
 
@@ -1672,9 +1798,10 @@ async def test_check_bounty_correct_player_wins_combat(combat_integration_setup)
         is_stalemate=False,
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -1730,9 +1857,10 @@ async def test_check_bounty_correct_bronze_player_loses_combat_still_captured(co
         is_stalemate=False,
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -1779,9 +1907,10 @@ async def test_check_bounty_correct_silver_player_loses_combat(combat_integratio
         is_stalemate=False,
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -1797,8 +1926,8 @@ async def test_check_bounty_correct_silver_player_loses_combat(combat_integratio
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_correct_stalemate_counts_as_win(combat_integration_setup):
-    """Stalemate result counts as player win (legacy behavior) — bronze bonus path."""
+async def test_check_bounty_correct_stalemate_no_bonus(combat_integration_setup):
+    """Stalemate counts as a loss for the bronze bonus — capture succeeds, no 2× bonus (spec §9)."""
     from services.bounty_service import RewardInfo
 
     service, mock_db = combat_integration_setup
@@ -1817,9 +1946,10 @@ async def test_check_bounty_correct_stalemate_counts_as_win(combat_integration_s
         is_stalemate=True,
         ship1_stats=_fight_stats1,
         ship2_stats=_fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=None,  # P2-T8b: stalemate has no winner side
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -1833,9 +1963,11 @@ async def test_check_bounty_correct_stalemate_counts_as_win(combat_integration_s
     result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
 
     assert result.result == CheckResult.CORRECT
-    assert result.combat_won is True
-    # Bronze: stalemate → bonus_won=True (stalemate counts as win for bonus)
-    assert result.bonus_won is True
+    assert result.combat_won is True  # Bronze capture is automatic regardless of fight outcome
+    # Bronze: stalemate → bonus_won=False (stalemate counts as a loss for the bonus)
+    assert result.bonus_won is False
+    assert result.total_reward == 600  # not doubled
+    service._award_combat_bonus.assert_not_called()
     assert "captured" in result.message.lower() or "cr" in result.message
 
 
@@ -1850,7 +1982,7 @@ async def test_check_bounty_correct_no_criminal_ship_data(combat_integration_set
     bounty = _make_active_bounty(answer="Sol")
     bounty.criminal_ship = None  # no ship data
 
-    # With both sides having 0 DPS, result is a stalemate → player wins bonus
+    # With both sides having 0 DPS, result is a stalemate → capture still succeeds (no bonus)
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
     service.bounty_repo.update.return_value = bounty
@@ -1894,7 +2026,7 @@ async def test_check_bounty_correct_combat_with_full_criminal_loadout(combat_int
         ship_name="Bandit", raw_hp=150, raw_dps=30.0, varied_hp=148, varied_dps=30.0, ttk=None
     )
 
-    def capture_fight(p_loadout, c_loadout, **kwargs):
+    async def capture_fight(p_loadout, c_loadout, **kwargs):
         captured_loadouts["player"] = p_loadout
         captured_loadouts["criminal"] = c_loadout
         return SimpleNamespace(
@@ -1903,10 +2035,11 @@ async def test_check_bounty_correct_combat_with_full_criminal_loadout(combat_int
             is_stalemate=False,
             ship1_stats=_fight_stats1,
             ship2_stats=_fight_stats2,
-            variance_percent=0.05,
+            combat_log_id=None,
+            winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
         )
 
-    service.combat_service.fight_ships.side_effect = capture_fight
+    service.combat_service.fight_ships = capture_fight
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3177,9 +3310,14 @@ def _make_player_with_tier(
     bounty_cooldown_end=None,
     active_ship=None,
 ) -> SimpleNamespace:
-    """Return a Player-like SimpleNamespace with an active_ship but no active_ship_id."""
+    """Return a Player-like SimpleNamespace with an active_ship but no active_ship_id.
+
+    T10: guild_id and user_id added so fight_ships callsites can extract them.
+    """
     return SimpleNamespace(
         id=player_id,
+        user_id=player_id * 1000,  # T10: Discord user_id for combat_log
+        guild_id=9999,  # T10: guild_id for combat_log
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
@@ -3243,9 +3381,10 @@ async def test_check_bounty_bronze_with_ship_bonus_won(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3299,9 +3438,10 @@ async def test_check_bounty_bronze_with_ship_bonus_lost(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3345,9 +3485,10 @@ async def test_check_bounty_silver_mandatory_combat_win(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3397,9 +3538,10 @@ async def test_check_bounty_silver_mandatory_combat_loss_resets_checks(service, 
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3442,9 +3584,10 @@ async def test_check_bounty_gold_mandatory_combat_win(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3466,8 +3609,8 @@ async def test_check_bounty_gold_mandatory_combat_win(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_silver_stalemate_counts_as_win(service, mock_db):
-    """Silver player — stalemate counts as player win (bounty captured)."""
+async def test_check_bounty_silver_stalemate_criminal_escapes(service, mock_db):
+    """Silver player — stalemate follows the loss path: criminal escapes, checks reset (spec §9)."""
     from services.bounty_service import RewardInfo
 
     service.player_repo.get_by_id = AsyncMock()
@@ -3488,9 +3631,10 @@ async def test_check_bounty_silver_stalemate_counts_as_win(service, mock_db):
         is_stalemate=True,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=None,  # P2-T8b: stalemate has no winner side
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3499,11 +3643,15 @@ async def test_check_bounty_silver_stalemate_counts_as_win(service, mock_db):
         return_value=[RewardInfo(player_id=1, credits_earned=600, xp_earned=60, is_winner=True)]
     )
     service.distribute_rewards = AsyncMock(return_value=[])
+    service._reset_bounty_checks = AsyncMock()
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
 
     assert result.result == CheckResult.CORRECT
-    assert result.combat_won is True  # Stalemate = player win for silver+
+    assert result.combat_won is False  # Stalemate = criminal escapes for silver+
+    assert "stalemate" in result.message.lower()
+    service._reset_bounty_checks.assert_called_once_with(mock_db, bounty)
+    service.calc_rewards.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -3558,9 +3706,10 @@ async def test_check_bounty_bronze_combat_result_serialized(service, mock_db):
         is_stalemate=False,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3604,9 +3753,10 @@ async def test_check_bounty_silver_combat_result_serialized(service, mock_db):
         is_stalemate=False,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
@@ -3625,6 +3775,137 @@ async def test_check_bounty_silver_combat_result_serialized(service, mock_db):
     assert result.combat_result is not None
     assert result.combat_result["winner_name"] == "Groza"
     assert "ship1_stats" in result.combat_result
+
+
+# ===========================================================================
+# P2-T8b: Same-name ship tests — id/side keying for win determination
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_bronze_same_name_criminal_wins_no_bonus(service, mock_db):
+    """P2-T8b SAME-NAME anti-vacuous: player and criminal share the same ship name.
+
+    Criminal wins (winner_side=2). A name-keyed impl (winner_name == player_loadout.ship_name)
+    would incorrectly assign bonus_won=True because winner_name == criminal_ship_name
+    == player_ship_name.  The side-keyed impl (winner_side == 1) correctly yields
+    bonus_won=False.
+    """
+    from services.bounty_service import RewardInfo
+    from services.combat_models import ShipLoadout
+
+    service.player_repo.get_by_id = AsyncMock()
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.update = AsyncMock()
+    service.combat_service = MagicMock()
+
+    shared_name = "CloneShip"
+    active_ship = SimpleNamespace(ship_name=shared_name, armour=100)
+    player = _make_player_with_tier(tier="Bronze", active_ship=active_ship)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {"ship_name": shared_name, "ship_armour": 500, "weapons": [], "turrets": []}
+
+    _fs1 = SimpleNamespace(ship_name=shared_name, raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None)
+    _fs2 = SimpleNamespace(ship_name=shared_name, raw_hp=500, raw_dps=50.0, varied_hp=500, varied_dps=50.0, ttk=2.0)
+    mock_fight = SimpleNamespace(
+        winner_name=shared_name,  # same as player ship name — name-key would be ambiguous
+        loser_name=shared_name,
+        is_stalemate=False,
+        ship1_stats=_fs1,
+        ship2_stats=_fs2,
+        combat_log_id=None,
+        winner_side=2,  # Criminal (side-2) wins — correct side-keyed determination
+    )
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
+
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=400, xp_earned=20, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+    service._award_combat_bonus = AsyncMock()
+
+    with patch(
+        "services.loadout_builder.LoadoutBuilder.from_player",
+        new=AsyncMock(return_value=ShipLoadout(ship_name=shared_name, base_armour=100)),
+    ):
+        result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True  # Bronze: auto-capture still succeeds
+    # P2-T8b: criminal won (side-2) → no bonus; a name-keyed impl would give bonus=True
+    assert result.bonus_won is False, (
+        "bonus_won must be False when criminal wins (side-2), even if player and criminal share the same ship name"
+    )
+    service._award_combat_bonus.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_silver_same_name_criminal_wins_no_duel_won(service, mock_db):
+    """P2-T8b SAME-NAME anti-vacuous: Silver player and criminal share the same ship name.
+
+    Criminal wins (winner_side=2). A name-keyed impl (winner_name == player_loadout.ship_name)
+    would incorrectly treat this as a player win (duel_won=True) because both names match.
+    The side-keyed impl (winner_side == 1) correctly yields duel_won=False → combat_won=False.
+
+    calc_rewards / distribute_rewards / _build_payout_breakdown are mocked so that
+    when a name-keyed mutation incorrectly takes the duel_won=True win-path, the code
+    completes and fails CLEANLY at the combat_won assertion (AssertionError) rather
+    than crashing with an AttributeError deep in the reward-calculation machinery.
+    """
+    from services.bounty_service import RewardInfo
+    from services.combat_models import ShipLoadout
+
+    service.player_repo.get_by_id = AsyncMock()
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.update = AsyncMock()
+    service.combat_service = MagicMock()
+
+    shared_name = "CloneShip"
+    active_ship = SimpleNamespace(ship_name=shared_name, armour=50)
+    player = _make_player_with_tier(tier="Silver", active_ship=active_ship)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {"ship_name": shared_name, "ship_armour": 1000, "weapons": [], "turrets": []}
+
+    _fs1 = SimpleNamespace(ship_name=shared_name, raw_hp=50, raw_dps=0.0, varied_hp=50, varied_dps=0.0, ttk=None)
+    _fs2 = SimpleNamespace(ship_name=shared_name, raw_hp=1000, raw_dps=99.0, varied_hp=1000, varied_dps=99.0, ttk=0.5)
+    mock_fight = SimpleNamespace(
+        winner_name=shared_name,  # same as player ship name — name-key would be ambiguous
+        loser_name=shared_name,
+        is_stalemate=False,
+        ship1_stats=_fs1,
+        ship2_stats=_fs2,
+        combat_log_id=None,
+        winner_side=2,  # Criminal (side-2) wins — correct side-keyed determination
+    )
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
+    service._reset_bounty_checks = AsyncMock()
+    # Mock the reward win-path so a name-keyed mutation (duel_won=True) completes
+    # and reaches the assertion rather than crashing inside calc_rewards/distribute_rewards.
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=500, xp_earned=25, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+    service._build_payout_breakdown = AsyncMock(return_value=None)
+
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+
+    with patch(
+        "services.loadout_builder.LoadoutBuilder.from_player",
+        new=AsyncMock(return_value=ShipLoadout(ship_name=shared_name, base_armour=50)),
+    ):
+        result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    # P2-T8b: criminal won (side-2) → combat_won=False for silver; name-keyed impl gives True
+    assert result.combat_won is False, (
+        "combat_won must be False when criminal wins (side-2), even if player and criminal share the same ship name"
+    )
+    # Reset should be called on combat loss
+    service._reset_bounty_checks.assert_awaited_once_with(mock_db, bounty)
 
 
 # ===========================================================================
@@ -3710,7 +3991,7 @@ def test_serialize_fight_results_none():
 
 
 def test_serialize_fight_results_win():
-    """Serializes a win FightResults to a dict with all expected keys."""
+    """Serializes a win FightResults to a dict with all expected keys (T10 schema)."""
     from services.bounty_service import _serialize_fight_results
 
     fight_stats1 = SimpleNamespace(
@@ -3723,7 +4004,7 @@ def test_serialize_fight_results_win():
         is_stalemate=False,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=42,
     )
 
     result = _serialize_fight_results(fight)
@@ -3732,16 +4013,19 @@ def test_serialize_fight_results_win():
     assert result["winner_name"] == "Betty"
     assert result["loser_name"] == "Bandit"
     assert result["is_stalemate"] is False
-    assert result["variance_percent"] == 0.05
+    # T10: variance_percent removed from serialized output
+    assert "variance_percent" not in result
     assert result["ship1_stats"]["ship_name"] == "Betty"
     assert result["ship1_stats"]["ttk"] == 18.57
     assert result["ship2_stats"]["ship_name"] == "Bandit"
-    # pvc_armour_buff absent when not passed
+    # T10: pvc_armour_buff retired
     assert "pvc_armour_buff" not in result
+    # T10: combat_log_id present
+    assert result["combat_log_id"] == 42
 
 
 def test_serialize_fight_results_win_with_pvc_buff():
-    """pvc_armour_buff is included in the dict when passed."""
+    """T10: pvc_armour_buff is retired — _serialize_fight_results no longer accepts it."""
     from services.bounty_service import _serialize_fight_results
 
     fight_stats1 = SimpleNamespace(
@@ -3754,17 +4038,18 @@ def test_serialize_fight_results_win_with_pvc_buff():
         is_stalemate=False,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.05,
+        combat_log_id=None,
     )
 
-    result = _serialize_fight_results(fight, pvc_armour_buff=1.5)
+    # T10: pvc_armour_buff kwarg is removed from _serialize_fight_results
+    import pytest as _pytest
 
-    assert result is not None
-    assert result["pvc_armour_buff"] == 1.5
+    with _pytest.raises(TypeError):
+        _serialize_fight_results(fight, pvc_armour_buff=1.5)  # type: ignore[call-arg]
 
 
 def test_serialize_fight_results_stalemate():
-    """Serializes a stalemate FightResults correctly."""
+    """Serializes a stalemate FightResults correctly (T10 schema)."""
     from services.bounty_service import _serialize_fight_results
 
     fight_stats1 = SimpleNamespace(ship_name="A", raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None)
@@ -3775,7 +4060,7 @@ def test_serialize_fight_results_stalemate():
         is_stalemate=True,
         ship1_stats=fight_stats1,
         ship2_stats=fight_stats2,
-        variance_percent=0.0,
+        combat_log_id=None,
     )
 
     result = _serialize_fight_results(fight)
@@ -3785,6 +4070,169 @@ def test_serialize_fight_results_stalemate():
     assert result["is_stalemate"] is True
     assert result["ship1_stats"]["ttk"] is None
     assert "pvc_armour_buff" not in result
+    assert "variance_percent" not in result
+
+
+def test_serialize_fight_results_includes_pvc_damage_reduction_for_pvc():
+    """pvc_damage_reduction is included from FightResults.metadata for a PvC fight."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(
+        ship_name="Betty", raw_hp=200, raw_dps=10.0, varied_hp=195, varied_dps=10.5, ttk=18.57
+    )
+    fight_stats2 = SimpleNamespace(ship_name="Bandit", raw_hp=100, raw_dps=8.0, varied_hp=98, varied_dps=8.2, ttk=23.78)
+    fight = SimpleNamespace(
+        winner_name="Betty",
+        loser_name="Bandit",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=7,
+        metadata={"pvc_damage_reduction": 0.33, "resolver": "tick_v1"},
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    assert result["pvc_damage_reduction"] == pytest.approx(0.33)
+
+
+def test_serialize_fight_results_pvc_damage_reduction_zero_for_pvp():
+    """pvc_damage_reduction is 0.0 when metadata has no pvc_damage_reduction key (PvP fight)."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(ship_name="Alpha", raw_hp=150, raw_dps=9.0, varied_hp=148, varied_dps=9.1, ttk=15.0)
+    fight_stats2 = SimpleNamespace(ship_name="Bravo", raw_hp=140, raw_dps=8.5, varied_hp=137, varied_dps=8.6, ttk=16.0)
+    fight = SimpleNamespace(
+        winner_name="Alpha",
+        loser_name="Bravo",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=None,
+        metadata={},
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    assert result["pvc_damage_reduction"] == pytest.approx(0.0)
+
+
+def test_serialize_fight_results_pvc_damage_reduction_zero_when_no_metadata():
+    """pvc_damage_reduction is 0.0 when fight has no metadata attribute at all."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(ship_name="Alpha", raw_hp=150, raw_dps=9.0, varied_hp=148, varied_dps=9.1, ttk=15.0)
+    fight_stats2 = SimpleNamespace(ship_name="Bravo", raw_hp=140, raw_dps=8.5, varied_hp=137, varied_dps=8.6, ttk=16.0)
+    # Deliberately no `metadata` attribute
+    fight = SimpleNamespace(
+        winner_name="Alpha",
+        loser_name="Bravo",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=None,
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    assert result["pvc_damage_reduction"] == pytest.approx(0.0)
+
+
+def test_serialize_fight_results_includes_summary_fields():
+    """CI-2: summary fields (combatants, duration_s, outcome, reason) are serialized."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(
+        ship_name="Betty", raw_hp=200, raw_dps=10.0, varied_hp=200, varied_dps=10.0, ttk=None
+    )
+    fight_stats2 = SimpleNamespace(
+        ship_name="Crusher", raw_hp=100, raw_dps=8.0, varied_hp=100, varied_dps=8.0, ttk=25.0
+    )
+    summary = {
+        "outcome": "win",
+        "reason": "hp_depleted",
+        "duration_ticks": 2650,
+        "combatants": {
+            "1": {
+                "name": "Betty",
+                "ship": "Betty",
+                "final_hp": {"shield": 0, "armour": 0, "hull": 95},
+                "damage_dealt": 312,
+                "damage_taken": 95,
+                "shots_fired": 81,
+                "shots_hit": 47,
+                "accuracy": 0.58,
+            },
+            "2": {
+                "name": "Crusher",
+                "ship": "Crusher",
+                "final_hp": {"shield": 0, "armour": 0, "hull": 0},
+                "damage_dealt": 95,
+                "damage_taken": 312,
+                "shots_fired": 78,
+                "shots_hit": 40,
+                "accuracy": 0.51,
+            },
+        },
+    }
+    fight = SimpleNamespace(
+        winner_name="Betty",
+        loser_name="Crusher",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=99,
+        metadata={
+            "summary": summary,
+            "metadata": {"tick_ms": 10, "total_ticks": 2650, "resolver": "tick_v1", "pvc_damage_reduction": 0.33},
+        },
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    # After-action fields present
+    assert result["outcome"] == "win"
+    assert result["reason"] == "hp_depleted"
+    assert result["duration_ticks"] == 2650
+    assert result["duration_s"] == pytest.approx(26.5)
+    assert result["pvc_damage_reduction"] == pytest.approx(0.33)
+    cb = result["combatants"]
+    assert cb is not None
+    assert cb["1"]["accuracy"] == pytest.approx(0.58)
+    assert cb["1"]["damage_dealt"] == 312
+    assert cb["2"]["final_hp"]["hull"] == 0
+    # Legacy projection fields still present
+    assert result["ship1_stats"]["ship_name"] == "Betty"
+    assert result["combat_log_id"] == 99
+
+
+def test_serialize_fight_results_no_summary_fields_are_none():
+    """CI-2: when fight has no metadata/summary, after-action fields default to None."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(ship_name="A", raw_hp=100, raw_dps=5.0, varied_hp=100, varied_dps=5.0, ttk=20.0)
+    fight_stats2 = SimpleNamespace(ship_name="B", raw_hp=80, raw_dps=5.0, varied_hp=80, varied_dps=5.0, ttk=20.0)
+    fight = SimpleNamespace(
+        winner_name="A",
+        loser_name="B",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        combat_log_id=None,
+        # No metadata attribute
+    )
+
+    result = _serialize_fight_results(fight)
+
+    assert result is not None
+    assert result["outcome"] is None
+    assert result["duration_ticks"] is None
+    assert result["duration_s"] is None
+    assert result["combatants"] is None
 
 
 # ===========================================================================
@@ -4535,18 +4983,16 @@ async def test_generate_loadout_empty_combat_ship_pool_warns_and_returns_unknown
 
 
 # ===========================================================================
-# Keith T Maxwell bonus — PvC armour buff at both fight_ships call sites
+# Keith T Maxwell bonus — PvC damage reduction at both fight_ships call sites (T10)
 # ===========================================================================
 
 
 @pytest.mark.asyncio
 async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setup):
-    """Keith T Maxwell bonus: Bronze path fight_ships call passes
-    player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
+    """T10: Bronze path fight_ships call passes pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION.
 
-    Verifies that ``_process_single_bounty_check`` passes the PvC armour
-    buff to ``combat_service.fight_ships`` on the Bronze (auto-capture)
-    code path, not just the Silver/Gold/Platinum gate path.
+    Verifies that ``_process_single_bounty_check`` passes the PvC DR to
+    ``combat_service.fight_ships`` on the Bronze (auto-capture) code path.
 
     Max mocks used: 2 (combat_service, loadout_builder).
     """
@@ -4568,7 +5014,7 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
     )
     _fight_stats2 = SimpleNamespace(ship_name="Raider", raw_hp=80, raw_dps=5.0, varied_hp=80, varied_dps=5.0, ttk=16.0)
 
-    def _capture_fight(p_loadout, c_loadout, **kwargs):
+    async def _capture_fight(p_loadout, c_loadout, **kwargs):
         captured_kwargs.update(kwargs)
         return SimpleNamespace(
             winner_name="Betty",
@@ -4576,10 +5022,11 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
             is_stalemate=False,
             ship1_stats=_fight_stats1,
             ship2_stats=_fight_stats2,
-            variance_percent=0.0,
+            combat_log_id=None,
+            winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
         )
 
-    service.combat_service.fight_ships.side_effect = _capture_fight
+    service.combat_service.fight_ships = _capture_fight
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
     service.bounty_repo.update.return_value = bounty
@@ -4596,23 +5043,22 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
         result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
 
     assert result.result == CheckResult.CORRECT
-    # The kwarg must have been passed
-    assert "player_armour_buff" in captured_kwargs, (
-        "fight_ships was not called with player_armour_buff kwarg on bronze path"
+    # T10: pvc_damage_reduction replaces player_armour_buff
+    assert "pvc_damage_reduction" in captured_kwargs, (
+        "fight_ships was not called with pvc_damage_reduction kwarg on bronze path"
     )
-    assert captured_kwargs["player_armour_buff"] == GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR, (
-        f"Expected player_armour_buff={GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR}, "
-        f"got {captured_kwargs.get('player_armour_buff')}"
+    assert captured_kwargs["pvc_damage_reduction"] == pytest.approx(GameConstants.PVC_DAMAGE_REDUCTION), (
+        f"Expected pvc_damage_reduction={GameConstants.PVC_DAMAGE_REDUCTION}, "
+        f"got {captured_kwargs.get('pvc_damage_reduction')}"
     )
 
 
 @pytest.mark.asyncio
 async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setup):
-    """Keith T Maxwell bonus: Silver/Gold/Platinum mandatory combat gate also passes
-    player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
+    """T10: Silver/Gold/Platinum fight_ships call passes pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION.
 
     Verifies that the second fight_ships call site (the Silver/Gold/Platinum
-    mandatory combat gate introduced in B.58) forwards the PvC armour buff.
+    mandatory combat gate) forwards the PvC DR kwarg.
 
     Max mocks used: 2 (combat_service, loadout_builder).
     """
@@ -4637,7 +5083,7 @@ async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setu
         ship_name="Guardian", raw_hp=150, raw_dps=10.0, varied_hp=150, varied_dps=10.0, ttk=20.0
     )
 
-    def _capture_fight(p_loadout, c_loadout, **kwargs):
+    async def _capture_fight(p_loadout, c_loadout, **kwargs):
         captured_kwargs.update(kwargs)
         return SimpleNamespace(
             winner_name="Falcon",
@@ -4645,10 +5091,11 @@ async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setu
             is_stalemate=False,
             ship1_stats=_fight_stats1,
             ship2_stats=_fight_stats2,
-            variance_percent=0.0,
+            combat_log_id=None,
+            winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
         )
 
-    service.combat_service.fight_ships.side_effect = _capture_fight
+    service.combat_service.fight_ships = _capture_fight
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
     service.bounty_repo.update.return_value = bounty
@@ -4665,13 +5112,13 @@ async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setu
 
     assert result.result == CheckResult.CORRECT
     assert result.combat_won is True
-    # The kwarg must have been passed on the silver path too
-    assert "player_armour_buff" in captured_kwargs, (
-        "fight_ships was not called with player_armour_buff kwarg on silver/gold/platinum path"
+    # T10: pvc_damage_reduction replaces player_armour_buff on silver path too
+    assert "pvc_damage_reduction" in captured_kwargs, (
+        "fight_ships was not called with pvc_damage_reduction kwarg on silver/gold/platinum path"
     )
-    assert captured_kwargs["player_armour_buff"] == GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR, (
-        f"Expected player_armour_buff={GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR}, "
-        f"got {captured_kwargs.get('player_armour_buff')}"
+    assert captured_kwargs["pvc_damage_reduction"] == pytest.approx(GameConstants.PVC_DAMAGE_REDUCTION), (
+        f"Expected pvc_damage_reduction={GameConstants.PVC_DAMAGE_REDUCTION}, "
+        f"got {captured_kwargs.get('pvc_damage_reduction')}"
     )
 
 
@@ -5285,6 +5732,10 @@ class TestBuildPayoutBreakdown:
     - Falls back to str(reward.player_id) when player not found
     - Returns empty list when rewards is empty
     - Amount is credits_earned from RewardInfo
+
+    P6-T1 update: _build_payout_breakdown now calls player_repo.get_by_ids
+    (batched WHERE id IN) instead of per-reward get_by_id.  Tests mock
+    player_repo.get_by_ids rather than player_repo.get_by_id.
     """
 
     @pytest.fixture
@@ -5316,7 +5767,7 @@ class TestBuildPayoutBreakdown:
         """RewardInfo with is_winner=True → role='capture claim'."""
         reward = self._make_reward_info(is_winner=True, credits_earned=5000)
         player = self._make_player(display_name="WinnerPlayer")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5331,7 +5782,7 @@ class TestBuildPayoutBreakdown:
         """RewardInfo with is_winner=False → role='system check'."""
         reward = self._make_reward_info(is_winner=False, credits_earned=200)
         player = self._make_player(display_name="CheckerPlayer")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5346,7 +5797,7 @@ class TestBuildPayoutBreakdown:
         """player_display_name uses Player.display_name when it is non-empty."""
         reward = self._make_reward_info(is_winner=True)
         player = self._make_player(user_id=555, display_name="SamAccountX")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5358,7 +5809,7 @@ class TestBuildPayoutBreakdown:
         """Falls back to str(player.user_id) when display_name is None."""
         reward = self._make_reward_info(player_id=1)
         player = self._make_player(user_id=123456, display_name=None)
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5370,7 +5821,7 @@ class TestBuildPayoutBreakdown:
         """Falls back to str(player.user_id) when display_name is empty string."""
         reward = self._make_reward_info(player_id=1)
         player = self._make_player(user_id=789, display_name="")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5383,7 +5834,8 @@ class TestBuildPayoutBreakdown:
     async def test_skips_entry_when_player_not_found(self, service):
         """When player is not found in DB, the entry is silently skipped."""
         reward = self._make_reward_info(player_id=999)
-        service.player_repo.get_by_id = AsyncMock(return_value=None)
+        # Return empty list → no players found → entry skipped
+        service.player_repo.get_by_ids = AsyncMock(return_value=[])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5405,7 +5857,7 @@ class TestBuildPayoutBreakdown:
         """breakdown entry 'amount' must equal reward.credits_earned."""
         reward = self._make_reward_info(credits_earned=7049, is_winner=True)
         player = self._make_player(display_name="SamX")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5423,11 +5875,8 @@ class TestBuildPayoutBreakdown:
         checker1_player = self._make_player(player_id=2, display_name="Checker1")
         checker2_player = self._make_player(player_id=3, display_name="Checker2")
 
-        async def get_by_id_side_effect(db, pid):
-            mapping = {1: winner_player, 2: checker1_player, 3: checker2_player}
-            return mapping.get(pid)
-
-        service.player_repo.get_by_id = get_by_id_side_effect
+        # get_by_ids returns all three players; output order must follow rewards list
+        service.player_repo.get_by_ids = AsyncMock(return_value=[winner_player, checker1_player, checker2_player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [winner_reward, checker1_reward, checker2_reward])
@@ -5443,7 +5892,7 @@ class TestBuildPayoutBreakdown:
         """Each entry in payout_breakdown must have player_display_name, role, amount."""
         reward = self._make_reward_info(is_winner=True, credits_earned=3000)
         player = self._make_player(display_name="X")
-        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        service.player_repo.get_by_ids = AsyncMock(return_value=[player])
         mock_db = AsyncMock()
 
         result = await service._build_payout_breakdown(mock_db, [reward])
@@ -5453,3 +5902,414 @@ class TestBuildPayoutBreakdown:
         assert "player_display_name" in entry
         assert "role" in entry
         assert "amount" in entry
+
+
+# ===========================================================================
+# Tests: CI-17 — Criminal secondary weapon generation
+# ===========================================================================
+
+
+def _make_loadout_for_secondary_test(
+    db,
+    service,
+    ship,
+    all_secondaries: list,
+    *,
+    tech_level: int = 3,
+):
+    """Shared async helper factory — call inside an async test body.
+
+    Returns an awaitable calling service.generate_loadout with:
+    - ship selection mocked to return ``ship``
+    - SecondaryWeaponRepository.list_all mocked to return ``all_secondaries``
+    - item_repo returning empty lists (no primaries/turrets needed)
+    - _find_typed_module returning None (no modules needed)
+    """
+
+    async def _run():
+        with (
+            patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+            patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
+            patch(
+                "services.bounty_service.SecondaryWeaponRepository",
+                return_value=MagicMock(list_all=AsyncMock(return_value=all_secondaries)),
+            ),
+        ):
+            service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+            _setup_mock_db_query(db, [ship])
+            return await service.generate_loadout(db, tech_level=tech_level)
+
+    return _run()
+
+
+class TestCi17SecondaryGeneration:
+    """CI-17: criminal secondary weapon generation in generate_loadout."""
+
+    # -----------------------------------------------------------------------
+    # Helpers
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _make_db():
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        db.refresh = AsyncMock()
+        return db
+
+    # -----------------------------------------------------------------------
+    # TL0 Betty unchanged
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_tl0_betty_unchanged_secondaries_empty(self, service):
+        """TL0 Betty path returns empty secondaries (no generation, no crash)."""
+        result = await service.generate_loadout(self._make_db(), tech_level=0)
+        assert result["secondaries"] == []
+        assert result["ship_max_secondaries"] == 0
+
+    # -----------------------------------------------------------------------
+    # Edge: max_secondaries=0
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_max_secondaries_zero_returns_empty(self, service):
+        """Ship with max_secondaries=0 → secondaries=[] (block skipped, no crash)."""
+        ship = _make_ship("Scout", value=50000, max_primaries=1, max_secondaries=0)
+        db = self._make_db()
+        secondary = _make_secondary("Nuclear Nuke", tech_level=1, subtype="nuke", damage=800)
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, [secondary])
+
+        assert result["secondaries"] == []
+        assert result["ship_max_secondaries"] == 0
+
+    # -----------------------------------------------------------------------
+    # Edge: deferred-only pool → empty, no crash
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_deferred_only_pool_returns_empty(self, service):
+        """TL whose only secondaries are deferred subtypes → secondaries=[] no crash."""
+        ship = _make_ship("Warrior", value=200000, max_primaries=2, max_secondaries=3)
+        db = self._make_db()
+        # All deferred subtypes
+        deferred_weapons = [
+            _make_secondary("EMP Bomb", tech_level=1, subtype="emp-bomb", damage=500),
+            _make_secondary("Land Mine", tech_level=1, subtype="mine", damage=300),
+            _make_secondary("Sentry Gun", tech_level=1, subtype="sentry-gun", damage=200),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, deferred_weapons)
+
+        assert result["secondaries"] == []
+
+    # -----------------------------------------------------------------------
+    # Edge: dead-weight exclusion (damage ≤ threshold)
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_dead_weight_damage_excluded(self, service):
+        """Secondaries with damage ≤ CRIMINAL_SECONDARY_MIN_DAMAGE are excluded."""
+        ship = _make_ship("Warrior", value=200000, max_primaries=2, max_secondaries=3)
+        db = self._make_db()
+        # damage=0 and damage=1 should be excluded (default threshold=1)
+        zero_dmg = _make_secondary("Zero Dmg", tech_level=1, subtype="missile", damage=0)
+        one_dmg = _make_secondary("One Dmg", tech_level=1, subtype="missile", damage=1)
+        good = _make_secondary("Good Missile", tech_level=1, subtype="missile", damage=100)
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, [zero_dmg, one_dmg, good])
+
+        names = [s["name"] for s in result["secondaries"]]
+        assert "Zero Dmg" not in names
+        assert "One Dmg" not in names
+        assert "Good Missile" in names
+
+    # -----------------------------------------------------------------------
+    # Generation: length ≤ max_secondaries
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondaries_count_respects_max_secondaries(self, service):
+        """Generated secondaries count never exceeds ship.max_secondaries."""
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=2)
+        db = self._make_db()
+        pool = [
+            _make_secondary("Rocket A", tech_level=1, subtype="rocket", damage=200),
+            _make_secondary("Missile B", tech_level=1, subtype="missile", damage=300),
+            _make_secondary("Nuke C", tech_level=1, subtype="nuke", damage=800),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        assert len(result["secondaries"]) <= ship.max_secondaries
+
+    # -----------------------------------------------------------------------
+    # Generation: distinct names (no duplicates)
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondaries_names_are_distinct(self, service):
+        """Sampled secondaries have no duplicate names (slot=type model)."""
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=3)
+        db = self._make_db()
+        pool = [
+            _make_secondary("Rocket A", tech_level=1, subtype="rocket", damage=200),
+            _make_secondary("Missile B", tech_level=1, subtype="missile", damage=300),
+            _make_secondary("Nuke C", tech_level=1, subtype="nuke", damage=800),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        names = [s["name"] for s in result["secondaries"]]
+        assert len(names) == len(set(names)), f"Duplicate secondary names found: {names}"
+
+    # -----------------------------------------------------------------------
+    # Generation: no deferred subtypes in output
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_deferred_subtypes_never_in_output(self, service):
+        """Deferred subtypes (emp-bomb/mine/sentry-gun) never appear in output."""
+        from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
+
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=3)
+        db = self._make_db()
+        pool = [
+            _make_secondary("EMP Bomb", tech_level=1, subtype="emp-bomb", damage=500),
+            _make_secondary("Good Nuke", tech_level=1, subtype="nuke", damage=800),
+            _make_secondary("Mine", tech_level=1, subtype="mine", damage=300),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        subtypes = [s["subtype"] for s in result["secondaries"]]
+        for st in subtypes:
+            assert st not in DEFERRED_SECONDARY_SUBTYPES, f"Deferred subtype {st!r} found in output"
+
+    # -----------------------------------------------------------------------
+    # Generation: all combat fields present
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondaries_carry_all_combat_fields(self, service):
+        """Each secondary dict carries the full set of combat fields."""
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=2)
+        db = self._make_db()
+        pool = [
+            _make_secondary(
+                "Nuke Alpha",
+                tech_level=1,
+                subtype="nuke",
+                damage=800,
+                loading_speed_ms=3000,
+                range_m=2000.0,
+                burst_count=0,
+                emp_damage=0,
+                magnitude_m=500.0,
+                steerable=True,
+            ),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        assert len(result["secondaries"]) == 1
+        s = result["secondaries"][0]
+        required_fields = {
+            "name",
+            "emoji",
+            "value",
+            "dps",
+            "rounds",
+            "damage",
+            "loading_speed_ms",
+            "range_m",
+            "subtype",
+            "burst_count",
+            "emp_damage",
+            "magnitude_m",
+            "steerable",
+        }
+        assert required_fields.issubset(set(s.keys())), f"Missing fields: {required_fields - set(s.keys())}"
+
+    # -----------------------------------------------------------------------
+    # Generation: rounds ≥ 1
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondaries_rounds_at_least_1(self, service):
+        """All generated secondaries have rounds ≥ 1 (floor applied)."""
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=3)
+        db = self._make_db()
+        pool = [
+            _make_secondary("Rocket X", tech_level=1, subtype="rocket", damage=200),
+            _make_secondary("Shock Y", tech_level=1, subtype="shock-blast", damage=150),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        for s in result["secondaries"]:
+            assert s["rounds"] >= 1, f"rounds < 1 for {s['name']!r}: {s['rounds']}"
+
+    # -----------------------------------------------------------------------
+    # Knob #1: nuke rounds == configured cap
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_nuke_rounds_equal_configured_cap(self, service):
+        """Nuke secondaries get exactly CRIMINAL_SECONDARY_ROUNDS['nuke'] rounds."""
+        from services.game_constants import GameConstants
+
+        ship = _make_ship("Groza", value=251600, max_primaries=3, max_secondaries=2)
+        db = self._make_db()
+        pool = [_make_secondary("Nuke X", tech_level=1, subtype="nuke", damage=800)]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        nuke_entries = [s for s in result["secondaries"] if s["subtype"] == "nuke"]
+        assert len(nuke_entries) == 1
+        assert nuke_entries[0]["rounds"] == GameConstants.CRIMINAL_SECONDARY_ROUNDS["nuke"]
+
+    # -----------------------------------------------------------------------
+    # Knob #4: value counted once per type
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_secondary_value_added_once_per_type(self, service):
+        """total_value includes each secondary's value exactly once."""
+        ship = _make_ship("Groza", value=100000, max_primaries=0, max_secondaries=2)
+        db = self._make_db()
+        pool = [
+            _make_secondary("Nuke X", tech_level=1, subtype="nuke", damage=800, value=5000),
+            _make_secondary("Missile Y", tech_level=1, subtype="missile", damage=200, value=3000),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool)
+
+        secondary_values = sum(s["value"] for s in result["secondaries"])
+        assert result["total_value"] == ship.value + secondary_values
+
+    # -----------------------------------------------------------------------
+    # Multiple TLs (TLs 1/3/4/5/9)
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tl", [1, 3, 4, 5, 9])
+    async def test_generation_across_tls_stable(self, service, tl):
+        """Generation at various TLs produces valid secondaries (distinct, no deferred, rounds≥1)."""
+        from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
+
+        ship = _make_ship("Warship", value=500000, max_primaries=2, max_secondaries=2)
+        db = self._make_db()
+        item_tl = max(1, tl - 1)
+        pool = [
+            _make_secondary("Missile A", tech_level=item_tl, subtype="missile", damage=200),
+            _make_secondary("Rocket B", tech_level=item_tl, subtype="rocket", damage=300),
+        ]
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, pool, tech_level=tl)
+
+        secondaries = result["secondaries"]
+        assert len(secondaries) <= ship.max_secondaries
+        names = [s["name"] for s in secondaries]
+        assert len(names) == len(set(names)), "Duplicate names"
+        for s in secondaries:
+            assert s["subtype"] not in DEFERRED_SECONDARY_SUBTYPES
+            assert s["rounds"] >= 1
+
+    # -----------------------------------------------------------------------
+    # ship_max_secondaries key is present
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ship_max_secondaries_key_present(self, service):
+        """generate_loadout always includes ship_max_secondaries in the return dict."""
+        ship = _make_ship("Scout", value=50000, max_primaries=1, max_secondaries=2)
+        db = self._make_db()
+
+        result = await _make_loadout_for_secondary_test(db, service, ship, [])
+
+        assert "ship_max_secondaries" in result
+        assert result["ship_max_secondaries"] == 2
+
+
+# ===========================================================================
+# Tests: CI-17 — helper functions
+# ===========================================================================
+
+
+class TestCi17Helpers:
+    """Unit tests for the module-level helper functions added in CI-17."""
+
+    def test_get_secondary_subtype_unwraps_inner_extra_atts(self):
+        """get_secondary_subtype reads subtype from the inner extra_atts dict."""
+        item = SimpleNamespace(extra_atts={"extra_atts": {"subtype": "nuke"}})
+        assert get_secondary_subtype(item) == "nuke"
+
+    def test_get_secondary_subtype_missing_returns_empty(self):
+        """get_secondary_subtype returns '' when extra_atts is absent/empty."""
+        item = SimpleNamespace(extra_atts={})
+        assert get_secondary_subtype(item) == ""
+
+    def test_get_secondary_subtype_flat_fallback(self):
+        """get_secondary_subtype falls back to outer dict for flat seeds."""
+        item = SimpleNamespace(extra_atts={"subtype": "missile"})
+        assert get_secondary_subtype(item) == "missile"
+
+    def test_extract_secondary_combat_fields_all_fields(self):
+        """_extract_secondary_combat_fields returns all required combat fields."""
+        item = SimpleNamespace(
+            damage=800,
+            extra_atts={
+                "extra_atts": {
+                    "loading_speed_ms": 3000,
+                    "range_m": 2000.0,
+                    "subtype": "nuke",
+                    "burst_count": 0,
+                    "emp_damage": 50,
+                    "magnitude_m": 500.0,
+                    "steerable": True,
+                }
+            },
+        )
+        fields = _extract_secondary_combat_fields(item)
+        assert fields["damage"] == 800
+        assert fields["loading_speed_ms"] == 3000
+        assert fields["range_m"] == 2000.0
+        assert fields["subtype"] == "nuke"
+        assert fields["burst_count"] == 0
+        assert fields["emp_damage"] == 50
+        assert fields["magnitude_m"] == 500.0
+        assert fields["steerable"] is True
+
+    def test_extract_secondary_combat_fields_defaults(self):
+        """_extract_secondary_combat_fields provides safe defaults for missing fields."""
+        item = SimpleNamespace(damage=0, extra_atts={})
+        fields = _extract_secondary_combat_fields(item)
+        assert fields["damage"] == 0
+        assert fields["loading_speed_ms"] == 0
+        assert fields["range_m"] == 0.0
+        assert fields["subtype"] == ""
+        assert fields["burst_count"] == 0
+        assert fields["emp_damage"] == 0
+        assert fields["magnitude_m"] == 0.0
+        assert fields["steerable"] is False
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_no_turret_slots_skips_turret_selection(service, mock_db):
+    """Ships with max_turrets=0 never enter the turret selection block (no fallback either)."""
+    ship = _make_ship("Betty", value=16038, max_primaries=1, max_modules=2, max_turrets=0)
+
+    async def _get_all_by_tl(db, tl, item_type=None):
+        if item_type == "turret_weapon":
+            # This should never be called for a ship with max_turrets=0
+            raise AssertionError("turret_weapon query must NOT be called when max_turrets=0")
+        return []
+
+    service.item_repo.get_all_by_tech_level = _get_all_by_tl
+
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=-1)):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    assert result["turrets"] == []

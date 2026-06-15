@@ -84,6 +84,9 @@ def mock_player_service():
             "xp": 1500,
         }
     )
+    service.update_notification_preference = AsyncMock(
+        return_value=make_mock_player(bounty_notifications_enabled=False)
+    )
     return service
 
 
@@ -291,13 +294,14 @@ class TestGetPlayersByGuild:
         assert data[0]["guild_id"] == 67890
 
     def test_get_players_by_guild_uses_repo_when_no_tier(self, mock_db_session, client, mock_player_service):
-        """Service delegation: no tier -> uses player_repo.get_players_by_guild."""
+        """Service delegation: no tier -> uses player_repo.get_players_by_guild with skip/limit (P6-T3)."""
         mock_session, _ = mock_db_session
 
         client.get("/api/v1/players/guild/67890")
 
+        # P6-T3: skip and limit are now passed to the repo so the DB applies LIMIT/OFFSET.
         mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
-            mock_session, 67890, active_within_days=None
+            mock_session, 67890, active_within_days=None, skip=0, limit=100
         )
         mock_player_service.get_players_by_tier.assert_not_called()
 
@@ -313,17 +317,22 @@ class TestGetPlayersByGuild:
         )
         mock_player_service.player_repo.get_players_by_guild.assert_not_called()
 
-    def test_get_players_by_guild_pagination(self, client, mock_player_service):
-        """Pagination: skip and limit query params are respected."""
-        # Create 5 players
-        players = [make_mock_player(id=i) for i in range(1, 6)]
-        mock_player_service.player_repo.get_players_by_guild.return_value = players
+    def test_get_players_by_guild_pagination(self, mock_db_session, client, mock_player_service):
+        """Pagination: skip and limit are forwarded to the repo; DB returns ≤ limit rows (P6-T3)."""
+        mock_session, _ = mock_db_session
+        # P6-T3: repo receives skip/limit and returns the already-paginated slice.
+        page = [make_mock_player(id=2), make_mock_player(id=3)]
+        mock_player_service.player_repo.get_players_by_guild.return_value = page
 
         response = client.get("/api/v1/players/guild/67890?skip=1&limit=2")
 
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 2
+        # Verify skip and limit were forwarded to the repo.
+        mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
+            mock_session, 67890, active_within_days=None, skip=1, limit=2
+        )
 
     def test_get_players_by_guild_empty_result(self, client, mock_player_service):
         """Happy path: guild with no players returns empty list."""
@@ -344,14 +353,14 @@ class TestGetPlayersByGuild:
         assert "Failed to get players" in response.json()["detail"]
 
     def test_get_players_by_guild_active_within_days_returns_200(self, mock_db_session, client, mock_player_service):
-        """active_within_days=7: returns 200 and passes filter param to repo."""
+        """active_within_days=7: returns 200 and passes all params (incl. skip/limit) to repo."""
         mock_session, _ = mock_db_session
 
         response = client.get("/api/v1/players/guild/67890?active_within_days=7")
 
         assert response.status_code == 200
         mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
-            mock_session, 67890, active_within_days=7
+            mock_session, 67890, active_within_days=7, skip=0, limit=100
         )
 
     def test_get_players_by_guild_active_within_days_zero_passes_zero(
@@ -364,7 +373,7 @@ class TestGetPlayersByGuild:
 
         assert response.status_code == 200
         mock_player_service.player_repo.get_players_by_guild.assert_called_once_with(
-            mock_session, 67890, active_within_days=0
+            mock_session, 67890, active_within_days=0, skip=0, limit=100
         )
 
     def test_get_players_by_guild_active_within_days_negative_returns_422(self, client, mock_player_service):
@@ -2051,3 +2060,89 @@ class TestCombatPreflightEndpoint:
         data = response.json()
         expected_keys = {"verdict", "player_win_rate", "criminal_win_rate", "sims_run", "target_tier", "sample_size"}
         assert expected_keys.issubset(data.keys())
+
+
+# ---------------------------------------------------------------------------
+# TestUpdateNotificationPreference — PUT /players/{id}/notifications (D-019)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateNotificationPreference:
+    """Tests for PUT /players/{player_id}/notifications (D-019)."""
+
+    def test_update_notification_returns_200_with_updated_flag(self, client, mock_player_service):
+        """Happy path: valid request returns 200 with PlayerResponse reflecting updated flag."""
+        mock_player_service.update_notification_preference.return_value = make_mock_player(
+            bounty_notifications_enabled=False
+        )
+
+        response = client.put(
+            "/api/v1/players/1/notifications",
+            json={"notification_type": "bounty", "enabled": False},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Non-vacuous: assert the flag is actually False in the response
+        assert data["bounty_notifications_enabled"] is False
+
+    def test_update_notification_shop_type_returns_200(self, client, mock_player_service):
+        """Happy path: shop notification type also returns 200 with updated flag."""
+        mock_player_service.update_notification_preference.return_value = make_mock_player(
+            shop_notifications_enabled=False
+        )
+
+        response = client.put(
+            "/api/v1/players/1/notifications",
+            json={"notification_type": "shop", "enabled": False},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["shop_notifications_enabled"] is False
+
+    def test_update_notification_player_not_found_returns_404(self, client, mock_player_service):
+        """When service raises ValueError containing 'not found', returns 404."""
+        mock_player_service.update_notification_preference.side_effect = ValueError("Player 999 not found")
+
+        response = client.put(
+            "/api/v1/players/999/notifications",
+            json={"notification_type": "bounty", "enabled": True},
+        )
+
+        assert response.status_code == 404
+        assert "999" in response.json()["detail"]
+
+    def test_update_notification_invalid_type_rejected_by_pydantic(self, client, mock_player_service):
+        """Invalid notification_type (not 'bounty' or 'shop') is rejected by Pydantic with 422."""
+        response = client.put(
+            "/api/v1/players/1/notifications",
+            json={"notification_type": "email", "enabled": True},
+        )
+
+        assert response.status_code == 422
+        # Service must never be called for a Pydantic-invalid request
+        mock_player_service.update_notification_preference.assert_not_awaited()
+
+    def test_update_notification_missing_enabled_field_returns_422(self, client):
+        """Missing 'enabled' field returns 422 (required field)."""
+        response = client.put(
+            "/api/v1/players/1/notifications",
+            json={"notification_type": "bounty"},
+        )
+
+        assert response.status_code == 422
+
+    def test_update_notification_delegates_to_service_correctly(self, mock_db_session, client, mock_player_service):
+        """Service is called with the correct player_id, notification_type, and enabled value."""
+        mock_session, _ = mock_db_session
+        mock_player_service.update_notification_preference.return_value = make_mock_player(
+            shop_notifications_enabled=True
+        )
+
+        client.put(
+            "/api/v1/players/7/notifications",
+            json={"notification_type": "shop", "enabled": True},
+        )
+
+        mock_player_service.update_notification_preference.assert_called_once_with(mock_session, 7, "shop", True)

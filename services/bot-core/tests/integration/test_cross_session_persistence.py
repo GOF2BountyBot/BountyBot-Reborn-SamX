@@ -560,15 +560,20 @@ class TestOp07SellItemToShop:
             await _seed_inventory(db, player.id, "primary_weapon", "Pulse Laser", quantity=1)
             player_id = player.id
 
-        # Mock 1: _get_item_base_price — static catalog not in SQLite.
+        # Mocks 1+2: _get_item_base_price / _get_item_tech_level — static catalog not in SQLite.
         from services.shop_service import ShopService
 
         original_price = ShopService._get_item_base_price
+        original_tech_level = ShopService._get_item_tech_level
 
         async def _mock_price(self, db, item_name):
             return 50
 
+        async def _mock_tech_level(self, db, item_type, item_name, base_price):
+            return 2
+
         ShopService._get_item_base_price = _mock_price
+        ShopService._get_item_tech_level = _mock_tech_level
 
         try:
             svc = ShopService()
@@ -580,6 +585,7 @@ class TestOp07SellItemToShop:
                 assert result["quantity"] == 1
         finally:
             ShopService._get_item_base_price = original_price
+            ShopService._get_item_tech_level = original_tech_level
 
         async with factory() as fresh_db:
             # Player credits increased (100 + sale price)

@@ -1,14 +1,20 @@
 {
-    "aliases":  [
-                    "TSuum"
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "https://i.postimg.cc/Ss4V5yJT/tsuum.png",
-    "loading speed":  0,
-    "name":  "T'Suum",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "sentry_guns"
+  "aliases": [
+    "TSuum"
+  ],
+  "builtIn": false,
+  "damage": 14,
+  "icon": "https://i.postimg.cc/Ss4V5yJT/tsuum.png",
+  "loading speed": 250,
+  "name": "T'Suum",
+  "value": 5311,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "techLevel": 9,
+  "extra_atts": {
+    "loading_speed_ms": 250,
+    "range_m": 1900,
+    "speed_km_h": 7000,
+    "subtype": "sentry-gun"
+  }
 }

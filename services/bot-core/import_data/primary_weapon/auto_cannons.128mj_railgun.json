@@ -1,17 +1,23 @@
 {
-    "aliases":  [
-                    "128MJ",
-                    "128MJ Railgun",
-                    "128 Rail"
-                ],
-    "builtIn":  false,
-    "dps":  25.0,
-    "emoji":  "<:128mjrailgun:723709598938300496>",
-    "icon":  "https://i.postimg.cc/nzh3fFyS/128mj-railgun.png",
-    "name":  "128MJ Railgun",
-    "techLevel":  5,
-    "value":  24675,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/128MJ_Railgun",
-    "type":  "PrimaryWeapon",
-    "subtype":  "auto_cannons"
+  "aliases": [
+    "128MJ",
+    "128MJ Railgun",
+    "128 Rail"
+  ],
+  "builtIn": false,
+  "dps": 25.0,
+  "emoji": "<:128mjrailgun:723709598938300496>",
+  "icon": "https://i.postimg.cc/nzh3fFyS/128mj-railgun.png",
+  "name": "128MJ Railgun",
+  "techLevel": 6,
+  "value": 23676,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/128MJ_Railgun",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 120,
+    "range_m": 2500,
+    "damage_per_shot": 3,
+    "speed_km_h": 6500,
+    "subtype": "auto-cannon"
+  }
 }

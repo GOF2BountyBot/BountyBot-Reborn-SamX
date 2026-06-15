@@ -1,0 +1,26 @@
+{
+  "_name": "Luxury",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/4NbFrSM0/luxury.png",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Luxury",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Luxury",
+    "Type": "Commodity",
+    "Tech Level": "7",
+    "Known Price Range": "-> 432$ (Buntta)\n-> 1,575$ (Beidan)"
+  },
+  "stats": {
+    "tech_level": 7,
+    "price_range_min_credits": 432,
+    "price_range_min_system": "Buntta",
+    "price_range_max_credits": 1575,
+    "price_range_max_system": "Beidan",
+    "value": 1004,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "There will always be goods that go beyond the typical needs of buyers and considered unnecessary or wasteful by the majority of customers.",
+  "mechanics_text": [],
+  "wiki_categories": ["Commodities", "Tech level 7", "GOF2", "Rare commodities", "Trading commodities", "Freelance Missions", "GOF2HD"]
+}

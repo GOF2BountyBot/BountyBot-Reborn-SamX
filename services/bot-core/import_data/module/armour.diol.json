@@ -1,14 +1,18 @@
 {
-    "aliases": [
-        "Diol"
-    ],
+  "aliases": [
+    "Diol"
+  ],
+  "armour": 160,
+  "builtIn": false,
+  "emoji": "<:diol:723706394687307803>",
+  "icon": "https://i.postimg.cc/D02JM0Rm/d-iol.png",
+  "name": "D'iol",
+  "techLevel": 7,
+  "type": "ArmourModule",
+  "value": 46490,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/D%27iol",
+  "extra_atts": {
     "armour": 160,
-    "builtIn": false,
-    "emoji": "<:diol:723706394687307803>",
-    "icon": "https://i.postimg.cc/D02JM0Rm/d-iol.png",
-    "name": "D'iol",
-    "techLevel": 7,
-    "type": "ArmourModule",
-    "value": 51449,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/D%27iol"
+    "mechanics_text": "## In-Game Description\nVossk-armor is considered the best of its kind in the known Universe and no other race has managed to successfully reproduce it. The D'iol armor is being used more and more often by engineers in the Terran fleet.\n\n## Trivia\n*According to its description, the T'Suum's casing is made with D'iol armor.\n*The D'iol is the best armor available if the T'yol's blueprint has not yet been found.\n* 2 D'iol armour plating can be looted by destroying the pirate's hideout at Bosméh orbit in the Weymire system. This process cannot be repeated as the pirate's hideout will be eradicated forever in the orbit after having been destroyed."
+  }
 }

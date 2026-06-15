@@ -225,6 +225,7 @@ def _make_ship(
     weapons=None,
     modules=None,
     turrets=None,
+    secondary_weapons=None,
     created_at="2024-01-01T00:00:00",
 ):
     """Return a minimal ship dict."""
@@ -236,6 +237,7 @@ def _make_ship(
         "weapons": weapons or ["Laser"],
         "modules": modules or [],
         "turrets": turrets or [],
+        "secondary_weapons": secondary_weapons or [],
         "created_at": created_at,
         "player_id": 1,
     }
@@ -301,7 +303,6 @@ class TestShipsCogInitialization:
 
     def test_initialization_logs_debug(self, mock_ships_cog):
         """ShipsCog __init__ should log a debug message."""
-        global _module_logger
         assert _module_logger is not None
         _module_logger.debug.assert_called_with("ShipsCog initialized")
 
@@ -375,6 +376,34 @@ class TestShipsCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+
+    def test_ships_summary_includes_secondary_count(self, mock_ships_cog, make_mock_response):
+        """ships loadout summary must include the S: (secondary) count alongside W/M/T."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response(
+            [
+                _make_ship(
+                    1,
+                    "Eagle",
+                    is_active=True,
+                    weapons=["Laser"],
+                    secondary_weapons=["Jet Rocket"],
+                    modules=["Cabin"],
+                    turrets=[],
+                )
+            ]
+        )
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        field_values = " ".join(f.value for f in embed.fields)
+        assert "W:1 | S:1 | M:1 | T:0" in field_values
 
     def test_ships_no_ships_found(self, mock_ships_cog, make_mock_response):
         """ships should send ephemeral message when player has no ships."""
@@ -846,7 +875,7 @@ class TestSetActiveCommand:
 
         asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -1043,7 +1072,7 @@ class TestSetActiveCommandRespx:
 
             asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, "5"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
 
 

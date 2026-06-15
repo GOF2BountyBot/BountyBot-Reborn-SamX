@@ -1,0 +1,26 @@
+{
+  "_name": "Premium Food",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/3r9vVj1B/premium-food.png",
+  "_subcategory": "standard",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Premium_Food",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Premium Food",
+    "Type": "Commodity",
+    "Tech Level": "8",
+    "Price Range": "-> 29$ (Magnetar)\n-> 273$ (Pan)"
+  },
+  "stats": {
+    "tech_level": 8,
+    "price_range_min_credits": 29,
+    "price_range_min_system": "Magnetar",
+    "price_range_max_credits": 273,
+    "price_range_max_system": "Pan",
+    "value": 151,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Neuro-algae Apocce, Zepar honey or eggs of the rare S'iik beetle are foods that only some people can afford. Whether they are actually more palatable than less exotic food is purely a matter of taste.",
+  "mechanics_text": [],
+  "wiki_categories": ["Commodities", "Tech level 8", "GOF2", "Rare commodities", "Trading commodities", "Freelance Missions", "GOF2HD"]
+}

@@ -12,8 +12,15 @@
   "icon": "https://i.postimg.cc/ZnT4Sdbt/dia-emp-mk-iii.png",
   "name": "Dia EMP Mk III",
   "techLevel": 6,
-  "value": 40736,
+  "value": 36652,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Dia_EMP_Mk_III",
   "type": "PrimaryWeapon",
-  "subtype": "emp_blasters"
+  "extra_atts": {
+    "loading_speed_ms": 450,
+    "range_m": 2300,
+    "damage_per_shot": 0,
+    "emp_damage": 8,
+    "speed_km_h": 4250,
+    "subtype": "emp-blaster"
+  }
 }

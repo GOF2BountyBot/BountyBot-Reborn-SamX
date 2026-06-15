@@ -17,8 +17,8 @@ class GameConstantsOverridesMixin(BaseModel):
     criminal_max_gear_upgrade: int | None = Field(None, ge=0, le=10)
     bounty_reward_to_xp_gain_mult: float | None = Field(None, ge=0.0)
     bounty_winner_reserve_factor: float | None = Field(None, ge=0.0, le=1.0)
-    bounty_pvc_armour_buff_factor: float | None = Field(None, ge=0.0)
-    duel_variance_percent: float | None = Field(None, ge=0.0, le=1.0)
+    # bounty_pvc_armour_buff_factor retired T10 (replaced by pvc_damage_reduction §3)
+    # duel_variance_percent retired T10 (SimpleTTKResolver removed)
     duel_cloak_chance: int | None = Field(None, ge=0, le=100)
 
     # Bounty mechanics
@@ -61,7 +61,7 @@ class GameConstantsOverridesMixin(BaseModel):
         if set(v.keys()) != required_keys:
             raise ValueError(f"division_max_tl must have exactly keys: {required_keys}")
         for key, val in v.items():
-            if not isinstance(val, int) or not (1 <= val <= 10):
+            if not isinstance(val, int) or not 1 <= val <= 10:
                 raise ValueError(f"division_max_tl[{key!r}] must be an integer between 1 and 10")
         return v
 

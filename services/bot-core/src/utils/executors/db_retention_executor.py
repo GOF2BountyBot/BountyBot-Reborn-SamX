@@ -1,6 +1,6 @@
 """DB data retention executor — daily cleanup of stale rows.
 
-Runs daily via APScheduler.  Three independent passes, each in its own
+Runs daily via APScheduler.  Four independent passes, each in its own
 database session so a failure on one target table does not abort the
 others:
 
@@ -12,6 +12,9 @@ others:
    than ``GameConstants.DUEL_RETENTION_HOURS`` hours (default 24h).
 3. ``admin_audit_logs`` — delete rows whose ``timestamp`` is older than
    ``GameConstants.AUDIT_RETENTION_DAYS`` days (default 30d).
+4. ``combat_log`` — delete rows whose ``created_at`` is older than
+   ``GameConstants.COMBAT_LOG_RETENTION_HOURS`` hours (default 72h).
+   Override via ``BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS``.
 
 Rationale
 ---------
@@ -20,6 +23,7 @@ Per-player aggregate stats (``bounty_wins``, ``systems_checked``,
 are kept on the ``players`` table, so terminal-state rows in ``bounty``
 and ``duel_requests`` have no game-relevant value.  Audit history is
 preserved out-of-band by the scheduled ``pg_backup_default`` job.
+Combat logs are ephemeral — retained 72h for post-fight review only.
 
 This executor never fails fatally — all exceptions are caught, logged,
 and the executor still returns ``{"status": "success", ...}`` with
@@ -38,7 +42,7 @@ flogger = get_logger("db-retention-executor")
 
 
 async def execute_db_retention_job(job_id: str, payload: dict) -> dict:
-    """Run the three retention passes.  Always returns success.
+    """Run the four retention passes.  Always returns success.
 
     Args:
         job_id: APScheduler job identifier (used for log correlation).
@@ -46,13 +50,14 @@ async def execute_db_retention_job(job_id: str, payload: dict) -> dict:
 
     Returns:
         Dict with keys ``status``, ``bounties_deleted``, ``duels_deleted``,
-        ``audit_logs_deleted`` and ``errors`` (list of strings — empty on
-        full success).
+        ``audit_logs_deleted``, ``combat_logs_deleted`` and ``errors``
+        (list of strings — empty on full success).
     """
     # Deferred imports — see module docstring.
     from persist.database.manager import db_manager
     from persist.repositories.admin_audit_log_repository import AdminAuditLogRepository
     from persist.repositories.bounty_repository import BountyRepository
+    from persist.repositories.combat_log_repository import CombatLogRepository
     from persist.repositories.duel_repository import DuelRepository
     from services.game_constants import GameConstants
 
@@ -62,10 +67,12 @@ async def execute_db_retention_job(job_id: str, payload: dict) -> dict:
     bounty_cutoff = now - timedelta(hours=GameConstants.BOUNTY_RETENTION_HOURS)
     duel_cutoff = now - timedelta(hours=GameConstants.DUEL_RETENTION_HOURS)
     audit_cutoff = now - timedelta(days=GameConstants.AUDIT_RETENTION_DAYS)
+    combat_log_cutoff = now - timedelta(hours=GameConstants.COMBAT_LOG_RETENTION_HOURS)
 
     bounties_deleted = 0
     duels_deleted = 0
     audit_logs_deleted = 0
+    combat_logs_deleted = 0
     errors: list[str] = []
 
     # ----- Pass 1: bounties --------------------------------------------------
@@ -110,9 +117,24 @@ async def execute_db_retention_job(job_id: str, payload: dict) -> dict:
         flogger.warning(f"DBRetention[{job_id}] {msg}")
         errors.append(msg)
 
+    # ----- Pass 4: combat logs -----------------------------------------------
+    try:
+        async with db_manager.get_session() as db:
+            combat_log_repo = CombatLogRepository()
+            combat_logs_deleted = await combat_log_repo.delete_older_than(db, combat_log_cutoff)
+        flogger.info(
+            f"DBRetention[{job_id}] combat_log pass: deleted={combat_logs_deleted} "
+            f"cutoff={combat_log_cutoff.isoformat()} "
+            f"(retention={GameConstants.COMBAT_LOG_RETENTION_HOURS}h)"
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        msg = f"combat_log pass failed: {type(e).__name__}: {e}"
+        flogger.warning(f"DBRetention[{job_id}] {msg}")
+        errors.append(msg)
+
     flogger.info(
         f"DBRetention[{job_id}] DONE bounties={bounties_deleted} duels={duels_deleted} "
-        f"audit={audit_logs_deleted} errors={len(errors)}"
+        f"audit={audit_logs_deleted} combat_logs={combat_logs_deleted} errors={len(errors)}"
     )
 
     return {
@@ -120,5 +142,6 @@ async def execute_db_retention_job(job_id: str, payload: dict) -> dict:
         "bounties_deleted": bounties_deleted,
         "duels_deleted": duels_deleted,
         "audit_logs_deleted": audit_logs_deleted,
+        "combat_logs_deleted": combat_logs_deleted,
         "errors": errors,
     }

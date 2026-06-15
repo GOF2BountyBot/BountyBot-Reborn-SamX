@@ -8,10 +8,15 @@ Each player can own multiple ships, but only one can be active at a time.
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from persist.database.tablenames import TableNames
 from persist.models.base import Base
+
+# Portable JSON type: PostgreSQL uses JSONB (binary, sub-path operators, GIN indexable);
+# SQLite unit-test suite falls back to JSON (no JSONB dialect support there).
+_JSONB = JSON().with_variant(JSONB(), "postgresql")
 
 
 class PlayerShip(Base):
@@ -23,11 +28,16 @@ class PlayerShip(Base):
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)  # Custom ship name
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Equipment loadouts (stored as JSON arrays of item names)
-    weapons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped primary weapon names
-    modules: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped module names
-    turrets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped turret weapon names
-    secondary_weapons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Equipped secondary weapons
+    # Equipment loadouts (stored as JSONB arrays of item names)
+    weapons: Mapped[list[str] | None] = mapped_column(_JSONB, nullable=True)  # Array of equipped primary weapon names
+    modules: Mapped[list[str] | None] = mapped_column(_JSONB, nullable=True)  # Array of equipped module names
+    turrets: Mapped[list[str] | None] = mapped_column(_JSONB, nullable=True)  # Array of equipped turret weapon names
+    secondary_weapons: Mapped[list[str] | None] = mapped_column(_JSONB, nullable=True)  # Equipped secondary weapons
+
+    # CI-16: per-equipped-secondary ammo sidecar — {weapon_name: remaining_rounds}
+    # None/absent = no ammo tracking (back-compat); {} = has slot(s) but all infinite or fresh equip
+    # SQLAlchemy JSON/JSONB: MUST reassign the whole dict, never mutate in place, or writes are silently lost.
+    secondary_ammo: Mapped[dict | None] = mapped_column(_JSONB, nullable=True, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 

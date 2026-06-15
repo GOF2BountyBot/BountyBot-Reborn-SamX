@@ -1,0 +1,29 @@
+{
+  "_name": "Secure Container",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/6phJf3ty/secure-container.png",
+  "_subcategory": "mission",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Secure_Container",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Secure Container",
+    "Type": "Commodity",
+    "Tech Level": "5",
+    "Price Range": "-> 0$",
+    "mission_only": true
+  },
+  "stats": {
+    "tech_level": 5,
+    "price_range_min_credits": 0,
+    "price_range_min_system": null,
+    "price_range_max_credits": 0,
+    "price_range_max_system": null,
+    "value": 0,
+    "price_source": "mission_only"
+  },
+  "in_game_description": "A container. It is locked and cannot be opened.",
+  "mechanics_text": [
+    "Appears as cargo during Salvage or Courier missions; cannot be removed or sold until mission ends, at which point it vanishes."
+  ],
+  "wiki_categories": ["Commodities", "Mission-only Commodities", "Tech level 5", "GOF2", "Freelance Missions", "Missions", "GOF2HD", "Miscellaneous"]
+}

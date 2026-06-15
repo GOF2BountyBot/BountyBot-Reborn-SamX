@@ -1,0 +1,28 @@
+{
+  "_name": "Noble Gas",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/yd8VZRR1/noble-gas.png",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Noble_Gas",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Noble Gas",
+    "Type": "Commodity",
+    "Tech Level": "2",
+    "Known Price Range": "-> 171$ (Vulpes)\n-> 208$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 2,
+    "price_range_min_credits": 171,
+    "price_range_min_system": "Vulpes",
+    "price_range_max_credits": 208,
+    "price_range_max_system": "Eanya",
+    "value": 190,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Non-flammable, non-water based and virtually colorless and odorless. For inert gasses, there are a variety of applications.",
+  "mechanics_text": [
+    "Required for blueprints: 10t M6 A3 \"Wolverine\", 28t Disruptor Laser, 40t Yin Co. Shadow Ninja, 8t Phoenix SIS."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 2", "GOF2", "Technical commodities", "Valkyrie", "Supernova", "Blueprints", "Freelance Missions", "GOF2HD"]
+}

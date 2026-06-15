@@ -12,9 +12,15 @@
   "icon": "https://i.postimg.cc/X74pjrHv/skuld-at-xr.png",
   "name": "Skuld AT XR",
   "techLevel": 6,
-  "value": 407793,
+  "value": 369685,
   "automatic": true,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Skuld_AT_XR",
   "type": "TurretWeapon",
-  "subtype": "auto"
+  "extra_atts": {
+    "loading_speed_ms": 190,
+    "range_m": 5500,
+    "speed_km_h": 8000,
+    "autonomous": true,
+    "damage_per_shot": 9
+  }
 }

@@ -3,12 +3,20 @@
     "Oppressor"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 400,
   "icon": "https://i.postimg.cc/XNFVynGy/amr-oppressor.png",
-  "loading speed": 0,
+  "loading speed": 6500,
   "name": "AMR Oppressor",
-  "value": 0,
+  "value": 1258,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "nukes"
+  "techLevel": 5,
+  "extra_atts": {
+    "loading_speed_ms": 6500,
+    "range_m": 3100,
+    "speed_km_h": 1750,
+    "subtype": "nuke",
+    "steerable": false,
+    "magnitude_m": 30000
+  }
 }

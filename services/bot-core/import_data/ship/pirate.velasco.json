@@ -53,5 +53,8 @@
     "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/Velasco_Full.mtl",
     "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/Velasco_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/ship_024_pirates_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/ship_024_pirates_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 456200
+  }
 }

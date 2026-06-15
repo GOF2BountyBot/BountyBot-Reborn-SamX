@@ -5,12 +5,18 @@
     "SG 100"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 9,
   "icon": "https://i.postimg.cc/NMnw2zYD/berger-sg-100.png",
-  "loading speed": 0,
+  "loading speed": 430,
   "name": "Berger SG-100",
-  "value": 0,
+  "value": 750,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "sentry_guns"
+  "techLevel": 9,
+  "extra_atts": {
+    "loading_speed_ms": 430,
+    "range_m": 1500,
+    "speed_km_h": 5500,
+    "subtype": "sentry-gun"
+  }
 }

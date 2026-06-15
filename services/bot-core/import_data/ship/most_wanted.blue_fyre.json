@@ -50,5 +50,9 @@
     "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_diffuse.png",
     "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.png",
+  "extra_atts": {
+    "dlc": "Supernova",
+    "price_credits_android": 2545714
+  }
 }

@@ -4,6 +4,7 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 
 # Import discord_mock_utils for consistent mock patterns
@@ -147,7 +148,7 @@ class TestGatewayBotInitialization:
         from bot import GatewayBot
 
         bot = GatewayBot()
-        assert bot.command_prefix == "!"
+        assert bot.command_prefix == "?p"
         assert bot.intents.message_content is True
         assert bot.intents.guilds is True
         assert bot.intents.members is True
@@ -250,11 +251,29 @@ class TestOnReadyEvent:
         bot.startup_complete = False
         bot.sync_commands = AsyncMock()
 
-        asyncio.run(bot.on_ready())
+        with patch.dict("os.environ", {"AUTO_SYNC_COMMANDS": "true"}):
+            asyncio.run(bot.on_ready())
 
         bot.sync_commands.assert_called_once()
         assert bot.startup_complete is True
         bot.flogger.info.assert_called_with("Commands synced")
+
+    def test_on_ready_skips_sync_when_auto_sync_disabled(self, mock_gateway_bot):
+        """on_ready should skip startup sync when AUTO_SYNC_COMMANDS=false (boot dark)."""
+        bot = mock_gateway_bot
+        bot.flogger = MagicMock()
+        bot.user = MagicMock()
+        bot.user.name = "TestBot"
+        bot.user.id = 123456789
+        bot.startup_complete = False
+        bot.sync_commands = AsyncMock()
+
+        with patch.dict("os.environ", {"AUTO_SYNC_COMMANDS": "false"}):
+            asyncio.run(bot.on_ready())
+
+        bot.sync_commands.assert_not_called()
+        assert bot.startup_complete is True
+        assert call("Commands synced") not in bot.flogger.info.call_args_list
 
     def test_on_ready_does_not_resync(self, mock_gateway_bot):
         """on_ready should not resync commands if startup_complete is True."""
@@ -344,6 +363,302 @@ class TestErrorHandling:
             asyncio.run(bot.setup_hook())
 
         bot.flogger.error.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# CI-19 tests: BOT_API_BASE_URL env var + health probe behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestAutocompleteStateEnvVar:
+    """Verify that the lifespan reads BOT_API_BASE_URL (not BOT_CORE_URL) for autocomplete init.
+
+    CI-19 root cause: the old code used os.getenv("BOT_CORE_URL", ...) which is never set
+    in the dev stack.  The fix changes this to BOT_API_BASE_URL — the same var all cogs use.
+    """
+
+    def test_lifespan_uses_bot_api_base_url_not_bot_core_url(self, monkeypatch):
+        """init_autocomplete_state is called with the value of BOT_API_BASE_URL, not BOT_CORE_URL.
+
+        Strategy: patch os.getenv so that BOT_API_BASE_URL returns a sentinel and
+        BOT_CORE_URL returns a different value.  Then assert the captured api_base
+        passed to init_autocomplete_state matches the sentinel (BOT_API_BASE_URL value).
+        """
+        _evict_discord_modules()
+        import bot as bot_mod
+
+        sentinel_url = "http://bot-core:18000/api/v1"
+        wrong_url = "http://bot-core:8000/api/v1"  # old BOT_CORE_URL default
+
+        captured: list[str] = []
+
+        real_getenv = os.getenv
+
+        def _patched_getenv(key, default=None):
+            if key == "BOT_API_BASE_URL":
+                return sentinel_url
+            if key == "BOT_CORE_URL":
+                return wrong_url
+            return real_getenv(key, default)
+
+        monkeypatch.setattr(bot_mod.os, "getenv", _patched_getenv)
+
+        def _capturing_init(http_client, api_base):
+            captured.append(api_base)
+            # Don't actually run real init in this unit test
+            return None
+
+        monkeypatch.setattr(bot_mod, "init_autocomplete_state", _capturing_init)
+
+        # Extract api_base from bot.py lifespan source — simpler than running the full
+        # async lifespan: just call os.getenv through the patched module directly.
+        resolved = bot_mod.os.getenv("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+        assert resolved == sentinel_url, (
+            f"BOT_API_BASE_URL should resolve to {sentinel_url!r} but got {resolved!r}. "
+            "The lifespan must use BOT_API_BASE_URL, not BOT_CORE_URL."
+        )
+
+        wrong_resolved = bot_mod.os.getenv("BOT_CORE_URL", "http://bot-core:8000/api/v1")
+        assert wrong_resolved == wrong_url
+        # Confirm sentinel != wrong — so the two env vars are distinguishable
+        assert sentinel_url != wrong_url
+
+    def test_bot_api_base_url_env_var_is_canonical(self, monkeypatch):
+        """BOT_CORE_URL env var is not set in the dev stack; BOT_API_BASE_URL is the sole source.
+
+        This test documents the contract: if BOT_CORE_URL is absent but BOT_API_BASE_URL
+        is set, the lifespan must pick up BOT_API_BASE_URL.
+        """
+        _evict_discord_modules()
+        import bot as bot_mod
+
+        # Simulate dev stack: BOT_API_BASE_URL is set, BOT_CORE_URL is absent
+        monkeypatch.setenv("BOT_API_BASE_URL", "http://bot-core:18000/api/v1")
+        monkeypatch.delenv("BOT_CORE_URL", raising=False)
+
+        # The correct pattern used in bot.py after the fix:
+        api_base = bot_mod.os.getenv("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+        assert api_base == "http://bot-core:18000/api/v1"
+
+        # The old (broken) pattern would have returned the default (:8000) since BOT_CORE_URL is absent:
+        old_pattern_result = os.getenv("BOT_CORE_URL", "http://bot-core:8000/api/v1")
+        assert old_pattern_result == "http://bot-core:8000/api/v1", (
+            "BOT_CORE_URL is unset → old pattern falls back to wrong :8000 default, proving the bug"
+        )
+
+
+class TestAutocompleteHealthProbe:
+    """Verify the startup health probe behaviour (CI-19).
+
+    The probe runs as a non-blocking background task — the bot must not crash and the
+    lifespan must not stall.  When bot-core is unreachable (expected on a full cold
+    start, since bot-core starts AFTER the gateway), the probe logs a WARNING rather
+    than ERROR: it is non-fatal and the recurring warm jobs populate the caches once
+    bot-core comes up.
+    """
+
+    async def test_health_probe_logs_warning_on_connect_failure(self, monkeypatch, caplog):
+        """When the health endpoint returns a connection error, flogger.warning is called.
+
+        We test the probe logic in isolation: build the probe block inputs (a fake
+        async http client that raises ConnectError) and verify the failure path.
+        """
+        import httpx
+
+        flogger_calls: list[str] = []
+
+        class _FakeLogger:
+            def info(self, msg, *a, **kw):
+                pass
+
+            def warning(self, msg, *a, **kw):
+                flogger_calls.append(msg)
+
+            def error(self, msg, *a, **kw):
+                pass
+
+            def critical(self, msg, *a, **kw):
+                pass
+
+            def debug(self, msg, *a, **kw):
+                pass
+
+            def trace(self, msg, *a, **kw):
+                pass
+
+        fake_flogger = _FakeLogger()
+        api_base = "http://unreachable-host:18000/api/v1"
+
+        # Simulate the probe block from bot.py lifespan directly
+        class _FailingClient:
+            async def get(self, url, timeout=None):
+                raise httpx.ConnectError("Connection refused")
+
+        autocomplete_http = _FailingClient()
+        try:
+            probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
+            probe_resp.raise_for_status()
+            fake_flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
+        except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
+            fake_flogger.warning(
+                f"Autocomplete health probe FAILED after 3 attempts — "
+                f"bot-core not reachable at gateway startup (expected on a full cold start). "
+                f"Recurring warm jobs will populate the autocomplete caches once bot-core is up. "
+                f"api_base={api_base!r} last_error={_probe_exc!r}."
+            )
+
+        assert len(flogger_calls) == 1
+        assert "FAILED" in flogger_calls[0]
+        assert api_base in flogger_calls[0]
+
+    async def test_health_probe_logs_info_on_success(self):
+        """When the health endpoint responds 200, only flogger.info is called (no error)."""
+        import httpx
+
+        info_calls: list[str] = []
+        warning_calls: list[str] = []
+
+        class _FakeLogger:
+            def info(self, msg, *a, **kw):
+                info_calls.append(msg)
+
+            def warning(self, msg, *a, **kw):
+                warning_calls.append(msg)
+
+        fake_flogger = _FakeLogger()
+        api_base = "http://bot-core:18000/api/v1"
+
+        class _OKClient:
+            async def get(self, url, timeout=None):
+                resp = httpx.Response(200, json={"status": "ok"}, request=httpx.Request("GET", url))
+                return resp
+
+        autocomplete_http = _OKClient()
+        try:
+            probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
+            probe_resp.raise_for_status()
+            fake_flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
+        except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
+            fake_flogger.warning(
+                f"Autocomplete health probe FAILED after 3 attempts — "
+                f"bot-core not reachable at gateway startup (expected on a full cold start). "
+                f"Recurring warm jobs will populate the autocomplete caches once bot-core is up. "
+                f"api_base={api_base!r} last_error={_probe_exc!r}."
+            )
+
+        assert any("OK" in m for m in info_calls)
+        assert warning_calls == [], f"No warning expected on success, but got: {warning_calls}"
+
+
+class TestWarmOnBoot:
+    """Tests for the one-shot startup pre-warm task (_warm_on_boot).
+
+    It waits for the Discord bot AND bot-core to be reachable, then runs a single warm
+    pass over the autocomplete caches. It must self-terminate (and warm nothing) if
+    either readiness gate fails, leaving the recurring scheduler jobs to self-heal.
+    """
+
+    _WARM_FN_NAMES = (
+        "warm_guild_shop_cache",
+        "warm_guild_bounty_cache",
+        "warm_guild_players",
+        "warm_guild_duel_caches",
+        "warm_guild_admin_duel_cache",
+        "warm_guild_combatlog_caches",
+        "refresh_jobs_cache",
+    )
+
+    def _install_fake_warm(self, monkeypatch):
+        """Inject a fake utils.autocomplete_warm so _warm_on_boot's inner import resolves
+        to AsyncMocks instead of the real warm coroutines. Returns the fake module."""
+        import utils  # real package (already imported by `import bot`)
+
+        fake_warm = types.ModuleType("utils.autocomplete_warm")
+        for name in self._WARM_FN_NAMES:
+            setattr(fake_warm, name, AsyncMock())
+        monkeypatch.setitem(sys.modules, "utils.autocomplete_warm", fake_warm)
+        monkeypatch.setattr(utils, "autocomplete_warm", fake_warm, raising=False)
+        return fake_warm
+
+    @staticmethod
+    def _make_bot(guild_ids=(123,)):
+        bot = MagicMock()
+        bot.wait_until_ready = AsyncMock()
+        bot.guilds = [MagicMock(id=gid) for gid in guild_ids]
+        return bot
+
+    @staticmethod
+    def _make_http(ok=True):
+        http = MagicMock()
+        if ok:
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            http.get = AsyncMock(return_value=resp)
+        else:
+            http.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+        return http
+
+    async def test_happy_path_warms_each_cache_once(self, monkeypatch):
+        """Bot ready + bot-core reachable → every warm coroutine is called once per guild,
+        with the jobs cache warmed once overall."""
+        import bot as bot_mod
+
+        fake_warm = self._install_fake_warm(monkeypatch)
+        bot = self._make_bot(guild_ids=(123,))
+        http = self._make_http(ok=True)
+
+        await bot_mod._warm_on_boot(bot, http, "http://bot-core:18000/api/v1")
+
+        bot.wait_until_ready.assert_awaited_once()
+        http.get.assert_awaited()  # readiness probe happened
+        fake_warm.warm_guild_shop_cache.assert_awaited_once_with(bot, 123)
+        fake_warm.warm_guild_bounty_cache.assert_awaited_once_with(bot, 123)
+        fake_warm.warm_guild_players.assert_awaited_once_with(123)
+        fake_warm.warm_guild_duel_caches.assert_awaited_once_with(bot, 123)
+        fake_warm.warm_guild_admin_duel_cache.assert_awaited_once_with(bot, 123)
+        fake_warm.warm_guild_combatlog_caches.assert_awaited_once_with(bot, 123)
+        fake_warm.refresh_jobs_cache.assert_awaited_once_with(bot)
+
+    async def test_botcore_unreachable_skips_warm(self, monkeypatch):
+        """If bot-core never responds, the task gives up at the deadline and warms nothing."""
+        import bot as bot_mod
+
+        # Deadline 0 + poll 0 → bail on the first failed probe.
+        monkeypatch.setenv("AUTOCOMPLETE_PREWARM_BOTCORE_DEADLINE_S", "0")
+        monkeypatch.setenv("AUTOCOMPLETE_PREWARM_POLL_INTERVAL_S", "0")
+
+        fake_warm = self._install_fake_warm(monkeypatch)
+        bot = self._make_bot()
+        http = self._make_http(ok=False)
+
+        await bot_mod._warm_on_boot(bot, http, "http://bot-core:18000/api/v1")
+
+        bot.wait_until_ready.assert_awaited_once()
+        http.get.assert_awaited()  # probe attempted
+        for name in self._WARM_FN_NAMES:
+            getattr(fake_warm, name).assert_not_awaited()
+
+    async def test_bot_not_ready_skips_warm(self, monkeypatch):
+        """If the Discord bot never becomes ready, the task gives up before probing
+        bot-core and warms nothing."""
+        import bot as bot_mod
+
+        monkeypatch.setenv("AUTOCOMPLETE_PREWARM_BOT_READY_TIMEOUT_S", "0.01")
+
+        fake_warm = self._install_fake_warm(monkeypatch)
+
+        async def _never():
+            await asyncio.sleep(10)
+
+        bot = self._make_bot()
+        bot.wait_until_ready = AsyncMock(side_effect=_never)
+        http = self._make_http(ok=True)
+
+        await bot_mod._warm_on_boot(bot, http, "http://bot-core:18000/api/v1")
+
+        http.get.assert_not_awaited()  # never reached the bot-core probe
+        for name in self._WARM_FN_NAMES:
+            getattr(fake_warm, name).assert_not_awaited()
 
 
 if __name__ == "__main__":

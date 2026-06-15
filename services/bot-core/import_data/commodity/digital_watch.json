@@ -1,0 +1,27 @@
+{
+  "_name": "Digital Watch",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/Gh7v8Ps2/digital-watch.png",
+  "_subcategory": "standard",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Digital_Watch",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "2",
+    "Known Price Range": "-> 4$ (Vulpes)\n-> 105$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 2,
+    "price_range_min_credits": 4,
+    "price_range_min_system": "Vulpes",
+    "price_range_max_credits": 105,
+    "price_range_max_system": "Eanya",
+    "value": 55,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "The AMR company produced these watches as a part of a retro trend. They ended up being one of the company's biggest commercial flops of the last 500 years. The watches were not set on Stellar Unit Time, but an outdated 24-hour period used by the Terrans, making them practically useless.",
+  "mechanics_text": [
+    "Stellar unit time is the current method of time used in the Galaxy on Fire universe. The 24-hour Earthly method is outdated, and is only used on these watches."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 2", "AMR", "Terran Technology", "GOF2", "Standard commodities", "Freelance Missions", "GOF2HD"]
+}

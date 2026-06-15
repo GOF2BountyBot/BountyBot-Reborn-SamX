@@ -17,7 +17,7 @@ def make_real_player_ship(**overrides):
 
     Used by A.28 regression tests to ensure router response assembly reads
     PlayerShip-shaped attributes (player_id, nickname, is_active, weapons,
-    modules, turrets, ship_name) and not Ship-seed-data fields.
+    modules, turrets, secondary_weapons, ship_name) and not Ship-seed-data fields.
     """
     from persist.models.player_ship import PlayerShip
 
@@ -30,6 +30,7 @@ def make_real_player_ship(**overrides):
         weapons=["Pulse Laser"],
         modules=["Shield Generator"],
         turrets=[],
+        secondary_weapons=[],
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     defaults.update(overrides)
@@ -47,6 +48,8 @@ def make_mock_ship(**overrides):
         weapons=["Pulse Laser"],
         modules=["Shield Generator"],
         turrets=[],
+        secondary_weapons=[],
+        secondary_ammo={},  # CI-16: ammo sidecar
         created_at=datetime(2026, 1, 1),
     )
     defaults.update(overrides)
@@ -87,9 +90,12 @@ def mock_ship_repo():
             "weapons": ["Pulse Laser"],
             "modules": ["Shield Generator"],
             "turrets": [],
+            "secondary_weapons": [],
+            "secondary_ammo": {},  # CI-16: ammo sidecar
             "weapons_count": 1,
             "modules_count": 1,
             "turrets_count": 0,
+            "secondary_weapons_count": 0,
         }
     )
     repo.remove = AsyncMock()
@@ -101,6 +107,10 @@ def mock_player_repo():
     repo = AsyncMock()
     repo.get_by_id = AsyncMock(return_value=make_mock_player())
     repo.update_active_ship = AsyncMock()
+    # D5-T3 (path 19): update_ship_loadout takes the aggregate-root Player lock
+    # FIRST via get_by_id_for_update; router-level tests override the repo so no
+    # real DB call is made.
+    repo.get_by_id_for_update = AsyncMock(return_value=make_mock_player())
     return repo
 
 
@@ -524,6 +534,53 @@ class TestUpdateShipLoadout:
         data = response.json()
         assert "detail" in data
 
+    def test_update_ship_loadout_locks_player_first(self, client, mock_ship_repo, mock_player_repo):
+        """D5-T3 (path 19): the aggregate-root Player lock is acquired on the ship's
+        player_id BEFORE the loadout overwrite.
+
+        The route resolves the ship (player_id=1 via make_mock_ship) then locks that
+        player FIRST. Mirrors test_inventory_router::test_consolidate_inventory_
+        locks_player_first. Without the lock call this assertion fails — proving the
+        lock is load-bearing, not silently absorbed by the mock.
+        """
+        payload = {"weapons": ["Pulse Laser"]}
+        response = client.put("/api/v1/ships/1/loadout", json=payload)
+
+        assert response.status_code == 200
+        # Lock-first: get_by_id_for_update on the ship's player_id must have been awaited.
+        mock_player_repo.get_by_id_for_update.assert_awaited_once()
+        assert mock_player_repo.get_by_id_for_update.call_args.args[1] == 1
+
+    def test_update_ship_loadout_overwrites_with_commit_false(self, client, mock_ship_repo):
+        """D5-T3 (path 19): the loadout overwrite runs with commit=False so the
+        route's db.begin() owns the atomic unit of work.
+
+        A silent revert to commit=True (service/repo committing mid-block) would be
+        caught here.
+        """
+        payload = {"weapons": ["Pulse Laser"]}
+        response = client.put("/api/v1/ships/1/loadout", json=payload)
+
+        assert response.status_code == 200
+        mock_ship_repo.update_loadout.assert_awaited_once()
+        assert mock_ship_repo.update_loadout.call_args.kwargs.get("commit") is False
+
+    def test_update_ship_loadout_ship_not_found_returns_404(self, client, mock_ship_repo):
+        """D5-T3 (path 19): a missing ship yields 404, NOT 500.
+
+        Exercises the ``except HTTPException: raise`` guard: the route raises a 404
+        HTTPException, which must propagate untouched rather than being swallowed by
+        the broad ``except Exception`` and re-raised as a 500. (Removing that guard
+        line makes this return 500 — confirmed by mutation proof.)
+        """
+        mock_ship_repo.get_by_id = AsyncMock(return_value=None)
+
+        payload = {"weapons": ["Pulse Laser"]}
+        response = client.put("/api/v1/ships/999/loadout", json=payload)
+
+        assert response.status_code == 404
+        assert "999" in response.json()["detail"]
+
 
 class TestUpdateShipNickname:
     """Tests for PUT /ships/{ship_id}/nickname."""
@@ -718,9 +775,12 @@ class TestGetShipLoadout:
                 "weapons": ["Multi-cannon", "Plasma Accelerator"],
                 "modules": ["Shield Cell Bank", "Fuel Scoop"],
                 "turrets": ["Turreted Beam"],
+                "secondary_weapons": [],
+                "secondary_ammo": {},
                 "weapons_count": 2,
                 "modules_count": 2,
                 "turrets_count": 1,
+                "secondary_weapons_count": 0,
             }
         )
 
@@ -1275,6 +1335,7 @@ class TestA28PlayerShipShape:
             weapons=["Pulse Laser", "Burst Laser"],
             modules=["Shield Generator"],
             turrets=["Auto Turret"],
+            secondary_weapons=[],
         )
         # Build the summary from the real PlayerShip's fields — this is the
         # exact shape PlayerShipRepository.get_ship_loadout_summary produces.
@@ -1287,9 +1348,12 @@ class TestA28PlayerShipShape:
                 "weapons": real_ship.weapons,
                 "modules": real_ship.modules,
                 "turrets": real_ship.turrets,
+                "secondary_weapons": real_ship.secondary_weapons,
+                "secondary_ammo": dict(real_ship.secondary_ammo or {}),
                 "weapons_count": len(real_ship.weapons),
                 "modules_count": len(real_ship.modules),
                 "turrets_count": len(real_ship.turrets),
+                "secondary_weapons_count": len(real_ship.secondary_weapons),
             }
         )
 
@@ -1305,8 +1369,115 @@ class TestA28PlayerShipShape:
         assert data["weapons"] == ["Pulse Laser", "Burst Laser"]
         assert data["modules"] == ["Shield Generator"]
         assert data["turrets"] == ["Auto Turret"]
+        assert data["secondary_weapons"] == []
         assert data["weapons_count"] == 2
         assert data["modules_count"] == 1
         assert data["turrets_count"] == 1
+        assert data["secondary_weapons_count"] == 0
         # PlayerShipRepository is the dependency that must be invoked
         mock_ship_repo.get_ship_loadout_summary.assert_called_once()
+
+
+class TestSecondaryWeaponsInShipResponse:
+    """CI-5: secondary_weapons must be visible in ShipResponse endpoints."""
+
+    def test_get_player_ships_includes_secondary_weapons(self, client, mock_ship_repo):
+        """GET /ships/player/{id} returns secondary_weapons in each ShipResponse."""
+        mock_ship_repo.get_player_ships = AsyncMock(return_value=[make_mock_ship(secondary_weapons=["AMR Tormentor"])])
+
+        response = client.get("/api/v1/ships/player/1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["secondary_weapons"] == ["AMR Tormentor"]
+
+    def test_get_player_ships_empty_secondary_weapons(self, client, mock_ship_repo):
+        """GET /ships/player/{id} returns empty list when no secondaries equipped."""
+        mock_ship_repo.get_player_ships = AsyncMock(return_value=[make_mock_ship(secondary_weapons=[])])
+
+        response = client.get("/api/v1/ships/player/1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[0]["secondary_weapons"] == []
+
+    def test_get_ship_includes_secondary_weapons(self, client, mock_ship_repo):
+        """GET /ships/{ship_id} returns secondary_weapons in ShipResponse."""
+        mock_ship_repo.get_by_id = AsyncMock(return_value=make_mock_ship(secondary_weapons=["Seeker Missile"]))
+
+        response = client.get("/api/v1/ships/1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["secondary_weapons"] == ["Seeker Missile"]
+
+    def test_get_active_ship_includes_secondary_weapons(self, client, mock_ship_repo):
+        """GET /ships/player/{id}/active returns secondary_weapons."""
+        mock_ship_repo.get_active_ship = AsyncMock(
+            return_value=make_mock_ship(is_active=True, secondary_weapons=["AMR Tormentor"])
+        )
+
+        response = client.get("/api/v1/ships/player/1/active")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["secondary_weapons"] == ["AMR Tormentor"]
+
+
+class TestSecondaryWeaponsInLoadoutSummary:
+    """CI-5: secondary_weapons must be visible in ShipLoadoutSummaryResponse."""
+
+    def test_get_ship_loadout_includes_secondary_weapons(self, client, mock_ship_repo):
+        """GET /ships/{id}/loadout returns secondary_weapons + secondary_weapons_count."""
+        mock_ship_repo.get_ship_loadout_summary = AsyncMock(
+            return_value={
+                "ship_id": 5,
+                "ship_name": "Niode",
+                "nickname": None,
+                "is_active": True,
+                "weapons": ["Pulse Laser"],
+                "modules": [],
+                "turrets": [],
+                "secondary_weapons": ["AMR Tormentor"],
+                "secondary_ammo": {"AMR Tormentor": 5},
+                "weapons_count": 1,
+                "modules_count": 0,
+                "turrets_count": 0,
+                "secondary_weapons_count": 1,
+            }
+        )
+
+        response = client.get("/api/v1/ships/5/loadout")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["secondary_weapons"] == ["AMR Tormentor"]
+        assert data["secondary_weapons_count"] == 1
+
+    def test_get_ship_loadout_multiple_secondary_weapons(self, client, mock_ship_repo):
+        """GET /ships/{id}/loadout handles multiple equipped secondaries."""
+        mock_ship_repo.get_ship_loadout_summary = AsyncMock(
+            return_value={
+                "ship_id": 6,
+                "ship_name": "Eagle",
+                "nickname": None,
+                "is_active": True,
+                "weapons": [],
+                "modules": [],
+                "turrets": [],
+                "secondary_weapons": ["AMR Tormentor", "Seeker Missile"],
+                "secondary_ammo": {"AMR Tormentor": 3, "Seeker Missile": 7},
+                "weapons_count": 0,
+                "modules_count": 0,
+                "turrets_count": 0,
+                "secondary_weapons_count": 2,
+            }
+        )
+
+        response = client.get("/api/v1/ships/6/loadout")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["secondary_weapons"] == ["AMR Tormentor", "Seeker Missile"]
+        assert data["secondary_weapons_count"] == 2

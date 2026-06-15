@@ -1,0 +1,26 @@
+{
+  "_name": "Rare Plants",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/sXhTK67w/rare-plants.png",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Rare_Plants",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Rare Plants",
+    "Type": "Commodity",
+    "Tech Level": "5",
+    "Known Price Range": "-> 1,712$ (Union)\n-> 5,981$ (Pan)"
+  },
+  "stats": {
+    "tech_level": 5,
+    "price_range_min_credits": 1712,
+    "price_range_min_system": "Union",
+    "price_range_max_credits": 5981,
+    "price_range_max_system": "Pan",
+    "value": 3847,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "On some planets the boundary between animals and plants is blurred. Some of these specimens fetch an extremely high price on the open market.",
+  "mechanics_text": [],
+  "wiki_categories": ["Commodities", "Tech level 5", "Trading commodities", "GOF2", "Rare commodities", "Freelance Missions", "GOF2HD"]
+}

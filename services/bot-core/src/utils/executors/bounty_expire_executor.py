@@ -45,6 +45,17 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
     -------
     dict
         Summary with ``status`` and ``bounty_id``.
+
+    Session-lifetime note (P6-T7)
+    -----------------------------
+    The DB session is closed *before* any external httpx call so that a pooled
+    connection is not held across network I/O.
+
+    Pattern:
+      1. Session A — fetch bounty, run expire_bounty, commit; session closes here.
+      2. Network I/O — _delete_bounty_announcement (Discord DELETE via gateway)
+         and _push_bounty_cache_expire (gateway cache POST) each open their own
+         short-lived session when called without an explicit ``db`` argument.
     """
     # Deferred imports — avoids transitive ORM dependencies at module load time.
     from persist.database.manager import db_manager
@@ -59,6 +70,11 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
         return {"status": "error", "reason": "missing bounty_id", "bounty_id": None}
 
     try:
+        # ------------------------------------------------------------------
+        # Session A: all DB work — fetch, expire, commit.
+        # The session is released back to the pool as soon as this block exits,
+        # BEFORE any external httpx call is made (P6-T7).
+        # ------------------------------------------------------------------
         async with db_manager.get_session() as db:
             from persist.repositories.bounty_repository import BountyRepository
 
@@ -68,20 +84,28 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
             # Fetch the bounty first (regardless of status) so we can delete the announcement.
             bounty_obj = await bounty_repo.get_by_id(db, bounty_id)
 
-            # Try to expire it (only succeeds if still active; returns None otherwise).
+            # Try to expire it.  The guard in expire_bounty() checks
+            # status == 'active' before writing; it returns None (no-op) if
+            # the bounty was already captured/completed, or if the expiry job
+            # was re-fired after a restart and already ran once before.
             bounty = await bounty_service.expire_bounty(db, bounty_id)
 
-            # Always attempt to delete the announcement, even if bounty was already captured.
-            if bounty_obj is not None:
-                await _delete_bounty_announcement(job_id, bounty_obj, db)
-
-            # Push updated bounty cache to gateway autocomplete (Phase 5b, non-fatal).
-            if bounty_obj is not None:
-                await _push_bounty_cache_expire(job_id, bounty_obj.guild_id, db)
+        # session A is now closed; DB connection returned to pool
 
         if bounty_obj is None:
             flogger.warning(f"BountyExpireJob[{job_id}] bounty {bounty_id} not found in database")
             return {"status": "skipped", "bounty_id": bounty_id}
+
+        # ------------------------------------------------------------------
+        # Network I/O: delete Discord announcement and push cache.
+        # Both helpers open their own short-lived sessions (db=None path).
+        # ------------------------------------------------------------------
+
+        # Always attempt to delete the announcement, even if bounty was already captured.
+        await _delete_bounty_announcement(job_id, bounty_obj, db=None)
+
+        # Push updated bounty cache to gateway autocomplete (Phase 5b, non-fatal).
+        await _push_bounty_cache_expire(job_id, bounty_obj.guild_id, db=None)
 
         if bounty is None:
             flogger.info(
@@ -107,44 +131,87 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def _delete_bounty_announcement(parent_job_id: str, bounty, db) -> None:
+async def _delete_bounty_announcement(parent_job_id: str, bounty, db=None) -> None:
     """Delete the bounty's Discord announcement message.
 
     1. Look up DiscordMessage by guild_id + "bounty_announcement" + bounty.id
     2. If found, DELETE the message from Discord via gateway
     3. Delete the DiscordMessage record from the database
     4. Non-fatal if any step fails
+
+    Session handling (P6-T7)
+    ------------------------
+    When ``db`` is ``None`` (executor path) the function opens its own short-lived
+    session for the DB look-up and clean-up so that no DB connection is held across
+    the external httpx DELETE call.  When a ``db`` session is supplied by the caller
+    (e.g. ``main.py`` recovery sweep) it is used directly for backward compatibility.
     """
     try:
         from persist.repositories.discord_message_repository import DiscordMessageRepository
 
         msg_repo = DiscordMessageRepository()
-        discord_msg = await msg_repo.get_by_guild_type_and_reference(
-            db, bounty.guild_id, "bounty_announcement", bounty.id
-        )
+
+        if db is not None:
+            # Caller-supplied session path (backward compat: main.py recovery sweep).
+            discord_msg = await msg_repo.get_by_guild_type_and_reference(
+                db, bounty.guild_id, "bounty_announcement", bounty.id
+            )
+            if discord_msg is None:
+                flogger.debug(f"BountyExpireJob[{parent_job_id}] no announcement to delete for bounty {bounty.id}")
+                return
+            channel_id = discord_msg.channel_id
+            msg_id = discord_msg.message_id
+            # httpx call while caller's session is open (unchanged from pre-T7 behaviour
+            # on this path — the caller already manages the session lifetime).
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.delete(
+                        f"{_GATEWAY_BASE_URL}/channels/{channel_id}/messages/{msg_id}",
+                        timeout=10,
+                    )
+                if resp.status_code not in (200, 204, 404):
+                    resp.raise_for_status()
+                flogger.info(f"BountyExpireJob[{parent_job_id}] deleted Discord message {msg_id}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"BountyExpireJob[{parent_job_id}] failed to delete Discord message: {e}")
+            await msg_repo.delete_by_guild_type_and_reference(db, bounty.guild_id, "bounty_announcement", bounty.id)
+            flogger.info(f"BountyExpireJob[{parent_job_id}] cleaned up announcement record for bounty {bounty.id}")
+            return
+
+        # Executor path (db=None, P6-T7): open own session for DB look-up only,
+        # close it before the external httpx DELETE, then open a new session for
+        # the DB clean-up.  No DB connection is held across network I/O.
+        from persist.database.manager import db_manager
+
+        async with db_manager.get_session() as lookup_db:
+            discord_msg = await msg_repo.get_by_guild_type_and_reference(
+                lookup_db, bounty.guild_id, "bounty_announcement", bounty.id
+            )
 
         if discord_msg is None:
             flogger.debug(f"BountyExpireJob[{parent_job_id}] no announcement to delete for bounty {bounty.id}")
             return
 
-        # Delete from Discord via gateway using channel-specific endpoint (more reliable —
-        # does not require a guild-wide channel scan to find the message).
+        channel_id = discord_msg.channel_id
+        msg_id = discord_msg.message_id
+
+        # Delete from Discord via gateway — no session held across this call.
         try:
-            channel_id = discord_msg.channel_id
             async with httpx.AsyncClient() as client:
                 resp = await client.delete(
-                    f"{_GATEWAY_BASE_URL}/channels/{channel_id}/messages/{discord_msg.message_id}",
+                    f"{_GATEWAY_BASE_URL}/channels/{channel_id}/messages/{msg_id}",
                     timeout=10,
                 )
             # 404 is OK — message may have been manually deleted
             if resp.status_code not in (200, 204, 404):
                 resp.raise_for_status()
-            flogger.info(f"BountyExpireJob[{parent_job_id}] deleted Discord message {discord_msg.message_id}")
+            flogger.info(f"BountyExpireJob[{parent_job_id}] deleted Discord message {msg_id}")
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.warning(f"BountyExpireJob[{parent_job_id}] failed to delete Discord message: {e}")
 
-        # Delete the DiscordMessage record from DB
-        await msg_repo.delete_by_guild_type_and_reference(db, bounty.guild_id, "bounty_announcement", bounty.id)
+        # Delete the DiscordMessage record from DB (fresh short-lived session).
+        async with db_manager.get_session() as del_db:
+            await msg_repo.delete_by_guild_type_and_reference(del_db, bounty.guild_id, "bounty_announcement", bounty.id)
         flogger.info(f"BountyExpireJob[{parent_job_id}] cleaned up announcement record for bounty {bounty.id}")
 
     except Exception as e:  # pylint: disable=broad-exception-caught
@@ -156,7 +223,7 @@ async def _delete_bounty_announcement(parent_job_id: str, bounty, db) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _push_bounty_cache_expire(parent_job_id: str, guild_id: int, db) -> None:
+async def _push_bounty_cache_expire(parent_job_id: str, guild_id: int, db=None) -> None:
     """Non-fatal push of the remaining active bounty list to the gateway autocomplete cache.
 
     Called after a bounty expires so the gateway autocomplete immediately
@@ -165,13 +232,22 @@ async def _push_bounty_cache_expire(parent_job_id: str, guild_id: int, db) -> No
     Args:
         parent_job_id: Job ID for log correlation.
         guild_id: The Discord guild ID.
-        db: An open AsyncSession (within the caller's db_manager.get_session() block).
+        db: An open AsyncSession, or ``None`` (P6-T7 executor path).  When
+            ``None`` the function opens its own short-lived session for the
+            DB read so that no connection is held across the gateway POST.
     """
     try:
         from persist.repositories.bounty_repository import BountyRepository
 
         bounty_repo = BountyRepository()
-        bounties_raw = await bounty_repo.get_active_by_guild(db, guild_id)
+
+        if db is None:
+            from persist.database.manager import db_manager
+
+            async with db_manager.get_session() as own_db:
+                bounties_raw = await bounty_repo.get_active_by_guild(own_db, guild_id)
+        else:
+            bounties_raw = await bounty_repo.get_active_by_guild(db, guild_id)
 
         # Serialise ORM objects to plain dicts (exclude SQLAlchemy internal keys)
         bounty_dicts: list[dict] = []
@@ -196,13 +272,15 @@ async def _push_bounty_cache_expire(parent_job_id: str, guild_id: int, db) -> No
         token = _os.getenv("INTERNAL_AUTH_TOKEN", "")
         headers = {"X-Internal-Auth": token} if token else {}
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
+            from shared.http_retry import with_transient_retry  # deferred — avoids forkserver mock-shared collision
+
+            await with_transient_retry(
+                client.post,
                 gateway_url,
                 json={"bounties": bounty_dicts},
                 headers=headers,
                 timeout=5.0,
             )
-            resp.raise_for_status()
         flogger.debug(
             f"BountyExpireJob[{parent_job_id}] pushed bounty cache for guild={guild_id} remaining={len(bounty_dicts)}"
         )

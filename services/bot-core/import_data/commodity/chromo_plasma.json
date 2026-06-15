@@ -1,0 +1,35 @@
+{
+  "_name": "Chromo Plasma",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/KzR6bDLM/chromo-plasma.png",
+  "_subcategory": "plasma",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Chromo_Plasma",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "10",
+    "Known Price Range": "-> 462,715$ (Prospero)\n-> 480,886$ (Eanya)",
+    "blueprint_only": true
+  },
+  "stats": {
+    "tech_level": 10,
+    "price_range_min_credits": 462715,
+    "price_range_min_system": "Prospero",
+    "price_range_max_credits": 480886,
+    "price_range_max_system": "Eanya",
+    "value": 471801,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Chromo Plasma is won by mingling and compacting four different sorts of plasma. This substance is particularly valuable because of its extremely high energy level. Since it is also prone to magnetic deviation, it can only be stored in containers with a special kind of sodil-alloy.",
+  "mechanics_text": [
+    "Blueprint requires 917t each of Blue Plasma, Green Plasma, Purple Plasma, and Red Plasma (iOS/PC); 930t each for Android.",
+    "Though the description mentions a sodil-alloy container, the blueprint does not require any sodil at all.",
+    "Chromo Plasma was used to complete the construction of the Plasma Array.",
+    "1t of Chromo Plasma is needed for the Phoenix SIS blueprint.",
+    "1t of Chromo Plasma is needed for the Fireworks blueprint.",
+    "This is the only craftable commodity in the game.",
+    "This is the most expensive commodity in the game; the second most expensive is the K'mirkk Toad Mutagen.",
+    "Despite containing high amounts of Red Plasma, Chromo Plasma does not become volatile after its construction."
+  ],
+  "wiki_categories": ["GOF2", "Supernova", "Tech level 10", "Blueprints", "Commodities", "Plasma", "Gas Cloud Mining", "Rare commodities", "GOF2HD"]
+}

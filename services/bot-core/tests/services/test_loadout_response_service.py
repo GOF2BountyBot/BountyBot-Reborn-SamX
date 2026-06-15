@@ -130,6 +130,8 @@ def _player_ship():
         weapons=["Pulse Laser"],
         modules=["D'iol"],
         turrets=[],
+        secondary_weapons=[],
+        secondary_ammo={},
     )
 
 
@@ -291,6 +293,94 @@ class TestBuildPlayerLoadout:
         assert result is not None
         assert result.cargo == []
         assert result.cargo_total_count == 0
+
+    async def test_player_secondaries_populated_with_rounds(self):
+        """build_player_loadout surfaces secondary_weapons with ammo rounds (CI-28)."""
+        player = _player()
+        user = _user()
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["Edo Torpedo", "S'koon Missile"],
+            secondary_ammo={"Edo Torpedo": 5, "S'koon Missile": 3},
+        )
+        ship = _ship()
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        # Return a stub item for secondaries
+        svc.item_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(emoji="<:edo:1>", dps=None, value=800))
+        db = _make_db_session(player_ship=ps, ship=ship, module_factory=lambda n: None)
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        assert result is not None
+        assert len(result.secondaries) == 2
+        # First secondary: Edo Torpedo with 5 rounds
+        assert result.secondaries[0].name == "Edo Torpedo"
+        assert result.secondaries[0].rounds == 5
+        # Second secondary: S'koon Missile with 3 rounds
+        assert result.secondaries[1].name == "S'koon Missile"
+        assert result.secondaries[1].rounds == 3
+        # Total value counts secondaries per round: 800×5 + 800×3 (no other equipment)
+        assert result.ship_stats.total_value == 6400
+
+    async def test_secondary_total_value_edge_rounds(self):
+        """Secondary value edges: 0 rounds contributes nothing; no ammo entry counts once."""
+        player = _player()
+        user = _user()
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["Edo Torpedo", "S'koon Missile"],
+            secondary_ammo={"Edo Torpedo": 0},  # depleted stack; S'koon has no sidecar entry
+        )
+        ship = _ship()
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(emoji="<:edo:1>", dps=None, value=800))
+        db = _make_db_session(player_ship=ps, ship=ship, module_factory=lambda n: None)
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        assert result is not None
+        # Edo Torpedo: 800 × 0 rounds = 0; S'koon Missile: no ammo entry → counted once = 800
+        assert result.ship_stats.total_value == 800
+
+    async def test_player_no_secondaries_returns_empty_list(self):
+        """build_player_loadout returns secondaries=[] when ship has none equipped (CI-28)."""
+        player = _player()
+        user = _user()
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=[],
+            secondary_ammo={},
+        )
+        ship = _ship()
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+        db = _make_db_session(player_ship=ps, ship=ship, module_factory=lambda n: None)
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        assert result is not None
+        assert result.secondaries == []
 
     async def test_compressor_module_multiplies_cargo(self):
         """CompressorModule cargoMultiplier applies to base ship.cargo (spec §2.6 step 9)."""
@@ -456,6 +546,52 @@ class TestBuildBountyLoadout:
         result = await svc.build_bounty_loadout(db, bounty_id=999)
 
         assert result is None
+
+    async def test_bounty_secondaries_populated_with_rounds(self):
+        """build_bounty_loadout surfaces criminal secondaries with rounds count (CI-28)."""
+        criminal_ship = {
+            "ship_name": "Interceptor",
+            "ship_armour": 95,
+            "total_hp": 200,
+            "weapons": [],
+            "turrets": [],
+            "modules": [],
+            "secondaries": [
+                {"name": "Edo Torpedo", "emoji": "<:edo:1>", "dps": 0.0, "value": 800, "rounds": 5},
+                {"name": "S'koon Missile", "emoji": "<:skoon:2>", "dps": 0.0, "value": 600, "rounds": 3},
+            ],
+        }
+        bounty = self._make_bounty(criminal_ship=criminal_ship)
+        ship = _interceptor_ship()
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=5)
+
+        assert result is not None
+        assert len(result.secondaries) == 2
+        # First secondary
+        assert result.secondaries[0].name == "Edo Torpedo"
+        assert result.secondaries[0].emoji == "<:edo:1>"
+        assert result.secondaries[0].rounds == 5
+        # Second secondary
+        assert result.secondaries[1].name == "S'koon Missile"
+        assert result.secondaries[1].rounds == 3
+
+    async def test_bounty_empty_secondaries_returns_empty_list(self):
+        """build_bounty_loadout returns secondaries=[] when criminal_ship has none (CI-28)."""
+        criminal_ship = self._default_criminal_ship()  # contains no 'secondaries' key
+        bounty = self._make_bounty(criminal_ship=criminal_ship)
+        ship = _interceptor_ship()
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=5)
+
+        assert result is not None
+        assert result.secondaries == []
 
     async def test_criminal_compressor_module_multiplies_cargo(self):
         """CompressorModule in criminal_ship multiplies base ship cargo (spec §2.6 step 9)."""
@@ -716,3 +852,237 @@ class TestCriminalModuleDedup:
         # All 9 entries returned as separate items — INVARIANT verified.
         assert len(result.modules) == 9
         assert all(m.name == "Rhoda Blackhole" for m in result.modules)
+
+
+# ---------------------------------------------------------------------------
+# modules_total_count field tests
+# ---------------------------------------------------------------------------
+
+
+class TestModulesTotalCount:
+    """modules_total_count must be the PRE-dedup count for criminal path and
+    equal to len(modules) for player path (never deduped).
+    """
+
+    def _make_bounty(self, criminal_ship):
+        return SimpleNamespace(
+            id=77,
+            criminal_name="Doni Trillyx",
+            criminal_faction="Terran",
+            tech_level=5,
+            criminal_ship=criminal_ship,
+        )
+
+    async def test_criminal_modules_total_count_is_pre_dedup_count(self):
+        """Criminal with 3× CompressorModule + 2 others → modules_total_count==5, len(modules)==3 after dedup."""
+        criminal_ship = {
+            "ship_name": "Interceptor",
+            "ship_armour": 95,
+            "total_hp": 200,
+            "weapons": [],
+            "turrets": [],
+            "modules": [
+                {"name": "Static Thrust", "type": "ThrusterModule", "value": 400},
+                {"name": "Targe Shield", "type": "ShieldModule", "value": 500},
+                {"name": "ZMI Optistore", "type": "CompressorModule", "value": 300},
+                {"name": "ZMI Optistore", "type": "CompressorModule", "value": 300},
+                {"name": "ZMI Optistore", "type": "CompressorModule", "value": 300},
+            ],
+        }
+        bounty = self._make_bounty(criminal_ship)
+        ship = _interceptor_ship()
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=77)
+
+        assert result is not None
+        # Dedup collapses 3× ZMI Optistore into 1 entry → list shrinks 5→3
+        assert len(result.modules) == 3, f"Expected 3 deduped module entries, got {len(result.modules)}"
+        # But modules_total_count must reflect the true pre-dedup count
+        assert result.modules_total_count == 5, (
+            f"Expected modules_total_count==5 (pre-dedup), got {result.modules_total_count}"
+        )
+
+    async def test_criminal_modules_total_count_no_dedup_needed(self):
+        """Criminal with no dedup-eligible duplicates: modules_total_count == len(modules)."""
+        criminal_ship = {
+            "ship_name": "Interceptor",
+            "ship_armour": 95,
+            "total_hp": 200,
+            "weapons": [],
+            "turrets": [],
+            "modules": [
+                {"name": "Static Thrust", "type": "ThrusterModule", "value": 400},
+                {"name": "Targe Shield", "type": "ShieldModule", "value": 500},
+            ],
+        }
+        bounty = self._make_bounty(criminal_ship)
+        ship = _interceptor_ship()
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=77)
+
+        assert result is not None
+        assert len(result.modules) == 2
+        assert result.modules_total_count == 2
+
+    async def test_player_modules_total_count_equals_len_modules(self):
+        """Player path: modules_total_count == len(modules) (players are never deduped)."""
+        player = _player()
+        user = _user()
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=["D'iol", "D'iol", "AutoPacker 2"],
+            turrets=[],
+            secondary_weapons=[],
+            secondary_ammo={},
+        )
+        ship = _ship()
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+
+        def _module_factory(name):
+            if name == "D'iol":
+                return _diol_module()
+            if name == "AutoPacker 2":
+                return _compressor_module()
+            return None
+
+        db = _make_db_session(player_ship=ps, ship=ship, module_factory=_module_factory)
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        assert result is not None
+        # Player path: 3 modules, all returned individually (no dedup)
+        assert len(result.modules) == 3
+        assert result.modules_total_count == 3
+
+    async def test_criminal_compressor_x9_modules_total_count_is_13(self):
+        """Pal Tyyrt-style: 9× CompressorModule + 4 other modules → modules_total_count==13."""
+        modules = (
+            [{"name": "Targe Shield", "type": "ShieldModule", "value": 500}]
+            + [{"name": "Phoenix SIS", "type": "ShieldInjectorModule", "value": 700}]
+            + [{"name": "Spectral Filter Omega", "type": "SpectralFilterModule", "value": 600}]
+            + [{"name": "Rhoda Vortex", "type": "TimeExtenderModule", "value": 800}]
+            + [{"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300} for _ in range(9)]
+        )
+        criminal_ship = {
+            "ship_name": "Darkzov",
+            "ship_armour": 200,
+            "total_hp": 740,
+            "weapons": [],
+            "turrets": [],
+            "modules": modules,
+        }
+        bounty = self._make_bounty(criminal_ship)
+        ship = _interceptor_ship(name="Darkzov", cargo=80, handling=50, armour=200)
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=77)
+
+        assert result is not None
+        # After dedup: 4 passthrough + 1 grouped = 5 visible entries
+        assert len(result.modules) == 5
+        # Pre-dedup total: 4 + 9 = 13
+        assert result.modules_total_count == 13
+
+
+# ---------------------------------------------------------------------------
+# Weapon combat-field extraction — damage_per_shot / loading_speed_ms
+# ---------------------------------------------------------------------------
+
+
+class TestWeaponCombatFields:
+    """_weapon_combat_fields pulls per-shot damage + reload from a weapon's extra_atts."""
+
+    @staticmethod
+    def _fn():
+        from services.loadout_response_service import LoadoutResponseService
+
+        return LoadoutResponseService._weapon_combat_fields
+
+    def test_nested_inner_extra_atts(self):
+        """Real DB shape: combat fields nested under inner extra_atts (Dark Matter Laser)."""
+        item = SimpleNamespace(
+            extra_atts={
+                "builtIn": False,
+                "techLevel": 9,
+                "extra_atts": {"damage_per_shot": 60, "loading_speed_ms": 680, "range_m": 3300},
+            }
+        )
+        assert self._fn()(item) == (60, 680)
+
+    def test_secondary_damage_key_fallback(self):
+        """Secondaries store per-shot damage under `damage`, not `damage_per_shot`."""
+        item = SimpleNamespace(extra_atts={"extra_atts": {"damage": 800, "loading_speed_ms": 3000}})
+        assert self._fn()(item) == (800, 3000)
+
+    def test_flat_extra_atts_without_nesting(self):
+        """Falls back to the outer dict when there's no inner extra_atts."""
+        item = SimpleNamespace(extra_atts={"damage_per_shot": 12, "loading_speed_ms": 500})
+        assert self._fn()(item) == (12, 500)
+
+    def test_missing_fields_yield_none(self):
+        item = SimpleNamespace(extra_atts={"extra_atts": {"range_m": 5500}})
+        assert self._fn()(item) == (None, None)
+
+    def test_non_dict_extra_atts(self):
+        assert self._fn()(SimpleNamespace(extra_atts=None)) == (None, None)
+        assert self._fn()(None) == (None, None)
+
+    def test_non_numeric_value_coerced_to_none(self):
+        item = SimpleNamespace(extra_atts={"extra_atts": {"damage_per_shot": "n/a", "loading_speed_ms": 680}})
+        assert self._fn()(item) == (None, 680)
+
+
+class TestNormalizeWeaponDict:
+    """_normalize_weapon_dict projects criminal_ship JSON fields including the new combat fields."""
+
+    @staticmethod
+    def _fn():
+        from services.loadout_response_service import LoadoutResponseService
+
+        return LoadoutResponseService._normalize_weapon_dict
+
+    def test_primary_weapon_fields(self):
+        raw = {
+            "name": "Rail Gun",
+            "emoji": "<:rg:1>",
+            "dps": 88.2,
+            "value": 1000,
+            "damage_per_shot": 60,
+            "loading_speed_ms": 680,
+        }
+        out = self._fn()(raw)
+        assert out["damage_per_shot"] == 60
+        assert out["loading_speed_ms"] == 680
+        assert "rounds" not in out
+
+    def test_secondary_damage_and_rounds(self):
+        raw = {"name": "S'koonn", "dps": 0.0, "value": 5000, "damage": 800, "loading_speed_ms": 3000, "rounds": 1}
+        out = self._fn()(raw, include_rounds=True)
+        assert out["damage_per_shot"] == 800  # mapped from `damage`
+        assert out["loading_speed_ms"] == 3000
+        assert out["rounds"] == 1
+
+    def test_float_values_coerced_to_int(self):
+        raw = {"name": "W", "damage_per_shot": 8.0, "loading_speed_ms": 600.0}
+        out = self._fn()(raw)
+        assert out["damage_per_shot"] == 8
+        assert out["loading_speed_ms"] == 600
+
+    def test_missing_combat_fields_none(self):
+        out = self._fn()({"name": "W"})
+        assert out["damage_per_shot"] is None
+        assert out["loading_speed_ms"] is None

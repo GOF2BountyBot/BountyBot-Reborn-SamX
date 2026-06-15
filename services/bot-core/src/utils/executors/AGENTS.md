@@ -1,6 +1,6 @@
 # AGENTS.md - utils/executors
 
-APScheduler job executor modules for bot-core. All 8 executor functions live here.
+APScheduler job executor modules for bot-core. All 10 executor modules (11 entry-point functions — `bounty_spawn_executor.py` exports two) live here.
 
 ---
 
@@ -16,17 +16,14 @@ async def execute_<job_type>_job(job_id: str, payload: dict) -> dict:
 
 ### Entry Point
 
-`utils/job_executor.py` dispatches to these functions via `JobExecutor.execute()`:
+`utils/job_executor.py` dispatches to these functions via `JobExecutor.execute()` on `payload["job_type"]`. The full dispatch set: `time_announcement`, `shop_refresh`, `bounty_spawn_orchestrate`, `bounty_spawn_one`, `bounty_expire`, `bounty_respawn`, `bounty_failsafe_cleanup`, `duel_expire`, `temperature_decay`, `pg_backup`, `db_retention`.
 
 ```python
 async def execute(self, job_id: str, payload: dict):
-    job_type = payload.get("job_type")
-    if job_type == "bounty_spawn_orchestrate":
+    if payload.get("job_type") == "bounty_spawn_orchestrate":
         return await execute_bounty_spawn_orchestrate_job(job_id, payload)
-    elif job_type == "bounty_spawn_one":
+    if payload.get("job_type") == "bounty_spawn_one":
         return await execute_bounty_spawn_one_job(job_id, payload)
-    elif job_type == "shop_refresh":
-        return await execute_shop_refresh_job(job_id, payload)
     # ... etc.
 ```
 
@@ -85,10 +82,12 @@ resp.raise_for_status()
 
 | Variable | Default | Used by |
 |---|---|---|
-| `EXECUTOR_HOST` | `bot-core` | Scheduler API calls (self-referencing) |
-| `EXECUTOR_PORT` | `8000` | Scheduler API calls |
-| `DISCORD_GATEWAY_HOST` | `discord-gateway` | Announcement calls to gateway |
-| `GATEWAY_PORT` | `7999` | Announcement calls to gateway |
+| `EXECUTOR_HOST` | `bot-core` | `time_announcement_executor` (`/api/v1/time`); `bounty_spawn_executor` HTTP-fallback scheduling and `BountyService.clear_bounties` A.11 cleanup (`/api/v1/jobs`) |
+| `EXECUTOR_PORT` | `8000` | Same as above |
+| `DISCORD_GATEWAY_HOST` | `discord-gateway` | Announcement + cache calls to gateway (`/api/v1/...`) |
+| `GATEWAY_PORT` | `7999` | Announcement + cache calls to gateway |
+
+**Scheduling is direct-first (P6-T8 / B.23a):** executors that schedule follow-up jobs (orchestrator → `bounty_spawn_one`; spawn → `bounty_expire`) call `utils.scheduler_holder.get_scheduler().add_job(run_job, trigger="date", ...)` in-process. The expiry path falls back to `POST {EXECUTOR}/api/v1/jobs` only when the scheduler holder is unavailable.
 
 **All HTTP failures are non-fatal** — errors are logged but do NOT propagate to prevent cascading failure of the spawn operation.
 
@@ -96,46 +95,49 @@ resp.raise_for_status()
 
 ## Gateway Push Contract
 
-`shop_refresh_executor`, `bounty_spawn_executor`, and `bounty_expire_executor` all POST
-cache-update payloads to the gateway after each relevant mutation:
+`shop_refresh_executor`, `bounty_spawn_executor`, `bounty_expire_executor`, and
+`duel_expire_executor` all POST cache-update payloads to the gateway after each
+relevant mutation:
 
 - `POST /api/v1/internal/autocomplete/shop-cache/{guild_id}/{tier}` — after shop refresh
 - `POST /api/v1/internal/autocomplete/bounty-cache/{guild_id}` — after spawn/expire
+- `POST /api/v1/internal/autocomplete/duel-cache` — after duel expiry
 
 All pushes are non-fatal (try/except + warning). The gateway's 6-minute periodic refresh
 covers any missed pushes. Requires `INTERNAL_AUTH_TOKEN` env var in both services.
 
 ---
 
-## All 8 Executors
+## All 10 Executors
 
 ### bounty_spawn_executor.py
 
 Two entry points (both dispatched from `job_executor.py`):
 
 **`execute_bounty_spawn_orchestrate_job(job_id, payload)`** — Orchestrator  
-**Triggered by**: `bounty_spawn_default` cron (every N minutes, default 5)  
+**Triggered by**: `bounty_spawn_default` cron (`*/{BOUNTY_DELAY_RANDOM_MIN} * * * *`, default every 5 minutes)  
 **Payload fields**: none required  
 **Flow**:
-1. For each guild config × division: count active bounties + queued spawn jobs
-2. If slot available: schedule a randomised one-time `bounty_spawn_one` job with ±25% window
-3. Returns job counts queued per guild
+1. For each guild config × tier: skip guilds failing `_is_guild_fully_configured`; count active bounties (`count_active_by_guild_and_division`) + already-queued `bounty_spawn_one` jobs (read via `scheduler_holder.get_scheduler().get_jobs()`)
+2. If slot available: compute a gap-aware fire time (`_compute_next_fire_time`: ideal spacing from existing issue times, clamped to `now + 5s` lead, plus bounded jitter `±min(15, 0.25 × interval)` minutes) and schedule a one-time `bounty_spawn_one` job **directly on the in-process scheduler** (P6-T8 — no HTTP loopback)
+3. Returns job counts queued per guild/tier
 
 **`execute_bounty_spawn_one_job(job_id, payload)`** — One-shot spawner  
 **Triggered by**: one-time APScheduler job created by the orchestrator  
 **Payload fields**:
 - `guild_id` — guild to spawn for
-- `division` — tier division (`bronze`, `silver`, `gold`, `platinum`)
-- `expiry_minutes` — bounty lifetime in minutes
+- `tier` — tier (`bronze`, `silver`, `gold`, `platinum`); missing `guild_id`/`tier` → `{"success": False, "reason": "missing_payload"}`
 
 **Flow**:
-1. Re-checks capacity (handles benign race with concurrent orchestrator ticks)
-2. Calls `BountyService.spawn_bounty(db, guild_id, division, expiry_minutes)`
-3. Schedules expiry job via `POST /api/v1/jobs` (one-time at `bounty.end_time`)
+1. Re-checks guild/tier configuration and capacity (handles benign race with concurrent orchestrator ticks)
+2. Calls `BountyService.spawn_bounty(db, guild_id, tier, expiry_minutes=expiry_minutes)` (expiry from `config.bounty_expiry_minutes`, fallback 480)
+3. Schedules the expiry job at `bounty.end_time` — direct in-process scheduler first (B.23a), `POST {EXECUTOR}/api/v1/jobs` fallback
 4. Pushes bounty cache to gateway (`POST /internal/autocomplete/bounty-cache/{guild_id}`)
 5. Announces via `POST {GATEWAY_BASE_URL}/announcements/bounty/channel/{cid}` (non-fatal)
 
 **Returns**: `{"status": "success", "bounty_id": N, ...}`
+
+Pure helpers (Tier-A-testable, no DB): `_is_guild_fully_configured`, `_get_division_channel_id`, `_get_division_role_id`.
 
 **A.48 announcement payload**: `_announce_bounty()` builds the request via `utils.bounty_announcement_payload.build_bounty_announcement_request(db, bounty, criminal_icon=..., route_map_url=..., bounty_hunter_role_id=..., captured=False)`. The body is a structured dict (`text_content` + `loadout_response` + `metadata`); the gateway renders the final embed using `cogs/_shared/loadout_embed.build_loadout_embed`. Edit-on-capture flows through `BountyService._edit_bounty_announcement` → gateway PUT at `/announcements/bounty/channel/{cid}/message/{mid}`.
 
@@ -146,21 +148,19 @@ Two entry points (both dispatched from `job_executor.py`):
 **Function**: `execute_bounty_expire_job(job_id, payload)`  
 **Triggered by**: One-time job scheduled by `bounty_spawn_executor` at `bounty.end_time`  
 **Payload fields**:
-- `bounty_id` — the bounty to expire
-- `guild_id` — guild context
-- `division` — division context
+- `bounty_id` — the bounty to expire (the only field the executor reads; the scheduling site also writes `guild_id` + `division` for A.11 cleanup discoverability)
 
-**Flow**:
-1. Fetch bounty by ID
-2. If still active: call `BountyService.expire_bounty(db, bounty_id)`
-3. Announce expiry to discord-gateway (non-fatal)
+**Flow** (session released before network I/O — P6-T7):
+1. Session A: fetch bounty by ID (regardless of status), call `BountyService.expire_bounty(db, bounty_id)` (internal guard skips already-captured/completed bounties), commit, close
+2. ALWAYS delete the Discord announcement via gateway (`_delete_bounty_announcement`, non-fatal) — even if the bounty was already captured
+3. Push updated bounty cache to gateway (`_push_bounty_cache_expire`, non-fatal)
 
 ---
 
 ### bounty_respawn_executor.py
 
 **Function**: `execute_bounty_respawn_job(job_id, payload)`  
-**Triggered by**: One-time job scheduled when a bounty is marked `escaped` (see `BountyService.escape_bounty()` which computes `respawn_time`; the scheduling call site is currently in the gateway / admin flow, not bot-core itself).  
+**Triggered by**: a one-time `bounty_respawn` job, or directly by the startup recovery sweep `run_stale_respawn_recovery()` in `main.py` (re-fires missed respawns for `status='escaped'` bounties whose `respawn_time` has passed). `BountyService.escape_bounty()` computes `respawn_time`, but no live in-repo call site currently schedules the one-shot job — the recovery sweep is the only in-repo invoker (verified 2026-06-11).  
 **Payload fields**:
 - `bounty_id` (int, required) — the escaped bounty's ID. This is the ONLY field the executor reads.
 
@@ -177,41 +177,45 @@ Two entry points (both dispatched from `job_executor.py`):
 ### duel_expire_executor.py
 
 **Function**: `execute_duel_expire_job(job_id, payload)`  
-**Triggered by**: Periodic job or one-time at duel `expires_at`  
-**Payload fields**: optional `guild_id` filter
+**Triggered by**: One-time job scheduled at the duel's timeout  
+**Payload fields**: `duel_id` — the single duel to expire
 
 **Flow**:
-1. Calls `DuelService.expire_duels(db)` (or `expire_duels_by_guild(db, guild_id)`)
-2. Marks all pending duels past `expires_at` as `"expired"`
-3. Refunds any locked credits
+1. Calls `DuelService.expire_duel(db, duel_id)` to set that duel's status to `expired` (a `ValueError` for already-resolved duels is handled as a no-op)
+2. Posts an expiry notification to the gateway `POST {GATEWAY_BASE_URL}/messages` (non-fatal)
+3. Pushes the duel autocomplete cache (`POST /internal/autocomplete/duel-cache`, non-fatal)
+
+No credits move on expiry — pending stakes are an implicit reservation, not a transfer (see `services/AGENTS.md` duel invariant).
 
 ---
 
 ### shop_refresh_executor.py
 
 **Function**: `execute_shop_refresh_job(job_id, payload)`  
-**Triggered by**: `shop_refresh_default` (every 6 hours)  
-**Payload fields**: optional `guild_id` filter
+**Triggered by**: `shop_refresh_default` (cron `0 */6 * * *` — every 6 hours)  
+**Payload fields**: optional `guild_id`, `tier`, `force_tech_level`
 
 **Flow**:
 1. If `guild_id` provided: refresh that guild only
 2. Otherwise: enumerate all guild configs via `ConfigRepository.list_all()`
-3. For each guild: call `ShopService.refresh_shop(db, guild_id)`
-4. Announce refresh to discord-gateway (non-fatal)
+3. For each guild × tier: call `ShopService.refresh_shop(db, guild_id, tier)`
+4. Post one announcement per refreshed tier to `POST {GATEWAY_BASE_URL}/channels/{shop_channel_id}/messages` (logic in `utils.shop_announcement.announce_shop_refresh`, wrapped by `_announce_shop_refresh`; non-fatal)
+5. Push the refreshed stock to the gateway autocomplete cache (Phase 5b, non-fatal)
 
 ---
 
 ### temperature_decay_executor.py
 
 **Function**: `execute_temperature_decay_job(job_id, payload)`  
-**Triggered by**: `temperature_decay_default` (every 1 hour)  
+**Triggered by**: `temperature_decay_default` (cron `0 * * * *` — hourly at :00)  
 **Payload fields**: none required
 
 **Flow**:
-1. For each guild config: fetch current temperature (activity level)
-2. Apply `TemperatureService.apply_decay(current_temp, decay_rate)`
-3. Clamp to `MIN_GUILD_ACTIVITY`
-4. Persist updated temperature to guild config
+1. Enumerate all guild configs via `ConfigRepository.list_all()`
+2. For each guild, read per-division temperatures from `GuildConfig.division_temperatures` (divisions hardcoded in the module since B.48)
+3. Apply `TemperatureService.decay_temperature()` to each division's value (×2/3, floored at 1.0, one decimal place)
+4. Persist via `ConfigRepository.update_division_temperatures()`
+5. Return a per-guild decay summary dict
 
 ---
 
@@ -219,12 +223,12 @@ Two entry points (both dispatched from `job_executor.py`):
 
 **Function**: `execute_time_announcement_job(job_id, payload)`  
 **Triggered by**: On-demand (scheduled dynamically)  
-**Payload fields**: `guild_id`, `announcement_type`, message content fields
+**Payload fields**: `guild_id`, `channel_id`, message fields
 
-**Flow**:
-1. Uses `MessageBuilderFactory.create_builder("time_announcement")` to build the embed payload
-2. POSTs the announcement to `{GATEWAY_BASE_URL}/messages`
-3. Response is logged; failure is non-fatal
+**Flow** (drives bot-core's own `/api/v1/time` REST API at `EXECUTOR_HOST:EXECUTOR_PORT`):
+1. `GET /time` to check whether the announcement message exists
+2. `POST /time` to create, or `PUT /time` to update
+3. On first POST, modifies the scheduler job so its payload carries the new `message_id`
 
 ---
 
@@ -265,7 +269,7 @@ The primary cleanup path (`bounty_expire_executor`) fires a one-time job at `bou
 no game-relevant value once per-player aggregate stats have been written to the
 `players` table.
 
-**Three independent passes** (each in its own DB session — one failure does not
+**Four independent passes** (each in its own DB session — one failure does not
 abort the others):
 
 1. `bounty` — delete rows where `status IN ('completed','expired','cleared')`
@@ -278,25 +282,54 @@ abort the others):
 3. `admin_audit_logs` — delete rows where
    `timestamp < now() - AUDIT_RETENTION_DAYS` (default 30d).
    *Audit history is preserved out-of-band by `pg_backup_default`.*
+4. `combat_log` — delete rows where
+   `created_at < now() - COMBAT_LOG_RETENTION_HOURS` (default 72h).
 
 **Per-player aggregates kept intact**: `players.bounty_wins`,
 `players.systems_checked`, `players.lifetime_credits`, `players.duel_wins`,
 `players.duel_losses`, `players.duel_credits_won`, `players.duel_credits_lost`.
 
 **Overrides**: `BOUNTYBOT_BOUNTY_RETENTION_HOURS`, `BOUNTYBOT_DUEL_RETENTION_HOURS`,
-`BOUNTYBOT_AUDIT_RETENTION_DAYS` (all integers; processed in `GameConstants.load()`).
+`BOUNTYBOT_AUDIT_RETENTION_DAYS`, `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS`
+(all integers; processed in `GameConstants.load()`).
 
 **Non-fatal design**: each pass is wrapped in `try/except`; failures are logged
 at WARNING with `type(e).__name__` for diagnosability and added to
 `result["errors"]`. The executor always returns `{"status": "success", ...}` so
 APScheduler does not retry.
 
-**Returns**: `{"status": "success", "bounties_deleted": N, "duels_deleted": M, "audit_logs_deleted": K, "errors": [...]}`
+**Returns**: `{"status": "success", "bounties_deleted": N, "duels_deleted": M, "audit_logs_deleted": K, "combat_logs_deleted": L, "errors": [...]}`
 
 **Repositories used**: `BountyRepository.delete_terminal_older_than`,
-`DuelRepository.delete_terminal_older_than`, `AdminAuditLogRepository.delete_older_than`.
-The audit log repository was added in this work as a minimal stub (count +
-delete-older-than only); writes still go through `AuditService.log_action`.
+`DuelRepository.delete_terminal_older_than`, `AdminAuditLogRepository.delete_older_than`,
+`CombatLogRepository.delete_older_than`.
+The audit log repository is a minimal stub (count + delete-older-than only);
+writes still go through `AuditService.log_action`.
+
+---
+
+### pg_backup_executor.py
+
+**Function**: `execute_pg_backup_job(job_id, payload)`  
+**Triggered by**: `pg_backup_default` (cron `15 */3 * * *` — :15 past every 3rd hour, offset from shop_refresh at :00 and failsafe cleanup at :30)  
+**Payload fields**: none required
+
+**Purpose**: `pg_dump | zstd -10` of the game database to a date-partitioned
+path under the bot-core data volume:
+`/app/data/backups/YYYY-MM-DD/bountydb_HH-MM-SS.sql.zst`.
+
+**Safety guarantees**:
+- Writes to a temp file (`<target>.tmp.PID`) then atomically renames.
+- Skips the rename if the dump is smaller than 250 KiB (corruption guard).
+- Backup directories older than `BACKUP_RETAIN_DAYS` (default 7) are removed after each successful dump.
+- Errors are logged and **re-raised** (unlike the other executors) so APScheduler records the failure.
+
+**Env vars**: `POSTGRES_HOST` (default `bounty_db`), `POSTGRES_PORT`, `POSTGRES_DB`,
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, `BACKUP_DIR`, `BACKUP_RETAIN_DAYS`.
+
+**No ORM**: calls the `pg_dump` binary via `subprocess` (off-loaded with
+`utils.offload.offload_io`) — never opens a SQLAlchemy session, so it has no
+deferred-import section.
 
 ---
 
@@ -335,7 +368,7 @@ delete-older-than only); writes still go through `AuditService.log_action`.
        return await execute_my_job(job_id, payload)
    ```
 
-3. **Schedule the job** — either via `register_default_jobs()` in `main.py` for recurring jobs, or via `POST /api/v1/jobs` for one-time jobs.
+3. **Schedule the job** — via `register_default_jobs()` in `main.py` for recurring jobs; for one-time jobs prefer a direct in-process `scheduler_holder.get_scheduler().add_job(run_job, trigger="date", ...)` (P6-T8), or `POST /api/v1/jobs` from outside the process.
 
 4. **Add tests** in `tests/test_<job_type>_executor.py`.
 
@@ -343,21 +376,22 @@ delete-older-than only); writes still go through `AuditService.log_action`.
 
 ## Testing Executors
 
-Executor tests mock the database session and services:
+Follow the S2/S3 three-tier pattern in `tests/AGENTS.md` ("Executor Test Pattern"):
+real SQLite sessions instead of repository mocks, `respx` for HTTP boundaries,
+and zero-mock tests for pure helpers. The canonical reference suite is
+`tests/test_bounty_spawn_executor.py`.
+
+**Patch target — deferred imports**: because executors bind `db_manager` inside
+the function body, the name lives in the SOURCE module. Patch
+`persist.database.manager.db_manager` — patching
+`utils.executors.<name>.db_manager` fails with `AttributeError` (the executor
+module never binds that name at module scope):
 
 ```python
-@pytest.mark.asyncio
-async def test_execute_bounty_spawn_job():
-    with patch("utils.executors.bounty_spawn_executor.db_manager") as mock_db:
-        mock_session = AsyncMock()
-        mock_db.get_session.return_value.__aenter__.return_value = mock_session
-        # ... set up mocks for repositories and services
-        result = await execute_bounty_spawn_job("test-job", {"job_type": "bounty_spawn"})
-        assert result["status"] == "success"
+with patch("persist.database.manager.db_manager", fake_db_manager):
+    result = await execute_bounty_spawn_one_job("job-id", payload)
 ```
-
-The deferred import pattern means patches must target the executor module's namespace (e.g., `utils.executors.bounty_spawn_executor.db_manager`), not the original module.
 
 ---
 
-*Last updated: 2026-05-16*
+*Last updated: 2026-06-11 — doc-vs-code reconciliation: 10 executors (pg_backup added, db_retention 4th combat_log pass); direct in-process scheduling (P6-T8/B.23a) documented; spawn-one payload corrected to guild_id/tier; duel_expire corrected to single-duel expire_duel; temperature decay corrected to per-division ×2/3 model; time_announcement corrected to /time REST flow; duel-cache push added; testing section aligned with tests/AGENTS.md (patch source module, not executor namespace).*

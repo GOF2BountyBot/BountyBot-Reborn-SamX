@@ -1,0 +1,33 @@
+{
+  "_name": "K'mirkk Toad Mutagen",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/65NmbXHR/k-mirkk-toad-mutagen.png",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/K'mirkk_Toad_Mutagen",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "10",
+    "Known Price Range": "-> 59,391$ (Me'enkk)\n-> 61,084$ (Me'enkk)",
+    "GoF2 HD (Android) Price Range": "-> 527,238$ (Me'enkk)\n-> 534,373$ (Me'enkk)",
+    "volatile": true
+  },
+  "stats": {
+    "tech_level": 10,
+    "price_range_min_credits": 59391,
+    "price_range_min_system": "Me'Enkk",
+    "price_range_max_credits": 61084,
+    "price_range_max_system": "Me'Enkk",
+    "value": 60238,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "This particularly nasty substance is extracted from the poison glands of the giant K'mirkk Frog. It is very rare and hard to obtain for several reasons. On the one hand, its extraction is very difficult due to the K'mirkk Frog's heavy carapace and on the other hand, its transportation is very dangerous, because the substance is likely to explode if it is subject to repeated concussions.",
+  "mechanics_text": [
+    "Effects activate upon loading at least 1t. The Khador Drive cannot be used while transporting volatile goods — the charging generates too much heat and could cause an explosion.",
+    "Second most valuable commodity; most expensive generally (Chromo Plasma is blueprint-only).",
+    "K'mirkk is in the Y'mirr isolated system — shipping to other Vossk systems requires the Transporting Volatile Goods Using Khador Drive glitch.",
+    "Can be found in lower tech level stations and Vossk Freighters despite being TL 10.",
+    "Urr Sakant (Vossk Most Wanted) distributed it to merchants as cough syrup, killing 56."
+  ],
+  "wiki_categories": ["Volatile Goods", "Commodities", "Supernova", "Tech level 10", "GOF2", "Vossk", "Rare commodities", "Vossk Technology", "GOF2HD", "Y'mirr"]
+}

@@ -96,6 +96,8 @@ def _make_player(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=player_id,
+        user_id=player_id * 1000,  # T10: Discord user_id for fight_ships
+        guild_id=9999,  # T10: guild_id for fight_ships
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
@@ -136,6 +138,7 @@ def _make_active_bounty(
         reward_per_sys=reward_per_sys,
         end_time=end_time,
         criminal_ship=criminal_ship,
+        status="active",  # X3-bounty: _process_single_bounty_check now checks status under lock
     )
 
 
@@ -165,6 +168,10 @@ def service() -> BountyService:
     B.49: config_repo is also replaced so that check_bounty can call
     get_by_guild_id without hitting the real DB.  Returns None by default
     so resolve_constant falls back to global GameConstants values.
+
+    X3-bounty: bounty_repo.get_by_id_for_update is configured as an AsyncMock
+    with a side_effect that auto-routes by bounty ID from the active bounties
+    list set via get_active_by_guild_and_division.return_value.
     """
     svc = BountyService()
     svc.bounty_repo = MagicMock()
@@ -173,6 +180,19 @@ def service() -> BountyService:
     svc.player_repo = MagicMock()
     svc.config_repo = MagicMock()
     svc.config_repo.get_by_guild_id = AsyncMock(return_value=None)
+
+    async def _for_update_side_effect(_db, bounty_id):
+        rv = svc.bounty_repo.get_active_by_guild_and_division.return_value
+        active = rv if isinstance(rv, list) else []
+        for b in active:
+            if getattr(b, "id", None) == bounty_id:
+                return b
+        return None
+
+    svc.bounty_repo.get_by_id_for_update = AsyncMock(side_effect=_for_update_side_effect)
+    # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids (batched).
+    # Default to empty list; individual tests that need payout content can override.
+    svc.player_repo.get_by_ids = AsyncMock(return_value=[])
     return svc
 
 
@@ -253,10 +273,11 @@ async def test_check_correct_triggers_announcement_edit_loss(service, mock_db):
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
     service.combat_service = MagicMock()
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
@@ -358,10 +379,11 @@ async def test_check_correct_silver_win_edits_with_captured_flag(service, mock_d
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=1,  # P2-T8b: player is always side-1 (combatant1)
     )
     service.combat_service = MagicMock()
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
@@ -665,10 +687,11 @@ async def test_check_correct_loss_edits_announcement_no_captured_flag(service, m
         is_stalemate=False,
         ship1_stats=_fs1,
         ship2_stats=_fs2,
-        variance_percent=0.05,
+        combat_log_id=None,
+        winner_side=2,  # P2-T8b: criminal is side-2; criminal wins here
     )
     service.combat_service = MagicMock()
-    service.combat_service.fight_ships.return_value = mock_fight
+    service.combat_service.fight_ships = AsyncMock(return_value=mock_fight)
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])

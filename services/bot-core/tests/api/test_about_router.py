@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from src.services.game_constants import GameConstants
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -87,6 +88,21 @@ def make_mock_system(**overrides):
     return obj
 
 
+def make_mock_commodity(**overrides):
+    obj = make_mock_object(**overrides)
+    obj.type = "commodity"
+    obj.manufacturer = None
+    obj.subcategory = "booze"
+    obj.price_source = "origin_system_price"
+    obj.price_range_min_credits = 720
+    obj.price_range_max_credits = 792
+    obj.price_range_min_system = "Behén"
+    obj.price_range_max_system = "Loma"
+    obj.highest_non_loma_price = None
+    obj.highest_non_loma_system = None
+    return obj
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -101,7 +117,7 @@ def mock_db_session():
 def mock_repos(mock_db_session):
     """Create mocked repositories that return no results by default."""
     repos = {}
-    for name in ["module", "primary", "secondary", "turret", "ship", "system", "criminal"]:
+    for name in ["module", "primary", "secondary", "turret", "ship", "system", "criminal", "commodity"]:
         repo = AsyncMock()
         repo.list_all = AsyncMock(return_value=[])
         repo.get_by_name = AsyncMock(return_value=None)
@@ -126,6 +142,7 @@ def test_app(mock_db_session, mock_repos):
     about_module.ship_repo = mock_repos["ship"]
     about_module.system_repo = mock_repos["system"]
     about_module.criminal_repo = mock_repos["criminal"]
+    about_module.commodity_repo = mock_repos["commodity"]
 
     # CRITICAL: CATEGORY_REPOS is a dict populated at module-import time with
     # references to the original repo instances.  Reassigning module attributes
@@ -138,6 +155,7 @@ def test_app(mock_db_session, mock_repos):
     about_module.CATEGORY_REPOS[DataCategory.ship] = mock_repos["ship"]
     about_module.CATEGORY_REPOS[DataCategory.system] = mock_repos["system"]
     about_module.CATEGORY_REPOS[DataCategory.criminal] = mock_repos["criminal"]
+    about_module.CATEGORY_REPOS[DataCategory.commodity] = mock_repos["commodity"]
 
     app = FastAPI()
     app.include_router(about_router, prefix="/api/v1")
@@ -180,7 +198,16 @@ class TestListCategories:
 
         assert response.status_code == 200
         data = response.json()
-        expected = {"module", "primary_weapon", "secondary_weapon", "turret_weapon", "ship", "criminal", "system"}
+        expected = {
+            "module",
+            "primary_weapon",
+            "secondary_weapon",
+            "turret_weapon",
+            "ship",
+            "criminal",
+            "system",
+            "commodity",
+        }
         assert expected == set(data)
 
     def test_list_categories_returns_strings(self, client):
@@ -225,6 +252,18 @@ class TestListObjectsForCategory:
         data = response.json()
         assert len(data) == 1
         assert data[0]["name"] == "Eagle"
+
+    def test_list_objects_commodity_category(self, client, mock_repos):
+        """Returns 200 with list of commodity objects."""
+        mock_commodity = make_mock_commodity(name="Iron")
+        mock_repos["commodity"].list_all = AsyncMock(return_value=[mock_commodity])
+
+        response = client.get("/api/v1/about/categories/commodity/objects")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["name"] == "Iron"
 
     def test_list_objects_empty_category(self, client, mock_repos):
         """Returns 200 with empty list when no objects exist."""
@@ -365,6 +404,21 @@ class TestGetObjectByName:
         assert data["category"] == "system"
         assert "coordinates" in data
         assert "faction" in data
+
+    def test_get_object_by_name_found_in_commodity(self, client, mock_repos):
+        """Returns 200 with subcategory + price fields when found in commodity repo."""
+        mock_commodity = make_mock_commodity(name="Behén Wine", value=756)
+        mock_repos["commodity"].get_by_name = AsyncMock(return_value=mock_commodity)
+
+        response = client.get("/api/v1/about/object/name/Behén Wine")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["category"] == "commodity"
+        assert data["subcategory"] == "booze"
+        assert data["price_source"] == "origin_system_price"
+        assert data["price_range_min_system"] == "Behén"
+        assert data["value"] == 756
 
     def test_get_object_by_name_not_found_returns_404(self, client, mock_repos):
         """Returns 404 when object not found in any category."""
@@ -537,6 +591,21 @@ class TestGetObjectById:
         data = response.json()
         assert data["category"] == "criminal"
         assert "faction" in data
+
+    def test_get_object_by_id_commodity_has_subcategory(self, client, mock_repos):
+        """Returns 200 with subcategory + price fields for commodity."""
+        mock_commodity = make_mock_commodity(name="Iron")
+        mock_commodity.subcategory = "ore"
+        mock_repos["commodity"].get_by_id = AsyncMock(return_value=mock_commodity)
+
+        response = client.get("/api/v1/about/object/commodity/1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["category"] == "commodity"
+        assert data["subcategory"] == "ore"
+        assert "price_range_min_credits" in data
+        assert "highest_non_loma_system" in data
 
 
 # ===========================================================================
@@ -806,3 +875,642 @@ class TestGetShipRenderInfo:
         assert data["mtl_path"] is None
         assert data["skin_base_path"] is None
         assert data["diffuse_path"] is None
+
+
+# ===========================================================================
+# T11 — §14 combat field enrichment tests
+# ===========================================================================
+
+
+def _make_mock_secondary(name="Test Secondary", subtype="missile", damage=100, **extra_inner_overrides):
+    """Build a secondary-weapon mock with inner extra_atts structure matching DB nesting."""
+    inner = {"loading_speed_ms": 3000, "range_m": 5000, "subtype": subtype}
+    inner.update(extra_inner_overrides)
+    obj = make_mock_object(name=name, type="SecondaryWeapon")
+    obj.damage = damage
+    obj.loading_speed = 3000
+    obj.extra_atts = {"extra_atts": inner}
+    return obj
+
+
+def _make_mock_primary_emp(name="Luna EMP Mk I", emp_damage=3, dps=8.57):
+    """Build a primary-weapon mock with EMP damage in inner extra_atts."""
+    inner = {"damage_per_shot": 0, "emp_damage": emp_damage, "subtype": "emp-blaster"}
+    obj = make_mock_object(name=name, type="PrimaryWeapon")
+    obj.dps = dps
+    obj.extra_atts = {"extra_atts": inner}
+    return obj
+
+
+def _make_mock_pwm(name="Nirai Overdrive", damage_pct=-10, fire_rate_pct=20, dps_multiplier=1.1):
+    """Build a PrimaryWeaponMod module mock with outer dpsMultiplier + inner damage/fire_rate pcts."""
+    inner = {"damage_pct": float(damage_pct), "fire_rate_pct": float(fire_rate_pct)}
+    obj = make_mock_object(name=name, type="PrimaryWeaponModModule")
+    obj.max_equipped = 1
+    obj.extra_atts = {"dpsMultiplier": dps_multiplier, "extra_atts": inner}
+    return obj
+
+
+class TestT11CombatFieldEnrichment:
+    """§14 / T11 — combat-relevant fields surfaced in about API responses.
+
+    All tests call GET /about/object/name/{name} which exercises _enrich_combat_fields().
+    """
+
+    # -------------------------------------------------------------------------
+    # EMP primary weapons
+    # -------------------------------------------------------------------------
+
+    def test_emp_primary_luna_emp_damage_non_null(self, client, mock_repos):
+        """Luna EMP Mk I: emp_damage must be 3 and non-null."""
+        mock_repos["primary"].get_by_name = AsyncMock(return_value=_make_mock_primary_emp("Luna EMP Mk I", 3))
+
+        resp = client.get("/api/v1/about/object/name/Luna EMP Mk I")
+
+        assert resp.status_code == 200
+        assert resp.json()["emp_damage"] == 3
+
+    def test_emp_primary_sol_emp_damage(self, client, mock_repos):
+        """Sol EMP Mk II: emp_damage must be 5."""
+        mock_repos["primary"].get_by_name = AsyncMock(return_value=_make_mock_primary_emp("Sol EMP Mk II", 5))
+
+        resp = client.get("/api/v1/about/object/name/Sol EMP Mk II")
+
+        assert resp.status_code == 200
+        assert resp.json()["emp_damage"] == 5
+
+    def test_emp_primary_dia_emp_damage(self, client, mock_repos):
+        """Dia EMP Mk III: emp_damage must be 8."""
+        mock_repos["primary"].get_by_name = AsyncMock(return_value=_make_mock_primary_emp("Dia EMP Mk III", 8))
+
+        resp = client.get("/api/v1/about/object/name/Dia EMP Mk III")
+
+        assert resp.status_code == 200
+        assert resp.json()["emp_damage"] == 8
+
+    def test_non_emp_primary_emp_damage_null(self, client, mock_repos):
+        """Non-EMP primary weapon: emp_damage must be null."""
+        plain = make_mock_primary_weapon(name="Nirai Pulse", extra_atts={"extra_atts": {"damage_per_shot": 20}})
+        mock_repos["primary"].get_by_name = AsyncMock(return_value=plain)
+
+        resp = client.get("/api/v1/about/object/name/Nirai Pulse")
+
+        assert resp.status_code == 200
+        assert resp.json()["emp_damage"] is None
+
+    # -------------------------------------------------------------------------
+    # EMP secondary weapons (Mamba EMP missile, Netha EMP mine)
+    # -------------------------------------------------------------------------
+
+    def test_mamba_emp_secondary_emp_damage(self, client, mock_repos):
+        """Mamba EMP: emp_damage must be 100."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Mamba EMP", subtype="missile", damage=0, emp_damage=100)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Mamba EMP")
+
+        assert resp.status_code == 200
+        assert resp.json()["emp_damage"] == 100
+
+    def test_netha_emp_mine_emp_damage(self, client, mock_repos):
+        """Netha EMP mine: emp_damage must be 500."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Netha EMP", subtype="mine", damage=0, emp_damage=500)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Netha EMP")
+
+        assert resp.status_code == 200
+        assert resp.json()["emp_damage"] == 500
+
+    # -------------------------------------------------------------------------
+    # Cluster missiles
+    # -------------------------------------------------------------------------
+
+    def test_shesha_burst_count_3(self, client, mock_repos):
+        """Shesha cluster missile: burst_count == 3."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Shesha", subtype="cluster-missile", damage=60, burst_count=3)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Shesha")
+
+        assert resp.status_code == 200
+        assert resp.json()["burst_count"] == 3
+
+    def test_garuda_iv_burst_count_4(self, client, mock_repos):
+        """Garuda-IV: burst_count == 4."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Garuda-IV", subtype="cluster-missile", damage=75, burst_count=4)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Garuda-IV")
+
+        assert resp.status_code == 200
+        assert resp.json()["burst_count"] == 4
+
+    def test_patala_burst_count_5(self, client, mock_repos):
+        """Patala: burst_count == 5."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Patala", subtype="cluster-missile", damage=90, burst_count=5)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Patala")
+
+        assert resp.status_code == 200
+        assert resp.json()["burst_count"] == 5
+
+    def test_non_cluster_burst_count_null(self, client, mock_repos):
+        """Plain missile: burst_count must be null."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Edo", subtype="missile", damage=200)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Edo")
+
+        assert resp.status_code == 200
+        assert resp.json()["burst_count"] is None
+
+    # -------------------------------------------------------------------------
+    # Nuke weapons
+    # -------------------------------------------------------------------------
+
+    def test_liberator_nuke_effective_magnitude(self, client, mock_repos):
+        """Liberator nuke: nuke_effective_magnitude_m == round(12500 * 0.10) == 1250."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Liberator", subtype="nuke", damage=850, magnitude_m=12500)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Liberator")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["nuke_effective_magnitude_m"] == 1250
+        assert data["nuke_direct_damage"] == 850
+        assert data["nuke_self_damage_factor"] == pytest.approx(GameConstants.NUKE_FRIENDLY_FACTOR)  # 0.50 (D-014)
+
+    def test_extinctor_nuke_effective_magnitude(self, client, mock_repos):
+        """AMR Extinctor nuke: nuke_effective_magnitude_m == round(40000 * 0.10) == 4000."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("AMR Extinctor", subtype="nuke", damage=700, magnitude_m=40000)
+        )
+
+        resp = client.get("/api/v1/about/object/name/AMR Extinctor")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["nuke_effective_magnitude_m"] == 4000
+
+    def test_non_nuke_nuke_fields_null(self, client, mock_repos):
+        """Plain missile: all nuke fields must be null."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Edo", subtype="missile", damage=200)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Edo")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["nuke_direct_damage"] is None
+        assert data["nuke_effective_magnitude_m"] is None
+        assert data["nuke_self_damage_factor"] is None
+
+    # -------------------------------------------------------------------------
+    # PrimaryWeaponMod modules
+    # -------------------------------------------------------------------------
+
+    def test_nirai_overdrive_pwm_fields(self, client, mock_repos):
+        """Nirai Overdrive: damage_pct=-10, fire_rate_pct=+20, dps_multiplier=1.1."""
+        mock_repos["module"].get_by_name = AsyncMock(
+            return_value=_make_mock_pwm("Nirai Overdrive", damage_pct=-10, fire_rate_pct=20, dps_multiplier=1.1)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Nirai Overdrive")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["damage_pct"] == -10
+        assert data["fire_rate_pct"] == 20
+        assert data["dps_multiplier"] == pytest.approx(1.1)
+
+    def test_nirai_overcharge_pwm_fields(self, client, mock_repos):
+        """Nirai Overcharge: damage_pct=+20, fire_rate_pct=-10, dps_multiplier=1.1."""
+        mock_repos["module"].get_by_name = AsyncMock(
+            return_value=_make_mock_pwm("Nirai Overcharge", damage_pct=20, fire_rate_pct=-10, dps_multiplier=1.1)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Nirai Overcharge")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["damage_pct"] == 20
+        assert data["fire_rate_pct"] == -10
+        assert data["dps_multiplier"] == pytest.approx(1.1)
+
+    def test_overdrive_overcharge_distinct_pcts(self, client, mock_repos):
+        """Overdrive and Overcharge have identical dps_multiplier but different pct values."""
+        overdrive = _make_mock_pwm("Nirai Overdrive", damage_pct=-10, fire_rate_pct=20, dps_multiplier=1.1)
+        overcharge = _make_mock_pwm("Nirai Overcharge", damage_pct=20, fire_rate_pct=-10, dps_multiplier=1.1)
+        mock_repos["module"].get_by_name = AsyncMock(
+            side_effect=lambda db, n: overdrive if "Overdrive" in n else overcharge
+        )
+
+        resp_od = client.get("/api/v1/about/object/name/Nirai Overdrive")
+        resp_oc = client.get("/api/v1/about/object/name/Nirai Overcharge")
+
+        d_od = resp_od.json()
+        d_oc = resp_oc.json()
+        # dps_multiplier identical
+        assert d_od["dps_multiplier"] == pytest.approx(d_oc["dps_multiplier"])
+        # but pcts differ
+        assert d_od["damage_pct"] != d_oc["damage_pct"]
+        assert d_od["fire_rate_pct"] != d_oc["fire_rate_pct"]
+
+    def test_non_pwm_module_fields_null(self, client, mock_repos):
+        """Non-PrimaryWeaponMod module (Scanner): damage_pct/fire_rate_pct/dps_multiplier all null."""
+        scanner = make_mock_module(name="Nirai Scanner", type="ScannerModule")
+        scanner.extra_atts = None
+        mock_repos["module"].get_by_name = AsyncMock(return_value=scanner)
+
+        resp = client.get("/api/v1/about/object/name/Nirai Scanner")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["damage_pct"] is None
+        assert data["fire_rate_pct"] is None
+        assert data["dps_multiplier"] is None
+
+    # -------------------------------------------------------------------------
+    # Backward compatibility: extra_atts blob preserved
+    # -------------------------------------------------------------------------
+
+    def test_extra_atts_blob_preserved_on_pwm(self, client, mock_repos):
+        """extra_atts blob is still present alongside explicit T11 fields."""
+        obj = _make_mock_pwm("Nirai Overdrive", damage_pct=-10, fire_rate_pct=20, dps_multiplier=1.1)
+        mock_repos["module"].get_by_name = AsyncMock(return_value=obj)
+
+        resp = client.get("/api/v1/about/object/name/Nirai Overdrive")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # extra_atts blob must still be present (backward compat)
+        assert "extra_atts" in data
+        assert data["extra_atts"] is not None
+
+    def test_extra_atts_blob_preserved_on_emp_primary(self, client, mock_repos):
+        """extra_atts blob is still present for EMP primary weapons."""
+        obj = _make_mock_primary_emp("Luna EMP Mk I", emp_damage=3)
+        mock_repos["primary"].get_by_name = AsyncMock(return_value=obj)
+
+        resp = client.get("/api/v1/about/object/name/Luna EMP Mk I")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "extra_atts" in data
+        assert data["extra_atts"] is not None
+
+
+# ===========================================================================
+# D-002 — primary_weapon and turret_weapon per-shot breakdown fields
+# ===========================================================================
+
+
+def _make_mock_primary_with_combat(
+    name="Nirai Pulse",
+    damage_per_shot=20,
+    loading_speed_ms=900,
+    subtype="laser",
+    dps=22.2,
+):
+    """Build a primary-weapon mock with full inner extra_atts combat fields."""
+    inner = {
+        "damage_per_shot": damage_per_shot,
+        "loading_speed_ms": loading_speed_ms,
+        "subtype": subtype,
+    }
+    obj = make_mock_object(name=name, type="PrimaryWeapon")
+    obj.dps = dps
+    obj.extra_atts = {"extra_atts": inner}
+    return obj
+
+
+def _make_mock_turret_with_combat(
+    name="Nirai Turret",
+    damage_per_shot=35,
+    loading_speed_ms=1200,
+    subtype="auto-cannon",
+    dps=29.1,
+    automatic=True,
+):
+    """Build a turret-weapon mock with full inner extra_atts combat fields."""
+    inner = {
+        "damage_per_shot": damage_per_shot,
+        "loading_speed_ms": loading_speed_ms,
+        "subtype": subtype,
+    }
+    obj = make_mock_object(name=name, type="TurretWeapon")
+    obj.dps = dps
+    obj.automatic = automatic
+    obj.extra_atts = {"extra_atts": inner}
+    return obj
+
+
+class TestPrimaryTurretWeaponFields:
+    """D-002 — damage_per_shot, loading_speed_ms, subtype surfaced for primary and turret weapons.
+
+    All tests call GET /about/object/name/{name} which exercises _enrich_combat_fields().
+    Secondary and module paths are NOT touched here.
+    """
+
+    # -------------------------------------------------------------------------
+    # Primary weapon — field presence and values
+    # -------------------------------------------------------------------------
+
+    def test_primary_damage_per_shot_present(self, client, mock_repos):
+        """Primary weapon: damage_per_shot must be surfaced and match inner extra_atts."""
+        mock_repos["primary"].get_by_name = AsyncMock(
+            return_value=_make_mock_primary_with_combat(name="Pulse Laser", damage_per_shot=16)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Pulse Laser")
+
+        assert resp.status_code == 200
+        assert resp.json()["damage_per_shot"] == 16
+
+    def test_primary_loading_speed_ms_present(self, client, mock_repos):
+        """Primary weapon: loading_speed_ms must be surfaced and match inner extra_atts."""
+        mock_repos["primary"].get_by_name = AsyncMock(
+            return_value=_make_mock_primary_with_combat(name="Pulse Laser", loading_speed_ms=900)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Pulse Laser")
+
+        assert resp.status_code == 200
+        assert resp.json()["loading_speed_ms"] == 900
+
+    def test_primary_subtype_present(self, client, mock_repos):
+        """Primary weapon: subtype must be surfaced and match inner extra_atts."""
+        mock_repos["primary"].get_by_name = AsyncMock(
+            return_value=_make_mock_primary_with_combat(name="Pulse Laser", subtype="laser")
+        )
+
+        resp = client.get("/api/v1/about/object/name/Pulse Laser")
+
+        assert resp.status_code == 200
+        assert resp.json()["subtype"] == "laser"
+
+    def test_primary_plasma_collector_subtype(self, client, mock_repos):
+        """Primary weapon: plasma-collector subtype is surfaced without modification."""
+        mock_repos["primary"].get_by_name = AsyncMock(
+            return_value=_make_mock_primary_with_combat(name="Plasma Collector", subtype="plasma-collector")
+        )
+
+        resp = client.get("/api/v1/about/object/name/Plasma Collector")
+
+        assert resp.status_code == 200
+        assert resp.json()["subtype"] == "plasma-collector"
+
+    def test_primary_missing_combat_fields_null(self, client, mock_repos):
+        """Primary weapon with no inner extra_atts: damage_per_shot/loading_speed_ms/subtype all null."""
+        obj = make_mock_primary_weapon(name="Bare Laser", extra_atts=None)
+        mock_repos["primary"].get_by_name = AsyncMock(return_value=obj)
+
+        resp = client.get("/api/v1/about/object/name/Bare Laser")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["damage_per_shot"] is None
+        assert data["loading_speed_ms"] is None
+        assert data["subtype"] is None
+
+    # -------------------------------------------------------------------------
+    # Turret weapon — field presence and values
+    # -------------------------------------------------------------------------
+
+    def test_turret_damage_per_shot_present(self, client, mock_repos):
+        """Turret weapon: damage_per_shot must be surfaced and match inner extra_atts."""
+        mock_repos["turret"].get_by_name = AsyncMock(
+            return_value=_make_mock_turret_with_combat(name="Auto Cannon", damage_per_shot=35)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Auto Cannon")
+
+        assert resp.status_code == 200
+        assert resp.json()["damage_per_shot"] == 35
+
+    def test_turret_loading_speed_ms_present(self, client, mock_repos):
+        """Turret weapon: loading_speed_ms must be surfaced and match inner extra_atts."""
+        mock_repos["turret"].get_by_name = AsyncMock(
+            return_value=_make_mock_turret_with_combat(name="Auto Cannon", loading_speed_ms=1200)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Auto Cannon")
+
+        assert resp.status_code == 200
+        assert resp.json()["loading_speed_ms"] == 1200
+
+    def test_turret_subtype_present(self, client, mock_repos):
+        """Turret weapon: subtype must be surfaced and match inner extra_atts."""
+        mock_repos["turret"].get_by_name = AsyncMock(
+            return_value=_make_mock_turret_with_combat(name="Auto Cannon", subtype="auto-cannon")
+        )
+
+        resp = client.get("/api/v1/about/object/name/Auto Cannon")
+
+        assert resp.status_code == 200
+        assert resp.json()["subtype"] == "auto-cannon"
+
+    def test_turret_plasma_collector_subtype(self, client, mock_repos):
+        """Turret weapon: plasma-collector subtype is surfaced without modification."""
+        mock_repos["turret"].get_by_name = AsyncMock(
+            return_value=_make_mock_turret_with_combat(name="Mining Turret", subtype="plasma-collector")
+        )
+
+        resp = client.get("/api/v1/about/object/name/Mining Turret")
+
+        assert resp.status_code == 200
+        assert resp.json()["subtype"] == "plasma-collector"
+
+    def test_turret_missing_combat_fields_null(self, client, mock_repos):
+        """Turret weapon with no inner extra_atts: all three D-002 fields are null."""
+        obj = make_mock_object(name="Bare Turret", type="TurretWeapon", extra_atts=None)
+        obj.dps = 10.0
+        mock_repos["turret"].get_by_name = AsyncMock(return_value=obj)
+
+        resp = client.get("/api/v1/about/object/name/Bare Turret")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["damage_per_shot"] is None
+        assert data["loading_speed_ms"] is None
+        assert data["subtype"] is None
+
+    # -------------------------------------------------------------------------
+    # Regression guard: secondary weapons are NOT affected
+    # -------------------------------------------------------------------------
+
+    def test_secondary_not_affected_by_d002(self, client, mock_repos):
+        """Secondary weapon must NOT gain loading_speed_ms/damage_per_shot keys."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Edo", subtype="missile", damage=200)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Edo")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # Secondary response schema does not include D-002 fields
+        assert "loading_speed_ms" not in data
+        assert "damage_per_shot" not in data
+
+
+# ===========================================================================
+# D-003 — turret_weapon automatic / firing-mode field
+# ===========================================================================
+
+
+class TestD003TurretFiringMode:
+    """D-003 — automatic field surfaced for turret weapons.
+
+    All tests call GET /about/object/name/{name} which exercises _build_object_result()
+    (ORM column) and _enrich_combat_fields().
+    """
+
+    def test_turret_automatic_true(self, client, mock_repos):
+        """Turret with automatic=True: 'automatic' must be True in the response."""
+        mock_repos["turret"].get_by_name = AsyncMock(
+            return_value=_make_mock_turret_with_combat(name="Auto Turret", automatic=True)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Auto Turret")
+
+        assert resp.status_code == 200
+        assert resp.json()["automatic"] is True
+
+    def test_turret_automatic_false(self, client, mock_repos):
+        """Turret with automatic=False: 'automatic' must be False in the response."""
+        mock_repos["turret"].get_by_name = AsyncMock(
+            return_value=_make_mock_turret_with_combat(name="Manual Turret", automatic=False)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Manual Turret")
+
+        assert resp.status_code == 200
+        assert resp.json()["automatic"] is False
+
+    def test_turret_plasma_collector_automatic_false(self, client, mock_repos):
+        """Plasma-collector turret with automatic=False: 'automatic' must be False (no special-casing)."""
+        mock_repos["turret"].get_by_name = AsyncMock(
+            return_value=_make_mock_turret_with_combat(
+                name="Mining Turret", subtype="plasma-collector", automatic=False
+            )
+        )
+
+        resp = client.get("/api/v1/about/object/name/Mining Turret")
+
+        assert resp.status_code == 200
+        assert resp.json()["automatic"] is False
+
+    def test_turret_automatic_none(self, client, mock_repos):
+        """Turret with automatic=None: 'automatic' must be None in the response."""
+        obj = _make_mock_turret_with_combat(name="Unknown Turret")
+        obj.automatic = None
+        mock_repos["turret"].get_by_name = AsyncMock(return_value=obj)
+
+        resp = client.get("/api/v1/about/object/name/Unknown Turret")
+
+        assert resp.status_code == 200
+        assert resp.json()["automatic"] is None
+
+    def test_turret_automatic_via_get_by_id(self, client, mock_repos):
+        """D-003 by-id path: automatic must be surfaced via GET /object/turret_weapon/{id}.
+
+        This is the second code path (_get_object_by_id) distinct from _build_object_result.
+        Exercises the turret branch in get_object_by_id to confirm result["automatic"] = obj.automatic
+        is included. If the by-id branch were missing the automatic assignment, this test fails.
+        """
+        mock_repos["turret"].get_by_id = AsyncMock(
+            return_value=_make_mock_turret_with_combat(name="Auto Turret", automatic=True)
+        )
+
+        resp = client.get("/api/v1/about/object/turret_weapon/1")
+
+        assert resp.status_code == 200
+        assert resp.json()["automatic"] is True
+
+    def test_turret_automatic_false_via_get_by_id(self, client, mock_repos):
+        """D-003 by-id path: automatic=False (Manual/collector) must round-trip via GET /object/turret_weapon/{id}."""
+        mock_repos["turret"].get_by_id = AsyncMock(
+            return_value=_make_mock_turret_with_combat(
+                name="Mining Turret", subtype="plasma-collector", automatic=False
+            )
+        )
+
+        resp = client.get("/api/v1/about/object/turret_weapon/2")
+
+        assert resp.status_code == 200
+        assert resp.json()["automatic"] is False
+
+
+# ===========================================================================
+# D-004 — secondary_weapon subtype field
+# ===========================================================================
+
+
+class TestD004SecondarySubtype:
+    """D-004 — subtype field surfaced for secondary weapons.
+
+    All tests call GET /about/object/name/{name} which exercises _enrich_combat_fields().
+    """
+
+    def test_secondary_subtype_missile(self, client, mock_repos):
+        """Plain missile: subtype must be 'missile'."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Edo", subtype="missile", damage=200)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Edo")
+
+        assert resp.status_code == 200
+        assert resp.json()["subtype"] == "missile"
+
+    def test_secondary_subtype_cluster_missile(self, client, mock_repos):
+        """Cluster-missile: subtype must be 'cluster-missile'."""
+        mock_repos["secondary"].get_by_name = AsyncMock(
+            return_value=_make_mock_secondary("Shesha", subtype="cluster-missile", damage=60, burst_count=3)
+        )
+
+        resp = client.get("/api/v1/about/object/name/Shesha")
+
+        assert resp.status_code == 200
+        assert resp.json()["subtype"] == "cluster-missile"
+
+    def test_secondary_subtype_none_when_missing(self, client, mock_repos):
+        """Secondary weapon with no subtype in extra_atts: 'subtype' must be None."""
+        obj = make_mock_object(name="Bare Missile", type="SecondaryWeapon")
+        obj.damage = 100
+        obj.loading_speed = 2000
+        obj.extra_atts = None
+        mock_repos["secondary"].get_by_name = AsyncMock(return_value=obj)
+
+        resp = client.get("/api/v1/about/object/name/Bare Missile")
+
+        assert resp.status_code == 200
+        assert resp.json()["subtype"] is None
+
+    def test_secondary_subtype_via_get_by_id(self, client, mock_repos):
+        """D-004 by-id path: subtype must be surfaced via GET /object/secondary_weapon/{id}.
+
+        Covers the get_object_by_id code path which is separate from _build_object_result.
+        Regression guard: if _enrich_combat_fields were accidentally not called in
+        get_object_by_id, this test would fail.
+        """
+        mock_repos["secondary"].get_by_id = AsyncMock(
+            return_value=_make_mock_secondary("Edo", subtype="missile", damage=200)
+        )
+
+        resp = client.get("/api/v1/about/object/secondary_weapon/1")
+
+        assert resp.status_code == 200
+        assert resp.json()["subtype"] == "missile"

@@ -106,11 +106,29 @@ def mock_shop_repo() -> AsyncMock:
 
 
 @pytest.fixture
-def service(mock_config_repo, mock_player_repo, mock_shop_repo) -> ConfigService:
+def mock_bounty_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.delete_by_guild_id = AsyncMock(return_value=0)
+    return repo
+
+
+@pytest.fixture
+def mock_combat_log_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.delete_by_guild_id = AsyncMock(return_value=0)
+    return repo
+
+
+@pytest.fixture
+def service(
+    mock_config_repo, mock_player_repo, mock_shop_repo, mock_bounty_repo, mock_combat_log_repo
+) -> ConfigService:
     svc = ConfigService()
     svc.config_repo = mock_config_repo
     svc.player_repo = mock_player_repo
     svc.shop_repo = mock_shop_repo
+    svc.bounty_repo = mock_bounty_repo
+    svc.combat_log_repo = mock_combat_log_repo
     return svc
 
 
@@ -536,19 +554,32 @@ class TestUninstallGuild:
 
     @pytest.mark.asyncio
     async def test_uninstalls_guild_completely(
-        self, service, mock_db, mock_player_repo, mock_config_repo, mock_shop_repo
+        self,
+        service,
+        mock_db,
+        mock_player_repo,
+        mock_config_repo,
+        mock_shop_repo,
+        mock_bounty_repo,
+        mock_combat_log_repo,
     ):
-        """Players, shops and config are all cleared."""
+        """Players, shops, bounties, combat_log, and config are all cleared."""
         players = [_make_player(i) for i in range(2)]
         mock_player_repo.get_players_by_guild.return_value = players
         mock_config_repo.delete_guild_config.return_value = True
+        mock_bounty_repo.delete_by_guild_id.return_value = 5
+        mock_combat_log_repo.delete_by_guild_id.return_value = 7
 
         result = await service.uninstall_guild(mock_db, guild_id=999)
 
         assert result["players"] == 2
         assert result["config"] == 1
+        assert result["bounties"] == 5
+        assert result["combat_log"] == 7
         mock_shop_repo.clear_all_guild_shops.assert_awaited_once_with(mock_db, 999)
         mock_config_repo.delete_guild_config.assert_awaited_once_with(mock_db, 999)
+        mock_bounty_repo.delete_by_guild_id.assert_awaited_once_with(mock_db, 999)
+        mock_combat_log_repo.delete_by_guild_id.assert_awaited_once_with(mock_db, 999)
 
     @pytest.mark.asyncio
     async def test_config_count_zero_when_config_not_deleted(
@@ -561,6 +592,40 @@ class TestUninstallGuild:
         result = await service.uninstall_guild(mock_db, guild_id=999)
 
         assert result["config"] == 0
+
+    @pytest.mark.asyncio
+    async def test_bounty_and_combat_log_deleted_even_when_no_players(
+        self,
+        service,
+        mock_db,
+        mock_player_repo,
+        mock_config_repo,
+        mock_shop_repo,
+        mock_bounty_repo,
+        mock_combat_log_repo,
+    ):
+        """Bounty and combat_log repos are called even when the guild has no players."""
+        mock_player_repo.get_players_by_guild.return_value = []
+        mock_config_repo.delete_guild_config.return_value = False
+        mock_bounty_repo.delete_by_guild_id.return_value = 3
+        mock_combat_log_repo.delete_by_guild_id.return_value = 9
+
+        result = await service.uninstall_guild(mock_db, guild_id=888)
+
+        mock_bounty_repo.delete_by_guild_id.assert_awaited_once_with(mock_db, 888)
+        mock_combat_log_repo.delete_by_guild_id.assert_awaited_once_with(mock_db, 888)
+        assert result["bounties"] == 3
+        assert result["combat_log"] == 9
+
+    @pytest.mark.asyncio
+    async def test_result_contains_expected_keys(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Return dict must include players, shop_items, bounties, combat_log, config."""
+        mock_player_repo.get_players_by_guild.return_value = []
+        mock_config_repo.delete_guild_config.return_value = False
+
+        result = await service.uninstall_guild(mock_db, guild_id=777)
+
+        assert set(result.keys()) >= {"players", "shop_items", "bounties", "combat_log", "config"}
 
     @pytest.mark.asyncio
     async def test_reraises_exception(self, service, mock_db, mock_player_repo, mock_config_repo):
@@ -748,6 +813,27 @@ class TestValidateConfigCompatibility:
 
         assert result["valid"] is False
         assert any("min must be >= 1" in e for e in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_error_secondary_weapon_count_range_min_gt_max(self, service, mock_db, mock_config_repo):
+        """Validation flags secondary_weapon count range with min > max (CI-11 parity)."""
+        config = _make_config(
+            tech_level_probabilities={"same_level": 0.7, "one_lower": 0.2, "two_lower": 0.1},
+        )
+
+        # Override get_count_range to return bad range for 'secondary_weapon' type
+        def _bad_secondary_range(item_type: str) -> dict:
+            if item_type == "secondary_weapon":
+                return {"min": 5, "max": 2}
+            return {"min": 1, "max": 3}
+
+        config.get_count_range = MagicMock(side_effect=_bad_secondary_range)
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        result = await service.validate_config_compatibility(mock_db, guild_id=999)
+
+        assert result["valid"] is False
+        assert any("secondary_weapon" in e and "min > max" in e for e in result["errors"])
 
     @pytest.mark.asyncio
     async def test_reraises_exception(self, service, mock_db, mock_config_repo):
@@ -1053,3 +1139,103 @@ class TestUpdateBountyConfigPlatinumTier:
 
         with pytest.raises(ValueError, match="bounty_spawn_interval_minutes must be between"):
             await service.update_bounty_config(mock_db, guild_id=1000, updates={"bounty_spawn_interval_minutes": 2000})
+
+
+# ===========================================================================
+# Tests: CI-11 — secondary_weapons config key round-trip
+# ===========================================================================
+
+
+class TestCI11SecondaryWeaponConfigKeys:
+    """CI-11: item_count_ranges / quantity_ranges must support 'secondary_weapons' key."""
+
+    @pytest.mark.asyncio
+    async def test_secondary_weapons_count_range_unpacked_to_flat_field(self, service, mock_db, mock_config_repo):
+        """item_count_ranges['secondary_weapons'] is unpacked to secondary_weapon_count_range."""
+        mock_config_repo.get_config_summary.return_value = {"guild_id": 999}
+
+        updates = {
+            "guild_id": 999,
+            "item_count_ranges": {
+                "secondary_weapons": {"min": 2, "max": 4},
+            },
+        }
+        await service.update_shop_config(mock_db, updates)
+
+        call_args = mock_config_repo.update_shop_config.call_args[0][1]
+        assert "secondary_weapon_count_range" in call_args, (
+            "secondary_weapons key must be unpacked to secondary_weapon_count_range"
+        )
+        assert call_args["secondary_weapon_count_range"] == {"min": 2, "max": 4}
+        assert "item_count_ranges" not in call_args
+
+    @pytest.mark.asyncio
+    async def test_secondary_weapons_quantity_range_unpacked_to_flat_field(self, service, mock_db, mock_config_repo):
+        """quantity_ranges['secondary_weapons'] is unpacked to secondary_weapon_quantity_range."""
+        mock_config_repo.get_config_summary.return_value = {"guild_id": 999}
+
+        updates = {
+            "guild_id": 999,
+            "quantity_ranges": {
+                "secondary_weapons": {"min": 1, "max": 3},
+            },
+        }
+        await service.update_shop_config(mock_db, updates)
+
+        call_args = mock_config_repo.update_shop_config.call_args[0][1]
+        assert "secondary_weapon_quantity_range" in call_args, (
+            "secondary_weapons key must be unpacked to secondary_weapon_quantity_range"
+        )
+        assert call_args["secondary_weapon_quantity_range"] == {"min": 1, "max": 3}
+        assert "quantity_ranges" not in call_args
+
+    @pytest.mark.asyncio
+    async def test_omitting_secondary_weapons_does_not_clobber_existing(self, service, mock_db, mock_config_repo):
+        """Payload omitting secondary_weapons must not pass secondary_weapon_count_range to repo.
+
+        Backward-compat: a caller providing only 'weapons' must not wipe the secondary
+        weapon range that already exists in the DB (the repo's whitelist governs — if the
+        key is absent from the payload, setattr is not called).
+        """
+        mock_config_repo.get_config_summary.return_value = {"guild_id": 999}
+
+        updates = {
+            "guild_id": 999,
+            "item_count_ranges": {
+                "weapons": {"min": 3, "max": 5},
+                # secondary_weapons deliberately omitted
+            },
+        }
+        await service.update_shop_config(mock_db, updates)
+
+        call_args = mock_config_repo.update_shop_config.call_args[0][1]
+        # secondary_weapon_count_range must NOT be in the payload (no clobber)
+        assert "secondary_weapon_count_range" not in call_args, (
+            "Omitting secondary_weapons from payload must not pass secondary_weapon_count_range to repo"
+        )
+        # weapon_count_range must still be present
+        assert "weapon_count_range" in call_args
+
+    @pytest.mark.asyncio
+    async def test_secondary_weapons_range_validation_applied(self, service, mock_db):
+        """Validation (min <= max, min >= 1) applies to secondary_weapon_count_range."""
+        updates = {
+            "guild_id": 999,
+            "item_count_ranges": {
+                "secondary_weapons": {"min": 5, "max": 2},  # min > max → invalid
+            },
+        }
+        with pytest.raises(ValueError, match="Min cannot be greater than max"):
+            await service.update_shop_config(mock_db, updates)
+
+    @pytest.mark.asyncio
+    async def test_secondary_weapons_quantity_range_validation_applied(self, service, mock_db):
+        """Validation applies to secondary_weapon_quantity_range too."""
+        updates = {
+            "guild_id": 999,
+            "quantity_ranges": {
+                "secondary_weapons": {"min": 0, "max": 2},  # min < 1 → invalid
+            },
+        }
+        with pytest.raises(ValueError, match="Min value must be >= 1"):
+            await service.update_shop_config(mock_db, updates)

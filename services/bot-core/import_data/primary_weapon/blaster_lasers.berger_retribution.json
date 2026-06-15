@@ -8,8 +8,15 @@
   "icon": "https://i.postimg.cc/RZ08zTwL/berger-retribution.png",
   "name": "Berger Retribution",
   "techLevel": 7,
-  "value": 37744,
+  "value": 35888,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_Retribution",
   "type": "PrimaryWeapon",
-  "subtype": "blaster_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 750,
+    "range_m": 3500,
+    "damage_per_shot": 18,
+    "speed_km_h": 5750,
+    "subtype": "laser",
+    "mechanics_text": "## In-Game Description\nThis relatively strong laser gun from the Berger company has one of the fastest rates of fire on the market, second only to the Converge series of weapons.\n\n## Notes\nThe game's description for this item is quite misleading. Although it states that the Berger Retribution has one of the fastest rates of fire on the market, this is only true when compared to other laser weapons of the same type. It also states that it is second only to the Converge series of weapons. While the Converge IV (the only weapon from the Converge series to appear in the game) surpasses the Retribution in several areas, including damage, rate of fire is not one of them as the description implies.\n\n## Trivia\n*The model of this laser has two barrels, but when fired only one shot is spent, or the two shots merge together to form one big shot.\n*In HD version of this game, the Berger Retribution seemed to be the standard weapon of the Nivelian star fleet.\n*The Disruptor Laser also fires similar projectiles to the Berger Retribution, but with a higher intensity.\n*The weapon's appearance resembles a double-barreled pump-action shotgun."
+  }
 }

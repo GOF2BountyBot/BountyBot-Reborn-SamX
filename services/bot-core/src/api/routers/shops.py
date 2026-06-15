@@ -30,6 +30,7 @@ from api.schemas.shops_schema import (
     ShopItemResponse,
     ShopSummaryResponse,
     TransactionResponse,
+    serialize_refresh_response,
 )
 
 flogger = bblogger.get_logger("shops-api-router")
@@ -56,10 +57,11 @@ async def _build_item_stat_map(db: Any, item_names: set[str]) -> dict[str, dict]
     for pw in pw_result.scalars():
         stat_map[pw.name] = {"dps": pw.dps}
 
-    # Secondary weapons — dps column
+    # Secondary weapons — no dps column; expose damage as dps for shop stat display.
+    # SecondaryWeapon has a "damage" column (damage per shot) rather than "dps".
     sw_result = await db.execute(select(SecondaryWeapon).where(SecondaryWeapon.name.in_(item_names)))
     for sw in sw_result.scalars():
-        stat_map[sw.name] = {"dps": sw.dps}
+        stat_map[sw.name] = {"dps": float(sw.damage) if sw.damage is not None else None}
 
     # Turret weapons — dps column
     tw_result = await db.execute(select(TurretWeapon).where(TurretWeapon.name.in_(item_names)))
@@ -316,7 +318,7 @@ async def refresh_shop(request: RefreshShopRequest, shop_service: ShopService = 
                 db, request.guild_id, request.tier, request.force_tech_level
             )
 
-            return refresh_details
+            return serialize_refresh_response(refresh_details)
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

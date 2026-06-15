@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_diffuse.png",
     "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.png",
+  "extra_atts": {
+    "dlc": "Valkyrie",
+    "price_credits_android": 1666667
+  }
 }

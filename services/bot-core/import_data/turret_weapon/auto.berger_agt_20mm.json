@@ -12,9 +12,15 @@
   "icon": "https://i.postimg.cc/Gt19stbq/berger-agt-20mm.png",
   "name": "Berger AGT 20mm",
   "techLevel": 5,
-  "value": 227040,
+  "value": 208624,
   "automatic": true,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_AGT_20mm",
   "type": "TurretWeapon",
-  "subtype": "auto"
+  "extra_atts": {
+    "loading_speed_ms": 100,
+    "range_m": 4400,
+    "speed_km_h": 8000,
+    "autonomous": true,
+    "damage_per_shot": 4
+  }
 }

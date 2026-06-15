@@ -1,12 +1,19 @@
 {
   "aliases": [],
   "builtIn": false,
-  "damage": 0,
+  "damage": 90,
   "icon": "https://i.postimg.cc/pTzBK9MS/patala.png",
-  "loading speed": 0,
+  "loading speed": 3000,
   "name": "Patala",
-  "value": 0,
+  "value": 1603,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "cluster_missiles"
+  "techLevel": 9,
+  "extra_atts": {
+    "loading_speed_ms": 3000,
+    "range_m": 6900,
+    "speed_km_h": 2500,
+    "subtype": "cluster-missile",
+    "burst_count": 5
+  }
 }

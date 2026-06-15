@@ -1,0 +1,27 @@
+{
+  "_name": "Implants",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/63kmXJtk/implants.png",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Implants",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "8",
+    "Known Price Range": "-> 4,866$ (Wolf-Reiser)\n-> 9,410$ (Pan)"
+  },
+  "stats": {
+    "tech_level": 8,
+    "price_range_min_credits": 4866,
+    "price_range_min_system": "Wolf-Reiser",
+    "price_range_max_credits": 9410,
+    "price_range_max_system": "Pan",
+    "value": 7138,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Jump out of a moving ship without dying, win an arm wrestling match against a Vossk, attract the gaze of a woman at the other end of the bar, or just look good naked. All of these things are possible with implants.",
+  "mechanics_text": [
+    "Hard to find; if not found initially, visit another system then return. Usually located in Wolf-Reiser or Aquila. Best sell prices in Pan (8500-9000+ per unit). Can sometimes be found in small quantities from ship drops."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 8", "Trading commodities", "GOF2", "Rare commodities", "Freelance Missions", "GOF2HD"]
+}

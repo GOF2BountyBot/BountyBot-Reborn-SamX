@@ -3,12 +3,20 @@
     "Tormentor"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 150,
   "icon": "https://i.postimg.cc/cL1ZjYDQ/amr-tormentor.png",
-  "loading speed": 0,
+  "loading speed": 6000,
   "name": "AMR Tormentor",
-  "value": 0,
+  "value": 530,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "nukes"
+  "techLevel": 4,
+  "extra_atts": {
+    "loading_speed_ms": 6000,
+    "range_m": 2500,
+    "speed_km_h": 1500,
+    "subtype": "nuke",
+    "steerable": false,
+    "magnitude_m": 10000
+  }
 }

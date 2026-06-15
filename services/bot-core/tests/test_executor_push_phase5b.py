@@ -29,6 +29,12 @@ import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+# Opt out of the autouse `_stub_gateway_push_helpers` fixture in tests/conftest.py:
+# this file's whole point is to exercise the real push helpers.
+pytestmark = pytest.mark.real_push
+
 # ---------------------------------------------------------------------------
 # Path setup and stub registration
 # ---------------------------------------------------------------------------
@@ -53,8 +59,33 @@ if "sqlalchemy_utils" not in sys.modules:
 # Application imports (after path setup)
 # ---------------------------------------------------------------------------
 
+from contextlib import asynccontextmanager
+
 import httpx
 import respx
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_db_manager():
+    """Minimal db_manager stub for tests that call push helpers with db=None.
+
+    P6-T7: when db=None the helpers open their own session via
+    ``db_manager.get_session()``.  Tests that pass db=None and mock the
+    BountyRepository directly don't need a real session — the fake yieldsany
+    sentinel; the mock repo ignores the db argument.
+    """
+
+    @asynccontextmanager
+    async def _fake_get_session():
+        yield None  # mock repo ignores the db arg
+
+    fake = MagicMock()
+    fake.get_session = MagicMock(side_effect=_fake_get_session)
+    return fake
+
 
 # ---------------------------------------------------------------------------
 # Constants (matching executor env defaults)
@@ -191,6 +222,7 @@ class TestBountySpawnPushHelper:
         with (
             patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": INTERNAL_TOKEN}),
             patch("persist.repositories.bounty_repository.BountyRepository", return_value=mock_repo),
+            patch("persist.database.manager.db_manager", _make_fake_db_manager()),
             respx.mock(assert_all_called=True) as router,
         ):
             route = router.post(_BOUNTY_PUSH_URL).respond(204)
@@ -228,6 +260,7 @@ class TestBountySpawnPushHelper:
         with (
             patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": INTERNAL_TOKEN}),
             patch("persist.repositories.bounty_repository.BountyRepository", return_value=mock_repo),
+            patch("persist.database.manager.db_manager", _make_fake_db_manager()),
             respx.mock(assert_all_called=True) as router,
         ):
             route = router.post(_BOUNTY_PUSH_URL).respond(204)
@@ -253,6 +286,7 @@ class TestBountySpawnPushHelper:
         with (
             patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": INTERNAL_TOKEN}),
             patch("persist.repositories.bounty_repository.BountyRepository", return_value=mock_repo),
+            patch("persist.database.manager.db_manager", _make_fake_db_manager()),
             respx.mock(assert_all_called=True) as router,
         ):
             router.post(_BOUNTY_PUSH_URL).respond(503)
@@ -272,6 +306,7 @@ class TestBountySpawnPushHelper:
         with (
             patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": INTERNAL_TOKEN}),
             patch("persist.repositories.bounty_repository.BountyRepository", return_value=mock_repo),
+            patch("persist.database.manager.db_manager", _make_fake_db_manager()),
             respx.mock(assert_all_called=True) as router,
         ):
             route = router.post(_BOUNTY_PUSH_URL).respond(204)
@@ -303,6 +338,7 @@ class TestBountyExpirePushHelper:
         with (
             patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": INTERNAL_TOKEN}),
             patch("persist.repositories.bounty_repository.BountyRepository", return_value=mock_repo),
+            patch("persist.database.manager.db_manager", _make_fake_db_manager()),
             respx.mock(assert_all_called=True) as router,
         ):
             route = router.post(_BOUNTY_PUSH_URL).respond(204)
@@ -327,6 +363,7 @@ class TestBountyExpirePushHelper:
         with (
             patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": INTERNAL_TOKEN}),
             patch("persist.repositories.bounty_repository.BountyRepository", return_value=mock_repo),
+            patch("persist.database.manager.db_manager", _make_fake_db_manager()),
             respx.mock(assert_all_called=True) as router,
         ):
             router.post(_BOUNTY_PUSH_URL).respond(500)
@@ -364,6 +401,7 @@ class TestBountyExpirePushHelper:
         with (
             patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": INTERNAL_TOKEN}),
             patch("persist.repositories.bounty_repository.BountyRepository", return_value=mock_repo),
+            patch("persist.database.manager.db_manager", _make_fake_db_manager()),
             respx.mock(assert_all_called=True) as router,
         ):
             route = router.post(_BOUNTY_PUSH_URL).respond(204)
@@ -447,6 +485,7 @@ class TestAdversarialEdgeCases:
         with (
             patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": INTERNAL_TOKEN}),
             patch("persist.repositories.bounty_repository.BountyRepository", return_value=mock_repo),
+            patch("persist.database.manager.db_manager", _make_fake_db_manager()),
             respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
         ):
             route = router.post(_BOUNTY_PUSH_URL).respond(204)

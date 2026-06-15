@@ -1,18 +1,25 @@
 {
-    "aliases":  [
-                    "MD 12",
-                    "MD12",
-                    "Mass Driver 12",
-                    "Mass Driver MD12"
-                ],
-    "builtIn":  false,
-    "dps":  70.0,
-    "emoji":  "<:massdrivermd12:723709599278170123>",
-    "icon":  "https://i.postimg.cc/gkZNWB7p/mass-driver-md-12.png",
-    "name":  "Mass Driver MD 12",
-    "techLevel":  9,
-    "value":  423181,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Mass_Driver_MD_12",
-    "type":  "PrimaryWeapon",
-    "subtype":  "auto_cannons"
+  "aliases": [
+    "MD 12",
+    "MD12",
+    "Mass Driver 12",
+    "Mass Driver MD12"
+  ],
+  "builtIn": false,
+  "dps": 70.0,
+  "emoji": "<:massdrivermd12:723709599278170123>",
+  "icon": "https://i.postimg.cc/gkZNWB7p/mass-driver-md-12.png",
+  "name": "Mass Driver MD 12",
+  "techLevel": 9,
+  "value": 410446,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Mass_Driver_MD_12",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 100,
+    "range_m": 3100,
+    "damage_per_shot": 7,
+    "speed_km_h": 7500,
+    "subtype": "auto-cannon",
+    "mechanics_text": "## In-Game Description\nThe Mass Driver MD12 is by far the deadliest ballistic weapon that is legally available on the market. The penetration power of the Mass Driver's projectiles is significantly enhanced by an artificial coating which the bullets receive only moments before they're fired off. This procedure results in a damage rate that is absolutely unrivalled for this kind of weapon.\n\n## Trivia\n*Despite its description, the Mass Driver MD 12 is only avaliable from Jakk Zoboon in the Kaamo Club Space Lounge. It cannot be found elsewhere.\n*This weapon can be considered the successor to the Mass Driver MD 10, with whom it shares projectile textures with.\n*This is the weapon used by a Blue Fyre in the Supernova Challenge, along with 2 Mimung Blasters.\n*Though the most powerful ballistic weapon by sheer DPS alone, the Mass Driver MD 12 has the second highest fire rate at 0.1 seconds per round or 600 rounds per minute."
+  }
 }

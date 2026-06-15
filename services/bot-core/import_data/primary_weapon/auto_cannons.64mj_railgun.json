@@ -1,17 +1,23 @@
 {
-    "aliases":  [
-                    "64MJ",
-                    "64MJ Railgun",
-                    "64 Rail"
-                ],
-    "builtIn":  false,
-    "dps":  14.28,
-    "emoji":  "<:64mjrailgun:723709599051677756>",
-    "icon":  "https://i.postimg.cc/CMtm9VmJ/64mj-railgun.png",
-    "name":  "64MJ Railgun",
-    "techLevel":  3,
-    "value":  15343,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/64MJ_Railgun",
-    "type":  "PrimaryWeapon",
-    "subtype":  "auto_cannons"
+  "aliases": [
+    "64MJ",
+    "64MJ Railgun",
+    "64 Rail"
+  ],
+  "builtIn": false,
+  "dps": 14.28,
+  "emoji": "<:64mjrailgun:723709599051677756>",
+  "icon": "https://i.postimg.cc/CMtm9VmJ/64mj-railgun.png",
+  "name": "64MJ Railgun",
+  "techLevel": 3,
+  "value": 13583,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/64MJ_Railgun",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 140,
+    "range_m": 1800,
+    "damage_per_shot": 2,
+    "speed_km_h": 5500,
+    "subtype": "auto-cannon"
+  }
 }

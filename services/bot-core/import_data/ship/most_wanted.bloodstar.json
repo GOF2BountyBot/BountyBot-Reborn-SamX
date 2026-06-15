@@ -52,5 +52,9 @@
     "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_cargo_midorian_wrecked_normal_specular.png",
     "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_ship_045_most_wanted_diffuse.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_cargo_midorian_wrecked_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_cargo_midorian_wrecked_normal_specular.png",
+  "extra_atts": {
+    "dlc": "Supernova",
+    "price_credits_android": 5346000
+  }
 }

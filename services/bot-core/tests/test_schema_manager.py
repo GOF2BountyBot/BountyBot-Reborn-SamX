@@ -182,14 +182,26 @@ class TestCreateTablesIfNotExist:
 class TestVerifySchemaVersion:
     @pytest.mark.asyncio
     async def test_first_time_creates_version_row(self, manager, mock_session):
-        """When no SchemaVersion row exists, one is created."""
+        """When no SchemaVersion row exists, an idempotent upsert is executed.
+
+        Production code (commit c1e11c9) inserts via
+        ``session.execute(insert(...).on_conflict_do_nothing(...))`` rather than
+        ``session.add()``, so assert on the executed INSERT statement.
+        """
+        from sqlalchemy.dialects.postgresql.dml import Insert
+
         mock_session.execute = AsyncMock(return_value=_make_scalars_result([]))
 
         await manager._verify_schema_version()
 
-        mock_session.add.assert_called_once()
-        added_obj = mock_session.add.call_args[0][0]
-        assert added_obj.version == CURRENT_SCHEMA_VERSION
+        mock_session.add.assert_not_called()
+        insert_stmts = [
+            call.args[0]
+            for call in mock_session.execute.await_args_list
+            if call.args and isinstance(call.args[0], Insert)
+        ]
+        assert len(insert_stmts) == 1
+        assert insert_stmts[0].compile().params["version"] == CURRENT_SCHEMA_VERSION
         mock_session.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -284,6 +296,8 @@ class TestGetSchemaHealthInfo:
 class TestInitializeSchema:
     @pytest.mark.asyncio
     async def test_factory_creates_and_initializes(self, mock_session):
+        from sqlalchemy.dialects.postgresql.dml import Insert
+
         db_manager = _mock_db_manager_with_session(mock_session)
         mock_session.execute = AsyncMock(return_value=_make_scalars_result([]))
 
@@ -291,5 +305,7 @@ class TestInitializeSchema:
 
         assert isinstance(result, SchemaManager)
         assert result.db_manager is db_manager
-        # verify_schema_version was called (it adds a SchemaVersion row)
-        mock_session.add.assert_called_once()
+        # verify_schema_version ran and performed the idempotent upsert via
+        # session.execute(insert(...)), not session.add() (commit c1e11c9).
+        mock_session.add.assert_not_called()
+        assert any(call.args and isinstance(call.args[0], Insert) for call in mock_session.execute.await_args_list)

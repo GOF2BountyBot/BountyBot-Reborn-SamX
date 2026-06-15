@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Taipan.bbship/Taipan_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Taipan.bbship/Taipan_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Taipan.bbship/ship_027_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Taipan.bbship/ship_027_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 79279,
+    "mechanics_text": "## In-Game Description\nLike the Hera, the Taipan is more of a vintage offering than a practical choice. The ability to attach three primary weapons gives it a slight edge, however.\n\n## Trivia\n*Cornelius Tenner piloted a Tapian.\n*The Taipan and the Hera are the two \"Classic\" ship designs in GoF2.\n*Taipan is the name of an Australian adder."
+  }
 }

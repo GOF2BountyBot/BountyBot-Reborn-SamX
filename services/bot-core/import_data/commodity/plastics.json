@@ -1,0 +1,28 @@
+{
+  "_name": "Plastics",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/NGVgK5jt/plastics.png",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Plastics",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Plastics",
+    "Type": "Commodity",
+    "Tech Level": "5",
+    "Price Range": "-> 14$ (Prospero)\n-> 189$ (Pan)"
+  },
+  "stats": {
+    "tech_level": 5,
+    "price_range_min_credits": 14,
+    "price_range_min_system": "Prospero",
+    "price_range_max_credits": 189,
+    "price_range_max_system": "Pan",
+    "value": 102,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "The properties of the polymers within the plastic can be varied at will, giving it a wide range of applications.",
+  "mechanics_text": [
+    "Required for blueprints: 2t Amour Rocket, 8t 128MJ Railgun, 12t Particle Shield, 14t M6 A3 \"Wolverine\", 30t T'yol, 30t Disruptor Laser."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 5", "GOF2", "Valkyrie", "Standard commodities", "Freelance Missions", "GOF2HD", "Trading commodities", "Blueprints"]
+}

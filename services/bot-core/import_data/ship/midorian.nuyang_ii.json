@@ -57,5 +57,9 @@
     "/app/data/game-objects/items/ships/Midorian/Nuyang II.bbship/ship_019_midorian_normal_specular.png",
     "/app/data/game-objects/items/ships/Midorian/Nuyang II.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Midorian/Nuyang II.bbship/ship_019_midorian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Nuyang II.bbship/ship_019_midorian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 626467,
+    "mechanics_text": "## In-Game Description\nThe Nuyang II is an impressive ship. It is armed to the teeth, heavily armored and has plenty of room for cargo. If you are looking for a good Mido ship, and you have the Credits, there is no better option.\n\n## Trivia\n*This is the only Midorian ship that does not bear its faction symbol.\n*This is the Base-Game ultimate ship for Mido.\n*The engines on the wings look like the ones found on a Badger. The whole body resembles the shape of the Betty\n*It can be assumed that this was a heavy mining vessel for Midorians before being weaponized.\n*It looks similar to Boba Fett's ship, Slave I, from the Star Wars franchise.\n*There is no Nuyang I or earlier model"
+  }
 }

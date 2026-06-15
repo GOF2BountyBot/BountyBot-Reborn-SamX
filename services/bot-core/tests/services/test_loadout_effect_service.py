@@ -60,6 +60,58 @@ class TestDocumentedModuleEffects:
         assert result == [EffectItem(label="Cargo Bonus", value="×1")]
 
 
+class TestPrimaryWeaponModEffects:
+    """PrimaryWeaponMod (Overcharge/Overdrive) — damage/fire-rate from nested inner
+    extra_atts, net DPS multiplier from the outer dpsMultiplier key."""
+
+    def test_overcharge_full_nested_structure(self):
+        """Real DB shape: damage_pct/fire_rate_pct nested in inner extra_atts; dpsMultiplier outer."""
+        extra = {"builtIn": False, "dpsMultiplier": 1.1, "extra_atts": {"damage_pct": 20.0, "fire_rate_pct": -10.0}}
+        result = LoadoutEffectService.format_module_effects("PrimaryWeaponModModule", extra)
+        assert result == [
+            EffectItem(label="Damage", value="+20%"),
+            EffectItem(label="Fire Rate", value="-10%"),
+            EffectItem(label="Net DPS", value="×1.1"),
+        ]
+
+    def test_overdrive_signs_inverted(self):
+        """Overdrive: damage -10%, fire rate +20% — signed_pct keeps both signs correct."""
+        extra = {"dpsMultiplier": 1.1, "extra_atts": {"damage_pct": -10.0, "fire_rate_pct": 20.0}}
+        result = LoadoutEffectService.format_module_effects("PrimaryWeaponModModule", extra)
+        assert result == [
+            EffectItem(label="Damage", value="-10%"),
+            EffectItem(label="Fire Rate", value="+20%"),
+            EffectItem(label="Net DPS", value="×1.1"),
+        ]
+
+    def test_missing_dps_multiplier_omits_net_dps(self):
+        """No outer dpsMultiplier → Net DPS entry silently omitted; pcts still render."""
+        extra = {"extra_atts": {"damage_pct": 20.0, "fire_rate_pct": -10.0}}
+        result = LoadoutEffectService.format_module_effects("PrimaryWeaponModModule", extra)
+        assert result == [
+            EffectItem(label="Damage", value="+20%"),
+            EffectItem(label="Fire Rate", value="-10%"),
+        ]
+
+
+class TestInnerExtraAttsMerge:
+    """Outer/inner extra_atts merge — inner keys resolve, outer duplicates remain consistent."""
+
+    def test_armour_resolves_when_only_inner_present(self):
+        """ArmourModule armour key nested under inner extra_atts still resolves."""
+        result = LoadoutEffectService.format_module_effects(
+            "ArmourModule", {"builtIn": False, "extra_atts": {"armour": 40}}
+        )
+        assert result == [EffectItem(label="Armour", value="40")]
+
+    def test_outer_and_inner_duplicate_does_not_double(self):
+        """Real E2 Exoclad shape: armour at BOTH levels — emits a single entry."""
+        result = LoadoutEffectService.format_module_effects(
+            "ArmourModule", {"armour": 40, "extra_atts": {"armour": 40}}
+        )
+        assert result == [EffectItem(label="Armour", value="40")]
+
+
 # ---------------------------------------------------------------------------
 # format_module_effects — special cases
 # ---------------------------------------------------------------------------

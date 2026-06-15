@@ -146,6 +146,10 @@ class PlayerService:
                 classic_mode=False,
                 guild_transfer_cooldown=None,
                 bounty_cooldown_end=None,
+                # D-019: new players default opted-in to both announcement streams,
+                # matching the historical default (and the model/server defaults).
+                bounty_notifications_enabled=True,
+                shop_notifications_enabled=True,
             )
 
             player = await self.player_repo.add(db, player, commit=False)
@@ -226,7 +230,16 @@ class PlayerService:
     ) -> Player:
         """Update player credits and optionally lifetime credits."""
         try:
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE) before the
+            # credits/lifetime_credits read-modify-write.  PUT /players/{id}/credits
+            # and the admin credits route reach this method as naked entry points
+            # with no outer lock, so without this lock two concurrent admin credit
+            # sets on the same player could interleave and lose an update (e.g. the
+            # lifetime_credits accumulation, computed from the pre-read balance).
+            # This method owns its own transaction (it commits below), so the lock
+            # is held by the session autobegin until that commit — no router
+            # db.begin() is required (and would conflict with the internal commit).
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -271,7 +284,12 @@ class PlayerService:
     async def update_player_xp(self, db: AsyncSession, player_id: int, xp: int) -> Player:
         """Update player XP. Tier is NOT auto-advanced; use promote_player() to advance tier."""
         try:
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE) before the
+            # XP write.  PUT /players/{id}/xp and the admin xp route are naked entry
+            # points (no outer lock); the lock serialises concurrent same-player XP
+            # sets so neither clobbers the other.  This method owns its transaction
+            # (commits below); the lock is held by autobegin until that commit.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -290,6 +308,50 @@ class PlayerService:
 
         except Exception as e:
             flogger.error(f"Error updating XP for player {player_id}: {e}")
+            raise
+
+    async def update_notification_preference(
+        self, db: AsyncSession, player_id: int, notification_type: str, enabled: bool
+    ) -> Player:
+        """Persist a player's notification preference (D-019).
+
+        ``notification_type`` is ``"bounty"`` or ``"shop"`` and selects which
+        boolean flag to write. The stored flag is the source of truth; the gateway
+        projects it onto the corresponding Discord role after this returns.
+
+        D5-T2 lock pattern: lock the aggregate-root Player row FIRST (FOR UPDATE)
+        before the read-modify-write. ``PUT /players/{id}/notifications`` is a naked
+        entry point with no outer lock, so the lock serialises concurrent preference
+        writes (e.g. a /notifications toggle racing a /profile-driven write) against
+        every other same-player mutation. This method owns its transaction (it commits
+        below); the lock is held by autobegin until that commit, so no router
+        ``db.begin()`` is required (and would conflict with the internal commit).
+        """
+        try:
+            if notification_type not in ("bounty", "shop"):
+                raise ValueError(f"Invalid notification_type: {notification_type!r}. Must be 'bounty' or 'shop'")
+
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
+
+            if notification_type == "bounty":
+                player.bounty_notifications_enabled = enabled
+            else:
+                player.shop_notifications_enabled = enabled
+
+            await db.commit()
+            await db.refresh(player)
+
+            flogger.info(
+                f"Updated {notification_type} notification preference for player {player_id}: enabled={enabled}"
+            )
+            return player
+
+        except ValueError:
+            raise
+        except Exception as e:
+            flogger.error(f"Error updating notification preference for player {player_id}: {e}")
             raise
 
     def _calculate_tier_from_xp(self, xp: int, thresholds: dict[str, int]) -> str:
@@ -412,7 +474,13 @@ class PlayerService:
         FORFEITED_CHECK sentinel (see BountyService.scrub_player_checks_outside_tier).
         """
         try:
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE) before the
+            # tier/cooldown read-modify-write.  PUT /players/{id}/promote is a naked
+            # entry point; the lock serialises a concurrent promote/demote on the
+            # same player so the cooldown check-then-set and tier change cannot race
+            # (e.g. a double promotion past the intended tier).  This method owns its
+            # transaction (commits below); autobegin holds the lock until commit.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -481,7 +549,13 @@ class PlayerService:
         ValueError.
         """
         try:
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE) before the
+            # tier/cooldown/credit-penalty read-modify-write.  PUT /players/{id}/demote
+            # is a naked entry point; the lock serialises a concurrent promote/demote
+            # (and the demotion credit penalty, an RMW on credits) on the same player.
+            # This method owns its transaction (commits below); autobegin holds the
+            # lock until commit.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 

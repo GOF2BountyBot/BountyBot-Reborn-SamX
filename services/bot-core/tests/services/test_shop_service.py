@@ -32,6 +32,7 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
 from services.exceptions import InvalidItemTypeError
+from services.game_constants import GameConstants
 from services.shop_service import ShopService
 
 # ---------------------------------------------------------------------------
@@ -393,6 +394,7 @@ class TestPurchaseItem:
     async def test_raises_when_shop_item_not_found(self, service, mock_db, mock_player_repo, mock_shop_repo):
         """ValueError raised when shop item does not exist."""
         mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         mock_shop_repo.get_by_id.return_value = None
 
         with pytest.raises(ValueError, match="Shop item 55 not found"):
@@ -404,6 +406,7 @@ class TestPurchaseItem:
         player = _make_player(tier="Bronze")
         shop_item = _make_shop_item(tier="Gold")  # Requires Gold+
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         with pytest.raises(ValueError, match="cannot access"):
@@ -415,6 +418,7 @@ class TestPurchaseItem:
         player = _make_player(tier="Bronze", credits=5000)
         shop_item = _make_shop_item(tier="Bronze", quantity=1, price=100)
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         with pytest.raises(ValueError, match="Insufficient quantity"):
@@ -426,6 +430,7 @@ class TestPurchaseItem:
         player = _make_player(tier="Bronze", credits=50)
         shop_item = _make_shop_item(tier="Bronze", quantity=5, price=200)
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         with pytest.raises(ValueError, match="Insufficient credits"):
@@ -523,6 +528,7 @@ class TestSellItem:
         B.7: Error message must NOT contain numeric player_id; must use 'your inventory'.
         """
         mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         mock_inventory_repo.get_player_items_by_name.return_value = []  # not found
 
         with pytest.raises(ValueError, match="not found in your inventory") as exc_info:
@@ -537,6 +543,7 @@ class TestSellItem:
     ):
         """ValueError raised when player has fewer than requested quantity."""
         mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         inventory_item = _make_inventory_item(quantity=1, item_type="primary_weapon")
         mock_inventory_repo.get_player_items_by_name.return_value = [inventory_item]
 
@@ -552,6 +559,7 @@ class TestSellItem:
         defensively to preserve the invariant that sells are always unambiguous writes.
         """
         mock_player_repo.get_by_id.return_value = _make_player()
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
         # Mock two rows for the same item_name but different concrete types
         row_a = _make_inventory_item(quantity=1, item_type="primary_weapon", item_name="AmbiguousItem")
         row_b = _make_inventory_item(quantity=1, item_type="turret_weapon", item_name="AmbiguousItem")
@@ -644,6 +652,43 @@ class TestRefreshShop:
         assert result["tech_level"] == 5
         assert "items_generated" in result
         assert "refresh_time" in result
+
+    @pytest.mark.asyncio
+    async def test_rows_carry_item_tech_level_not_batch(self, service, mock_db, mock_config_repo, mock_shop_repo):
+        """Shop rows store the ITEM's drawn tech level; the batch TL stays in refresh_details only.
+
+        Draws may land at TL-1/TL-2 of the batch level, and the listing renders
+        T{tech_level} per item — storing the batch TL mislabeled those items.
+        """
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        # Unique name per type — refresh dedupes drawn names, so a constant
+        # name would produce a single row for whichever type iterates first.
+        service._get_random_item_by_tech_level = AsyncMock(side_effect=lambda db, item_type, tl: f"{item_type}-item")
+        service._get_item_base_price = AsyncMock(return_value=300)
+        service._select_item_tech_level = MagicMock(return_value=3)  # drawn two below batch
+        mock_shop_repo.create_or_update = AsyncMock(return_value=_make_shop_item())
+
+        result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=5)
+
+        assert result["tech_level"] == 5  # batch TL preserved for the announcement
+        non_ship_rows = [
+            call.args[1]
+            for call in mock_shop_repo.create_or_update.call_args_list
+            if call.args[1]["item_type"] != "ship"
+        ]
+        assert non_ship_rows, "Test setup: expected at least one non-ship row"
+        assert all(row["tech_level"] == 3 for row in non_ship_rows)
+
+        # Ship rows derive TL from credit value (300 → TL1 under locked thresholds)
+        ship_rows = [
+            call.args[1]
+            for call in mock_shop_repo.create_or_update.call_args_list
+            if call.args[1]["item_type"] == "ship"
+        ]
+        for row in ship_rows:
+            assert row["tech_level"] == 1
 
     @pytest.mark.asyncio
     async def test_raises_guild_not_configured_when_none_exists(
@@ -1112,6 +1157,65 @@ class TestAddItemToShop:
                 mock_db, guild_id=999, tier="Bronze", item_type="weapon", item_name="Gun", quantity=1, base_price=100
             )
 
+    @pytest.mark.asyncio
+    async def test_new_item_carries_catalog_tech_level(self, service, mock_db, mock_shop_repo, mock_module_repo):
+        """A freshly-sold item's shop row stores the item's REAL catalog tech level, not 1."""
+        mock_shop_repo.get_shop_item_by_name.return_value = None
+        mock_module_repo.get_by_name.return_value = MagicMock(tech_level=4)
+
+        await service._add_item_to_shop(
+            mock_db, guild_id=999, tier="Silver", item_type="module", item_name="Shield", quantity=1, base_price=500
+        )
+
+        item_data = mock_shop_repo.create_or_update.call_args[0][1]
+        assert item_data["tech_level"] == 4
+
+    @pytest.mark.asyncio
+    async def test_new_ship_tech_level_derived_from_value(self, service, mock_db, mock_shop_repo):
+        """Sold-back ships (no catalog tech_level) derive TL from credit value."""
+        from services.game_maths import ship_tech_level_for_value
+
+        mock_shop_repo.get_shop_item_by_name.return_value = None
+        ship_value = 150_000  # between thresholds → TL3 with locked SHIP_PRICE_THRESHOLDS
+
+        await service._add_item_to_shop(
+            mock_db,
+            guild_id=999,
+            tier="Gold",
+            item_type="ship",
+            item_name="Hatsuyuki",
+            quantity=1,
+            base_price=ship_value,
+        )
+
+        item_data = mock_shop_repo.create_or_update.call_args[0][1]
+        assert item_data["tech_level"] == ship_tech_level_for_value(ship_value)
+        assert item_data["tech_level"] == 3
+
+    @pytest.mark.asyncio
+    async def test_unknown_item_falls_back_to_tl1(self, service, mock_db, mock_shop_repo):
+        """Items missing from the catalog fall back to TL1 (all repos return None)."""
+        mock_shop_repo.get_shop_item_by_name.return_value = None
+
+        await service._add_item_to_shop(
+            mock_db, guild_id=999, tier="Bronze", item_type="module", item_name="Ghost", quantity=1, base_price=100
+        )
+
+        item_data = mock_shop_repo.create_or_update.call_args[0][1]
+        assert item_data["tech_level"] == 1
+
+    @pytest.mark.asyncio
+    async def test_existing_item_skips_tech_level_lookup(self, service, mock_db, mock_shop_repo, mock_module_repo):
+        """Quantity-bump path never touches the catalog repos."""
+        mock_shop_repo.get_shop_item_by_name.return_value = _make_shop_item(item_id=20, quantity=3)
+
+        await service._add_item_to_shop(
+            mock_db, guild_id=999, tier="Bronze", item_type="module", item_name="Shield", quantity=1, base_price=100
+        )
+
+        mock_module_repo.get_by_name.assert_not_awaited()
+        mock_shop_repo.create_or_update.assert_not_awaited()
+
 
 # ===========================================================================
 # Tests: purchase_ship
@@ -1331,6 +1435,7 @@ class TestPurchaseShip:
         shop_item = _make_shop_item(item_type="weapon", item_name="Pulse Laser", price=200)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         with pytest.raises(ValueError, match="not a ship"):
@@ -1445,6 +1550,7 @@ class TestSellShip:
         active_ship = _make_player_ship(ship_id=100, player_id=1, is_active=True)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = active_ship
 
         with pytest.raises(ValueError, match="Cannot sell active ship"):
@@ -1520,6 +1626,7 @@ class TestSellShip:
         )
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = other_players_ship
 
         with pytest.raises(ValueError, match="does not belong to player"):
@@ -1531,6 +1638,7 @@ class TestSellShip:
         player = _make_player(guild_id=999, credits=1000)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = None  # ship not found
 
         with pytest.raises(ValueError, match="Ship 999 not found"):
@@ -1609,3 +1717,535 @@ class TestSellShip:
 
         with pytest.raises(ValueError, match="Invalid target tier"):
             await service.sell_ship(mock_db, player_id=1, ship_id=1, target_tier="Diamond")
+
+
+# ===========================================================================
+# Tests: CI-5 — secondary weapon shop exclusion of deferred subtypes
+# ===========================================================================
+
+
+def _make_secondary_weapon(
+    name: str,
+    tech_level: int = 3,
+    subtype: str = "rocket",
+    value: int = 200,
+) -> MagicMock:
+    """Create a mock SecondaryWeapon DB object with the inner extra_atts nesting used in real data.
+
+    Seed JSON stores subtype inside extra_atts → extra_atts → subtype.
+    The secondary_weapon_repository stores ``extra_atts`` key in the outer JSON blob,
+    so on the ORM object: item.extra_atts = {"extra_atts": {"subtype": ..., ...}}.
+    """
+    item = MagicMock()
+    item.name = name
+    item.tech_level = tech_level
+    item.value = value
+    item.extra_atts = {"extra_atts": {"subtype": subtype}}
+    return item
+
+
+class TestShopExcludesDeferredSecondarySubtypes:
+    """CI-5: shop candidate pool must exclude emp-bomb / mine / sentry-gun secondaries.
+
+    Two-part assertion per spec:
+    1. _get_random_item_by_tech_level never returns a deferred-subtype weapon.
+    2. refresh_shop generates at least one secondary when canonical subtypes are available.
+    """
+
+    @pytest.mark.asyncio
+    async def test_deferred_subtypes_excluded_from_candidate_pool(self, service, mock_db, mock_secondary_weapon_repo):
+        """_get_random_item_by_tech_level skips emp-bomb / mine / sentry-gun weapons."""
+        # Populate repo with one deferred weapon per deferred subtype plus a canonical one
+        deferred = [
+            _make_secondary_weapon("EMP GL I", tech_level=3, subtype="emp-bomb"),
+            _make_secondary_weapon("AMR Saber", tech_level=3, subtype="mine"),
+            _make_secondary_weapon("Berger SG-100", tech_level=3, subtype="sentry-gun"),
+        ]
+        canonical = _make_secondary_weapon("Jet Rocket", tech_level=3, subtype="rocket")
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=[*deferred, canonical])
+
+        # Run 20 draws — all must come back as the canonical weapon or None (never a deferred one)
+        deferred_names = {"EMP GL I", "AMR Saber", "Berger SG-100"}
+        for _ in range(20):
+            result = await service._get_random_item_by_tech_level(mock_db, "secondary_weapon", 3)
+            assert result not in deferred_names, (
+                f"_get_random_item_by_tech_level returned a deferred-subtype weapon: {result!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_canonical_secondary_still_included(self, service, mock_db, mock_secondary_weapon_repo):
+        """At least one canonical secondary weapon must be selectable when available."""
+        canonical_weapons = [
+            _make_secondary_weapon("Jet Rocket", tech_level=3, subtype="rocket"),
+            _make_secondary_weapon("Mamba EMP", tech_level=3, subtype="missile"),
+            _make_secondary_weapon("AMR Extinctor", tech_level=3, subtype="nuke"),
+        ]
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=canonical_weapons)
+
+        result = await service._get_random_item_by_tech_level(mock_db, "secondary_weapon", 3)
+        canonical_names = {w.name for w in canonical_weapons}
+        assert result in canonical_names, f"Expected a canonical secondary weapon name, got: {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_only_deferred_subtypes_at_tech_level(
+        self, service, mock_db, mock_secondary_weapon_repo
+    ):
+        """Returns None when every secondary at the requested tech level is deferred."""
+        deferred = [
+            _make_secondary_weapon("EMP GL I", tech_level=4, subtype="emp-bomb"),
+            _make_secondary_weapon("EMP GL II", tech_level=4, subtype="emp-bomb"),
+            _make_secondary_weapon("Ksann'k", tech_level=4, subtype="mine"),
+        ]
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=deferred)
+
+        result = await service._get_random_item_by_tech_level(mock_db, "secondary_weapon", 4)
+        assert result is None, f"Expected None when only deferred subtypes exist at tech level, got: {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_refresh_shop_includes_secondary_weapon_type(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo
+    ):
+        """refresh_shop now generates secondary_weapon items (CI-5 gate).
+
+        Verifies that secondary_weapon enters the candidate pool and that
+        the item_type written to guild_shops is the concrete "secondary_weapon"
+        string (never a generic alias).
+        """
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        # Canonical secondary at tech level 1 — should be selected
+        canonical = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype="rocket", value=150)
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=[canonical])
+
+        # Capture item_type values written to the shop
+        item_types_written: list[str] = []
+
+        async def _fake_create_or_update(db, item_data):
+            item_types_written.append(item_data["item_type"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        # Override _get_random_item_by_tech_level to return the canonical secondary for
+        # the secondary_weapon type and None for everything else (keeps test focused)
+        async def _fake_get_random(db, item_type, tech_level):
+            if item_type == "secondary_weapon":
+                return "Jet Rocket"
+            return None
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=150)
+
+        result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert "secondary_weapon" in item_types_written, (
+            "refresh_shop must write secondary_weapon items to the shop (CI-5)"
+        )
+        assert "weapon" not in item_types_written, (
+            "generic alias 'weapon' must NOT be written to guild_shops.item_type (A.36 regression)"
+        )
+        assert result["items_generated"] >= 1
+
+
+# ===========================================================================
+# Tests: CI-11 — secondary_weapon gets its own shop-count range
+# ===========================================================================
+
+
+def _make_config_with_separate_ranges(
+    primary_count_range: dict | None = None,
+    secondary_count_range: dict | None = None,
+    primary_qty_range: dict | None = None,
+    secondary_qty_range: dict | None = None,
+) -> MagicMock:
+    """Build a mock GuildConfig whose get_count_range/get_quantity_range dispatch correctly.
+
+    Simulates the real GuildConfig.get_count_range() which now looks up
+    'weapon' for primary_weapon and 'secondary_weapon' for secondary_weapon.
+    """
+    primary_count = primary_count_range or {"min": 3, "max": 5}
+    secondary_count = secondary_count_range or {"min": 3, "max": 5}
+    primary_qty = primary_qty_range or {"min": 2, "max": 4}
+    secondary_qty = secondary_qty_range or {"min": 2, "max": 4}
+
+    count_map = {
+        "ship": {"min": 3, "max": 5},
+        "weapon": primary_count,
+        "secondary_weapon": secondary_count,
+        "module": {"min": 3, "max": 5},
+        "turret": {"min": 3, "max": 5},
+    }
+    qty_map = {
+        "ship": {"min": 1, "max": 1},
+        "weapon": primary_qty,
+        "secondary_weapon": secondary_qty,
+        "module": {"min": 2, "max": 4},
+        "turret": {"min": 2, "max": 4},
+    }
+
+    config = MagicMock()
+    config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+    config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 1, "max": 1}))
+    config.get_quantity_range = MagicMock(side_effect=lambda k: qty_map.get(k, {"min": 1, "max": 1}))
+    return config
+
+
+class TestCI11SecondaryWeaponOwnRange:
+    """CI-11: secondary_weapon draws from its own count/quantity range, not from 'weapon'."""
+
+    def test_concrete_to_config_key_maps_secondary_to_own_key(self):
+        """_CONCRETE_TO_CONFIG_KEY now maps secondary_weapon → 'secondary_weapon', not 'weapon'."""
+        from services.shop_service import _CONCRETE_TO_CONFIG_KEY
+
+        assert _CONCRETE_TO_CONFIG_KEY["secondary_weapon"] == "secondary_weapon", (
+            "secondary_weapon must map to its own config key 'secondary_weapon' (CI-11)"
+        )
+        assert _CONCRETE_TO_CONFIG_KEY["primary_weapon"] == "weapon", (
+            "primary_weapon must still map to 'weapon' config key"
+        )
+
+    def test_concrete_to_config_key_all_expected_entries(self):
+        """_CONCRETE_TO_CONFIG_KEY contains all 5 expected concrete types."""
+        from services.shop_service import _CONCRETE_TO_CONFIG_KEY
+
+        assert set(_CONCRETE_TO_CONFIG_KEY.keys()) == {
+            "ship",
+            "primary_weapon",
+            "secondary_weapon",
+            "module",
+            "turret_weapon",
+        }
+
+    @pytest.mark.asyncio
+    async def test_secondary_draws_from_own_range_not_weapon_range(
+        self, service, mock_db, mock_config_repo, mock_shop_repo
+    ):
+        """With secondary_weapon_count_range={min:1,max:1}, exactly 1 secondary is generated.
+
+        If secondary piggybacked on the weapon range ({min:3,max:5}), we'd expect 3-5
+        secondaries; with its own range {min:1,max:1} we expect exactly 1.
+        Meanwhile primary_weapon range is {min:3,max:5} → still generates primaries.
+        """
+        config = _make_config_with_separate_ranges(
+            primary_count_range={"min": 3, "max": 5},
+            secondary_count_range={"min": 1, "max": 1},  # hard limit: exactly 1 secondary
+            primary_qty_range={"min": 1, "max": 1},
+            secondary_qty_range={"min": 1, "max": 1},
+        )
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        # Track per-type counts
+        type_counts: dict[str, int] = {}
+
+        async def _fake_create_or_update(db, item_data):
+            t = item_data["item_type"]
+            type_counts[t] = type_counts.get(t, 0) + 1
+            return _make_shop_item(item_name=item_data["item_name"], item_type=t)
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        # Return distinct names per call so dedup doesn't collapse them.
+        # Each call gets a unique index suffix; the type prefix ensures
+        # secondary draws never use the weapon namespace.
+        _call_counters: dict[str, int] = {}
+
+        async def _fake_get_random(db, item_type, tech_level):
+            _call_counters[item_type] = _call_counters.get(item_type, 0) + 1
+            return f"Fake_{item_type}_{_call_counters[item_type]}"
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        secondary_count = type_counts.get("secondary_weapon", 0)
+        assert secondary_count == 1, (
+            f"With secondary_weapon_count_range={{min:1,max:1}}, expected exactly 1 secondary, "
+            f"got {secondary_count}. This indicates secondary still draws from weapon range."
+        )
+
+        primary_count = type_counts.get("primary_weapon", 0)
+        assert primary_count >= 3, (
+            f"primary_weapon range {{min:3,max:5}} should still yield ≥3 primaries, got {primary_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_primary_and_secondary_draw_from_independent_ranges(
+        self, service, mock_db, mock_config_repo, mock_shop_repo
+    ):
+        """Primary and secondary draw from completely independent ranges (CI-11 core invariant).
+
+        Set secondary to {min:0,max:0} (no secondaries) while primary is {min:2,max:2}.
+        Expect: exactly 2 primaries, 0 secondaries.
+        """
+        # Note: GuildConfig.get_count_range fallback for unknown keys is {"min":1,"max":1},
+        # so we use min:2 for primary and a custom config with 0 for secondary.
+        count_map = {
+            "ship": {"min": 0, "max": 0},
+            "weapon": {"min": 2, "max": 2},
+            "secondary_weapon": {"min": 0, "max": 0},
+            "module": {"min": 0, "max": 0},
+            "turret": {"min": 0, "max": 0},
+        }
+        qty_map: dict[str, dict] = {}
+
+        config = MagicMock()
+        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+        config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
+        config.get_quantity_range = MagicMock(side_effect=lambda k: qty_map.get(k, {"min": 1, "max": 1}))
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        type_counts: dict[str, int] = {}
+
+        async def _fake_create_or_update(db, item_data):
+            t = item_data["item_type"]
+            type_counts[t] = type_counts.get(t, 0) + 1
+            return _make_shop_item(item_name=item_data["item_name"], item_type=t)
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        # Return distinct names per call so dedup doesn't collapse draws to one item.
+        # Each call gets a unique index suffix; the type prefix ensures
+        # secondary draws never bleed into the weapon namespace.
+        _call_counters2: dict[str, int] = {}
+
+        async def _fake_get_random(db, item_type, tech_level):
+            _call_counters2[item_type] = _call_counters2.get(item_type, 0) + 1
+            return f"Fake_{item_type}_{_call_counters2[item_type]}"
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert type_counts.get("secondary_weapon", 0) == 0, (
+            "secondary_weapon_count_range {min:0,max:0} must produce 0 secondaries"
+        )
+        assert type_counts.get("primary_weapon", 0) == 2, (
+            f"weapon count range {{min:2,max:2}} must produce exactly 2 primaries, "
+            f"got {type_counts.get('primary_weapon', 0)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_deferred_subtype_regression_with_secondary_count_greater_than_zero(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo
+    ):
+        """Many-iteration refresh with secondary count>0 → zero emp-bomb/mine/sentry-gun in shop.
+
+        Even when secondaries are actively being generated (count=2), the deferred
+        subtype filter must hold and never allow emp-bomb, mine, or sentry-gun through.
+        Uses a config where only secondaries are generated (count=2), all other types=0,
+        so the ship_repo empty list error is avoided.
+        """
+        # Canonical secondary + all three deferred subtypes
+        canonical = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype="rocket")
+        deferred = [
+            _make_secondary_weapon("EMP GL I", tech_level=1, subtype="emp-bomb"),
+            _make_secondary_weapon("Ksann'k", tech_level=1, subtype="mine"),
+            _make_secondary_weapon("Berger SG-100", tech_level=1, subtype="sentry-gun"),
+        ]
+        mock_secondary_weapon_repo.list_all = AsyncMock(return_value=[canonical, *deferred])
+
+        # Config: only secondary_weapon generates items (all other counts = 0)
+        count_map = {
+            "ship": {"min": 0, "max": 0},
+            "weapon": {"min": 0, "max": 0},
+            "secondary_weapon": {"min": 2, "max": 2},
+            "module": {"min": 0, "max": 0},
+            "turret": {"min": 0, "max": 0},
+        }
+        config = MagicMock()
+        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+        config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
+        config.get_quantity_range = MagicMock(return_value={"min": 1, "max": 1})
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        names_generated: list[str] = []
+        deferred_names = {"EMP GL I", "Ksann'k", "Berger SG-100"}
+
+        async def _fake_create_or_update(db, item_data):
+            if item_data["item_type"] == "secondary_weapon":
+                names_generated.append(item_data["item_name"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        # Run 10 iterations; each should generate 2 secondaries, all must be canonical
+        for _ in range(10):
+            names_generated.clear()
+            # Reset the static cache so real DB call goes through secondary_weapon_repo
+            service._static_cache = None
+            await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+            for name in names_generated:
+                assert name not in deferred_names, (
+                    f"Deferred subtype weapon '{name}' must never appear in shop (deferred-subtype regression)"
+                )
+
+
+# ===========================================================================
+# Tests: secondary-weapon shop quantity scalers (consumable rounds)
+# ===========================================================================
+
+
+def _make_config_secondary_only(qty_min: int = 3, qty_max: int = 3) -> MagicMock:
+    """Config that generates exactly one secondary per refresh and nothing else.
+
+    Fixed quantity range (default min=max=3) makes the scaled quantity
+    deterministic: rolled 3 × scaler.
+    """
+    count_map = {
+        "ship": {"min": 0, "max": 0},
+        "weapon": {"min": 0, "max": 0},
+        "secondary_weapon": {"min": 1, "max": 1},
+        "module": {"min": 0, "max": 0},
+        "turret": {"min": 0, "max": 0},
+    }
+    config = MagicMock()
+    config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+    config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
+    config.get_quantity_range = MagicMock(return_value={"min": qty_min, "max": qty_max})
+    return config
+
+
+class TestSecondaryQuantityScalers:
+    """Secondaries are consumable rounds: refresh_shop multiplies the rolled
+    quantity by SHOP_SECONDARY_QTY_SCALER_HEAVY for nuke/shock-blast and
+    SHOP_SECONDARY_QTY_SCALER_STANDARD for everything else."""
+
+    async def _refresh_and_capture_quantity(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
+    ) -> int:
+        """Run a secondary-only refresh drawing `weapon` and return the written quantity."""
+        mock_config_repo.get_by_guild_id.return_value = _make_config_secondary_only(qty_min=3, qty_max=3)
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=weapon)
+
+        quantities: list[int] = []
+
+        async def _fake_create_or_update(db, item_data):
+            quantities.append(item_data["quantity"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        async def _fake_get_random(db, item_type, tech_level):
+            return weapon.name if item_type == "secondary_weapon" else None
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert len(quantities) == 1, f"Expected exactly 1 secondary written, got {len(quantities)}"
+        return quantities[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("subtype", ["nuke", "shock-blast"])
+    async def test_heavy_subtypes_use_heavy_scaler(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, subtype
+    ):
+        """nuke/shock-blast: rolled 3 × HEAVY scaler (5) = 15."""
+        weapon = _make_secondary_weapon("AMR Extinctor", tech_level=1, subtype=subtype)
+        qty = await self._refresh_and_capture_quantity(
+            service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
+        )
+        expected = 3 * GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY
+        assert qty == expected, (
+            f"{subtype}: expected 3×{GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY}={expected}, got {qty}"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("subtype", ["missile", "rocket", "cluster-missile"])
+    async def test_standard_subtypes_use_standard_scaler(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, subtype
+    ):
+        """missile/rocket/cluster-missile: rolled 3 × STANDARD scaler (10) = 30."""
+        weapon = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype=subtype)
+        qty = await self._refresh_and_capture_quantity(
+            service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
+        )
+        expected = 3 * GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD
+        assert qty == expected, (
+            f"{subtype}: expected 3×{GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD}={expected}, got {qty}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_subtype_falls_back_to_standard_scaler(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo
+    ):
+        """A secondary with no subtype in extra_atts gets the STANDARD scaler."""
+        weapon = MagicMock()
+        weapon.name = "Mystery Launcher"
+        weapon.tech_level = 1
+        weapon.value = 100
+        weapon.extra_atts = {}
+        qty = await self._refresh_and_capture_quantity(
+            service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
+        )
+        assert qty == 3 * GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD
+
+    @pytest.mark.asyncio
+    async def test_non_secondary_types_are_not_scaled(self, service, mock_db, mock_config_repo, mock_shop_repo):
+        """Primary weapons keep the raw rolled quantity (no scaler applied)."""
+        count_map = {
+            "ship": {"min": 0, "max": 0},
+            "weapon": {"min": 1, "max": 1},
+            "secondary_weapon": {"min": 0, "max": 0},
+            "module": {"min": 0, "max": 0},
+            "turret": {"min": 0, "max": 0},
+        }
+        config = MagicMock()
+        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+        config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
+        config.get_quantity_range = MagicMock(return_value={"min": 3, "max": 3})
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        quantities: list[int] = []
+
+        async def _fake_create_or_update(db, item_data):
+            quantities.append(item_data["quantity"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        async def _fake_get_random(db, item_type, tech_level):
+            return "Micro Gun MK I" if item_type == "primary_weapon" else None
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert quantities == [3], f"primary_weapon quantity must stay at rolled 3 (unscaled), got {quantities}"
+
+    @pytest.mark.asyncio
+    async def test_subtype_lookup_uses_static_cache_when_warm(self, service, mock_db, mock_secondary_weapon_repo):
+        """_get_secondary_subtype_by_name reads the static cache (no repo call) when preloaded."""
+        weapon = _make_secondary_weapon("AMR Extinctor", tech_level=1, subtype="nuke")
+        service._static_cache = {"secondary": [weapon]}
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(
+            side_effect=AssertionError("repo must not be queried when static cache is warm")
+        )
+
+        subtype = await service._get_secondary_subtype_by_name(mock_db, "AMR Extinctor")
+        assert subtype == "nuke"
+
+        # Name missing from cache → "" without falling back to the repo
+        assert await service._get_secondary_subtype_by_name(mock_db, "Nonexistent") == ""
+
+    @pytest.mark.asyncio
+    async def test_subtype_lookup_falls_back_to_repo_when_cache_cold(
+        self, service, mock_db, mock_secondary_weapon_repo
+    ):
+        """_get_secondary_subtype_by_name queries the repo when no static cache is loaded."""
+        weapon = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype="rocket")
+        service._static_cache = None
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=weapon)
+
+        assert await service._get_secondary_subtype_by_name(mock_db, "Jet Rocket") == "rocket"
+
+        # Unknown item → ""
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=None)
+        assert await service._get_secondary_subtype_by_name(mock_db, "Nonexistent") == ""

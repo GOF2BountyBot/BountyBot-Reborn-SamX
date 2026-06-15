@@ -47,5 +47,8 @@
     "/app/data/game-objects/items/ships/Void/VoidX.bbship/VoidXFull.mtl",
     "/app/data/game-objects/items/ships/Void/VoidX.bbship/VoidXFull.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Void/VoidX.bbship/ship_008_void_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Void/VoidX.bbship/ship_008_void_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 4057950
+  }
 }

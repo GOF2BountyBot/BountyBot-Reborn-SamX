@@ -8,6 +8,8 @@ python-multipart  # required by FastAPI for UploadFile / multipart form parsing 
 uvicorn[standard]
 rapidfuzz
 apscheduler>=3.10.4
+orjson>=3.10,<4
+tenacity>=9.0,<10
 
 # Testing & QC
 pylint>=3.0.0

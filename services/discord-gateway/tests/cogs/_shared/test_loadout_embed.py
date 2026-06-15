@@ -350,6 +350,161 @@ class TestSectionHeaders:
 
 
 # ---------------------------------------------------------------------------
+# modules_total_count field — Modules <N/M> header correctness
+# ---------------------------------------------------------------------------
+
+
+class TestModulesTotalCountHeader:
+    """Verify that the Modules <N/M> header uses modules_total_count (pre-dedup)
+    rather than len(modules) (post-dedup display list).
+
+    This is the fix for the Doni Trillyx live bug: header was <3/5> when the
+    criminal had 5 real equipped modules (3 of them were deduped CompressorModules).
+    """
+
+    def test_modules_header_uses_modules_total_count_when_present(self):
+        """modules_total_count=5 with 3 display entries → header shows <5/5>."""
+        resp = _make_criminal_response(
+            modules=[
+                {
+                    "name": "Static Thrust",
+                    "emoji": None,
+                    "type": "ThrusterModule",
+                    "value": 400,
+                    "effects": [],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "Targe Shield",
+                    "emoji": None,
+                    "type": "ShieldModule",
+                    "value": 500,
+                    "effects": [],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "ZMI Optistore x3",
+                    "emoji": None,
+                    "type": "CompressorModule",
+                    "value": 300,
+                    "effects": [],
+                    "combat_tier": "utility",
+                },
+            ],
+            modules_total_count=5,  # 3 display entries but 5 real modules (3× ZMI deduped)
+            ship_stats={
+                "armour": 95,
+                "cargo": 45,
+                "handling": 60,
+                "hp": 95,
+                "dps": 5.2,
+                "total_value": 1000,
+                "max_primaries": 1,
+                "max_secondaries": 0,
+                "max_turrets": 0,
+                "max_modules": 5,
+            },
+        )
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        field = next((f for f in embed.fields if f.name.startswith("Modules")), None)
+        assert field is not None
+        # Header must use modules_total_count (5), not len(modules) (3)
+        assert field.name == "Modules <5/5>", (
+            f"Expected 'Modules <5/5>' but got {field.name!r} — "
+            "modules_total_count was ignored in favour of len(modules)"
+        )
+
+    def test_modules_header_fallback_to_len_when_field_absent(self):
+        """When modules_total_count is absent (old response), falls back to len(modules)."""
+        resp = _make_criminal_response(
+            modules=[
+                {
+                    "name": "ZMI Optistore x3",
+                    "emoji": None,
+                    "type": "CompressorModule",
+                    "value": 300,
+                    "effects": [],
+                    "combat_tier": "utility",
+                },
+            ],
+            ship_stats={
+                "armour": 95,
+                "cargo": 45,
+                "handling": 60,
+                "hp": 95,
+                "dps": 5.2,
+                "total_value": 1000,
+                "max_primaries": 1,
+                "max_secondaries": 0,
+                "max_turrets": 0,
+                "max_modules": 5,
+            },
+        )
+        # Explicitly remove modules_total_count to simulate old response without the field
+        resp.pop("modules_total_count", None)
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        field = next((f for f in embed.fields if f.name.startswith("Modules")), None)
+        assert field is not None
+        # Fallback: len(modules) == 1
+        assert field.name == "Modules <1/5>", f"Expected fallback 'Modules <1/5>' but got {field.name!r}"
+
+    def test_modules_header_doni_trillyx_scenario(self):
+        """Exact Doni Trillyx scenario: 5 equipped modules (3× ZMI Optistore deduped).
+
+        Before fix: header showed <3/5> (used len(post-dedup list)).
+        After fix: header shows <5/5> (uses modules_total_count).
+        """
+        resp = _make_criminal_response(
+            modules=[
+                {
+                    "name": "Static Thrust",
+                    "emoji": None,
+                    "type": "ThrusterModule",
+                    "value": 400,
+                    "effects": [],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "Targe Shield",
+                    "emoji": None,
+                    "type": "ShieldModule",
+                    "value": 500,
+                    "effects": [],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "ZMI Optistore x3",
+                    "emoji": None,
+                    "type": "CompressorModule",
+                    "value": 300,
+                    "effects": [],
+                    "combat_tier": "utility",
+                },
+            ],
+            modules_total_count=5,  # authoritative pre-dedup count from bot-core
+            ship_stats={
+                "armour": 95,
+                "cargo": 45,
+                "handling": 60,
+                "hp": 200,
+                "dps": 10.0,
+                "total_value": 5000,
+                "max_primaries": 1,
+                "max_secondaries": 0,
+                "max_turrets": 0,
+                "max_modules": 5,
+            },
+        )
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        field = next((f for f in embed.fields if f.name.startswith("Modules")), None)
+        assert field is not None
+        # The fix: shows <5/5> not <3/5>
+        assert field.name == "Modules <5/5>", (
+            f"Doni Trillyx bug regression: expected 'Modules <5/5>', got {field.name!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Weapon/module/cargo line formatting
 # ---------------------------------------------------------------------------
 
@@ -1486,3 +1641,268 @@ class TestPalTyyrtA48Regression:
             + sum(len(f.name) + len(f.value) for f in embed.fields)
         )
         assert total <= MAX_EMBED_TOTAL
+
+
+# ===========================================================================
+# CI-28 — Turrets and Secondaries sections
+# ===========================================================================
+
+
+def _make_full_loadout_response(**overrides):
+    """Response with non-empty turrets and secondaries for CI-28 tests."""
+    defaults = {
+        "subject_kind": "criminal",
+        "subject_name": "Pal Tyyrt",
+        "subject_description": "Terran",
+        "tech_level": 10,
+        "ship_name": "Darkzov",
+        "ship_emoji": "<:darkzov:1>",
+        "thumbnail_url": "https://cdn/paltyyrt.png",
+        "ship_stats": {
+            "armour": 200,
+            "cargo": 80,
+            "handling": 50,
+            "hp": 740,
+            "dps": 110.5,
+            "total_value": 80000,
+            "max_primaries": 4,
+            "max_turrets": 2,
+            "max_secondaries": 3,
+            "max_modules": 14,
+        },
+        "weapons": [
+            {"name": "Mimung Blaster", "emoji": "<:m:1>", "dps": 30.0, "value": 1500},
+        ],
+        "turrets": [
+            {"name": "PE Ambipolar-5", "emoji": "<:t:1>", "dps": 18.0, "value": 1100},
+            {"name": "Razor Turret", "emoji": "<:rt:2>", "dps": 22.0, "value": 1300},
+        ],
+        "secondaries": [
+            {"name": "S'koon Rockets", "emoji": "<:sk:1>", "damage": 80, "rounds": 12, "subtype": "rocket"},
+            {"name": "EMP Nuke", "emoji": "<:nuke:2>", "damage": 200, "rounds": 1, "subtype": "nuke"},
+        ],
+        "modules": [
+            {
+                "name": "Targe Shield",
+                "emoji": "<:ts:1>",
+                "type": "ShieldModule",
+                "value": 500,
+                "effects": [{"label": "Shield", "value": "150"}],
+                "combat_tier": "combat",
+            },
+        ],
+        "cargo": [],
+        "cargo_total_count": 0,
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+class TestTurretsAndSecondariesSections:
+    """CI-28: turrets + secondaries sections rendered in criminal/player loadout embeds."""
+
+    def test_turrets_section_present_when_non_empty(self):
+        """Non-empty turrets list → embed has a Turrets <N/M> section field."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        turret_field = next((f for f in embed.fields if f.name.startswith("Turrets")), None)
+        assert turret_field is not None, "Turrets section must appear when turrets list is non-empty"
+        assert turret_field.name == "Turrets <2/2>"
+
+    def test_turrets_items_rendered_with_dps(self):
+        """Each turret renders as ':emoji: Name | DPS: **X**' (reuses _format_weapon_line)."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        turret_field = next(f for f in embed.fields if f.name.startswith("Turrets"))
+        assert "<:t:1> PE Ambipolar-5 | DPS: **18**" in turret_field.value
+        assert "<:rt:2> Razor Turret | DPS: **22**" in turret_field.value
+
+    def test_secondaries_section_present_when_non_empty(self):
+        """Non-empty secondaries list → embed has a Secondaries <N/M> section field."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        sec_field = next((f for f in embed.fields if f.name.startswith("Secondaries")), None)
+        assert sec_field is not None, "Secondaries section must appear when secondaries list is non-empty"
+        assert sec_field.name == "Secondaries <2/3>"
+
+    def test_secondaries_items_rendered_with_rounds(self):
+        """Each secondary renders as ':emoji: Name | ×N' when rounds are present."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        sec_field = next(f for f in embed.fields if f.name.startswith("Secondaries"))
+        assert "<:sk:1> S'koon Rockets | ×12" in sec_field.value
+        assert "<:nuke:2> EMP Nuke | ×1" in sec_field.value
+
+    def test_secondary_without_rounds_renders_name_only(self):
+        """Secondary with no rounds field renders as ':emoji: Name' (no ×N suffix)."""
+        resp = _make_full_loadout_response(
+            secondaries=[
+                {"name": "Shock Blast", "emoji": "<:sb:1>", "damage": 50, "subtype": "shock-blast"},
+            ],
+        )
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        sec_field = next(f for f in embed.fields if f.name.startswith("Secondaries"))
+        assert "<:sb:1> Shock Blast" in sec_field.value
+        assert "×" not in sec_field.value
+
+    def test_turrets_section_absent_when_empty(self):
+        """Empty turrets list → no Turrets section (don't show an empty header)."""
+        resp = _make_full_loadout_response(turrets=[])
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert not any(f.name.startswith("Turrets") for f in embed.fields), (
+            "Turrets section must not appear when turrets list is empty"
+        )
+
+    def test_secondaries_section_absent_when_empty(self):
+        """Empty secondaries list → no Secondaries section."""
+        resp = _make_full_loadout_response(secondaries=[])
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert not any(f.name.startswith("Secondaries") for f in embed.fields), (
+            "Secondaries section must not appear when secondaries list is empty"
+        )
+
+    def test_section_order_primary_turrets_secondaries_modules(self):
+        """Section order must be: Primary Weapons → Turrets → Secondaries → Modules."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=False)
+        names = [f.name for f in embed.fields if not f.name.startswith("‎")]
+        pw_idx = next(i for i, n in enumerate(names) if n.startswith("Primary Weapons"))
+        tu_idx = next(i for i, n in enumerate(names) if n.startswith("Turrets"))
+        sc_idx = next(i for i, n in enumerate(names) if n.startswith("Secondaries"))
+        mo_idx = next(i for i, n in enumerate(names) if n.startswith("Modules"))
+        assert pw_idx < tu_idx < sc_idx < mo_idx, (
+            f"Expected PW < Turrets < Secondaries < Modules but got indices "
+            f"PW={pw_idx}, Tu={tu_idx}, Sc={sc_idx}, Mo={mo_idx}"
+        )
+
+    def test_spacer_before_turrets_section(self):
+        """A spacer field must appear immediately before the Turrets section header."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        names = [f.name for f in embed.fields]
+        tu_idx = next(i for i, n in enumerate(names) if n.startswith("Turrets"))
+        assert names[tu_idx - 1] == SPACER_NAME, "Spacer must precede Turrets header"
+
+    def test_spacer_before_secondaries_section(self):
+        """A spacer field must appear immediately before the Secondaries section header."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        names = [f.name for f in embed.fields]
+        sc_idx = next(i for i, n in enumerate(names) if n.startswith("Secondaries"))
+        assert names[sc_idx - 1] == SPACER_NAME, "Spacer must precede Secondaries header"
+
+    def test_budget_still_respected_with_turrets_and_secondaries(self):
+        """Adding turrets + secondaries must not push total embed over 6000-char ceiling."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        total = (
+            len(embed.title or "")
+            + len(embed.description or "")
+            + sum(len(f.name) + len(f.value) for f in embed.fields)
+        )
+        assert total <= MAX_EMBED_TOTAL
+
+    def test_field_count_respected_with_turrets_and_secondaries(self):
+        """Field count must never exceed MAX_FIELDS=25."""
+        resp = _make_full_loadout_response()
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert len(embed.fields) <= MAX_FIELDS
+
+    def test_missing_turrets_key_treated_as_empty(self):
+        """If the response omits 'turrets' entirely, no Turrets section appears (graceful)."""
+        resp = _make_full_loadout_response()
+        resp.pop("turrets", None)
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert not any(f.name.startswith("Turrets") for f in embed.fields)
+
+    def test_missing_secondaries_key_treated_as_empty(self):
+        """If the response omits 'secondaries' entirely, no Secondaries section appears."""
+        resp = _make_full_loadout_response()
+        resp.pop("secondaries", None)
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert not any(f.name.startswith("Secondaries") for f in embed.fields)
+
+    def test_secondary_emoji_fallback_bullet(self):
+        """Secondary with no emoji uses '• ' bullet fallback."""
+        resp = _make_full_loadout_response(
+            secondaries=[{"name": "Mystery Bomb", "emoji": None, "rounds": 5, "subtype": "nuke"}],
+        )
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        sec_field = next(f for f in embed.fields if f.name.startswith("Secondaries"))
+        assert "• Mystery Bomb | ×5" in sec_field.value
+
+
+# ---------------------------------------------------------------------------
+# Combat detail on weapon/secondary lines + PrimaryWeaponMod module effects
+# (damage-per-shot, loading speed, modifier effects)
+# ---------------------------------------------------------------------------
+
+
+from cogs._shared.loadout_embed import (
+    _format_module_line,
+    _format_secondary_line,
+    _format_weapon_line,
+)
+
+
+class TestWeaponCombatDetailLine:
+    """_format_weapon_line appends Dmg/shot + Loading segments when present."""
+
+    def test_primary_with_all_segments(self):
+        line = _format_weapon_line(
+            {
+                "name": "Dark Matter Laser",
+                "emoji": "<:dml:1>",
+                "dps": 88.23,
+                "damage_per_shot": 60,
+                "loading_speed_ms": 680,
+            }
+        )
+        assert line == "<:dml:1> Dark Matter Laser | DPS: **88.23** | Dmg/shot: **60** | Loading: **680 ms**"
+
+    def test_dps_present_combat_fields_absent(self):
+        """Backwards-compatible: no new fields → unchanged DPS-only line."""
+        line = _format_weapon_line({"name": "Pulse Laser", "emoji": "<:p:1>", "dps": 12.0})
+        assert line == "<:p:1> Pulse Laser | DPS: **12**"
+
+    def test_partial_only_damage_per_shot(self):
+        line = _format_weapon_line({"name": "W", "dps": 5.0, "damage_per_shot": 30})
+        assert line == "• W | DPS: **5** | Dmg/shot: **30**"
+
+    def test_partial_only_loading(self):
+        line = _format_weapon_line({"name": "W", "dps": 5.0, "loading_speed_ms": 400})
+        assert line == "• W | DPS: **5** | Loading: **400 ms**"
+
+
+class TestSecondaryCombatDetailLine:
+    """_format_secondary_line shows per-shot damage + reload but never DPS."""
+
+    def test_secondary_with_rounds_and_combat_fields(self):
+        line = _format_secondary_line(
+            {"name": "S'koonn", "emoji": "<:sk:1>", "rounds": 1, "damage_per_shot": 800, "loading_speed_ms": 3000}
+        )
+        assert line == "<:sk:1> S'koonn | ×1 | Dmg/shot: **800** | Loading: **3000 ms**"
+        assert "DPS:" not in line  # secondaries are ammo-limited — no DPS
+
+    def test_secondary_without_combat_fields_unchanged(self):
+        line = _format_secondary_line({"name": "EMP Nuke", "emoji": "<:n:2>", "rounds": 1})
+        assert line == "<:n:2> EMP Nuke | ×1"
+
+
+class TestPrimaryWeaponModModuleLine:
+    """PrimaryWeaponMod module renders its pre-formatted modifier effects."""
+
+    def test_overcharge_effects_rendered(self):
+        line = _format_module_line(
+            {
+                "name": "Nirai Overcharge",
+                "emoji": "<:noc:1>",
+                "type": "PrimaryWeaponModModule",
+                "effects": [
+                    {"label": "Damage", "value": "+20%"},
+                    {"label": "Fire Rate", "value": "-10%"},
+                    {"label": "Net DPS", "value": "×1.1"},
+                ],
+            }
+        )
+        assert line == "<:noc:1> Nirai Overcharge | Damage: **+20%** | Fire Rate: **-10%** | Net DPS: **×1.1**"

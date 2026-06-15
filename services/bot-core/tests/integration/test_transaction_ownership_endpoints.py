@@ -231,15 +231,20 @@ class TestShopsSellEndpoint:
 
         app.include_router(shops_router, prefix="/api/v1")
 
-        # Mock 1: item price lookup (static item tables not in SQLite integration schema)
+        # Mocks 1+2: item price + tech level lookups (static item tables not in SQLite integration schema)
         from services.shop_service import ShopService
 
         original_get_price = ShopService._get_item_base_price
+        original_tech_level = ShopService._get_item_tech_level
 
         async def _mock_price(self, db, item_name):
             return 50
 
+        async def _mock_tech_level(self, db, item_type, item_name, base_price):
+            return 2
+
         ShopService._get_item_base_price = _mock_price
+        ShopService._get_item_tech_level = _mock_tech_level
 
         try:
             async with factory() as router_db:
@@ -254,6 +259,7 @@ class TestShopsSellEndpoint:
                         )
         finally:
             ShopService._get_item_base_price = original_get_price
+            ShopService._get_item_tech_level = original_tech_level
 
         # Key assertion: NOT 500 (A.44 transaction bug would cause 500)
         assert response.status_code != 500, (

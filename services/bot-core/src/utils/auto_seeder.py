@@ -7,6 +7,10 @@ the existing ``load_data()`` infrastructure.  The seeding is idempotent:
 tables that already contain rows are skipped without modification.
 """
 
+import contextlib
+import fcntl
+import os
+
 from persist.database.manager import db_manager
 from shared import bblogger
 from sqlalchemy import func, select
@@ -24,7 +28,12 @@ SEED_CATEGORIES: list[str] = [
     "module",
     "criminal",
     "system",
+    "commodity",
 ]
+
+# Cross-worker file lock — prevents N uvicorn workers from racing the
+# initial seed on a fresh DB.  Held only for the duration of auto_seed_data().
+_SEED_LOCK_PATH = "/tmp/bountybot_auto_seed.lock"
 
 
 async def table_is_empty(repo) -> bool:
@@ -44,7 +53,36 @@ async def auto_seed_data() -> None:
     ``import_data/<category>/`` via the existing ``load_data()`` helper.
     Missing data directories are skipped gracefully so the startup sequence
     is never aborted by a partially-present asset set.
+
+    Cross-worker safety: when uvicorn runs N workers, all N spawn this
+    coroutine on startup.  A non-blocking ``fcntl.flock`` on
+    ``_SEED_LOCK_PATH`` serializes them — only the first worker proceeds
+    with seeding; the others log and exit immediately.  By the time those
+    workers retry on the next restart, the per-table "already populated"
+    check is the idempotency guard.
     """
+    try:
+        lock_fd = os.open(_SEED_LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o600)
+    except OSError as exc:
+        flogger.error(f"🌱 Could not open seed lock {_SEED_LOCK_PATH}: {exc} — proceeding without lock")
+        await _run_seed_loop()
+        return
+
+    try:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            flogger.info("🌱 Another worker holds the seed lock; skipping auto-seed in this worker.")
+            return
+        await _run_seed_loop()
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+async def _run_seed_loop() -> None:
+    """Inner seeding loop — kept separate so the lock-acquisition wrapper stays focused."""
     flogger.info("🌱 Starting auto-seed check for game data...")
 
     for category in SEED_CATEGORIES:

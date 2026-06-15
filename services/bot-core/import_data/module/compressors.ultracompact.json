@@ -7,6 +7,9 @@
   "name": "Ultracompact",
   "techLevel": 5,
   "type": "CompressorModule",
-  "value": 14992,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Ultracompact"
+  "value": 13764,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Ultracompact",
+  "extra_atts": {
+    "effect_pct": 40.0
+  }
 }

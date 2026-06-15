@@ -1,0 +1,33 @@
+{
+  "_name": "Energy Cells",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/8PjjY2jp/energy-cell.png",
+  "emoji": "<:energycell:1508869559925473463>",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Energy_Cells",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "2",
+    "Known GoF2 Price Range": "-> 549$ (Behén)\n-> 712$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 2,
+    "price_range_min_credits": 549,
+    "price_range_min_system": "Behén",
+    "price_range_max_credits": 712,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 631,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "These small cells save a tremendous amount of energy that can be released when needed. Energy cells are highly standardized, and can be connected to almost any device.",
+  "mechanics_text": [
+    "Sight Suppressor II consumes 2t of Energy Cells per use.",
+    "U'tool consumes 1t of Energy Cells per use.",
+    "Yin Co. Shadow Ninja consumes 5t of Energy Cells per use.",
+    "Khador Drive consumes 1t per jumpgate jump (4t when jumping to/from systems inaccessible by jumpgates; doubled in Extreme difficulty).",
+    "Blueprint uses: 1t (Amour Rocket), 5t (M6 A3 \"Wolverine\"), 8t (H'nookk), 11t (128MJ Railgun), 17t (Rhoda Blackhole), 20t (Icarus Heavy AS), 25t (Phoenix SIS), 31t (Mass Driver MD 10), 40t (Pandora Leech), 45t (Disruptor Laser), 80t (Particle Shield).",
+    "It is one of only two consumable commodities in the game, the other being Blue Plasma, which powers the Phoenix SIS shield injector."
+  ],
+  "wiki_categories": ["Commodities", "GoF1", "GOF2", "Technical commodities", "Valkyrie", "Supernova", "Tech level 2", "Blueprints", "GOF2HD", "GOF3D"]
+}

@@ -13,6 +13,8 @@ class ShipResponse(BaseModel):
     weapons: list[str] | None
     modules: list[str] | None
     turrets: list[str] | None
+    secondary_weapons: list[str] | None = None
+    secondary_ammo: dict[str, int] | None = None  # CI-16: {weapon_name: rounds}
     created_at: str
     # Package G B.19: optional structured report from set_active_ship when
     # switching to a ship whose loadout exceeds its slot caps.  Pydantic
@@ -29,9 +31,12 @@ class ShipLoadoutSummaryResponse(BaseModel):
     weapons: list[str]
     modules: list[str]
     turrets: list[str]
+    secondary_weapons: list[str] = []
+    secondary_ammo: dict[str, int] = {}  # CI-16: {weapon_name: rounds}
     weapons_count: int
     modules_count: int
     turrets_count: int
+    secondary_weapons_count: int = 0
 
 
 class CreateShipRequest(BaseModel):
@@ -55,17 +60,17 @@ class UpdateNicknameRequest(BaseModel):
 
 class EquipItemRequest(BaseModel):
     player_id: int
-    # Equipment slot category (NOT item_type). Permitted: weapons | modules | turrets.
+    # Equipment slot category (NOT item_type). Permitted: weapons | modules | turrets | secondary_weapons.
     # This is orthogonal to item_type vocabulary — e.g. slot "weapons" holds "primary_weapon" items.
-    equipment_type: str | None = Field(default=None, pattern="^(weapons|modules|turrets)$")
+    equipment_type: str | None = Field(default=None, pattern="^(weapons|modules|turrets|secondary_weapons)$")
     item_name: str
 
 
 class UnequipItemRequest(BaseModel):
     player_id: int
-    # Equipment slot category (NOT item_type). Permitted: weapons | modules | turrets.
+    # Equipment slot category (NOT item_type). Permitted: weapons | modules | turrets | secondary_weapons.
     # This is orthogonal to item_type vocabulary — e.g. slot "weapons" holds "primary_weapon" items.
-    equipment_type: str | None = Field(default=None, pattern="^(weapons|modules|turrets)$")
+    equipment_type: str | None = Field(default=None, pattern="^(weapons|modules|turrets|secondary_weapons)$")
     item_name: str
 
 

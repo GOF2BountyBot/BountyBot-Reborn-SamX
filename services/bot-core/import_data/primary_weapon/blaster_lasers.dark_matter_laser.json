@@ -10,8 +10,15 @@
   "icon": "https://i.postimg.cc/437SYNLK/dark-matter-laser.png",
   "name": "Dark Matter Laser",
   "techLevel": 9,
-  "value": 523757,
+  "value": 513322,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Dark_Matter_Laser",
   "type": "PrimaryWeapon",
-  "subtype": "blaster_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 680,
+    "range_m": 3300,
+    "damage_per_shot": 60,
+    "speed_km_h": 6000,
+    "subtype": "laser",
+    "mechanics_text": "## In-Game Description\nNobody really knows who built this extremely dangerous primary weapon or who introduced it to the market. Even though Deep Science has already assigned a whole research team to this task, the scientists in charge have not yet been able to gather any usable information on the Dark Matter Laser's unique configuration and functionality. Consequently, the origin and operating mode of this mysterious device do still remain a mystery.\n\n## Trivia\n*It resembles the Berger Focus II A1 in shape, implying that it may be produced by Berger in discreet as their latest blockbuster before its technology and copies were distributed to known owners and vendors such as Jakk Zoboon and the Black Guard.\n**It is notable that the Dark Matter Lasers used by Black Guard NPC ships do significantly less damage.\n*The Dark Matter Laser can only be purchased from Jakk Zoboon in the Kaamo Club Space Lounge.\n*The laser shot of the Dark Matter Laser (black with a green aura) is very similar, if not exactly the same, as the shot from the Overwatch Standard Issue Pulse Rifle from the game Half-Life 2."
+  }
 }

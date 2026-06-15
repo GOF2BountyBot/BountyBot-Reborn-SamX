@@ -32,12 +32,57 @@ class PlayerRepository(IRepository[Player]):
         Use this inside a transaction when you need to read-then-modify
         credit balances (or any field) to prevent TOCTOU race conditions.
         The lock is held until the enclosing transaction commits or rolls back.
+
+        This is also the aggregate-root mutex for the loadout/inventory
+        ``owned = cargo + equipped`` invariant (D5): every same-player
+        loadout/inventory mutation acquires this lock first via
+        ``LoadoutConsistencyService._lock_player`` so the whole cross-table
+        read-modify-write serialises against every other same-player mutation.
+
+        IMPORTANT: ``execution_options(populate_existing=True)`` is required
+        because the session runs with ``expire_on_commit=False`` (our production
+        default).  Without it, a Player already present in the SQLAlchemy
+        identity map (e.g. pre-loaded by an earlier unlocked ``get_by_id`` in the
+        same transaction — as ``shop_service.sell_ship`` / ``purchase_ship`` and
+        ``ships.transfer_ship`` do) would be returned from cache and the guard
+        would read pre-commit stale state even though the FOR UPDATE lock was
+        acquired — the classic "lock looks correct, tests green" trap.  With
+        ``populate_existing=True`` the ORM unconditionally overwrites the
+        in-memory object with the data just fetched from Postgres under the lock.
+        This mirrors ``BountyRepository`` / ``DuelRepository`` (P2-T10).
         """
         try:
-            result = await db.execute(select(Player).where(Player.id == obj_id).with_for_update())
+            result = await db.execute(
+                select(Player).where(Player.id == obj_id).with_for_update().execution_options(populate_existing=True)
+            )
             return result.scalars().first()
         except Exception as e:
             flogger.error(f"Error getting player (FOR UPDATE) by ID {obj_id}: {e}")
+            raise
+
+    async def get_by_ids(self, db: AsyncSession, obj_ids: list[int]) -> list[Player]:
+        """Fetch multiple players by ID in a single ``WHERE id IN (...)`` query.
+
+        P6-T1: batch alternative to N sequential ``get_by_id`` calls.  Order of
+        the returned list matches DB retrieval order (not necessarily the order
+        of ``obj_ids``); callers that need a specific ordering should build a
+        mapping from the result.
+
+        Args:
+            db:      Async database session.
+            obj_ids: List of player IDs to fetch.  Duplicates are fine — the DB
+                     will de-duplicate via the primary-key index.
+
+        Returns:
+            List of matching Player objects (silently omits IDs with no row).
+        """
+        if not obj_ids:
+            return []
+        try:
+            result = await db.execute(select(Player).where(Player.id.in_(obj_ids)))
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error fetching players by IDs {obj_ids}: {e}")
             raise
 
     async def get_by_name(self, db: AsyncSession, name: str) -> Player | None:
@@ -158,8 +203,10 @@ class PlayerRepository(IRepository[Player]):
         db: AsyncSession,
         guild_id: int,
         active_within_days: int | None = None,
+        skip: int = 0,
+        limit: int | None = None,
     ) -> list[Player]:
-        """Get all players in a specific guild.
+        """Get players in a specific guild with optional DB-side pagination.
 
         Args:
             db: Database session.
@@ -167,16 +214,76 @@ class PlayerRepository(IRepository[Player]):
             active_within_days: When set and > 0, restricts results to players
                 whose ``updated_at`` is within this many days of the current UTC time.
                 ``0`` means "warm everyone" — same as ``None`` (no filter applied).
+            skip: Number of rows to skip (OFFSET).  Default 0 (no offset).
+            limit: Maximum number of rows to return (LIMIT).  Default ``None``
+                returns all matching rows.  P6-T3: use this instead of
+                Python-slicing after a full load.
         """
         try:
             query = select(Player).where(Player.guild_id == guild_id)
             if active_within_days is not None and active_within_days > 0:
                 cutoff = datetime.now(UTC) - timedelta(days=active_within_days)
                 query = query.where(Player.updated_at >= cutoff)
+            if skip:
+                query = query.offset(skip)
+            if limit is not None:
+                query = query.limit(limit)
             result = await db.execute(query)
             return list(result.scalars().all())
         except Exception as e:
             flogger.error(f"Error getting players for guild {guild_id}: {e}")
+            raise
+
+    async def get_guild_stats(self, db: AsyncSession, guild_id: int) -> dict:
+        """Return aggregate statistics for a guild using DB-side computation.
+
+        P6-T4: replaces the ``get_players_by_guild`` full-load + Python loop in
+        the admin stats endpoint with two DB aggregate queries so the app never
+        materialises the full player list just to sum a few columns.
+
+        Queries issued:
+          1. ``SELECT count(*), sum(credits), sum(xp) WHERE guild_id = ?``
+          2. ``SELECT tier, count(*) WHERE guild_id = ? GROUP BY tier``
+
+        Returns a dict with keys identical to what the admin stats endpoint
+        produces, so the router can return it directly without any further
+        transformation:
+          ``guild_id``, ``total_players``, ``tier_distribution``,
+          ``total_credits``, ``total_xp``, ``average_credits``, ``average_xp``.
+        """
+        try:
+            # Query 1: scalar aggregates
+            agg_result = await db.execute(
+                select(
+                    func.count(Player.id).label("total_players"),  # pylint: disable=not-callable
+                    func.coalesce(func.sum(Player.credits), 0).label("total_credits"),  # pylint: disable=not-callable
+                    func.coalesce(func.sum(Player.xp), 0).label("total_xp"),  # pylint: disable=not-callable
+                ).where(Player.guild_id == guild_id)
+            )
+            row = agg_result.one()
+            total_players: int = row.total_players
+            total_credits: int = row.total_credits
+            total_xp: int = row.total_xp
+
+            # Query 2: tier distribution
+            tier_result = await db.execute(
+                select(Player.tier, func.count(Player.id).label("cnt"))  # pylint: disable=not-callable
+                .where(Player.guild_id == guild_id)
+                .group_by(Player.tier)
+            )
+            tier_distribution: dict[str, int] = dict(tier_result.all())
+
+            return {
+                "guild_id": guild_id,
+                "total_players": total_players,
+                "tier_distribution": tier_distribution,
+                "total_credits": total_credits,
+                "total_xp": total_xp,
+                "average_credits": total_credits / total_players if total_players > 0 else 0,
+                "average_xp": total_xp / total_players if total_players > 0 else 0,
+            }
+        except Exception as e:
+            flogger.error(f"Error getting guild stats for guild {guild_id}: {e}")
             raise
 
     async def get_players_by_user(self, db: AsyncSession, user_id: int) -> list[Player]:

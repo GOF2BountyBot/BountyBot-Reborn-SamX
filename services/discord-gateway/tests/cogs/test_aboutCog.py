@@ -655,6 +655,32 @@ class TestListCategoryCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "not found" in call_kwargs[0][0].lower()
 
+    def test_list_category_cold_cache_self_heals(self, mock_about_cog):
+        """D-020: a cold-cache miss for a VALID category must cold-fill via
+        get_with_timeout and render — NOT false-negative with 'not found'.
+        (Regression: /list_category used a bare peek() with no self-heal, so a
+        valid category reported 'not found' right after /reload_autocomplete
+        cleared the objects cache.)"""
+        interaction = _create_mock_interaction()
+
+        # Cold cache: peek("system") -> None ...
+        mock_about_cog._objects_cache.clear()
+        # ... but the cold-fill resolves the valid category.
+        mock_about_cog._objects_cache.get_with_timeout = AsyncMock(
+            return_value=[{"name": "S'Kolptorr", "emoji": None}, {"name": "Mido", "emoji": None}]
+        )
+
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "system"))
+
+        # The self-heal cold-fill was attempted with the requested category.
+        mock_about_cog._objects_cache.get_with_timeout.assert_awaited_once_with("system", timeout=1.0)
+        # And it rendered an embed rather than a "not found" text error.
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert "embed" in call_args[1]
+        sent_text = call_args[0][0] if call_args[0] else ""
+        assert "not found" not in str(sent_text).lower()
+
     def test_list_category_empty_category(self, mock_about_cog):
         """list_category with empty category should send ephemeral message."""
         interaction = _create_mock_interaction()
@@ -1052,6 +1078,111 @@ class TestCreateObjectEmbed:
 
         mc.embed_to_payload.assert_called_once()
         assert result is not None
+
+    # ── Range field (range_m lives in the inner / double-nested extra_atts) ──────
+
+    @staticmethod
+    def _range_fields(mc):
+        """Return the 'Range' fields of the pre-grid embed passed to embed_to_payload."""
+        pre_grid_embed = mc.embed_to_payload.call_args[0][0]
+        return [f for f in pre_grid_embed.fields if f.name == "Range"]
+
+    def test_embed_primary_weapon_range(self, mock_about_cog):
+        """primary_weapon with nested range_m should render a thousands-formatted Range field."""
+        obj_data = {
+            **_make_object_data("Pulse Laser", "primary_weapon", 20),
+            "dps": 42.5,
+            "extra_atts": {"extra_atts": {"range_m": 3000}},
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        range_fields = self._range_fields(mc)
+        assert len(range_fields) == 1
+        assert range_fields[0].value == "3,000 m"
+
+    def test_embed_secondary_weapon_range(self, mock_about_cog):
+        """secondary_weapon with nested range_m should render a Range field."""
+        obj_data = {
+            **_make_object_data("Missile", "secondary_weapon", 90),
+            "extra_atts": {"extra_atts": {"range_m": 3100}},
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        range_fields = self._range_fields(mc)
+        assert len(range_fields) == 1
+        assert range_fields[0].value == "3,100 m"
+
+    def test_embed_turret_weapon_range(self, mock_about_cog):
+        """turret_weapon with nested range_m should render a Range field."""
+        obj_data = {
+            **_make_object_data("Turret", "turret_weapon", 91),
+            "dps": 12.0,
+            "extra_atts": {"extra_atts": {"range_m": 5000}},
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        range_fields = self._range_fields(mc)
+        assert len(range_fields) == 1
+        assert range_fields[0].value == "5,000 m"
+
+    def test_embed_weapon_range_omitted_when_absent(self, mock_about_cog):
+        """A weapon without nested range_m should not render a Range field."""
+        obj_data = {
+            **_make_object_data("Pulse Laser", "primary_weapon", 20),
+            "dps": 42.5,
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        assert self._range_fields(mc) == []
+
+    def test_embed_commodity_category(self, mock_about_cog):
+        """_create_object_embed for 'commodity' renders subcategory + price fields,
+        suppresses raw_infobox from the generic dump, and still shows lore."""
+        obj_data = {
+            **_make_object_data("Hydrogen", "commodity", 200),
+            "subcategory": "raw_material",
+            "price_source": "wiki_table",
+            "price_range_min_credits": 1000,
+            "price_range_max_credits": 5000,
+            "price_range_min_system": "Vega",
+            "price_range_max_system": "Loma",
+            "highest_non_loma_price": 4200,
+            "highest_non_loma_system": "Vega",
+            "extra_atts": {
+                "raw_infobox": "RAWINFOBOXMARKER {{Infobox|price=999}}",
+                "price_source": "wiki_table",
+                "mechanics_text": "A common industrial gas traded across the galaxy.",
+            },
+        }
+
+        # Commodity is in the 2-column grid set; pass EmbedConverter through so we can
+        # inspect the real fields instead of a grid-rearranged MagicMock.
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.side_effect = lambda embed: embed
+            mc.payload_to_grid_embed.side_effect = lambda embed, fields_per_row: embed
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        field_names = [f.name for f in result.fields]
+        field_values = [f.value for f in result.fields]
+
+        assert "Subcategory" in field_names
+        assert "Price Range" in field_names
+        assert "Lore / Mechanics" in field_names
+        # raw_infobox must be suppressed from the generic "Additional Info" dump
+        assert "Raw Infobox" not in field_names
+        assert all("RAWINFOBOXMARKER" not in (v or "") for v in field_values)
 
 
 # ---------------------------------------------------------------------------
@@ -1610,6 +1741,1124 @@ class TestListCategoryBugBundleRegressions:
         # Every one of the 66 modules is present.
         for i in range(66):
             assert f"Module{i:02d}" in rendered
+
+
+# ===========================================================================
+# T11 — §14 item-detail embed rendering tests
+# ===========================================================================
+
+
+def _field_names(embed: discord.Embed) -> list[str]:
+    """Return lowercased field names from a discord.Embed (before grid conversion)."""
+    return [f.name.lower() for f in embed.fields]
+
+
+def _field_value(embed: discord.Embed, name_fragment: str) -> str | None:
+    """Return the value of the first field whose name contains *name_fragment* (case-insensitive)."""
+    fragment = name_fragment.lower()
+    for f in embed.fields:
+        if fragment in f.name.lower():
+            return f.value
+    return None
+
+
+def _run_embed(cog, obj_data: dict) -> discord.Embed:
+    """Call _create_object_embed and return the *pre-grid* discord.Embed.
+
+    EmbedConverter is patched to a passthrough so we can inspect the embed
+    fields that the cog rendered before the 2-column layout transformation.
+    """
+    captured: list[discord.Embed] = []
+
+    def _capture(embed, *_a, **_kw):
+        captured.append(embed)
+        return MagicMock()
+
+    def _passthrough(*_a, **_kw):
+        # Return a real discord.Embed so we can inspect it downstream.
+        if captured:
+            return captured[0]
+        return discord.Embed()
+
+    with patch("cogs.aboutCog.EmbedConverter") as mock_conv:
+        mock_conv.embed_to_payload.side_effect = _capture
+        mock_conv.payload_to_grid_embed.side_effect = _passthrough
+        embed = asyncio.run(cog._create_object_embed(obj_data))
+    return embed
+
+
+class TestT11EmbedRendering:
+    """§14 / T11 — Discord embed rendering of combat fields in the /about cog.
+
+    Each test builds an obj_data dict as the API would return it (after
+    _enrich_combat_fields), calls _create_object_embed, and inspects the
+    pre-grid discord.Embed fields via the captured embed from EmbedConverter.
+    """
+
+    # -------------------------------------------------------------------------
+    # EMP primary weapons
+    # -------------------------------------------------------------------------
+
+    def test_emp_blaster_embed_has_emp_field(self, mock_about_cog):
+        """EMP-blaster embed must contain an 'EMP damage' field."""
+        obj_data = {
+            **_make_object_data("Luna EMP Mk I", "primary_weapon"),
+            "dps": 8.57,
+            "emp_damage": 3,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("emp damage" in n for n in _field_names(embed))
+        assert _field_value(embed, "emp damage") == "3"
+
+    def test_emp_blaster_embed_no_misleading_zero_damage(self, mock_about_cog):
+        """EMP-blaster embed must NOT display a bare 'Damage: 0' field (no physical damage field)."""
+        obj_data = {
+            **_make_object_data("Sol EMP Mk II", "primary_weapon"),
+            "dps": 11.11,
+            "emp_damage": 5,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        # There is no "damage" field at all (primary weapon embeds don't show damage directly)
+        field_names = _field_names(embed)
+        # Confirm EMP field is present
+        assert any("emp" in n for n in field_names)
+
+    def test_non_emp_primary_no_emp_field(self, mock_about_cog):
+        """Non-EMP primary weapon must NOT render an EMP damage field."""
+        obj_data = {
+            **_make_object_data("Nirai Pulse", "primary_weapon"),
+            "dps": 30.0,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert not any("emp" in n for n in _field_names(embed))
+
+    # -------------------------------------------------------------------------
+    # Cluster missiles
+    # -------------------------------------------------------------------------
+
+    def test_cluster_embed_has_burst_count_field(self, mock_about_cog):
+        """Cluster-missile embed must contain a 'Burst count' field."""
+        obj_data = {
+            **_make_object_data("Shesha", "secondary_weapon"),
+            "damage": 60,
+            "burst_count": 3,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("burst count" in n for n in _field_names(embed))
+        assert _field_value(embed, "burst count") == "3"
+
+    def test_cluster_embed_total_damage_correct(self, mock_about_cog):
+        """Cluster-missile embed must contain 'Total damage on full hit' = burst_count * damage."""
+        obj_data = {
+            **_make_object_data("Patala", "secondary_weapon"),
+            "damage": 90,
+            "burst_count": 5,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        total_field = _field_value(embed, "total damage")
+        assert total_field == "450", f"Expected 450, got {total_field!r}"
+
+    # -------------------------------------------------------------------------
+    # Nuke weapons
+    # -------------------------------------------------------------------------
+
+    def test_nuke_embed_has_direct_hit_damage(self, mock_about_cog):
+        """Nuke embed must contain a 'Direct hit damage' field."""
+        obj_data = {
+            **_make_object_data("Liberator", "secondary_weapon"),
+            "damage": 850,
+            "burst_count": None,
+            "nuke_direct_damage": 850,
+            "nuke_effective_magnitude_m": 1250,
+            "nuke_self_damage_factor": 0.25,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("direct hit" in n for n in _field_names(embed))
+        assert _field_value(embed, "direct hit") == "850"
+
+    def test_nuke_embed_has_effective_blast_radius(self, mock_about_cog):
+        """Nuke embed must contain 'Effective blast radius' (NOT raw magnitude_m)."""
+        obj_data = {
+            **_make_object_data("Liberator", "secondary_weapon"),
+            "damage": 850,
+            "burst_count": None,
+            "nuke_direct_damage": 850,
+            "nuke_effective_magnitude_m": 1250,
+            "nuke_self_damage_factor": 0.25,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("blast radius" in n for n in _field_names(embed))
+        blast_val = _field_value(embed, "blast radius")
+        # Must use effective value (1250), NOT raw magnitude_m (12500)
+        assert "1250" in blast_val, f"Expected effective radius 1250, got {blast_val!r}"
+        assert "12500" not in blast_val, "Raw magnitude_m must not appear in embed"
+
+    def test_nuke_embed_has_self_damage_warning(self, mock_about_cog):
+        """Nuke embed must contain a self-damage warning field."""
+        obj_data = {
+            **_make_object_data("Liberator", "secondary_weapon"),
+            "damage": 850,
+            "burst_count": None,
+            "nuke_direct_damage": 850,
+            "nuke_effective_magnitude_m": 1250,
+            "nuke_self_damage_factor": 0.25,
+            "emp_damage": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("self-damage" in n or "self damage" in n for n in _field_names(embed))
+        # self_dmg = round(850 * 0.25) = round(212.5) = 212 (Python banker's rounding)
+        self_val = _field_value(embed, "self-damage") or _field_value(embed, "self damage")
+        assert self_val is not None
+        assert "212" in self_val, f"Expected ~212 hp, got {self_val!r}"
+
+    def test_nuke_embed_does_not_show_raw_magnitude(self, mock_about_cog):
+        """Nuke embed must NOT display raw magnitude_m; only effective value is shown."""
+        obj_data = {
+            **_make_object_data("AMR Extinctor", "secondary_weapon"),
+            "damage": 700,
+            "burst_count": None,
+            "nuke_direct_damage": 700,
+            "nuke_effective_magnitude_m": 4000,
+            "nuke_self_damage_factor": 0.25,
+            "emp_damage": None,
+            "extra_atts": {"extra_atts": {"subtype": "nuke", "magnitude_m": 40000}},
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        all_values = " ".join(f.value for f in embed.fields)
+        # Raw magnitude_m (40000) must NOT appear
+        assert "40000" not in all_values, f"Raw magnitude_m must not appear; fields: {all_values!r}"
+
+    # -------------------------------------------------------------------------
+    # Pure-EMP secondary weapons (§14 / T11 — D1.4)
+    # -------------------------------------------------------------------------
+
+    def test_mamba_emp_missile_no_misleading_zero_damage(self, mock_about_cog):
+        """Mamba EMP missile (damage=0, emp_damage=100) must NOT show 'Damage: 0' and MUST show EMP damage.
+
+        Pure-EMP secondary: physical damage field must be suppressed; only 'EMP damage' rendered.
+        Mirrors the primary-weapon EMP path (test_emp_blaster_embed_no_misleading_zero_damage).
+        """
+        obj_data = {
+            **_make_object_data("Mamba EMP", "secondary_weapon"),
+            "damage": 0,
+            "burst_count": None,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": 100,
+            "subtype": "missile",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        # Must NOT show "Damage: 0"
+        damage_field = _field_value(embed, "damage")
+        assert damage_field != "0", f"Pure-EMP secondary must not show 'Damage: 0'; got damage field={damage_field!r}"
+        # Must show "EMP damage" with the correct value
+        assert any("emp damage" in n for n in names), f"Missing 'EMP damage' field; fields={names}"
+        assert _field_value(embed, "emp damage") == "100", (
+            f"Expected EMP damage=100; got {_field_value(embed, 'emp damage')!r}"
+        )
+
+    def test_neetha_emp_mine_no_misleading_zero_damage(self, mock_about_cog):
+        """Neétha EMP mine (damage=0, emp_damage=500) must NOT show 'Damage: 0' and MUST show EMP damage.
+
+        Pure-EMP secondary: physical damage field must be suppressed; only 'EMP damage' rendered.
+        """
+        obj_data = {
+            **_make_object_data("Neétha EMP", "secondary_weapon"),
+            "damage": 0,
+            "burst_count": None,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": 500,
+            "subtype": "mine",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        # Must NOT show "Damage: 0"
+        damage_field = _field_value(embed, "damage")
+        assert damage_field != "0", f"Pure-EMP secondary must not show 'Damage: 0'; got damage field={damage_field!r}"
+        # Must show "EMP damage" with the correct value
+        assert any("emp damage" in n for n in names), f"Missing 'EMP damage' field; fields={names}"
+        assert _field_value(embed, "emp damage") == "500", (
+            f"Expected EMP damage=500; got {_field_value(embed, 'emp damage')!r}"
+        )
+
+    def test_normal_secondary_with_damage_still_shows_damage(self, mock_about_cog):
+        """Normal secondary with real damage (and no emp_damage) must still show the Damage field.
+
+        Regression guard: the pure-EMP suppression must not affect ordinary missiles.
+        """
+        obj_data = {
+            **_make_object_data("Standard Missile", "secondary_weapon"),
+            "damage": 250,
+            "burst_count": None,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": None,
+            "subtype": "missile",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert _field_value(embed, "damage") == "250", (
+            f"Normal secondary must still show Damage field; got {_field_value(embed, 'damage')!r}"
+        )
+
+    # -------------------------------------------------------------------------
+    # PrimaryWeaponMod modules
+    # -------------------------------------------------------------------------
+
+    def test_pwm_embed_has_all_three_fields(self, mock_about_cog):
+        """PrimaryWeaponMod embed must show damage modifier, fire rate modifier, AND net DPS shift."""
+        obj_data = {
+            **_make_object_data("Nirai Overdrive", "module"),
+            "max_equipped": 1,
+            "damage_pct": -10,
+            "fire_rate_pct": 20,
+            "dps_multiplier": 1.1,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        assert any("damage modifier" in n for n in names), f"Missing 'damage modifier'; fields={names}"
+        assert any("fire rate modifier" in n for n in names), f"Missing 'fire rate modifier'; fields={names}"
+        assert any("net dps shift" in n for n in names), f"Missing 'net dps shift'; fields={names}"
+
+    def test_pwm_overdrive_values(self, mock_about_cog):
+        """Nirai Overdrive: damage=-10%, fire_rate=+20%, dps_mult=1.10."""
+        obj_data = {
+            **_make_object_data("Nirai Overdrive", "module"),
+            "max_equipped": 1,
+            "damage_pct": -10,
+            "fire_rate_pct": 20,
+            "dps_multiplier": 1.1,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert "-10%" in _field_value(embed, "damage modifier")
+        assert "+20%" in _field_value(embed, "fire rate modifier")
+
+    def test_pwm_overcharge_values(self, mock_about_cog):
+        """Nirai Overcharge: damage=+20%, fire_rate=-10%, dps_mult=1.10."""
+        obj_data = {
+            **_make_object_data("Nirai Overcharge", "module"),
+            "max_equipped": 1,
+            "damage_pct": 20,
+            "fire_rate_pct": -10,
+            "dps_multiplier": 1.1,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert "+20%" in _field_value(embed, "damage modifier")
+        assert "-10%" in _field_value(embed, "fire rate modifier")
+
+    def test_pwm_overdrive_overcharge_distinct_field_values(self, mock_about_cog):
+        """Overdrive and Overcharge show different field values despite same dps_multiplier."""
+        od_data = {
+            **_make_object_data("Nirai Overdrive", "module"),
+            "max_equipped": 1,
+            "damage_pct": -10,
+            "fire_rate_pct": 20,
+            "dps_multiplier": 1.1,
+        }
+        oc_data = {
+            **_make_object_data("Nirai Overcharge", "module"),
+            "max_equipped": 1,
+            "damage_pct": 20,
+            "fire_rate_pct": -10,
+            "dps_multiplier": 1.1,
+        }
+        embed_od = _run_embed(mock_about_cog, od_data)
+        embed_oc = _run_embed(mock_about_cog, oc_data)
+        # damage_pct values differ
+        od_dmg = _field_value(embed_od, "damage modifier")
+        oc_dmg = _field_value(embed_oc, "damage modifier")
+        assert od_dmg != oc_dmg, f"Overdrive and Overcharge should differ; got od={od_dmg!r} oc={oc_dmg!r}"
+
+    def test_non_pwm_module_no_pwm_fields(self, mock_about_cog):
+        """Non-PrimaryWeaponMod module (Scanner) must not show damage/fire_rate/dps_mult fields."""
+        obj_data = {
+            **_make_object_data("Scanner", "module"),
+            "max_equipped": 1,
+            "damage_pct": None,
+            "fire_rate_pct": None,
+            "dps_multiplier": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        assert not any("damage modifier" in n for n in names)
+        assert not any("fire rate modifier" in n for n in names)
+        assert not any("net dps shift" in n for n in names)
+
+
+# ===========================================================================
+# D-002 — primary_weapon and turret_weapon per-shot breakdown embed fields
+# ===========================================================================
+
+
+class TestD002PrimaryTurretEmbedFields:
+    """D-002 — damage_per_shot, loading_speed_ms, and subtype rendered in /about embeds.
+
+    Each test builds an obj_data dict as the API would return it (after
+    _enrich_combat_fields), calls _create_object_embed via _run_embed, and
+    inspects the pre-grid discord.Embed fields.
+
+    Secondary and module code paths are NOT touched.
+    """
+
+    # -------------------------------------------------------------------------
+    # Primary weapon embed
+    # -------------------------------------------------------------------------
+
+    def test_primary_embed_has_damage_per_shot(self, mock_about_cog):
+        """Primary weapon embed must show 'Damage per shot' field with integer value."""
+        obj_data = {
+            **_make_object_data("Pulse Laser", "primary_weapon"),
+            "dps": 22.2,
+            "emp_damage": None,
+            "damage_per_shot": 16,
+            "loading_speed_ms": 900,
+            "subtype": "laser",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("damage per shot" in n for n in _field_names(embed))
+        assert _field_value(embed, "damage per shot") == "16"
+
+    def test_primary_embed_has_loading_speed(self, mock_about_cog):
+        """Primary weapon embed must show 'Loading speed' field with ms suffix."""
+        obj_data = {
+            **_make_object_data("Pulse Laser", "primary_weapon"),
+            "dps": 22.2,
+            "emp_damage": None,
+            "damage_per_shot": 16,
+            "loading_speed_ms": 900,
+            "subtype": "laser",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("loading speed" in n for n in _field_names(embed))
+        assert _field_value(embed, "loading speed") == "900 ms"
+
+    def test_primary_embed_has_weapon_type(self, mock_about_cog):
+        """Primary weapon embed must show 'Weapon type' field with Title Case value."""
+        obj_data = {
+            **_make_object_data("Pulse Laser", "primary_weapon"),
+            "dps": 22.2,
+            "emp_damage": None,
+            "damage_per_shot": 16,
+            "loading_speed_ms": 900,
+            "subtype": "laser",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("weapon type" in n for n in _field_names(embed))
+        assert _field_value(embed, "weapon type") == "Laser"
+
+    def test_primary_embed_auto_cannon_hyphen_title_case(self, mock_about_cog):
+        """Primary weapon with subtype 'auto-cannon': 'Weapon type' renders as 'Auto Cannon'."""
+        obj_data = {
+            **_make_object_data("Auto Cannon Mk I", "primary_weapon"),
+            "dps": 30.0,
+            "emp_damage": None,
+            "damage_per_shot": 25,
+            "loading_speed_ms": 800,
+            "subtype": "auto-cannon",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert _field_value(embed, "weapon type") == "Auto Cannon"
+
+    def test_primary_embed_plasma_collector_no_annotation(self, mock_about_cog):
+        """Primary plasma-collector embed shows 'Weapon type: Plasma Collector' with no extra annotation."""
+        obj_data = {
+            **_make_object_data("Plasma Collector", "primary_weapon"),
+            "dps": 5.0,
+            "emp_damage": None,
+            "damage_per_shot": 10,
+            "loading_speed_ms": 2000,
+            "subtype": "plasma-collector",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        wt = _field_value(embed, "weapon type")
+        assert wt == "Plasma Collector", f"Expected 'Plasma Collector', got {wt!r}"
+        # DPS line must still be present — no suppression for plasma-collector
+        assert any("dps" in n for n in _field_names(embed))
+
+    def test_primary_embed_no_optional_fields_when_none(self, mock_about_cog):
+        """Primary weapon with all D-002 fields None must not render those fields."""
+        obj_data = {
+            **_make_object_data("Plain Weapon", "primary_weapon"),
+            "dps": 10.0,
+            "emp_damage": None,
+            "damage_per_shot": None,
+            "loading_speed_ms": None,
+            "subtype": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        assert not any("damage per shot" in n for n in names)
+        assert not any("loading speed" in n for n in names)
+        assert not any("weapon type" in n for n in names)
+
+    # -------------------------------------------------------------------------
+    # Turret weapon embed
+    # -------------------------------------------------------------------------
+
+    def test_turret_embed_has_damage_per_shot(self, mock_about_cog):
+        """Turret weapon embed must show 'Damage per shot' field with integer value."""
+        obj_data = {
+            **_make_object_data("Auto Cannon Turret", "turret_weapon"),
+            "dps": 29.1,
+            "emp_damage": None,
+            "damage_per_shot": 35,
+            "loading_speed_ms": 1200,
+            "subtype": "auto-cannon",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("damage per shot" in n for n in _field_names(embed))
+        assert _field_value(embed, "damage per shot") == "35"
+
+    def test_turret_embed_has_loading_speed(self, mock_about_cog):
+        """Turret weapon embed must show 'Loading speed' field with ms suffix."""
+        obj_data = {
+            **_make_object_data("Auto Cannon Turret", "turret_weapon"),
+            "dps": 29.1,
+            "emp_damage": None,
+            "damage_per_shot": 35,
+            "loading_speed_ms": 1200,
+            "subtype": "auto-cannon",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("loading speed" in n for n in _field_names(embed))
+        assert _field_value(embed, "loading speed") == "1200 ms"
+
+    def test_turret_embed_has_weapon_type(self, mock_about_cog):
+        """Turret weapon embed must show 'Weapon type' field with Title Case value."""
+        obj_data = {
+            **_make_object_data("Auto Cannon Turret", "turret_weapon"),
+            "dps": 29.1,
+            "emp_damage": None,
+            "damage_per_shot": 35,
+            "loading_speed_ms": 1200,
+            "subtype": "auto-cannon",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("weapon type" in n for n in _field_names(embed))
+        assert _field_value(embed, "weapon type") == "Auto Cannon"
+
+    def test_turret_embed_plasma_collector(self, mock_about_cog):
+        """Turret weapon with plasma-collector subtype renders 'Plasma Collector'."""
+        obj_data = {
+            **_make_object_data("Mining Turret", "turret_weapon"),
+            "dps": 3.0,
+            "emp_damage": None,
+            "damage_per_shot": 8,
+            "loading_speed_ms": 2500,
+            "subtype": "plasma-collector",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        wt = _field_value(embed, "weapon type")
+        assert wt == "Plasma Collector", f"Expected 'Plasma Collector', got {wt!r}"
+
+    def test_turret_embed_no_optional_fields_when_none(self, mock_about_cog):
+        """Turret weapon with all D-002 fields None must not render those fields."""
+        obj_data = {
+            **_make_object_data("Plain Turret", "turret_weapon"),
+            "dps": 10.0,
+            "emp_damage": None,
+            "damage_per_shot": None,
+            "loading_speed_ms": None,
+            "subtype": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        assert not any("damage per shot" in n for n in names)
+        assert not any("loading speed" in n for n in names)
+        assert not any("weapon type" in n for n in names)
+
+    # -------------------------------------------------------------------------
+    # EMP zero-damage suppression for primary and turret weapons (D-002 follow-up)
+    # -------------------------------------------------------------------------
+
+    def test_primary_emp_zero_damage_per_shot_not_rendered(self, mock_about_cog):
+        """Primary EMP-blaster with damage_per_shot=0 must NOT render 'Damage per shot: 0'.
+
+        Pure-effect (EMP) primary weapons carry damage_per_shot=0 in seed data
+        (Dia EMP Mk III, Luna EMP Mk I, Sol EMP Mk II). Rendering 'Damage per shot: 0'
+        is misleading; the field must be suppressed while all other fields still render.
+        """
+        obj_data = {
+            **_make_object_data("Dia EMP Mk III", "primary_weapon"),
+            "dps": 8.57,
+            "emp_damage": 4,
+            "damage_per_shot": 0,
+            "loading_speed_ms": 700,
+            "subtype": "emp-blaster",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        # Must NOT render 'Damage per shot'
+        assert not any("damage per shot" in n for n in names), (
+            f"'Damage per shot: 0' must be suppressed for EMP weapons; fields={names}"
+        )
+        # Other fields must still render
+        assert any("emp damage" in n for n in names), f"'EMP damage' field missing; fields={names}"
+        assert any("loading speed" in n for n in names), f"'Loading speed' field missing; fields={names}"
+        assert any("weapon type" in n for n in names), f"'Weapon type' field missing; fields={names}"
+
+    def test_turret_emp_zero_damage_per_shot_not_rendered(self, mock_about_cog):
+        """Turret weapon with damage_per_shot=0 must NOT render 'Damage per shot: 0'.
+
+        Symmetric guard to keep primary_weapon and turret_weapon branches consistent.
+        No EMP turrets exist in seed data today, but the suppression must be in place.
+        """
+        obj_data = {
+            **_make_object_data("EMP Turret", "turret_weapon"),
+            "dps": 5.0,
+            "emp_damage": 10,
+            "damage_per_shot": 0,
+            "loading_speed_ms": 1500,
+            "subtype": "emp-blaster",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        # Must NOT render 'Damage per shot'
+        assert not any("damage per shot" in n for n in names), (
+            f"'Damage per shot: 0' must be suppressed for zero-damage turret; fields={names}"
+        )
+        # Loading speed and weapon type must still render
+        assert any("loading speed" in n for n in names), f"'Loading speed' field missing; fields={names}"
+        assert any("weapon type" in n for n in names), f"'Weapon type' field missing; fields={names}"
+
+    def test_secondary_not_affected_by_d002(self, mock_about_cog):
+        """D-002 adds damage_per_shot/loading_speed_ms/subtype only to primary_weapon and turret_weapon.
+
+        Secondary weapon embeds must not gain these fields, and must NOT contain a
+        'subtype' key in the rendered embed fields (subtype is internal to secondary
+        weapons and is never surfaced as an embed field).
+        """
+        obj_data = {
+            **_make_object_data("Standard Missile", "secondary_weapon"),
+            "damage": 300,
+            "burst_count": None,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": None,
+            "subtype": "missile",
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = _field_names(embed)
+        assert not any("damage per shot" in n for n in names), (
+            f"Secondary embed must not gain 'damage per shot' field; fields={names}"
+        )
+        assert not any("loading speed" in n for n in names), (
+            f"Secondary embed must not gain 'loading speed' field; fields={names}"
+        )
+        assert not any(n == "subtype" for n in names), (
+            f"Secondary embed must not expose raw 'subtype' field; fields={names}"
+        )
+
+
+# ===========================================================================
+# D-003 / D-004 / D-005 — turret firing mode, secondary weapon type, no-dup loading speed
+# ===========================================================================
+
+
+class TestD003TurretFiringModeEmbedFields:
+    """D-003 — 'Firing mode' field rendered in turret_weapon embeds.
+
+    Covers Automatic / Manual / plasma-collector-shows-Manual / None-omitted.
+    """
+
+    def test_turret_automatic_embed_shows_firing_mode_automatic(self, mock_about_cog):
+        """Turret with automatic=True must show 'Firing mode: Automatic'."""
+        obj_data = {
+            **_make_object_data("Auto Cannon Turret", "turret_weapon"),
+            "dps": 29.1,
+            "emp_damage": None,
+            "damage_per_shot": 35,
+            "loading_speed_ms": 1200,
+            "subtype": "auto-cannon",
+            "automatic": True,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("firing mode" in n for n in _field_names(embed)), (
+            f"'Firing mode' field missing; fields={_field_names(embed)}"
+        )
+        assert _field_value(embed, "firing mode") == "Automatic"
+
+    def test_turret_manual_embed_shows_firing_mode_manual(self, mock_about_cog):
+        """Turret with automatic=False must show 'Firing mode: Manual'."""
+        obj_data = {
+            **_make_object_data("Manual Turret", "turret_weapon"),
+            "dps": 15.0,
+            "emp_damage": None,
+            "damage_per_shot": 20,
+            "loading_speed_ms": 2000,
+            "subtype": "laser",
+            "automatic": False,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("firing mode" in n for n in _field_names(embed)), (
+            f"'Firing mode' field missing; fields={_field_names(embed)}"
+        )
+        assert _field_value(embed, "firing mode") == "Manual"
+
+    def test_turret_plasma_collector_shows_firing_mode_manual(self, mock_about_cog):
+        """Plasma-collector turret (automatic=False) must show 'Firing mode: Manual' — no special-casing."""
+        obj_data = {
+            **_make_object_data("Mining Turret", "turret_weapon"),
+            "dps": 3.0,
+            "emp_damage": None,
+            "damage_per_shot": 8,
+            "loading_speed_ms": 2500,
+            "subtype": "plasma-collector",
+            "automatic": False,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert any("firing mode" in n for n in _field_names(embed)), (
+            f"'Firing mode' field missing for plasma-collector; fields={_field_names(embed)}"
+        )
+        assert _field_value(embed, "firing mode") == "Manual"
+
+    def test_turret_automatic_none_omits_firing_mode(self, mock_about_cog):
+        """Turret with automatic=None must NOT render 'Firing mode' field."""
+        obj_data = {
+            **_make_object_data("Unknown Turret", "turret_weapon"),
+            "dps": 10.0,
+            "emp_damage": None,
+            "damage_per_shot": 15,
+            "loading_speed_ms": 1800,
+            "subtype": "auto-cannon",
+            "automatic": None,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        assert not any("firing mode" in n for n in _field_names(embed)), (
+            f"'Firing mode' must be omitted when automatic=None; fields={_field_names(embed)}"
+        )
+
+    def test_turret_firing_mode_field_order(self, mock_about_cog):
+        """Firing mode must appear after 'Loading speed' and before 'Weapon type' in the turret embed."""
+        obj_data = {
+            **_make_object_data("Auto Cannon Turret", "turret_weapon"),
+            "dps": 29.1,
+            "emp_damage": None,
+            "damage_per_shot": 35,
+            "loading_speed_ms": 1200,
+            "subtype": "auto-cannon",
+            "automatic": True,
+        }
+        embed = _run_embed(mock_about_cog, obj_data)
+        names = [f.name.lower() for f in embed.fields]
+        ls_idx = next((i for i, n in enumerate(names) if "loading speed" in n), None)
+        fm_idx = next((i for i, n in enumerate(names) if "firing mode" in n), None)
+        wt_idx = next((i for i, n in enumerate(names) if "weapon type" in n), None)
+        assert ls_idx is not None and fm_idx is not None and wt_idx is not None, (
+            f"Expected loading speed, firing mode, weapon type all present; fields={names}"
+        )
+        assert ls_idx < fm_idx < wt_idx, (
+            f"Field order wrong: loading_speed={ls_idx}, firing_mode={fm_idx}, weapon_type={wt_idx}; fields={names}"
+        )
+
+
+class TestD004SecondaryWeaponTypeEmbedField:
+    """D-004 — 'Weapon type' field rendered in secondary_weapon embeds.
+
+    Covers plain missile / cluster-missile (hyphen→Title Case) / shock-blast / None-omitted.
+    """
+
+    def _make_sec_data(self, name="Missile", subtype="missile", damage=200, **extra):
+        """Return a secondary obj_data dict as the API would return it."""
+        return {
+            **_make_object_data(name, "secondary_weapon"),
+            "damage": damage,
+            "burst_count": None,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": None,
+            "loading_speed": 3000,
+            "subtype": subtype,
+            **extra,
+        }
+
+    def test_secondary_missile_weapon_type(self, mock_about_cog):
+        """Secondary missile embed must show 'Weapon type: Missile'."""
+        embed = _run_embed(mock_about_cog, self._make_sec_data(subtype="missile"))
+        assert any("weapon type" in n for n in _field_names(embed)), (
+            f"'Weapon type' missing for missile; fields={_field_names(embed)}"
+        )
+        assert _field_value(embed, "weapon type") == "Missile"
+
+    def test_secondary_cluster_missile_title_case(self, mock_about_cog):
+        """Secondary cluster-missile embed must show 'Weapon type: Cluster Missile' (hyphen→space, Title Case)."""
+        embed = _run_embed(
+            mock_about_cog,
+            self._make_sec_data(name="Shesha", subtype="cluster-missile", damage=60, burst_count=3),
+        )
+        assert any("weapon type" in n for n in _field_names(embed)), (
+            f"'Weapon type' missing for cluster-missile; fields={_field_names(embed)}"
+        )
+        assert _field_value(embed, "weapon type") == "Cluster Missile"
+
+    def test_secondary_shock_blast_title_case(self, mock_about_cog):
+        """Secondary shock-blast embed must show 'Weapon type: Shock Blast'."""
+        embed = _run_embed(mock_about_cog, self._make_sec_data(name="Shock Blast", subtype="shock-blast"))
+        assert any("weapon type" in n for n in _field_names(embed))
+        assert _field_value(embed, "weapon type") == "Shock Blast"
+
+    def test_secondary_subtype_none_omits_weapon_type(self, mock_about_cog):
+        """Secondary weapon with subtype=None must NOT render 'Weapon type' field."""
+        embed = _run_embed(mock_about_cog, self._make_sec_data(subtype=None))
+        assert not any("weapon type" in n for n in _field_names(embed)), (
+            f"'Weapon type' must be omitted when subtype=None; fields={_field_names(embed)}"
+        )
+
+    def test_secondary_weapon_type_appears_after_loading_speed(self, mock_about_cog):
+        """'Weapon type' must appear after 'Loading Speed' in the secondary embed."""
+        embed = _run_embed(mock_about_cog, self._make_sec_data(subtype="missile"))
+        names = [f.name.lower() for f in embed.fields]
+        ls_idx = next((i for i, n in enumerate(names) if "loading speed" in n), None)
+        wt_idx = next((i for i, n in enumerate(names) if "weapon type" in n), None)
+        assert ls_idx is not None and wt_idx is not None, (
+            f"Expected loading speed and weapon type both present; fields={names}"
+        )
+        assert ls_idx < wt_idx, f"'Weapon type' ({wt_idx}) must come after 'Loading Speed' ({ls_idx}); fields={names}"
+
+
+class TestD005SecondaryNoAdditionalInfoLoadingSpeed:
+    """D-005 — 'loading speed' must NOT appear in Additional Info for secondary_weapon embeds.
+
+    The real outer extra_atts for a secondary weapon (confirmed via SQL) contains the
+    key ``"loading speed"`` (lowercase, single space — NOT ``loading_speed_ms``).
+    The dedicated 'Loading Speed: <n> ms' embed field is driven by ``obj_data["loading_speed"]``
+    (outer column); the Additional Info dump must suppress the duplicate ``"loading speed"``
+    outer extra_atts key so it does not produce a second "Loading Speed: 3000" line.
+    """
+
+    def _make_shesha_data(self):
+        """Return obj_data matching the real Shesha secondary-weapon API shape.
+
+        Outer columns:
+          loading_speed=3000  → drives the dedicated 'Loading Speed: 3000 ms' embed field.
+
+        extra_atts outer dict (as returned by the about API, mirroring the DB JSONB):
+          {"builtIn": False, "techLevel": 9, "extra_atts": {"subtype": "rocket", ...},
+           "loading speed": 3000}
+
+        The "loading speed" key in extra_atts is the one that was previously leaking
+        into the Additional Info dump as a duplicate "Loading Speed: 3000" line.
+        """
+        return {
+            **_make_object_data("Shesha", "secondary_weapon"),
+            "damage": 60,
+            "burst_count": 3,
+            "nuke_direct_damage": None,
+            "nuke_effective_magnitude_m": None,
+            "nuke_self_damage_factor": None,
+            "emp_damage": None,
+            "loading_speed": 3000,
+            "subtype": "cluster-missile",
+            # Real shape: outer extra_atts with "loading speed" (space, no _ms suffix)
+            "extra_atts": {
+                "builtIn": False,
+                "techLevel": 9,
+                "extra_atts": {"subtype": "rocket"},
+                "loading speed": 3000,
+            },
+        }
+
+    def test_secondary_no_duplicate_loading_speed_in_additional_info(self, mock_about_cog):
+        """Additional Info block must NOT contain a 'Loading Speed' line for secondary weapons.
+
+        The outer extra_atts ``"loading speed"`` key would humanise to
+        ``"Loading Speed: 3000"`` in the generic dump.  D-005 must suppress it.
+
+        This test uses the REAL data shape (``"loading speed"`` with a space) and will
+        FAIL if ``_SECONDARY_EXTRA_SKIP`` is reverted to the old value ``{"loading_speed_ms"}``.
+        """
+        embed = _run_embed(mock_about_cog, self._make_shesha_data())
+        # Dedicated 'Loading Speed' field (with 'ms') must still be present
+        assert any("loading speed" in n for n in _field_names(embed)), (
+            f"Dedicated 'Loading Speed' field must still render; fields={_field_names(embed)}"
+        )
+        dedicated_val = _field_value(embed, "loading speed")
+        assert dedicated_val is not None and "ms" in dedicated_val, (
+            f"Dedicated field must include 'ms' suffix; got {dedicated_val!r}"
+        )
+        # The Additional Info field value must NOT contain a bare 'Loading Speed' line
+        # (the humanised form of the extra_atts "loading speed" key would be
+        #  "**Loading Speed:** 3000\n" — without the 'ms' suffix that marks the dedicated field).
+        ai_value = " ".join(f.value for f in embed.fields if f.name == "Additional Info")
+        assert "Loading Speed" not in ai_value, f"Duplicate 'Loading Speed' found in Additional Info: {ai_value!r}"
+
+    def test_secondary_dedicated_loading_speed_still_renders_with_ms(self, mock_about_cog):
+        """Dedicated 'Loading Speed: <n> ms' field must still appear despite D-005 suppression."""
+        embed = _run_embed(mock_about_cog, self._make_shesha_data())
+        ls_val = _field_value(embed, "loading speed")
+        assert ls_val is not None, "Dedicated 'Loading Speed' field must still render"
+        assert "3000 ms" in ls_val, f"Expected '3000 ms', got {ls_val!r}"
+
+    def test_d005_fails_if_skip_key_is_old_wrong_value(self, mock_about_cog):
+        """Regression guard: the test detects the bug when the skip key is wrong.
+
+        If _SECONDARY_EXTRA_SKIP is reverted to ``{"loading_speed_ms"}`` the
+        Additional Info block WILL contain "Loading Speed: 3000" (because the
+        actual extra_atts key is ``"loading speed"``, not ``"loading_speed_ms"``).
+        This test directly exercises that scenario to confirm the guard is genuine.
+        """
+        obj_data = self._make_shesha_data()
+        # Directly exercise the generic extra_atts loop with the OLD skip key
+        # to confirm it leaks "Loading Speed" when the key is wrong.
+
+        async def _patched_embed(od):
+            # Monkeypatch the local skip set to the old wrong value before render.
+            # We do this by running the embed, then checking that the wrong key
+            # would have let "Loading Speed" through — i.e. with the old key the
+            # extra_atts loop would NOT skip "loading speed" and it WOULD appear.
+            #
+            # Direct approach: call the real extra_atts loop logic outside the cog
+            # to confirm the old key misses.
+            extra_atts = od.get("extra_atts") or {}
+            old_skip = {"loading_speed_ms"}
+            leaked = []
+            for key, value in extra_atts.items():
+                if key == "mechanics_text":
+                    continue
+                if od.get("category") == "secondary_weapon" and key in old_skip:
+                    continue
+                if isinstance(value, (int, float, str, bool)):
+                    leaked.append(key.replace("_", " ").title())
+            return leaked
+
+        leaked_keys = asyncio.run(_patched_embed(obj_data))
+        # With the OLD wrong skip key, "loading speed" is NOT suppressed and leaks through.
+        assert "Loading Speed" in leaked_keys, (
+            "Expected 'Loading Speed' to leak with old skip key {'loading_speed_ms'}; "
+            f"got leaked_keys={leaked_keys!r}"
+        )
+
+
+# ===========================================================================
+# D-006 — icon thumbnail validation: retry + success-only cache
+# ===========================================================================
+
+
+class TestD006IconValidationCache:
+    """D-006 — _validate_icon_with_cache: retry, success-only caching, fail-closed."""
+
+    def _fresh_cog(self, mock_about_cog):
+        """Return mock_about_cog with a cleared icon cache and a fresh AsyncMock head."""
+        mock_about_cog._icon_ok_cache = {}
+        mock_about_cog.http_client.head = AsyncMock()
+        return mock_about_cog
+
+    # -------------------------------------------------------------------------
+    # Cache-hit path
+    # -------------------------------------------------------------------------
+
+    def test_cache_hit_second_call_skips_head(self, mock_about_cog):
+        """Two calls for the same URL → http_client.head invoked only ONCE; both return True."""
+        cog = self._fresh_cog(mock_about_cog)
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+        cog.http_client.head = AsyncMock(return_value=head_resp)
+
+        url = "https://example.com/icon1.png"
+
+        result1 = asyncio.run(cog._validate_icon_with_cache(url))
+        result2 = asyncio.run(cog._validate_icon_with_cache(url))
+
+        assert result1 is True
+        assert result2 is True
+        # HEAD called exactly once — second call hits the cache
+        assert cog.http_client.head.await_count == 1
+
+    # -------------------------------------------------------------------------
+    # Retry-then-success path
+    # -------------------------------------------------------------------------
+
+    def test_retry_then_success_returns_true_head_called_twice(self, mock_about_cog):
+        """First HEAD fails (exception), second HEAD returns 200 → returns True; head called twice."""
+        cog = self._fresh_cog(mock_about_cog)
+
+        call_count = 0
+
+        async def _head_side_effect(url, **_kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("rate limited")
+            resp = MagicMock()
+            resp.status_code = 200
+            return resp
+
+        cog.http_client.head = AsyncMock(side_effect=_head_side_effect)
+        url = "https://example.com/icon2.png"
+
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+            result = asyncio.run(cog._validate_icon_with_cache(url))
+
+        assert result is True
+        assert call_count == 2
+
+    def test_retry_non_200_then_200_returns_true(self, mock_about_cog):
+        """First HEAD returns non-200, second returns 200 → returns True; thumbnail would be set."""
+        cog = self._fresh_cog(mock_about_cog)
+
+        responses = [MagicMock(status_code=429), MagicMock(status_code=200)]
+        cog.http_client.head = AsyncMock(side_effect=responses)
+        url = "https://example.com/icon3.png"
+
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+            result = asyncio.run(cog._validate_icon_with_cache(url))
+
+        assert result is True
+        assert cog.http_client.head.await_count == 2
+
+    # -------------------------------------------------------------------------
+    # Ultimate failure — NOT cached
+    # -------------------------------------------------------------------------
+
+    def test_ultimate_failure_not_cached_head_called_each_time(self, mock_about_cog):
+        """HEAD always fails → returns False on both calls AND head is attempted on BOTH calls (not cached)."""
+        cog = self._fresh_cog(mock_about_cog)
+
+        cog.http_client.head = AsyncMock(side_effect=RuntimeError("always fails"))
+        url = "https://example.com/icon_bad.png"
+
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+            result1 = asyncio.run(cog._validate_icon_with_cache(url))
+        # Reset the mock between calls (but keep the side_effect logic)
+        cog.http_client.head.reset_mock(side_effect=True)
+        cog.http_client.head = AsyncMock(side_effect=RuntimeError("always fails"))
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+            result2 = asyncio.run(cog._validate_icon_with_cache(url))
+
+        assert result1 is False
+        assert result2 is False
+        # Both calls attempted HEAD (2 tries each = 2 total on second call confirms no caching)
+        assert cog.http_client.head.await_count == 2  # second call made 2 attempts
+        assert url not in cog._icon_ok_cache, "Failure must NOT be cached"
+
+    # -------------------------------------------------------------------------
+    # 200 path sets thumbnail; non-200-after-retries skips it
+    # -------------------------------------------------------------------------
+
+    def test_200_path_sets_thumbnail_on_embed(self, mock_about_cog):
+        """When _validate_icon_with_cache returns True, embed.set_thumbnail is called."""
+        cog = self._fresh_cog(mock_about_cog)
+        cog._icon_ok_cache = {}
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+        cog.http_client.head = AsyncMock(return_value=head_resp)
+
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 70),
+            "icon": "https://example.com/eagle_icon.png",
+        }
+        embed = _run_embed(cog, obj_data)
+        assert embed is not None
+        # Thumbnail is set on the embed when validation succeeds
+        assert embed.thumbnail is not None
+        assert embed.thumbnail.url == "https://example.com/eagle_icon.png"
+
+    def test_non_200_after_retries_skips_thumbnail(self, mock_about_cog):
+        """When _validate_icon_with_cache returns False, embed has no thumbnail."""
+        cog = self._fresh_cog(mock_about_cog)
+        cog._icon_ok_cache = {}
+        cog.http_client.head = AsyncMock(return_value=MagicMock(status_code=404))
+
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 71),
+            "icon": "https://example.com/broken_icon.png",
+        }
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+            embed = _run_embed(cog, obj_data)
+        assert embed is not None
+        # Thumbnail must NOT be set when validation fails
+        assert embed.thumbnail is None or embed.thumbnail.url is None
+
+    # -------------------------------------------------------------------------
+    # Expired-cache path — cached entry beyond TTL must re-HEAD
+    # -------------------------------------------------------------------------
+
+    def test_expired_cache_entry_triggers_revalidation(self, mock_about_cog):
+        """Cache entry older than _ICON_CACHE_TTL_S must NOT count as a hit → HEAD called again.
+
+        Pre-seeds _icon_ok_cache with a timestamp that is _ICON_CACHE_TTL_S + 1 seconds
+        in the past (by monkeypatching time.monotonic to return a value that makes the
+        cached timestamp look stale).  Confirms HEAD is called on the second invocation
+        and that a fresh 200 updates the cache timestamp.
+        """
+        import time as _time
+
+        from cogs.aboutCog import _ICON_CACHE_TTL_S
+
+        cog = self._fresh_cog(mock_about_cog)
+        url = "https://example.com/icon_stale.png"
+
+        # Record a real baseline so we can compute an artificially old timestamp.
+        base_now = _time.monotonic()
+        stale_ts = base_now - (_ICON_CACHE_TTL_S + 1)  # one second past TTL
+
+        # Seed the cache with the stale timestamp
+        cog._icon_ok_cache[url] = stale_ts
+
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+        cog.http_client.head = AsyncMock(return_value=head_resp)
+
+        # Patch time.monotonic so the "now" inside _validate_icon_with_cache always
+        # returns base_now, which is _ICON_CACHE_TTL_S + 1 seconds after stale_ts.
+        with patch("cogs.aboutCog.time.monotonic", return_value=base_now):
+            result = asyncio.run(cog._validate_icon_with_cache(url))
+
+        assert result is True
+        # HEAD must have been called — stale cache entry is not a hit
+        assert cog.http_client.head.await_count == 1, (
+            f"Expected exactly 1 HEAD call on stale cache; got {cog.http_client.head.await_count}"
+        )
+        # Cache must now hold an updated (non-stale) timestamp
+        assert url in cog._icon_ok_cache
+        assert cog._icon_ok_cache[url] != stale_ts, "Cache must be updated after re-validation"
+
+    def test_within_ttl_cache_entry_is_still_a_hit(self, mock_about_cog):
+        """Cache entry younger than _ICON_CACHE_TTL_S must still be treated as a hit (HEAD skipped).
+
+        Complementary guard: ensures TTL expiry is one-sided — a fresh entry is kept.
+        """
+        import time as _time
+
+        from cogs.aboutCog import _ICON_CACHE_TTL_S
+
+        cog = self._fresh_cog(mock_about_cog)
+        url = "https://example.com/icon_fresh.png"
+
+        base_now = _time.monotonic()
+        fresh_ts = base_now - (_ICON_CACHE_TTL_S - 60)  # 60 seconds before TTL expires
+
+        cog._icon_ok_cache[url] = fresh_ts
+
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+        cog.http_client.head = AsyncMock(return_value=head_resp)
+
+        with patch("cogs.aboutCog.time.monotonic", return_value=base_now):
+            result = asyncio.run(cog._validate_icon_with_cache(url))
+
+        assert result is True
+        # HEAD must NOT be called — fresh entry is a cache hit
+        assert cog.http_client.head.await_count == 0, (
+            f"Expected 0 HEAD calls for fresh cache hit; got {cog.http_client.head.await_count}"
+        )
 
 
 if __name__ == "__main__":

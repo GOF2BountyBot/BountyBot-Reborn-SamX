@@ -71,6 +71,33 @@ class GenericRepository(IRepository[T], Generic[T]):  # noqa: UP046
             flogger.error(f"Error getting {self._model.__name__} by name {name}: {e}")
             raise
 
+    async def get_by_names(self, db: AsyncSession, names: list[str]) -> list[T]:
+        """Batch-fetch entities whose ``name`` column is in *names*.
+
+        P6-T2: replaces N×``get_by_name`` calls with a single
+        ``WHERE name IN (...)`` query.  Returns an empty list for empty *names*.
+        The result order matches DB retrieval (not necessarily the order of *names*);
+        callers that need a specific ordering should build a mapping from the result.
+
+        Args:
+            db:    Async database session.
+            names: Item names to look up; duplicates are tolerated.
+
+        Returns:
+            List of matching model instances (silently omits names with no row).
+        """
+        if not names:
+            return []
+        flogger.trace(f"get_by_names() called: model={self._model.__name__}, count={len(names)}")
+        try:
+            result = await db.execute(select(self._model).where(self._model.name.in_(names)))
+            entities = list(result.scalars().all())
+            flogger.debug(f"get_by_names() found {len(entities)}/{len(names)} {self._model.__name__} rows")
+            return entities
+        except Exception as e:
+            flogger.error(f"Error in get_by_names() for {self._model.__name__}: {e}")
+            raise
+
     async def get_by_alias(self, db: AsyncSession, alias: str) -> T | None:
         flogger.trace(f"get_by_alias() called: model={self._model.__name__}, alias={alias}")
         try:

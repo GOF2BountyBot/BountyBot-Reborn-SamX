@@ -31,6 +31,9 @@ class LoadoutWeaponItem(BaseModel):
     emoji: str | None = None
     dps: float | None = None
     value: int | None = None
+    rounds: int | None = None  # Secondary weapons only — ammo count (None = not applicable)
+    damage_per_shot: int | None = None  # Per-shot damage (primary/turret/secondary); None = unknown
+    loading_speed_ms: int | None = None  # Reload/cooldown in ms; None = unknown
 
 
 class LoadoutModuleItem(BaseModel):
@@ -106,13 +109,16 @@ class LoadoutResponse(BaseModel):
 
     # Equipped items
     weapons: list[LoadoutWeaponItem] = Field(default_factory=list)
-    secondaries: list[LoadoutWeaponItem] = Field(default_factory=list)  # reserved for future
+    secondaries: list[LoadoutWeaponItem] = Field(default_factory=list)  # populated (CI-28)
     turrets: list[LoadoutWeaponItem] = Field(default_factory=list)  # reserved for future
     modules: list[LoadoutModuleItem] = Field(default_factory=list)
 
     # Cargo
     cargo: list[CargoItem] = Field(default_factory=list)
     cargo_total_count: int = 0  # Sum of CargoItem.quantity — used in 'Cargo Hold <N/M>' header
+
+    # Modules
+    modules_total_count: int = 0  # True equipped module count (pre-dedup) — used in 'Modules <N/M>' header
 
     # Error/info
     message: str | None = None  # "No active ship", etc. — gateway renders error embed

@@ -1,6 +1,7 @@
 import asyncio
 import io
 import os
+import time
 
 import discord
 import httpx
@@ -20,6 +21,24 @@ flogger = bblogger.get_logger("discord-gateway-AboutCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"aboutCog loading with BOT_API_BASE_URL: {api_base}")
 
+# Commodity price/raw fields are rendered explicitly in the commodity branch, so they
+# must be suppressed from the generic "Additional Info" extra_atts dump to avoid
+# duplicate fields and raw wiki markup leaking into the embed.
+
+# TTL for the icon-URL validation success cache (seconds).
+_ICON_CACHE_TTL_S = 3600
+
+_COMMODITY_EXTRA_SKIP = {
+    "price_source",
+    "price_range_min_credits",
+    "price_range_max_credits",
+    "price_range_min_system",
+    "price_range_max_system",
+    "highest_non_loma_price",
+    "highest_non_loma_system",
+    "raw_infobox",
+}
+
 
 def is_developer():
     # Example role check, uncomment and configure as needed
@@ -30,22 +49,50 @@ def is_developer():
 class AboutCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Static catalog caches — TTL=None (never expires; only reloaded on /reload_autocomplete)
+        # Static catalog caches — TTL=None. SELF-HEAL via refresh_fn so a cleared key
+        # (from /reload_autocomplete) lazily re-fills on the next get_with_timeout
+        # instead of staying empty forever (kills the D-010 class bug). Both caches are
+        # keyed by a single string ("all" / category name), so a per-key refresh_fn
+        # repopulates cleanly — no size-guard needed.
         self._categories_cache: AutocompleteCache[str, list[str]] = AutocompleteCache(
             ttl_seconds=None,
+            refresh_fn=self._fetch_categories,
             name="about-categories",
         )
         self._objects_cache: AutocompleteCache[str, list[dict]] = AutocompleteCache(
             ttl_seconds=None,
+            refresh_fn=self._fetch_objects,
             name="about-objects",
         )
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        # Maps icon URL → monotonic timestamp of last successful HEAD validation.
+        # Only successful responses are cached; failures are never stored so that
+        # transient rate-limit errors self-heal on the next /about command.
+        self._icon_ok_cache: dict[str, float] = {}
 
         # Schedule preload once bot is ready
         bot.loop.create_task(self._preload_data())
 
     async def cog_unload(self):
         await self.http_client.aclose()
+
+    async def _fetch_categories(self, _key: str) -> list[str]:
+        """Refresh the about categories list. Reused as _categories_cache.refresh_fn
+        AND by the preload so a cleared "all" key self-heals on the next get().
+        Raises on HTTP error.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _fetch_objects(self, category: str) -> list[dict]:
+        """Refresh one category's objects. Reused as _objects_cache.refresh_fn AND by
+        the preload so a cleared category key self-heals on the next get(). Raises on
+        HTTP error.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
 
     async def _preload_data(self):
         """Preload all categories and objects at startup for responsiveness.
@@ -62,9 +109,7 @@ class AboutCog(commands.Cog):
         for attempt in range(5):
             try:
                 flogger.info(f"Starting preload of about data (attempt {attempt + 1}/5)...")
-                resp = await self.http_client.get(f"{api_base}/about/categories", timeout=5)
-                resp.raise_for_status()
-                categories = resp.json()
+                categories = await self._fetch_categories("all")
                 flogger.debug(f"Preloaded categories: {categories}")
                 break
             except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -86,9 +131,7 @@ class AboutCog(commands.Cog):
         # --- Step 2: fetch objects per category (each independently, no retry needed here) ---
         for category in categories:
             try:
-                resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
-                resp.raise_for_status()
-                objects = resp.json()
+                objects = await self._fetch_objects(category)
                 self._objects_cache.set(category, objects)
                 flogger.debug(f"Preloaded {len(objects)} objects for category {category}")
             except httpx.TimeoutException as e:
@@ -112,7 +155,14 @@ class AboutCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for category selection"""
         norm_current = normalize_for_search(current)
-        categories = self._categories_cache.peek("all") or []
+        # Self-heal: peek then cold-fill so a cleared "all" key re-fills (D-010 fix).
+        categories = self._categories_cache.peek("all")
+        if categories is None:
+            try:
+                categories = await self._categories_cache.get_with_timeout("all", timeout=1.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                categories = None
+        categories = categories or []
         choices = [
             app_commands.Choice(name=cat.replace("_", " ").title(), value=cat)
             for cat in categories
@@ -124,7 +174,14 @@ class AboutCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for system name selection using preloaded data."""
-        systems = self._objects_cache.peek("system") or []
+        # Self-heal: peek then cold-fill the "system" category key (D-010 fix).
+        systems = self._objects_cache.peek("system")
+        if systems is None:
+            try:
+                systems = await self._objects_cache.get_with_timeout("system", timeout=1.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                systems = None
+        systems = systems or []
         names = [obj["name"] for obj in systems if obj.get("name")]
         return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, names)]
 
@@ -135,7 +192,13 @@ class AboutCog(commands.Cog):
         category = getattr(interaction.namespace, "category", None)
         if not category:
             return []
+        # Self-heal: peek then cold-fill the selected category key (D-010 fix).
         objects = self._objects_cache.peek(category)
+        if objects is None:
+            try:
+                objects = await self._objects_cache.get_with_timeout(category, timeout=1.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                objects = None
         if objects is None:
             return []
         names = [obj["name"] for obj in objects if obj.get("name")]
@@ -192,10 +255,50 @@ class AboutCog(commands.Cog):
             )
             await interaction.followup.send("⚠️ An error occurred while fetching object information.", ephemeral=True)
 
+    async def _validate_icon_with_cache(self, url: str) -> bool:
+        """Validate an icon URL with retry and success-only caching.
+
+        Returns True if the URL is reachable (HTTP 200).  False on ultimate failure.
+
+        Cache behaviour:
+        - Successful validations are cached for _ICON_CACHE_TTL_S seconds using
+          time.monotonic() so the result is immune to wall-clock jumps.
+        - Failures are NEVER cached; a transient rate-limit therefore self-heals on
+          the next /about invocation without any manual intervention.
+
+        Retry behaviour:
+        - Up to 2 HEAD attempts; a 1-second async sleep separates them so that a
+          single momentary rate-limit burst still yields a valid thumbnail on retry.
+        """
+        now = time.monotonic()
+        cached_ts = self._icon_ok_cache.get(url)
+        if cached_ts is not None and now - cached_ts < _ICON_CACHE_TTL_S:
+            return True
+
+        for attempt in range(2):
+            try:
+                head_resp = await self.http_client.head(url, timeout=5)
+                if head_resp.status_code == 200:
+                    self._icon_ok_cache[url] = time.monotonic()
+                    return True
+                flogger.debug(f"Icon URL returned {head_resp.status_code} (attempt {attempt + 1}/2): {url}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.debug(f"Failed to validate icon URL {url} (attempt {attempt + 1}/2): {e}")
+
+            if attempt == 0:
+                await asyncio.sleep(1)
+
+        # Both attempts failed — do NOT cache; return fail-closed
+        return False
+
     async def _create_object_embed(self, obj_data: dict) -> discord.Embed:
         """Create a rich embed with object information"""
         name = obj_data.get("name", "Unknown")
         category = obj_data.get("category", "Unknown")
+
+        # Weapon stats like range_m live in the inner (double-nested) extra_atts dict;
+        # unlike dps/loading_speed_ms/subtype they are NOT flattened to the top level.
+        inner_atts = (obj_data.get("extra_atts") or {}).get("extra_atts") or {}
 
         # Create embed with appropriate color based on category
         color_map = {
@@ -206,6 +309,7 @@ class AboutCog(commands.Cog):
             "ship": discord.Color.green(),
             "criminal": discord.Color.dark_red(),
             "system": discord.Color.gold(),
+            "commodity": discord.Color.teal(),
         }
         color = color_map.get(category, discord.Color.default())
 
@@ -220,15 +324,8 @@ class AboutCog(commands.Cog):
 
         # ← Generic thumbnail: check icon URL resolves before applying
         icon_url = obj_data.get("icon")
-        if icon_url:
-            try:
-                head_resp = await self.http_client.head(icon_url, timeout=5)
-                if head_resp.status_code == 200:
-                    embed.set_thumbnail(url=icon_url)
-                else:
-                    flogger.debug(f"Icon URL returned {head_resp.status_code}: {icon_url}")
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                flogger.debug(f"Failed to validate icon URL {icon_url}: {e}")
+        if icon_url and await self._validate_icon_with_cache(icon_url):
+            embed.set_thumbnail(url=icon_url)
 
         # Add basic information
         if obj_data.get("type"):
@@ -244,10 +341,107 @@ class AboutCog(commands.Cog):
         if category == "module":
             if obj_data.get("max_equipped") is not None:
                 embed.add_field(name="Max Equipped", value=str(obj_data["max_equipped"]), inline=True)
+            # §14 / T11: PrimaryWeaponMod breakdown — all three fields required per spec
+            dmg_pct = obj_data.get("damage_pct")
+            fr_pct = obj_data.get("fire_rate_pct")
+            dps_mult = obj_data.get("dps_multiplier")
+            if dmg_pct is not None or fr_pct is not None or dps_mult is not None:
+                if dmg_pct is not None:
+                    sign = "+" if dmg_pct >= 0 else ""
+                    embed.add_field(name="Damage modifier", value=f"{sign}{dmg_pct}%", inline=True)
+                if fr_pct is not None:
+                    sign = "+" if fr_pct >= 0 else ""
+                    embed.add_field(name="Fire rate modifier", value=f"{sign}{fr_pct}%", inline=True)
+                if dps_mult is not None:
+                    embed.add_field(name="Net DPS shift", value=f"x{dps_mult:.2f}", inline=True)
 
         elif category == "primary_weapon":
             if obj_data.get("dps") is not None:
                 embed.add_field(name="DPS", value=f"{obj_data['dps']:.1f}", inline=True)
+            # §14 / T11: EMP damage — show instead of (misleading) "Damage: 0" for pure-EMP blasters
+            emp_dmg = obj_data.get("emp_damage")
+            if emp_dmg is not None and emp_dmg > 0:
+                embed.add_field(name="EMP damage", value=str(emp_dmg), inline=True)
+            range_m = inner_atts.get("range_m")
+            if range_m is not None:
+                embed.add_field(name="Range", value=f"{range_m:,} m", inline=True)
+            # D-002: per-shot breakdown fields
+            dps_shot = obj_data.get("damage_per_shot")
+            if dps_shot is not None and dps_shot > 0:
+                embed.add_field(name="Damage per shot", value=str(dps_shot), inline=True)
+            ls_ms = obj_data.get("loading_speed_ms")
+            if ls_ms is not None:
+                embed.add_field(name="Loading speed", value=f"{ls_ms} ms", inline=True)
+            weapon_subtype = obj_data.get("subtype")
+            if weapon_subtype:
+                embed.add_field(name="Weapon type", value=weapon_subtype.replace("-", " ").title(), inline=True)
+
+        elif category == "secondary_weapon":
+            range_m = inner_atts.get("range_m")
+            if range_m is not None:
+                embed.add_field(name="Range", value=f"{range_m:,} m", inline=True)
+            # §14 / T11: Cluster-missile burst fields — show before generic damage to keep context clear
+            burst = obj_data.get("burst_count")
+            if burst is not None:
+                per_shot = obj_data.get("damage")
+                embed.add_field(name="Burst count", value=str(burst), inline=True)
+                if per_shot is not None:
+                    embed.add_field(name="Total damage on full hit", value=str(burst * per_shot), inline=True)
+                # per-sub-munition damage shown after totals for comparison
+                if per_shot is not None:
+                    embed.add_field(name="Damage (per sub-munition)", value=str(per_shot), inline=True)
+            # §14 / T11: Nuke fields — direct hit + effective radius + self-damage warning
+            elif obj_data.get("nuke_effective_magnitude_m") is not None:
+                nuke_dmg = obj_data.get("nuke_direct_damage")
+                eff_mag = obj_data["nuke_effective_magnitude_m"]
+                self_factor = obj_data.get("nuke_self_damage_factor", 0.25)
+                if nuke_dmg is not None:
+                    embed.add_field(name="Direct hit damage", value=str(nuke_dmg), inline=True)
+                embed.add_field(name="Effective blast radius", value=f"{eff_mag} m", inline=True)
+                if nuke_dmg is not None:
+                    self_dmg = round(nuke_dmg * self_factor)
+                    embed.add_field(name="Self-damage at point-blank", value=f"~{self_dmg} hp", inline=True)
+            else:
+                # Standard missile/mine damage (non-cluster, non-nuke).
+                # §14 / T11: pure-EMP secondaries (damage=0, emp_damage>0) must NOT show
+                # a misleading "Damage: 0" field — mirror the primary-weapon EMP path.
+                dmg_val = obj_data.get("damage")
+                sec_emp_check = obj_data.get("emp_damage")
+                is_pure_emp = dmg_val == 0 and sec_emp_check is not None and sec_emp_check > 0
+                if dmg_val is not None and not is_pure_emp:
+                    embed.add_field(name="Damage", value=str(dmg_val), inline=True)
+            # §14 / T11: EMP damage for secondary weapons (Mamba EMP missile, Neétha EMP mine)
+            sec_emp = obj_data.get("emp_damage")
+            if sec_emp is not None and sec_emp > 0:
+                embed.add_field(name="EMP damage", value=str(sec_emp), inline=True)
+            ls = obj_data.get("loading_speed")
+            if ls is not None:
+                embed.add_field(name="Loading Speed", value=f"{ls} ms", inline=True)
+            # D-004: weapon subtype for secondary weapons
+            sec_subtype = obj_data.get("subtype")
+            if sec_subtype:
+                embed.add_field(name="Weapon type", value=sec_subtype.replace("-", " ").title(), inline=True)
+
+        elif category == "turret_weapon":
+            if obj_data.get("dps") is not None:
+                embed.add_field(name="DPS", value=f"{obj_data['dps']:.1f}", inline=True)
+            range_m = inner_atts.get("range_m")
+            if range_m is not None:
+                embed.add_field(name="Range", value=f"{range_m:,} m", inline=True)
+            # D-002: per-shot breakdown fields
+            dps_shot = obj_data.get("damage_per_shot")
+            if dps_shot is not None and dps_shot > 0:
+                embed.add_field(name="Damage per shot", value=str(dps_shot), inline=True)
+            ls_ms = obj_data.get("loading_speed_ms")
+            if ls_ms is not None:
+                embed.add_field(name="Loading speed", value=f"{ls_ms} ms", inline=True)
+            # D-003: firing mode — shown on all turrets (including plasma-collectors)
+            automatic = obj_data.get("automatic")
+            if automatic is not None:
+                embed.add_field(name="Firing mode", value="Automatic" if automatic else "Manual", inline=True)
+            weapon_subtype = obj_data.get("subtype")
+            if weapon_subtype:
+                embed.add_field(name="Weapon type", value=weapon_subtype.replace("-", " ").title(), inline=True)
 
         elif category == "ship":
             # Hull & capacity
@@ -274,6 +468,9 @@ class AboutCog(commands.Cog):
                 embed.add_field(name="Manufacturer", value=obj_data["manufacturer"], inline=True)
             if obj_data.get("skinnable"):
                 embed.add_field(name="Skinnable", value="Yes", inline=True)
+            if obj_data.get("builtin_modules"):
+                bm = ", ".join(obj_data["builtin_modules"])
+                embed.add_field(name="Built-in Modules", value=bm, inline=True)
             if obj_data.get("compatible_skins"):
                 names = list(obj_data["compatible_skins"].keys())
                 # build pairs of two
@@ -302,6 +499,29 @@ class AboutCog(commands.Cog):
         elif category == "criminal" and obj_data.get("faction"):
             embed.add_field(name="Faction", value=str(obj_data["faction"]), inline=True)
 
+        elif category == "commodity":
+            if obj_data.get("subcategory"):
+                embed.add_field(
+                    name="Subcategory", value=str(obj_data["subcategory"]).replace("_", " ").title(), inline=True
+                )
+            pmin = obj_data.get("price_range_min_credits")
+            pmax = obj_data.get("price_range_max_credits")
+            if pmin is not None and pmax is not None:
+                embed.add_field(name="Price Range", value=f"{pmin:,} – {pmax:,} cr", inline=True)
+            if obj_data.get("price_range_min_system"):
+                embed.add_field(name="Lowest @", value=str(obj_data["price_range_min_system"]), inline=True)
+            if obj_data.get("price_range_max_system"):
+                embed.add_field(name="Highest @", value=str(obj_data["price_range_max_system"]), inline=True)
+            if obj_data.get("highest_non_loma_price") is not None:
+                _sys = obj_data.get("highest_non_loma_system") or "?"
+                embed.add_field(
+                    name="Best non-Loma", value=f"{obj_data['highest_non_loma_price']:,} cr @ {_sys}", inline=True
+                )
+            if obj_data.get("price_source"):
+                embed.add_field(
+                    name="Price Basis", value=str(obj_data["price_source"]).replace("_", " ").title(), inline=True
+                )
+
         # Add aliases if available
         if obj_data.get("aliases"):
             aliases_text = ", ".join(obj_data["aliases"])
@@ -317,10 +537,35 @@ class AboutCog(commands.Cog):
         if obj_data.get("wiki"):
             embed.add_field(name="Wiki", value=f"[More Info]({obj_data['wiki']})", inline=False)
 
-        # Add extra attributes if available
-        if obj_data.get("extra_atts"):
+        # Mechanics / lore text — extracted from extra_atts and shown separately
+        # so it doesn't get buried in the generic attribute dump.
+        extra_atts = obj_data.get("extra_atts") or {}
+        mechanics = extra_atts.get("mechanics_text")
+        if mechanics and isinstance(mechanics, str) and mechanics.strip():
+            trunc = mechanics[:500] + "…" if len(mechanics) > 500 else mechanics
+            embed.add_field(name="Lore / Mechanics", value=trunc, inline=False)
+
+        # §14 / T11: suppress outer extra_atts keys that are already rendered explicitly
+        # (dpsMultiplier is a scalar at the outer level and would appear in the generic dump)
+        _T11_EXTRA_SUPPRESS = {"dpsMultiplier"}
+
+        # D-005: suppress "loading speed" from the generic dump for secondary weapons —
+        # it is already rendered as the dedicated "Loading Speed: <n> ms" field above.
+        # SQL-confirmed outer key: `loading speed` (lowercase, single space, no underscore/suffix).
+        _SECONDARY_EXTRA_SKIP = {"loading speed"}
+
+        # Add remaining extra attributes (skip mechanics_text — shown above)
+        if extra_atts:
             extra_text = ""
-            for key, value in obj_data["extra_atts"].items():
+            for key, value in extra_atts.items():
+                if key == "mechanics_text":
+                    continue
+                if key in _T11_EXTRA_SUPPRESS:
+                    continue
+                if category == "commodity" and key in _COMMODITY_EXTRA_SKIP:
+                    continue
+                if category == "secondary_weapon" and key in _SECONDARY_EXTRA_SKIP:
+                    continue
                 if isinstance(value, (int, float, str, bool)):
                     extra_text += f"**{key.replace('_', ' ').title()}:** {value}\n"
             if extra_text:
@@ -332,7 +577,7 @@ class AboutCog(commands.Cog):
         embed.set_footer(text=f"ID: {obj_data.get('id', 'N/A')}")
 
         # ─── FORCE 2-COLUMN LAYOUT FOR MODULES, WEAPONS & SHIPS ─────────────
-        if category in ("ship", "module", "primary_weapon", "secondary_weapon", "turret_weapon"):
+        if category in ("ship", "module", "primary_weapon", "secondary_weapon", "turret_weapon", "commodity"):
             payload = EmbedConverter.embed_to_payload(embed)
             embed = EmbedConverter.payload_to_grid_embed(payload, fields_per_row=2)
 
@@ -360,7 +605,17 @@ class AboutCog(commands.Cog):
         )
 
         try:
+            # D-020: cold-cache self-heal. A bare peek() miss must NOT be reported
+            # as "not found" — a valid-but-unwarmed category (e.g. right after
+            # /reload_autocomplete clears _objects_cache, or on fresh startup) would
+            # false-negative. Mirror the autocomplete cold-fill: peek → on miss,
+            # get_with_timeout() to populate, then only treat as not-found/empty.
             objects = self._objects_cache.peek(category)
+            if objects is None:
+                try:
+                    objects = await self._objects_cache.get_with_timeout(category, timeout=1.0)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    objects = None
             if objects is None:
                 await interaction.followup.send(f"❌ Category '{category}' not found.", ephemeral=True)
                 return

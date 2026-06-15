@@ -51,5 +51,9 @@
     "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/Wraith_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/Wraith_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/ship_043_retro_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/ship_043_retro_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 1166667,
+    "mechanics_text": "## Trivia\n*A Wraith is a ghost or ghost-like image.\n*It is one of five Galaxy on Fire 3D ships that are included in Galaxy on Fire 2.\n*The Wraith was added to Galaxy on Fire 2 at the same time as the Valkyrie expansion pack.\n*In GoF2, the Wraith differs from normal Nivelian ship coloring, as it is grey/red instead of standard blue/grey.\n*There is an incredibly rare glitch that allows the Wraith to appear in the Ko-on hangar only once. Once the game restarts by closing the app, the Wraith will no longer appear. This, unfortunately, is unconfirmed.\n*Most Wanted criminal Vilhelm Lindon pilots this ship."
+  }
 }

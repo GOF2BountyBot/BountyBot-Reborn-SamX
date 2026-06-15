@@ -19,6 +19,7 @@ from api.schemas.loadout_schema import LoadoutResponse
 from api.schemas.players_schema import (
     CreatePlayerRequest,
     DemoteResponse,
+    NotificationPreferenceUpdate,
     PlayerResponse,
     PlayerStatisticsResponse,
     PrestigeResponse,
@@ -90,6 +91,8 @@ async def create_or_get_player(
                 duel_credits_lost=player.duel_credits_lost,
                 active_ship_id=player.active_ship_id,
                 display_name=player.display_name,
+                bounty_notifications_enabled=player.bounty_notifications_enabled,
+                shop_notifications_enabled=player.shop_notifications_enabled,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )
@@ -140,6 +143,8 @@ async def get_player(player_id: int, player_service: PlayerService = Depends(get
                 duel_credits_won=player.duel_credits_won,
                 duel_credits_lost=player.duel_credits_lost,
                 active_ship_id=player.active_ship_id,
+                bounty_notifications_enabled=player.bounty_notifications_enabled,
+                shop_notifications_enabled=player.shop_notifications_enabled,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )
@@ -179,16 +184,18 @@ async def get_players_by_guild(
     try:
         async with get_db_session() as db:
             if tier:
+                # Tier-filtered path: full load required for Python-side tier filter;
+                # pagination applied in-process after filtering (P6-T3 scope is no-tier path).
                 players = await player_service.get_players_by_tier(
                     db, guild_id, tier, active_within_days=active_within_days
                 )
+                paginated_players = players[skip : skip + limit]
             else:
-                players = await player_service.player_repo.get_players_by_guild(
-                    db, guild_id, active_within_days=active_within_days
+                # P6-T3: push skip/limit into the query (LIMIT/OFFSET) so the DB
+                # returns at most `limit` rows instead of loading the full guild set.
+                paginated_players = await player_service.player_repo.get_players_by_guild(
+                    db, guild_id, active_within_days=active_within_days, skip=skip, limit=limit
                 )
-
-            # Apply pagination
-            paginated_players = players[skip : skip + limit]
 
             return [
                 PlayerResponse(
@@ -207,6 +214,8 @@ async def get_players_by_guild(
                     duel_credits_won=player.duel_credits_won,
                     duel_credits_lost=player.duel_credits_lost,
                     active_ship_id=player.active_ship_id,
+                    bounty_notifications_enabled=player.bounty_notifications_enabled,
+                    shop_notifications_enabled=player.shop_notifications_enabled,
                     created_at=player.created_at.isoformat(),
                     updated_at=player.updated_at.isoformat(),
                 )
@@ -245,6 +254,8 @@ async def update_player_credits(
                 duel_credits_won=player.duel_credits_won,
                 duel_credits_lost=player.duel_credits_lost,
                 active_ship_id=player.active_ship_id,
+                bounty_notifications_enabled=player.bounty_notifications_enabled,
+                shop_notifications_enabled=player.shop_notifications_enabled,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )
@@ -283,6 +294,8 @@ async def update_player_xp(
                 duel_credits_won=player.duel_credits_won,
                 duel_credits_lost=player.duel_credits_lost,
                 active_ship_id=player.active_ship_id,
+                bounty_notifications_enabled=player.bounty_notifications_enabled,
+                shop_notifications_enabled=player.shop_notifications_enabled,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )
@@ -292,6 +305,63 @@ async def update_player_xp(
     except Exception as e:
         flogger.error(f"Error updating XP for player {player_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update XP") from e
+
+
+@router.put("/{player_id}/notifications", response_model=PlayerResponse)
+async def update_notification_preference(
+    player_id: int,
+    request: NotificationPreferenceUpdate,
+    player_service: PlayerService = Depends(get_player_service),
+):
+    """Persist a player's notification preference (D-019).
+
+    Writes the ``bounty_notifications_enabled`` / ``shop_notifications_enabled`` flag
+    selected by ``notification_type``. The stored flag is the source of truth; the
+    gateway syncs the corresponding Discord role to match after this returns.
+    """
+    flogger.info(
+        f"Updating {request.notification_type} notification preference for player {player_id}: "
+        f"enabled={request.enabled}"
+    )
+
+    try:
+        async with get_db_session() as db:
+            player = await player_service.update_notification_preference(
+                db, player_id, request.notification_type, request.enabled
+            )
+
+            return PlayerResponse(
+                id=player.id,
+                user_id=player.user_id,
+                guild_id=player.guild_id,
+                credits=player.credits,
+                lifetime_credits=player.lifetime_credits,
+                systems_checked=player.systems_checked,
+                bounty_wins=player.bounty_wins,
+                xp=player.xp,
+                tier=player.tier,
+                prestige_count=player.prestige_count,
+                duel_wins=player.duel_wins,
+                duel_losses=player.duel_losses,
+                duel_credits_won=player.duel_credits_won,
+                duel_credits_lost=player.duel_credits_lost,
+                active_ship_id=player.active_ship_id,
+                bounty_notifications_enabled=player.bounty_notifications_enabled,
+                shop_notifications_enabled=player.shop_notifications_enabled,
+                created_at=player.created_at.isoformat(),
+                updated_at=player.updated_at.isoformat(),
+            )
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg) from e
+    except Exception as e:
+        flogger.error(f"Error updating notification preference for player {player_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update notification preference"
+        ) from e
 
 
 @router.post("/{player_id}/prestige", response_model=PrestigeResponse)
@@ -387,7 +457,7 @@ async def combat_preflight(player_id: int, target_tier: str, num_sims: int = 20)
             player = await PlayerService().player_repo.get_by_id(db, player_id)
             if not player:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {player_id} not found")
-            result = await CombatPreflightService().estimate(
+            result = await CombatPreflightService().estimate(  # noqa: TRANSACTION_DISCIPLINE — preflight uses log_result=False; no DB writes
                 db,
                 player_id=player_id,
                 guild_id=player.guild_id,

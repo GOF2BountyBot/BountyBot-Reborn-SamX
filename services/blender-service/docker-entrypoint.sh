@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# --- Privilege normalization: if running as root, chown /app/data then re-exec as botuser ---
+if [ "$(id -u)" = "0" ]; then
+    mkdir -p /app/data/game-objects
+    chown -R botuser:botuser /app/data
+    chmod -R u+rwX /app/data
+    exec gosu botuser /app/docker-entrypoint.sh "$@"
+fi
+# ---- from here down runs as botuser ----
+
 # Configuration variables
 TARGET_DIR="/app/data/game-objects"
 TEMP_FILE="/tmp/downloaded_file.7z"
@@ -90,6 +99,11 @@ check_dependencies
 # Check directory status
 echo "Checking game objects directory status..."
 
+echo "DIAG[boot]: TARGET_DIR=$TARGET_DIR  uid=$(id -u) gid=$(id -g)"
+echo "DIAG[boot]: listing:"; ls -la "$TARGET_DIR" 2>&1 | head -20
+echo "DIAG[boot]: total files under TARGET_DIR: $(find "$TARGET_DIR" -type f 2>/dev/null | wc -l)"
+echo "DIAG[boot]: bmp/jpg count: $(find "$TARGET_DIR" -type f \( -iname '*.bmp' -o -iname '*.jpg' \) 2>/dev/null | wc -l)"
+
 if check_directory; then
     # Directory already exists and appears to have all needed files
     GAME_OBJECTS_READY=true
@@ -162,9 +176,6 @@ echo "=== Final Status Check ==="
 if [[ "$GAME_OBJECTS_READY" == true ]]; then
     echo "✓ Game objects data is ready. Proceeding with application launch..."
     echo
-    # Force-reupdate permissions on the bot folder...
-    sudo chown -R botuser /app
-    sudo chmod -R 1777 /app
     source /opt/venv/bin/activate
     /opt/venv/bin/python /app/src/main.py "$CONFIG_FILE"
 else

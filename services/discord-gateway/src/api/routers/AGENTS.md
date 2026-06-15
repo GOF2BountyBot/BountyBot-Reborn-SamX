@@ -6,7 +6,7 @@ This file provides detailed guidance for AI agents working on REST API routers i
 
 ## Overview
 
-This directory contains **10 FastAPI router modules** that expose Discord functionality as a REST API. These routers allow other services (like bot-core's scheduled jobs, external integrations) to perform Discord actions programmatically without going through Discord's slash command interface.
+This directory contains **12 FastAPI router modules** that expose Discord functionality as a REST API. These routers allow other services (like bot-core's scheduled jobs, external integrations) to perform Discord actions programmatically without going through Discord's slash command interface.
 
 The routers bridge the gap: they receive HTTP requests and translate them into Discord API calls via the live `GatewayBot` instance.
 
@@ -29,7 +29,7 @@ for _, modname, ispkg in pkgutil.iter_modules(routers_pkg.__path__):
 - Any module in this package that defines a `router` attribute is automatically included
 - All routers are mounted under `/api/v1`
 - The module name becomes the OpenAPI tag
-- No manual registration in `bot.py` or `server.py` is needed
+- No manual registration in `bot.py` is needed
 
 ---
 
@@ -37,7 +37,7 @@ for _, modname, ispkg in pkgutil.iter_modules(routers_pkg.__path__):
 
 | File | Path Prefix | Endpoints | Purpose |
 |------|-------------|-----------|---------|
-| `health.py` | `/health` | `GET /health`, `GET /health/simple`, `GET /health/liveness` | Service health checks |
+| `health.py` | `/health` | `GET /health`, `GET /health/simple`, `GET /healthliveness` | Service health checks |
 | `guilds.py` | `/guilds` | Guild CRUD, role list, role create/edit/delete | Guild and role management |
 | `channels.py` | `/channels` | Channel CRUD, message send/edit/delete | Text/voice channel operations |
 | `categories.py` | `/categories` | Category CRUD | Category channel management |
@@ -47,7 +47,8 @@ for _, modname, ispkg in pkgutil.iter_modules(routers_pkg.__path__):
 | `permissions.py` | `/permissions` | Permission overwrite get/set/delete | Channel permission management |
 | `tags.py` | `/tags` | Forum tag CRUD | Forum channel tag management |
 | `threads.py` | `/threads` | Thread create/archive/list | Thread management |
-| `announcements.py` | `/announcements` | `POST /announcements/bounty/channel/{cid}`, `PUT /announcements/bounty/channel/{cid}/message/{mid}` | A.48 unified bounty-announcement endpoint: receives `LoadoutResponse + metadata` from bot-core, renders a single embed via the shared `cogs/_shared/loadout_embed.build_loadout_embed`. Field values > 1024 chars are continuation-split automatically (regression protection for A.48). |
+| `announcements.py` | *(none — paths spelled in full)* | `POST /announcements/bounty/channel/{channel_id}`, `PUT /announcements/bounty/channel/{channel_id}/message/{message_id}` | A.48 unified bounty-announcement endpoint: receives `LoadoutResponse + metadata` from bot-core, renders a single embed via the shared `cogs/_shared/loadout_embed.build_loadout_embed`. Field values > 1024 chars are continuation-split automatically (regression protection for A.48). |
+| `internal_autocomplete.py` | `/internal/autocomplete` | `POST /shop-cache/{guild_id}/{tier}`, `POST /bounty-cache/{guild_id}`, `POST /duel-cache/{guild_id}/{player_id}`, `POST /combatlog-cache/{guild_id}/{user_id}`, `GET /health` | bot-core → gateway push/invalidate endpoints for in-process autocomplete caches; guarded by the `X-Internal-Auth` header (`INTERNAL_AUTH_TOKEN`; unset = dev mode, warn + allow) |
 
 ### A.48: Unified bounty-announcement rendering
 
@@ -226,10 +227,10 @@ For list responses, use a `list[Model]` return type directly or wrap in a `BaseR
 ```
 GET /api/v1/health          → HealthCheckResponse (Python version, platform, checks)
 GET /api/v1/health/simple   → SimpleHealthResponse (minimal status)
-GET /api/v1/health/liveness → {"status": "alive"}
+GET /api/v1/healthliveness  → {"status": "alive"}   (route path "liveness" has no leading slash)
 ```
 
-The `HealthFilter` in `server.py` suppresses these endpoints from uvicorn access logs to reduce noise.
+`internal_autocomplete.py` also skips `resolve_bot()` — it reads `request.app.state.bot` directly (warn + no-op when unavailable) and routes pushes to cogs via `bot.get_cog(...)`.
 
 ---
 
@@ -370,4 +371,4 @@ All routers, request bodies, and response models appear automatically because Fa
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-06-11*

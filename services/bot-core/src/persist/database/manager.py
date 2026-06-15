@@ -13,12 +13,13 @@ Key Features:
 - Future-ready for repository pattern integration
 """
 
+import asyncio
 import contextlib
 import os
-import time
 from contextlib import asynccontextmanager
 from typing import Any
 
+import orjson
 from shared import bblogger
 from sqlalchemy import MetaData, inspect, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
@@ -26,6 +27,22 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from sqlalchemy.orm import sessionmaker
 
 flogger = bblogger.get_logger("bot-database-manager")
+
+# ---------------------------------------------------------------------------
+# orjson codec for SQLAlchemy JSON/JSONB columns (P4-T2).
+#
+# OPT_NAIVE_UTC: naive datetimes (no tzinfo) are treated as UTC and serialized
+# to RFC-3339 format ("YYYY-MM-DDTHH:MM:SS+00:00").  All JSON columns in this
+# codebase store only string-keyed dicts — OPT_NON_STR_KEYS is intentionally
+# absent (fail-fast on any future int-keyed write; see P4-T3 audit).
+#
+# json_serializer must return str (SQLAlchemy contract); orjson.dumps returns
+# bytes, so .decode() is required.
+# ---------------------------------------------------------------------------
+_ORJSON_OPTS: int = orjson.OPT_NAIVE_UTC
+
+_json_serializer = lambda o: orjson.dumps(o, option=_ORJSON_OPTS).decode()  # noqa: E731
+_json_deserializer = orjson.loads
 
 
 class DatabaseManager:
@@ -44,6 +61,16 @@ class DatabaseManager:
         self._metadata = MetaData()
         self._load_config()
 
+    # Pool sizing formula (single-worker rationale — Decision D10):
+    #   pool_size + max_overflow >= (2 * AUTOCOMPLETE_WARM_CONCURRENCY) + live_headroom
+    #   With AUTOCOMPLETE_WARM_CONCURRENCY default 16 → up to 32 in-flight warm GETs,
+    #   and live_headroom >= 10, the minimum is 42.
+    #   We run ONE uvicorn worker (P0-T1); there is ONE pool, not 4×(pool+overflow).
+    #   Defaults: pool_size=40 / max_overflow=20 → total 60.
+    #   Must stay safely under Postgres max_connections (100 on this deployment).
+    #   Override via DB_POOL_SIZE / DB_MAX_OVERFLOW env vars.
+    _POSTGRES_MAX_CONNECTIONS_FLOOR = 100  # Observed via SHOW max_connections; keep total well below.
+
     def _load_config(self) -> None:
         """Load database configuration from environment variables."""
         db_host = os.getenv("POSTGRES_HOST", "bounty_db")
@@ -52,11 +79,32 @@ class DatabaseManager:
         db_user = os.getenv("POSTGRES_USER", "bounty")
         db_password = os.getenv("POSTGRES_PASSWORD", "bounty")
 
-        pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
+        pool_size = int(os.getenv("DB_POOL_SIZE", "40"))
         max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "20"))
         pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
         pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
         echo_flag = os.getenv("DB_ECHO", "false").lower() == "true"
+
+        total_pool = pool_size + max_overflow
+        ceiling = self._POSTGRES_MAX_CONNECTIONS_FLOOR
+        if total_pool >= ceiling:
+            # Hard error: exceeding max_connections causes connection failures for all services.
+            raise ValueError(
+                f"DB pool too large: pool_size={pool_size} + max_overflow={max_overflow} = {total_pool} "
+                f">= Postgres max_connections={ceiling}. "
+                f"Reduce DB_POOL_SIZE or DB_MAX_OVERFLOW."
+            )
+        if total_pool > ceiling * 0.75:
+            flogger.warning(
+                f"DB pool approaching Postgres max_connections ceiling: "
+                f"pool_size={pool_size} + max_overflow={max_overflow} = {total_pool} "
+                f"(ceiling={ceiling}, used {total_pool / ceiling:.0%}). "
+                f"Consider reducing DB_POOL_SIZE or DB_MAX_OVERFLOW."
+            )
+        flogger.info(
+            f"DB pool sizing: pool_size={pool_size} + max_overflow={max_overflow} = {total_pool} "
+            f"(Postgres max_connections ceiling={ceiling}, headroom={ceiling - total_pool})"
+        )
 
         flogger.debug(
             f"Pool configuration: size={pool_size}, max_overflow={max_overflow}, "
@@ -87,7 +135,13 @@ class DatabaseManager:
         try:
             flogger.info("Initializing async database connection...")
             flogger.debug("Creating AsyncEngine with asyncpg dialect and connection pool")
-            self._engine = create_async_engine(self._connection_string, future=True, **self._pool_config)
+            self._engine = create_async_engine(
+                self._connection_string,
+                future=True,
+                json_serializer=_json_serializer,
+                json_deserializer=_json_deserializer,
+                **self._pool_config,
+            )
             flogger.debug("AsyncEngine created successfully")
             flogger.debug("Creating async_sessionmaker")
             self._session_factory = sessionmaker(bind=self._engine, class_=AsyncSession, expire_on_commit=False)
@@ -114,7 +168,7 @@ class DatabaseManager:
             except OperationalError as e:
                 if attempt < max_retries - 1:
                     flogger.warning(f"DB connection attempt {attempt + 1} failed: {e}. Retrying in {retry_delay}s...")
-                    time.sleep(retry_delay)
+                    await asyncio.sleep(retry_delay)
                     retry_delay *= 2
                 else:
                     flogger.error("Database connection failed after retries")

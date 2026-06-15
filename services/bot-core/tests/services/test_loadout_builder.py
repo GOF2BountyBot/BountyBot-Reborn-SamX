@@ -45,6 +45,7 @@ def make_criminal_ship(
     weapons: list[dict] | None = None,
     turrets: list[dict] | None = None,
     modules: list[dict] | None = None,
+    secondaries: list[dict] | None = None,
 ) -> dict:
     """Create a criminal_ship dict matching the format from BountyService."""
     return {
@@ -57,6 +58,39 @@ def make_criminal_ship(
         "weapons": weapons or [],
         "turrets": turrets or [],
         "modules": modules or [],
+        "secondaries": secondaries or [],
+    }
+
+
+def make_secondary_dict(
+    name: str = "Nuke X",
+    dps: float = 0.0,
+    value: int = 5000,
+    damage: int = 800,
+    subtype: str = "nuke",
+    loading_speed_ms: int = 3000,
+    range_m: float = 2000.0,
+    burst_count: int = 0,
+    emp_damage: int = 0,
+    magnitude_m: float = 500.0,
+    steerable: bool = True,
+    rounds: int = 1,
+) -> dict:
+    """Create a secondary weapon dict matching the CI-17 generate_loadout format."""
+    return {
+        "name": name,
+        "emoji": None,
+        "dps": dps,
+        "value": value,
+        "damage": damage,
+        "loading_speed_ms": loading_speed_ms,
+        "range_m": range_m,
+        "subtype": subtype,
+        "burst_count": burst_count,
+        "emp_damage": emp_damage,
+        "magnitude_m": magnitude_m,
+        "steerable": steerable,
+        "rounds": rounds,
     }
 
 
@@ -725,11 +759,17 @@ class TestFromPlayer:
             result.scalars.return_value = scalars_result
             return result
 
+        # T7: turret builder now queries TurretWeapon directly (for automatic column);
+        # add a slot for that query. turret mock must have `automatic` attr.
+        turret.automatic = False  # default: manual-turret for this legacy test mock
+        turret.extra_atts = {}  # no extra_atts for this simple mock
+
         db = MagicMock()
         db.execute = AsyncMock(
             side_effect=[
                 make_execute_result(player_ship),  # PlayerShip query
                 make_execute_result(ship),  # Ship query
+                make_execute_result(turret),  # TurretWeapon query (T7 new: reads automatic column)
                 make_execute_result(shield_module),  # Module query
             ]
         )
@@ -936,3 +976,477 @@ class TestCollectStatsIntegration:
         assert stats.dps == pytest.approx(110.0)
         # Armour: 200 (no armour module)
         assert stats.armour == 200
+
+
+# ---------------------------------------------------------------------------
+# TestCriminalWeaponSelfHealing — CI-1 fix: self-healing fallback for legacy
+# JSONB weapon dicts that lack combat fields (damage_per_shot / range_m).
+# ---------------------------------------------------------------------------
+
+
+class TestCriminalWeaponSelfHealing:
+    """AC: from_criminal_ship with a dps-only weapon dict still bakes to
+    non-zero effective_damage_per_shot and non-zero range_m (self-healing
+    fallback for legacy bounties stored before Change A).
+    """
+
+    def test_dps_only_weapon_bakes_nonzero_effective_damage(self):
+        """Weapon dict with only 'dps' (no damage_per_shot/loading_speed_ms)
+        produces effective_damage_per_shot > 0 via the cadence fallback."""
+        from src.services.combat_resolver import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Hiro",
+            weapons=[{"name": "N'saan", "dps": 13.33}],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        state = _init_combatant(loadout, is_player=False)
+
+        assert len(state.effective_primaries) == 1
+        p = state.effective_primaries[0]
+        assert p.effective_damage_per_shot > 0, (
+            f"Expected effective_damage_per_shot > 0, got {p.effective_damage_per_shot}"
+        )
+
+    def test_dps_only_weapon_bakes_nonzero_range_m(self):
+        """Weapon dict with only 'dps' (no range_m) produces range_m > 0 via the floor fallback."""
+        from src.services.combat_resolver import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Inflict",
+            weapons=[{"name": "N'saan", "dps": 13.33}],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        state = _init_combatant(loadout, is_player=False)
+
+        assert len(state.effective_primaries) == 1
+        p = state.effective_primaries[0]
+        assert p.range_m > 0, f"Expected range_m > 0, got {p.range_m}"
+
+    def test_dps_only_weapon_is_not_pure_emp(self):
+        """Weapon with dps > 0 and no explicit damage_per_shot must not be classified pure-EMP."""
+        from src.services.combat_resolver import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Betty",
+            weapons=[{"name": "Micro Gun MK I", "dps": 9.09}],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        state = _init_combatant(loadout, is_player=False)
+
+        assert len(state.effective_primaries) == 1
+        p = state.effective_primaries[0]
+        assert p.is_pure_emp is False, "Weapon with dps > 0 should not be pure-EMP"
+
+    def test_full_combat_fields_dict_preserves_values(self):
+        """Weapon dict with all combat fields set preserves them exactly (no fallback applied)."""
+        from src.services.combat_resolver import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Betty",
+            weapons=[
+                {
+                    "name": "N'saan",
+                    "dps": 13.33,
+                    "damage_per_shot": 8.0,
+                    "loading_speed_ms": 600,
+                    "range_m": 1400.0,
+                    "subtype": "blaster",
+                }
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        assert loadout.weapons[0].damage_per_shot == pytest.approx(8.0)
+        assert loadout.weapons[0].loading_speed_ms == 600
+        assert loadout.weapons[0].range_m == pytest.approx(1400.0)
+        assert loadout.weapons[0].subtype == "blaster"
+
+        state = _init_combatant(loadout, is_player=False)
+        p = state.effective_primaries[0]
+        assert p.effective_damage_per_shot == 8  # round(8.0 * 1.0) = 8
+        assert p.range_m == pytest.approx(1400.0)
+        assert p.is_pure_emp is False
+
+
+# ---------------------------------------------------------------------------
+# TestCriminalWeaponSelfHealingEdgeCases — additional coverage for CI-1 fix
+# ---------------------------------------------------------------------------
+
+
+class TestCriminalWeaponSelfHealingEdgeCases:
+    """Edge-case coverage for the self-healing fallback in from_criminal_ship().
+
+    Verifies that the fallback only fires when damage_per_shot is absent (None),
+    NOT when it is explicitly 0 (pure-EMP weapon); and that turrets self-heal
+    the same way primary weapons do.
+    """
+
+    def test_pure_emp_primary_not_promoted(self):
+        """A weapon with explicit damage_per_shot=0 and dps>0 is a pure-EMP weapon.
+        The self-healing fallback must NOT overwrite the explicit 0 with a derived value —
+        is_pure_emp must be True and baked damage must stay 0.
+        """
+        from src.services.combat_resolver import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="EMP Raider",
+            weapons=[
+                {
+                    "name": "EMP Pulse",
+                    "dps": 17.77,
+                    "damage_per_shot": 0,
+                    "loading_speed_ms": 600,
+                    "range_m": 1400.0,
+                    "subtype": "emp",
+                }
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        # The WeaponStats must preserve the explicit 0
+        assert loadout.weapons[0].damage_per_shot == pytest.approx(0.0), (
+            "damage_per_shot=0 must be preserved, not overwritten by self-heal fallback"
+        )
+        state = _init_combatant(loadout, is_player=False)
+        assert len(state.effective_primaries) == 1
+        p = state.effective_primaries[0]
+        assert p.is_pure_emp is True, "Weapon with explicit damage_per_shot=0 must be pure-EMP"
+        assert p.effective_damage_per_shot == 0, (
+            f"pure-EMP weapon baked damage must be 0, got {p.effective_damage_per_shot}"
+        )
+
+    def test_legacy_turret_self_heals_nonzero_baked_damage_and_range(self):
+        """A legacy criminal turret dict (dps>0, damage_per_shot absent, loading_speed_ms=0)
+        must self-heal to non-zero baked damage and non-zero range — mirroring the
+        primary-weapon self-heal test.
+        """
+        from src.services.combat_resolver import _init_combatant
+
+        criminal_ship = make_criminal_ship(
+            ship_name="Legacy Gunship",
+            turrets=[
+                {
+                    "name": "Old Beam",
+                    "dps": 8.5,
+                    # damage_per_shot intentionally absent (legacy dict)
+                    # loading_speed_ms absent → defaults to 0 → fallback cadence used
+                }
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        # damage_per_shot should have been derived (non-None, non-zero)
+        turret_ws = loadout.turrets[0]
+        assert turret_ws.damage_per_shot is not None, "Self-heal must set damage_per_shot"
+        assert turret_ws.damage_per_shot > 0, (
+            f"Self-healed damage_per_shot must be > 0, got {turret_ws.damage_per_shot}"
+        )
+        # range_m should have been given a non-zero floor
+        assert turret_ws.range_m > 0, f"Self-healed range_m must be > 0, got {turret_ws.range_m}"
+
+        # Confirm _init_combatant does not raise (no crash on self-healed turret)
+        _init_combatant(loadout, is_player=False)
+        assert len(loadout.turrets) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestExtractWeaponCombatFields — unit tests for the bounty_service helper
+# that extracts combat fields from ORM extra_atts onto the JSONB dict.
+# ---------------------------------------------------------------------------
+
+
+class TestExtractWeaponCombatFields:
+    """AC: _extract_weapon_combat_fields returns correct combat fields for
+    the various extra_atts nesting patterns found in the DB.
+    """
+
+    def test_nested_extra_atts_pattern(self):
+        """Standard DB nesting: outer.extra_atts has the combat fields."""
+        import types
+
+        from src.services.bounty_service import _extract_weapon_combat_fields
+
+        item = types.SimpleNamespace(
+            extra_atts={
+                "extra_atts": {
+                    "loading_speed_ms": 600,
+                    "range_m": 1400.0,
+                    "damage_per_shot": 8,
+                    "subtype": "blaster",
+                }
+            }
+        )
+        fields = _extract_weapon_combat_fields(item)
+        assert fields["damage_per_shot"] == 8
+        assert fields["loading_speed_ms"] == 600
+        assert fields["range_m"] == pytest.approx(1400.0)
+        assert fields["subtype"] == "blaster"
+
+    def test_flat_extra_atts_fallback(self):
+        """Legacy flat extra_atts (no inner nesting) is also read correctly."""
+        import types
+
+        from src.services.bounty_service import _extract_weapon_combat_fields
+
+        item = types.SimpleNamespace(
+            extra_atts={
+                "loading_speed_ms": 220,
+                "range_m": 1300.0,
+                "damage_per_shot": 2,
+                "subtype": "auto-cannon",
+            }
+        )
+        fields = _extract_weapon_combat_fields(item)
+        assert fields["damage_per_shot"] == 2
+        assert fields["loading_speed_ms"] == 220
+        assert fields["range_m"] == pytest.approx(1300.0)
+        assert fields["subtype"] == "auto-cannon"
+
+    def test_no_extra_atts_returns_safe_defaults(self):
+        """Item without extra_atts → safe zero/empty defaults (never raises)."""
+        import types
+
+        from src.services.bounty_service import _extract_weapon_combat_fields
+
+        item = types.SimpleNamespace(extra_atts=None)
+        fields = _extract_weapon_combat_fields(item)
+        assert fields["damage_per_shot"] is None
+        assert fields["loading_speed_ms"] == 0
+        assert fields["range_m"] == pytest.approx(0.0)
+        assert fields["subtype"] == ""
+
+    def test_weapon_dict_includes_combat_fields_after_extract(self):
+        """Weapon dict produced by generate_loadout() includes all four combat fields."""
+        import types
+
+        from src.services.bounty_service import _extract_weapon_combat_fields
+
+        item = types.SimpleNamespace(
+            name="N'saan",
+            dps=13.33,
+            value=11478,
+            emoji="<:nsaan:1>",
+            extra_atts={
+                "extra_atts": {
+                    "loading_speed_ms": 600,
+                    "range_m": 1400.0,
+                    "damage_per_shot": 8,
+                    "subtype": "blaster",
+                }
+            },
+        )
+        fields = _extract_weapon_combat_fields(item)
+        weapon_dict = {
+            "name": item.name,
+            "dps": item.dps,
+            "value": item.value,
+            **fields,
+        }
+        assert "damage_per_shot" in weapon_dict
+        assert "loading_speed_ms" in weapon_dict
+        assert "range_m" in weapon_dict
+        assert "subtype" in weapon_dict
+        assert weapon_dict["damage_per_shot"] == 8
+        assert weapon_dict["range_m"] == pytest.approx(1400.0)
+
+
+# ===========================================================================
+# Tests: CI-17 — from_criminal_ship secondaries round-trip
+# ===========================================================================
+
+
+class TestFromCriminalShipSecondaries:
+    """CI-17: from_criminal_ship reads 'secondaries' list and builds WeaponStats correctly.
+
+    Secondary slot model: slot=TYPE, quantity=ammo (rounds), NOT repeated entries.
+    damage_per_shot is populated from the 'damage' field (NOT 'dps').
+    """
+
+    def test_secondaries_absent_produces_empty_list(self):
+        """criminal_ship dict without 'secondaries' key → secondary_weapons=[]."""
+        criminal_ship = make_criminal_ship()  # no secondaries key
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        assert loadout.secondary_weapons == []
+
+    def test_secondaries_empty_list_produces_empty_list(self):
+        """criminal_ship with secondaries=[] → secondary_weapons=[]."""
+        criminal_ship = make_criminal_ship(secondaries=[])
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        assert loadout.secondary_weapons == []
+
+    def test_single_secondary_round_trips_name(self):
+        """Single secondary → WeaponStats with correct name."""
+        sw = make_secondary_dict(name="Nuke X", subtype="nuke", damage=800, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert len(loadout.secondary_weapons) == 1
+        assert loadout.secondary_weapons[0].name == "Nuke X"
+
+    def test_damage_maps_to_damage_per_shot(self):
+        """'damage' field maps to WeaponStats.damage_per_shot (not dps)."""
+        sw = make_secondary_dict(name="Nuke X", dps=0.0, damage=800, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].damage_per_shot == pytest.approx(800.0)
+
+    def test_dps_field_preserved(self):
+        """dps field is preserved as WeaponStats.dps."""
+        sw = make_secondary_dict(name="Nuke X", dps=2.5, damage=800, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].dps == pytest.approx(2.5)
+
+    def test_subtype_round_trips(self):
+        """subtype field round-trips correctly."""
+        sw = make_secondary_dict(name="Rocket A", subtype="rocket", damage=200, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].subtype == "rocket"
+
+    def test_rounds_maps_to_ammo(self):
+        """'rounds' field maps to WeaponStats.ammo."""
+        sw = make_secondary_dict(name="Missile B", subtype="missile", damage=200, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].ammo == 5
+
+    def test_rounds_floored_at_1(self):
+        """rounds=0 is floored to 1 so the weapon always fires at least once."""
+        sw = make_secondary_dict(name="Missile B", subtype="missile", damage=200, rounds=0)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].ammo >= 1
+
+    def test_burst_count_round_trips(self):
+        """burst_count field round-trips correctly."""
+        sw = make_secondary_dict(name="Cluster", subtype="cluster-missile", damage=150, burst_count=4, rounds=3)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].burst_count == 4
+
+    def test_emp_damage_round_trips(self):
+        """emp_damage field round-trips correctly."""
+        sw = make_secondary_dict(name="EMP Weapon", subtype="missile", damage=100, emp_damage=50, rounds=2)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].emp_damage == 50
+
+    def test_magnitude_m_round_trips(self):
+        """magnitude_m field round-trips correctly (nuke blast radius)."""
+        sw = make_secondary_dict(name="Nuke X", subtype="nuke", damage=800, magnitude_m=500.0, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].magnitude_m == pytest.approx(500.0)
+
+    def test_steerable_round_trips(self):
+        """steerable field round-trips correctly."""
+        sw = make_secondary_dict(name="Steerable Nuke", subtype="nuke", damage=800, steerable=True, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].steerable is True
+
+    def test_loading_speed_ms_round_trips(self):
+        """loading_speed_ms field round-trips correctly."""
+        sw = make_secondary_dict(name="Slow Nuke", subtype="nuke", damage=800, loading_speed_ms=4500, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].loading_speed_ms == 4500
+
+    def test_range_m_round_trips(self):
+        """range_m field round-trips correctly."""
+        sw = make_secondary_dict(name="Short Rocket", subtype="rocket", damage=200, range_m=1500.0, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert loadout.secondary_weapons[0].range_m == pytest.approx(1500.0)
+
+    def test_multiple_secondaries_all_round_trip(self):
+        """Multiple secondaries all produce distinct WeaponStats entries."""
+        sw1 = make_secondary_dict(name="Nuke X", subtype="nuke", damage=800, rounds=1)
+        sw2 = make_secondary_dict(name="Rocket A", subtype="rocket", damage=200, rounds=5)
+        sw3 = make_secondary_dict(name="Missile B", subtype="missile", damage=300, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw1, sw2, sw3]))
+        assert len(loadout.secondary_weapons) == 3
+        names = [sw.name for sw in loadout.secondary_weapons]
+        assert "Nuke X" in names
+        assert "Rocket A" in names
+        assert "Missile B" in names
+
+    def test_existing_weapons_turrets_unaffected_by_secondaries(self):
+        """Adding secondaries does not affect primary weapons or turrets in the loadout."""
+        weapon = {"name": "Rail Gun", "dps": 30.0, "emoji": None, "value": 5000}
+        sw = make_secondary_dict(name="Nuke X", subtype="nuke", damage=800, rounds=1)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(weapons=[weapon], secondaries=[sw]))
+        assert len(loadout.weapons) == 1
+        assert loadout.weapons[0].name == "Rail Gun"
+        assert len(loadout.secondary_weapons) == 1
+        assert loadout.secondary_weapons[0].name == "Nuke X"
+
+    def test_secondary_dps_preserved_in_weapon_stats(self):
+        """Secondary dps field is preserved in the WeaponStats object."""
+        sw = make_secondary_dict(name="Damage Missile", subtype="missile", dps=5.0, damage=200, rounds=5)
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship(secondaries=[sw]))
+        assert len(loadout.secondary_weapons) == 1
+        assert loadout.secondary_weapons[0].dps == pytest.approx(5.0)
+
+
+# ---------------------------------------------------------------------------
+# FIX 1 — RepairBotModule HPps → pct mapping (_module_stats_from_extra)
+# ---------------------------------------------------------------------------
+
+
+class TestRepairBotModuleMapping:
+    """_module_stats_from_extra maps seed HPps to locked pct constants for RepairBotModules."""
+
+    def _make_extra(self, hpps: int) -> dict:
+        """Build an outer extra_atts dict matching the DB nesting pattern."""
+        return {"extra_atts": {"HPps": hpps}}
+
+    def test_hpps_7_maps_to_ketar_i(self):
+        """HPps=7 (id122 Ketar I) → KETAR_I_REPAIR_PCT_PER_SEC."""
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Ketar Repair Bot", self._make_extra(7), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)
+
+    def test_hpps_15_maps_to_ketar_ii(self):
+        """HPps=15 (id129 Ketar II) → KETAR_II_REPAIR_PCT_PER_SEC."""
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Ketar Repair Bot II", self._make_extra(15), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_II_REPAIR_PCT_PER_SEC)
+
+    def test_hpps_99_maps_to_ketar_ii(self):
+        """HPps=99 (any future high-value bot) → KETAR_II_REPAIR_PCT_PER_SEC (>=15 path)."""
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Future Repair Bot", self._make_extra(99), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_II_REPAIR_PCT_PER_SEC)
+
+    def test_hpps_0_maps_to_ketar_i(self):
+        """HPps=0 (unknown/missing) → KETAR_I_REPAIR_PCT_PER_SEC (safe base default, never 0.0)."""
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Unknown Bot", self._make_extra(0), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)
+
+    def test_explicit_repair_pct_per_sec_wins(self):
+        """repair_pct_per_sec in inner extra_atts overrides HPps threshold logic."""
+        explicit_rate = 0.075
+        extra = {"extra_atts": {"HPps": 7, "repair_pct_per_sec": explicit_rate}}
+        stats = _module_stats_from_extra("Custom Bot", extra, module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(explicit_rate)
+
+    def test_non_repair_bot_module_unaffected(self):
+        """Non-RepairBotModule with HPps in extra is NOT mapped to pct constants."""
+        # HPps present but module_type != RepairBotModule → repair_rate stays 0.0 (generic path)
+        extra = {"extra_atts": {"HPps": 7}}
+        stats = _module_stats_from_extra("Some Other Module", extra, module_type="CloakModule")
+        assert stats.repair_rate == pytest.approx(0.0)
+
+    def test_explicit_zero_repair_pct_honored(self):
+        """An explicit repair_pct_per_sec of 0.0 is honored (NOT treated as absent).
+
+        Guards the `is not None` precedence: a seed author who writes 0.0 means
+        "no regen", which must win over the HPps fallback (here HPps=99 would
+        otherwise map to the II rate).
+        """
+        extra = {"extra_atts": {"HPps": 99, "repair_pct_per_sec": 0.0}}
+        stats = _module_stats_from_extra("Deliberately Inert Bot", extra, module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(0.0)
+
+    def test_detected_by_subclass_not_name(self):
+        """Detection keys on module_type, NOT the item name (the original bug was name-matching).
+
+        A RepairBotModule whose name contains no "Ketar"/"Repair" token still gets
+        a regen rate purely from its subclass.
+        """
+        from services.game_constants import GameConstants
+
+        stats = _module_stats_from_extra("Zzz Gadget 9000", self._make_extra(7), module_type="RepairBotModule")
+        assert stats.repair_rate == pytest.approx(GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)

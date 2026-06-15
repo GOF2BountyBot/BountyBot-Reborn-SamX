@@ -52,5 +52,8 @@
     "/app/data/game-objects/items/ships/Midorian/Cicero.bbship/ship_020_midorian_normal_specular.png",
     "/app/data/game-objects/items/ships/Midorian/Cicero.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Midorian/Cicero.bbship/ship_020_midorian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Cicero.bbship/ship_020_midorian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 41580
+  }
 }

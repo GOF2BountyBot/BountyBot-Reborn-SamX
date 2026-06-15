@@ -674,12 +674,12 @@ class TestOrchestratorCapacityWithQueued:
     async def test_skips_tier_when_active_plus_queued_covers_max(self, sqlite_engine_and_factory):
         """Tier with active_count=2 and queued_count=1 against max=3 → capacity_full.
 
-        The orchestrator queries the ``apscheduler_jobs`` table directly for the
-        queued count.  We create that table manually (it is not part of the ORM
-        models) and insert one row matching the naming pattern for the bronze
-        tier to verify the combined accounting is correct.
+        The orchestrator now reads already-queued jobs via the APScheduler API
+        (``get_scheduler().get_jobs()``) rather than raw SQL on apscheduler_jobs.
+        We inject one matching job into a mock scheduler to simulate the queued
+        count without touching the DB at all.
 
-        # 1 mock — db_manager bridge (Tier B)
+        # 2 mocks — db_manager bridge (Tier B) + scheduler holder (APScheduler API)
         """
         _engine, factory = sqlite_engine_and_factory
 
@@ -697,24 +697,22 @@ class TestOrchestratorCapacityWithQueued:
             for i in range(ACTIVE):
                 await _seed_active_bounty(seed_db, GUILD_ID, DIVISION, f"Criminal-{i}")
 
-            # Create the apscheduler_jobs table and insert a fake queued job row.
-            # The orchestrator now reads next_run_time too (Fix C, gap-aware
-            # scheduling) so the schema must include it.
-            await seed_db.execute(
-                text("CREATE TABLE IF NOT EXISTS apscheduler_jobs (id TEXT PRIMARY KEY, next_run_time REAL)")
+        # Build a mock scheduler with one queued job matching the bronze prefix.
+        # next_run_time is UTC-aware (mirroring what APScheduler returns for a
+        # date-trigger job scheduled with a UTC-aware run_date).
+        mock_jobs = [
+            SimpleNamespace(
+                id=f"bounty_spawn_{GUILD_ID}_{DIVISION}_fake-uuid-0",
+                next_run_time=datetime.now(UTC) + timedelta(minutes=10),
             )
-            # Seed an arbitrary future fire time — value doesn't affect this
-            # test (capacity gate is hit before the fire-time computation).
-            fake_fire = datetime.now(UTC).timestamp() + 600.0
-            for j in range(QUEUED_JOBS):
-                await seed_db.execute(
-                    text("INSERT INTO apscheduler_jobs (id, next_run_time) VALUES (:id, :nrt)"),
-                    {"id": f"bounty_spawn_{GUILD_ID}_{DIVISION}_fake-uuid-{j}", "nrt": fake_fire},
-                )
-            await seed_db.commit()
+            for _ in range(QUEUED_JOBS)
+        ]
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs = MagicMock(return_value=mock_jobs)
 
         with (
             patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler),
             respx.mock(assert_all_called=False),
         ):
             result = await execute_bounty_spawn_orchestrate_job("test-job-id", {})
@@ -873,17 +871,30 @@ class TestSpawnOneCapacityReached:
 
 
 class TestOrchestratorSchedulesJobs:
-    """Backlog item #6: orchestrator schedules one-time jobs via HTTP POST to /jobs."""
+    """Backlog item #6: orchestrator schedules one-time jobs via direct scheduler.add_job (P6-T8).
 
-    async def test_post_body_contains_required_fields(self, sqlite_engine_and_factory):
-        """POST to /jobs contains run_at (ISO), payload.job_type, payload.guild_id, payload.tier.
+    P6-T8: The self-HTTP /jobs loopback has been replaced with a direct in-process
+    scheduler.add_job call.  These tests verify the same job-spec invariants
+    (trigger type, run_date, args, id) via the scheduler mock, not HTTP.
+    """
 
-        # 1 mock — db_manager bridge (Tier B + C)
+    async def test_add_job_called_with_required_fields(self, sqlite_engine_and_factory):
+        """Direct scheduler.add_job called with correct trigger/run_date/args/id.
+
+        Verifies:
+          - trigger == "date"
+          - run_date is a future UTC datetime
+          - args == [spawn_job_id, payload] where payload has job_type/guild_id/tier
+          - id matches the bounty_spawn_{gid}_{tier}_{uuid} pattern
+          - No HTTP call to /jobs (no loopback)
+
+        # 1 mock — db_manager bridge (Tier B)
+        # + scheduler_holder mock (Tier B — same class, no HTTP involved)
         """
         _engine, factory = sqlite_engine_and_factory
 
         async with factory() as seed_db:
-            # Only enable bronze; others are 0 to limit HTTP calls.
+            # Only enable bronze; others are 0 to limit scheduling calls.
             await _seed_full_config(
                 seed_db,
                 GUILD_ID,
@@ -892,44 +903,71 @@ class TestOrchestratorSchedulesJobs:
             # apscheduler_jobs table required by queued-count query for bronze tier.
             await _create_apscheduler_table(seed_db)
 
+        # Capture what add_job is called with.
+        add_job_calls: list[dict] = []
+
+        def _capture_add_job(func, trigger=None, run_date=None, args=None, id=None, **kwargs):
+            add_job_calls.append({"trigger": trigger, "run_date": run_date, "args": args, "id": id})
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs = MagicMock(return_value=[])
+        mock_scheduler.add_job = MagicMock(side_effect=_capture_add_job)
+
         with (
             patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
-            respx.mock(assert_all_called=False) as router,
+            patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler),
+            respx.mock(assert_all_called=False),
         ):
-            jobs_route = router.post(SELF_JOBS_URL).respond(200, json={"data": {"id": "j1"}})
             result = await execute_bounty_spawn_orchestrate_job("test-job-id", {})
 
         assert result["status"] == "success"
 
-        # Exactly one POST should have been made (bronze only, others disabled).
-        assert jobs_route.called, "Expected a POST to the scheduler jobs endpoint"
-        request_body = jobs_route.calls.last.request
-        import json as _json
+        # Exactly one add_job call (bronze only, others disabled).
+        assert len(add_job_calls) == 1, f"Expected 1 direct add_job call (bronze only), got {len(add_job_calls)}"
+        import re as _re
 
-        body = _json.loads(request_body.content)
+        call = add_job_calls[0]
 
-        # Assert on real computed values in the request body.
-        assert "run_at" in body, "POST body must contain run_at"
-        # Verify run_at is a parseable ISO timestamp.
-        run_at_dt = datetime.fromisoformat(body["run_at"])
+        # Trigger must be "date" (one-time job).
+        assert call["trigger"] == "date", f"Expected trigger='date', got {call['trigger']!r}"
+
+        # run_date must be a future UTC datetime.
+        assert isinstance(call["run_date"], datetime), f"run_date must be a datetime, got {type(call['run_date'])}"
         now = datetime.now(UTC)
-        assert run_at_dt > now, f"run_at must be in the future; got {body['run_at']!r}"
+        assert call["run_date"] > now, f"run_date must be in the future; got {call['run_date']!r}"
 
-        inner_payload = body.get("payload", {})
+        # args must be [job_id_str, payload_dict].
+        args = call["args"]
+        assert isinstance(args, list) and len(args) == 2, f"args must be [job_id, payload], got {args!r}"
+        inner_payload = args[1]
         assert inner_payload.get("job_type") == "bounty_spawn_one", (
             f"payload.job_type must be 'bounty_spawn_one', got {inner_payload!r}"
         )
         assert inner_payload.get("guild_id") == GUILD_ID
         assert inner_payload.get("tier") == "bronze"
 
+        # id must match the bounty_spawn_{gid}_{tier}_{uuid} pattern.
+        jid = call["id"]
+        pattern = _re.compile(rf"^bounty_spawn_{GUILD_ID}_bronze_[0-9a-f\-]{{36}}$")
+        assert pattern.match(jid), (
+            f"add_job id={jid!r} does not match expected bounty_spawn_{GUILD_ID}_bronze_<uuid> pattern"
+        )
+
+        # No HTTP loopback: the /jobs endpoint is NOT called.
+        assert not respx.calls, "No HTTP calls to /jobs should be made (P6-T8: direct add_job)"
+
 
 class TestOrchestratorContinuesOnScheduleFailure:
-    """Backlog item #7: orchestrator continues across tiers when one schedule call fails."""
+    """Backlog item #7: orchestrator continues across tiers when one add_job call fails (P6-T8)."""
 
     async def test_schedule_failure_one_tier_does_not_block_others(self, sqlite_engine_and_factory):
-        """503 on bronze's schedule call → silver and gold still attempted.
+        """add_job raises for bronze → silver still attempted and queued.
 
-        # 1 mock — db_manager bridge (Tier B + C)
+        P6-T8: scheduling is direct in-process; failure is simulated by having
+        the mock scheduler's add_job raise for bronze but succeed for silver.
+
+        # 1 mock — db_manager bridge (Tier B)
+        # + scheduler_holder mock (Tier B — replaces HTTP Tier C)
         """
         _engine, factory = sqlite_engine_and_factory
 
@@ -942,36 +980,30 @@ class TestOrchestratorContinuesOnScheduleFailure:
             # apscheduler_jobs table required by queued-count query.
             await _create_apscheduler_table(seed_db)
 
-        # Track which calls succeed vs. fail.
-        bronze_call_count = 0
-        silver_call_count = 0
+        # Track which tiers were attempted and which failed.
+        bronze_attempt_count = 0
+        silver_attempt_count = 0
 
-        def _job_handler(request):
-            import json as _json
-
-            body = _json.loads(request.content)
-            inner = body.get("payload", {})
-            tier = inner.get("tier", "")
-            nonlocal bronze_call_count, silver_call_count
+        def _add_job_handler(func, trigger=None, run_date=None, args=None, id=None, **kwargs):
+            # Extract tier from args[1] payload.
+            tier = (args[1] if args and len(args) >= 2 else {}).get("tier", "")
+            nonlocal bronze_attempt_count, silver_attempt_count
             if tier == "bronze":
-                bronze_call_count += 1
-                import httpx as _httpx
-
-                return _httpx.Response(503)
+                bronze_attempt_count += 1
+                raise RuntimeError("scheduler busy for bronze")
             elif tier == "silver":
-                silver_call_count += 1
-                import httpx as _httpx
+                silver_attempt_count += 1
+                return None  # success
 
-                return _httpx.Response(200, json={"data": {"id": "j-silver"}})
-            import httpx as _httpx
-
-            return _httpx.Response(200, json={"data": {"id": "j-other"}})
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs = MagicMock(return_value=[])
+        mock_scheduler.add_job = MagicMock(side_effect=_add_job_handler)
 
         with (
             patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
-            respx.mock(assert_all_called=False) as router,
+            patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler),
+            respx.mock(assert_all_called=False),
         ):
-            router.post(SELF_JOBS_URL).mock(side_effect=_job_handler)
             result = await execute_bounty_spawn_orchestrate_job("test-job-id", {})
 
         assert result["status"] == "success"
@@ -982,13 +1014,16 @@ class TestOrchestratorContinuesOnScheduleFailure:
         bronze = tiers.get("bronze", {})
         assert bronze.get("reason") == "schedule_error", f"Expected schedule_error for bronze, got {bronze!r}"
 
-        # Silver succeeded → queued=1 (HTTP call was made and returned 200).
+        # Silver succeeded → queued=1.
         silver = tiers.get("silver", {})
         assert silver.get("queued") == 1, f"Expected queued=1 for silver, got {silver!r}"
 
-        # Both HTTP calls were made — orchestrator did NOT stop after the bronze failure.
-        assert bronze_call_count == 1, "Bronze schedule should have been attempted"
-        assert silver_call_count == 1, "Silver schedule should have been attempted despite bronze failure"
+        # Both tiers were attempted — orchestrator did NOT stop after the bronze failure.
+        assert bronze_attempt_count == 1, "Bronze schedule should have been attempted"
+        assert silver_attempt_count == 1, "Silver schedule should have been attempted despite bronze failure"
+
+        # No HTTP loopback to /jobs.
+        assert not respx.calls, "No HTTP calls should be made (P6-T8: direct add_job)"
 
 
 class TestSpawnOneHappyPath:

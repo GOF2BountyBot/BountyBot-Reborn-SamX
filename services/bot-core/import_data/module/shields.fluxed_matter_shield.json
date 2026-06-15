@@ -11,6 +11,10 @@
   "shield": 220,
   "techLevel": 10,
   "type": "ShieldModule",
-  "value": 101914,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Fluxed_Matter_Shield"
+  "value": 92932,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Fluxed_Matter_Shield",
+  "extra_atts": {
+    "shield_capacity": 220,
+    "shield_recharge_ms": 60000
+  }
 }

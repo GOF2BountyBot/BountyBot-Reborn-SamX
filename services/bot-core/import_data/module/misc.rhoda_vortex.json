@@ -10,6 +10,10 @@
   "name": "Rhoda Vortex",
   "techLevel": 9,
   "type": "TimeExtenderModule",
-  "value": 370064,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Rhoda_Vortex"
+  "value": 357105,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Rhoda_Vortex",
+  "extra_atts": {
+    "duration_ms": 15000,
+    "loading_speed_ms": 30000
+  }
 }

@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Groza.bbship/ship_022_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Groza.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Groza.bbship/ship_022_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Groza.bbship/ship_022_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 201280,
+    "mechanics_text": "## In-Game Description\n“The Groza may not look like much, but it is a well-equipped and very dangerous ship. The large cargo space makes it a common choice among trigger-happy traders.”\n\n## Notes\nA better, modified version of this ship, the Groza MK II, can be acquired from the Kaamo Club.\n\n## Trivia\n*\"Groza\" (Гроза) means \"Thunderstorm\" in Russian language.\n*\"Groza\" means \"Terror\" in Polish language.\n*The Groza MK II is a modified version of this ship that is better. However It can only be bought at the Kaamo Club.\n*The Groza is one of only six ships that appear in both GoF2 and GoF3.\n*The Groza is the Terran's Mk II Fighter in Galaxy on Fire Alliances."
+  }
 }

@@ -5,12 +5,21 @@
     "GL 1"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 2,
   "icon": "https://i.postimg.cc/2SyF29fh/emp-gl-i.png",
-  "loading speed": 0,
+  "loading speed": 6000,
   "name": "EMP GL I",
-  "value": 0,
+  "value": 68,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "emp_bombs"
+  "techLevel": 4,
+  "extra_atts": {
+    "loading_speed_ms": 6000,
+    "range_m": 2900,
+    "speed_km_h": 1750,
+    "subtype": "emp-bomb",
+    "steerable": false,
+    "magnitude_m": 11000,
+    "emp_damage": 80
+  }
 }

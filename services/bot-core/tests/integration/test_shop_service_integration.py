@@ -198,6 +198,7 @@ async def _seed_player_ship(
 # sell_item calls:
 #   - inventory_repo.get_player_items_by_name  (reads player_inventories)
 #   - _get_item_base_price                     (needs Ship/Item repos — ARRAY tables → mock)
+#   - _get_item_tech_level                     (same catalog tables → mock)
 #   - player_repo.get_by_id_for_update         (reads players)
 #   - inventory_repo.remove_item               (commit=False)
 #   - player_repo.update_credits               (commit=False)
@@ -227,9 +228,12 @@ class TestSellItemIntegration:
                 player_id = player.id
                 await _seed_inventory_item(session_a, player_id, "module", "E2 Exoclad", quantity=2)
 
-                # 1 mock — _get_item_base_price: Ship/Item tables have ARRAY columns
+                # 2 mocks — _get_item_base_price + _get_item_tech_level: Ship/Item tables have ARRAY columns
                 # (cannot be seeded in SQLite — see AGENTS.md §SQLite Compatibility)
-                with patch.object(service, "_get_item_base_price", new=AsyncMock(return_value=500)):
+                with (
+                    patch.object(service, "_get_item_base_price", new=AsyncMock(return_value=500)),
+                    patch.object(service, "_get_item_tech_level", new=AsyncMock(return_value=2)),
+                ):
                     result = await service.sell_item(session_a, player_id=player_id, item_name="E2 Exoclad", quantity=1)
                     await session_a.commit()
 
@@ -256,8 +260,11 @@ class TestSellItemIntegration:
                 player_id = player.id
                 await _seed_inventory_item(session_a, player_id, "module", "Telta Quickscan", quantity=3)
 
-                # 1 mock — _get_item_base_price: ARRAY-column tables unavailable in SQLite
-                with patch.object(service, "_get_item_base_price", new=AsyncMock(return_value=200)):
+                # 2 mocks — _get_item_base_price + _get_item_tech_level: ARRAY-column tables unavailable in SQLite
+                with (
+                    patch.object(service, "_get_item_base_price", new=AsyncMock(return_value=200)),
+                    patch.object(service, "_get_item_tech_level", new=AsyncMock(return_value=2)),
+                ):
                     await service.sell_item(session_a, player_id=player_id, item_name="Telta Quickscan", quantity=2)
                     await session_a.commit()
 
@@ -291,8 +298,11 @@ class TestSellItemIntegration:
                 player_id = player.id
                 await _seed_inventory_item(session_a, player_id, "primary_weapon", "Nirai Impulse EX 1", quantity=1)
 
-                # 1 mock — _get_item_base_price: ARRAY-column tables unavailable in SQLite
-                with patch.object(service, "_get_item_base_price", new=AsyncMock(return_value=1000)):
+                # 2 mocks — _get_item_base_price + _get_item_tech_level: ARRAY-column tables unavailable in SQLite
+                with (
+                    patch.object(service, "_get_item_base_price", new=AsyncMock(return_value=1000)),
+                    patch.object(service, "_get_item_tech_level", new=AsyncMock(return_value=2)),
+                ):
                     await service.sell_item(session_a, player_id=player_id, item_name="Nirai Impulse EX 1", quantity=1)
                     await session_a.commit()
 
@@ -330,8 +340,11 @@ class TestSellItemIntegration:
                 player_id = player.id
                 await _seed_inventory_item(session_a, player_id, "module", "Shield Booster", quantity=1)
 
-                # 1 mock — _get_item_base_price: ARRAY-column tables unavailable in SQLite
-                with patch.object(service, "_get_item_base_price", new=AsyncMock(return_value=750)):
+                # 2 mocks — _get_item_base_price + _get_item_tech_level: ARRAY-column tables unavailable in SQLite
+                with (
+                    patch.object(service, "_get_item_base_price", new=AsyncMock(return_value=750)),
+                    patch.object(service, "_get_item_tech_level", new=AsyncMock(return_value=2)),
+                ):
                     await service.sell_item(session_a, player_id=player_id, item_name="Shield Booster", quantity=1)
                     await session_a.commit()
 

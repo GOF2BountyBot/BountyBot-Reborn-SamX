@@ -1,5 +1,7 @@
 """Service-specific fixtures for bot-core tests."""
 
+import contextlib
+import importlib.util
 import os
 import sys
 import types
@@ -13,7 +15,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 # Add the src directory to the path so imports work
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+_SRC_ROOT = os.path.join(os.path.dirname(__file__), "..", "src")
+sys.path.insert(0, _SRC_ROOT)
 # Add the tests directory to the path so test helpers (e.g. conftest) are importable
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -41,6 +44,73 @@ _mock_shared.bblogger = _mock_bblogger
 
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
+
+# Load the real shared.http_retry from src/ so executor imports can resolve it.
+# conftest installs a flat mock 'shared' (not a real package), so we must load
+# http_retry directly from the filesystem and register it in sys.modules.
+_http_retry_path = os.path.join(_SRC_ROOT, "shared", "http_retry.py")
+if os.path.exists(_http_retry_path) and "shared.http_retry" not in sys.modules:
+    _spec = importlib.util.spec_from_file_location("shared.http_retry", _http_retry_path)
+    _http_retry_mod = importlib.util.module_from_spec(_spec)
+    sys.modules["shared.http_retry"] = _http_retry_mod
+    _spec.loader.exec_module(_http_retry_mod)
+
+
+# Register the `real_push` marker so pytest does not warn about it.
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_push: opt out of the autouse gateway-push stubs; for tests that "
+        "actually exercise utils.executors.*._push_* or api.routers.duels._push_*.",
+    )
+
+
+# Targets stubbed by the autouse fixture below. Each entry is a fully-qualified
+# import path. The push helpers all do `async with httpx.AsyncClient() as c:`
+# against http://discord-gateway:7999/... — that host does not resolve in the
+# test environment, so each call hangs on a ~4s DNS-resolution timeout. Test
+# files in tests/api/ and tests/test_shop_refresh_executor.py do not stub them,
+# and several tests fire 4-8 such calls per test, accounting for ~85% of total
+# suite runtime as of 2026-06-02. Stub at the helper boundary (cheaper than
+# patching httpx itself; respx-based tests still work for non-stubbed paths).
+_PUSH_STUB_TARGETS = (
+    "utils.executors.shop_refresh_executor._push_shop_cache",
+    "utils.executors.bounty_spawn_executor._push_bounty_cache",
+    "utils.executors.bounty_expire_executor._push_bounty_cache_expire",
+    "api.routers.duels._push_duel_cache",
+    "api.routers.duels._push_duel_caches_for_players",
+    "services.bounty_service.BountyService._push_bounty_cache_after_capture",
+)
+
+
+@pytest.fixture(autouse=True)
+def _stub_gateway_push_helpers(request):
+    """Stub bot-core push-to-gateway helpers to avoid DNS-timeout cost.
+
+    Tests asserting real push behavior must be decorated with
+    @pytest.mark.real_push (see tests/test_executor_push_phase5b.py).
+    """
+    if request.node.get_closest_marker("real_push"):
+        yield
+        return
+
+    from unittest.mock import patch as _patch
+
+    started = []
+    for target in _PUSH_STUB_TARGETS:
+        try:
+            p = _patch(target, new=AsyncMock())
+            p.start()
+            started.append(p)
+        except (AttributeError, ModuleNotFoundError, ImportError):
+            # Target's module not importable in this test's context — skip silently.
+            pass
+    try:
+        yield
+    finally:
+        for p in started:
+            with contextlib.suppress(RuntimeError):
+                p.stop()
 
 
 @pytest.fixture
@@ -146,6 +216,8 @@ def make_mock_player(**overrides):
         guild_transfer_cooldown=None,
         classic_mode=False,
         bounty_cooldown_end=None,
+        bounty_notifications_enabled=True,
+        shop_notifications_enabled=True,
         created_at=datetime(2026, 1, 1),
         updated_at=datetime(2026, 1, 1),
     )

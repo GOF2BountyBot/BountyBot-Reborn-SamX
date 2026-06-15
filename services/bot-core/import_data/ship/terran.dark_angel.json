@@ -54,5 +54,9 @@
     "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 3613500,
+    "mechanics_text": "## Notes\nThe Dark Angel is the new ship brought by Fishlabs in GOF2. This ship was originally planned to appear in Supernova add-on as one of Most Wanted criminals' ships, but it was cut being considered bland and unimagined. Design-wise, the Dark Angel’s biggest characteristic is the unorthodox shape of its airfoils, which is a little reminiscent of the wings of an angel; hence the name of the ship. It’s also due to this advanced shaping that the Dark Angel is surprisingly swift and agile despite its heavy armor and massive plating. It can be found in Terran territory, mostly in the Aquila System or in the Union system (Android).\n\n## Trivia\n*The Dark Angel is the best Terran ship for fighting in the base game.\n*The Dark Angel differs from the default Terran paint-job, which is a gray ship with yellow markings on it, due to the fact that it was an incomplete prototype.\n*The wings of the Dark Angel are similar to those of the Ghost. It's backstory is also similar, both being abandoned in prototype stage.\n*This ship is never used by NPCs.\n*The Dark Angel resembles a real military gunship. However, Its weapons are aimed at the front instead of its side.\n*Despite the description, Davilion is very active in GOF3, which is set after GOF2."
+  }
 }

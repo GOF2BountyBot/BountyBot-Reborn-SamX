@@ -40,6 +40,7 @@ from api.schemas.admin_schema import (
     UpdatePlayerXPRequest,
     UpdateShopConfigRequest,
 )
+from api.schemas.shops_schema import serialize_refresh_response
 
 flogger = bblogger.get_logger("admin-api-router")
 
@@ -300,7 +301,11 @@ async def uninstall_bot(
     """
     Completely remove all bot data for a guild.
 
-    WARNING: This is irreversible and removes all player data, configurations, and shops.
+    WARNING: This is irreversible. Removes all player data, configurations,
+    shops, bounty rows, and combat_log rows. ``bounty`` and ``combat_log``
+    are hard-deleted (not status-only), preventing a privacy bug where a
+    re-registering user would see pre-uninstall fight history.
+
     Requires admin permissions (user_id must be in ADMIN_USER_IDS).
     """
     flogger.warning(f"Uninstalling bot from guild {guild_id} - ALL DATA WILL BE LOST")
@@ -382,10 +387,14 @@ async def cleanup_guild_on_remove(
     """
     Soft cleanup invoked by the discord-gateway ``on_guild_remove`` event.
 
-    Removes guild-scoped DB state (``guild_configs``, ``guild_shops``, ``bounty``,
-    ``apscheduler_jobs``, players & cascaded ships/inventory) for a guild the bot
-    has just left. Does NOT touch Discord channels/roles — the bot is already
-    gone from the guild, so Discord side cannot be modified.
+    Removes guild-scoped DB state (``guild_configs``, ``guild_shops``,
+    ``bounty``, ``combat_log``, players & cascaded ships/inventory) for a
+    guild the bot has just left. Does NOT touch Discord channels/roles — the
+    bot is already gone from the guild, so Discord side cannot be modified.
+
+    ``bounty`` and ``combat_log`` rows are **hard-deleted** (not status-only).
+    This prevents a privacy bug where a user who re-registers in the same guild
+    after an uninstall would otherwise see pre-uninstall fight history.
 
     This endpoint is intentionally distinct from ``DELETE /uninstall``:
 
@@ -790,7 +799,7 @@ async def refresh_shop(
             )
 
         response: dict = {
-            **refresh_details,
+            **serialize_refresh_response(refresh_details),
             "message": f"Successfully refreshed {request.tier} shop for guild {request.guild_id}",
         }
         if announcement_warning:
@@ -891,29 +900,10 @@ async def get_guild_statistics(
 
     try:
         async with get_db_session() as db:
-            players = await player_service.player_repo.get_players_by_guild(db, guild_id)
-
-            # Calculate statistics
-            total_players = len(players)
-            tier_counts = {}
-            total_credits = 0
-            total_xp = 0
-
-            for player in players:
-                tier_counts[player.tier] = tier_counts.get(player.tier, 0) + 1
-                total_credits += player.credits
-                total_xp += player.xp
-
-            stats = {
-                "guild_id": guild_id,
-                "total_players": total_players,
-                "tier_distribution": tier_counts,
-                "total_credits": total_credits,
-                "total_xp": total_xp,
-                "average_credits": total_credits / total_players if total_players > 0 else 0,
-                "average_xp": total_xp / total_players if total_players > 0 else 0,
-            }
-
+            # P6-T4: use DB-side aggregates instead of loading all players into
+            # Python and summing there.  Two queries (scalar agg + GROUP BY tier)
+            # replace one full table scan materialised as a Python list.
+            stats = await player_service.player_repo.get_guild_stats(db, guild_id)
             return stats
 
     except Exception as e:

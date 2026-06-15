@@ -9,6 +9,10 @@
   "name": "Nirai Overdrive",
   "techLevel": 5,
   "type": "PrimaryWeaponModModule",
-  "value": 30143,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Overdrive"
+  "value": 26958,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Overdrive",
+  "extra_atts": {
+    "damage_pct": -10.0,
+    "fire_rate_pct": 20.0
+  }
 }

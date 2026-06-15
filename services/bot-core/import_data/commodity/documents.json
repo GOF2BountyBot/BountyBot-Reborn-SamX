@@ -1,0 +1,30 @@
+{
+  "_name": "Documents",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/v8psQk0H/documents.png",
+  "_subcategory": "mission",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Documents",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "2",
+    "Price range": "1,576$",
+    "mission_only": true
+  },
+  "stats": {
+    "tech_level": 2,
+    "price_range_min_credits": 1576,
+    "price_range_min_system": null,
+    "price_range_max_credits": null,
+    "price_range_max_system": null,
+    "value": 1576,
+    "price_source": "single_price"
+  },
+  "in_game_description": "Important-looking documents that are definitely missing.",
+  "mechanics_text": [
+    "Documents can only be purchased when the Stolen Goods freelance mission is active. They can only be found at a certain space station's shop in a specified system. The mission is completed when the documents are found and returned to the station where the mission was given.",
+    "Unlike Secure Containers and Secure Cabins, they can be kept by simply cancelling the mission after purchasing them.",
+    "When scanning a freighter's wreck to find blueprints, your scanner will say '1t Documents' if you haven't hacked into it yet, which are presumably the blueprints. Unlike the standalone Documents item, they take up no space in the cargo hold."
+  ],
+  "wiki_categories": ["Commodities", "Mission-only Commodities", "Tech level 2", "GOF2", "Missions", "Freelance Missions", "GOF2HD"]
+}

@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Inflict.bbship/ship_005_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Inflict.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Inflict.bbship/ship_005_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Inflict.bbship/ship_005_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 30591,
+    "mechanics_text": "## In-Game Description\nThe Terran fleet's most popular fighter. Cheap to manufacture and great looking.\n\n## Trivia\n*The Inflict has a striking resemblance to the Hawk, a Terran ship available in Galaxy on Fire 3D. The Inflict may simply be a later version of the Hawk, like the Zephyr and Razor 6. No such relationship between them is mentioned in the game, however.\n*The design of the Inflict, as well as that of the Hawk and the Phantom all appear to be a nod to the design of the [https://galactica.fandom.com/wiki/Viper Viper] fighter from the Battlestar Galactica TV shows.\n*This is the ship you first get on GoF2 Lite. This is also the starter ship when playing Valkyrie storyline.\n*It is good ship to buy after the Betty.\n*The nose, body and the canopy of the Inflict has a strong resemblance to the X-wing fighter of Star Wars.\n*The Inflict is the Terran's MK I Fighter in Galaxy on Fire: Alliances."
+  }
 }

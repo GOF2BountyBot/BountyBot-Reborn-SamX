@@ -106,17 +106,17 @@ class RenderConfig:
         """
         errors: list[str] = []
 
-        if not (self.min_res_x <= self.default_res_x <= self.max_res_x):
+        if not self.min_res_x <= self.default_res_x <= self.max_res_x:
             errors.append(
                 f"min_res_x ({self.min_res_x}) <= default_res_x ({self.default_res_x}) "
                 f"<= max_res_x ({self.max_res_x}) is violated"
             )
-        if not (self.min_res_y <= self.default_res_y <= self.max_res_y):
+        if not self.min_res_y <= self.default_res_y <= self.max_res_y:
             errors.append(
                 f"min_res_y ({self.min_res_y}) <= default_res_y ({self.default_res_y}) "
                 f"<= max_res_y ({self.max_res_y}) is violated"
             )
-        if not (self.min_samples <= self.default_samples <= self.max_samples):
+        if not self.min_samples <= self.default_samples <= self.max_samples:
             errors.append(
                 f"min_samples ({self.min_samples}) <= default_samples ({self.default_samples}) "
                 f"<= max_samples ({self.max_samples}) is violated"
@@ -221,7 +221,7 @@ class RenderConfigService:
         old_config = self._config.to_dict()
         self.__init__()
         new_config = self._config.to_dict()
-        changes = {k: (old_config[k], new_config[k]) for k in old_config if old_config[k] != new_config[k]}
+        changes = {k: (v, new_config[k]) for k, v in old_config.items() if v != new_config[k]}
         if changes:
             flogger.info(f"Config reset complete: {len(changes)} field(s) changed: {changes}")
         else:

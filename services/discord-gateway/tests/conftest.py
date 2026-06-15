@@ -69,6 +69,39 @@ _REAL_DISCORD_EXT_COMMANDS = _real_discord_ext_commands
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
+def _isolated_module(name: str) -> bool:
+    """Module names that test files evict/replace in sys.modules (the
+    ``_evict_discord_modules`` pattern); restored after every test."""
+    return (
+        name == "discord"
+        or name.startswith("discord.")
+        or name in ("api", "bot", "utils")
+        or name.startswith("api.")
+        or name.startswith("utils.")
+        or name.startswith("cogs.")
+    )
+
+
+@pytest.fixture(autouse=True)
+def _restore_source_modules() -> Generator[None]:
+    """Snapshot the discord/source module cache around every test.
+
+    Many test files evict or replace sys.modules entries (discord, api.*, …)
+    to force themselves a clean import, and most never restore the originals.
+    Whichever file runs next on the same xdist worker then resolves patch
+    targets against freshly re-imported module objects while its own mocks
+    were built against the originals — so identity checks quietly break
+    (e.g. ``except discord.NotFound`` stops catching the mock-raised real
+    NotFound). Restoring the pre-test state after every test makes the files
+    order-independent without touching each evictor.
+    """
+    saved = {k: m for k, m in sys.modules.items() if _isolated_module(k)}
+    yield
+    for k in [k for k in sys.modules if _isolated_module(k)]:
+        del sys.modules[k]
+    sys.modules.update(saved)
+
+
 @pytest.fixture(scope="session")
 def mock_shared_bblogger() -> Generator[None]:
     """Yield and clean up mock shared.bblogger module."""

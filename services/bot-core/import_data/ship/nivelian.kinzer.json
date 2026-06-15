@@ -42,7 +42,7 @@
   "shopSpawnRate": 7.214,
   "skinnable": true,
   "textureRegions": 1,
-  "value": 2128000,
+  "value": 2128100,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Kinzer",
   "assets": [
     "/app/data/game-objects/items/ships/Nivelian/Kinzer.bbship/Kinzer_Full.mtl",
@@ -52,5 +52,9 @@
     "/app/data/game-objects/items/ships/Nivelian/Kinzer.bbship/ship_016_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Kinzer.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Kinzer.bbship/ship_016_nivelian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Kinzer.bbship/ship_016_nivelian_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 1418733,
+    "mechanics_text": "## In-Game Description\nA popular, customizable Nivelian ship, the Kinzer is equipped with the latest technology and can be personalized with a variety of modules.\n\n## Trivia\n*The Kinzer's original design in the Java game was used as the basis for the Aegir in the iOS version.\n*The Kinzer is the Nivelian's heavy rocket ship.\n**This is evident as it has the capabilities of 4 secondaries.\n*The Kinzer RS is a modified version of this ship. It's only sold at the Kaamo Club.\n*The kinzer has an extra thruster compared to the Kinzer RS.\n*The Kinzer is used as Nivelian advanced interceptor in Galaxy on Fire: Alliances"
+  }
 }

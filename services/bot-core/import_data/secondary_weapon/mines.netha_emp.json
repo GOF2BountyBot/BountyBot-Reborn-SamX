@@ -1,16 +1,22 @@
 {
-    "aliases":  [
-                    "Neetha EMP",
-                    "Neétha",
-                    "Neetha"
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "https://i.postimg.cc/y6PpMShF/neetha-emp.png",
-    "loading speed":  0,
-    "name":  "Neétha EMP",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "mines"
+  "aliases": [
+    "Neetha EMP",
+    "Neétha",
+    "Neetha"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/y6PpMShF/neetha-emp.png",
+  "loading speed": 3000,
+  "name": "Neétha EMP",
+  "value": 500,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "techLevel": 3,
+  "extra_atts": {
+    "loading_speed_ms": 3000,
+    "subtype": "mine",
+    "magnitude_m": 1100,
+    "emp_damage": 500
+  }
 }

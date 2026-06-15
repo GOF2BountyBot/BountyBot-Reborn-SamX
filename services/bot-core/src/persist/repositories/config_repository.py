@@ -191,10 +191,12 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "sale_price_factor",
                 "ship_count_range",
                 "weapon_count_range",
+                "secondary_weapon_count_range",
                 "module_count_range",
                 "turret_count_range",
                 "ship_quantity_range",
                 "weapon_quantity_range",
+                "secondary_weapon_quantity_range",
                 "module_quantity_range",
                 "turret_quantity_range",
             ]
@@ -421,12 +423,14 @@ class ConfigRepository(IRepository[GuildConfig]):
                     "item_count_ranges": {
                         "ships": config.ship_count_range,
                         "weapons": config.weapon_count_range,
+                        "secondary_weapons": config.secondary_weapon_count_range,
                         "modules": config.module_count_range,
                         "turrets": config.turret_count_range,
                     },
                     "quantity_ranges": {
                         "ships": config.ship_quantity_range,
                         "weapons": config.weapon_quantity_range,
+                        "secondary_weapons": config.secondary_weapon_quantity_range,
                         "modules": config.module_quantity_range,
                         "turrets": config.turret_quantity_range,
                     },
@@ -461,8 +465,8 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "criminal_max_gear_upgrade": config.criminal_max_gear_upgrade,
                 "bounty_reward_to_xp_gain_mult": config.bounty_reward_to_xp_gain_mult,
                 "bounty_winner_reserve_factor": config.bounty_winner_reserve_factor,
-                "bounty_pvc_armour_buff_factor": config.bounty_pvc_armour_buff_factor,
-                "duel_variance_percent": config.duel_variance_percent,
+                # bounty_pvc_armour_buff_factor retired T10
+                # duel_variance_percent retired T10
                 "duel_cloak_chance": config.duel_cloak_chance,
                 "close_bounty_threshold": config.close_bounty_threshold,
                 "max_route_length": config.max_route_length,

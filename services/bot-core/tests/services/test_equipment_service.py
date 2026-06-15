@@ -145,6 +145,10 @@ def svc() -> EquipmentService:
     service.item_repo = AsyncMock()
     service.module_repo = AsyncMock()
     service.ship_data_repo = AsyncMock()
+    # D5: shared aggregate-root lock repo — mocked clean no-op so the
+    # choke-point's FOR UPDATE lock does not hit the (mocked) db session.
+    service.player_repo = AsyncMock()
+    service.player_repo.get_by_id_for_update = AsyncMock(return_value=None)
 
     # Default: nothing found (tests override what they need)
     service.ship_repo.get_by_id = AsyncMock(return_value=None)
@@ -1048,20 +1052,27 @@ class TestSecondaryWeaponSlotRouting:
     """
 
     @pytest.mark.asyncio
-    async def test_equip_secondary_weapon_rejected_when_gated(self, mock_db, svc):
-        """Default CURRENTLY_ENABLED_TYPES excludes secondary_weapon → InvalidItemTypeError."""
-        from services.exceptions import InvalidItemTypeError
+    async def test_equip_secondary_weapon_not_gated(self, mock_db, svc):
+        """CI-5: secondary_weapon is now in CURRENTLY_ENABLED_TYPES — equip_check proceeds past gate.
+
+        The gate in equipment_service / loadout_consistency_service only fires when
+        secondary_weapon is absent from CURRENTLY_ENABLED_TYPES.  Since CI-5 added it,
+        the gate no longer triggers and equip validation continues normally (inventory check).
+        """
         from services.game_constants import GameConstants
 
-        assert "secondary_weapon" not in GameConstants.CURRENTLY_ENABLED_TYPES
+        assert "secondary_weapon" in GameConstants.CURRENTLY_ENABLED_TYPES
 
         # Item is resolved as SecondaryWeapon via item_repo
         base_item = _make_base_item("Seeker Missile", "SecondaryWeapon")
         svc.item_repo.get_by_name_any_type.return_value = base_item
         player_ship = _make_player_ship(player_id=42, ship_name="Betty")
         svc.ship_repo.get_by_id.return_value = player_ship
+        # Inventory is empty → equip_check returns "slot_full" or raises ValueError on inventory
+        # (not InvalidItemTypeError), confirming the gate is no longer blocking.
+        svc.inventory_repo.get_player_item.return_value = None
 
-        with pytest.raises(InvalidItemTypeError, match="not currently enabled"):
+        with pytest.raises(ValueError, match="not found in your inventory"):
             await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Seeker Missile")
 
     @pytest.mark.asyncio

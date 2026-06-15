@@ -1,17 +1,21 @@
 {
-    "aliases": [
-        "Gunant's",
-        "Gunants",
-        "Gunants Drill"
-    ],
-    "builtIn": false,
-    "emoji": "<:gunantsdrill:723706605572718612>",
-    "drillHandling": 2,
-    "icon": "https://i.postimg.cc/PqJk2j6h/gunant-s-drill.png",
-    "name": "Gunant's Drill",
-    "oreYield": 2,
-    "techLevel": 10,
-    "type": "MiningDrillModule",
-    "value": 209353,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Gunant%27s_Drill"
+  "aliases": [
+    "Gunant's",
+    "Gunants",
+    "Gunants Drill"
+  ],
+  "builtIn": false,
+  "emoji": "<:gunantsdrill:723706605572718612>",
+  "drillHandling": 2,
+  "icon": "https://i.postimg.cc/PqJk2j6h/gunant-s-drill.png",
+  "name": "Gunant's Drill",
+  "oreYield": 2,
+  "techLevel": 10,
+  "type": "MiningDrillModule",
+  "value": 184692,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Gunant%27s_Drill",
+  "extra_atts": {
+    "drill_yield_pct": 100,
+    "drill_handling_pct": 100
+  }
 }

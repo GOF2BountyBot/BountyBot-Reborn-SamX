@@ -1,15 +1,21 @@
 {
-    "aliases":  [
-                    "vskorr"
-                ],
-    "builtIn":  false,
-    "dps":  14,
-    "emoji":  "<:vskorr:723709563823718402>",
-    "icon":  "https://i.postimg.cc/WzXn9QYL/v-skorr.png",
-    "name":  "V'skorr",
-    "techLevel":  6,
-    "value":  9528,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/V%27skorr",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blaster_lasers"
+  "aliases": [
+    "vskorr"
+  ],
+  "builtIn": false,
+  "dps": 14,
+  "emoji": "<:vskorr:723709563823718402>",
+  "icon": "https://i.postimg.cc/WzXn9QYL/v-skorr.png",
+  "name": "V'skorr",
+  "techLevel": 6,
+  "value": 8816,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/V%27skorr",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 500,
+    "range_m": 2700,
+    "damage_per_shot": 7,
+    "speed_km_h": 5000,
+    "subtype": "laser"
+  }
 }

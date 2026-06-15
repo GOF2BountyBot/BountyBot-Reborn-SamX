@@ -1,0 +1,32 @@
+{
+  "_name": "Void Essence",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/zfBhJyfh/void-essence.png",
+  "_subcategory": "ore_core",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Void_Essence",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Void Essence",
+    "Type": "Ore core",
+    "Tech Level": "3",
+    "Known Price Range": "-> 4,750$ (V'ikka)\n-> 5,247$ (Aquila)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 4750,
+    "price_range_min_system": "V'Ikka",
+    "price_range_max_credits": 5247,
+    "price_range_max_system": "Aquila",
+    "value": 4999,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "The bright, vibrant core of an asteroid from the Void world. This will definitely fetch a high price on the open market.",
+  "mechanics_text": [
+    "1t required for Disruptor Laser blueprint.",
+    "Highest-priced asteroid core in the base game (tied with Novanium Core).",
+    "One of only two cores (with Novanium Core) that cannot be found at any Hangar unless placed there.",
+    "The only ore core not named 'Core' — it is called 'Void Essence'.",
+    "If you bring Netor more than one Void Crystal, he will only return one for constructing the Disruptor Laser."
+  ],
+  "wiki_categories": ["Core", "Tech level 3", "GOF2", "Trading commodities", "Blueprints", "Minigames", "GOF2HD", "Mining"]
+}

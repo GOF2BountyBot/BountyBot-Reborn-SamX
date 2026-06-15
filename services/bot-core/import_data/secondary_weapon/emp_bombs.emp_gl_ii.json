@@ -5,12 +5,20 @@
     "GL 2"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 2,
   "icon": "https://i.postimg.cc/7ZR1c1xc/emp-gl-ii.png",
-  "loading speed": 0,
+  "loading speed": 6500,
   "name": "EMP GL II",
-  "value": 0,
+  "value": 196,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "emp_bombs"
+  "techLevel": 5,
+  "extra_atts": {
+    "loading_speed_ms": 6500,
+    "range_m": 3600,
+    "speed_km_h": 2000,
+    "subtype": "emp-bomb",
+    "magnitude_m": 15000,
+    "emp_damage": 150
+  }
 }

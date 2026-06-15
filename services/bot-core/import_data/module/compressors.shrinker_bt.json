@@ -10,6 +10,9 @@
   "name": "Shrinker BT",
   "techLevel": 7,
   "type": "CompressorModule",
-  "value": 28571,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Shrinker_BT"
+  "value": 26130,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Shrinker_BT",
+  "extra_atts": {
+    "effect_pct": 75.0
+  }
 }

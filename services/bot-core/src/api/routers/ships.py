@@ -112,6 +112,8 @@ async def get_player_ships(
                     weapons=ship.weapons,
                     modules=ship.modules,
                     turrets=ship.turrets,
+                    secondary_weapons=ship.secondary_weapons,
+                    secondary_ammo=ship.secondary_ammo,
                     created_at=ship.created_at.isoformat(),
                 )
                 for ship in ships
@@ -147,6 +149,8 @@ async def get_ship(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
+                secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -188,6 +192,8 @@ async def create_ship(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
+                secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -222,6 +228,8 @@ async def get_active_ship(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
+                secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -273,6 +281,8 @@ async def set_active_ship(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
+                secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
                 evacuated_items=result["evacuated_items"],
                 any_evacuated=result["any_evacuated"],
@@ -292,12 +302,38 @@ async def update_ship_loadout(
     ship_id: int,
     request: UpdateLoadoutRequest,
     player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
+    player_repo: PlayerRepository = Depends(get_player_repository),
 ):
-    """Update a ship's equipment loadout."""
+    """Update a ship's equipment loadout (admin/maintenance direct JSON overwrite)."""
     flogger.info(f"Updating loadout for ship {ship_id}")
 
     try:
-        async with get_db_session() as db:
+        # D5-T3 (path 19): this admin/maintenance route overwrites the ship's
+        # JSON slot lists directly, bypassing the LoadoutConsistencyService
+        # choke-point. It previously ran with NEITHER a transaction NOR the
+        # aggregate-root lock, so a concurrent equip/unequip on the same player
+        # could interleave and corrupt the owned = cargo + equipped invariant.
+        #
+        # The LOCK is what fixes that: taking the Player row FOR UPDATE FIRST
+        # (lock-ordering rule) serialises this overwrite against any concurrent
+        # same-player loadout mutation. AsyncSession autobegin already holds the
+        # row lock until the session is committed/closed, so db.begin() does NOT
+        # change the lock's duration.
+        #
+        # db.begin() is load-bearing for ATOMICITY: it makes the lock
+        # acquisition and the flush-only (commit=False) loadout overwrite one
+        # explicit unit of work that commits/rolls back together. (Durability is
+        # additionally backstopped by get_db_session's AC-7 auto-commit, but the
+        # transaction-discipline contract requires an explicit boundary — see
+        # test_transaction_discipline.) The ship's immutable player_id is
+        # resolved up front to know which aggregate to lock.
+        async with get_db_session() as db, db.begin():
+            ship = await player_ship_repo.get_by_id(db, ship_id)
+            if not ship:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Ship {ship_id} not found")
+
+            await player_repo.get_by_id_for_update(db, ship.player_id)
+
             # Build loadout update dict
             loadout_updates = {}
             if request.weapons is not None:
@@ -307,7 +343,7 @@ async def update_ship_loadout(
             if request.turrets is not None:
                 loadout_updates["turrets"] = request.turrets
 
-            ship = await player_ship_repo.update_loadout(db, ship_id, loadout_updates)
+            ship = await player_ship_repo.update_loadout(db, ship_id, loadout_updates, commit=False)
 
             return ShipResponse(
                 id=ship.id,
@@ -318,9 +354,13 @@ async def update_ship_loadout(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
+                secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
@@ -352,6 +392,8 @@ async def update_ship_nickname(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
+                secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -437,6 +479,8 @@ async def equip_item(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
+                secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -490,6 +534,8 @@ async def unequip_item(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
+                secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
                 created_at=ship.created_at.isoformat(),
             )
 
@@ -526,9 +572,12 @@ async def get_ship_loadout(
                 weapons=loadout["weapons"],
                 modules=loadout["modules"],
                 turrets=loadout["turrets"],
+                secondary_weapons=loadout["secondary_weapons"],
+                secondary_ammo=loadout["secondary_ammo"],
                 weapons_count=loadout["weapons_count"],
                 modules_count=loadout["modules_count"],
                 turrets_count=loadout["turrets_count"],
+                secondary_weapons_count=loadout["secondary_weapons_count"],
             )
 
     except ValueError as e:
@@ -629,6 +678,17 @@ async def transfer_ship(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Cannot transfer the active ship. Set another ship as active first.",
                 )
+
+            # D5-T2 (lock-ordering rule 2): this transaction mutates BOTH players'
+            # aggregates — the from_player's loadout/inventory (the evacuate mints
+            # cargo) and the to_player's fleet (it gains ship ownership).  Lock both
+            # Player rows FOR UPDATE in ASCENDING player_id order BEFORE the evacuate,
+            # matching transfer_credits' ascending-id pattern so no AB-BA deadlock can
+            # arise with any other multi-player credit/loadout transaction.  The
+            # evacuate choke-point re-locks from_player via ``_lock_player``; that
+            # re-acquire is an intra-transaction no-op.
+            for _pid in sorted({request.from_player_id, request.to_player_id}):
+                await player_repo.get_by_id_for_update(db, _pid)
 
             # Package G (B.19): evacuate items via the LoadoutConsistencyService
             # choke-point (anti-duplication guard prevents legacy phantom-item

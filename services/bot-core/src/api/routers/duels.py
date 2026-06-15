@@ -99,14 +99,16 @@ async def _push_duel_cache(guild_id: int, player_id: int, pending_duels: list, o
             f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache"
             f"/{quote(str(safe_guild), safe='')}/{quote(str(safe_player), safe='')}"
         )
+        from shared.http_retry import with_transient_retry  # deferred — avoids forkserver mock-shared collision
+
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
+            await with_transient_retry(
+                client.post,
                 cache_url,
                 json={"pending_duels": pending_duels, "outgoing_duels": outgoing_duels},
                 headers=headers,
                 timeout=5,
             )
-        resp.raise_for_status()
         flogger.debug(
             f"_push_duel_cache: pushed guild={guild_id} player={player_id} "
             f"pending={len(pending_duels)} outgoing={len(outgoing_duels)}"
@@ -281,7 +283,7 @@ async def accept_duel(
         flogger.info(f"Duel accept request: duel_id={duel_id} user_id={user_id}")
         flogger.debug(f"User {user_id} is accepting duel {duel_id} (authorization check passed)")
         try:
-            result = await service.accept_duel(db, duel_id)
+            result = await service.accept_duel(db, duel_id)  # noqa: TRANSACTION_DISCIPLINE - see CombatLogService
         except ValueError as exc:
             msg = str(exc)
             flogger.error(f"Duel accept failed: duel_id={duel_id} user_id={user_id}: {msg}")
@@ -323,9 +325,33 @@ async def accept_duel(
             target_id=target.id,
         )
 
+        # Extract after-action summary from FightResults metadata (tick-resolver output).
+        # Included as optional fields so existing clients can ignore them; gateway embeds use them.
+        # Guard: only extract when metadata is a real dict (not a MagicMock in tests).
+        _raw_metadata = getattr(fight, "metadata", None)
+        _fight_metadata: dict = _raw_metadata if isinstance(_raw_metadata, dict) else {}
+        _fight_inner_meta: dict = _fight_metadata.get("metadata") or {}
+        _fight_summary: dict = _fight_metadata.get("summary") or {}
+        _tick_ms = int(_fight_inner_meta.get("tick_ms", 10))
+        _duration_ticks = int(_fight_summary.get("duration_ticks", 0))
+        _duration_s = (_duration_ticks * _tick_ms) / 1000.0 if _duration_ticks else None
+
+        # P2-T8a: resolve winner player_id (snowflake) from winner_side — NEVER by name.
+        # winner_side == 1 → challenger (loadout1); winner_side == 2 → target (loadout2).
+        # Stalemate → None.  Names (winner_name, loser_name) remain for presentation only.
+        _winner_side = getattr(fight, "winner_side", None)
+        if fight.is_stalemate or _winner_side is None:
+            _winner_player_id: int | None = None
+        elif _winner_side == 1:
+            _winner_player_id = challenger.id
+        else:
+            _winner_player_id = target.id
+
         return {
             "duel_id": duel_id,
             "is_stalemate": fight.is_stalemate,
+            # P2-T8a: winner reported by immutable player snowflake (not by name)
+            "winner_player_id": _winner_player_id,
             "winner_name": fight.winner_name,
             "loser_name": fight.loser_name,
             "credits_transferred": result["credits_transferred"],
@@ -340,6 +366,13 @@ async def accept_duel(
             "target_credits": target.credits,
             "target_hp": fight.ship2_stats.varied_hp,
             "target_dps": fight.ship2_stats.varied_dps,
+            # After-action summary (from tick-resolver; None when unavailable)
+            "outcome": _fight_summary.get("outcome"),
+            "reason": _fight_summary.get("reason"),
+            "duration_ticks": _duration_ticks or None,
+            "duration_s": _duration_s,
+            "combatants": _fight_summary.get("combatants"),
+            "combat_log_id": getattr(fight, "combat_log_id", None),
         }
 
 

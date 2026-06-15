@@ -1,0 +1,32 @@
+{
+  "_name": "Novanium",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/pdNCrQgj/novanium.png",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Novanium",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Novanium",
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 407$ (Suteo)\n-> 431$ (Wah'norr)",
+    "Loma Price": "451$"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 407,
+    "price_range_min_system": "Suteo",
+    "price_range_max_credits": 431,
+    "price_range_max_system": "Wah'Norr",
+    "value": 419,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "A just recently discovered strangely shimmering ore which cools down rather slowly.",
+  "mechanics_text": [
+    "Only available in the Supernova add-on; can only be mined at Naneroh (closest planet to Ginoya star) — limited time due to gamma radiation.",
+    "After the Supernova storyline, only found at Naneroh; skilled players may mine two or three cores per run.",
+    "30t (100t on extreme mode) ore can be exchanged for 1 Novanium Core at the Mido Mining Plant in Coromesk (Skavac system).",
+    "Used by AMR to manufacture a new series of time-pieces."
+  ],
+  "wiki_categories": ["Ore", "Supernova", "Tech level 1", "Commodities", "GOF2", "Trading commodities", "Gamma Shields", "GOF2HD", "Minigames", "Mining"]
+}

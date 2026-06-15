@@ -2443,38 +2443,41 @@ class TestPlayerShipAutocomplete:
     def test_filters_to_player_ships_when_user_param_available(self, mock_admin_cog):
         """When namespace.user is set and player resolves, only that player's ships are shown.
 
-        Phase 4: resolve_player_id reads from cache. Pre-populate player_cache so
-        the admin function gets player_id=7 and then makes its own HTTP call for ships.
+        Phase 2 (Bucket C): player_ship_autocomplete now REUSES the shared ships_cache
+        (key = (guild, player_id)) instead of a live GET /ships/player/{id} per keystroke.
+        Seed player_cache (→ player_id=7) and ships_cache; assert ZERO HTTP GET for ships.
         """
+        from utils.autocomplete_state import NormalizedChoice
+
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
 
-        # Phase 4: Pre-populate player_cache so resolve_player_id returns player_id=7
         ac = _ac_init_player_cache_for_admin()
         if ac is not None:
             ac.player_cache.set((99, 42), {"id": 7})
+            # Seed the shared ships_cache for (guild=99, player_id=7).
+            from cogs._shared.autocomplete_cache import AutocompleteCache
 
-        # GET /ships/player/7 returns two ships owned by the player (still HTTP in adminCog)
-        ships_resp = MagicMock()
-        ships_resp.status_code = 200
-        ships_resp.json = MagicMock(
-            return_value=[
-                {"ship_name": "Niode", "ship_id": 1},
-                {"ship_name": "Groza", "ship_id": 2},
-            ]
+            if ac.ships_cache is None:
+                ac.ships_cache = AutocompleteCache(name="ships")
+            ac.ships_cache.set(
+                (99, 7),
+                [
+                    NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
+                    NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
+                ],
+            )
+
+        # HTTP GET must NOT be hit — ships come from the shared cache now.
+        mock_admin_cog.http_client.get = AsyncMock(
+            side_effect=AssertionError("HTTP GET must not be called on warm ships_cache path")
         )
-
-        mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
 
         names = [c.name for c in result]
         assert "Niode" in names
         assert "Groza" in names
-        # Should NOT have fetched all-ships fallback (only called player ships endpoint)
-        get_calls = [call[0][0] for call in mock_admin_cog.http_client.get.call_args_list]
-        assert any("ships/player/7" in url for url in get_calls)
-        assert not any("about/ships" in url for url in get_calls)
 
         # Cleanup
         _ac_reset_admin_player_cache()
@@ -2527,25 +2530,31 @@ class TestPlayerShipAutocomplete:
         mock_admin_cog.http_client.get.assert_not_called()
 
     def test_filters_ships_by_current_input(self, mock_admin_cog):
-        """Autocomplete filters results by the current typed prefix (Phase 4: cache-based player)."""
+        """Autocomplete filters results by the current typed prefix (Phase 2: ships_cache reuse)."""
+        from utils.autocomplete_state import NormalizedChoice
+
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
 
-        # Phase 4: Pre-populate player_cache
         ac = _ac_init_player_cache_for_admin()
         if ac is not None:
             ac.player_cache.set((99, 42), {"id": 7})
+            from cogs._shared.autocomplete_cache import AutocompleteCache
 
-        ships_resp = MagicMock()
-        ships_resp.status_code = 200
-        ships_resp.json = MagicMock(
-            return_value=[
-                {"ship_name": "Niode", "ship_id": 1},
-                {"ship_name": "Groza", "ship_id": 2},
-                {"ship_name": "Bloodstar", "ship_id": 3},
-            ]
+            if ac.ships_cache is None:
+                ac.ships_cache = AutocompleteCache(name="ships")
+            ac.ships_cache.set(
+                (99, 7),
+                [
+                    NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
+                    NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
+                    NormalizedChoice(label="Bloodstar", value="3", norm="bloodstar", raw={"ship_name": "Bloodstar"}),
+                ],
+            )
+
+        mock_admin_cog.http_client.get = AsyncMock(
+            side_effect=AssertionError("HTTP GET must not be called on warm ships_cache path")
         )
-        mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, "Ni"))
 
@@ -4339,7 +4348,6 @@ class TestAdminClearBountiesTimeoutAndCancel:
     @pytest.fixture(autouse=True)
     def _use_confirm_view_fixture(self, mock_admin_cog):
         """Keep real ConfirmView for these tests to test timeout/cancel paths."""
-        pass
 
     def test_clear_bounties_not_admin(self, mock_admin_cog):
         """admin_clear_bounties rejects non-admin user before showing confirm view."""
@@ -5109,16 +5117,23 @@ class TestAdminDuelAutocomplete:
         assert len(choices) == 1
         assert choices[0].value == "all"
 
-    def test_admin_duel_autocomplete_error_returns_empty(self, mock_admin_cog):
-        """admin_duel_autocomplete returns empty list on API error."""
+    def test_admin_duel_autocomplete_error_returns_sentinel_only(self, mock_admin_cog):
+        """On a cold cache + backend error, the 'Cancel ALL' sentinel is still returned.
+
+        Phase 2: the sentinel is ALWAYS first (even on a cold/empty cache). When the
+        cold-fill refresh_fn raises, get_with_timeout returns None and the handler
+        returns just the sentinel — never bare []. Admins can still cancel-all.
+        """
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
 
+        mock_admin_cog._admin_pending_duel_cache.invalidate(987654321)
         mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("API down"))
 
         choices = asyncio.run(mock_admin_cog.admin_duel_autocomplete(interaction, ""))
 
-        assert choices == []
+        assert len(choices) == 1
+        assert choices[0].value == "all"
 
     def test_admin_duel_autocomplete_friendly_duel_label(self, mock_admin_cog):
         """admin_duel_autocomplete labels friendly duel without stakes."""

@@ -1,6 +1,6 @@
 # AGENTS.md - services
 
-Business logic layer for bot-core. All 16 service modules live here + 1 normalizer helper. (B.48: division_service.py was removed alongside the level/division progression system.)
+Business logic layer for bot-core. 27 modules live here: 19 service classes, the tick-combat engine and its support modules (`combat_resolver.py`, `combat_models.py`, `combat_balance.py`), pure-function/constants modules (`game_maths.py`, `game_constants.py`), and helpers (`_item_type_normalizer.py`, `_transaction_guards.py`, `exceptions.py`). (B.48: division_service.py was removed alongside the level/division progression system.)
 
 ---
 
@@ -35,7 +35,7 @@ deduction and before the transaction commit.
 
 | Site | File | Notes |
 |------|------|-------|
-| `ShopService.buy_item` | `shop_service.py` | after `player.credits -= total_cost` |
+| `ShopService.purchase_item` | `shop_service.py` | after `player.credits -= total_cost` |
 | `ShopService.purchase_ship` | `shop_service.py` | after `player_repo.update_credits` |
 | `PlayerService.transfer_credits` | `player_service.py` | source side only; target is gaining |
 | `PlayerService.update_player_credits` | `player_service.py` | decrease path only (`new_credits < old_credits`) |
@@ -48,7 +48,87 @@ pattern `from services.duel_service import DuelService` avoids circular imports.
 
 ---
 
-## Inventory & Equipment Data Model — CANONICAL REFERENCE
+## Loadout & Inventory system — CANONICAL REFERENCE
+
+> ### ⚠️ BE CAREFUL — most-broken subsystem in the codebase
+>
+> Loadout ↔ inventory ↔ equip/unequip/sell/buy/transfer is the **single most
+> fragile, most-frequently-regressed area** of bot-core. Phantom items, dropped
+> copies, double-counts, and silent cross-ship duplication have all shipped here
+> before (bug classes B.19, B.34, B.41, B.94/B.95). **Read this entire section
+> before touching any code path that mutates `player_ships.{weapons,modules,
+> turrets,secondary_weapons}` or `player_inventories`.** Preserve the invariants
+> below exactly, route every cross-table mutation through the
+> `LoadoutConsistencyService` choke-point, and test the invariants exhaustively
+> (per-flow, plus a "total owned is conserved" property test). When in doubt,
+> escalate to the architect rather than improvising a new write path.
+
+### Data model
+
+Two tables back the system. **Static** catalog data (the item's stats, tech
+level, slot it occupies) lives in the `item` STI hierarchy and the `ship` table;
+**dynamic** ownership lives in the two tables below.
+
+| Table | Columns of interest | Role |
+|-------|---------------------|------|
+| `player_ships` | `weapons`, `secondary_weapons`, `turrets`, `modules` (all `JSON` list-of-name columns); `ship_name`, `player_id`, `is_active`, `nickname` | **Equipped pool.** Each string entry in a slot list is one equipped copy. Slot caps come from the matching static `ship` row (`max_primaries` → `weapons`, `max_secondaries` → `secondary_weapons`, `max_turrets` → `turrets`, `max_modules` → `modules`). |
+| `player_inventories` | `player_id`, `item_type` (concrete: `ship` / `primary_weapon` / `secondary_weapon` / `turret_weapon` / `module`), `item_name`, `quantity` | **Cargo pool.** One row per `(player_id, item_type, item_name)`; `quantity` is the loose (un-equipped) copy count. Model: `persist/models/player_inventory.py`. |
+
+The relevant maps live in `equipment_service.py` (imported by
+`loadout_consistency_service.py`): `_SLOT_MAP` maps each `equipment_type` to its
+**static ship slot-cap field** (`weapons → max_primaries`,
+`secondary_weapons → max_secondaries`, `turrets → max_turrets`,
+`modules → max_modules`), and `_INVENTORY_TYPE_MAP` maps each `equipment_type` to
+its **concrete inventory `item_type`** (`weapons → primary_weapon`,
+`secondary_weapons → secondary_weapon`, `turrets → turret_weapon`,
+`modules → module`). Note the deliberate naming skew: the JSON slot for primaries
+is `weapons`, its cap field is `max_primaries`, and its inventory `item_type` is
+`primary_weapon`. `VALID_EQUIPMENT_TYPES` = `{weapons, secondary_weapons,
+modules, turrets}`.
+
+> **DB-level uniqueness since CI-18 (2026-06-05).** `player_inventories` now has
+> `UniqueConstraint("player_id", "item_type", "item_name",
+> name="uq_player_inventories_player_item")` — declared in
+> `persist/models/player_inventory.py` and created by migration
+> `0015_ci18_player_inventory_unique.py` (which first merges any pre-existing
+> duplicate rows into the lowest-id row). The "exactly one row per item"
+> property is additionally upheld at the app layer by
+> `InventoryRepository.add_item`, which calls `get_player_item` and increments
+> an existing row instead of inserting a second. New write paths must go
+> through `add_item` — a direct INSERT of a duplicate now raises an
+> IntegrityError instead of silently corrupting counts.
+
+### `secondary_ammo` sidecar — CI-16 (BUILT, 2026-06-03)
+
+Secondary weapons are now consumable (ammo-limited). The chosen storage model is
+a **JSON sidecar column** on `player_ships.secondary_ammo: dict[str, int]`.
+
+**Conservation model (CI-16 canonical):**
+```
+owned(S) = cargo.quantity(S) + Σ_ships secondary_ammo[S]
+```
+The `secondary_weapons` slot-list entry is **pure slot occupancy — NOT a counted
+copy** (deliberate divergence from primaries/turrets/modules where each slot
+entry = 1 copy). `secondary_ammo[name]` = remaining rounds for that equipped
+type. Key invariants:
+
+- **Equip (new type):** whole cargo stack → `secondary_ammo[name]`; one slot
+  entry appended; cargo quantity drops to 0.
+- **Equip (already equipped, top-up):** whole cargo stack → `secondary_ammo[name]`
+  increment; NO new slot entry; cargo quantity drops to 0.
+- **Unequip:** whole remaining `secondary_ammo[name]` → cargo; slot entry removed;
+  `secondary_ammo` key deleted.
+- **Ship transfer (R1):** fitting secondaries move `secondary_ammo[S]` src→dst;
+  overflow secondaries return `secondary_ammo[S]` rounds to cargo.
+- **Evacuate (R2):** each secondary returns `secondary_ammo[S]` rounds to cargo.
+- **Shop buy (equipped):** rounds added to `secondary_ammo[name]`; no cargo add.
+- **Shop buy (not equipped):** rounds added to cargo (normal path).
+- **Post-fight:** resolver decrements `secondary_ammo[S]` per fire trigger;
+  write-back in `_consume_secondary_ammo`; auto-unequip when rounds reach 0.
+- **`ammo=None`:** infinite (back-compat for criminal/legacy paths — no write-back).
+
+SQLAlchemy JSON: **MUST reassign the whole dict**, never mutate in place, or writes
+are silently lost. Migration: `0013_secondary_ammo.py` (`down_revision="0012"`).
 
 ### Two Separate Pools
 
@@ -104,6 +184,89 @@ This prevents equipping when there are no cargo copies left to consume, which wo
 **The guard only runs when a slot is free** — it is skipped when slots are full (the swap path). For swaps: the cog unequips first (returning the copy to cargo, incrementing quantity), then equips (decrementing quantity). After the unequip, `quantity` increases so the guard passes on the subsequent equip call.
 
 **Do not remove or weaken this guard.** It is the primary defence against inventory corruption.
+
+### The INVARIANTS — hard rules, do not violate
+
+These are the load-bearing rules. A change that breaks any of them is a bug,
+regardless of whether tests are green.
+
+1. **Pool separation.** Equipped copies live **only** in `player_ships` slot
+   lists; loose copies live **only** in `player_inventories`. A given physical
+   copy is in exactly one pool — never both, never neither.
+2. **Conservation.** `Total owned(item, player) = cargo quantity + Σ equipped
+   count across all of that player's ships`. Every mutation must preserve this:
+   equip = −1 cargo / +1 slot; unequip = +1 cargo / −1 slot; swap = net zero;
+   sell/transfer = −1 cargo only; ship purchase/sale moves items between slots
+   and cargo without minting or dropping. Never double-count; never drop a copy.
+3. **No materialisation from nothing (I2).** Every slot entry must trace back to
+   an inventory decrement. Do not append a name to a slot list without a paired
+   cargo decrement (the choke-point does both, atomically).
+4. **No cross-ship duplication (I1).** The same physical copy must not appear in
+   two ships' slot lists. `repair_player` and the `evacuate_*` anti-dup guard
+   exist to clean up legacy violations — do not reintroduce the bug class.
+5. **Slot caps + unique-equip (I4).** A ship's slot list length must never
+   exceed its static cap (`max_primaries` / `max_secondaries` / `max_turrets` /
+   `max_modules`). `MODULE_EQUIP_LIMITS` additionally caps how many of a given
+   module *class* may be equipped at once. **These caps apply uniformly to
+   players AND to auto-generated criminal/NPC loadouts** — `bounty_service`
+   generates criminal gear by looping `range(ship.max_primaries)` /
+   `range(ship.max_modules)` against the same static `ship` row, so a criminal
+   never exceeds the caps a player would face on the same hull.
+6. **`/unequip` before `/sell` (and before `/transfer`).** Sell and transfer
+   operate on **cargo only**. See the dedicated subsection below for exactly how
+   this is enforced — it is structural, not a guard you can grep for.
+7. **Surface gating.** `GameConstants.CURRENTLY_ENABLED_TYPES` is the single
+   lever that exposes a concrete item type to playable surfaces.
+   `secondary_weapon` is **already enabled** (added prior to CI-16); `equip_one`
+   and the type normalizer will correctly handle secondary weapons. Honour this
+   gate in any new flow.
+
+### Unequip-before-sell — how it is actually enforced
+
+There is **no explicit "is this item equipped?" check** in the sell or transfer
+paths, and you should not add one expecting it to be the enforcement point.
+Enforcement is **structural**, falling out of invariant #1:
+
+- `ShopService.sell_item` (`shop_service.py`, ≈line 409) resolves the item from
+  `player_inventories` and calls `inventory_repo.remove_item`, which raises
+  `ValueError("Insufficient item quantity ...")` when cargo `quantity` is too
+  low. Equipped copies are **not in `player_inventories` at all**, so they are
+  simply unreachable by sell — a fully-equipped, zero-cargo item cannot be sold
+  until `/unequip` returns a copy to cargo. The `/sell` router
+  (`api/routers/shops.py`) wraps the call in `db.begin()`.
+- `InventoryService.transfer_item_between_players` (`inventory_service.py`) has
+  the same property: it removes from the source player's **cargo** and adds to
+  the target's cargo. Equipped gear is unreachable. ⚠️ Note transfer does a
+  remove+add pair across two players **outside** the `LoadoutConsistencyService`
+  choke-point — this is currently safe **only because both legs are cargo-only**
+  (no slot mutation, so I1/I2 cannot be violated). If transfer is ever extended
+  to move equipped gear directly, it **must** route through the choke-point.
+
+If you ever see a sell/transfer path that reads or mutates `player_ships` slot
+lists, that is a bug — flag it.
+
+### JSON-column reassignment gotcha — MUST reassign, never mutate in place
+
+`player_ships.{weapons,secondary_weapons,turrets,modules}` are SQLAlchemy `JSON`
+columns. SQLAlchemy's default change tracking does **not** detect in-place
+mutation of a `JSON`/`list` value — `ship.weapons.append(name)` will **silently
+fail to persist**. Every write must **reassign the whole list**:
+
+```python
+# CORRECT — reassign a new list (change is tracked, persists on flush)
+ship.weapons = list(current) + [item_name]
+
+# WRONG — in-place mutation; change tracker never fires; the write is lost
+ship.weapons.append(item_name)
+```
+
+The existing code already does this correctly: `PlayerShipRepository.update_loadout`
+assigns `ship.weapons = loadout["weapons"]`; `add_equipment` / `remove_equipment`
+build a fresh `list(...)` then call `update_loadout`; and
+`LoadoutConsistencyService._set_slot` assigns `ship.weapons = list(items)`.
+**Preserve this pattern in any new slot-mutating code.** (Alternatively
+`flag_modified(ship, "weapons")` after an in-place mutation, but the codebase
+convention is reassignment — match it.)
 
 ### Autocomplete Filter (discord-gateway `inventoryCog.equip_autocomplete`)
 
@@ -236,7 +399,7 @@ async def get_or_create_player(self, db: AsyncSession, discord_id: int, ...) -> 
 
 ---
 
-## All 16 Service Modules (B.48: division_service removed)
+## Module Reference (all 27 modules)
 
 ### audit_service.py — `AuditService`
 
@@ -257,15 +420,18 @@ await AuditService.log_action(
 ### bounty_service.py — `BountyService`
 
 Core bounty system business logic:
-- `spawn_bounty(db, guild_id, division)` — selects a random criminal, generates a route using PathfindingService, sets reward, creates the Bounty record
-- `check_system(db, bounty_id, user_id, system_name)` — records a system check; returns proximity hints
-- `expire_bounty(db, bounty_id)` — marks bounty as expired; optionally schedules respawn
-- `resolve_bounty(db, bounty_id, winner_user_id)` — awards credits and XP to winner via PlayerService
+- `spawn_bounty(db, guild_id, division, tech_level=None, expiry_minutes=None)` — full spawn orchestration: select criminal (excluding active ones), determine tech level, generate A* route (up to 3 attempts), pick the answer system, generate criminal loadout, calculate reward
+- `select_criminal` / `find_item_tl` / `generate_loadout` — spawn building blocks; criminal gear loops `range(ship.max_primaries)` / `range(ship.max_turrets)` and fills modules up to `ship.max_modules` against the same static `ship` row players use
+- `check_bounty(...)` — records a system check; returns proximity hints via `CheckResult` / `CheckResponse` / `MultiCheckResponse`
+- `calc_rewards` / `distribute_rewards` — winner + consolation payouts (`RewardInfo`)
+- `expire_bounty(db, bounty_id)` — marks bounty as expired
+- `escape_bounty` / `respawn_bounty(db, bounty_id)` — escape computes `respawn_time`; respawn regenerates route/answer for the same criminal and resets status to `active`
+- `_edit_bounty_announcement(db, bounty, captured=False)` — edits the Discord announcement via gateway PUT (A.48)
 - `clear_bounties(db, guild_id, tier=None)` — admin soft-clear; also cleans up Discord announcements AND any orphaned `bounty_expire` / `bounty_respawn` scheduler jobs linked to the cleared bounty IDs (A.11). Scheduler cleanup runs via HTTP to the scheduler API **after** the DB commit, mirroring the announcement-cleanup pattern: scheduler-side failures are non-fatal and logged as warnings. Return dict includes `scheduler_jobs_deleted` for observability.
 
 **Scheduler-cleanup pattern** (A.11): orphaned jobs are located by payload content (`args[1]["job_type"]` ∈ {`bounty_expire`, `bounty_respawn`} AND `args[1]["bounty_id"]` in cleared set) rather than by deterministic job IDs, because bounty job IDs are random UUIDs. 404 responses on DELETE are treated as already-fired and NOT logged.
 
-Uses: `CriminalRepository`, `BountyRepository`, `PathfindingService`, `SystemGraphService`, `PlayerService`, `TemperatureService`
+Uses: `CriminalRepository`, `BountyRepository`, `ConfigRepository`, `ItemRepository`, `PlayerRepository`, `SecondaryWeaponRepository`, `PathfindingService`, `SystemGraphService`, `CombatService`, `game_maths`
 
 ---
 
@@ -274,23 +440,58 @@ Uses: `CriminalRepository`, `BountyRepository`, `PathfindingService`, `SystemGra
 **This file contains only dataclasses and protocols — no service class.** Do not confuse with `combat_service.py`.
 
 Key types:
-- `WeaponStats` — frozen dataclass: `name`, `dps`, optional `fire_rate`, `damage_per_shot`, `accuracy_modifier`
-- `ModuleStats` — frozen dataclass: `name`, `module_type`, effect fields
-- `ShipLoadout` — frozen dataclass: assembles ship + weapons + modules into one structure
+- `WeaponStats` — frozen dataclass: `name`, `dps`, plus tick-resolver fields (`fire_rate`, `damage_per_shot`, `loading_speed_ms`, `range_m`), T6/T7 discriminator fields (`subtype`, `burst_count`, `emp_damage`, `magnitude_m`, `steerable`, `automatic`), and CI-16 `ammo` (`None` = infinite). There is NO `manual_turret_mode` anywhere — turret/primary switching is range-driven (see `combat_resolver.py` below)
+- `ModuleStats` / `UpgradeStats` — frozen dataclasses: name + effect fields
+- `ShipLoadout` — frozen dataclass: ship base stats + `weapons` / `turrets` / `secondary_weapons` / `modules` / `upgrades` / `builtin_modules`
 - `CombatStats` — computed stats from a loadout
-- `FightStats` / `FightResults` — output of a combat resolution
-- `CombatResolver` — `Protocol` defining `resolve(attacker, defender) -> FightResults`
+- `FightStats` / `FightResults` / `CombatMeta` / `CombatEvent` / `CombatEventType` — output of a combat resolution
+- `CombatResolver` — `Protocol` for resolver strategies (implemented by `TickResolver`)
 
 ---
 
 ### combat_service.py — `CombatService`
 
-Duel combat resolution:
-- `build_loadout(db, player_id)` — fetches player's active ship, equipped weapons and modules from DB; returns `ShipLoadout`
-- `resolve_combat(attacker_loadout, defender_loadout)` — uses `SimpleTTKResolver` (time-to-kill model) to simulate combat; applies DUEL_VARIANCE_PERCENT random factor
-- Returns `FightResults` with winner, damage log, turn count
+Tick-based combat resolution (T3–T10):
+- `fight_ships(loadout1, loadout2, *, context, log_result, pvc_damage_reduction, session, guild_id, ...)` — async;
+  routes through `TickResolver` (offloaded to the process pool via `compute.combat_worker.run_fight` + `utils.offload.offload_cpu`); persists `combat_log` row + increments Player stat counters when `log_result=True`.
+  `SimpleTTKResolver` and `DUEL_VARIANCE_PERCENT` are retired (T10). Use `pvc_damage_reduction=0.33` for PvC, `0.0` for PvP.
+- `collect_stats(loadout)` / `get_dps` / `get_armour` / `get_shield` — legacy stat collection used by embed builders; still present.
+- `_consume_secondary_ammo(...)` — post-fight write-back of `secondary_ammo` decrements (CI-16).
+- Returns `FightResults` with `combat_log` timeline, metadata summary, and `combat_log_id`.
 
-Uses: `PlayerRepository`, `PlayerShipRepository`, `InventoryRepository`, `EquipmentService`
+Uses: `CombatLogService` (deferred import), `PlayerRepository` (deferred import), `TickResolver` (from `combat_resolver.py`)
+
+---
+
+### combat_resolver.py — `TickResolver` (DB-free engine)
+
+DB-free leaf module containing all combat-math symbols (constants, runtime dataclasses, helpers, the `TickResolver` class) so it can be imported in a forkserver process-pool child without pulling in SQLAlchemy/FastAPI/persist (P2-T0c split).
+
+**Turret/primary switching is range-driven (2026-06-11, replaces `manual_turret_mode`):**
+- Primaries always evaluate behind their per-weapon `range_m` gate.
+- **Auto-turrets** (`automatic=True`) always fire on their own cooldown; accuracy = `pilot_turret_acc × GameConstants.AUTO_TURRET_ACCURACY_MULTIPLIER` (0.85).
+- **Manual turrets** (`automatic=False`, non-plasma) fire ONLY while NO primary is in range — i.e. during the approach phase, after a shock-blast distance reset, or while a booster push holds the gap open. The instant any primary is in range (cooldown irrelevant) manual turrets go inert. A ship with zero primaries uses its manual turrets all fight. Accuracy = `pilot_primary_acc` (full §5, NOT 0.85-multiplied).
+- The static per-ship `manual_turret_mode` flag is fully removed: gone from `ShipLoadout`, `_CombatantState`, `LoadoutBuilder`, the `PlayerShip` ORM, and the DB column (migration `0018_drop_manual_turret_mode.py`).
+
+---
+
+### combat_balance.py — Pure Functions
+
+Combat balance hooks for the tick resolver (§5): `weapon_accuracy()`, `compute_pilot_accuracy()`, `thruster_ramp()`, `booster_debuff_pp()`, `resolve_scanner_tier()` / `ScannerTier`.
+
+---
+
+### combat_log_service.py — `CombatLogService`
+
+Persists resolved fight records to `combat_log` (§12 / T10) and reads them back:
+- `persist(...)` — one row per resolved fight; accepts plain-dict timelines (offload path) or `CombatEvent` dataclasses (P2-T6)
+- `list_for_player` / `get_detail` — read side for `/combat-log`
+
+---
+
+### combat_preflight_service.py — `CombatPreflightService`
+
+Monte-Carlo win-rate estimator (default 20 simulated fights) surfaced in the `/promote` confirmation embed. Advisory only — the `PreflightVerdict` never blocks an action.
 
 ---
 
@@ -323,23 +524,28 @@ and `player_service.prestige_player` for the canonical promotion/prestige flow.
 ### duel_service.py — `DuelService`
 
 Duel challenge lifecycle:
-- `create_challenge(db, guild_id, challenger_id, target_id, stakes)` — validates both players exist, have sufficient credits, creates `DuelRequest`
-- `accept_duel(db, duel_id)` — calls CombatService to resolve; awards/deducts credits; updates win/loss stats
-- `decline_duel(db, duel_id)` — marks as declined; refunds any locked credits
-- `expire_duels(db)` — bulk expire all duels past `expires_at`; called by `duel_expire_executor`
+- `create_challenge(...)` — validates both players exist and that **available** balances (see pending-stakes invariant above) cover the stakes; creates `DuelRequest`
+- `accept_duel(db, duel_id)` — re-validates under `FOR UPDATE` locks (`get_by_id_for_update`); builds loadouts via `LoadoutBuilder` and resolves via `CombatService`; transfers credits; updates win/loss stats; runs `cancel_underfunded_duels` for the loser
+- `reject_duel(db, duel_id)` — marks as rejected
+- `cancel_duel(...)` / `cancel_all_pending_duels(db, guild_id)` — challenger-side / admin cancellation
+- `cancel_underfunded_duels(db, player_id, commit=False)` — the auto-cancel contract hook (see top of this doc)
+- `expire_duel(db, duel_id)` — expires ONE duel past `expires_at`; called per-duel by `duel_expire_executor`
+- read helpers: `get_duel`, `get_pending_for_target`, `get_outgoing_for_challenger`, `get_all_pending_for_guild`
 
-Uses: `DuelRepository`, `PlayerRepository`, `CombatService`
+Uses: `DuelRepository`, `PlayerRepository`, `UserRepository`, `ConfigRepository`, `CombatService`, `LoadoutBuilder`
 
 ---
 
 ### equipment_service.py — `EquipmentService`
 
-Equipment management:
-- `equip_item(db, player_id, player_ship_id, item_name, item_type)` — validates equip limits from `GameConstants.MODULE_EQUIP_LIMITS`; updates `PlayerShip` loadout JSON
-- `unequip_item(db, player_id, player_ship_id, item_name, item_type)` — removes item from loadout; moves to inventory
-- Enforces per-module-type limits (e.g., max 1 ArmourModule, unlimited CabinModule)
+Equipment management — thin wrappers that delegate to `LoadoutConsistencyService` (the B.19 choke-point):
+- `equip_item(db, player_id, ship_id, item_name, equipment_type=None)` — delegates to `equip_one`
+- `unequip_item(db, player_id, ship_id, item_name, equipment_type=None)` — delegates to `unequip_one`
+- `equip_check(...)` — validation-only preview
+- Module-class limits (`GameConstants.MODULE_EQUIP_LIMITS`, e.g. max 1 ArmourModule, unlimited CabinModule) are enforced inside the choke-point (`_validate_module_equip_limit`)
+- Module-level helpers: `item_discriminator_to_concrete_type()`, plus the `_SLOT_MAP` / `_INVENTORY_TYPE_MAP` / `VALID_EQUIPMENT_TYPES` vocabulary (see canonical loadout section above)
 
-Uses: `PlayerShipRepository`, `InventoryRepository`, `GameConstants`
+Uses: `LoadoutConsistencyService` (deferred import), `PlayerShipRepository`, `InventoryRepository`, `ItemRepository`, `ModuleRepository`, `PlayerRepository`, `ShipRepository`, `GameConstants`
 
 ---
 
@@ -353,13 +559,15 @@ BOUNTYBOT_CHECK_COOLDOWN=120
 BOUNTYBOT_BOUNTY_DELAY_RANDOM_MIN=3
 ```
 
-Call `GameConstants.load()` at application startup to apply overrides. **Non-operational constants** (XP boundaries, division definitions, module equip limits) are intentionally excluded from runtime overrides to maintain game balance.
+Call `GameConstants.load()` at application startup to apply overrides. **Non-operational constants** (e.g. module equip limits, enabled-type gating) are intentionally excluded from runtime overrides to maintain game balance.
 
 Key constant groups:
 - `MODULE_EQUIP_LIMITS` — per-module-type equip limits dict
 - `BOUNTY_DELAY_RANDOM_MIN/MAX` — bounty spawn frequency
 - `MAX_BOUNTIES_PER_DIVISION` — bounty cap (temperature-adjusted)
 - `SHOP_DEFAULT_*_NUM` — shop stock counts per category
+- `CURRENTLY_ENABLED_TYPES` — surface-gating frozenset (currently all 5 concrete types)
+- `*_RETENTION_*` — db_retention windows (`BOUNTY_RETENTION_HOURS`, `DUEL_RETENTION_HOURS`, `AUDIT_RETENTION_DAYS`, `COMBAT_LOG_RETENTION_HOURS`)
 - B.48: `DIVISION_NAMES`, `DIVISION_BOUNDARIES`, and `XP_LEVEL_BOUNDARIES` were
   deleted along with the level/division progression system.
 
@@ -378,35 +586,34 @@ B.48: `calculate_user_level` and `calculate_xp_for_level` were deleted.
 
 ### inventory_service.py — `InventoryService`
 
-Player inventory management:
-- `buy_item(db, player_id, item_name, item_type, guild_id)` — validates credits, deducts from player, adds to inventory
-- `sell_item(db, player_id, item_name, item_type)` — removes from inventory, adds credits to player
-- `transfer_item(db, source_player_id, target_player_id, item_name, item_type)` — item transfer between players
-- `get_player_inventory(db, player_id)` — returns full inventory list
+Player inventory (cargo) management:
+- `get_player_inventory(db, player_id, item_type=None, include_ships=False)` — full inventory list; `item_type` accepts concrete types or generic aliases (normalizer-expanded). `include_ships=True` additionally lists the player's INACTIVE ships as cargo entries (ships live in `player_ships`, not `player_inventories`; the active ship is "equipped" and excluded) — default False so equip/sell consumers are unchanged
+- `get_inventory_summary(db, player_id, include_ships=False)` — per-type counts; `include_ships` adds the inactive-ship count to the `ship` bucket
+- `add_item_to_inventory` / `remove_item_from_inventory` — cargo-only mutations
+- `transfer_item_between_players(...)` — cargo-only remove+add pair across two players (see "Unequip-before-sell" caveat above)
+- `search_inventory`, `validate_item_compatibility`, `get_player_item_count`, `consolidate_inventory`
 
-Uses: `InventoryRepository`, `PlayerRepository`, `ShopRepository`, `ItemRepository`
+Uses: `InventoryRepository`, `PlayerRepository`, `PlayerShipRepository`, `ShipRepository`, `PrimaryWeaponRepository`, `SecondaryWeaponRepository`, `TurretWeaponRepository`, `ModuleRepository`
 
 ---
 
 ### map_renderer.py — `MapRenderer`
 
-Pillow-based star map image generation:
-- `render_map(systems, highlighted_systems, route)` — generates PNG image of the system graph with highlighted nodes and drawn route
-- Uses `PIL.Image`, `PIL.ImageDraw` for rendering
-- Returns `bytes` (PNG image data) for HTTP response
-
-Uses: `SystemRepository`, `SystemGraphService`
+Pillow-based star map image generation over the base map shipped at `import_data/system-map.png`:
+- `prewarm()` — preloads/caches the base image (P3-T1)
+- `render_route(...)` / `render_route_for_bounty(...)` — PNG bytes with the route drawn over the map
+- `render_route_offloaded(...)` — async wrapper that renders in the shared process pool (P3)
+- Uses `PIL.Image`, `PIL.ImageDraw`; consumes `SystemGraphService` nodes for coordinates
 
 ---
 
 ### pathfinding_service.py — `PathfindingService`
 
 A* pathfinding over the star system graph:
-- `find_path(db, start_system, end_system)` — returns list of system names representing shortest route
-- `MAX_ROUTE_LENGTH` limit from `GameConstants` prevents runaway searches
-- Returns `None` if no path exists within the limit
+- `make_route(start, end)` — returns a list of system names, or a `PathfindingError` enum member on failure
+- Module-level `MAX_ROUTE_LENGTH = 50` prevents runaway searches
 
-Uses: `SystemRepository`, `SystemGraphService`
+Uses: `SystemGraphService`
 
 ---
 
@@ -415,8 +622,9 @@ Uses: `SystemRepository`, `SystemGraphService`
 Core player management:
 - `get_or_create_player(db, discord_id, guild_id, discord_username)` — creates user if needed, creates player with `starting_credits` from guild config
 - `update_player_credits(db, player_id, new_credits, update_lifetime)` — sets absolute credit balance; optionally updates lifetime_credits
-- `update_player_xp(db, player_id, new_xp)` — sets XP only. Tier is NOT auto-advanced; use `promote_player()` to explicitly cross a tier threshold.
-- `promote_player(db, player_id)` — explicit tier-up; gated by `xp_thresholds[next_tier]`
+- `update_player_xp(db, player_id, xp)` — sets XP only. Tier is NOT auto-advanced; use `promote_player()` to explicitly cross a tier threshold.
+- `promote_player(db, player_id)` / `demote_player(db, player_id)` — explicit tier change; gated by `xp_thresholds`; raises `TierChangeCooldownError` (defined in this module) inside the cooldown window
+- `get_promotion_status(db, player_id)` — read-side promotion eligibility summary
 - `prestige_player(db, player_id)` — B.49: gated on `xp_thresholds["Prestige"]` (default 50,000 when key absent); resets XP/credits/tier, deletes all ships/inventory, recreates the starter Betty loadout via `_create_starter_loadout()`, increments `prestige_count`; preserves lifetime_credits/duel stats/bounty stats. Returns dict with `tier_before` and `xp_before`.
 - `transfer_credits(db, source_id, target_id, amount)` — atomic transfer using `get_by_id_for_update` to prevent race conditions
 - `get_player_statistics(db, player_id)` — assembles comprehensive stats dict
@@ -427,54 +635,103 @@ Uses: `PlayerRepository`, `UserRepository`, `ConfigRepository`
 
 ### shop_service.py — `ShopService`
 
-Multi-tier shop system:
-- `generate_shop_stock(db, guild_id)` — generates a new shop with `SHOP_DEFAULT_*_NUM` items per category; items are tier-appropriate for the guild's player base
-- `refresh_shop(db, guild_id)` — clears current stock, calls `generate_shop_stock()`; called by `shop_refresh_executor`
-- `buy_item(db, player_id, item_name, guild_id)` — validates tier eligibility, deducts credits, adds item to inventory
-- `sell_item(db, player_id, item_name, quantity=1)` — sells item back for a fraction of its value
+Multi-tier shop system (`VALID_TIERS = Bronze/Silver/Gold/Platinum`):
+- `refresh_shop(db, guild_id, tier, force_tech_level=None)` — regenerates a tier's stock (`SHOP_DEFAULT_*_NUM` items per category); called by `shop_refresh_executor`. The batch draws a `shop_tech_level`; each item then gets its own drawn TL (`_select_item_tech_level`), and the **shop row stores that per-item TL** (ships: value-derived via `game_maths.ship_tech_level_for_value`) — NOT the batch TL. The returned `refresh_details` dict still carries the batch `tech_level`.
+- `_get_item_tech_level(db, item_type, item_name, base_price)` — resolves an item's real catalog TL; `_add_item_to_shop` (the `/sell` restock path) stores it so sold-back items keep their true TL
+- `get_shop_items(db, guild_id, tier, ...)` — read side
+- `purchase_item(...)` — validates tier eligibility + credits; cargo-only `add_item`; runs the duel auto-cancel hook
+- `purchase_ship(...)` — buys + activates a ship via the `activate_ship` choke-point; runs the duel auto-cancel hook
+- `sell_item(db, player_id, item_name, quantity=1)` — cargo-only; type/tier resolved server-side (A.42, see below)
+- `sell_ship(...)` — evacuates the loadout to cargo first (`evacuate_ship_loadout_to_inventory`)
+- `preload_static_data(db)` / `clear_static_cache()` — in-memory static-catalog cache for bulk refreshes
 
-Uses: `ShopRepository`, `ShipRepository`, `PrimaryWeaponRepository`, `SecondaryWeaponRepository`, `TurretWeaponRepository`, `ModuleRepository`, `PlayerRepository`, `InventoryRepository`, `PlayerShipRepository`, `ConfigRepository`
+Uses: `ShopRepository`, `ConfigRepository`, `PlayerRepository`, `InventoryRepository`, `ItemRepository`, `ShipRepository`, `PlayerShipRepository`, `PrimaryWeaponRepository`, `SecondaryWeaponRepository`, `TurretWeaponRepository`, `ModuleRepository`
 
 ---
 
 ### system_graph_service.py — `SystemGraphService`
 
-Star system adjacency graph:
-- `build_graph(db)` — loads all systems from DB; constructs adjacency dict `{system_name: [connected_system_names]}`
-- `get_graph()` — returns cached graph (rebuilds if cache is empty)
+Star system adjacency graph (in-memory `SystemNode` cache):
+- `load_graph(db)` — loads all systems from DB into the node cache
+- `get_system(name)` / `get_neighbours(name)` / `get_all_systems()` / `get_systems_with_jump_gates()`
+- `euclidean_distance(sys_a, sys_b)` (static), `is_loaded()`, `reset()`
 - Used by `PathfindingService` and `MapRenderer`
-
-Uses: `SystemRepository`
 
 ---
 
 ### temperature_service.py — `TemperatureService`
 
-Guild activity temperature:
-- `get_max_bounties(temperature)` — static method; returns max bounties per division based on activity level; higher temperature → more bounties (up to `MAX_BOUNTIES_PER_DIVISION`)
-- `apply_decay(current_temp, decay_rate)` — static; applies `GUILD_ACTIVITY_DECAY_RATE` decay
-- `calculate_temperature(player_count)` — computes temperature from active players using `ACTIVITY_TEMP_PER_PLAYER`
+Guild activity temperature (all static methods; per-division values live in `GuildConfig.division_temperatures`):
+- `get_max_bounties(temperature)` — max bounties per division for an activity level (up to `MAX_BOUNTIES_PER_DIVISION`)
+- `raise_temperature(current_temp, amount=None)` — bumps temperature on player activity
+- `decay_temperature(current_temp, guild_config=None)` / `decay_temperature_n_hours(...)` — multiplies by 2/3, floors at 1.0; called hourly by `temperature_decay_executor`
+- `calculate_spawn_delay(temperature, route_length, guild_config=None)` — spawn-pacing input for the orchestrator
+
+---
+
+### loadout_builder.py — `LoadoutBuilder`
+
+Builds `ShipLoadout` objects for combat, separated from the simulation itself:
+- `from_player(db, player_id)` — from the player's active ship + equipped items
+- `from_criminal_ship(criminal_ship)` (static) — from a bounty's `criminal_ship` JSON dict
+
+---
+
+### loadout_consistency_service.py — `LoadoutConsistencyService`
+
+The single canonical loadout↔inventory mutation choke-point. Fully documented in the dedicated section below ("Loadout↔Inventory Consistency Choke-Point").
+
+---
+
+### loadout_effect_service.py — `LoadoutEffectService`
+
+Maps module types to display-ready effect strings server-side so the gateway embed builder renders them as-is (LOADOUT_EMBED_DESIGN_SPEC §2.4/§2.5).
+
+---
+
+### loadout_response_service.py — `LoadoutResponseService`
+
+Assembles the `/loadout` and bounty-loadout API responses (`build_player_loadout`, `build_bounty_loadout`, `_build_cargo_items`) reading BOTH pools. Criminal module dedup rules: see "Criminal-Only Module Dedup Invariant" section above.
+
+---
+
+### _item_type_normalizer.py — Pure Functions
+
+`expand_item_type_to_concrete(item_type, *, context)` — see "Item-Type Vocabulary & Normalizer Contract" section above.
+
+---
+
+### _transaction_guards.py — `requires_transaction`
+
+Runtime transaction-discipline decorator (AC-6, B.34): raises at call time when a decorated service method runs outside an active SQLAlchemy transaction. Complements the static linter `tests/test_transaction_discipline.py`.
+
+---
+
+### exceptions.py — Custom Exceptions
+
+- `GuildNotConfiguredError(Exception)` — no `guild_configs` row (carries `guild_id`)
+- `InvalidItemTypeError(ValueError)` — unknown/disabled item type (subclasses `ValueError` so existing handlers still catch it)
 
 ---
 
 ## Service Interaction Map
 
 ```
-DuelService ──── CombatService ──── EquipmentService
-               │                  │
-               └─── PlayerService ─┴─── InventoryService
-                          │
-                          └─── ConfigService
+DuelService ──── CombatService ──── TickResolver (combat_resolver.py)
+            │                 │
+            │                 └──── CombatLogService
+            └─── LoadoutBuilder
 
 BountyService ─── PathfindingService ─── SystemGraphService
              │
-             └─── TemperatureService ──── GameConstants
-             │
-             └─── PlayerService (for reward distribution)
+             └─── CombatService (bounty-check fights via fight_ships)
 
-ShopService ──── PlayerService
-            │
-            └─── InventoryService
+EquipmentService ──┐
+ShopService ───────┼── LoadoutConsistencyService (choke-point)
+PlayerService ─────┘   (starter loadout / activate / evacuate)
+
+TemperatureService — consumed by executors (temperature_decay, bounty_spawn),
+                     not by other services
 ```
 
 ---
@@ -532,11 +789,46 @@ re-introduces the B.19 phantom-item / cross-ship duplication bug class.
 ### Constructor injection for tests
 
 `LoadoutConsistencyService(*, player_ship_repo=None, inventory_repo=None,
-item_repo=None, ship_repo=None)` accepts optional repo overrides so callers
+item_repo=None, ship_repo=None, player_repo=None)` accepts optional repo overrides so callers
 (e.g. `EquipmentService.equip_item`, `ShopService.purchase_ship`) can share
 their already-mocked repositories with the consistency service in unit
 tests.
 
+### Choke-points & flows — where each operation actually mutates state
+
+Use this as the map when changing or debugging any loadout/inventory flow. The
+**invariants** these flows preserve are stated in the
+*Loadout & Inventory system — CANONICAL REFERENCE* section above; this is the
+plumbing.
+
+| User flow | Entry point (service) | Touches slots? | Touches cargo? | Choke-point method |
+|-----------|-----------------------|----------------|----------------|--------------------|
+| `/equip` | `EquipmentService.equip_item` → `equip_one` | +1 slot | −1 cargo | `equip_one` |
+| `/unequip` | `EquipmentService.unequip_item` → `unequip_one` | −1 slot | +1 cargo | `unequip_one` |
+| swap (cog) | gateway `inventoryCog` does unequip-then-equip | replace | net 0 | `unequip_one` + `equip_one` |
+| `/buy` item | `ShopService.purchase_item` (≈line 150) | no | +qty cargo | none (cargo-only `add_item`) |
+| `/buy` ship | `ShopService.purchase_ship` (≈line 258) | moves gear src→dst, overflow→cargo | overflow only | `activate_ship` → `transfer_loadout_to_new_ship` |
+| `/sell` item | `ShopService.sell_item` (≈line 409) | no (cargo-only — see "Unequip-before-sell") | −qty cargo | none (cargo-only `remove_item`) |
+| sell ship | `ShopService.sell_ship` | evacuates gear→cargo | +cargo | `evacuate_ship_loadout_to_inventory` |
+| `/transfer` (give) | `InventoryService.transfer_item_between_players` | no (cargo-only) | −cargo src / +cargo dst | none (cargo-only; see caveat above) |
+| set active ship | `ships.set_active_ship` | reconcile + transfer | overflow→cargo | `activate_ship` |
+| transfer ship | `ships.transfer_ship` | evacuates gear→cargo | +cargo | `evacuate_ship_loadout_to_inventory` |
+| admin remove ship | `admin.remove_ship` | evacuates gear→cargo | +cargo | `evacuate_ship_loadout_to_inventory` |
+| starter loadout | `PlayerService._create_starter_loadout` | +3 slots | +4 then −3 | `equip_one` ×3 |
+| B.19 repair / migration | `repair_player` | dedups slots | none (never mints) | `repair_player` |
+
+Two reads worth knowing: `LoadoutResponseService` (`_build_cargo_items` etc.)
+assembles the `/loadout` view by reading **both** pools; gateway-side
+`inventoryCog.equip_autocomplete` filters the equip dropdown on cargo `quantity`
+(active-ship scope — see Autocomplete Filter note above). Reads must never
+mutate.
+
+Repositories backing all of this stay **dumb**: `PlayerShipRepository`
+(`update_loadout` / `add_equipment` / `remove_equipment` / `get_ship_loadout_summary`)
+and `InventoryRepository` (`add_item` / `remove_item` / `get_player_item` /
+`get_player_items_by_name`) do data access only — they enforce none of the
+cross-table invariants. That is the choke-point's job.
+
 ---
 
-*Last updated: 2026-04-29*
+*Last updated: 2026-06-11 — full doc-vs-code reconciliation: module reference expanded to all 27 modules (combat_resolver/balance/log/preflight, loadout_* helpers, guards, exceptions); range-driven manual-turret switching documented (manual_turret_mode removed, migration 0018); CI-18 unique constraint on player_inventories documented (migration 0015); InventoryService include_ships and ShopService per-item shop tech levels documented; stale method names/signatures corrected throughout.*

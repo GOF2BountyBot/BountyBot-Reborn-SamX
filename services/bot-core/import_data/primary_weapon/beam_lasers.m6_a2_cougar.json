@@ -15,8 +15,13 @@
   "icon": "https://i.postimg.cc/05dHM4fC/m6-a2-cougar.png",
   "name": "M6 A2 \"Cougar\"",
   "techLevel": 8,
-  "value": 46160,
+  "value": 43092,
   "wiki": "https://galaxyonfire.fandom.com/wiki/M6_A2_\"Cougar\"",
   "type": "PrimaryWeapon",
-  "subtype": "beam_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 1400,
+    "range_m": 3600,
+    "damage_per_shot": 34,
+    "subtype": "beam-laser"
+  }
 }

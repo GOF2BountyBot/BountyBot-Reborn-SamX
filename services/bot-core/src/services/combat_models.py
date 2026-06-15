@@ -11,7 +11,18 @@ Defines the data structures used by the combat system:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
+
+# ---------------------------------------------------------------------------
+# Secondary-weapon subtype classification
+# ---------------------------------------------------------------------------
+
+# Subtypes that the Phase-1 tick resolver handles via the "else: noop" branch
+# (combat_service.py — "deferred subtypes (emp-bomb, mine, sentry-gun) — noop").
+# These weapons do nothing in a fight, so the shop must not offer them.
+# Cross-reference: services/bot-core/src/services/combat_service.py (the else branch).
+# Add a subtype here when promoting it from deferred → active in the resolver.
+DEFERRED_SECONDARY_SUBTYPES: Final[frozenset[str]] = frozenset({"emp-bomb", "mine", "sentry-gun"})
 
 # ---------------------------------------------------------------------------
 # Input data structures — assembled by callers from DB models
@@ -20,7 +31,7 @@ from typing import Any, Protocol
 
 @dataclass(frozen=True, slots=True)
 class WeaponStats:
-    """Stats for a single weapon (primary or turret).
+    """Stats for a single weapon (primary, secondary, or turret).
 
     Attributes:
         name: Weapon display name.
@@ -29,15 +40,36 @@ class WeaponStats:
     Future extension fields (unused now, reserved for fire-rate combat):
         fire_rate: Shots per second (None = use averaged DPS model).
         damage_per_shot: Damage dealt per individual shot.
-        accuracy_modifier: Per-weapon accuracy adjustment (1.0 = neutral).
+
+    T6 discriminator fields (D0): default zero/empty for backward compat.
+        subtype: Secondary weapon subtype string (e.g. "rocket", "missile", "nuke").
+                 Empty string for primaries/turrets.
+        burst_count: Cluster-missile sub-munition count (D4). 0 for non-cluster.
+        emp_damage: EMP damage value (phase-2+ deferred; baked for log fidelity). 0 if none.
+        magnitude_m: Nuke blast radius seed value (D5). 0.0 if non-nuke.
+        steerable: Nuke/missile steerable flag (data-only in Phase-1; no behaviour branch). False by default.
+    T7 discriminator fields (D0): default False for backward compat.
+        automatic: Turret auto-fire flag. True = auto-turret, False = manual-turret (§6.3).
+                   Plasma-collectors are identified by subtype=="plasma-collector" regardless of automatic.
     """
 
     name: str
     dps: float
-    # Future fields — unused in SimpleTTKResolver, present for type stability
-    fire_rate: float | None = None
-    damage_per_shot: float | None = None
-    accuracy_modifier: float = 1.0
+    # Tick-resolver fields (T5+): used by TickResolver for per-shot simulation
+    fire_rate: float | None = None  # shots/sec — DPS-model concept; kept for legacy compat
+    damage_per_shot: float | None = None  # physical damage per shot (§4/§6.1); None → 0 in resolver
+    loading_speed_ms: int = 0  # cooldown in ms between shots (§1/§6.1); 0 = DPS-model only
+    range_m: float = 0.0  # binary fire gate: fires when current_distance ≤ range_m (§2)
+    # T6 discriminator fields (D0) — default zero/empty so legacy code paths are unaffected
+    subtype: str = ""  # secondary subtype: "rocket"|"missile"|"cluster-missile"|"nuke"|"shock-blast"|...
+    burst_count: int = 0  # cluster-missile sub-munition count (§6.2 D4); 0 for non-cluster
+    emp_damage: int = 0  # EMP damage (baked for log fidelity; deferred to phase-2+)
+    magnitude_m: float = 0.0  # nuke blast radius seed value (§6.2 D5); 0.0 for non-nukes
+    steerable: bool = False  # steerable flag — data-only in Phase-1; no behaviour branch (§6.2 D5)
+    # T7 discriminator fields — default False/empty so legacy code paths are unaffected
+    automatic: bool = False  # turret auto-fire flag: True = auto-turret, False = manual-turret (§6.3)
+    # CI-16: consumable ammo for secondary weapons; None = infinite (back-compat / legacy data)
+    ammo: int | None = None  # remaining rounds at fight start; None = infinite; 0 = depleted
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +93,7 @@ class ModuleStats:
         evasion_modifier: Effect on owner's evasion (e.g., thruster +0.1).
         enemy_accuracy_modifier: Effect on enemy's accuracy (e.g., cloak -0.2).
         shield_recharge_rate: Shield HP recovered per second (for tick sim).
-        repair_rate: Hull HP recovered per second (for repair bots).
+        repair_rate: Repair-bot regen as fraction of (max_hull+max_armour) per second (pct/sec); 0.0 = no repair bot.
     """
 
     name: str
@@ -75,8 +107,17 @@ class ModuleStats:
     accuracy_modifier: float = 0.0
     evasion_modifier: float = 0.0
     enemy_accuracy_modifier: float = 0.0
+    shield_recharge_ms: int = 0  # raw recharge time (ms); used by TickResolver §3 schedule
     shield_recharge_rate: float = 0.0
     repair_rate: float = 0.0
+    # Tick-resolver fields (T5+): STI discriminator + PrimaryWeaponMod stats (§7.8/§10)
+    module_type: str = ""  # STI discriminator from Item.type (e.g. "PrimaryWeaponModModule")
+    damage_pct: int = 0  # PrimaryWeaponMod: per-shot damage modifier (§7.8); can be negative
+    fire_rate_pct: int = 0  # PrimaryWeaponMod: fire-rate modifier (§7.8); positive = faster (lower cooldown)
+    # T8 activation-rule module fields (§7.2 / §7.3 / §7.4) — default zero/empty for backward compat
+    effect_pct: float = 0.0  # Booster: speed boost pct; Thruster: accuracy bonus pct (from extra_atts)
+    effect_duration_ms: int = 0  # Cloak/Booster: effect window in ms (seed key: duration_ms)
+    loading_speed_ms: int = 0  # Cloak/Booster: cooldown after effect expiry in ms
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +165,10 @@ class ShipLoadout:
     turrets: list[WeaponStats] = field(default_factory=list)
     modules: list[ModuleStats] = field(default_factory=list)
     upgrades: list[UpgradeStats] = field(default_factory=list)
+    # T6 (D0): secondary weapons — runtime home for secondaries consumed by TickResolver
+    secondary_weapons: list[WeaponStats] = field(default_factory=list)
+    # T8: built-in modules from ship config (§10 supersession); e.g. ["U'tool"] for Scimitar/Specter
+    builtin_modules: list[str] = field(default_factory=list)
     # Future fields
     base_accuracy: float = 1.0
     base_evasion: float = 0.0
@@ -205,9 +250,11 @@ class FightResults:
         is_stalemate: True if neither ship can defeat the other.
         ship1_stats: Detailed combat stats for the first ship.
         ship2_stats: Detailed combat stats for the second ship.
-        variance_percent: The variance percentage that was applied.
-
-    Future extension fields:
+        winner_side: Side index of the winner (1 = combatant1/challenger, 2 = combatant2/target,
+                     None = stalemate).  Derived from the death-branch termination logic —
+                     NOT from winner_name — so it is correct even when both combatants share
+                     an identical name.
+        combat_log_id: The combat_log row id (non-NULL when log_result=True; T10).
         combat_log: Ordered list of combat events (for tick-based sim).
         metadata: Arbitrary key-value data for extensibility.
     """
@@ -217,10 +264,70 @@ class FightResults:
     is_stalemate: bool
     ship1_stats: FightStats
     ship2_stats: FightStats
-    variance_percent: float
+    # P2-T0b: side of winner (1/2/None); defaults to None so all existing construction sites
+    # that predate this field remain valid without modification.
+    winner_side: int | None = None
+    # T10: combat_log row id (populated by CombatLogService.persist; None when log_result=False)
+    combat_log_id: int | None = None
     # Future fields
     combat_log: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# CombatMeta — caller context for CombatLogService (T10)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CombatMeta:
+    """Caller context required by CombatLogService.persist (§12 / T10).
+
+    Carries guild_id — the only per-call context not already on FightResults.
+    Combatant identity is read from fight_results.metadata (T9 output).
+    """
+
+    guild_id: int
+
+
+# ---------------------------------------------------------------------------
+# Combat event — one timeline row (§12)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CombatEvent:
+    """One tick-timeline entry in a fight's combat log (§12).
+
+    type is an open str — use CombatEventType constants at emit sites.
+    actor / target are combatant display names; None for global events.
+    """
+
+    tick: int
+    type: str
+    actor: str | None
+    target: str | None
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+class CombatEventType:
+    """Event-type string constants for CombatEvent.type (§12 vocabulary table).
+
+    The field stays open (str) for extensibility; these constants are
+    documentation + reusable identifiers for emit-site code in T3+.
+    """
+
+    fight_start: Final[str] = "fight_start"
+    fight_end: Final[str] = "fight_end"
+    regen: Final[str] = "regen"
+    weapon_fire: Final[str] = "weapon_fire"
+    damage: Final[str] = "damage"
+    module_activation: Final[str] = "module_activation"
+    cooldown_end: Final[str] = "cooldown_end"
+    layer_depleted: Final[str] = "layer_depleted"
+    distance: Final[str] = "distance"
+    # CI-16: emitted when a secondary weapon exhausts all rounds (post-fight auto-unequip signal)
+    secondary_depleted: Final[str] = "secondary_depleted"
 
 
 # ---------------------------------------------------------------------------

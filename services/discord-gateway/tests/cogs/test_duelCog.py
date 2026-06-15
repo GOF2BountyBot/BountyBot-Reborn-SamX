@@ -434,6 +434,74 @@ class TestDuelAcceptCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "invalid" in call_kwargs[0][0].lower()
 
+    def test_accept_uses_timeout_15(self, mock_duel_cog, make_mock_response):
+        """/duel-accept POST to /duels/<id>/accept must use timeout=15 (G-T2: raised from 10s).
+
+        Mutation proof: setting timeout=10 in source causes this assertion to fail.
+        """
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        accept_resp = make_mock_response(
+            _make_accept_result(duel_id=1, is_stalemate=False, winner_name="A", loser_name="B")
+        )
+
+        timeout_values: list = []
+        call_count = 0
+
+        async def _spy_post(url, **kw):
+            nonlocal call_count
+            call_count += 1
+            timeout_values.append(kw.get("timeout"))
+            if call_count == 1:
+                return player_resp
+            return accept_resp
+
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=_spy_post)
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        assert len(timeout_values) >= 2, f"Expected 2+ post() calls, got {len(timeout_values)}"
+        accept_timeout = timeout_values[1]
+        assert accept_timeout == 15, (
+            f"Expected /duels/accept timeout=15 (G-T2), got {accept_timeout!r}. "
+            "Did you forget to raise the timeout from 10 to 15?"
+        )
+
+    def test_accept_graceful_error_on_failure(self, mock_duel_cog, make_mock_response):
+        """/duel-accept shows graceful error on network failure (no auto-retry)."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error = httpx.TimeoutException("timed out", request=MagicMock())
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, error])
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        # Must show exactly ONE follow-up (the error message), no retry
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False), "Error response should be ephemeral"
+
+    def test_accept_no_auto_retry(self, mock_duel_cog, make_mock_response):
+        """/duel-accept must NOT retry on HTTP failure — idempotency makes it safe but
+        verify the implementation has no retry loop (single attempt only)."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error_response = MagicMock()
+        error_response.status_code = 500
+        http_error = httpx.HTTPStatusError("500", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        # post() must be called exactly twice: once for player resolution, once for accept
+        assert mock_duel_cog.http_client.post.await_count == 2, (
+            f"Expected exactly 2 post() calls (no retry), got {mock_duel_cog.http_client.post.await_count}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _build_accept_embed — winner/loser player-name display (B.63)
@@ -606,6 +674,333 @@ class TestBuildAcceptEmbedPlayerNames:
         assert "general_failure." in balance_field.value
         assert "1,500" in balance_field.value
         assert "500" in balance_field.value
+
+
+def _make_accept_result_with_summary(
+    duel_id=1,
+    winner_ship="Ship A",
+    loser_ship="Ship B",
+    challenger_name="challenger_player",
+    target_name="target_player",
+    credits_transferred=500,
+    stakes=500,
+    challenger_credits=1500,
+    target_credits=500,
+    duration_s=15.0,
+    pvc_damage_reduction=0.0,
+):
+    """Build an accept result dict with full tick-resolver summary fields."""
+    return {
+        "duel_id": duel_id,
+        "is_stalemate": False,
+        "winner_name": winner_ship,
+        "loser_name": loser_ship,
+        "credits_transferred": credits_transferred,
+        "stakes": stakes,
+        "challenger_id": 100,
+        "challenger_name": challenger_name,
+        "challenger_credits": challenger_credits,
+        "target_id": 200,
+        "target_name": target_name,
+        "target_credits": target_credits,
+        "outcome": "win",
+        "reason": "hp_depleted",
+        "duration_ticks": 1500,
+        "duration_s": duration_s,
+        "combat_log_id": 77,
+        "combatants": {
+            "1": {
+                "name": winner_ship,
+                "ship": winner_ship,
+                "final_hp": {"shield": 0, "armour": 50, "hull": 120},
+                "damage_dealt": 250,
+                "shots_fired": 60,
+                "shots_hit": 40,
+                "accuracy": 0.667,
+            },
+            "2": {
+                "name": loser_ship,
+                "ship": loser_ship,
+                "final_hp": {"shield": 0, "armour": 0, "hull": 0},
+                "damage_dealt": 80,
+                "shots_fired": 55,
+                "shots_hit": 30,
+                "accuracy": 0.545,
+            },
+        },
+    }
+
+
+class TestBuildAcceptEmbedCI2:
+    """CI-2 tests for DuelCog._build_accept_embed() — actual after-action stats."""
+
+    def test_ci2_duration_in_title(self, mock_duel_cog):
+        """CI-2: When duration_s is present, title includes it."""
+        data = _make_accept_result_with_summary(duration_s=15.0)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "15.0s" in embed.title
+
+    def test_ci2_winner_name_in_title(self, mock_duel_cog):
+        """CI-2: When combatants block is present, winner is resolved from ship → player name mapping."""
+        data = _make_accept_result_with_summary(winner_ship="Ship A", challenger_name="challenger_player")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        # The title/description should identify the winner by player name
+        assert "challenger_player" in embed.title or "challenger_player" in embed.description
+
+    def test_ci2_combat_stats_field_present(self, mock_duel_cog):
+        """CI-2: Combat Stats field is added when combatants block is present."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        field_names = [f.name for f in embed.fields]
+        assert any("Combat Stats" in n for n in field_names)
+
+    def test_ci2_combat_stats_shows_damage_dealt(self, mock_duel_cog):
+        """CI-2: Combat Stats field shows damage_dealt."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "250" in stats_field.value  # c1 damage_dealt
+
+    def test_ci2_combat_stats_shows_accuracy(self, mock_duel_cog):
+        """CI-2: Combat Stats field shows accuracy as percentage."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "67%" in stats_field.value  # round(0.667 * 100)
+
+    def test_ci2_combat_stats_field_le_1024_chars(self, mock_duel_cog):
+        """CI-2: Combat Stats field value stays within Discord's 1024-char limit."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert len(stats_field.value) <= 1024
+
+    def test_ci2_no_combat_stats_field_without_summary(self, mock_duel_cog):
+        """CI-2: No Combat Stats field when combatants block is absent (legacy response)."""
+        data = _make_accept_result(is_stalemate=False)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        field_names = [f.name for f in embed.fields]
+        assert not any("Combat Stats" in n for n in field_names)
+
+    def test_ci2_stalemate_with_duration(self, mock_duel_cog):
+        """CI-2: Stalemate embed includes duration when available."""
+        data = {
+            "duel_id": 1,
+            "is_stalemate": True,
+            "winner_name": None,
+            "loser_name": None,
+            "credits_transferred": 0,
+            "stakes": 500,
+            "challenger_id": 100,
+            "challenger_name": "player_one",
+            "challenger_credits": 1000,
+            "target_id": 200,
+            "target_name": "player_two",
+            "target_credits": 1000,
+            "duration_s": 30.0,
+            "combatants": None,
+        }
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "Stalemate" in embed.title
+        assert "30.0s" in embed.title
+
+
+# ---------------------------------------------------------------------------
+# _build_accept_embed — winner-by-hull fix (CI-2/#7)
+# Reproduces the "both fly Betty" bug and its symmetric counterpart.
+# ---------------------------------------------------------------------------
+
+
+def _make_betty_duel(
+    *,
+    c1_hull: int,
+    c2_hull: int,
+    is_stalemate: bool = False,
+    challenger_name: str = "challenger_player",
+    target_name: str = "target_player",
+) -> dict:
+    """Build an accept result where both combatants fly the same ship ('Betty').
+
+    c1 = challenger (slot "1"), c2 = target (slot "2").
+    Hull values control who survived.
+    """
+    return {
+        "duel_id": 42,
+        "is_stalemate": is_stalemate,
+        "winner_name": "Betty",  # same ship name for both — the ambiguous case
+        "loser_name": "Betty",
+        "credits_transferred": 500 if not is_stalemate else 0,
+        "stakes": 500,
+        "challenger_id": 100,
+        "challenger_name": challenger_name,
+        "challenger_credits": 1500,
+        "target_id": 200,
+        "target_name": target_name,
+        "target_credits": 500,
+        "outcome": "stalemate" if is_stalemate else "win",
+        "reason": "time_cap" if is_stalemate else "hp_depleted",
+        "duration_s": 20.0,
+        "combatants": {
+            "1": {
+                "name": "Betty",
+                "ship": "Betty",
+                "final_hp": {"shield": 0, "armour": 0, "hull": c1_hull},
+                "damage_dealt": 200,
+                "shots_fired": 50,
+                "shots_hit": 35,
+                "accuracy": 0.70,
+            },
+            "2": {
+                "name": "Betty",
+                "ship": "Betty",
+                "final_hp": {"shield": 0, "armour": 0, "hull": c2_hull},
+                "damage_dealt": 150,
+                "shots_fired": 45,
+                "shots_hit": 25,
+                "accuracy": 0.556,
+            },
+        },
+    }
+
+
+class TestBuildAcceptEmbedWinnerByHull:
+    """Regression tests for CI-2/#7 — winner resolved by hull HP, not ship-name equality.
+
+    Both combatants fly "Betty" so ship-name equality is useless.
+    Slot "1" = challenger, slot "2" = target (invariant from fight_ships call order).
+    """
+
+    def test_target_wins_when_challenger_hull_zero(self, mock_duel_cog):
+        """The critical missing case: c1.hull==0, c2.hull>0 → target wins (NOT challenger)."""
+        data = _make_betty_duel(c1_hull=0, c2_hull=80, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        # Target (gf) must appear BEFORE challenger (samx) as winner → lower index in description
+        assert "gf" in embed.description, "target name must appear in description"
+        assert "samx" in embed.description, "challenger name must appear in description"
+        assert embed.description.index("gf") < embed.description.index("samx"), (
+            "target should be shown as winner (appears first) when c1.hull==0 and c2.hull>0"
+        )
+
+    def test_challenger_wins_when_target_hull_zero(self, mock_duel_cog):
+        """Symmetric case: c1.hull>0, c2.hull==0 → challenger wins."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "samx" in embed.description, "challenger name must appear in description"
+        assert "gf" in embed.description, "target name must appear in description"
+        assert embed.description.index("samx") < embed.description.index("gf"), (
+            "challenger should be shown as winner (appears first) when c1.hull>0 and c2.hull==0"
+        )
+
+    def test_stalemate_both_survive(self, mock_duel_cog):
+        """When both players survive (is_stalemate=True), no false winner is shown."""
+        data = _make_betty_duel(c1_hull=50, c2_hull=60, is_stalemate=True)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "Stalemate" in embed.title, "stalemate flag must produce stalemate embed"
+
+    def test_stalemate_both_zero_hull(self, mock_duel_cog):
+        """When both hull values are 0 with is_stalemate=True, stalemate embed is shown."""
+        data = _make_betty_duel(c1_hull=0, c2_hull=0, is_stalemate=True)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "Stalemate" in embed.title, "double-zero hull with stalemate flag must show stalemate"
+
+
+# ---------------------------------------------------------------------------
+# _build_accept_embed — compact-worded combat stats layout (task requirement)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildAcceptEmbedCompactLayout:
+    """Tests for the approved compact-worded Combat Stats field in duel embeds.
+
+    Rules:
+    - Worded HP labels: 'Shield', 'Armour', 'Hull' — no emoji run-on.
+    - Player names (NOT 'You') in the format '{Name} ({Ship}) — survived|destroyed'.
+    - No '⚔️ Combat vs ...' header line (duel embed title already states the winner).
+    - survived/destroyed status from hull data.
+    - Field value ≤1024 chars.
+    """
+
+    def test_duel_layout_worded_shield_label(self, mock_duel_cog):
+        """Combat Stats field uses 'Shield' word, not emoji 🛡."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "Shield" in stats_field.value
+
+    def test_duel_layout_worded_armour_label(self, mock_duel_cog):
+        """Combat Stats field uses 'Armour' word, not emoji 🔩."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "Armour" in stats_field.value
+        assert "🔩" not in stats_field.value
+
+    def test_duel_layout_worded_hull_label(self, mock_duel_cog):
+        """Combat Stats field uses 'Hull' word."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "Hull" in stats_field.value
+
+    def test_duel_layout_player_names_not_you(self, mock_duel_cog):
+        """Duel stats use real player names ('samx', 'gf') — NOT 'You'."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next((f for f in embed.fields if "Combat Stats" in f.name), None)
+        assert stats_field is not None
+        assert "You" not in stats_field.value
+        assert "samx" in stats_field.value
+        assert "gf" in stats_field.value
+
+    def test_duel_layout_no_combat_vs_header_line(self, mock_duel_cog):
+        """Combat Stats field must NOT contain a '⚔️ Combat vs ...' header line."""
+        data = _make_accept_result_with_summary()
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        assert "Combat vs" not in stats_field.value
+
+    def test_duel_layout_challenger_survived(self, mock_duel_cog):
+        """Challenger with hull > 0 shows 'survived'."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        lines = stats_field.value.split("\n")
+        samx_line = next((ln for ln in lines if "samx" in ln), "")
+        assert "survived" in samx_line
+
+    def test_duel_layout_target_destroyed(self, mock_duel_cog):
+        """Target with hull == 0 shows 'destroyed'."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        lines = stats_field.value.split("\n")
+        gf_line = next((ln for ln in lines if "gf" in ln), "")
+        assert "destroyed" in gf_line
+
+    def test_duel_layout_challenger_destroyed_when_hull_zero(self, mock_duel_cog):
+        """Challenger with hull == 0 shows 'destroyed'."""
+        data = _make_betty_duel(c1_hull=0, c2_hull=80, challenger_name="samx", target_name="gf")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        lines = stats_field.value.split("\n")
+        samx_line = next((ln for ln in lines if "samx" in ln), "")
+        assert "destroyed" in samx_line
+
+    def test_duel_layout_ship_name_in_player_label(self, mock_duel_cog):
+        """Each player line includes the ship name in '{Name} ({Ship}) — ...' format."""
+        data = _make_accept_result_with_summary(challenger_name="samx", winner_ship="StarFighter")
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next(f for f in embed.fields if "Combat Stats" in f.name)
+        # challenger is c1 with ship=winner_ship
+        assert "samx (StarFighter)" in stats_field.value
+
+    def test_duel_layout_le_1024_chars(self, mock_duel_cog):
+        """Combat Stats field value stays within Discord's 1024-char limit."""
+        data = _make_betty_duel(c1_hull=95, c2_hull=0, challenger_name="A" * 200, target_name="B" * 200)
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        stats_field = next((f for f in embed.fields if "Combat Stats" in f.name), None)
+        if stats_field:
+            assert len(stats_field.value) <= 1024
 
 
 # ---------------------------------------------------------------------------

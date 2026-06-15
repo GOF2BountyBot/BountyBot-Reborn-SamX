@@ -9,6 +9,11 @@
   "plasmaConsumption": 30,
   "techLevel": 9,
   "type": "ShieldInjectorModule",
-  "value": 535304,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Phoenix_SIS"
+  "value": 527150,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Phoenix_SIS",
+  "extra_atts": {
+    "plasma_consumption_t": 30,
+    "blueprint_only": true,
+    "mechanics_text": "Phoenix SIS (Phoenix Shield Injecting System) quickly refills a depleted shield. Activates automatically when shield depletes from sustained damage. Recharges shield within ~5 seconds. Requires 30t of blue plasma per activation. Can recharge indefinitely as long as 30t blue plasma is available. Effectively creates 'infinite' shield if damage rate equals regeneration rate. Blueprint-only item — must be crafted, cannot be purchased normally."
+  }
 }

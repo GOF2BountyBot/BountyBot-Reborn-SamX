@@ -11,6 +11,7 @@ from typing import Any
 from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.item_repository import ItemRepository
 from persist.repositories.module_repository import ModuleRepository
+from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.ship_repository import ShipRepository
 from shared import bblogger
@@ -111,6 +112,9 @@ class EquipmentService:
         self.item_repo = ItemRepository()
         self.module_repo = ModuleRepository()
         self.ship_data_repo = ShipRepository()
+        # D5: shared so the choke-point's aggregate-root Player lock uses the same
+        # (mockable) repo as the rest of the equip/unequip flow.
+        self.player_repo = PlayerRepository()
 
     # ------------------------------------------------------------------
     # Public API
@@ -153,6 +157,7 @@ class EquipmentService:
                 inventory_repo=self.inventory_repo,
                 item_repo=self.item_repo,
                 ship_repo=self.ship_data_repo,
+                player_repo=self.player_repo,
             )
             result = await service.equip_one(
                 db,
@@ -204,6 +209,7 @@ class EquipmentService:
                 inventory_repo=self.inventory_repo,
                 item_repo=self.item_repo,
                 ship_repo=self.ship_data_repo,
+                player_repo=self.player_repo,
             )
             result = await service.unequip_one(
                 db,

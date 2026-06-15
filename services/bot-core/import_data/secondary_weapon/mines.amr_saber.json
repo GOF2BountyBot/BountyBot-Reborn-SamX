@@ -3,12 +3,18 @@
     "Saber"
   ],
   "builtIn": false,
-  "damage": 0,
+  "damage": 350,
   "icon": "https://i.postimg.cc/ZRW5Q35f/amr-saber.png",
-  "loading speed": 0,
+  "loading speed": 1000,
   "name": "AMR Saber",
-  "value": 0,
+  "value": 300,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "mines"
+  "techLevel": 3,
+  "extra_atts": {
+    "loading_speed_ms": 1000,
+    "subtype": "mine",
+    "magnitude_m": 500,
+    "emp_damage": 0
+  }
 }

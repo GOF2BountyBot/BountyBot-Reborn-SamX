@@ -1,0 +1,31 @@
+{
+  "_name": "Com. Devices",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/FRNYn1J8/com-devices.png",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Com._Devices",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "5",
+    "Price Range": "-> 72$ (Nesla)\n-> 241$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 5,
+    "price_range_min_credits": 72,
+    "price_range_min_system": "Nesla",
+    "price_range_max_credits": 241,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 157,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "A transceiver for all different ranges, frequency modulations, critical system cables and more.",
+  "mechanics_text": [
+    "2t of Com. Devices are required for the Intelli Jet blueprint.",
+    "5t of Com. Devices are required for the HH-AT \"Archimedes\" blueprint.",
+    "7t of Com. Devices are required for the AMR Extinctor blueprint.",
+    "The icon is a satellite dish with signal waves being sent out.",
+    "Com. is short for \"communication\"."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 5", "GOF2", "Technical commodities", "Blueprints", "Freelance Missions", "GOF2HD", "Terran Technology"]
+}

@@ -514,21 +514,27 @@ class TestPlayerEquippableAutocomplete:
         names = {c.value for c in choices}
         assert "Pulse Laser" in names, "cargo copy available even though equipped — must appear"
 
-    def test_player_equippable_excludes_non_equippable_types(self):
-        """secondary_weapon items are excluded (not in CURRENTLY_EQUIPPABLE set)."""
+    def test_player_equippable_includes_secondary_weapon_type(self):
+        """secondary_weapon items are included in /equip autocomplete (CI-23).
+
+        Secondaries are now buyable (CI-5) and equippable (CI-16).  They must appear
+        in the /equip dropdown alongside primary_weapon, turret_weapon, and module.
+        'ship' items remain excluded (never /equip-able via that surface).
+        """
         items = [
             _make_inv_nc("Primary Gun", "primary_weapon"),
             _make_inv_nc("Seeker Missile", "secondary_weapon"),
+            _make_inv_nc("Old Freighter", "ship"),  # ship — always excluded
         ]
-        # Only need player and inventory caches now (no ships_cache required)
         autocomplete_state.player_cache.set((222, 111), {"id": 7})
         autocomplete_state.inventory_cache.set((222, 7), items)
         client = _make_raising_client()
 
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
         names = {c.value for c in choices}
-        assert "Seeker Missile" not in names
+        assert "Seeker Missile" in names, "secondary_weapon with quantity>0 must appear in /equip autocomplete"
         assert "Primary Gun" in names
+        assert "Old Freighter" not in names, "ship type must never appear in /equip autocomplete"
 
     def test_cold_miss_does_not_call_http(self):
         """Cold miss on player cache does not call HTTP."""
@@ -601,9 +607,14 @@ class TestPlayerEquippableAutocomplete:
         assert len(choices) == 1
         assert choices[0].value == "Pulse Laser"
 
-    def test_constants_exclude_secondary_weapon(self):
-        """_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES must not contain 'secondary_weapon'."""
-        assert "secondary_weapon" not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+    def test_constants_include_secondary_weapon(self):
+        """_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES MUST contain 'secondary_weapon' (CI-23).
+
+        Secondaries are now buyable (CI-5) and equippable (CI-16), so they must appear
+        in /equip autocomplete alongside primary_weapon, turret_weapon, and module.
+        'ship' is never equippable via /equip and must remain excluded.
+        """
+        assert "secondary_weapon" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
         assert "ship" not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
         assert "primary_weapon" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
         assert "turret_weapon" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
@@ -1020,12 +1031,16 @@ class TestAdversarialEdgeCases:
         Equippable-type items with quantity > 0 appear regardless of whether they
         are also in the ship loadout. Items with quantity <= 0 are excluded.
         Only inventory_cache is needed — ships_cache is not consulted.
+
+        Note: secondary_weapon IS now in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES (CI-23),
+        so a secondary with quantity > 0 appears in the dropdown.  Only 'ship' type
+        and items with quantity=0 are excluded.
         """
         items = [
             _make_inv_nc("Cannon", "primary_weapon"),  # quantity=1 (default)
             _make_inv_nc("Turret Alpha", "turret_weapon"),
             _make_inv_nc("ShieldV2", "module"),
-            _make_inv_nc("Seeker", "secondary_weapon"),  # non-equippable type
+            _make_inv_nc("Seeker", "secondary_weapon"),  # equippable since CI-23
             _make_inv_nc("EmptyGun", "primary_weapon", quantity=0),  # no cargo copy
         ]
         autocomplete_state.player_cache.set((222, 111), {"id": 7})
@@ -1035,14 +1050,104 @@ class TestAdversarialEdgeCases:
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
         names = {c.value for c in choices}
 
-        # All equippable types with quantity > 0 returned
+        # All equippable types with quantity > 0 returned (secondary_weapon now included — CI-23)
         assert "Cannon" in names
         assert "Turret Alpha" in names
         assert "ShieldV2" in names
-        # secondary_weapon is not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
-        assert "Seeker" not in names
-        # quantity=0 → excluded
+        assert "Seeker" in names, "secondary_weapon with quantity>0 must appear since CI-23"
+        # quantity=0 → excluded regardless of type
         assert "EmptyGun" not in names
+
+
+# ---------------------------------------------------------------------------
+# CI-23 tests: secondary_weapon now appears in /equip autocomplete
+# ---------------------------------------------------------------------------
+
+
+class TestCI23SecondaryWeaponEquippable:
+    """CI-23: secondary_weapon is now equippable and must appear in /equip autocomplete.
+
+    Previously gated out; CI-5 (buyable) + CI-16 (equippable wiring) made secondaries
+    fully supported.  CI-23 removes the surface gate in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES.
+    """
+
+    def setup_method(self):
+        _init_state_with_real_caches()
+
+    def teardown_method(self):
+        _reset_state()
+
+    def test_secondary_weapon_in_equippable_types_constant(self):
+        """_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES contains 'secondary_weapon' (CI-23)."""
+        assert "secondary_weapon" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+
+    def test_secondary_weapon_in_cargo_appears_in_equip_autocomplete(self):
+        """A secondary_weapon with quantity>0 in cargo shows up in /equip autocomplete.
+
+        This is the canonical CI-23 regression test: before the fix the item was
+        silently omitted from the dropdown; after the fix it appears alongside
+        primary_weapon / turret_weapon / module items.
+        """
+        items = [
+            _make_inv_nc("Seeker Missile", "secondary_weapon", quantity=2),
+            _make_inv_nc("Pulse Laser", "primary_weapon", quantity=1),
+        ]
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        names = {c.value for c in choices}
+
+        assert "Seeker Missile" in names, (
+            "secondary_weapon with quantity>0 must appear in /equip autocomplete after CI-23"
+        )
+        assert "Pulse Laser" in names
+
+    def test_secondary_weapon_zero_quantity_excluded(self):
+        """secondary_weapon with quantity=0 (no cargo copy) is still excluded."""
+        items = [
+            _make_inv_nc("Seeker Missile", "secondary_weapon", quantity=0),
+            _make_inv_nc("Pulse Laser", "primary_weapon", quantity=1),
+        ]
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        names = {c.value for c in choices}
+
+        assert "Seeker Missile" not in names, "quantity=0 must be excluded regardless of type"
+        assert "Pulse Laser" in names
+
+    def test_ship_type_still_excluded(self):
+        """'ship' item_type is never equippable via /equip regardless of CI-23."""
+        items = [
+            _make_inv_nc("Old Freighter", "ship", quantity=1),
+            _make_inv_nc("Seeker Missile", "secondary_weapon", quantity=1),
+        ]
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        names = {c.value for c in choices}
+
+        assert "Old Freighter" not in names, "ship type must never appear in /equip autocomplete"
+        assert "Seeker Missile" in names
+
+    def test_secondary_weapon_label_format(self):
+        """secondary_weapon choice label uses 'Secondary Weapon' (title-cased from type)."""
+        items = [_make_inv_nc("EMP Drone", "secondary_weapon", quantity=3)]
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert len(choices) == 1
+        assert "Secondary Weapon" in choices[0].name
+        assert "x3" in choices[0].name
+        assert choices[0].value == "EMP Drone"
 
 
 if __name__ == "__main__":

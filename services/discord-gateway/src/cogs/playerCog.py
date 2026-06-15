@@ -226,40 +226,19 @@ class PlayerCog(commands.Cog):
                     f"/profile: cache write-through failed for user={interaction.user.id}; command still succeeded"
                 )
 
-            # Attempt to assign the Bounty Hunter role + tier role (non-fatal)
-            try:
-                config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
-                config_resp.raise_for_status()
-                config = config_resp.json()
-                guild = interaction.guild
-                roles_to_add: list[discord.Role] = []
-
-                # General Bounty Hunter role
-                bh_role_id = config.get("bounty_hunter_role_id")
-                if bh_role_id:
-                    role = guild.get_role(bh_role_id)
-                    if role and role not in interaction.user.roles:
-                        roles_to_add.append(role)
-
-                # Tier-specific role based on the player's current tier
-                player_tier = (player_data.get("tier") or "Bronze").lower()
-                tier_role_key = f"{player_tier}_role_id"
-                tier_role_id = config.get(tier_role_key)
-                if tier_role_id:
-                    tier_role = guild.get_role(tier_role_id)
-                    if tier_role and tier_role not in interaction.user.roles:
-                        roles_to_add.append(tier_role)
-
-                if roles_to_add:
-                    await interaction.user.add_roles(*roles_to_add, reason="BountyBot player registration")
-                    role_names = ", ".join(r.name for r in roles_to_add)
-                    flogger.info(
-                        f"Assigned roles [{role_names}] to user {interaction.user.id} in guild {interaction.guild_id}"
-                    )
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                flogger.warning(
-                    f"Failed to assign roles: guild={interaction.guild_id}, user={interaction.user.id}, error={e}"
-                )
+            # Sync the Bounty Hunter role + notification roles to the player's
+            # STORED preferences (D-019). The tier role / shop role are projections
+            # of bounty_notifications_enabled / shop_notifications_enabled — see
+            # _sync_player_notification_roles. SELF-SCOPING: this WRITE path operates
+            # ONLY on interaction.user (the caller). Even though /profile has no
+            # `user:` param today, a future one MUST feed only the read/display path
+            # above — never this call.
+            await self._sync_player_notification_roles(
+                interaction.guild,
+                interaction.user,
+                interaction.guild_id,
+                player_data,
+            )
 
         except httpx.HTTPStatusError as e:
             flogger.error(
@@ -472,19 +451,16 @@ class PlayerCog(commands.Cog):
                 roles_to_add: list[discord.Role] = []
 
                 old_tier_role_id = config.get(old_tier_key)
-                # Notification preference detection: if the old role is configured and
-                # exists in Discord but the user doesn't have it, they opted out via
-                # /notifications — don't assign the new tier role either.
-                # If the old role isn't configured or doesn't exist in the guild we
-                # cannot infer a preference, so default to assigning the new role.
-                notifications_enabled = True
+                # D-019: the player's bounty-notification preference is the STORED flag,
+                # not inferred from role presence. The old tier role is always removed
+                # (it's now the wrong tier); the new tier role is added only if the
+                # player is opted in. player_data is the pre-prestige fetch — the flags
+                # survive prestige (unregister/prestige never flip them).
+                notifications_enabled = bool(player_data.get("bounty_notifications_enabled", True))
                 if old_tier_role_id:
                     old_role = guild.get_role(old_tier_role_id)
-                    if old_role:
-                        if old_role in interaction.user.roles:
-                            roles_to_remove.append(old_role)
-                        else:
-                            notifications_enabled = False
+                    if old_role and old_role in interaction.user.roles:
+                        roles_to_remove.append(old_role)
 
                 new_tier_role_id = config.get(new_tier_key)
                 if new_tier_role_id and notifications_enabled:
@@ -609,7 +585,7 @@ class PlayerCog(commands.Cog):
                         f"\n**Power Check** {verdict_emoji} "
                         f"You win **{pre['player_win_rate']:.0%}** of "
                         f"{pre['sims_run']} simulated fights against "
-                        f"active {target_tier} criminals."
+                        f"{target_tier} criminals."
                     )
                 else:
                     # NO_DATA: player has no active ship (should not occur in normal play)
@@ -707,19 +683,14 @@ class PlayerCog(commands.Cog):
                 roles_to_add: list[discord.Role] = []
 
                 old_tier_role_id = config.get(old_tier_key)
-                # Notification preference detection: if the old role is configured and
-                # exists in Discord but the user doesn't have it, they opted out via
-                # /notifications — don't assign the new tier role either.
-                # If the old role isn't configured or doesn't exist in the guild we
-                # cannot infer a preference, so default to assigning the new role.
-                notifications_enabled = True
+                # D-019: bounty-notification preference is the STORED flag, not inferred
+                # from role presence. The old tier role is always removed (wrong tier
+                # now); the new tier role is added only if the player is opted in.
+                notifications_enabled = bool(player_data.get("bounty_notifications_enabled", True))
                 if old_tier_role_id:
                     old_role = guild.get_role(old_tier_role_id)
-                    if old_role:
-                        if old_role in interaction.user.roles:
-                            roles_to_remove.append(old_role)
-                        else:
-                            notifications_enabled = False
+                    if old_role and old_role in interaction.user.roles:
+                        roles_to_remove.append(old_role)
 
                 new_tier_role_id = config.get(new_tier_key)
                 if new_tier_role_id and notifications_enabled:
@@ -911,17 +882,14 @@ class PlayerCog(commands.Cog):
                 new_role_id = config.get(f"{demote_data['new_tier'].lower()}_role_id")
                 roles_to_add: list[discord.Role] = []
                 roles_to_remove: list[discord.Role] = []
-                # Notification preference detection: if the old role is configured and
-                # exists in Discord but the user doesn't have it, they opted out via
-                # /notifications — don't assign the new tier role either.
-                notifications_enabled = True
+                # D-019: bounty-notification preference is the STORED flag, not inferred
+                # from role presence. The old tier role is always removed (wrong tier
+                # now); the new tier role is added only if the player is opted in.
+                notifications_enabled = bool(player_data.get("bounty_notifications_enabled", True))
                 if old_role_id:
                     old_role = guild.get_role(old_role_id)
-                    if old_role:
-                        if old_role in interaction.user.roles:
-                            roles_to_remove.append(old_role)
-                        else:
-                            notifications_enabled = False
+                    if old_role and old_role in interaction.user.roles:
+                        roles_to_remove.append(old_role)
                 if new_role_id and notifications_enabled:
                     new_role = guild.get_role(new_role_id)
                     if new_role and new_role not in interaction.user.roles:
@@ -1119,6 +1087,11 @@ class PlayerCog(commands.Cog):
                     )
                     return
 
+                # D-019: persist the STORED preference FIRST (source of truth), then
+                # project it onto the Discord role. SELF-SCOPING: keyed on
+                # interaction.user via player_data['id'] — caller only.
+                await self._persist_notification_preference(player_data["id"], "bounty", bool(enabled))
+
                 try:
                     member = interaction.user
                     if enabled:
@@ -1166,6 +1139,25 @@ class PlayerCog(commands.Cog):
                         "❌ Notification role not found — ask an admin to re-run `/admin_setup`.", ephemeral=True
                     )
                     return
+
+                # D-019: resolve the player so we can persist the STORED preference.
+                # The shop role is a projection of shop_notifications_enabled.
+                shop_user_data = {
+                    "discord_id": interaction.user.id,
+                    "guild_id": interaction.guild_id,
+                    "discord_username": None,
+                    "display_name": getattr(interaction.user, "display_name", None),
+                }
+                shop_player_resp = await self.http_client.post(f"{api_base}/players/", json=shop_user_data, timeout=10)
+                if shop_player_resp.status_code == 400:
+                    await interaction.followup.send("❌ Run `/profile` first to register as a player.", ephemeral=True)
+                    return
+                shop_player_resp.raise_for_status()
+                shop_player_data = shop_player_resp.json()
+
+                # Persist the STORED preference FIRST (source of truth), then project
+                # onto the role. SELF-SCOPING: keyed on interaction.user — caller only.
+                await self._persist_notification_preference(shop_player_data["id"], "shop", bool(enabled))
 
                 try:
                     member = interaction.user
@@ -1290,6 +1282,115 @@ class PlayerCog(commands.Cog):
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/unregister error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while removing the role.", ephemeral=True)
+
+    async def _persist_notification_preference(self, player_id: int, notification_type: str, enabled: bool) -> None:
+        """Persist a player's notification preference to bot-core (D-019).
+
+        The stored flag is the source of truth; this is the write that makes the
+        preference durable across role-assigning paths (/profile, promote/demote/
+        prestige). Non-fatal: a persist failure is logged but does not block the
+        user-visible role change — /profile will reconcile on the next run.
+
+        SELF-SCOPING: ``player_id`` is always resolved from ``interaction.user`` by
+        the caller, never from a target/lookup user.
+        """
+        try:
+            resp = await self.http_client.put(
+                f"{api_base}/players/{player_id}/notifications",
+                json={"notification_type": notification_type, "enabled": enabled},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            flogger.info(
+                f"Persisted {notification_type} notification preference for player {player_id}: enabled={enabled}"
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(
+                f"Failed to persist {notification_type} notification preference for player {player_id}: {e}"
+            )
+
+    async def _sync_player_notification_roles(
+        self,
+        guild: discord.Guild,
+        member: discord.Member,
+        guild_id: int,
+        player_data: dict,
+    ) -> None:
+        """Sync ``member``'s Discord roles to their STORED notification preferences (D-019).
+
+        Projection of the persisted flags onto Discord roles:
+        - Bounty Hunter role: always ensured present (registration status, not a
+          notification preference).
+        - Current-tier role: present iff ``player_data["bounty_notifications_enabled"]``.
+        - Shop-announcements role: present iff ``player_data["shop_notifications_enabled"]``.
+
+        "Sync" means: add the role when its flag is True and it is missing; remove it
+        when its flag is False and it is present. This makes /profile and /register the
+        authoritative reconciler — they no longer re-enable an opted-out user (the bug
+        this fixes), and they restore the shop role on re-register (the prior asymmetry).
+
+        SELF-SCOPING GUARD (forward-looking): ``member`` MUST be the invoking user
+        (the caller, ``interaction.user``). This method MUTATES roles, which are the
+        projection of persisted preferences, so it must NEVER run against a target /
+        lookup user. If a ``user:`` param is ever added to /profile to view another
+        member, it MUST feed only the read/display path — never this method. Callers
+        pass ``interaction.user`` explicitly so a target Member cannot reach here.
+
+        Non-fatal: all failures are logged and swallowed so the primary command still
+        succeeds.
+        """
+        try:
+            config_resp = await self.http_client.get(f"{api_base}/config/guild/{guild_id}", timeout=5)
+            config_resp.raise_for_status()
+            config = config_resp.json()
+
+            roles_to_add: list[discord.Role] = []
+            roles_to_remove: list[discord.Role] = []
+
+            # Bounty Hunter role — registration status; always ensure present.
+            bh_role_id = config.get("bounty_hunter_role_id")
+            if bh_role_id:
+                bh_role = guild.get_role(bh_role_id)
+                if bh_role and bh_role not in member.roles:
+                    roles_to_add.append(bh_role)
+
+            # Tier role — projection of bounty_notifications_enabled.
+            bounty_enabled = bool(player_data.get("bounty_notifications_enabled", True))
+            player_tier = (player_data.get("tier") or "Bronze").lower()
+            tier_role_id = config.get(f"{player_tier}_role_id")
+            if tier_role_id:
+                tier_role = guild.get_role(tier_role_id)
+                if tier_role:
+                    if bounty_enabled and tier_role not in member.roles:
+                        roles_to_add.append(tier_role)
+                    elif not bounty_enabled and tier_role in member.roles:
+                        roles_to_remove.append(tier_role)
+
+            # Shop role — projection of shop_notifications_enabled.
+            shop_enabled = bool(player_data.get("shop_notifications_enabled", True))
+            shop_role_id = config.get("shop_announcements_role_id")
+            if shop_role_id:
+                shop_role = guild.get_role(shop_role_id)
+                if shop_role:
+                    if shop_enabled and shop_role not in member.roles:
+                        roles_to_add.append(shop_role)
+                    elif not shop_enabled and shop_role in member.roles:
+                        roles_to_remove.append(shop_role)
+
+            if roles_to_add:
+                await member.add_roles(*roles_to_add, reason="BountyBot notification preference sync")
+                flogger.info(
+                    f"Added roles [{', '.join(r.name for r in roles_to_add)}] to user {member.id} "
+                    f"in guild {guild_id} (notification-pref sync)"
+                )
+            if roles_to_remove:
+                await member.remove_roles(*roles_to_remove, reason="BountyBot notification preference sync")
+                flogger.info(
+                    f"Removed roles [{', '.join(r.name for r in roles_to_remove)}] from user {member.id} "
+                    f"in guild {guild_id} (notification-pref sync)"
+                )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"Failed to sync notification roles: guild={guild_id}, user={member.id}, error={e}")
 
     def _get_tier_color(self, tier: str) -> discord.Color:
         """Get Discord color based on player tier."""

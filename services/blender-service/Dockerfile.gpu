@@ -79,6 +79,8 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         libxt6t64 \
         # 7zip for extraction of assets on container startup
         7zip \
+        # gosu for privilege drop in entrypoint (root → botuser)
+        gosu \
         # vim and sudo for debugging — comment out once stable
         # vim \
         # sudo \
@@ -234,6 +236,10 @@ RUN groupadd --gid 1002 botuser && \
     chmod -R 1777 /home/botuser && \
     chmod -R 1777 /app
 
-USER botuser
+# Sanity-check gosu is functional before the image is sealed.
+RUN gosu nobody true
 
+# The entrypoint starts as root, normalizes /app/data ownership, then drops to
+# botuser via gosu (handled inside docker-entrypoint.sh root-check block).
+# The '& tail -f /dev/null' keep-alive preserves original crash-survival behavior.
 ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /app/docker-entrypoint.sh & tail -f /dev/null"]

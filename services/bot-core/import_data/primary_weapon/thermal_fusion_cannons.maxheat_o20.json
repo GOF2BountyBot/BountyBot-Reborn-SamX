@@ -9,8 +9,14 @@
   "icon": "https://i.postimg.cc/Y0jDYr8L/maxheat-o20.png",
   "name": "MaxHeat o20",
   "techLevel": 9,
-  "value": 86204,
+  "value": 81748,
   "wiki": "https://galaxyonfire.fandom.com/wiki/MaxHeat_o20",
   "type": "PrimaryWeapon",
-  "subtype": "thermal_fusion_cannons"
+  "extra_atts": {
+    "loading_speed_ms": 150,
+    "range_m": 2200,
+    "damage_per_shot": 5,
+    "speed_km_h": 4000,
+    "subtype": "thermal-fusion"
+  }
 }

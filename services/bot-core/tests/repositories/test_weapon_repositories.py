@@ -282,6 +282,81 @@ class TestSecondaryWeaponRepository:
         with pytest.raises(ValueError, match="Missing required key 'damage' in data for secondary_weapon"):
             await repo.create_or_update(mock_db, {"name": "Missile"})
 
+    @pytest.mark.asyncio
+    async def test_loading_speed_read_from_wiki_style_key(self, repo, mock_db):
+        """PR-2 L2: ``"loading speed"`` (wiki infobox style, with space) must be
+        accepted as the source for the ``loading_speed`` column.
+
+        All 30 current seed JSONs use this exact key. Prior to PR-2 the loader
+        only read ``loadingSpeed`` (camelCase), leaving ``loading_speed`` NULL
+        on every populated secondary in the DB.
+        """
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        captured_kwargs = {}
+
+        class MockSecondaryWeapon:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                for k, v in kwargs.items():
+                    object.__setattr__(self, k, v)
+
+        raw = {"name": "Shesha", "damage": 60, "loading speed": 3000}
+        with patch("persist.repositories.secondary_weapon_repository.SecondaryWeapon", MockSecondaryWeapon):
+            await repo.create_or_update(mock_db, raw)
+
+        assert captured_kwargs.get("loading_speed") == 3000
+
+    @pytest.mark.asyncio
+    async def test_loading_speed_camelcase_fallback(self, repo, mock_db):
+        """PR-2 L2: ``"loadingSpeed"`` (camelCase) remains a valid fallback for
+        forward-compat with any future seed JSON that uses it.
+        """
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        captured_kwargs = {}
+
+        class MockSecondaryWeapon:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                for k, v in kwargs.items():
+                    object.__setattr__(self, k, v)
+
+        raw = {"name": "FutureWeapon", "damage": 100, "loadingSpeed": 1500}
+        with patch("persist.repositories.secondary_weapon_repository.SecondaryWeapon", MockSecondaryWeapon):
+            await repo.create_or_update(mock_db, raw)
+
+        assert captured_kwargs.get("loading_speed") == 1500
+
+    @pytest.mark.asyncio
+    async def test_loading_speed_wiki_key_wins_over_camelcase(self, repo, mock_db):
+        """PR-2 L2: when both keys are present, the wiki-style key (which is
+        what every current seed file uses) takes precedence.
+        """
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        captured_kwargs = {}
+
+        class MockSecondaryWeapon:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                for k, v in kwargs.items():
+                    object.__setattr__(self, k, v)
+
+        raw = {
+            "name": "BothKeys",
+            "damage": 50,
+            "loading speed": 2000,
+            "loadingSpeed": 9999,
+        }
+        with patch("persist.repositories.secondary_weapon_repository.SecondaryWeapon", MockSecondaryWeapon):
+            await repo.create_or_update(mock_db, raw)
+
+        assert captured_kwargs.get("loading_speed") == 2000
+
 
 # ---------------------------------------------------------------------------
 # TestTurretWeaponRepository

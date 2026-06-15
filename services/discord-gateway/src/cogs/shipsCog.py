@@ -130,10 +130,11 @@ class ShipsCog(commands.Cog):
 
                 # Count loadout
                 weapons_count = len(ship["weapons"]) if ship["weapons"] else 0
+                secondaries_count = len(ship["secondary_weapons"]) if ship.get("secondary_weapons") else 0
                 modules_count = len(ship["modules"]) if ship["modules"] else 0
                 turrets_count = len(ship["turrets"]) if ship["turrets"] else 0
 
-                loadout_summary = f"W:{weapons_count} | M:{modules_count} | T:{turrets_count}"
+                loadout_summary = f"W:{weapons_count} | S:{secondaries_count} | M:{modules_count} | T:{turrets_count}"
 
                 ship_info = (
                     f"{status}{nickname}\nLoadout: {loadout_summary}\n"
@@ -279,6 +280,25 @@ class ShipsCog(commands.Cog):
                     name=f"🎯 Turrets ({loadout['turrets_count']})", value=turrets_text or "None", inline=False
                 )
 
+            # CI-16: render secondary weapons with ammo counts
+            if loadout.get("secondary_weapons"):
+                _sec_ammo: dict = loadout.get("secondary_ammo") or {}
+                sec_lines = []
+                for sw_name in loadout["secondary_weapons"][:10]:
+                    rounds = _sec_ammo.get(sw_name)
+                    if rounds is not None:
+                        sec_lines.append(f"• {sw_name} ×{rounds}")
+                    else:
+                        sec_lines.append(f"• {sw_name}")
+                if len(loadout["secondary_weapons"]) > 10:
+                    sec_lines.append(f"... and {len(loadout['secondary_weapons']) - 10} more")
+                secondary_text = "\n".join(sec_lines)
+                embed.add_field(
+                    name=f"\U0001f4a5 Secondaries ({loadout['secondary_weapons_count']})",
+                    value=secondary_text or "None",
+                    inline=False,
+                )
+
             embed.set_footer(
                 text="Use /setactive <ship_id> to set as active ship | /nickname <ship_id> <name> to set nickname"
             )
@@ -312,7 +332,7 @@ class ShipsCog(commands.Cog):
     async def setactive(self, interaction: discord.Interaction, ship_id: str):
         """Set active ship."""
         flogger.info(f"/setactive: guild={interaction.guild_id}, user={interaction.user.id}, ship_id={ship_id}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         # Validate that ship_id is a valid integer (user may type freeform or pick from autocomplete)
         try:

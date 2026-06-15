@@ -1,15 +1,22 @@
 {
-    "aliases":  [
-                    "Kbooskk"
-                ],
-    "builtIn":  false,
-    "dps":  15.9,
-    "emoji":  "<:kbooskk:723709619968671765>",
-    "icon":  "https://i.postimg.cc/q7510Vpk/k-booskk.png",
-    "name":  "K'booskk",
-    "techLevel":  2,
-    "value":  16743,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/K%27booskk",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blasters"
+  "aliases": [
+    "Kbooskk"
+  ],
+  "builtIn": false,
+  "dps": 15.9,
+  "emoji": "<:kbooskk:723709619968671765>",
+  "icon": "https://i.postimg.cc/q7510Vpk/k-booskk.png",
+  "name": "K'booskk",
+  "techLevel": 2,
+  "value": 15302,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/K%27booskk",
+  "type": "PrimaryWeapon",
+  "extra_atts": {
+    "loading_speed_ms": 530,
+    "range_m": 1400,
+    "damage_per_shot": 8,
+    "speed_km_h": 3500,
+    "subtype": "blaster",
+    "mechanics_text": "## In-Game Description\nThe K'booskk is the successor to the N'saan. It is more efficient in every area of performance and is definitely preferable to its little brother.\n\n## Notes\nDespite the statement in the in-game description, the K'booskk is only slightly better than its predecessor the N'saan, dealing the same base damage with only a minor loading speed advantage."
+  }
 }

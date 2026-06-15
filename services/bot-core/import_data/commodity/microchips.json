@@ -1,0 +1,29 @@
+{
+  "_name": "Microchips",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/gcB03g4f/microchips.png",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Microchips",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Microchips",
+    "Type": "Commodity",
+    "Tech Level": "7",
+    "Known Price Range": "-> 14$ (Nesla)\n-> 83$ (Ni'mrrod)"
+  },
+  "stats": {
+    "tech_level": 7,
+    "price_range_min_credits": 14,
+    "price_range_min_system": "Nesla",
+    "price_range_max_credits": 83,
+    "price_range_max_system": "Ni'Mrrod",
+    "value": 49,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Following the discovery of the smallest particles in the universe, microchips have shrunk enormously. If you buy a load of microchips, consider using a hadron microscope to check they are all there before paying.",
+  "mechanics_text": [
+    "Required for blueprints: 2t Intelli Jet, 5t AMR Extinctor, 5t Liberator, 10t Yin Co. Shadow Ninja, 15t 128MJ Railgun, 20t Mass Driver MD 10, 75t Khador Drive, 80t Fluxed Matter Shield.",
+    "More common in high tech level systems, especially Nivelian systems and Thynome."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 7", "GOF2", "Technical commodities", "Valkyrie", "Freelance Missions", "GOF2HD", "Blueprints"]
+}

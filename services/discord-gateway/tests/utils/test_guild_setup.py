@@ -129,11 +129,12 @@ def _make_guild(
     # Category creation mock
     if forbidden_category:
 
-        class FakeResponse403:
+        class FakeResponse403Category:
             status = 403
             reason = "Forbidden"
 
-        guild.create_category = AsyncMock(side_effect=discord.Forbidden(FakeResponse403(), "Missing Permissions"))
+        _err = discord.Forbidden(FakeResponse403Category(), "Missing Permissions")
+        guild.create_category = AsyncMock(side_effect=_err)
     elif error_category:
         guild.create_category = AsyncMock(side_effect=RuntimeError("oops"))
     else:

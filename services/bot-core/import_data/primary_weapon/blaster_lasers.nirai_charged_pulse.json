@@ -10,8 +10,14 @@
   "icon": "https://i.postimg.cc/52jPr2MP/nirai-charged-pulse.png",
   "name": "Nirai Charged Pulse",
   "techLevel": 3,
-  "value": 11465,
+  "value": 10290,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Charged_Pulse",
   "type": "PrimaryWeapon",
-  "subtype": "blaster_lasers"
+  "extra_atts": {
+    "loading_speed_ms": 380,
+    "range_m": 2700,
+    "damage_per_shot": 6,
+    "speed_km_h": 5000,
+    "subtype": "laser"
+  }
 }

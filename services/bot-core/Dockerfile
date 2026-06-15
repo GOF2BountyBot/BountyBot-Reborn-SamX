@@ -20,6 +20,10 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         postgresql-client \
         # 7zip for extraction of assets on container startup
         7zip \
+        # zstd for pg_dump backup compression (used by pg_backup_executor)
+        zstd \
+        # gosu for privilege drop in entrypoint (root → botuser)
+        gosu \
         # vim and sudo for debugging — comment out once stable
         # vim \
         # sudo \
@@ -97,11 +101,17 @@ RUN groupadd --gid 1002 botuser && \
     chmod -R 1777 /home/botuser && \
     chmod -R 1777 /app
 
-USER botuser
-
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
   CMD curl -s -o /dev/null -f http://localhost:8000/api/v1/health/ || exit 1
 
-# The '& tail -f /dev/null' keeps the container running if the app crashes,
-# allowing exec access for debugging.
-ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && cd /app/src && /opt/venv/bin/python -m persist.database.run_migration upgrade && /opt/venv/bin/python /app/src/main.py & tail -f /dev/null"]
+# Sanity-check gosu is functional before the image is sealed.
+RUN gosu nobody true
+
+# Copy the entrypoint script (chmod set on host; Dockerfile RUN ensures execute bit).
+COPY services/bot-core/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
+# The entrypoint starts as root, normalizes /app/data ownership, then drops to
+# botuser via gosu.  The '& tail -f /dev/null' keep-alive (inside the gosu'd
+# command) preserves original crash-survival behavior.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

@@ -79,3 +79,44 @@ async def db_session(async_engine) -> AsyncSession:
     session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
         yield session
+
+
+# ---------------------------------------------------------------------------
+# P2-T2: thread-pool fixture for fight_ships-exercising tests
+#
+# fight_ships now calls offload_cpu(run_fight, ...) which requires a pool
+# registered in executor_holder.  A ThreadPoolExecutor is used here for
+# speed and correctness — run_fight is pure and correct in a thread.
+#
+# Import executor_holder at MODULE-IMPORT time (not inside the fixture body)
+# so the fixture always targets the same canonical module object that
+# combat_service.offload_cpu → utils.offload.get_process_pool references,
+# regardless of whether tests/test_offload.py has swapped sys.modules entries
+# before this fixture executes.  Mirrors the same pattern in
+# tests/services/conftest.py.
+# ---------------------------------------------------------------------------
+
+import concurrent.futures
+
+import utils.executor_holder as _holder
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _integration_thread_pool_for_offload():
+    """Register a ThreadPoolExecutor for offload_cpu in integration tests.
+
+    Mirrors the same fixture in tests/services/conftest.py.
+    Scope: session.  Torn down + holder reset after the session.
+
+    Registers against _holder (the module-level canonical import) to ensure
+    order-independence with respect to tests that temporarily swap sys.modules.
+    """
+    # Only set if not already set by a sibling fixture (idempotent guard).
+    if _holder._process_pool is None:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="test-int-combat")
+        _holder.set_process_pool(pool)
+        yield
+        pool.shutdown(wait=True)
+        _holder._process_pool = None
+    else:
+        yield

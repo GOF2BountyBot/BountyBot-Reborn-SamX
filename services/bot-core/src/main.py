@@ -12,11 +12,15 @@ CHANGES MADE:
 - Option 2: Use SQLAlchemy AsyncEngine and a real sync_engine for APScheduler
 """
 
+import asyncio
+import fcntl
 import importlib
 import logging as pyLogging
+import multiprocessing
 import os
 import pkgutil
-from contextlib import asynccontextmanager
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from contextlib import asynccontextmanager, suppress
 
 from api import routers
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -29,11 +33,59 @@ from persist.schemas.schema_manager import initialize_schema
 from services.game_constants import GameConstants
 from shared import bblogger
 from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import create_async_engine
 from utils.auto_seeder import auto_seed_data
+from utils.executor_holder import set_process_pool, set_thread_pool
 from utils.job_executor import run_job
 
 flogger = bblogger.get_logger("bot-main-script")
+
+# ---------------------------------------------------------------------------
+# Executor pool sizing — read from env with sane defaults.
+#
+# WHY explicit max_workers is REQUIRED:
+#   On Python 3.13, ProcessPoolExecutor defaults to os.process_cpu_count()
+#   which reads the CPU *affinity mask*, not the Docker CFS cgroup quota
+#   (cpu_quota / cpu_period).  Inside a Docker container, process_cpu_count()
+#   typically returns the host CPU count, not the container's allocated share,
+#   so the pool would over-provision workers.  We MUST set max_workers explicitly.
+#   Ref: https://docs.python.org/3/library/concurrent.futures.html
+#        (Changed in 3.13: max_workers uses os.process_cpu_count() by default)
+# ---------------------------------------------------------------------------
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read an environment variable as a positive integer.
+
+    Returns *default* when the variable is unset or empty.
+    Raises ``ValueError`` with a descriptive message when the value is present
+    but cannot be parsed as an integer OR is less than 1.  Fails loudly so
+    misconfiguration is visible at startup rather than silently ignored.
+
+    Args:
+        name:    Name of the environment variable.
+        default: Value to use when the variable is absent or empty.
+
+    Returns:
+        A positive integer (>= 1).
+
+    Raises:
+        ValueError: If the value is non-integer or less than 1.
+    """
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"Environment variable {name!r} must be a positive integer; got {raw!r}") from None
+    if value < 1:
+        raise ValueError(f"Environment variable {name!r} must be >= 1; got {value!r}")
+    return value
+
+
+_DEFAULT_PROCESS_POOL_WORKERS = 3
+PROCESS_POOL_WORKERS: int = _positive_int_env("PROCESS_POOL_WORKERS", _DEFAULT_PROCESS_POOL_WORKERS)
+THREAD_POOL_WORKERS: int = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * PROCESS_POOL_WORKERS))
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +154,7 @@ def register_default_jobs(scheduler) -> None:
             trigger=trigger,
             args=[jid, job_def["payload"]],
             id=jid,
+            replace_existing=True,
         )
         jitter_info = f", jitter={jitter}s" if jitter else ""
         flogger.info(f"📅 Registered default job '{jid}' with cron '{job_def['cron']}'{jitter_info}")
@@ -326,6 +379,26 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.error("🛑 Application startup aborted due to database issues")
         raise
 
+    # Pre-warm the shared map renderer + system graph (P3-T7).
+    # Constructed ONCE here and stored on app.state so both the bounties and
+    # systems routers share exactly one instance — no lazy per-request init,
+    # no second cold singleton in a worker thread.
+    try:
+        from services.map_renderer import MapRenderer
+        from services.system_graph_service import SystemGraphService
+
+        flogger.info("🗺️  Pre-warming shared MapRenderer + SystemGraphService...")
+        _map_renderer = MapRenderer()
+        _map_renderer.prewarm()  # P3-T1: load base image once on the loop thread
+        _system_graph = SystemGraphService()
+        async with db_manager.get_session() as _warmup_db:
+            await _system_graph.load_graph(_warmup_db)
+        fastapi_app.state.map_renderer = _map_renderer
+        fastapi_app.state.system_graph = _system_graph
+        flogger.info("✅ Shared map renderer + system graph ready")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"⚠️  Map renderer / system graph pre-warm failed (non-fatal, continuing): {e}")
+
     # Recovery sweep: mark stale active bounties/duels as expired (B.14 — Layer 2).
     # Runs AFTER migrations and BEFORE the scheduler, so the DB is clean before
     # any jobs or live requests are processed.
@@ -337,16 +410,45 @@ async def lifespan(fastapi_app: FastAPI):
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"⚠️ Auto-seed encountered an unexpected error (continuing): {e}")
 
-    # Initialize scheduler with a true sync_engine for APScheduler
+    # Initialize scheduler with a true sync_engine for APScheduler.
+    #
+    # Cross-worker safety: when uvicorn runs N workers, all N reach this block
+    # on startup and race to CREATE TABLE apscheduler_jobs. PostgreSQL's
+    # pg_type catalog rejects the duplicate type registration even with
+    # CREATE TABLE IF NOT EXISTS semantics (the check-then-create window is
+    # not atomic at the catalog level). Serialize startup with a non-blocking
+    # fcntl.flock + poll: first worker creates the table; subsequent workers
+    # block on the lock, then see the table already exists and proceed.
+    _SCHEDULER_LOCK_PATH = "/tmp/bountybot_scheduler_init.lock"
+    _SCHEDULER_LOCK_TIMEOUT_S = 60.0
+    _SCHEDULER_LOCK_POLL_S = 0.5
+
+    try:
+        sched_lock_fd = os.open(_SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o600)
+    except OSError as exc:
+        flogger.error(f"⏰ Could not open scheduler init lock {_SCHEDULER_LOCK_PATH}: {exc} — proceeding without lock")
+        sched_lock_fd = None
+
+    if sched_lock_fd is not None:
+        acquired = False
+        elapsed = 0.0
+        while elapsed < _SCHEDULER_LOCK_TIMEOUT_S:
+            try:
+                fcntl.flock(sched_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                await asyncio.sleep(_SCHEDULER_LOCK_POLL_S)
+                elapsed += _SCHEDULER_LOCK_POLL_S
+        if not acquired:
+            os.close(sched_lock_fd)
+            sched_lock_fd = None
+            flogger.error(
+                f"⏰ Scheduler init lock not acquired within {_SCHEDULER_LOCK_TIMEOUT_S}s — proceeding without lock"
+            )
+
     try:
         flogger.info("⏰ Initializing Scheduler…")
-
-        # existing async engine (if you need it elsewhere)
-        create_async_engine(
-            db_manager._connection_string,  # asyncpg URL
-            echo=False,
-            future=True,
-        )
 
         # derive a sync URL and engine for APScheduler
         sync_url = db_manager._connection_string.replace("postgresql+asyncpg", "postgresql")
@@ -381,6 +483,44 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.error(f"❌ Scheduler initialization failed: {e}")
         flogger.error("🛑 Application startup aborted due to scheduler issues")
         raise
+    finally:
+        if sched_lock_fd is not None:
+            with suppress(OSError):
+                fcntl.flock(sched_lock_fd, fcntl.LOCK_UN)
+            os.close(sched_lock_fd)
+
+    # -----------------------------------------------------------------------
+    # Build executor pools AFTER the scheduler is up (forkserver server is
+    # spawned into a stable parent snapshot) and BEFORE yield.
+    #
+    # WHY forkserver (not fork):
+    #   fork() in a multithreaded process (event loop + APScheduler threads)
+    #   is unsafe; on Python 3.12+ it raises DeprecationWarning.  forkserver
+    #   uses a single-threaded helper process as the actual fork()-er, which
+    #   is safe.  Ref: https://docs.python.org/3.13/library/multiprocessing.html
+    #
+    # set_forkserver_preload: tells the forkserver helper to pre-import the
+    #   listed modules so child processes inherit them without re-importing.
+    #   This is the module-level function (multiprocessing.set_forkserver_preload)
+    #   documented in the Python 3.13 stdlib.  It must be called before the
+    #   first worker is spawned (i.e. before ProcessPoolExecutor is created).
+    #   Ref: https://docs.python.org/3.13/library/multiprocessing.html#multiprocessing.set_forkserver_preload
+    # -----------------------------------------------------------------------
+    flogger.info(
+        f"🔧 Building executor pools: process_workers={PROCESS_POOL_WORKERS}, thread_workers={THREAD_POOL_WORKERS}"
+    )
+
+    # Pre-import the combat worker leaf in the forkserver control process so
+    # each spawned worker inherits it without a cold import.
+    multiprocessing.set_forkserver_preload(["compute.combat_worker"])
+
+    mp_ctx = multiprocessing.get_context("forkserver")
+    process_pool = ProcessPoolExecutor(mp_context=mp_ctx, max_workers=PROCESS_POOL_WORKERS)
+    thread_pool = ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS)
+
+    set_process_pool(process_pool)
+    set_thread_pool(thread_pool)
+    flogger.info("✅ Executor pools built and registered in executor_holder")
 
     flogger.info("📚 API Documentation available at: /docs")
     flogger.info("📖 ReDoc Documentation available at: /redoc")
@@ -395,6 +535,20 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.info("✅ Scheduler stopped")
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"⚠️ Error shutting down scheduler: {e}")
+
+    try:
+        flogger.info("🔧 Shutting down process pool...")
+        process_pool.shutdown(wait=True)
+        flogger.info("✅ Process pool shut down")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"⚠️ Error shutting down process pool: {e}")
+
+    try:
+        flogger.info("🔧 Shutting down thread pool...")
+        thread_pool.shutdown(wait=True)
+        flogger.info("✅ Thread pool shut down")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"⚠️ Error shutting down thread pool: {e}")
 
     try:
         flogger.info("🗄️ Shutting down database connections...")
@@ -511,7 +665,7 @@ if __name__ == "__main__":
         host=os.getenv("BOT_HOST", "0.0.0.0"),
         port=int(os.getenv("BOT_PORT", os.getenv("PORT", "8000"))),
         access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
-        workers=4,
+        workers=int(os.getenv("WORKERS", "1")),
         # Explicit: uvloop + httptools are bundled with uvicorn[standard];
         # "auto" picks them up but pinning makes the dependency obvious.
         loop="uvloop",

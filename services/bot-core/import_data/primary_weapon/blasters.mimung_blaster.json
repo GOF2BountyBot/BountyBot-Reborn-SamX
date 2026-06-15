@@ -8,8 +8,15 @@
   "icon": "https://i.postimg.cc/3Ng1gkmR/mimung-blaster.png",
   "name": "Mimung Blaster",
   "techLevel": 9,
-  "value": 369763,
+  "value": 361864,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Mimung_Blaster",
   "type": "PrimaryWeapon",
-  "subtype": "blasters"
+  "extra_atts": {
+    "loading_speed_ms": 230,
+    "range_m": 1300,
+    "damage_per_shot": 16,
+    "speed_km_h": 5000,
+    "subtype": "blaster",
+    "mechanics_text": "## Trivia\n*The Mimung Blaster can only be purchased from Jakk Zoboon in the Kaamo Club Space Lounge, even if you do not have the supernova pack.\n*Two of them are used by a Blue Fyre in the Supernova Challenge, along with a Mass Driver MD 12.\n*It shoots purple rings of energy.\n*The Mimung is the name of the sword wielded by the famous Norse character Wudga."
+  }
 }

@@ -53,9 +53,13 @@ class BountyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        # Static catalog: star system names — TTL=None (never expires; only reloaded on /reload_autocomplete)
+        # Static catalog: star system names — TTL=None (never expires).
+        # SELF-HEAL (kills the D-010 class bug): a refresh_fn re-runs the same per-key
+        # loader the preload uses, so a clear() (from /reload_autocomplete) lazily
+        # re-fills on the next get/get_with_timeout instead of staying empty forever.
         self._systems_cache: AutocompleteCache[str, list[str]] = AutocompleteCache(
             ttl_seconds=None,
+            refresh_fn=self._fetch_systems,
             name="bounty-systems",
         )
         # Bounty cache: keyed by guild_id (int), stores list of bounty dicts, TTL=1200s (20 min)
@@ -73,6 +77,17 @@ class BountyCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
+    async def _fetch_systems(self, _key: str) -> list[str]:
+        """Refresh the star-system catalog. Reused as _systems_cache.refresh_fn AND
+        by _preload_data, so a cleared cache self-heals on the next get().
+
+        Raises on HTTP error so AutocompleteCache applies its stale-on-error policy.
+        """
+        resp = await self.http_client.get(f"{api_base}/about/categories/system/objects", timeout=10)
+        resp.raise_for_status()
+        systems = resp.json()
+        return [s.get("name", "") for s in systems if s.get("name")]
+
     async def _preload_data(self):
         """Preload star system names at startup for autocomplete (with retries)."""
         await self.bot.wait_until_ready()
@@ -80,10 +95,8 @@ class BountyCog(commands.Cog):
         for attempt, delay in enumerate(delays, start=1):
             try:
                 flogger.info("BountyCog: Starting preload of system data (attempt %d/%d)...", attempt, len(delays))
-                resp = await self.http_client.get(f"{api_base}/about/categories/system/objects", timeout=10)
-                resp.raise_for_status()
-                systems = resp.json()
-                system_names = [s.get("name", "") for s in systems if s.get("name")]
+                # Use the cache's own loader so preload and self-heal share one code path.
+                system_names = await self._fetch_systems("all")
                 self._systems_cache.set("all", system_names)
                 flogger.info("BountyCog: Preloaded %d system names", len(system_names))
                 return  # Success — exit
@@ -162,8 +175,16 @@ class BountyCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for star system names — includes ALL systems (game balance)."""
-        systems = self._systems_cache.peek("all") or []
-        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, systems)]
+        # Self-heal: peek first; on a miss (e.g. right after /reload_autocomplete cleared
+        # the cache) cold-fill via the refresh_fn within the 1.0s budget so the dropdown
+        # is never permanently empty (kills the D-010 class bug).
+        systems = self._systems_cache.peek("all")
+        if systems is None:
+            try:
+                systems = await self._systems_cache.get_with_timeout("all", timeout=1.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                systems = None
+        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, systems or [])]
 
     async def bounty_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -184,13 +205,17 @@ class BountyCog(commands.Cog):
             guild_id = interaction.guild_id
             user_id = interaction.user.id
 
-            # HOT PATH: peek bounty cache — no HTTP
+            # HOT PATH: peek bounty cache — no HTTP. On cold miss, cold-fill the
+            # PRIMARY gate within the 1.0s budget so the 0th keystroke is never empty.
             bounties = self._bounty_cache.peek(guild_id)
             if bounties is None:
-                self._bounty_cache.schedule_refresh(guild_id)
+                bounties = await self._bounty_cache.get_with_timeout(guild_id, timeout=1.0)
+            if bounties is None:
                 return []
 
-            # Attempt tier filtering from player cache — graceful degradation on miss
+            # Attempt tier filtering from player cache — graceful degradation on miss.
+            # THIRD-GATE RULE: the player tier-filter stays peek-only (degrade on miss);
+            # the budget is already spent on the primary bounty gate.
             player_tier: str | None = None
             if autocomplete_state.player_cache is not None:
                 player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
@@ -258,7 +283,7 @@ class BountyCog(commands.Cog):
                 f"{api_base}/bounties/check",
                 json={"player_id": player_id, "system_name": system},
                 params={"guild_id": interaction.guild_id},
-                timeout=10,
+                timeout=20,
             )
 
             if resp.status_code == 429:
@@ -381,7 +406,12 @@ class BountyCog(commands.Cog):
             bonus_won = outcome.get("bonus_won", False)
 
             if combat_won is False:
-                # Silver+ combat loss — checks reset for this bounty
+                # Silver+ combat loss or stalemate — checks reset for this bounty
+                if (outcome.get("combat_result") or {}).get("is_stalemate"):
+                    return (
+                        f"⚔️ {criminal_name}",
+                        "Stalemate — criminal escaped; system checks reset for this bounty.",
+                    )
                 return (
                     f"💀 {criminal_name}",
                     "Combat loss — system checks reset for this bounty.",
@@ -454,7 +484,7 @@ class BountyCog(commands.Cog):
             criminal_name = outcome.get("criminal_name") or f"Bounty #{outcome.get('bounty_id')}"
             combat = outcome.get("combat_result")
             if combat:
-                summary = self._format_combat_summary(combat)
+                summary = self._format_combat_summary(combat, criminal_name=criminal_name)
                 embed.add_field(
                     name=f"⚔️ Combat — {criminal_name}",
                     value=summary[:1024],
@@ -482,31 +512,120 @@ class BountyCog(commands.Cog):
         return embed
 
     @staticmethod
-    def _format_combat_summary(combat: dict) -> str:
-        """Format combat results into a readable embed field."""
-        s1 = combat.get("ship1_stats", {})
-        s2 = combat.get("ship2_stats", {})
+    def _format_combat_summary(
+        combat: dict,
+        *,
+        combat_won: bool | None = None,  # retained for API compat — NOT used to drive outcome header (CI-12)
+        criminal_name: str | None = None,
+    ) -> str:
+        """Format actual after-action combat results into a readable embed field.
 
-        lines = []
-        # Player stats — varied_hp already reflects the PvC armour buff
-        lines.append(f"**Your Ship** ({s1.get('ship_name', '?')})")
-        lines.append(f"HP: {s1.get('raw_hp', 0)} → {s1.get('varied_hp', 0)} | DPS: {s1.get('raw_dps', 0):.1f}")
-        armour_buff = combat.get("pvc_armour_buff")
-        if armour_buff is not None and armour_buff != 1.0:
-            lines.append(f"🛡️ Keith T Maxwell armour buff active (×{armour_buff:g} HP)")
-        ttk1 = s1.get("ttk")
-        lines.append(f"Time to Kill: {f'{ttk1:.1f}s' if ttk1 is not None else '∞'}")
-        lines.append("")
-        # Criminal stats
-        lines.append(f"**Criminal Ship** ({s2.get('ship_name', '?')})")
-        lines.append(f"HP: {s2.get('raw_hp', 0)} → {s2.get('varied_hp', 0)} | DPS: {s2.get('raw_dps', 0):.1f}")
-        ttk2 = s2.get("ttk")
-        lines.append(f"Time to Kill: {f'{ttk2:.1f}s' if ttk2 is not None else '∞'}")
+        Uses the tick-resolver summary (combatants block with final HP, damage dealt,
+        and accuracy) when available.  Falls back gracefully when summary data is
+        absent (e.g. pre-existing logs from before the tick resolver was deployed).
 
-        if combat.get("is_stalemate"):
-            lines.append("\n**Result:** Stalemate")
+        Args:
+            combat: The combat_result dict from the API response.
+            combat_won: Retained for API compatibility — ignored for the outcome header
+                        (CI-12 fix).  Outcome is always derived from actual hull data.
+            criminal_name: Display name of the criminal (passed in by callers that have
+                           it; defaults to "Criminal" when absent).
 
-        return "\n".join(lines)
+        The field value is truncated to 1024 characters to stay within Discord limits.
+
+        Layout (compact worded format, owner-approved):
+            ⚔️ Combat vs {criminal_name} — {Victory|Defeat|Stalemate} in {duration}s
+
+            You ({player_ship}) — {survived|destroyed}
+              Shield {s} · Armour {a} · Hull {h}  ·  dealt {dmg} · {acc}% acc ({hits}/{fired})
+
+            {criminal_name} ({criminal_ship}) — {survived|destroyed}
+              Shield {s} · Armour {a} · Hull {h}  ·  dealt {dmg} · {acc}% acc ({hits}/{fired})
+        """
+        combatants = (combat.get("combatants") or {}) if combat else {}
+        c1 = combatants.get("1", {}) or {}
+        c2 = combatants.get("2", {}) or {}
+
+        # Duration / outcome — derived from ACTUAL hull data, not the combat_won flag.
+        duration_s: float | None = combat.get("duration_s") if combat else None
+        is_stalemate = combat.get("is_stalemate", False) if combat else False
+        outcome_field: str | None = combat.get("outcome") if combat else None
+
+        # Resolve per-combatant survival from final hull (CI-12 fix).
+        c1_hull = ((c1.get("final_hp") or {}).get("hull") or 0) if c1 else 0
+        c2_hull = ((c2.get("final_hp") or {}).get("hull") or 0) if c2 else 0
+        c1_survived = c1_hull > 0
+        c2_survived = c2_hull > 0
+
+        # Determine match outcome from actual fight data.
+        if c1 or c2:
+            # Tick-resolver data present: derive from hull.
+            if is_stalemate or outcome_field == "stalemate":
+                match_outcome = "Stalemate"
+            elif c1_survived and not c2_survived:
+                match_outcome = "Victory"
+            elif c2_survived and not c1_survived:
+                match_outcome = "Defeat"
+            else:
+                # Both alive or both destroyed — treat as stalemate.
+                match_outcome = "Stalemate"
+        else:
+            # Legacy path: no combatants block; use is_stalemate flag.
+            match_outcome = "Stalemate" if (is_stalemate or outcome_field == "stalemate") else "Victory"
+
+        crim_label = criminal_name or "Criminal"
+
+        # Header line
+        if duration_s is not None:
+            header = f"⚔️ Combat vs {crim_label} — {match_outcome} in {duration_s:.1f}s"
+        else:
+            header = f"⚔️ Combat vs {crim_label} — {match_outcome}"
+
+        def _hp_str(hp_block: dict) -> str:
+            shield = hp_block.get("shield", 0)
+            armour = hp_block.get("armour", 0)
+            hull = hp_block.get("hull", 0)
+            return f"Shield {shield} · Armour {armour} · Hull {hull}"
+
+        def _combatant_block(cb: dict, label: str, survived: bool) -> str:
+            """Render one combatant block.
+
+            label already contains the ship name in the format 'You (Ship)' or
+            '{Name} (Ship)' so no extra ship suffix is appended here.
+            """
+            final_hp = cb.get("final_hp") or {}
+            hp_str = _hp_str(final_hp)
+            dealt = cb.get("damage_dealt", 0)
+            fired = cb.get("shots_fired", 0)
+            hit = cb.get("shots_hit", 0)
+            acc_pct = round((cb.get("accuracy") or 0) * 100)
+            acc_str = f"{acc_pct}% acc ({hit}/{fired})" if fired > 0 else "n/a"
+            status = "survived" if survived else "destroyed"
+            return f"**{label}** — {status}\n  {hp_str}  ·  dealt {dealt} · {acc_str}"
+
+        lines: list[str] = [header]
+
+        if c1 or c2:
+            player_ship = c1.get("ship") or "?"
+            crim_ship = c2.get("ship") or "?"
+            lines.append(_combatant_block(c1, f"You ({player_ship})", c1_survived))
+            lines.append(_combatant_block(c2, f"{crim_label} ({crim_ship})", c2_survived))
+        else:
+            # Fallback: legacy projection fields (pre-tick-resolver data)
+            s1 = (combat.get("ship1_stats") or {}) if combat else {}
+            s2 = (combat.get("ship2_stats") or {}) if combat else {}
+            lines.append(f"**Your Ship** ({s1.get('ship_name', '?')})")
+            lines.append(f"**Criminal Ship** ({s2.get('ship_name', '?')})")
+
+        pvc_dr = (combat.get("pvc_damage_reduction") or 0.0) if combat else 0.0
+        if pvc_dr > 0:
+            lines.append(f"🛡️ PvC damage reduction: {round(pvc_dr * 100)}% active")
+
+        text = "\n".join(lines)
+        # Truncate defensively to stay within Discord's 1024-char field limit
+        if len(text) > 1024:
+            text = text[:1021] + "…"
+        return text
 
     def _get_tier_color(self, tier: str | None) -> discord.Color:
         """Return a discord.Color for the given tier string (case-insensitive).
@@ -532,22 +651,33 @@ class BountyCog(commands.Cog):
             criminal_name = data.get("criminal_name", "Unknown")
 
             if combat_won is False:
-                # Criminal escaped after combat loss — checks have been reset
-                embed = discord.Embed(
-                    title="💀 Combat Defeat!",
-                    description=(
-                        f"**{criminal_name}** defeated you and escaped!\n"
-                        "All system checks have been reset — the hunt continues!"
-                    ),
-                    color=discord.Color.dark_red(),
-                )
+                # Criminal escaped after combat loss OR stalemate — checks have been reset
+                _is_stalemate = bool((data.get("combat_result") or {}).get("is_stalemate"))
+                if _is_stalemate:
+                    embed = discord.Embed(
+                        title="⚔️ Stalemate!",
+                        description=(
+                            f"**{criminal_name}** fought you to a standstill and escaped!\n"
+                            "All system checks have been reset — the hunt continues!"
+                        ),
+                        color=discord.Color.dark_red(),
+                    )
+                else:
+                    embed = discord.Embed(
+                        title="💀 Combat Defeat!",
+                        description=(
+                            f"**{criminal_name}** defeated you and escaped!\n"
+                            "All system checks have been reset — the hunt continues!"
+                        ),
+                        color=discord.Color.dark_red(),
+                    )
                 if message:
                     embed.add_field(name="Result", value=message, inline=False)
                 combat = data.get("combat_result")
                 if combat:
                     embed.add_field(
                         name="⚔️ Combat Summary",
-                        value=self._format_combat_summary(combat),
+                        value=self._format_combat_summary(combat, criminal_name=criminal_name),
                         inline=False,
                     )
             else:
@@ -562,10 +692,11 @@ class BountyCog(commands.Cog):
             embed = self._build_capture_embed(data)
         elif result == "combat_loss":
             # Kept for backward compatibility (not returned by current bot-core but may exist in future)
+            _crim_name_loss = data.get("criminal_name", "Unknown")
             embed = discord.Embed(
                 title="💀 Combat Defeat!",
                 description=(
-                    f"**{data.get('criminal_name', 'Unknown')}** defeated you and escaped!\n"
+                    f"**{_crim_name_loss}** defeated you and escaped!\n"
                     "All system checks have been reset — the hunt continues!"
                 ),
                 color=discord.Color.dark_red(),
@@ -574,7 +705,7 @@ class BountyCog(commands.Cog):
             if combat:
                 embed.add_field(
                     name="⚔️ Combat Summary",
-                    value=self._format_combat_summary(combat),
+                    value=self._format_combat_summary(combat, criminal_name=_crim_name_loss),
                     inline=False,
                 )
         elif result == "incorrect":
@@ -630,12 +761,12 @@ class BountyCog(commands.Cog):
             color=self._get_tier_color(tier),
         )
 
-        # Combat summary
+        # Combat summary (capture = player won)
         combat = data.get("combat_result")
         if combat:
             embed.add_field(
                 name="⚔️ Combat Summary",
-                value=self._format_combat_summary(combat),
+                value=self._format_combat_summary(combat, criminal_name=criminal_name),
                 inline=False,
             )
 

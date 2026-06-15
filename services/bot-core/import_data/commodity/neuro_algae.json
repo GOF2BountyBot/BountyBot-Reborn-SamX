@@ -1,0 +1,22 @@
+{
+  "_name": "Neuro-algae",
+  "_category": "commodity",
+  "_subcategory": "mission",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Neuro-algae",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "wiki_note": "Not a GOF2 purchasable commodity — page is lore-only; explicitly states 'This is not purchasable in GOF2 or GOF3D'"
+  },
+  "stats": {
+    "tech_level": null,
+    "price_range_min_credits": 0,
+    "price_range_min_system": null,
+    "price_range_max_credits": 0,
+    "price_range_max_system": null,
+    "value": 0,
+    "price_source": "mission_only"
+  },
+  "in_game_description": null,
+  "mechanics_text": [],
+  "wiki_categories": ["Miscellaneous", "Commodities"]
+}

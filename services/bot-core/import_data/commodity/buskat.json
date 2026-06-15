@@ -1,0 +1,33 @@
+{
+  "_name": "Buskat",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/s20LTG8D/buskat.png",
+  "_subcategory": "rare",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Buskat",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Commodity",
+    "Tech Level": "4",
+    "Known Price Range": "-> 8,559$ (K'ontrr)\n-> 12,517$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 4,
+    "price_range_min_credits": 8559,
+    "price_range_min_system": "K'Ontrr",
+    "price_range_max_credits": 12517,
+    "price_range_max_system": "Eanya",
+    "value": 10538,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Buskat is the remnant of an imploded star and therefore extremely rare and expensive. The wives of various luxury obsessed dictators, known for their extravagance, often use it on special occasions as a spice or narcotic.",
+  "mechanics_text": [
+    "50t Buskat are required to buy the Kaamo Club from Mkkt Bkkt if you decide not to pay 1.59€ ($1.99) for it through the App Store.",
+    "It is believed that a trigger causes buskat to be rarer after saving Mkkt Bkkt, but it has been proven false.",
+    "Buskat is very hard to find in Galaxy on Fire 2. It appears randomly in space stations and in the possession of other pilots. Merchants in space lounges also trade it. Buskat often appears at Sao Perula in the Loma system. One can also get buskat from defeating Most Wanted Criminals.",
+    "Buskat looks similar to sand or dirt.",
+    "Although it is more expensive than Implants and Organs, it is only Tech Level 4.",
+    "Buskat does not seem to have any use for blueprints, except for buying the Kaamo Club.",
+    "If one is lucky enough, they can find large quantities of Buskat in freighters or Terran Battlecruisers."
+  ],
+  "wiki_categories": ["GOF2", "Commodities", "Tech level 4", "Rare commodities", "Trading commodities", "Kaamo", "GOF2HD", "Space Station", "Ships"]
+}

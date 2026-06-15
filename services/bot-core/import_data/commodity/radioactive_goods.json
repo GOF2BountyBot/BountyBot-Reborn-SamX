@@ -1,0 +1,30 @@
+{
+  "_name": "Radioactive Goods",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/mDksDsxh/radioactive-goods.png",
+  "_subcategory": "technical",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Radioactive_Goods",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Radioactive Goods",
+    "Type": "Commodity",
+    "Tech Level": "3",
+    "Known Price Range": "-> 86$ (Aquila)\n-> 315$ (Pan)"
+  },
+  "stats": {
+    "tech_level": 3,
+    "price_range_min_credits": 86,
+    "price_range_min_system": "Aquila",
+    "price_range_max_credits": 315,
+    "price_range_max_system": "Pan",
+    "value": 201,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Although no longer classified as hazardous, radioactive goods are still unpopular. Perhaps it is the yellow symbol or the strong lights that make people associate them with danger?",
+  "mechanics_text": [
+    "Required for blueprints: 10t Ion Lambda MK2, 15t Liberator, 40t AMR Extinctor, 40t Yin Co. Shadow Ninja.",
+    "Always sold at Sao Perula in the Loma system; large quantities available depending on difficulty.",
+    "Shares the same container as Biowaste but is yellow with a radioactive symbol instead of orange with a biohazard symbol."
+  ],
+  "wiki_categories": ["Commodities", "Tech level 3", "GOF2", "Valkyrie", "Trading commodities", "Standard commodities", "Blueprints", "Freelance Missions", "GOF2HD"]
+}

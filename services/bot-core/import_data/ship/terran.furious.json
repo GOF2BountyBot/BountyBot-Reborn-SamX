@@ -53,5 +53,9 @@
     "/app/data/game-objects/items/ships/Terran/Furious.bbship/ship_033_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Furious.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Furious.bbship/ship_033_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Furious.bbship/ship_033_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 60033,
+    "mechanics_text": "## In-Game Description\nA light, basic Terran ship, made more appealing by the possibility of installing a turret.\n\n## Trivia\n*The cockpit section looks like an Icarus Scout Class II form GOF3D.\n*It is a Starter Ship.\n*The Furious has a cockpit that looks a lot like the Star Wars T-65 X-Wing fighter, a renowned starfighter from any science fiction universe.\n*In the J2ME version of the game, this ship was called \"Furious Flounder\" due to its fish-like appearance."
+  }
 }

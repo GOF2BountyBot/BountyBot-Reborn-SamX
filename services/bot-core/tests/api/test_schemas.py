@@ -1440,6 +1440,35 @@ class TestShipsShipResponseSchema:
         assert ship.nickname == "My Eagle"
         assert ship.weapons == ["Laser", "Blaster"]
 
+    def test_secondary_weapons_defaults_to_none(self):
+        ship = ShipResponse(
+            id=1,
+            player_id=10,
+            ship_name="Falcon",
+            nickname=None,
+            is_active=True,
+            weapons=None,
+            modules=None,
+            turrets=None,
+            created_at="2026-01-01",
+        )
+        assert ship.secondary_weapons is None
+
+    def test_secondary_weapons_populated(self):
+        ship = ShipResponse(
+            id=3,
+            player_id=10,
+            ship_name="Eagle",
+            nickname=None,
+            is_active=True,
+            weapons=["Laser"],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["AMR Tormentor"],
+            created_at="2026-01-01",
+        )
+        assert ship.secondary_weapons == ["AMR Tormentor"]
+
     def test_missing_required_raises(self):
         with pytest.raises(ValidationError):
             ShipResponse(id=1, player_id=10)
@@ -1463,6 +1492,40 @@ class TestShipLoadoutSummaryResponseSchema:
         )
         assert resp.ship_id == 1
         assert resp.weapons_count == 1
+
+    def test_secondary_weapons_defaults_to_empty_list(self):
+        resp = ShipLoadoutSummaryResponse(
+            ship_id=1,
+            ship_name="Falcon",
+            nickname=None,
+            is_active=True,
+            weapons=["Laser"],
+            modules=[],
+            turrets=[],
+            weapons_count=1,
+            modules_count=0,
+            turrets_count=0,
+        )
+        assert resp.secondary_weapons == []
+        assert resp.secondary_weapons_count == 0
+
+    def test_secondary_weapons_populated(self):
+        resp = ShipLoadoutSummaryResponse(
+            ship_id=2,
+            ship_name="Eagle",
+            nickname=None,
+            is_active=True,
+            weapons=[],
+            modules=[],
+            turrets=[],
+            secondary_weapons=["AMR Tormentor"],
+            weapons_count=0,
+            modules_count=0,
+            turrets_count=0,
+            secondary_weapons_count=1,
+        )
+        assert resp.secondary_weapons == ["AMR Tormentor"]
+        assert resp.secondary_weapons_count == 1
 
     def test_missing_required_raises(self):
         with pytest.raises(ValidationError):
@@ -1535,14 +1598,24 @@ class TestUpdateNicknameRequestSchema:
 class TestEquipItemRequestSchema:
     """Tests for EquipItemRequest."""
 
-    @pytest.mark.parametrize("eq_type", ["weapons", "modules", "turrets"])
+    @pytest.mark.parametrize("eq_type", ["weapons", "modules", "turrets", "secondary_weapons"])
     def test_valid_equipment_types(self, eq_type):
         req = EquipItemRequest(player_id=1, equipment_type=eq_type, item_name="X")
         assert req.equipment_type == eq_type
 
+    def test_secondary_weapons_accepted(self):
+        """CI-25: secondary_weapons must be accepted — was wrongly excluded by old pattern."""
+        req = EquipItemRequest(player_id=1, equipment_type="secondary_weapons", item_name="AMR Tormentor")
+        assert req.equipment_type == "secondary_weapons"
+
     def test_invalid_equipment_type_raises(self):
         with pytest.raises(ValidationError):
             EquipItemRequest(player_id=1, equipment_type="armor", item_name="X")
+
+    def test_shields_still_rejected(self):
+        """CI-25: invalid values are still rejected after adding secondary_weapons."""
+        with pytest.raises(ValidationError):
+            EquipItemRequest(player_id=1, equipment_type="shields", item_name="X")
 
     def test_missing_item_name_raises(self):
         with pytest.raises(ValidationError):
@@ -1556,14 +1629,24 @@ class TestEquipItemRequestSchema:
 class TestUnequipItemRequestSchema:
     """Tests for UnequipItemRequest."""
 
-    @pytest.mark.parametrize("eq_type", ["weapons", "modules", "turrets"])
+    @pytest.mark.parametrize("eq_type", ["weapons", "modules", "turrets", "secondary_weapons"])
     def test_valid_equipment_types(self, eq_type):
         req = UnequipItemRequest(player_id=1, equipment_type=eq_type, item_name="Y")
         assert req.equipment_type == eq_type
 
+    def test_secondary_weapons_accepted(self):
+        """CI-25: secondary_weapons must be accepted — was wrongly excluded by old pattern."""
+        req = UnequipItemRequest(player_id=1, equipment_type="secondary_weapons", item_name="AMR Tormentor")
+        assert req.equipment_type == "secondary_weapons"
+
     def test_invalid_equipment_type_raises(self):
         with pytest.raises(ValidationError):
             UnequipItemRequest(player_id=1, equipment_type="shield", item_name="Y")
+
+    def test_shields_still_rejected(self):
+        """CI-25: invalid values are still rejected after adding secondary_weapons."""
+        with pytest.raises(ValidationError):
+            UnequipItemRequest(player_id=1, equipment_type="shields", item_name="Y")
 
     def test_missing_required_raises(self):
         with pytest.raises(ValidationError):

@@ -9,6 +9,9 @@
   "name": "Emergency System",
   "techLevel": 6,
   "type": "EmergencySystemModule",
-  "value": 6860,
-  "wiki": "https://galaxyonfire.fandom.com/wiki/Emergency_System"
+  "value": 7510,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Emergency_System",
+  "extra_atts": {
+    "duration_ms": 10000
+  }
 }

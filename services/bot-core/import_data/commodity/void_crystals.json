@@ -1,0 +1,32 @@
+{
+  "_name": "Void Crystals",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/s2Nh13BN/void-crystals.png",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Void_Crystals",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Box title": "Void Crystals",
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 380$ (Buntta)\n-> 420$ (V'ikka)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 380,
+    "price_range_min_system": "Buntta",
+    "price_range_max_credits": 420,
+    "price_range_max_system": "V'Ikka",
+    "value": 400,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Very pretty sparkling crystals. When you look into them deeply, you feel like you can see the entire universe.",
+  "mechanics_text": [
+    "50t required for Khador Drive blueprint.",
+    "Can only be obtained by mining asteroids in the Void system; Voids spawn indefinitely, making mining very dangerous.",
+    "Khador claims each crystal contains a tiny image of the universe, allowing the Voids to open wormholes anywhere.",
+    "After acquiring a Khador Drive, it is the only way to re-enter the Void system after finishing the base game.",
+    "One of the most expensive ores; tied with Novanium (in the Supernova campaign) for highest ore price."
+  ],
+  "wiki_categories": ["Ore", "Tech level 1", "GOF2", "Commodities", "Trading commodities", "Blueprints", "GOF2HD", "Minigames", "Mining"]
+}

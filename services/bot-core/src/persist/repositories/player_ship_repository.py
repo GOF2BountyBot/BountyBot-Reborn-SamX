@@ -385,9 +385,12 @@ class PlayerShipRepository(IRepository[PlayerShip]):
                 "weapons": ship.weapons or [],
                 "modules": ship.modules or [],
                 "turrets": ship.turrets or [],
+                "secondary_weapons": ship.secondary_weapons or [],
+                "secondary_ammo": dict(ship.secondary_ammo or {}),  # CI-16: ammo sidecar
                 "weapons_count": len(ship.weapons) if ship.weapons else 0,
                 "modules_count": len(ship.modules) if ship.modules else 0,
                 "turrets_count": len(ship.turrets) if ship.turrets else 0,
+                "secondary_weapons_count": len(ship.secondary_weapons) if ship.secondary_weapons else 0,
             }
 
         except Exception as e:

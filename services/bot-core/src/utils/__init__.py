@@ -1,7 +1,7 @@
 import importlib
 import pkgutil
 
-# Automatically import all modules in this package
+# Automatically import all modules in this package.
 package_name = __name__
 
 for _loader, module_name, _is_pkg in pkgutil.walk_packages(__path__):

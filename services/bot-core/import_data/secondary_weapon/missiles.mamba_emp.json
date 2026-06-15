@@ -5,10 +5,18 @@
   "builtIn": false,
   "damage": 0,
   "icon": "https://i.postimg.cc/q7hfVG2C/mamba-emp.png",
-  "loading speed": 0,
+  "loading speed": 3000,
   "name": "Mamba EMP",
-  "value": 0,
+  "value": 95,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "missiles"
+  "techLevel": 7,
+  "extra_atts": {
+    "loading_speed_ms": 3000,
+    "range_m": 10400,
+    "speed_km_h": 3750,
+    "subtype": "missile",
+    "steerable": true,
+    "emp_damage": 100
+  }
 }

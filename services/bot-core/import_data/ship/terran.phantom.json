@@ -53,5 +53,8 @@
     "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Phantom.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 966667
+  }
 }

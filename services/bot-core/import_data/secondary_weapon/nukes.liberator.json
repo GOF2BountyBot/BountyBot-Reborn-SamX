@@ -1,12 +1,20 @@
 {
   "aliases": [],
   "builtIn": false,
-  "damage": 0,
+  "damage": 850,
   "icon": "https://i.postimg.cc/5yMWmFYQ/liberator.png",
-  "loading speed": 0,
+  "loading speed": 10000,
   "name": "Liberator",
-  "value": 0,
+  "value": 6619,
   "wiki": "",
   "type": "SecondaryWeapon",
-  "subtype": "nukes"
+  "techLevel": 4,
+  "extra_atts": {
+    "loading_speed_ms": 10000,
+    "range_m": 13800,
+    "speed_km_h": 2500,
+    "subtype": "nuke",
+    "steerable": true,
+    "magnitude_m": 12500
+  }
 }

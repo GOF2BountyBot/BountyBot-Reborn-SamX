@@ -1,0 +1,27 @@
+{
+  "_name": "Doxtrite",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/4NNSR5gN/doxtrite.png",
+  "_subcategory": "ore",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Doxtrite",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Ore",
+    "Tech Level": "1",
+    "Known Price Range": "-> 34$ (Vulpes)\n-> 61$ (Eanya)"
+  },
+  "stats": {
+    "tech_level": 1,
+    "price_range_min_credits": 34,
+    "price_range_min_system": "Vulpes",
+    "price_range_max_credits": 61,
+    "price_range_max_system": "Eanya",
+    "value": 48,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "Ores can be obtained through mining asteroids. Ore is not found in every system.",
+  "mechanics_text": [
+    "10t Doxtrite is required for the Khador Drive blueprint."
+  ],
+  "wiki_categories": ["Ore", "Tech level 1", "Commodities", "GOF2", "Trading commodities", "Blueprints", "GOF2HD", "Minigames", "Mining"]
+}

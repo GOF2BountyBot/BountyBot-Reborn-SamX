@@ -1,0 +1,30 @@
+{
+  "_name": "Blue Plasma",
+  "_category": "commodity",
+  "icon": "https://i.postimg.cc/FKPMwBfv/blue-plasma.png",
+  "_subcategory": "plasma",
+  "_url": "https://galaxyonfire.wiki.gg/wiki/Blue_Plasma",
+  "_extracted_at": "2026-05-27T23:00:00Z",
+  "raw_infobox": {
+    "Type": "Plasma",
+    "Tech Level": "9",
+    "Known Price Range": "-> 39$ (Prospero)\n-> 46$ (Pescal Inartu)"
+  },
+  "stats": {
+    "tech_level": 9,
+    "price_range_min_credits": 39,
+    "price_range_min_system": "Prospero",
+    "price_range_max_credits": 46,
+    "price_range_max_system": "Pescal Inartu",
+    "value": 43,
+    "price_source": "range_midpoint"
+  },
+  "in_game_description": "A special kind of gas cloud plasma characterized by its blue glimmer. Can be found between Aquila and Prospero.",
+  "mechanics_text": [
+    "The best place to gather blue plasma is Wolf-Reiser because there are no enemies there.",
+    "917 tons are needed for the Chromo Plasma blueprint.",
+    "35 tons are needed for the Particle Shield blueprint.",
+    "30 tons are used by the Phoenix SIS to recharge shields."
+  ],
+  "wiki_categories": ["Plasma", "Supernova", "Tech level 9", "Gas Cloud Mining", "GOF2", "GOF2HD", "Minigames"]
+}

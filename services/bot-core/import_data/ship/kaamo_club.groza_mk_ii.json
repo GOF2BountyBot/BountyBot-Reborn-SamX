@@ -60,5 +60,8 @@
     "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_diffuse.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_normal_specular.png",
+  "extra_atts": {
+    "price_credits_android": 3565000
+  }
 }

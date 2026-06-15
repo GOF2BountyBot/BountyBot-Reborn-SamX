@@ -315,11 +315,18 @@ class TestLifespan:
             patch("persist.database.migration_manager.MigrationManager", mock_mm_class),
             patch("main.initialize_schema", new_callable=AsyncMock, return_value=mock_schema_mgr),
             patch("main.auto_seed_data", new_callable=AsyncMock),
-            patch("main.create_async_engine"),
             patch("main.create_engine"),
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
+            # P2-T2-CAUSED: patch pool constructors + holder setters so this lifespan
+            # unit test does NOT create real pools or mutate the global executor_holder.
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
         ):
             async with lifespan(test_app):
                 # App is "running" — verify startup happened
@@ -411,12 +418,18 @@ class TestLifespan:
             patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock, side_effect=Exception("seed fail")),
-            patch("main.create_async_engine"),
             patch("main.create_engine"),
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
             patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            # P2-T2-CAUSED: prevent real pool creation / holder mutation
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
         ):
             mock_mm_instance = MagicMock()
             mock_mm_instance.ensure_current = MagicMock()
@@ -428,7 +441,13 @@ class TestLifespan:
 
     @pytest.mark.asyncio
     async def test_lifespan_scheduler_failure_raises(self):
-        """If scheduler init fails, startup should raise."""
+        """If sync-engine creation for APScheduler fails, startup should raise.
+
+        The old test patched create_async_engine (which no longer exists in main.py).
+        The real scheduler-init failure point is create_engine() — used to build the
+        synchronous SQLAlchemy engine that backs SQLAlchemyJobStore.  Patching that
+        to raise verifies the except-block re-raises and aborts startup.
+        """
         from main import lifespan
 
         test_app = FastAPI()
@@ -440,7 +459,7 @@ class TestLifespan:
             patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock),
-            patch("main.create_async_engine", side_effect=Exception("scheduler fail")),
+            patch("main.create_engine", side_effect=Exception("scheduler fail")),
             patch("persist.database.migration_manager.MigrationManager") as MockMM,
         ):
             mock_mm_instance = MagicMock()
@@ -470,12 +489,18 @@ class TestLifespan:
             patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock),
-            patch("main.create_async_engine"),
             patch("main.create_engine"),
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
             patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            # P2-T2-CAUSED: prevent real pool creation / holder mutation
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
         ):
             mock_mm_instance = MagicMock()
             mock_mm_instance.ensure_current = MagicMock()
@@ -505,12 +530,18 @@ class TestLifespan:
             patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock),
-            patch("main.create_async_engine"),
             patch("main.create_engine"),
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
             patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            # P2-T2-CAUSED: prevent real pool creation / holder mutation
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
         ):
             mock_mm_instance = MagicMock()
             mock_mm_instance.ensure_current = MagicMock()
@@ -543,3 +574,554 @@ class TestMainBlock:
                 assert isinstance(health_filter, logging.Filter)
             finally:
                 main_module.__name__ = original_name
+
+
+# ===================================================================
+# P1-T4: Executor pool creation in lifespan
+# ===================================================================
+
+
+class TestLifespanExecutorPools:
+    """Mock-based tests for executor pool construction, registration, and teardown.
+
+    These tests patch ProcessPoolExecutor and ThreadPoolExecutor so no actual
+    forkserver processes are spawned, keeping the suite fast.  Construction
+    kwargs and shutdown(wait=True) calls are asserted via mock inspection.
+    """
+
+    def _make_mock_pool(self):
+        """Return a MagicMock that tracks shutdown() calls."""
+        mock = MagicMock()
+        mock.shutdown = MagicMock()
+        return mock
+
+    @pytest.mark.asyncio
+    async def test_executor_pools_created_with_correct_workers(self):
+        """After startup, process pool uses PROCESS_POOL_WORKERS=2 and
+        thread pool floors at max(4, 2*2)=4 per formula.
+
+        The module-level constants PROCESS_POOL_WORKERS / THREAD_POOL_WORKERS are
+        evaluated at import time from os.getenv, so we patch them directly on the
+        module object rather than via os.environ (which would only affect future reads).
+        """
+        from main import lifespan
+
+        test_app = FastAPI()
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        mock_process_pool = self._make_mock_pool()
+        mock_thread_pool = self._make_mock_pool()
+
+        mock_pp_cls = MagicMock(return_value=mock_process_pool)
+        mock_tp_cls = MagicMock(return_value=mock_thread_pool)
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", mock_pp_cls),
+            patch("main.ThreadPoolExecutor", mock_tp_cls),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.set_process_pool") as mock_set_pp,
+            patch("main.set_thread_pool") as mock_set_tp,
+            # Patch the module-level constants directly (they are already evaluated
+            # from os.getenv at import time; patching os.environ has no effect here).
+            patch("main.PROCESS_POOL_WORKERS", 2),
+            patch("main.THREAD_POOL_WORKERS", max(4, 2 * 2)),
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                # ProcessPoolExecutor constructed with max_workers=2 and an mp_context
+                pp_call_kwargs = mock_pp_cls.call_args[1]
+                assert pp_call_kwargs["max_workers"] == 2
+                assert pp_call_kwargs["mp_context"] is not None
+
+                # ThreadPoolExecutor constructed with max_workers = max(4, 2*2) = 4
+                tp_call_kwargs = mock_tp_cls.call_args[1]
+                assert tp_call_kwargs["max_workers"] == 4
+
+                # Pools registered in holder
+                mock_set_pp.assert_called_once_with(mock_process_pool)
+                mock_set_tp.assert_called_once_with(mock_thread_pool)
+
+    @pytest.mark.asyncio
+    async def test_executor_pools_registered_in_holder(self):
+        """Holder registration functions are called exactly once during startup."""
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool") as mock_set_pp,
+            patch("main.set_thread_pool") as mock_set_tp,
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                mock_set_pp.assert_called_once()
+                mock_set_tp.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_executor_pools_shutdown_called_on_teardown(self):
+        """On shutdown, both pools have shutdown(wait=True) called.
+
+        An exception in one teardown block must not prevent the other from running.
+        """
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        mock_process_pool = MagicMock()
+        mock_thread_pool = MagicMock()
+        mock_process_pool.shutdown = MagicMock()
+        mock_thread_pool.shutdown = MagicMock()
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", return_value=mock_process_pool),
+            patch("main.ThreadPoolExecutor", return_value=mock_thread_pool),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                pass  # yields; then teardown runs
+
+        # After lifespan exits, both pools must have been shut down with wait=True
+        mock_process_pool.shutdown.assert_called_once_with(wait=True)
+        mock_thread_pool.shutdown.assert_called_once_with(wait=True)
+
+    @pytest.mark.asyncio
+    async def test_executor_pool_shutdown_error_does_not_skip_other(self):
+        """If process pool shutdown raises, thread pool shutdown still runs."""
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        mock_process_pool = MagicMock()
+        mock_thread_pool = MagicMock()
+        mock_process_pool.shutdown = MagicMock(side_effect=RuntimeError("pool crash"))
+        mock_thread_pool.shutdown = MagicMock()
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", return_value=mock_process_pool),
+            patch("main.ThreadPoolExecutor", return_value=mock_thread_pool),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            # Must not raise; both teardown blocks are independent try/except
+            async with lifespan(test_app):
+                pass
+
+        # Thread pool shutdown still called despite process pool crash
+        mock_thread_pool.shutdown.assert_called_once_with(wait=True)
+
+    @pytest.mark.asyncio
+    async def test_process_pool_uses_forkserver_context(self):
+        """ProcessPoolExecutor is constructed with a forkserver mp_context."""
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+
+        fake_mp_ctx = MagicMock(name="forkserver_ctx")
+        mock_pp_cls = MagicMock(return_value=MagicMock())
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context", return_value=fake_mp_ctx) as mock_get_ctx,
+            patch("main.ProcessPoolExecutor", mock_pp_cls),
+            patch("main.ThreadPoolExecutor", return_value=MagicMock()),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                # get_context called with "forkserver"
+                mock_get_ctx.assert_called_once_with("forkserver")
+
+                # ProcessPoolExecutor received our fake context object
+                pp_kwargs = mock_pp_cls.call_args[1]
+                assert pp_kwargs["mp_context"] is fake_mp_ctx
+
+    @pytest.mark.asyncio
+    async def test_thread_pool_workers_floor_at_four(self):
+        """Thread pool worker count is max(4, 2 * PROCESS_POOL_WORKERS).
+
+        With PROCESS_POOL_WORKERS=1, 2*1=2 < 4, so thread workers floor at 4.
+        Module-level constants are patched directly since they are evaluated at import time.
+        """
+        from main import lifespan
+
+        test_app = FastAPI()
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs.return_value = []
+        mock_scheduler.start = MagicMock()
+        mock_scheduler.shutdown = MagicMock()
+
+        mock_db_mgr, _, _ = _make_db_session_mock_with_empty_sweep()
+        mock_tp_cls = MagicMock(return_value=MagicMock())
+
+        with (
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
+            patch("main.ProcessPoolExecutor", return_value=MagicMock()),
+            patch("main.ThreadPoolExecutor", mock_tp_cls),
+            patch("main.multiprocessing.set_forkserver_preload"),
+            patch("main.multiprocessing.get_context"),
+            patch("main.set_process_pool"),
+            patch("main.set_thread_pool"),
+            # PROCESS_POOL_WORKERS=1 → 2*1=2 < 4 → floor at 4
+            patch("main.PROCESS_POOL_WORKERS", 1),
+            patch("main.THREAD_POOL_WORKERS", max(4, 2 * 1)),  # = 4
+        ):
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
+
+            async with lifespan(test_app):
+                tp_kwargs = mock_tp_cls.call_args[1]
+                assert tp_kwargs["max_workers"] == 4
+
+
+# ===================================================================
+# P1-T4: Real (non-mocked) forkserver smoke test
+# ===================================================================
+
+
+def _trivial_add(a: int, b: int) -> int:
+    """Picklable top-level function used by the forkserver smoke test."""
+    return a + b
+
+
+class TestForkserverSmokeReal:
+    """Non-mocked test that actually spawns a forkserver ProcessPoolExecutor
+    and confirms it can run a trivial task and shut down cleanly.
+
+    This test is intentionally isolated from the lifespan to keep it simple
+    and portable — it only validates that the forkserver context + explicit
+    max_workers construction works on this Python/OS combination.
+    """
+
+    def test_forkserver_pool_runs_trivial_task(self):
+        """Build a real forkserver ProcessPoolExecutor, run a task, verify result."""
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+
+        mp_ctx = mp.get_context("forkserver")
+        with ProcessPoolExecutor(mp_context=mp_ctx, max_workers=2) as pool:
+            future = pool.submit(_trivial_add, 3, 7)
+            result = future.result(timeout=30)
+
+        assert result == 10
+
+    def test_forkserver_pool_shuts_down_cleanly(self):
+        """ProcessPoolExecutor with forkserver context shuts down without errors."""
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+
+        mp_ctx = mp.get_context("forkserver")
+        pool = ProcessPoolExecutor(mp_context=mp_ctx, max_workers=2)
+
+        # Submit a trivial task to confirm the pool is live
+        future = pool.submit(_trivial_add, 1, 2)
+        assert future.result(timeout=30) == 3
+
+        # Explicit shutdown should not raise
+        pool.shutdown(wait=True)
+
+        # After shutdown, submitting new work should raise RuntimeError
+        try:
+            pool.submit(_trivial_add, 1, 2)
+            raise AssertionError("Expected RuntimeError after shutdown, but no exception was raised")
+        except RuntimeError:
+            pass  # expected
+
+
+# ===================================================================
+# P1-T5: _positive_int_env helper validation
+# ===================================================================
+
+
+class TestPositiveIntEnv:
+    """Tests for the _positive_int_env validation helper.
+
+    Tests call the helper directly rather than reimporting main with
+    different env vars to avoid import-time side effects.
+    """
+
+    def _get_helper(self):
+        from main import _positive_int_env
+
+        return _positive_int_env
+
+    # ------------------------------------------------------------------
+    # Default behaviour (unset / empty)
+    # ------------------------------------------------------------------
+
+    def test_unset_both_returns_defaults(self, monkeypatch):
+        """Unset PROCESS_POOL_WORKERS and THREAD_POOL_WORKERS → defaults 3 and 6."""
+        monkeypatch.delenv("PROCESS_POOL_WORKERS", raising=False)
+        monkeypatch.delenv("THREAD_POOL_WORKERS", raising=False)
+
+        _positive_int_env = self._get_helper()
+
+        process_workers = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        thread_workers = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * process_workers))
+
+        assert process_workers == 3
+        assert thread_workers == 6
+
+    def test_empty_string_returns_default(self, monkeypatch):
+        """An empty string value is treated the same as unset."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "")
+
+        _positive_int_env = self._get_helper()
+        result = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        assert result == 3
+
+    def test_whitespace_only_returns_default(self, monkeypatch):
+        """A whitespace-only value is treated the same as unset."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "   ")
+
+        _positive_int_env = self._get_helper()
+        result = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        assert result == 3
+
+    # ------------------------------------------------------------------
+    # Floor-at-4 for thread pool
+    # ------------------------------------------------------------------
+
+    def test_process_1_thread_floors_at_4(self, monkeypatch):
+        """With PROCESS_POOL_WORKERS=1, thread default = max(4, 2*1) = 4."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "1")
+        monkeypatch.delenv("THREAD_POOL_WORKERS", raising=False)
+
+        _positive_int_env = self._get_helper()
+
+        process_workers = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        thread_workers = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * process_workers))
+
+        assert process_workers == 1
+        assert thread_workers == 4  # floor applied: max(4, 2*1)=4, not 2
+
+    # ------------------------------------------------------------------
+    # Explicit values honored exactly
+    # ------------------------------------------------------------------
+
+    def test_explicit_values_honored(self, monkeypatch):
+        """process=2, thread=9 → both returned exactly, no floor override."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "2")
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "9")
+
+        _positive_int_env = self._get_helper()
+
+        process_workers = _positive_int_env("PROCESS_POOL_WORKERS", 3)
+        thread_workers = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * process_workers))
+
+        assert process_workers == 2
+        assert thread_workers == 9  # explicit value: no floor applied
+
+    def test_explicit_thread_below_floor_honored(self, monkeypatch):
+        """An explicit THREAD_POOL_WORKERS=1 is honored; the floor only applies to the default."""
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "1")
+
+        _positive_int_env = self._get_helper()
+        # The floor max(4, ...) is only in the default expression, not enforced by the helper
+        result = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * 3))
+        assert result == 1
+
+    # ------------------------------------------------------------------
+    # Invalid values → clear failure with var name in message
+    # ------------------------------------------------------------------
+
+    def test_non_integer_process_raises_with_var_name(self, monkeypatch):
+        """PROCESS_POOL_WORKERS='foo' raises ValueError naming the variable."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "foo")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="PROCESS_POOL_WORKERS"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    def test_non_integer_process_includes_bad_value_in_message(self, monkeypatch):
+        """Error message for non-integer includes the bad value."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "foo")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="foo"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    def test_zero_process_raises_with_var_name(self, monkeypatch):
+        """PROCESS_POOL_WORKERS='0' raises ValueError naming the variable."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "0")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="PROCESS_POOL_WORKERS"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    def test_negative_process_raises_with_var_name(self, monkeypatch):
+        """PROCESS_POOL_WORKERS='-1' raises ValueError naming the variable."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "-1")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="PROCESS_POOL_WORKERS"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    def test_non_integer_thread_raises_with_var_name(self, monkeypatch):
+        """THREAD_POOL_WORKERS='bar' raises ValueError naming the variable."""
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "bar")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="THREAD_POOL_WORKERS"):
+            _positive_int_env("THREAD_POOL_WORKERS", 6)
+
+    def test_zero_thread_raises_with_var_name(self, monkeypatch):
+        """THREAD_POOL_WORKERS='0' raises ValueError naming the variable."""
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "0")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="THREAD_POOL_WORKERS"):
+            _positive_int_env("THREAD_POOL_WORKERS", 6)
+
+    def test_negative_thread_raises_with_var_name(self, monkeypatch):
+        """THREAD_POOL_WORKERS='-5' raises ValueError naming the variable."""
+        monkeypatch.setenv("THREAD_POOL_WORKERS", "-5")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="THREAD_POOL_WORKERS"):
+            _positive_int_env("THREAD_POOL_WORKERS", 6)
+
+    def test_float_string_raises(self, monkeypatch):
+        """PROCESS_POOL_WORKERS='2.5' raises ValueError (not a valid int)."""
+        monkeypatch.setenv("PROCESS_POOL_WORKERS", "2.5")
+
+        _positive_int_env = self._get_helper()
+
+        with pytest.raises(ValueError, match="PROCESS_POOL_WORKERS"):
+            _positive_int_env("PROCESS_POOL_WORKERS", 3)
+
+    # ------------------------------------------------------------------
+    # Module-level constants smoke check (import-time evaluation)
+    # ------------------------------------------------------------------
+
+    def test_module_constants_are_positive_ints(self):
+        """PROCESS_POOL_WORKERS and THREAD_POOL_WORKERS on the module are ints >= 1."""
+        import main as main_module
+
+        assert isinstance(main_module.PROCESS_POOL_WORKERS, int)
+        assert main_module.PROCESS_POOL_WORKERS >= 1
+        assert isinstance(main_module.THREAD_POOL_WORKERS, int)
+        assert main_module.THREAD_POOL_WORKERS >= 1

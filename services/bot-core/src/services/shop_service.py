@@ -29,20 +29,22 @@ from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services._item_type_normalizer import expand_item_type_to_concrete
+from services.bounty_service import get_secondary_subtype
+from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants
+from services.game_maths import ship_tech_level_for_value
 
 flogger = bblogger.get_logger("shop-service")
 
 # Map concrete item_type → GuildConfig key used by get_count_range() / get_quantity_range().
-# These config keys are generic (legacy) and GuildConfig hasn't been updated yet.
-# When GuildConfig gains a "secondary_weapon" key, add it here.
+# Each type has its own dedicated key so primaries and secondaries draw from independent ranges.
 _CONCRETE_TO_CONFIG_KEY: dict[str, str] = {
     "ship": "ship",
     "primary_weapon": "weapon",
+    "secondary_weapon": "secondary_weapon",  # dedicated key — mirrors weapon range (min:3/max:5)
     "module": "module",
     "turret_weapon": "turret",
-    # secondary_weapon → future: "secondary_weapon"
 }
 
 
@@ -84,22 +86,21 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         self._static_cache = {
             "ship": await self.ship_repo.list_all(db),
             "weapon": await self.primary_weapon_repo.list_all(db),
+            "secondary": await self.secondary_weapon_repo.list_all(db),
             "module": await self.module_repo.list_all(db),
             "turret": await self.turret_weapon_repo.list_all(db),
         }
         # Build price lookup from all item types (includes secondary weapons)
         self._price_cache = {}
-        secondary_weapons = await self.secondary_weapon_repo.list_all(db)
         for items in self._static_cache.values():
             for item in items:
                 self._price_cache[item.name] = item.value
-        for item in secondary_weapons:
-            self._price_cache[item.name] = item.value
 
         flogger.info(
             f"Preloaded static data: "
             f"{len(self._static_cache['ship'])} ships, "
             f"{len(self._static_cache['weapon'])} weapons, "
+            f"{len(self._static_cache['secondary'])} secondary weapons, "
             f"{len(self._static_cache['module'])} modules, "
             f"{len(self._static_cache['turret'])} turrets, "
             f"{len(self._price_cache)} prices cached"
@@ -155,8 +156,9 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         Returns transaction details including cost and remaining shop quantity.
         """
         try:
-            # Get player and validate
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2 (lock-ordering rule 1): lock the Player row FIRST so the locked
+            # read is the first player access feeding the credit read-modify-write.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -165,7 +167,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             if not shop_item:
                 raise ValueError(f"Shop item {shop_item_id} not found")
 
-            # Validate tier access
+            # Validate tier access (reads the locked player row)
             if not self._can_access_tier(player.tier, shop_item.tier):
                 raise ValueError(f"Player tier {player.tier} cannot access {shop_item.tier} shop")
 
@@ -176,14 +178,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # Calculate total cost
             total_cost = shop_item.price * quantity
 
-            # Check player credits
-            if player.credits < total_cost:
-                raise ValueError(f"Insufficient credits. Cost: {total_cost}, Available: {player.credits}")
-
-            # Lock player row and re-check credits under lock
-            player = await self.player_repo.get_by_id_for_update(db, player_id)
-            if not player:
-                raise ValueError(f"Player {player_id} not found")
+            # Check player credits under lock (prevents TOCTOU race)
             if player.credits < total_cost:
                 raise ValueError(f"Insufficient credits. Cost: {total_cost}, Available: {player.credits}")
 
@@ -202,14 +197,33 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     f"cancel_underfunded_duels failed after buy_item for player_id={player_id}: {_duel_exc}"
                 )
 
-            # Add item to player inventory (commit=False — this service owns the
-            # explicit single commit below). B.34 closeout: previously this used
-            # the default commit=True, which committed the credit deduction
-            # mid-flow and left a window where the shop-quantity update could
-            # fail and leave player credit-deducted-with-item but shop unchanged.
-            await self.inventory_repo.add_item(
-                db, player_id, shop_item.item_type, shop_item.item_name, quantity, commit=False
-            )
+            # CI-16: secondary_weapon top-up — if name is already equipped on the active ship,
+            # add rounds directly to secondary_ammo instead of cargo.
+            # Keep atomic: all mutations are commit=False; single db.commit() below covers all.
+            _topped_up_ammo = False
+            if shop_item.item_type == "secondary_weapon":
+                active_ship = await self.player_ship_repo.get_active_ship(db, player_id)
+                if active_ship is not None and shop_item.item_name in (active_ship.secondary_weapons or []):
+                    # Top up ammo sidecar (reassign — never mutate in place)
+                    _ship_ammo: dict[str, int] = dict(getattr(active_ship, "secondary_ammo", None) or {})
+                    _ship_ammo[shop_item.item_name] = _ship_ammo.get(shop_item.item_name, 0) + quantity
+                    active_ship.secondary_ammo = _ship_ammo
+                    await db.flush()
+                    flogger.info(
+                        f"Player {player_id} top-up secondary '{shop_item.item_name}' +{quantity} rounds "
+                        f"on ship {active_ship.id} (ammo now {_ship_ammo[shop_item.item_name]})"
+                    )
+                    _topped_up_ammo = True
+
+            if not _topped_up_ammo:
+                # Add item to player inventory (commit=False — this service owns the
+                # explicit single commit below). B.34 closeout: previously this used
+                # the default commit=True, which committed the credit deduction
+                # mid-flow and left a window where the shop-quantity update could
+                # fail and leave player credit-deducted-with-item but shop unchanged.
+                await self.inventory_repo.add_item(
+                    db, player_id, shop_item.item_type, shop_item.item_name, quantity, commit=False
+                )
 
             # Remove item from shop
             new_shop_quantity = shop_item.quantity - quantity
@@ -260,8 +274,17 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             Transaction details dict
         """
         try:
-            # Validate player exists
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2 (lock-ordering rule 1): acquire the Player-row aggregate lock
+            # FIRST — before any read whose value feeds the credit/loadout
+            # read-modify-write below.  ``activate_ship`` (called later) re-locks the
+            # same Player row via the choke-point's ``_lock_player``; that re-acquire
+            # is an intra-transaction no-op (a txn may re-hold its own row lock), so
+            # the loadout lock and this credit lock collapse into one lock class with
+            # no A-then-B hazard.  Previously this method read ``get_by_id`` (unlocked)
+            # for the tier-access validation and only locked at the credit re-check,
+            # leaving the lock as the SECOND player access; the locked read is now the
+            # FIRST player access, satisfying "first lock = most restrictive mode".
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -276,6 +299,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
             # Validate tier access (mirrors purchase_item — closes a privilege-escalation
             # gap where ships from any tier shop could be purchased without restriction).
+            # Reads the locked player row.
             if not self._can_access_tier(player.tier, shop_item.tier):
                 raise ValueError(f"Player tier {player.tier} cannot access {shop_item.tier} shop")
 
@@ -285,12 +309,6 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 raise ValueError(f"Static ship data not found for '{shop_item.item_name}'")
 
             new_ship_price = shop_item.price
-
-            # Transaction is owned by the caller (router).
-            # Lock the player row to prevent concurrent credit modifications.
-            player = await self.player_repo.get_by_id_for_update(db, player_id)
-            if not player:
-                raise ValueError(f"Player {player_id} not found")
 
             # Re-check credits under lock (prevents TOCTOU race)
             if player.credits < new_ship_price:
@@ -322,6 +340,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 inventory_repo=self.inventory_repo,
                 item_repo=self.item_repo,
                 ship_repo=self.ship_repo,
+                player_repo=self.player_repo,
             )
             activation_result = await consistency.activate_ship(
                 db,
@@ -407,8 +426,10 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 but guarded defensively).
         """
         try:
-            # Get player and validate
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2 (lock-ordering rule 1): lock the Player row FIRST so the locked
+            # read is the first player access feeding the credit/inventory
+            # read-modify-write below.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -447,12 +468,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             unit_sell_price = base_price
             total_sell_value = unit_sell_price * quantity
 
-            # Transaction is owned by the caller (router).
-            # Lock player row to prevent concurrent credit modifications.
-            player = await self.player_repo.get_by_id_for_update(db, player_id)
-            if not player:
-                raise ValueError(f"Player {player_id} not found")
-
+            # Player row already locked (FOR UPDATE) at the top of this method (D5-T2).
             # Remove item from player inventory (commit=False — caller's transaction controls commit)
             await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity, commit=False)
 
@@ -513,8 +529,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             if target_tier not in self.VALID_TIERS:
                 raise ValueError(f"Invalid target tier: {target_tier}")
 
-            # Validate player exists
-            player = await self.player_repo.get_by_id(db, player_id)
+            # D5-T2 (lock-ordering rule 1): lock the Player row FIRST.  The evacuate
+            # choke-point (when clear_equipment) re-locks the SAME player row via
+            # ``_lock_player``; that re-acquire is an intra-transaction no-op, so the
+            # loadout lock and this credit lock collapse into one lock class.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -543,12 +562,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 "secondary_weapons": [],
             }
 
-            # Transaction is owned by the caller (router).
-            # Lock the player row to prevent concurrent credit modifications.
-            player = await self.player_repo.get_by_id_for_update(db, player_id)
-            if not player:
-                raise ValueError(f"Player {player_id} not found")
-
+            # Player row already locked (FOR UPDATE) at the top of this method (D5-T2).
             if clear_equipment:
                 # Package G (B.19): use the LoadoutConsistencyService choke-point
                 # (anti-duplication guard prevents legacy phantom-item exploit).
@@ -559,6 +573,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     inventory_repo=self.inventory_repo,
                     item_repo=self.item_repo,
                     ship_repo=self.ship_repo,
+                    player_repo=self.player_repo,
                 )
                 evac = await consistency.evacuate_ship_loadout_to_inventory(db, ship=player_ship)
                 items_unequipped = {kind: list(v) for kind, v in evac["items_returned_detail"].items()}
@@ -639,10 +654,15 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # Generate new shop inventory.
             # Use concrete item types derived from CURRENTLY_ENABLED_TYPES to avoid
             # writing generic aliases to guild_shops.item_type.
-            # Only types that have a GuildConfig count_range key are generated;
-            # secondary_weapon is excluded until mechanics ship (no config key yet).
+            # secondary_weapon is now included; deferred subtypes (emp-bomb, mine, sentry-gun)
+            # are excluded at the item-selection layer in _get_random_item_by_tech_level.
             _generation_types = tuple(t for t in GameConstants.CURRENTLY_ENABLED_TYPES if t in _CONCRETE_TO_CONFIG_KEY)
             generated_items = []
+            # Track drawn item_names to avoid duplicate upserts: a name drawn more
+            # than once in the same refresh would otherwise hit create_or_update()
+            # multiple times for the same row.  Deduplicate here before the upsert
+            # so each unique item_name is written exactly once.
+            _seen_item_names: set[str] = set()
 
             for concrete_type in _generation_types:
                 config_key = _CONCRETE_TO_CONFIG_KEY[concrete_type]
@@ -662,14 +682,40 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     if not item_name:
                         continue  # Skip if no items available at this tech level
 
+                    # Skip duplicate draws (draws-with-replacement): only the first
+                    # occurrence of each item_name is upserted in this refresh cycle.
+                    if item_name in _seen_item_names:
+                        continue
+                    _seen_item_names.add(item_name)
+
+                    # Secondaries are consumable rounds — scale the rolled quantity
+                    # so one refresh cycle can supply multiple players.
+                    if concrete_type == "secondary_weapon":
+                        subtype = await self._get_secondary_subtype_by_name(db, item_name)
+                        scaler = (
+                            GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY
+                            if subtype in GameConstants.SHOP_HEAVY_SECONDARY_SUBTYPES
+                            else GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD
+                        )
+                        item_quantity *= scaler
+
                     # Calculate price
                     base_price = await self._get_item_base_price(db, item_name)
+
+                    # Row tech_level is the ITEM's actual TL (shown per-item in the
+                    # shop listing) — NOT the batch shop_tech_level: draws may land
+                    # at TL-1/TL-2, and ships are drawn by spawn-rate weight with a
+                    # value-derived TL. The batch TL lives in refresh_details below.
+                    if concrete_type == "ship":
+                        row_tech_level = ship_tech_level_for_value(base_price)
+                    else:
+                        row_tech_level = item_tech_level
 
                     # Create shop item
                     shop_item_data = {
                         "guild_id": guild_id,
                         "tier": tier,
-                        "tech_level": shop_tech_level,
+                        "tech_level": row_tech_level,
                         "item_type": item_type,
                         "item_name": item_name,
                         "quantity": item_quantity,
@@ -679,17 +725,6 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
                     shop_item = await self.shop_repo.create_or_update(db, shop_item_data)
                     generated_items.append(shop_item)
-
-            # Deduplicate: the generation loop draws items with replacement, so the same
-            # item_name may be drawn multiple times. create_or_update() upserts to a single
-            # DB row each time, leaving the DB clean — but every draw unconditionally
-            # appends to generated_items, causing duplicates in the announcement embed
-            # and the autocomplete cache push. Keep only the final (most-recently-upserted)
-            # state for each item_name.
-            seen: dict[str, object] = {}
-            for si in generated_items:
-                seen[si.item_name] = si
-            generated_items = list(seen.values())
 
             refresh_details = {
                 "guild_id": guild_id,
@@ -793,6 +828,23 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             items = [m for m in all_modules if m.tech_level == tech_level]
             return random.choice(items).name if items else None
 
+        if item_type == "secondary_weapon":
+            all_secondary = (
+                self._static_cache["secondary"]
+                if self._static_cache is not None
+                else await self.secondary_weapon_repo.list_all(db)
+            )
+
+            # Filter by tech level and exclude deferred subtypes (emp-bomb, mine, sentry-gun).
+            # Subtype unwrap is single-sourced from bounty_service.get_secondary_subtype
+            # (avoids drift between generation and shop filtering).
+            items = [
+                sw
+                for sw in all_secondary
+                if sw.tech_level == tech_level and get_secondary_subtype(sw) not in DEFERRED_SECONDARY_SUBTYPES
+            ]
+            return random.choice(items).name if items else None
+
         if item_type in ("turret", "turret_weapon"):
             all_turrets = (
                 self._static_cache["turret"]
@@ -803,6 +855,22 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             return random.choice(items).name if items else None
 
         return None
+
+    async def _get_secondary_subtype_by_name(self, db: AsyncSession, item_name: str) -> str:
+        """Resolve a secondary weapon's subtype from its name.
+
+        Uses the in-memory static cache when warm (bulk-refresh path),
+        otherwise falls back to a direct repository lookup. Returns ""
+        if the item cannot be found or carries no subtype.
+        """
+        if self._static_cache is not None:
+            for sw in self._static_cache["secondary"]:
+                if sw.name == item_name:
+                    return get_secondary_subtype(sw)
+            return ""
+
+        sw = await self.secondary_weapon_repo.get_by_name(db, item_name)
+        return get_secondary_subtype(sw) if sw is not None else ""
 
     async def _get_item_base_price(self, db: AsyncSession, item_name: str) -> int:
         """Look up the item's value field. Returns 0 if not found.
@@ -827,6 +895,29 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             if item is not None:
                 return item.value
         return 0
+
+    async def _get_item_tech_level(self, db: AsyncSession, item_type: str, item_name: str, base_price: int) -> int:
+        """Resolve the item's actual tech level for shop-row display.
+
+        Ships have no tech_level column — theirs is derived from credit value
+        (same rule as bounty ship selection). Other types read the catalog
+        row's tech_level. Falls back to 1 when the item can't be found.
+        """
+        if item_type == "ship":
+            return ship_tech_level_for_value(base_price)
+        repo = {
+            "primary_weapon": self.primary_weapon_repo,
+            "secondary_weapon": self.secondary_weapon_repo,
+            "turret_weapon": self.turret_weapon_repo,
+            "module": self.module_repo,
+        }.get(item_type)
+        if repo is not None:
+            item = await repo.get_by_name(db, item_name)
+            tech_level = getattr(item, "tech_level", None) if item is not None else None
+            if tech_level:
+                return tech_level
+        flogger.warning(f"Could not resolve tech level for {item_name!r} ({item_type}); defaulting to 1")
+        return 1
 
     async def _add_item_to_shop(
         self,
@@ -854,11 +945,13 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 new_quantity = existing_item.quantity + quantity
                 await self.shop_repo.update_quantity(db, existing_item.id, new_quantity, commit=commit)
             else:
-                # Create new shop item
+                # Create new shop item carrying the item's REAL tech level — the
+                # shop listing renders T{tech_level} per item, so the old hardcoded
+                # default of 1 displayed every freshly-sold item as T1.
                 shop_item_data = {
                     "guild_id": guild_id,
                     "tier": tier,
-                    "tech_level": 1,  # Default tech level for sold items
+                    "tech_level": await self._get_item_tech_level(db, item_type, item_name, base_price),
                     "item_type": item_type,
                     "item_name": item_name,
                     "quantity": quantity,

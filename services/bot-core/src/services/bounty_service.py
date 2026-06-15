@@ -22,10 +22,11 @@ from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.criminal_repository import CriminalRepository
 from persist.repositories.item_repository import ItemRepository
 from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.combat_models import ShipLoadout, WeaponStats
+from services.combat_models import DEFERRED_SECONDARY_SUBTYPES, ShipLoadout
 from services.combat_service import CombatService
 from services.game_constants import GameConstants, resolve_constant
 from services.game_maths import (
@@ -39,6 +40,110 @@ from services.system_graph_service import SystemGraphService
 flogger = bblogger.get_logger("bounty-service")
 
 
+async def _resolve_combat_label(db, player, user_repo=None) -> str:
+    """CI-20: Resolve a player to a display label for combat-log thread naming.
+
+    Preference order: player.display_name → user.discord_username → "Player {id}".
+    Always returns a string — never raises.
+
+    NOTE: duel_service.DuelService._resolve_player_label is a near-identical copy.
+    A shared extraction was deferred because bounty_service is a module-level function
+    while duel_service uses a method (accesses self.user_repo).  If a third caller
+    appears, extract to services/combat_label_utils.py.
+    """
+    try:
+        if getattr(player, "display_name", None):
+            return player.display_name
+        if user_repo is None:
+            from persist.repositories.user_repository import UserRepository
+
+            user_repo = UserRepository()
+        user = await user_repo.get_by_id(db, player.user_id)
+        if user and user.discord_username:
+            return user.discord_username
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.debug(f"Could not resolve combat label for player_id={getattr(player, 'id', '?')}: {exc}")
+    return f"Player {getattr(player, 'id', '?')}"
+
+
+def _extract_weapon_combat_fields(item) -> dict:
+    """Extract combat fields from a weapon ORM object's extra_atts.
+
+    DB storage nests combat-relevant snake_case fields inside an inner
+    ``extra_atts`` dict (e.g. ``{"extra_atts": {"loading_speed_ms": 220, ...}}``).
+    The canonical unwrap pattern is ``outer.get("extra_atts", outer)`` — fall
+    back to the outer dict for flat/legacy seeds.
+
+    Returns a dict with keys: ``damage_per_shot``, ``loading_speed_ms``,
+    ``range_m``, ``subtype``.  All default to safe zero/empty values so the
+    dict is always present even for weapons that lack extra_atts entirely.
+    """
+    outer: dict = getattr(item, "extra_atts", None) or {}
+    inner: dict = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+    return {
+        "damage_per_shot": inner.get("damage_per_shot"),
+        "loading_speed_ms": int(inner.get("loading_speed_ms", 0) or 0),
+        "range_m": float(inner.get("range_m", 0.0) or 0.0),
+        "subtype": inner.get("subtype", "") or "",
+    }
+
+
+def get_secondary_subtype(item) -> str:
+    """Unwrap the secondary-weapon subtype from an ORM object's extra_atts.
+
+    The subtype lives in the INNER extra_atts dict (DB nesting pattern).
+    This is the single-source implementation; shop_service imports this
+    function to avoid duplicating the unwrap logic (drift risk).
+
+    Args:
+        item: Any object with an ``extra_atts`` attribute (SecondaryWeapon ORM
+              instance, SimpleNamespace, or similar).
+
+    Returns:
+        Subtype string (e.g. ``"nuke"``, ``"missile"``), or empty string if absent.
+    """
+    outer: dict = getattr(item, "extra_atts", None) or {}
+    inner: dict = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+    return inner.get("subtype", "") if isinstance(inner, dict) else ""
+
+
+def _extract_secondary_combat_fields(item) -> dict:
+    """Extract ALL combat fields from a secondary-weapon ORM object.
+
+    Unlike ``_extract_weapon_combat_fields`` (which omits secondary-specific
+    fields and reads ``damage_per_shot``), this helper reads the ``damage``
+    column (the secondary weapon's explosion/hit damage) and also extracts
+    ``burst_count``, ``emp_damage``, ``magnitude_m``, and ``steerable`` which
+    are required for the tick resolver to fire the weapon correctly.
+
+    DB nesting pattern identical to primaries/turrets:
+        outer = item.extra_atts  (e.g. ``{"loading speed": ..., "extra_atts": {...}}``)
+        inner = outer["extra_atts"]  (snake_case combat fields live here)
+
+    Args:
+        item: SecondaryWeapon ORM instance (or SimpleNamespace with matching attrs).
+
+    Returns:
+        Dict with keys: ``damage``, ``loading_speed_ms``, ``range_m``, ``subtype``,
+        ``burst_count``, ``emp_damage``, ``magnitude_m``, ``steerable``.
+        All default to safe zero/empty values.
+    """
+    outer: dict = getattr(item, "extra_atts", None) or {}
+    inner: dict = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+    # ``damage`` comes from the ORM column (item.damage), NOT from extra_atts.
+    damage = int(getattr(item, "damage", 0) or 0)
+    return {
+        "damage": damage,
+        "loading_speed_ms": int(inner.get("loading_speed_ms", 0) or 0),
+        "range_m": float(inner.get("range_m", 0.0) or 0.0),
+        "subtype": inner.get("subtype", "") or "",
+        "burst_count": int(inner.get("burst_count", 0) or 0),
+        "emp_damage": int(inner.get("emp_damage", 0) or 0),
+        "magnitude_m": float(inner.get("magnitude_m", 0.0) or 0.0),
+        "steerable": bool(inner.get("steerable", False)),
+    }
+
+
 # Sentinel values used in bounty.checked maps.
 # >0 = player_id who locked the slot; <0 = special state.
 UNCHECKED = -1  # System has not been checked yet — fair game.
@@ -48,16 +153,20 @@ FORFEITED_CHECK = -2  # System checked by a player who has since promoted past t
 # eligible for the per-system payout. See scrub_player_checks_below_tier.
 
 
-def _serialize_fight_results(fight_results, *, pvc_armour_buff: float | None = None) -> dict | None:
+def _serialize_fight_results(fight_results) -> dict | None:
     """Serialize a FightResults dataclass to a plain dict for API responses.
 
-    Returns None if fight_results is None.
+    Returns None if fight_results is None. Includes the combat_log_id when present.
+    variance_percent is omitted (retired in T10 alongside SimpleTTKResolver).
 
-    Args:
-        fight_results:    FightResults instance (or None).
-        pvc_armour_buff:  When provided, included in the dict so the gateway
-                          can surface the Keith T Maxwell buff callout in the
-                          combat summary embed. Pass None for PvP (duel) results.
+    pvc_damage_reduction is included from FightResults.metadata; it is 0.0 for
+    PvP fights and the configured DR value (e.g. 0.33) for PvC bounty fights.
+
+    Also includes the actual after-action summary (final_hp, damage_dealt,
+    damage_taken, shots_fired, shots_hit, accuracy, outcome, reason,
+    duration_ticks) from metadata["summary"] when available.  Consumers that
+    only need the legacy projection fields can ignore the new keys; they are
+    always optional so the shape stays backward-compatible.
 
     Returns:
         Dict representation suitable for JSON serialization, or None.
@@ -75,16 +184,29 @@ def _serialize_fight_results(fight_results, *, pvc_armour_buff: float | None = N
             "ttk": fs.ttk,
         }
 
-    result = {
+    metadata = getattr(fight_results, "metadata", None) or {}
+    inner_meta = metadata.get("metadata", {}) or {}
+    summary = metadata.get("summary", {}) or {}
+    pvc_damage_reduction = float(inner_meta.get("pvc_damage_reduction", metadata.get("pvc_damage_reduction", 0.0)))
+    tick_ms = int(inner_meta.get("tick_ms", 10))
+    duration_ticks = int(summary.get("duration_ticks", 0))
+    duration_s = (duration_ticks * tick_ms) / 1000.0 if duration_ticks else None
+
+    result: dict = {
         "winner_name": fight_results.winner_name,
         "loser_name": fight_results.loser_name,
         "is_stalemate": fight_results.is_stalemate,
         "ship1_stats": _stats_to_dict(fight_results.ship1_stats),
         "ship2_stats": _stats_to_dict(fight_results.ship2_stats),
-        "variance_percent": fight_results.variance_percent,
+        "combat_log_id": fight_results.combat_log_id,
+        "pvc_damage_reduction": pvc_damage_reduction,
+        # After-action summary fields (populated from tick-resolver summary; None when unavailable)
+        "outcome": summary.get("outcome"),
+        "reason": summary.get("reason"),
+        "duration_ticks": duration_ticks or None,
+        "duration_s": duration_s,
+        "combatants": summary.get("combatants"),
     }
-    if pvc_armour_buff is not None:
-        result["pvc_armour_buff"] = pvc_armour_buff
     return result
 
 
@@ -392,9 +514,11 @@ class BountyService:
                 "ship_max_primaries": 0,
                 "ship_max_modules": 0,
                 "ship_max_turrets": 0,
+                "ship_max_secondaries": 0,
                 "weapons": [],
                 "modules": [],
                 "turrets": [],
+                "secondaries": [],
                 "total_value": 0,
             }
 
@@ -417,6 +541,7 @@ class BountyService:
         )
 
         ship = None
+        all_ships: list | None = None  # P6-T9b: cached to avoid second identical query on fallback
         if ship_tl != -1:
             from persist.models.ship import Ship
             from sqlalchemy import select
@@ -428,12 +553,16 @@ class BountyService:
                 ship = random.choice(matching_ships)
 
         if ship is None:
-            # Fallback: pick any combat-capable ship (max_primaries > 0)
-            from persist.models.ship import Ship
-            from sqlalchemy import select
+            # Fallback: pick any combat-capable ship (max_primaries > 0).
+            # P6-T9b: reuse all_ships from the TL-match query above if it was
+            # already fetched; only execute a new query when ship_tl == -1 (i.e.
+            # the TL-match branch was skipped and all_ships was never populated).
+            if all_ships is None:
+                from persist.models.ship import Ship
+                from sqlalchemy import select
 
-            result = await db.execute(select(Ship).where(Ship.max_primaries > 0))
-            all_ships = list(result.scalars().all())
+                result = await db.execute(select(Ship).where(Ship.max_primaries > 0))
+                all_ships = list(result.scalars().all())
             if not all_ships:
                 flogger.warning("No combat-capable ships (max_primaries > 0) found in DB — this should never happen")
             if all_ships:
@@ -451,9 +580,11 @@ class BountyService:
                 "ship_max_primaries": 0,
                 "ship_max_modules": 0,
                 "ship_max_turrets": 0,
+                "ship_max_secondaries": 0,
                 "weapons": [],
                 "modules": [],
                 "turrets": [],
+                "secondaries": [],
                 "total_value": 0,
             }
 
@@ -526,9 +657,19 @@ class BountyService:
                 chosen = random.choice(available_pool)
                 equipped_modules.append(chosen)
                 mtype = getattr(chosen, "type", "")
-                equipped_type_counts[mtype] = equipped_type_counts.get(mtype, 0) + 1
-                # Re-filter pool based on updated type counts
-                available_pool = [m for m in available_pool if _can_equip(m)]
+                new_count = equipped_type_counts.get(mtype, 0) + 1
+                equipped_type_counts[mtype] = new_count
+                # P6-T9a: de-quadratic re-filter.  After equipping `chosen` of
+                # type `mtype`, only that type's limit can newly become exceeded —
+                # all other types are untouched.  So instead of re-scanning the
+                # entire pool (O(pool) per pick), we remove items of `mtype` only
+                # when the count has just reached its limit.  Items of other types
+                # remain valid and need not be re-tested.
+                limit = GameConstants.MODULE_EQUIP_LIMITS.get(mtype, -1)
+                if limit != -1 and new_count >= limit:
+                    # This type is now full; drop every remaining entry of this type.
+                    available_pool = [m for m in available_pool if getattr(m, "type", "") != mtype]
+                # else: limit is -1 (unlimited) or not yet reached → pool unchanged.
 
         # ----------------------------------------------------------------
         # Calculate partial values (weapons + modules) before turret selection
@@ -556,7 +697,47 @@ class BountyService:
                         equipped_turrets.append(random.choice(all_turrets))
 
         turret_value = sum(getattr(t, "value", 0) for t in equipped_turrets)
-        total_value = ship.value + weapon_value + module_value + turret_value
+
+        # ----------------------------------------------------------------
+        # Secondary weapon selection (CI-17)
+        # Subtype-aware pool: never hand out deferred subtypes or dead-weight
+        # (zero-damage) items.  Sample distinct-by-name WITHOUT replacement.
+        # Graceful empty: max_secondaries==0 or empty pool → secondaries=[]
+        # ----------------------------------------------------------------
+        equipped_secondaries: list = []
+        if getattr(ship, "max_secondaries", 0) > 0:
+            # Build candidate pool across a TL window, mirroring find_item_tl's
+            # bidirectional intent without calling it (that can return a TL
+            # populated only by deferred/dead-weight items with no fallback).
+            _sw_repo = SecondaryWeaponRepository()
+            _all_secondary = await _sw_repo.list_all(db)
+
+            # Compute TL window: prefer item_tl, search down to MIN_TECH_LEVEL
+            # then up by criminal_max_gear_upgrade (mirrors primary/turret logic).
+            _tl_candidates: list[int] = list(range(item_tl, GameConstants.MIN_TECH_LEVEL - 1, -1)) + list(
+                range(item_tl + 1, min(GameConstants.MAX_TECH_LEVEL, item_tl + _criminal_max_gear_upgrade) + 1)
+            )
+            _seen_names: set[str] = set()
+            for _sw in _all_secondary:
+                if getattr(_sw, "tech_level", -1) not in _tl_candidates:
+                    continue
+                _subtype = get_secondary_subtype(_sw)
+                if _subtype in DEFERRED_SECONDARY_SUBTYPES:
+                    continue
+                _sw_damage = int(getattr(_sw, "damage", 0) or 0)
+                if _sw_damage <= GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE:
+                    continue
+                if _sw.name not in _seen_names:
+                    _seen_names.add(_sw.name)
+                    equipped_secondaries.append(_sw)
+
+            # Sample min(max_secondaries, pool_size) distinct items WITHOUT replacement
+            n_pick = min(ship.max_secondaries, len(equipped_secondaries))
+            equipped_secondaries = random.sample(equipped_secondaries, n_pick) if n_pick > 0 else []
+
+        # Knob #4: count each secondary's value ONCE per equipped type (not scaled by rounds).
+        secondary_value = sum(getattr(sw, "value", 0) for sw in equipped_secondaries)
+        total_value = ship.value + weapon_value + module_value + turret_value + secondary_value
 
         # ----------------------------------------------------------------
         # Calculate HP from base ship + modules
@@ -586,8 +767,15 @@ class BountyService:
             "ship_max_primaries": ship.max_primaries,
             "ship_max_modules": ship.max_modules,
             "ship_max_turrets": ship.max_turrets,
+            "ship_max_secondaries": getattr(ship, "max_secondaries", 0),
             "weapons": [
-                {"name": w.name, "emoji": getattr(w, "emoji", None), "value": w.value, "dps": w.dps}
+                {
+                    "name": w.name,
+                    "emoji": getattr(w, "emoji", None),
+                    "value": w.value,
+                    "dps": w.dps,
+                    **_extract_weapon_combat_fields(w),
+                }
                 for w in equipped_weapons
             ],
             "modules": [
@@ -602,8 +790,25 @@ class BountyService:
                 for m in equipped_modules
             ],
             "turrets": [
-                {"name": t.name, "emoji": getattr(t, "emoji", None), "value": t.value, "dps": t.dps}
+                {
+                    "name": t.name,
+                    "emoji": getattr(t, "emoji", None),
+                    "value": t.value,
+                    "dps": t.dps,
+                    **_extract_weapon_combat_fields(t),
+                }
                 for t in equipped_turrets
+            ],
+            "secondaries": [
+                {
+                    "name": sw.name,
+                    "emoji": getattr(sw, "emoji", None),
+                    "value": sw.value,
+                    "dps": float(getattr(sw, "dps", 0) or 0),
+                    "rounds": max(1, GameConstants.CRIMINAL_SECONDARY_ROUNDS.get(get_secondary_subtype(sw), 1)),
+                    **_extract_secondary_combat_fields(sw),
+                }
+                for sw in equipped_secondaries
             ],
             "total_value": total_value,
         }
@@ -611,24 +816,6 @@ class BountyService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _build_criminal_loadout(self, criminal_ship: dict) -> ShipLoadout:
-        """Build a ShipLoadout from a bounty's criminal_ship JSONB data.
-
-        Args:
-            criminal_ship: Dict containing criminal ship data from bounty JSONB column.
-
-        Returns:
-            ShipLoadout ready for combat resolution.
-        """
-        weapons = [WeaponStats(name=w["name"], dps=w.get("dps", 0)) for w in criminal_ship.get("weapons", [])]
-        turrets = [WeaponStats(name=t["name"], dps=t.get("dps", 0)) for t in criminal_ship.get("turrets", [])]
-        return ShipLoadout(
-            ship_name=criminal_ship.get("ship_name", "Unknown"),
-            base_armour=criminal_ship.get("ship_armour", 100),
-            weapons=weapons,
-            turrets=turrets,
-        )
 
     def _build_player_loadout(self, player, player_ship=None) -> ShipLoadout:
         """Build a minimal ShipLoadout from a player's active ship.
@@ -1186,6 +1373,12 @@ class BountyService:
         cooldown_seconds = resolve_constant(cfg, "check_cooldown", GameConstants.CHECK_COOLDOWN)
         tier_before = player.tier
 
+        # LOCK ORDERING (X3-bounty): acquire Bounty row locks in ascending bounty.id
+        # order to prevent AB-BA deadlocks when two concurrent /check calls touch
+        # the same set of bounties in different orders.  The actual lock is taken
+        # inside _process_single_bounty_check via get_by_id_for_update.
+        matching_bounties = sorted(matching_bounties, key=lambda b: b.id)
+
         for bounty in matching_bounties:
             outcome, announce_info = await self._process_single_bounty_check(
                 db,
@@ -1281,7 +1474,41 @@ class BountyService:
         the original single-bounty contract. Multi-bounty terminal hits
         therefore distribute rewards independently per matching bounty.
         """
-        # System is in this bounty's route
+        # CONCURRENCY FIX (X3-bounty): acquire a row-level lock on this bounty
+        # BEFORE reading its ``checked`` map.  Two concurrent /check calls both
+        # loaded the unlocked row in Step 4; whichever session arrives here first
+        # wins the lock, the second blocks until the first commits.
+        #
+        # populate_existing=True is MANDATORY because expire_on_commit=False means
+        # the row is already in the session identity map from the unlocked SELECT
+        # above.  Without it, SQLAlchemy returns the cached in-memory object and
+        # the guard reads pre-commit stale state even though the lock was acquired.
+        bounty = await self.bounty_repo.get_by_id_for_update(db, bounty.id)
+        if bounty is None:
+            # Bounty disappeared between the initial load and the lock (expired/deleted).
+            return (
+                CheckResponse(
+                    result=CheckResult.NOT_FOUND,
+                    message="Bounty no longer active",
+                ),
+                None,
+            )
+
+        # Re-check status under lock: another session may have captured this bounty
+        # between our unlocked load and now.
+        if bounty.status != "active":
+            return (
+                CheckResponse(
+                    result=CheckResult.ALREADY_CHECKED,
+                    bounty_id=bounty.id,
+                    criminal_name=bounty.criminal_name,
+                    message=f"Bounty {bounty.id} already resolved",
+                    division=division,
+                ),
+                None,
+            )
+
+        # Read the FRESH checked map (just populated by the locked fetch).
         checked = dict(bounty.checked)  # Copy to modify
 
         if checked.get(system_name, -1) != -1:
@@ -1330,9 +1557,10 @@ class BountyService:
             player_loadout = await LoadoutBuilder.from_player(db, player_id)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
 
-            _pvc_buff = resolve_constant(
-                cfg, "bounty_pvc_armour_buff_factor", GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
-            )
+            # CI-20: resolve display labels for combat-log thread naming
+            _player_label = await _resolve_combat_label(db, player)
+            _criminal_label = bounty.criminal_name or criminal_loadout.ship_name
+
             if is_bronze:
                 # BRONZE: Auto-capture always succeeds. Optional combat bonus.
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)
@@ -1344,12 +1572,24 @@ class BountyService:
                 bonus_won = False
                 total_reward = winner_reward
                 if not _no_ship:
-                    fight_results = self.combat_service.fight_ships(
-                        player_loadout, criminal_loadout, player_armour_buff=_pvc_buff
+                    _pvc_dr = resolve_constant(cfg, "pvc_damage_reduction", GameConstants.PVC_DAMAGE_REDUCTION)
+                    fight_results = await self.combat_service.fight_ships(
+                        player_loadout,
+                        criminal_loadout,
+                        context="bounty_bonus",
+                        log_result=True,
+                        pvc_damage_reduction=_pvc_dr,
+                        session=db,
+                        guild_id=player.guild_id,
+                        combatant1_user_id=player.user_id,
+                        combatant2_user_id=None,  # NPC side
+                        combatant1_label=_player_label,
+                        combatant2_label=_criminal_label,
                     )
-                    combat_player_won = (
-                        fight_results.winner_name == player_loadout.ship_name
-                    ) or fight_results.is_stalemate
+                    # P2-T8b: player is always combatant1 (loadout1 / side-1).
+                    # winner_side==1 → player won; winner_side==2 → criminal won.
+                    # Stalemate counts as a loss — no 2× bonus (spec §9 PvC draw semantics).
+                    combat_player_won = fight_results.winner_side == 1
                     if combat_player_won:
                         bonus_won = True
                         total_reward = winner_reward * 2
@@ -1365,9 +1605,7 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
-                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
-                        if fight_results
-                        else None,
+                        combat_result=_serialize_fight_results(fight_results) if fight_results else None,
                         bonus_won=bonus_won,
                         total_reward=total_reward,
                         criminal_ship=bounty.criminal_ship,
@@ -1383,10 +1621,24 @@ class BountyService:
                 duel_won = True
                 fight_results = None
             else:
-                fight_results = self.combat_service.fight_ships(
-                    player_loadout, criminal_loadout, player_armour_buff=_pvc_buff
+                _pvc_dr_silver = resolve_constant(cfg, "pvc_damage_reduction", GameConstants.PVC_DAMAGE_REDUCTION)
+                fight_results = await self.combat_service.fight_ships(
+                    player_loadout,
+                    criminal_loadout,
+                    context="bounty_pvc",
+                    log_result=True,
+                    pvc_damage_reduction=_pvc_dr_silver,
+                    session=db,
+                    guild_id=player.guild_id,
+                    combatant1_user_id=player.user_id,
+                    combatant2_user_id=None,  # NPC side
+                    combatant1_label=_player_label,
+                    combatant2_label=_criminal_label,
                 )
-                duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
+                # P2-T8b: player is always combatant1 (loadout1 / side-1).
+                # winner_side==1 → player won; winner_side==2 → criminal won.
+                # Stalemate follows the loss path — criminal escapes, checks reset (spec §9).
+                duel_won = fight_results.winner_side == 1
 
             if duel_won:
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)
@@ -1403,9 +1655,7 @@ class BountyService:
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
                         total_reward=winner_reward,
-                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
-                        if fight_results
-                        else None,
+                        combat_result=_serialize_fight_results(fight_results) if fight_results else None,
                         reward_per_sys=getattr(bounty, "reward_per_sys", None),
                         route_length=len(list(getattr(bounty, "route", None) or [])),
                         payout_breakdown=payout_breakdown,
@@ -1413,19 +1663,23 @@ class BountyService:
                     (bounty, True),
                 )
 
-            # LOSS: Criminal escapes checks — reset bounty location
+            # LOSS or STALEMATE: Criminal escapes checks — reset bounty location (spec §9)
             await self._reset_bounty_checks(db, bounty)
+            _is_stalemate = fight_results is not None and fight_results.is_stalemate
+            escape_msg = (
+                f"{bounty.criminal_name} fought you to a stalemate and escaped!"
+                if _is_stalemate
+                else f"{bounty.criminal_name} defeated you in combat and escaped!"
+            )
             return (
                 CheckResponse(
                     result=CheckResult.CORRECT,
                     bounty_id=bounty.id,
-                    message=f"{bounty.criminal_name} defeated you in combat and escaped!",
+                    message=escape_msg,
                     combat_won=False,
                     division=division,
                     criminal_name=bounty.criminal_name,
-                    combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
-                    if fight_results
-                    else None,
+                    combat_result=_serialize_fight_results(fight_results) if fight_results else None,
                 ),
                 (bounty, False),
             )
@@ -1596,14 +1850,16 @@ class BountyService:
             # SSRF guard: coerce to int — non-numeric values raise ValueError,
             # caught by the surrounding try/except as a warning.
             safe_guild = int(guild_id)
+            from shared.http_retry import with_transient_retry  # deferred — avoids forkserver mock-shared collision
+
             async with httpx.AsyncClient() as client:
-                resp = await client.post(
+                await with_transient_retry(
+                    client.post,
                     f"{gateway_url}/internal/autocomplete/bounty-cache/{quote(str(safe_guild), safe='')}",
                     json={"bounties": bounty_dicts},
                     headers=headers,
                     timeout=5.0,
                 )
-            resp.raise_for_status()
             flogger.debug(
                 f"check_bounty: pushed bounty cache after capture for guild={guild_id} remaining={len(bounty_dicts)}"
             )
@@ -1681,7 +1937,6 @@ class BountyService:
         import os
 
         import httpx as _httpx
-        from persist.repositories.config_repository import ConfigRepository
         from persist.repositories.user_repository import UserRepository
         from utils.bounty_announcement_payload import build_capture_payout_embed
 
@@ -1861,8 +2116,31 @@ class BountyService:
             Updated RewardInfo list (post-mutation).
         """
         modified_players = []
-        for reward in rewards:
-            player = await self.player_repo.get_by_id(db, reward.player_id)
+        # D5-T2b: lock EACH rewarded player's row FOR UPDATE before the credit
+        # read-modify-write so concurrent credit ops (shop buy / transfer / duel,
+        # or another /check payout touching the same player) serialise instead of
+        # losing an update.  Two ordering rules from the global lock-ordering
+        # contract (persist/repositories/AGENTS.md) apply:
+        #   1. Aggregate-first: distribute_rewards runs inside check_bounty, which
+        #      already holds the Bounty row lock (P2-T10).  This adds the Player
+        #      lock *after* the Bounty lock — Bounty → Players, never Player →
+        #      Bounty — so no AB-BA cycle against /check itself is created.
+        #   2. Players in ASCENDING player_id order — matches transfer_credits /
+        #      ships.transfer_ship / duel accept (the only other multi-player
+        #      credit paths), so a multi-checker payout (1 winner + N consolation)
+        #      and a concurrent multi-player credit op acquire their shared player
+        #      rows in the same order and never deadlock (40P01).
+        # We iterate a player_id-sorted view of `rewards`; the returned `rewards`
+        # list itself is left in its original order so callers' per-player display
+        # ordering (_build_payout_breakdown, winner lookup) is unchanged.
+        #
+        # get_by_id_for_update carries populate_existing=True (D5-T1), so even
+        # though check_bounty pre-loaded this same player UNLOCKED at the top of
+        # the call, the FOR UPDATE re-fetch overwrites the in-memory object with
+        # the freshly-committed credits read under the lock.  The mutation below
+        # therefore operates on the fresh locked balance — no stale-read clobber.
+        for reward in sorted(rewards, key=lambda r: r.player_id):
+            player = await self.player_repo.get_by_id_for_update(db, reward.player_id)
             if player is None:
                 flogger.warning(f"Player {reward.player_id} not found during reward distribution")
                 continue
@@ -1920,8 +2198,10 @@ class BountyService:
     ) -> list[dict]:
         """Build a per-player payout breakdown list for embed rendering.
 
-        Fetches each player by ID to get their display_name, then assembles
-        one dict per player with player_display_name, role, and amount.
+        P6-T1: Fetches ALL players in a single ``WHERE id IN (...)`` query
+        instead of one ``get_by_id`` per reward (N+1 → 1).  The output list
+        preserves the original ``rewards`` ordering so callers' per-player
+        display ordering is unchanged.
 
         Args:
             db:      Async database session.
@@ -1931,9 +2211,19 @@ class BountyService:
             List of dicts with keys: player_display_name, role, amount.
             role is 'capture claim' for the winner, 'system check' for others.
         """
+        if not rewards:
+            return []
+
+        # P6-T1: single batched fetch via player_repo.get_by_ids (WHERE id IN (...))
+        # instead of one get_by_id per reward.  Result is indexed by player_id so
+        # the output loop below can preserve the original rewards ordering.
+        player_ids = [r.player_id for r in rewards]
+        players = await self.player_repo.get_by_ids(db, player_ids)
+        players_by_id = {p.id: p for p in players}
+
         payout_breakdown: list[dict] = []
         for reward in rewards:
-            player = await self.player_repo.get_by_id(db, reward.player_id)
+            player = players_by_id.get(reward.player_id)
             if player is None:
                 continue
             # Use display_name if available and non-empty, else fall back to str(user_id)
@@ -1976,6 +2266,11 @@ class BountyService:
             flogger.warning(f"Cannot expire bounty {bounty_id}: not found")
             return None
 
+        # Idempotency guard: protects against the expiry job firing again
+        # after a scheduler restart (re-fire of a job that already ran), or
+        # a cadence overlap where the bounty was captured between the job
+        # being scheduled and it actually executing.  NOT a concurrent-worker
+        # guard — at WORKERS=1 only one expiry job runs at a time.
         if bounty.status != "active":
             flogger.warning(f"Cannot expire bounty {bounty_id}: status is {bounty.status}")
             return None

@@ -30,6 +30,30 @@ class BountyRepository(IRepository[Bounty]):
             flogger.error(f"Error getting bounty by ID {obj_id}: {e}")
             raise
 
+    async def get_by_id_for_update(self, db: AsyncSession, obj_id: int) -> Bounty | None:
+        """Get bounty by primary key with SELECT ... FOR UPDATE row-level lock.
+
+        Use inside a transaction when you need to read-then-modify the ``checked``
+        map (or any other field) to prevent TOCTOU race conditions.  The lock is
+        held until the enclosing transaction commits or rolls back.
+
+        IMPORTANT: ``execution_options(populate_existing=True)`` is required when
+        the session has ``expire_on_commit=False`` (our production default).
+        Without it, a row already present in the SQLAlchemy identity map would be
+        returned from cache and the guard would read pre-commit stale state even
+        though the lock was acquired — the classic "lock looks correct, tests green"
+        trap.  With ``populate_existing=True`` the ORM unconditionally overwrites
+        the in-memory object with the data just fetched from Postgres.
+        """
+        try:
+            result = await db.execute(
+                select(Bounty).where(Bounty.id == obj_id).with_for_update().execution_options(populate_existing=True)
+            )
+            return result.scalars().first()
+        except Exception as e:
+            flogger.error(f"Error getting bounty (FOR UPDATE) by ID {obj_id}: {e}")
+            raise
+
     async def get_by_name(self, db: AsyncSession, name: str) -> Bounty | None:
         """Not applicable for bounties."""
         raise NotImplementedError("Bounties are not queried by name")
@@ -241,6 +265,44 @@ class BountyRepository(IRepository[Bounty]):
             return result.scalar_one()
         except Exception as e:
             flogger.error(f"Error counting bounties: {e}")
+            raise
+
+    async def delete_by_guild_id(self, db: AsyncSession, guild_id: int, *, commit: bool = True) -> int:
+        """Hard-delete ALL bounty rows for a guild (full uninstall cascade).
+
+        DOCUMENTED EXCEPTION to the ORM-mutation rule (see
+        ``persist/repositories/AGENTS.md``): bulk DELETE that returns only the
+        row count. Uses Core DELETE with ``synchronize_session="fetch"`` so any
+        identity-mapped Bounty rows in the session are correctly expired.
+
+        This method is exclusively for full guild uninstall/cleanup. Do NOT use
+        it from the routine ``/admin_clear_bounties`` path — that path calls
+        ``clear_active_by_guild()`` which sets status='cleared' (preserving
+        historical data) rather than destroying rows.
+
+        Args:
+            db: Async database session.
+            guild_id: Discord guild ID whose bounty rows will be destroyed.
+            commit: When False, flush without committing (caller owns transaction).
+
+        Returns:
+            Count of deleted rows.
+        """
+        try:
+            result = await db.execute(
+                delete(Bounty).where(Bounty.guild_id == guild_id).execution_options(synchronize_session="fetch")
+            )
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            count = result.rowcount or 0
+            flogger.info(f"Hard-deleted {count} bounty row(s) for guild {guild_id} (uninstall)")
+            return count
+        except Exception as e:
+            flogger.error(f"Error hard-deleting bounty rows for guild {guild_id}: {e}")
+            if commit:
+                await db.rollback()
             raise
 
     async def clear_active_by_guild(

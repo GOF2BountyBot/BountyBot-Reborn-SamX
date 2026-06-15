@@ -37,16 +37,18 @@ def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
 
 
 def _format_shop_item_stats(item: dict) -> str:
-    """Return a stat suffix string for a shop item, matching /loadout display style.
+    """Return a bare stat token for a shop item, matching /loadout display style.
 
     Format examples:
-      Primary/Secondary/Turret Weapon → " | DPS: 92.3"
-      Shield Module                   → " | Shield: 380"
-      Armour Module                   → " | Armour: 250"
-      Ship                            → " | Hull: 1200"
-      Items with no relevant stat     → ""  (empty — no trailing pipe)
+      Primary/Secondary/Turret Weapon → "DPS: 92.3"
+      Shield Module                   → "Shield: 380"
+      Armour Module                   → "Armour: 250"
+      Ship                            → "Hull: 1200"
+      Items with no relevant stat     → ""  (empty)
 
-    The pipe separator is only included when a stat is present.
+    Returns a bare token (no leading separator) — the caller owns the " | "
+    delimiter when assembling the item line, so every field on the line is
+    joined uniformly.
     DPS is rounded to 1 decimal place.
     Shield and Armour are mutually exclusive per item line (first found wins).
     """
@@ -55,22 +57,22 @@ def _format_shop_item_stats(item: dict) -> str:
     if item_type in ("primary_weapon", "secondary_weapon", "turret_weapon"):
         dps = item.get("dps")
         if dps is not None and float(dps) != 0.0:
-            return f" | DPS: {float(dps):.1f}"
+            return f"DPS: {float(dps):.1f}"
         return ""
 
     if item_type == "module":
         shield = item.get("shield")
         if shield is not None and int(shield) != 0:
-            return f" | Shield: {int(shield)}"
+            return f"Shield: {int(shield)}"
         armour = item.get("armour")
         if armour is not None and int(armour) != 0:
-            return f" | Armour: {int(armour)}"
+            return f"Armour: {int(armour)}"
         return ""
 
     if item_type == "ship":
         hull_hp = item.get("hull_hp")
         if hull_hp is not None and int(hull_hp) != 0:
-            return f" | Hull: {int(hull_hp)}"
+            return f"Hull: {int(hull_hp)}"
         return ""
 
     return ""
@@ -272,7 +274,13 @@ class ShopCog(commands.Cog):
                         price_text = f"~~{price_text}~~ 💸"
 
                     name_display = f"{emoji} **{item['item_name']}**" if emoji else f"**{item['item_name']}**"
-                    item_line = f"{name_display}{stat_suffix} {tech_level} {quantity}"
+                    # Join every present field with " | " so the separator is uniform
+                    # (stat / tech level / quantity are all optional).
+                    line_parts = [name_display]
+                    for part in (stat_suffix, tech_level, quantity):
+                        if part:
+                            line_parts.append(part)
+                    item_line = " | ".join(line_parts)
                     items_text += f"{item_line}\n    {price_text} | ID: {item['id']}\n"
 
                 if len(type_items) > 10:

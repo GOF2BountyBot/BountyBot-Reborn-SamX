@@ -102,10 +102,14 @@ class JobExecutor:
             end_ts = datetime.now(UTC)
             duration = (end_ts - start_ts).total_seconds()
             flogger.info(f"[{end_ts.isoformat()}] Completed job '{job_id}' in {duration:.2f}s")
+            # Generic/unrecognized payloads have no executor result to return.
+            return None
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"[{datetime.now(UTC).isoformat()}] Job '{job_id}' failed: {e}", exc_info=True)
             flogger.trace(traceback.format_exc())
+            # Failures are logged and swallowed; the job reports no result.
+            return None
 
 
 # A single, picklable executor instance for APScheduler

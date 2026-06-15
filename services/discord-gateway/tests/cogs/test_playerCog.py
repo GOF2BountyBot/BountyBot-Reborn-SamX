@@ -3399,15 +3399,9 @@ class TestPromoteTierRoleSwap:
 
         # CORRECT expected outcome: if add_roles fails, remove_roles must NOT have run.
         # The user keeps their Bronze role rather than ending up with no role at all.
-        # This assertion FAILS on the current implementation (proving DEF-B39-001).
-        (
-            interaction.user.remove_roles.assert_not_awaited(),
-            (
-                "DEF-B39-001: When add_roles fails, remove_roles must not have fired. "
-                "The implementation must add the new role BEFORE removing the old one so that "
-                "a failure in add_roles aborts without stripping the user's existing tier role."
-            ),
-        )
+        # DEF-B39-001: the implementation must add the new role BEFORE removing the old one
+        # so that a failure in add_roles aborts without stripping the user's existing tier role.
+        interaction.user.remove_roles.assert_not_awaited()
 
     def test_promote_notifications_disabled_does_not_add_new_role(self, mock_player_cog):
         """Notification opt-out: stored bounty_notifications_enabled=False — Silver role

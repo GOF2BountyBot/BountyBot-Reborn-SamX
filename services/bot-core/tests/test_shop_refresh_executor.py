@@ -643,8 +643,6 @@ class TestDiagnosticLogging:
         # Capture all info log calls from the executor
         info_calls: list[str] = []
 
-        import utils.executors.shop_refresh_executor as exec_module
-
         original_flogger = exec_module.flogger
         mock_flogger = MagicMock()
 

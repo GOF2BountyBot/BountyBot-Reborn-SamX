@@ -65,6 +65,16 @@ import discord.ext.commands as _real_discord_ext_commands
 
 _REAL_DISCORD_EXT_COMMANDS = _real_discord_ext_commands
 
+# These real-discord references are public API of this conftest: ~23 sibling
+# test modules read them cross-module via sys.modules["conftest"] to obtain the
+# genuine discord packages after their own module-level fake-discord swaps.
+# Declaring them in __all__ marks them intentionally public.
+__all__ = [
+    "_REAL_DISCORD",
+    "_REAL_DISCORD_EXT",
+    "_REAL_DISCORD_EXT_COMMANDS",
+]
+
 # Add the src directory to the path so imports work
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 

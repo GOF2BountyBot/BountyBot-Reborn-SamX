@@ -2439,8 +2439,6 @@ class TestInventoryCogA46Choices:
 
         target = _create_mock_interaction(user_id=222222222).user
 
-        import asyncio
-
         asyncio.run(
             mock_inventory_cog.give.callback(
                 mock_inventory_cog,

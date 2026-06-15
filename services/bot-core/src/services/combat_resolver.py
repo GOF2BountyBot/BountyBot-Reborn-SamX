@@ -2108,17 +2108,12 @@ class TickResolver:
 
 # Tick duration used when persisting (10 ms per tick — from GameConstants default).
 # Key-event time conversion uses this value.
-# Key-event time conversion uses this value.
 _TICK_MS: int = 10
 
 # Secondary weapon subtypes that count as "notable" fires for key-events.
 # CI-16/CI-13: added "ionizing-missile" (was missing; it fires and should log); "emp-bomb" is deferred but kept.
 _SECONDARY_SUBTYPES: frozenset[str] = frozenset(
     {"rocket", "missile", "cluster-missile", "nuke", "shock-blast", "emp-bomb", "ionizing-missile"}
-)
-
-_NOTABLE_MODULE_TYPES: frozenset[str] = frozenset(
-    {"CloakModule", "BoosterModule", "ThrusterModule", "EmergencySystemModule"}
 )
 
 # HP layer labels (used for layer_depleted event detail)

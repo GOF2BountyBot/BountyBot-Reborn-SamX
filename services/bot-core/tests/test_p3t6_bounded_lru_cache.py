@@ -325,8 +325,6 @@ _MAP_PATH = os.path.abspath(
     )
 )
 
-_GOLDEN_PNG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "fixtures", "golden_route_abc.png"))
-
 
 def _make_node(name: str, x: int, y: int, neighbours: list[str]):
     from services.system_graph_service import SystemNode

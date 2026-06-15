@@ -9,12 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import utils.command_utils as command_utils
 
-from tests.mocks.discord_mock_utils import DiscordMockUtils
-
 CommandValidator = command_utils.CommandValidator
-
-# Setup mock modules
-_mock_discord = DiscordMockUtils.create_mock_discord_module()
 
 
 @pytest.fixture(autouse=True)

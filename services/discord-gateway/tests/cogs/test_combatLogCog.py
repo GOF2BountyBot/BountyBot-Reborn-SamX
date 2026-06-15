@@ -27,8 +27,6 @@ import pytest
 # ---------------------------------------------------------------------------
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
-_mock_utils = DiscordMockUtils()
-
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 

@@ -30,7 +30,6 @@ elif sys.path[0] != _SRC_DIR:
 # ---------------------------------------------------------------------------
 # 2. Ensure services/ parent is on sys.path (for `from shared import bblogger`)
 # ---------------------------------------------------------------------------
-_SERVICES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 # Walk up to find the directory containing the 'shared' package
 # The shared module lives at /proj/services/shared/
 _SHARED_PARENT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))

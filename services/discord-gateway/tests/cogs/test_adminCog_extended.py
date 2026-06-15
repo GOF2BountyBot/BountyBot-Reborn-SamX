@@ -15,20 +15,18 @@ import pytest
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
-_mock_utils = DiscordMockUtils()
-
 # Setup mock shared.bblogger module
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
-_module_logger = None
+_unused_module_logger = None
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock that already has common log-level methods."""
-    global _module_logger
+    global _unused_module_logger
     logger = MagicMock()
     logger.info = MagicMock()
     logger.debug = MagicMock()
@@ -37,7 +35,7 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.trace = MagicMock()
     logger.critical = MagicMock()
     logger.exception = MagicMock()
-    _module_logger = logger
+    _unused_module_logger = logger
     return logger
 
 

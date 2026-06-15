@@ -32,16 +32,16 @@ _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 
 _mock_bblogger = types.ModuleType("shared.bblogger")
-_module_logger = None
+_unused_module_logger = None
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock logger with all common level methods."""
-    global _module_logger
+    global _unused_module_logger
     logger = MagicMock()
     for method in ("info", "debug", "warning", "error", "trace", "critical", "exception"):
         setattr(logger, method, MagicMock())
-    _module_logger = logger
+    _unused_module_logger = logger
     return logger
 
 

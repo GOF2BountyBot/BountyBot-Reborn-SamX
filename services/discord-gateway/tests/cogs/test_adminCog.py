@@ -9,9 +9,6 @@ import pytest
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
-# Create module-level mock utilities
-_mock_utils = DiscordMockUtils()
-
 # Setup mock shared.bblogger module
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -19,14 +16,14 @@ _mock_shared.__path__ = []
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
 # Track the module-level logger
-_module_logger = None
+_unused_module_logger = None
 # Track all loggers created (keyed by name) to support lookup after multi-logger inits.
 _all_loggers: dict[str, MagicMock] = {}
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock that already has common log-level methods."""
-    global _module_logger
+    global _unused_module_logger
     # Use the logger name if provided to allow targeted lookup.
     name = _args[0] if _args else None
     logger = MagicMock()
@@ -36,7 +33,7 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.error = MagicMock()
     logger.trace = MagicMock()
     logger.critical = MagicMock()
-    _module_logger = logger
+    _unused_module_logger = logger
     if name:
         _all_loggers[name] = logger
     return logger
@@ -138,9 +135,9 @@ def _evict_discord_modules():
 def mock_admin_cog(mock_bot):
     """Create a mock adminCog instance."""
     # Re-assert this file's own mock so that when adminCog is re-imported below
-    # it calls *our* _make_mock_logger (which populates _module_logger).
+    # it calls *our* _make_mock_logger (which populates _unused_module_logger).
     # Without this, whichever test file was imported last "owns" the shared
-    # sys.modules["shared.bblogger"] entry and the other file's _module_logger
+    # sys.modules["shared.bblogger"] entry and the other file's _unused_module_logger
     # stays None.
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger

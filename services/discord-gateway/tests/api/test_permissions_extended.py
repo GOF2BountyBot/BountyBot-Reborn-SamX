@@ -37,8 +37,6 @@ import tests.mocks.discord_mock_utils as discord_mock_utils
 
 DiscordMockUtils = discord_mock_utils.DiscordMockUtils
 
-_mock_utils = DiscordMockUtils()
-
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 _mock_bblogger = types.ModuleType("shared.bblogger")

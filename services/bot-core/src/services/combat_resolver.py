@@ -40,10 +40,26 @@ from services.game_constants import GameConstants
 
 flogger = bblogger.get_logger(__name__)
 
+# Repair-bot regen accumulator precision: 12 decimal places is intentionally
+# conservative for repeated per-tick float additions (e.g. 0.1) — it suppresses visible
+# IEEE-754 drift (10 × 0.1 = 0.9999…) while staying far below any gameplay-significant
+# integer-flush threshold.
+REPAIR_BOT_ACCUMULATOR_ROUND_DIGITS = 12
+
 _PRIMARY_WEAPON_MOD_TYPE = "PrimaryWeaponModModule"
 
 # STI discriminator for RepairBot modules (used for rate detection in _init_combatant)
 _REPAIR_BOT_MODULE_TYPE = "RepairBotModule"
+
+
+def _damage_or_zero(value: float | None) -> float:
+    """Return *value* as a float, defaulting None to 0.0 (a real 0.0 is preserved)."""
+    return value if value is not None else 0.0
+
+
+def _clamp_accuracy(value: float, min_val: float, max_val: float) -> float:
+    """Clamp an accuracy value to the configured inclusive [min_val, max_val] bounds."""
+    return max(min_val, min(max_val, value))
 
 
 @dataclass(slots=True)
@@ -315,9 +331,10 @@ def _init_combatant(
     pw_mods = [m for m in loadout.modules if m.module_type == _PRIMARY_WEAPON_MOD_TYPE]
     if len(pw_mods) > 1:
         # Unique-equip invariant violation — first wins; log once outside tick loop (§10)
+        pw_mod_names = ", ".join(m.name for m in pw_mods)
         flogger.warning(
             f"Combatant '{loadout.ship_name}': multiple PrimaryWeaponMods equipped "
-            f"({[m.name for m in pw_mods]}). Using first: '{pw_mods[0].name}'. "
+            f"({pw_mod_names}). Using first: '{pw_mods[0].name}'. "
             "Upstream loadout-builder invariant violated."
         )
     pw_mod = pw_mods[0] if pw_mods else None
@@ -326,7 +343,7 @@ def _init_combatant(
 
     effective_primaries: list[_PrimaryWeaponRuntime] = []
     for ws in loadout.weapons:
-        base_dmg = ws.damage_per_shot if ws.damage_per_shot is not None else 0.0
+        base_dmg = _damage_or_zero(ws.damage_per_shot)
         base_speed = float(ws.loading_speed_ms) if ws.loading_speed_ms > 0 else float(tick_ms)
         # Formula (§7.8 / Appendix B):
         #   effective_damage  = round(base × (1 + damage_pct/100))      — integer, no floor
@@ -353,7 +370,7 @@ def _init_combatant(
     # ------------------------------------------------------------------
     effective_secondaries: list[_SecondaryWeaponRuntime] = []
     for sw in loadout.secondary_weapons:
-        raw_dmg = sw.damage_per_shot if sw.damage_per_shot is not None else 0.0
+        raw_dmg = _damage_or_zero(sw.damage_per_shot)
         raw_speed = sw.loading_speed_ms if sw.loading_speed_ms > 0 else tick_ms
         effective_secondaries.append(
             _SecondaryWeaponRuntime(
@@ -529,8 +546,11 @@ def _tick_repair_bot_regen(state: _CombatantState, tick: int, events: list[Comba
         return  # dormant — both layers at max
 
     delta = state.repair_bot_delta_per_tick
-    # Round to 12 decimal places to prevent IEEE 754 drift (e.g. 10 × 0.1 = 0.9999…)
-    state.repair_bot_regen_accumulator = round(state.repair_bot_regen_accumulator + delta, 12)
+    # Round accumulator to a stable precision to suppress IEEE-754 drift across long
+    # tick sequences (e.g. 10 × 0.1 = 0.9999…). See REPAIR_BOT_ACCUMULATOR_ROUND_DIGITS.
+    state.repair_bot_regen_accumulator = round(
+        state.repair_bot_regen_accumulator + delta, REPAIR_BOT_ACCUMULATOR_ROUND_DIGITS
+    )
 
     if state.repair_bot_regen_accumulator >= 1.0:
         flush = int(state.repair_bot_regen_accumulator)
@@ -1030,13 +1050,17 @@ def _build_fight_summary(
     # fights accumulate stats per-side correctly. Ship name is still stored for display.
     # Build a name→slot map for attacker/target lookups (still ship_name in events).
     _name_to_slot: dict[str, int] = {}
-    # When both ships share a name, the map would collide; we handle that by using
-    # data["side"] directly when available, falling back to name-match.
+    # When both ships share a name, name-based attribution is ambiguous: the map would
+    # collide (a single entry → slot 1). In that case only data["side"] can safely
+    # disambiguate, so the name fallbacks below refuse to guess (yield None) rather than
+    # mis-attribute every same-name event to slot 1. Real fights always emit data["side"],
+    # so this only affects the defensive side-less path.
     # For the accumulators themselves we always key on slot ("1"/"2").
+    _names_collide = c1.name == c2.name
     c1_slot = "1"
     c2_slot = "2"
     _name_to_slot[c1.name] = 1
-    if c2.name != c1.name:
+    if not _names_collide:
         _name_to_slot[c2.name] = 2
 
     shots_fired: dict[str, int] = {c1_slot: 0, c2_slot: 0}
@@ -1048,10 +1072,16 @@ def _build_fight_summary(
     damage_taken: dict[str, int] = {c1_slot: 0, c2_slot: 0}
 
     def _slot_from_event(ev: CombatEvent) -> str | None:
-        """Resolve actor's slot from event. Prefers data['side']; falls back to name→slot."""
+        """Resolve actor's slot from event. Prefers data['side']; falls back to name→slot.
+
+        When both combatants share a ship name the name fallback is ambiguous, so a
+        side-less event is left unattributed (returns None) rather than defaulting to slot 1.
+        """
         side = ev.data.get("side") if ev.data else None
         if side is not None:
             return str(side)
+        if _names_collide:
+            return None
         actor = ev.actor
         if actor is None:
             return None
@@ -1100,14 +1130,14 @@ def _build_fight_summary(
                 target_side = ev.data.get("side")
                 if target_side is not None:
                     att_slot = c2_slot if str(target_side) == c1_slot else c1_slot
-                elif attacker_name is not None:
+                elif attacker_name is not None and not _names_collide:
                     _raw = _name_to_slot.get(attacker_name)
                     att_slot = str(_raw) if _raw is not None else None
                 else:
                     att_slot = None
                 # target slot from data["side"]
                 tgt_slot = str(target_side) if target_side is not None else None
-                if tgt_slot is None and ev.target is not None:
+                if tgt_slot is None and ev.target is not None and not _names_collide:
                     _raw_t = _name_to_slot.get(ev.target)
                     tgt_slot = str(_raw_t) if _raw_t is not None else None
                 if att_slot in damage_dealt:
@@ -1675,8 +1705,12 @@ class TickResolver:
 
             # Pre-bake auto-turret accuracy once per combatant per tick (§6.3 / Appendix A)
             # ONE value per combatant per tick — correctness statement (§6.3), not just perf.
-            _c1_auto_acc = max(_acc_clamp_min, min(_acc_clamp_max, c1.pilot_turret_acc * _auto_turret_multiplier))
-            _c2_auto_acc = max(_acc_clamp_min, min(_acc_clamp_max, c2.pilot_turret_acc * _auto_turret_multiplier))
+            _c1_auto_acc = _clamp_accuracy(
+                c1.pilot_turret_acc * _auto_turret_multiplier, _acc_clamp_min, _acc_clamp_max
+            )
+            _c2_auto_acc = _clamp_accuracy(
+                c2.pilot_turret_acc * _auto_turret_multiplier, _acc_clamp_min, _acc_clamp_max
+            )
 
             # Auto-turrets: C1 then C2 (§ determinism)
             for _attacker, _target, _auto_acc in ((c1, c2, _c1_auto_acc), (c2, c1, _c2_auto_acc)):

@@ -1030,6 +1030,27 @@ class TestSecondaryRoundsByWeapon:
         assert s["combatants"]["1"]["secondary_rounds_by_weapon"] == {"Patala Missile": 1}
         assert s["combatants"]["2"]["secondary_rounds_by_weapon"] == {"Patala Missile": 2}
 
+    def test_same_name_sideless_event_is_not_misattributed_to_slot_one(self):
+        """Defensive hardening: a side-LESS event from same-named combatants must NOT be
+        mis-attributed to slot 1 by the name fallback. Real fights always emit data['side'],
+        but if one is missing, ambiguous name resolution returns None (event dropped) rather
+        than silently inflating slot 1's stats.
+
+        _weapon_fire_event emits NO data['side'], so it exercises the name→slot fallback.
+        With identical names, neither shot can be safely attributed → both slots stay 0.
+        """
+        c1, c2 = _make_states("Twin", "Twin")  # identical names, no side data on fires
+        events = [
+            _fight_start_event("Twin", "Twin"),
+            _weapon_fire_event("Twin", "Twin", tick=1),  # would-be c1 shot, no side
+            _weapon_fire_event("Twin", "Twin", tick=2),  # would-be c2 shot, no side
+            _fight_end_event(5, None, "time_cap", 5, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None)
+        # Neither shot is attributed to slot 1 (the pre-hardening bug attributed BOTH to "1").
+        assert s["combatants"]["1"]["shots_fired"] == 0
+        assert s["combatants"]["2"]["shots_fired"] == 0
+
     # ------------------------------------------------------------------
     # TickResolver integration: real fight with secondaries
     # ------------------------------------------------------------------

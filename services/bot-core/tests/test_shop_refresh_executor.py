@@ -75,10 +75,12 @@ if "sqlalchemy_utils" not in sys.modules:
 
 import pytest
 import respx
+import utils.executors.shop_refresh_executor as exec_module
 from persist.models.base import Base
 from persist.models.guild_config import GuildConfig
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from utils.executors.shop_refresh_executor import execute_shop_refresh_job
+
+execute_shop_refresh_job = exec_module.execute_shop_refresh_job
 
 # ---------------------------------------------------------------------------
 # SQLite table list — only SQLite-compatible tables (no ARRAY columns).

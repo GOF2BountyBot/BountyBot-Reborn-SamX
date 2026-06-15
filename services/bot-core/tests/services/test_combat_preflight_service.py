@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 import types
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,20 +19,20 @@ if "shared" not in sys.modules:
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
 
-from services.combat_preflight_service import CombatPreflightService, PreflightVerdict
+import services.combat_preflight_service as _svc_mod
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_service() -> CombatPreflightService:
-    svc = CombatPreflightService.__new__(CombatPreflightService)
+def _make_service() -> _svc_mod.CombatPreflightService:
+    svc = _svc_mod.CombatPreflightService.__new__(_svc_mod.CombatPreflightService)
     return svc
 
 
 def _criminal_bounty(ship_name: str = "Raider") -> object:
-    return SimpleNamespace(
+    return types.SimpleNamespace(
         id=1,
         criminal_ship={"ship_name": ship_name, "ship_armour": 80, "weapons": [], "turrets": []},
     )
@@ -41,7 +40,9 @@ def _criminal_bounty(ship_name: str = "Raider") -> object:
 
 def _make_synthetic_criminal(ship_name: str = "SynthRaider") -> object:
     """Return a SimpleNamespace that mimics a synthesized criminal (no DB id)."""
-    return SimpleNamespace(criminal_ship={"ship_name": ship_name, "ship_armour": 80, "weapons": [], "turrets": []})
+    return types.SimpleNamespace(
+        criminal_ship={"ship_name": ship_name, "ship_armour": 80, "weapons": [], "turrets": []}
+    )
 
 
 def _all_player_wins(num_sims: int) -> list[tuple]:
@@ -81,7 +82,7 @@ class TestEstimateNoData:
         with patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=[])):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver")
 
-        assert result.verdict == PreflightVerdict.NO_DATA
+        assert result.verdict == _svc_mod.PreflightVerdict.NO_DATA
         assert result.sims_run == 0
         assert result.sample_size == 0
 
@@ -104,7 +105,7 @@ class TestEstimateNoData:
         ):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver")
 
-        assert result.verdict == PreflightVerdict.NO_DATA
+        assert result.verdict == _svc_mod.PreflightVerdict.NO_DATA
         assert result.sims_run == 0
 
 
@@ -141,7 +142,7 @@ class TestEstimateNoBountiesSynthesis:
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
         assert synth_mock.called, "_synthesize_criminals must always be called"
-        assert result.verdict != PreflightVerdict.NO_DATA
+        assert result.verdict != _svc_mod.PreflightVerdict.NO_DATA
         assert result.sims_run == 20
 
     @pytest.mark.asyncio
@@ -171,7 +172,7 @@ class TestEstimateNoBountiesSynthesis:
         ):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
-        assert result.verdict == PreflightVerdict.GREEN
+        assert result.verdict == _svc_mod.PreflightVerdict.GREEN
 
     @pytest.mark.asyncio
     async def test_synthesis_called_with_num_sims_count(self):
@@ -232,7 +233,7 @@ class TestEstimateVerdicts:
         ):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
-        assert result.verdict == PreflightVerdict.GREEN
+        assert result.verdict == _svc_mod.PreflightVerdict.GREEN
         assert result.player_win_rate >= 0.75
 
     @pytest.mark.asyncio
@@ -257,7 +258,7 @@ class TestEstimateVerdicts:
         ):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
-        assert result.verdict == PreflightVerdict.RED
+        assert result.verdict == _svc_mod.PreflightVerdict.RED
         assert result.criminal_win_rate >= 0.75
 
     @pytest.mark.asyncio
@@ -282,7 +283,7 @@ class TestEstimateVerdicts:
         ):
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
-        assert result.verdict == PreflightVerdict.YELLOW
+        assert result.verdict == _svc_mod.PreflightVerdict.YELLOW
 
     @pytest.mark.asyncio
     async def test_sims_run_matches_num_sims_arg(self):
@@ -565,7 +566,7 @@ class TestSynthesizeCriminals:
         # Top-up brought pool to 4 → sample_size == 4, sims_run == 4
         assert result.sample_size == 4
         assert result.sims_run == 4
-        assert result.verdict != PreflightVerdict.NO_DATA
+        assert result.verdict != _svc_mod.PreflightVerdict.NO_DATA
         # Top-up must pass count == shortage (1), not count == num_sims (4).
         assert len(captured_counts) == 2, f"Expected 2 synthesis calls, got {captured_counts}"
         assert captured_counts[0] == 4, f"Initial call count should be num_sims=4, got {captured_counts[0]}"
@@ -594,8 +595,6 @@ class TestSynthesizeCriminals:
             captured_matchups.extend(matchups)
             return _all_player_wins(len(matchups))
 
-        import services.combat_preflight_service as _svc_mod
-
         warn_calls: list = []
         orig_warning = _svc_mod.flogger.warning
 
@@ -620,7 +619,7 @@ class TestSynthesizeCriminals:
         # 5 sims must have run (modulo guard, no IndexError)
         assert len(captured_matchups) == 5
         assert result.sims_run == 5
-        assert result.verdict != PreflightVerdict.NO_DATA
+        assert result.verdict != _svc_mod.PreflightVerdict.NO_DATA
         # Warning about degraded pool must have been logged
         assert any("degraded" in str(w) for w in warn_calls), f"Expected a 'degraded pool' warning; got: {warn_calls}"
 
@@ -740,7 +739,7 @@ class TestP2T7WinPredicate:
 
         assert result.player_win_rate == 0.0
         assert result.criminal_win_rate == 1.0
-        assert result.verdict == PreflightVerdict.RED
+        assert result.verdict == _svc_mod.PreflightVerdict.RED
 
     @pytest.mark.asyncio
     async def test_winner_side_1_counts_as_player_win(self):
@@ -765,7 +764,7 @@ class TestP2T7WinPredicate:
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
         assert result.player_win_rate == 1.0
-        assert result.verdict == PreflightVerdict.GREEN
+        assert result.verdict == _svc_mod.PreflightVerdict.GREEN
 
     @pytest.mark.asyncio
     async def test_winner_side_2_counts_as_criminal_win(self):
@@ -790,7 +789,7 @@ class TestP2T7WinPredicate:
             result = await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=20)
 
         assert result.criminal_win_rate == 1.0
-        assert result.verdict == PreflightVerdict.RED
+        assert result.verdict == _svc_mod.PreflightVerdict.RED
 
     @pytest.mark.asyncio
     async def test_win_by_side_not_name_same_name_matchup(self):
@@ -823,7 +822,7 @@ class TestP2T7WinPredicate:
 
         # Side-keyed: side 2 = criminal win, so RED
         assert result.criminal_win_rate == 1.0
-        assert result.verdict == PreflightVerdict.RED
+        assert result.verdict == _svc_mod.PreflightVerdict.RED
 
 
 class TestP2T7CriminalDrawDistribution:

@@ -29,9 +29,9 @@ import concurrent.futures
 import os
 import sys
 import threading
+import types as _types
 from collections import OrderedDict
 from datetime import UTC, datetime
-from types import ModuleType
 from unittest.mock import MagicMock
 
 import pytest
@@ -48,15 +48,13 @@ elif sys.path[0] != _SRC_DIR:
     sys.path.insert(0, _SRC_DIR)
 
 # Mock shared.bblogger (not installed in test env)
-_mock_shared = ModuleType("shared")
+_mock_shared = _types.ModuleType("shared")
 _mock_shared.bblogger = MagicMock()
 _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())
 sys.modules.setdefault("shared", _mock_shared)
 sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 
 # Mock sqlalchemy_utils (transitive import from models)
-import types as _types
-
 if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils = _types.ModuleType("sqlalchemy_utils")
     _sqla_utils.UUIDType = MagicMock()  # type: ignore[attr-defined]
@@ -563,15 +561,13 @@ class TestConcurrencyEvidence:
             importlib.reload(offload_mod)
 
             async def _render_serial(b):
-                from utils.offload import offload_io
-
                 route = list(b.route) if b.route else []
                 system_coords: dict = {}
                 for sys_name in route:
                     node = graph.get_system(sys_name)
                     if node is not None:
                         system_coords[sys_name] = node.coordinates
-                return await offload_io(renderer.render_route, route, system_coords)
+                return await offload_mod.offload_io(renderer.render_route, route, system_coords)
 
             # Run renders sequentially (not via gather, to force serialization).
             for b in bounties:
@@ -616,9 +612,9 @@ class TestDeadCheckRemoved:
         """
         import inspect
 
-        from api.routers.bounties import admin_spawn_bounties
+        import api.routers.bounties as bounties_module
 
-        source = inspect.getsource(admin_spawn_bounties)
+        source = inspect.getsource(bounties_module.admin_spawn_bounties)
 
         # The dead check used: "if cache_key in _map_cache:"
         # It was the branch that short-circuited to reading from the cache
@@ -637,9 +633,9 @@ class TestDeadCheckRemoved:
         """
         import inspect
 
-        from api.routers.bounties import admin_spawn_bounties
+        import api.routers.bounties as bounties_module
 
-        source = inspect.getsource(admin_spawn_bounties)
+        source = inspect.getsource(bounties_module.admin_spawn_bounties)
 
         assert "asyncio.gather" in source, (
             "asyncio.gather was NOT found in admin_spawn_bounties. "
@@ -654,9 +650,9 @@ class TestDeadCheckRemoved:
         """
         import inspect
 
-        from api.routers.bounties import admin_spawn_bounties
+        import api.routers.bounties as bounties_module
 
-        source = inspect.getsource(admin_spawn_bounties)
+        source = inspect.getsource(bounties_module.admin_spawn_bounties)
 
         assert "render_route_offloaded" in source, (
             "render_route_offloaded was NOT found in admin_spawn_bounties. "

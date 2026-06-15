@@ -37,16 +37,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import utils.autocomplete_helpers as _autocomplete_helpers_mod
 import utils.autocomplete_state as autocomplete_state
-from utils.autocomplete_helpers import (
-    _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES,
-    player_equippable_autocomplete,
-    player_equipped_autocomplete,
-    player_inventory_autocomplete,
-    player_ships_autocomplete,
-    resolve_player_id,
-)
-from utils.autocomplete_state import NormalizedChoice
 from utils.autocomplete_utils import normalize_for_search
+
+_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES = _autocomplete_helpers_mod._CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+player_equippable_autocomplete = _autocomplete_helpers_mod.player_equippable_autocomplete
+player_equipped_autocomplete = _autocomplete_helpers_mod.player_equipped_autocomplete
+player_inventory_autocomplete = _autocomplete_helpers_mod.player_inventory_autocomplete
+player_ships_autocomplete = _autocomplete_helpers_mod.player_ships_autocomplete
+resolve_player_id = _autocomplete_helpers_mod.resolve_player_id
+NormalizedChoice = autocomplete_state.NormalizedChoice
 
 API_BASE = "http://bot-core:8000/api/v1"
 

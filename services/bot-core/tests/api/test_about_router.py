@@ -130,8 +130,6 @@ def mock_repos(mock_db_session):
 @pytest.fixture
 def test_app(mock_db_session, mock_repos):
     import api.routers.about as about_module
-    from api.routers.about import get_db
-    from api.routers.about import router as about_router
     from api.routers.data import DataCategory
 
     # Override all repository instances on the module attributes
@@ -158,13 +156,13 @@ def test_app(mock_db_session, mock_repos):
     about_module.CATEGORY_REPOS[DataCategory.commodity] = mock_repos["commodity"]
 
     app = FastAPI()
-    app.include_router(about_router, prefix="/api/v1")
+    app.include_router(about_module.router, prefix="/api/v1")
 
     # Override the get_db dependency to return our mock session
     async def override_get_db():
         yield mock_db_session
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[about_module.get_db] = override_get_db
 
     yield app
     app.dependency_overrides.clear()

@@ -100,10 +100,9 @@ def mock_message_repo():
 @pytest.fixture
 def test_app(mock_db_manager, mock_message_repo):
     import api.routers.discord_message as dm_module
-    from api.routers.discord_message import router as discord_message_router
 
     app = FastAPI()
-    app.include_router(discord_message_router, prefix="/api/v1")
+    app.include_router(dm_module.router, prefix="/api/v1")
     app.state.db_manager = mock_db_manager
 
     # Patch the module-level repository instance

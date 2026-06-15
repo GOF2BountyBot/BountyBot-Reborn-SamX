@@ -523,7 +523,6 @@ class TestGiveAutocomplete:
         """give_item_autocomplete returns choices from player inventory (Phase 6: zero HTTP)."""
         import utils.autocomplete_state as ac_state
         from cogs._shared.autocomplete_cache import AutocompleteCache
-        from utils.autocomplete_state import NormalizedChoice
         from utils.autocomplete_utils import normalize_for_search as nfs
 
         interaction = _create_mock_interaction(user_id=111111111, guild_id=987654321)
@@ -546,7 +545,7 @@ class TestGiveAutocomplete:
         for item in raw_items:
             label = f"{item['item_name']} [{item['item_type']}]"
             inv_choices.append(
-                NormalizedChoice(
+                ac_state.NormalizedChoice(
                     label=label,
                     value=f"{item['item_name']}::{item['item_type']}",
                     norm=nfs(item["item_name"]),
@@ -583,7 +582,6 @@ class TestGiveAutocomplete:
         """give_ship_autocomplete returns non-active ships (Phase 6: zero HTTP)."""
         import utils.autocomplete_state as ac_state
         from cogs._shared.autocomplete_cache import AutocompleteCache
-        from utils.autocomplete_state import NormalizedChoice
         from utils.autocomplete_utils import normalize_for_search as nfs
 
         interaction = _create_mock_interaction(user_id=111111111, guild_id=987654321)
@@ -607,7 +605,7 @@ class TestGiveAutocomplete:
             name = ship.get("ship_name", "")
             label = f"{name} ({'⚡ ' if ship['is_active'] else ''})"
             ship_choices.append(
-                NormalizedChoice(
+                ac_state.NormalizedChoice(
                     label=label,
                     value=str(ship["player_ship_id"]),
                     norm=nfs(name),

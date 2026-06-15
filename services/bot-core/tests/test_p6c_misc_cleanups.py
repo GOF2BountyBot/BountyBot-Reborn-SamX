@@ -182,9 +182,9 @@ class TestP6T6AsyncSleepInTestConnection:
 
 def _make_shop_svc_with_fake_config(fake_config):
     """Build a ShopService with config_repo and shop_repo pre-mocked."""
-    from services.shop_service import ShopService
+    import services.shop_service as ss_mod
 
-    svc = ShopService.__new__(ShopService)
+    svc = ss_mod.ShopService.__new__(ss_mod.ShopService)
     svc.config_repo = MagicMock()
     svc.config_repo.get_by_guild_id = AsyncMock(return_value=fake_config)
     svc.shop_repo = MagicMock()

@@ -17,7 +17,6 @@ from shared import bblogger
 from shared.http_retry import with_transient_retry
 
 import utils.autocomplete_state as autocomplete_state
-from utils.autocomplete_state import NormalizedChoice
 from utils.autocomplete_utils import normalize_for_search
 
 flogger = bblogger.get_logger("discord-gateway-autocomplete-warm")
@@ -123,7 +122,7 @@ async def warm_active_player_loadout(guild_id: int, player_id: int) -> None:
             )
             items = inv_resp.json()
 
-            inventory_choices: list[NormalizedChoice] = []
+            inventory_choices: list[autocomplete_state.NormalizedChoice] = []
             for item in items:
                 item_name = item.get("item_name") or ""
                 item_type = item.get("item_type") or ""
@@ -134,7 +133,9 @@ async def warm_active_player_loadout(guild_id: int, player_id: int) -> None:
                 label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
                 value = str(item.get("id", item_name))
                 norm = normalize_for_search(label)
-                inventory_choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=item))
+                inventory_choices.append(
+                    autocomplete_state.NormalizedChoice(label=label, value=value, norm=norm, raw=item)
+                )
 
             autocomplete_state.set_inventory(guild_id, player_id, inventory_choices)
 
@@ -155,7 +156,7 @@ async def warm_active_player_loadout(guild_id: int, player_id: int) -> None:
             )
             ships = ships_resp.json()
 
-            ships_choices: list[NormalizedChoice] = []
+            ships_choices: list[autocomplete_state.NormalizedChoice] = []
             for ship in ships:
                 nickname = ship.get("nickname") or ""
                 name = ship.get("name") or ship.get("ship_name") or ""
@@ -167,7 +168,7 @@ async def warm_active_player_loadout(guild_id: int, player_id: int) -> None:
                 label = f"{display_name} ({active_prefix}{ship_type})"
                 value = str(ship.get("player_ship_id") or ship.get("id") or "")
                 norm = normalize_for_search(label)
-                ships_choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=ship))
+                ships_choices.append(autocomplete_state.NormalizedChoice(label=label, value=value, norm=norm, raw=ship))
 
             autocomplete_state.set_ships(guild_id, player_id, ships_choices)
 

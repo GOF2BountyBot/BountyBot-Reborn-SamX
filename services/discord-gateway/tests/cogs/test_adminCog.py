@@ -2447,7 +2447,7 @@ class TestPlayerShipAutocomplete:
         (key = (guild, player_id)) instead of a live GET /ships/player/{id} per keystroke.
         Seed player_cache (→ player_id=7) and ships_cache; assert ZERO HTTP GET for ships.
         """
-        from utils.autocomplete_state import NormalizedChoice
+        import utils.autocomplete_state as _ac_mod
 
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
@@ -2463,8 +2463,8 @@ class TestPlayerShipAutocomplete:
             ac.ships_cache.set(
                 (99, 7),
                 [
-                    NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
-                    NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
+                    _ac_mod.NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
+                    _ac_mod.NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
                 ],
             )
 
@@ -2531,7 +2531,7 @@ class TestPlayerShipAutocomplete:
 
     def test_filters_ships_by_current_input(self, mock_admin_cog):
         """Autocomplete filters results by the current typed prefix (Phase 2: ships_cache reuse)."""
-        from utils.autocomplete_state import NormalizedChoice
+        import utils.autocomplete_state as _ac_mod
 
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
@@ -2546,9 +2546,11 @@ class TestPlayerShipAutocomplete:
             ac.ships_cache.set(
                 (99, 7),
                 [
-                    NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
-                    NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
-                    NormalizedChoice(label="Bloodstar", value="3", norm="bloodstar", raw={"ship_name": "Bloodstar"}),
+                    _ac_mod.NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
+                    _ac_mod.NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
+                    _ac_mod.NormalizedChoice(
+                        label="Bloodstar", value="3", norm="bloodstar", raw={"ship_name": "Bloodstar"}
+                    ),
                 ],
             )
 
@@ -5389,7 +5391,7 @@ class TestRemoveItemAutocomplete:
         Phase 6: Both player_cache and inventory_cache are pre-populated.
         The admin function reads from cache — zero HTTP calls on hot path.
         """
-        from utils.autocomplete_state import NormalizedChoice
+        import utils.autocomplete_state as _ac_mod
         from utils.autocomplete_utils import normalize_for_search as nfs
 
         target_user = MagicMock()
@@ -5415,7 +5417,9 @@ class TestRemoveItemAutocomplete:
             inv_choices = []
             for item in raw_items:
                 label = f"{item['item_name']} ({item['item_type'].replace('_', ' ').title()})"
-                inv_choices.append(NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item))
+                inv_choices.append(
+                    _ac_mod.NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item)
+                )
             ac.inventory_cache.set((987654321, 7), inv_choices)
 
         # HTTP must not be called — all from cache

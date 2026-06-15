@@ -86,9 +86,9 @@ def mock_health_cog(mock_bot):
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
-    from cogs.healthCog import HealthCog
+    import cogs.healthCog as health_module
 
-    cog = HealthCog(mock_bot)
+    cog = health_module.HealthCog(mock_bot)
     return cog
 
 
@@ -400,9 +400,9 @@ class TestCogSetup:
 
     def test_setup_function(self, mock_bot):
         """setup function should add healthCog to bot."""
-        from cogs.healthCog import setup
+        import cogs.healthCog as health_module
 
-        asyncio.run(setup(mock_bot))
+        asyncio.run(health_module.setup(mock_bot))
 
         mock_bot.add_cog.assert_called_once()
 

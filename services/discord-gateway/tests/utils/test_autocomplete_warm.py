@@ -58,7 +58,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import utils.autocomplete_state as state_mod
 import utils.autocomplete_warm as warm_mod
-from utils.autocomplete_state import NormalizedChoice
 from utils.autocomplete_utils import normalize_for_search
 
 API_BASE = "http://bot-core:8000/api/v1"
@@ -238,13 +237,13 @@ class TestWarmActivePlayerLoadout:
 
         assert inv_cached is not None and len(inv_cached) == 1
         item = inv_cached[0]
-        assert isinstance(item, NormalizedChoice)
+        assert isinstance(item, state_mod.NormalizedChoice)
         assert item.norm  # non-empty
         assert item.norm == normalize_for_search(item.label)
 
         assert ships_cached is not None and len(ships_cached) == 1
         ship = ships_cached[0]
-        assert isinstance(ship, NormalizedChoice)
+        assert isinstance(ship, state_mod.NormalizedChoice)
         assert ship.norm  # non-empty
         assert ship.norm == normalize_for_search(ship.label)
 

@@ -163,9 +163,9 @@ def cog(mock_bot):
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
 
-    from cogs.helpCog import HelpCog
+    import cogs.helpCog as helpCog_module
 
-    return HelpCog(mock_bot)
+    return helpCog_module.HelpCog(mock_bot)
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +180,9 @@ class TestIsAdminCommand:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _is_admin_command
+        import cogs.helpCog as helpCog_module
 
-        return _is_admin_command
+        return helpCog_module._is_admin_command
 
     def test_admin_prefix_admin_underscore(self):
         """Commands starting with 'admin_' are admin (AC-5)."""
@@ -274,37 +274,35 @@ class TestIsAdminCommand:
         MagicMock) so any future wrong-attribute typo is caught immediately.
         """
         import discord
-        from discord import app_commands
 
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _is_admin_command
+        import cogs.helpCog as helpCog_module
 
-        @app_commands.command(name="test_real_admin_cmd", description="Real admin command")
-        @app_commands.default_permissions(administrator=True)
+        @discord.app_commands.command(name="test_real_admin_cmd", description="Real admin command")
+        @discord.app_commands.default_permissions(administrator=True)
         async def test_real_admin_cmd(interaction: discord.Interaction) -> None:  # pragma: no cover
             pass
 
-        assert _is_admin_command(test_real_admin_cmd) is True
+        assert helpCog_module._is_admin_command(test_real_admin_cmd) is True
 
     def test_is_admin_does_not_flag_real_public_command(self):
         """Regression: _is_admin_command returns False for a real app_commands.Command with no
         permissions decorator.  Uses a real Command object (not a MagicMock).
         """
         import discord
-        from discord import app_commands
 
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _is_admin_command
+        import cogs.helpCog as helpCog_module
 
-        @app_commands.command(name="test_real_public_cmd", description="Real public command")
+        @discord.app_commands.command(name="test_real_public_cmd", description="Real public command")
         async def test_real_public_cmd(interaction: discord.Interaction) -> None:  # pragma: no cover
             pass
 
-        assert _is_admin_command(test_real_public_cmd) is False
+        assert helpCog_module._is_admin_command(test_real_public_cmd) is False
 
 
 # ---------------------------------------------------------------------------
@@ -319,9 +317,9 @@ class TestNormalizeCategory:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _normalize_category
+        import cogs.helpCog as helpCog_module
 
-        return _normalize_category
+        return helpCog_module._normalize_category
 
     def test_lowercase(self):
         fn = self._get_fn()
@@ -353,9 +351,9 @@ class TestFormatParams:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _format_params
+        import cogs.helpCog as helpCog_module
 
-        return _format_params
+        return helpCog_module._format_params
 
     def test_no_params_returns_empty(self):
         fn = self._get_fn()
@@ -753,12 +751,12 @@ class TestAdminHelpCmdOverview:
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
 
-        from cogs.helpCog import HelpCog
+        import cogs.helpCog as helpCog_module
 
         bot = MagicMock()
         bot.tree = MagicMock()
         bot.tree.get_commands = MagicMock(return_value=[])
-        cog = HelpCog(bot)
+        cog = helpCog_module.HelpCog(bot)
 
         # discord.app_commands.Command stores checks in .checks attribute
         assert hasattr(cog.admin_help_cmd, "checks")
@@ -775,12 +773,12 @@ class TestAdminHelpCmdOverview:
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
 
-        from cogs.helpCog import HelpCog
+        import cogs.helpCog as helpCog_module
 
         bot = MagicMock()
         bot.tree = MagicMock()
         bot.tree.get_commands = MagicMock(return_value=[])
-        cog = HelpCog(bot)
+        cog = helpCog_module.HelpCog(bot)
 
         # B.40: default_permissions is intentionally None (removed to fix admin-role holder hiding).
         # The command is still protected by @is_admin() check in .checks.
@@ -800,12 +798,12 @@ class TestAdminHelpCmdOverview:
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
 
-        from cogs.helpCog import HelpCog
+        import cogs.helpCog as helpCog_module
 
         bot = MagicMock()
         bot.tree = MagicMock()
         bot.tree.get_commands = MagicMock(return_value=[])
-        cog = HelpCog(bot)
+        cog = helpCog_module.HelpCog(bot)
 
         # /help should have no default_permissions restriction
         assert cog.help_cmd.default_permissions is None
@@ -926,13 +924,13 @@ class TestAutocomplete:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _USER_CATEGORY_ORDER, _user_category_autocomplete
+        import cogs.helpCog as helpCog_module
 
         interaction = _create_mock_interaction()
-        results = await _user_category_autocomplete(interaction, "")
+        results = await helpCog_module._user_category_autocomplete(interaction, "")
 
         result_values = [r.value for r in results]
-        for cat in _USER_CATEGORY_ORDER:
+        for cat in helpCog_module._USER_CATEGORY_ORDER:
             assert cat in result_values
 
     @pytest.mark.asyncio
@@ -941,10 +939,10 @@ class TestAutocomplete:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _user_category_autocomplete
+        import cogs.helpCog as helpCog_module
 
         interaction = _create_mock_interaction()
-        results = await _user_category_autocomplete(interaction, "bounty")
+        results = await helpCog_module._user_category_autocomplete(interaction, "bounty")
 
         result_values = [r.value for r in results]
         assert "Bounty Hunting" in result_values
@@ -957,13 +955,13 @@ class TestAutocomplete:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _ADMIN_CATEGORY_ORDER, _admin_category_autocomplete
+        import cogs.helpCog as helpCog_module
 
         interaction = _create_mock_interaction()
-        results = await _admin_category_autocomplete(interaction, "")
+        results = await helpCog_module._admin_category_autocomplete(interaction, "")
 
         result_values = [r.value for r in results]
-        for cat in _ADMIN_CATEGORY_ORDER:
+        for cat in helpCog_module._ADMIN_CATEGORY_ORDER:
             assert cat in result_values
 
     @pytest.mark.asyncio
@@ -972,10 +970,10 @@ class TestAutocomplete:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _admin_category_autocomplete
+        import cogs.helpCog as helpCog_module
 
         interaction = _create_mock_interaction()
-        results = await _admin_category_autocomplete(interaction, "player")
+        results = await helpCog_module._admin_category_autocomplete(interaction, "player")
 
         result_values = [r.value for r in results]
         assert "Admin — Players" in result_values
@@ -988,10 +986,10 @@ class TestAutocomplete:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _user_category_autocomplete
+        import cogs.helpCog as helpCog_module
 
         interaction = _create_mock_interaction()
-        results = await _user_category_autocomplete(interaction, "")
+        results = await helpCog_module._user_category_autocomplete(interaction, "")
         assert len(results) <= 25
 
 
@@ -1007,10 +1005,10 @@ class TestBuildOverviewEmbed:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
+        import cogs.helpCog as helpCog_module
         import discord as _discord
-        from cogs.helpCog import _build_overview_embed
 
-        return _build_overview_embed, _discord
+        return helpCog_module._build_overview_embed, _discord
 
     def test_overview_embed_has_title(self):
         """_build_overview_embed returns an embed with the specified title."""
@@ -1078,10 +1076,10 @@ class TestBuildDetailEmbed:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
+        import cogs.helpCog as helpCog_module
         import discord as _discord
-        from cogs.helpCog import _build_detail_embed
 
-        return _build_detail_embed, _discord
+        return helpCog_module._build_detail_embed, _discord
 
     def test_detail_embed_has_category_in_title(self):
         """_build_detail_embed title includes the category name."""
@@ -1210,8 +1208,8 @@ class TestEdgeCases:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
+        import cogs.helpCog as helpCog_module
         import discord as _discord
-        from cogs.helpCog import _build_detail_embed
 
         # Create a command with a very long param description
         cmd = _make_mock_cmd(
@@ -1219,7 +1217,7 @@ class TestEdgeCases:
             "List bounties",
             params=[{"name": "x", "required": True, "description": "a" * 1100}],
         )
-        embed = _build_detail_embed(
+        embed = helpCog_module._build_detail_embed(
             category="Bounty Hunting",
             description="Hunt",
             cmds=[cmd],
@@ -1234,7 +1232,7 @@ class TestEdgeCases:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _format_params
+        import cogs.helpCog as helpCog_module
 
         cmd = _make_mock_cmd("somecmd")
 
@@ -1250,7 +1248,7 @@ class TestEdgeCases:
 
         cmd.parameters = [BadParam()]
         # Should not raise — the except AttributeError: continue block catches it
-        result = _format_params(cmd)
+        result = helpCog_module._format_params(cmd)
         # The bad param is skipped; no output other than possibly the header
         # Result is either empty string or just the header (no actual params listed)
         # Either way it should not raise
@@ -1298,14 +1296,14 @@ class TestSetupFunction:
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
 
-        from cogs.helpCog import HelpCog, setup
+        import cogs.helpCog as helpCog_module
 
         mock_bot.add_cog = AsyncMock()
-        await setup(mock_bot)
+        await helpCog_module.setup(mock_bot)
 
         mock_bot.add_cog.assert_awaited_once()
         added_cog = mock_bot.add_cog.call_args.args[0]
-        assert isinstance(added_cog, HelpCog)
+        assert isinstance(added_cog, helpCog_module.HelpCog)
 
 
 # ---------------------------------------------------------------------------
@@ -1326,9 +1324,9 @@ class TestAdminCategoryMappingIntegrity:
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
-        from cogs.helpCog import _ADMIN_CATEGORY_MAPPING
+        import cogs.helpCog as helpCog_module
 
-        return _ADMIN_CATEGORY_MAPPING
+        return helpCog_module._ADMIN_CATEGORY_MAPPING
 
     # -- Item 1: dead entries removed --
 

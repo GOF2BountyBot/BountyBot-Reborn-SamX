@@ -32,7 +32,9 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from tests.mocks.discord_mock_utils import DiscordMockUtils
+import tests.mocks.discord_mock_utils as discord_mock_utils
+
+DiscordMockUtils = discord_mock_utils.DiscordMockUtils
 
 _mock_utils = DiscordMockUtils()
 
@@ -234,7 +236,7 @@ class TestUpdateThreadTags:
         parent = MagicMock(spec=_MockFC)
         parent.__class__ = _MockFC
         if available_tags is None:
-            from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+            DMU = discord_mock_utils.DiscordMockUtils
 
             t1 = DMU.create_mock_forum_tag(tag_id=111, name="tag1", channel_id=555555555)
             t2 = DMU.create_mock_forum_tag(tag_id=222, name="tag2", channel_id=555555555)
@@ -1590,7 +1592,7 @@ class TestUpdateThreadTagsObjectIdNotFound:
 
     def test_tag_object_with_id_not_found(self):
         """Tag object dict with id that doesn't match any available tag → 404 (line 375)."""
-        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        DMU = discord_mock_utils.DiscordMockUtils
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
@@ -1672,7 +1674,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
     async def test_tag_matched_by_name_direct_call(self):
         """Tag with tid=None matched by name via direct function call (lines 383-385)."""
-        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        DMU = discord_mock_utils.DiscordMockUtils
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
@@ -1716,7 +1718,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
     def test_tag_no_match_by_name_or_emoji_raises_404(self):
         """Tag dict with id that matches nothing, falls through → 404 (lines 402-409)."""
-        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        DMU = discord_mock_utils.DiscordMockUtils
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
@@ -1739,7 +1741,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
         We bypass FastAPI validation and call the endpoint function directly."""
         # This tests the code path that's hard to reach through FastAPI validation
         # We'll call the endpoint function directly with a mock request
-        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        DMU = discord_mock_utils.DiscordMockUtils
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
@@ -1787,7 +1789,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
     async def test_tag_emoji_matching_direct_call(self):
         """Directly test emoji matching when name doesn't match (lines 387-400)."""
-        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        DMU = discord_mock_utils.DiscordMockUtils
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
@@ -1836,7 +1838,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
     async def test_tag_emoji_matching_normalize_raises(self):
         """normalize_emoji raises → falls back to raw emoji_val (lines 390-391)."""
-        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        DMU = discord_mock_utils.DiscordMockUtils
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
@@ -1884,7 +1886,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
     async def test_tag_no_name_no_emoji_match_raises_404(self):
         """Tag with no id, no name match, no emoji match → 404 (lines 402-409)."""
-        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        DMU = discord_mock_utils.DiscordMockUtils
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
@@ -1932,7 +1934,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
     async def test_tag_emoji_no_match_at_str(self):
         """Emoji matching tries str(at_e) comparison (line 398)."""
-        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        DMU = discord_mock_utils.DiscordMockUtils
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
@@ -1983,7 +1985,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
     async def test_tag_available_tag_emoji_is_none_skipped(self):
         """Available tag with emoji=None is skipped in emoji scan (line 395-396)."""
-        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        DMU = discord_mock_utils.DiscordMockUtils
 
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)

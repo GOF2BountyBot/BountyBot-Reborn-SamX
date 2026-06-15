@@ -94,9 +94,9 @@ def mock_admin_cog(mock_bot):
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
-    from cogs.adminCog import AdminCog
+    import cogs.adminCog as _adm
 
-    cog = AdminCog(mock_bot)
+    cog = _adm.AdminCog(mock_bot)
     return cog
 
 
@@ -956,8 +956,9 @@ def _get_is_admin_predicate():
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
-    from cogs.adminCog import is_admin as _is_admin_fn
+    import cogs.adminCog as _adm
 
+    _is_admin_fn = _adm.is_admin
     # app_commands.check wraps the predicate. We can extract it via __closure__
     # or just call it directly since the decorator returns a function that
     # has the predicate stored in its closure. Simplest approach: re-implement
@@ -1068,8 +1069,9 @@ def _extract_is_admin_predicate():
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
-    from cogs.adminCog import is_admin as _is_admin_fn
+    import cogs.adminCog as _adm
 
+    _is_admin_fn = _adm.is_admin
     decorator = _is_admin_fn()
     # app_commands.check wraps the predicate in a decorator whose closure
     # contains the original coroutine function.

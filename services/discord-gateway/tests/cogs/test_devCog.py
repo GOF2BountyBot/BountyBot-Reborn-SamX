@@ -98,15 +98,13 @@ def mock_dev_cog(mock_bot, monkeypatch):
     _check_is_super_admin directly via cogs.devCog module attribute.
     """
     _evict_discord_modules()
-    from cogs.devCog import DevCog
+    import cogs.devCog as _dev_module
 
-    cog = DevCog(mock_bot)
+    cog = _dev_module.DevCog(mock_bot)
 
     # Bypass the super-admin gate for all tests in this file that don't
     # explicitly test the gate.  Tests that need the gate patched for
     # rejection do their own monkeypatching via cogs.devCog._check_is_super_admin.
-    import cogs.devCog as _dev_module
-
     async def _always_super_admin(_interaction):
         return True
 
@@ -575,12 +573,12 @@ class TestCogSetup:
 
     def test_setup_function(self, mock_bot):
         """setup function should add devCog to bot."""
-        from cogs.devCog import setup
+        import cogs.devCog as dev_module
 
         # Make add_cog awaitable
         mock_bot.add_cog = AsyncMock()
 
-        asyncio.run(setup(mock_bot))
+        asyncio.run(dev_module.setup(mock_bot))
 
         mock_bot.add_cog.assert_called_once()
 

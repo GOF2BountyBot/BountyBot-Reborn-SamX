@@ -1935,7 +1935,6 @@ def _init_ac_caches_for_inventory_tests(
     """
     import utils.autocomplete_state as ac_state
     from cogs._shared.autocomplete_cache import AutocompleteCache
-    from utils.autocomplete_state import NormalizedChoice
     from utils.autocomplete_utils import normalize_for_search
 
     if ac_state.player_cache is None:
@@ -1962,7 +1961,7 @@ def _init_ac_caches_for_inventory_tests(
             label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
             value = str(item.get("id", item_name))
             norm = normalize_for_search(label)
-            inv_choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=item))
+            inv_choices.append(ac_state.NormalizedChoice(label=label, value=value, norm=norm, raw=item))
         ac_state.inventory_cache.set((guild_id, player_id), inv_choices)
 
     # Store ships as NormalizedChoice objects (as _refresh_ships does)
@@ -1978,7 +1977,7 @@ def _init_ac_caches_for_inventory_tests(
             label = f"{display_name} ({active_prefix}{ship_type})"
             value = str(ship.get("player_ship_id") or ship.get("id") or "")
             norm = normalize_for_search(label)
-            ship_choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=ship))
+            ship_choices.append(ac_state.NormalizedChoice(label=label, value=value, norm=norm, raw=ship))
         ac_state.ships_cache.set((guild_id, player_id), ship_choices)
 
 

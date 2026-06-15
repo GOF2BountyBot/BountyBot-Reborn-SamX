@@ -218,7 +218,6 @@ class TestPlayerShipReuse:
     def test_warm_ships_cache_hit_no_http(self, admin_cog):
         import utils.autocomplete_state as ac_state
         from cogs._shared.autocomplete_cache import AutocompleteCache
-        from utils.autocomplete_state import NormalizedChoice
 
         guild_id, target_uid, player_id = 987654321, 222, 7
         ac_state.player_cache = AutocompleteCache(name="p2-player")
@@ -226,7 +225,7 @@ class TestPlayerShipReuse:
         ac_state.ships_cache = AutocompleteCache(name="p2-ships")
         ac_state.ships_cache.set(
             (guild_id, player_id),
-            [NormalizedChoice(label="Betty", value="1", norm="betty", raw={"ship_name": "Betty"})],
+            [ac_state.NormalizedChoice(label="Betty", value="1", norm="betty", raw={"ship_name": "Betty"})],
         )
 
         # HTTP GET must NOT be hit on a warm ships_cache (resolve_player_id reads

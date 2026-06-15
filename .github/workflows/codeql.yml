@@ -53,11 +53,15 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          # security-and-quality runs both the security-extended and code-quality packs.
-          # Query selection and path exclusions are managed in .github/codeql/codeql-config.yml.
+          # Security-focused advanced setup. Query suite + path exclusions live in
+          # .github/codeql/codeql-config.yml (version-controlled).
           #
-          # NOTE: GitHub Default Setup (repo Settings → Code security) must be DISABLED for
-          # this advanced-setup config-file to take effect — Default Setup overrides it when enabled.
+          # NOTE: code QUALITY findings (maintainability/reliability, the /security/quality
+          # view) come from GitHub's separate managed "Code Quality" feature, which is NOT
+          # driven by this workflow and cannot read this config-file. There is currently no
+          # production-ready way to configure Code Quality in YAML (the codeql-action
+          # `analysis-kinds`/`quality-queries` inputs are internal/experimental). Quality
+          # is configured in repo Settings → Code security → Code Quality.
           config-file: ./.github/codeql/codeql-config.yml
 
       - name: Autobuild

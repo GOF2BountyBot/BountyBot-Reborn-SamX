@@ -1,50 +1,14 @@
-name: "BountyBot CodeQL config"
+name: "BountyBot CodeQL config (security)"
 
 # ---------------------------------------------------------------------------
-# Query suite: run security AND quality intentionally.
-# (security-extended alone produced 0 findings; the quality findings came from
-# Default Setup's code-quality pack. security-and-quality is the superset that
-# runs both on purpose, in version-controlled advanced setup.)
+# Security-focused advanced setup. Code QUALITY (maintainability/reliability)
+# is handled by GitHub's separate managed "Code Quality" feature, which does
+# not read this file — so only security-relevant config belongs here.
 # ---------------------------------------------------------------------------
 queries:
-  - uses: security-and-quality
+  - uses: security-extended
 
-# ---------------------------------------------------------------------------
-# Suppressions below are deliberate and justified — NOT a way to hide poor
-# implementation. Each entry documents WHY the findings are false positives,
-# not-our-code, or a low-value rule that conflicts with an intentional pattern.
-# Everything else stays IN SCOPE (incl. all first-party src and tests), so real
-# issues continue to surface and must be fixed, not buried.
-# ---------------------------------------------------------------------------
 paths-ignore:
   # Vendored third-party git submodule (github.com/Trimatix/AEPi, pinned in
-  # .gitmodules). Not our code; we cannot fix it without forking, and any edit
-  # is lost on the next submodule bump. Standard practice to exclude vendored code.
+  # .gitmodules). Not our code; don't scan it for vulnerabilities.
   - 'services/blender-service/src/lib/AEPi/**'
-
-  # Alembic migration revisions. These are framework-generated, append-only,
-  # declarative files. Their ONLY CodeQL findings are the module globals
-  # `revision`/`down_revision`/`branch_labels`/`depends_on`, which Alembic
-  # REQUIRES and reads via reflection — CodeQL cannot see that use and reports
-  # them as unused (false positives). Migration *logic* (upgrade/downgrade) is
-  # exercised by the dedicated services/bot-core/tests/test_migration_*.py suite,
-  # which remains in scope.
-  - 'services/bot-core/src/persist/database/revisions/versions/**'
-
-# ---------------------------------------------------------------------------
-# Rule-level exclusions (apply everywhere, by query id) — preferred over a
-# blanket tests/** path-ignore so that OTHER rules still police test code.
-# ---------------------------------------------------------------------------
-query-filters:
-  # py/import-and-import-from: flagged at 141 sites, almost all in tests. The
-  # codebase intentionally imports a module BY REFERENCE (`import x.y as y`) to
-  # access/mutate its module-level mutable state — autocomplete caches and FastAPI
-  # repo singletons that tests inject into, and that lazy imports elsewhere must
-  # share — WHILE ALSO importing specific names (`from x.y import Name`) for
-  # ergonomic use. The module reference is load-bearing (you cannot drop it), and
-  # the rule's implied "fix" (collapse to one import form) would either break the
-  # shared-module-object semantics or only add `module.` qualification noise. This
-  # is a low-value style rule that conflicts with a deliberate, documented pattern
-  # — not a code-quality defect. Disabled by policy.
-  - exclude:
-      id: py/import-and-import-from

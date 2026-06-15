@@ -424,7 +424,7 @@ async def lifespan(fastapi_app: FastAPI):
     _SCHEDULER_LOCK_POLL_S = 0.5
 
     try:
-        sched_lock_fd = os.open(_SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o644)
+        sched_lock_fd = os.open(_SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o600)
     except OSError as exc:
         flogger.error(f"⏰ Could not open scheduler init lock {_SCHEDULER_LOCK_PATH}: {exc} — proceeding without lock")
         sched_lock_fd = None

@@ -62,7 +62,7 @@ async def auto_seed_data() -> None:
     check is the idempotency guard.
     """
     try:
-        lock_fd = os.open(_SEED_LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o644)
+        lock_fd = os.open(_SEED_LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o600)
     except OSError as exc:
         flogger.error(f"🌱 Could not open seed lock {_SEED_LOCK_PATH}: {exc} — proceeding without lock")
         await _run_seed_loop()

@@ -20,11 +20,18 @@ flogger = bblogger.get_logger("loadout-effect-service")
 
 # ---------------------------------------------------------------------------
 # Formatters (dict-dispatch, per Appendix B of spec)
+#
+# IMPORTANT — input units differ per formatter (this is intentional, not a bug):
+#   * int_pct      expects a FRACTION (e.g. 0.15 → "15%"); multiplies by 100.
+#   * signed_pct   expects a WHOLE PERCENT already (e.g. 20.0 → "+20%", -10.0 → "-10%");
+#                  it does NOT multiply by 100. Callers pass damage_pct/fire_rate_pct,
+#                  which are stored as whole percents (see test_loadout_effect_service,
+#                  test_primary_weapons). round() gives nearest-int display on purpose.
 # ---------------------------------------------------------------------------
 _FORMATTERS = {
     "int": lambda v: str(int(v)),
-    "int_pct": lambda v: f"{round(float(v) * 100)}%",
-    "signed_pct": lambda v: f"{'+' if float(v) >= 0 else '-'}{abs(round(float(v)))}%",
+    "int_pct": lambda v: f"{round(float(v) * 100)}%",  # fraction → percent; round() = nearest-int display
+    "signed_pct": lambda v: f"{'+' if float(v) >= 0 else '-'}{abs(round(float(v)))}%",  # value is already a percent
     "float": lambda v: f"{float(v):g}",
     "seconds": lambda v: f"{int(v)}s",
     "x": lambda v: f"×{float(v):g}",

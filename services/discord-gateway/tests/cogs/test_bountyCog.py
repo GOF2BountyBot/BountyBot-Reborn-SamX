@@ -1022,13 +1022,6 @@ class TestCheckCommandRespx:
             "outcomes": [{"result": "incorrect", "bounty_id": None}],
         }
 
-        captured_calls: list = []
-        original_send = mock_bounty_cog.http_client.send
-
-        async def _capture_send(request_obj, **kwargs):
-            captured_calls.append(request_obj)
-            return await original_send(request_obj, **kwargs)
-
         env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
         with (
             _patch.dict(os.environ, env_without_bot_api, clear=True),

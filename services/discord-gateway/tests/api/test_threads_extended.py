@@ -311,8 +311,6 @@ class TestUpdateThreadTags:
 
         # Build app manually so we can override thread.parent AFTER _make_tags_app
         # sets it. We use _make_tags_app then replace thread.parent inside the loop.
-        _original_parent = thread.parent
-
         app = FastAPI()
         app.state.bot = bot
 

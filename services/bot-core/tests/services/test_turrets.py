@@ -892,13 +892,6 @@ async def test_builder_fed_turret_fight():
         "PE Ambipolar-5", dps=0.0, automatic=False, loading_speed_ms=0, range_m=5000.0, subtype="plasma-collector"
     )
 
-    # Map turret name → fake ORM row so db.execute returns the right one
-    _turret_orm_map = {
-        "Berger AGT 20mm": berger_orm,
-        "Hammerhead D1": hammerhead_orm,
-        "PE Ambipolar-5": plasma_orm,
-    }
-
     # ------------------------------------------------------------------ #
     # Mock #1: AsyncMock DB session — execute() returns scalars chain     #
     # ------------------------------------------------------------------ #

@@ -574,9 +574,6 @@ async def test_render_config_requires_admin(admin_cog) -> None:
         # Mock the HTTP call to /config/guild to return no admin role
         mock_http_resp = _make_mock_http_response({"admin_role_id": None})
 
-        async def _fake_get(*_a, **_kw):
-            return mock_http_resp
-
         # We only need 1 mock: the HTTP GET for guild config
         with __import__("unittest.mock", fromlist=["patch"]).patch(
             "httpx.AsyncClient.__aenter__",

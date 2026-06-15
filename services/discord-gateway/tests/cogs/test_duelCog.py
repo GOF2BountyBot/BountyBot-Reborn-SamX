@@ -258,13 +258,6 @@ class TestDuelChallengeCommand:
         error_response.json.return_value = {"detail": "A player cannot challenge themselves to a duel."}
         http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
 
-        async def post_side_effect(*args, **kwargs):
-            if mock_duel_cog.http_client.post.call_count <= 2:
-                if mock_duel_cog.http_client.post.call_count == 1:
-                    return challenger_player_resp
-                return target_player_resp
-            raise http_error
-
         mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, http_error])
 
         asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))

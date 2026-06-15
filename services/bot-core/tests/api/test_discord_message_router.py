@@ -146,7 +146,6 @@ class TestCreateDiscordMessage:
         mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_http.post = AsyncMock(return_value=make_mock_http_response())
 
-        _mock_msg = make_mock_message()
         mock_db_session.refresh = AsyncMock()
         # DiscordMessageResponse.from_orm needs the object
         with patch(

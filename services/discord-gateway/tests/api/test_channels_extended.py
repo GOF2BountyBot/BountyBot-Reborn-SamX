@@ -574,7 +574,7 @@ class TestCreateChannelMessage:
 
     def test_create_message_success(self, channels_client, channels_app_and_mocks):
         """POST a message to a channel should return 201."""
-        _app, _mocks = channels_app_and_mocks
+        _app_unused, _mocks_unused = channels_app_and_mocks
         # The channel's send() is AsyncMock; set up a return value
         mock_msg = MagicMock()
         mock_msg.id = 9876543210

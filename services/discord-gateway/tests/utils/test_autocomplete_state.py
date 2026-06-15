@@ -385,7 +385,7 @@ class TestRefreshInventoryPrecomputesNorm:
         and the function under test operate on the SAME module object.
         """
         # initialized_state returns the real_http_client used to init the module
-        _real_http_client = initialized_state  # kept for clarity; value unused, side-effect is module init
+        _unused_real_http_client = initialized_state  # kept for clarity; value unused, side-effect is module init
 
         items_response = [
             {
@@ -435,7 +435,7 @@ class TestRefreshInventoryPrecomputesNorm:
         reference caused by ``_evict_discord_modules()`` in cog test fixtures.
         """
         # initialized_state returns the real_http_client used to init the module
-        _real_http_client = initialized_state  # kept for clarity; value unused, side-effect is module init
+        _unused_real_http_client = initialized_state  # kept for clarity; value unused, side-effect is module init
 
         ships_response = [
             {

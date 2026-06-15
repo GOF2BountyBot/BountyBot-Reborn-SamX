@@ -201,6 +201,7 @@ class MigrationManager:
 
         # Retry get_current_revision to absorb transient DB startup races.
         # Only OperationalError is retried — other errors indicate real problems.
+        current_rev: str | None = None  # guard against a non-positive retry-max misconfig
         for attempt in range(1, _CONNECTION_RETRY_MAX_ATTEMPTS + 1):
             try:
                 current_rev = self.get_current_revision()

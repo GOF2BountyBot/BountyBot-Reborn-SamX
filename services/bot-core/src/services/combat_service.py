@@ -30,7 +30,7 @@ from services.combat_models import (
     FightStats,
     ShipLoadout,
 )
-from services.combat_resolver import TickResolver
+from services.combat_resolver import _EMERGENCY_SYSTEM_MODULE_TYPE, TickResolver
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -401,6 +401,17 @@ class CombatService:
             guild_id=guild_id,
         )
 
+        # §7.7: EmergencySystem is a one-use consumable — remove it from the loadout
+        # after it fires. Must be AFTER _increment_player_stats (reads the same summary),
+        # inside the log_result=True branch (sim guard returns before this).
+        await self._consume_emergency_system(
+            session=session,
+            fight_results=fight_results,
+            combatant1_user_id=combatant1_user_id,
+            combatant2_user_id=combatant2_user_id,
+            guild_id=guild_id,
+        )
+
         flogger.info(
             f"fight_ships: persisted combat_log_id={combat_log_id} "
             f"winner={fight_results.winner_name} stalemate={fight_results.is_stalemate}"
@@ -579,3 +590,100 @@ class CombatService:
             except Exception as exc:
                 # Non-fatal — ammo write-back failure should not abort the fight record
                 flogger.error(f"_consume_secondary_ammo failed: user_id={user_id} guild_id={guild_id}: {exc}")
+
+    async def _consume_emergency_system(
+        self,
+        *,
+        session: "AsyncSession",
+        fight_results: FightResults,
+        combatant1_user_id: int | None,
+        combatant2_user_id: int | None,
+        guild_id: int,
+    ) -> None:
+        """Post-fight EmergencySystem consumption write-back (§7.7).
+
+        EmergencySystem is a one-use consumable: per spec §7.7 it is "removed from
+        loadout after use; player must manually re-equip a spare from inventory."
+        The in-fight ``es_runtime.consumed`` flag only enforces once-per-fight; this
+        method performs the cross-fight loadout removal that was previously missing.
+
+        For each HUMAN combatant whose side-keyed summary block records an
+        ``emergency_system`` activation, ONE EmergencySystemModule instance is removed
+        from the player's active-ship ``modules`` list. The activating module is
+        identified by the ``Item.type`` discriminator (== _EMERGENCY_SYSTEM_MODULE_TYPE);
+        there is no separate ``module_type`` column. If the side equips two ES modules,
+        only one is consumed — ES fires at most once per fight (§7.7), so exactly one is spent.
+
+        Mirrors _consume_secondary_ammo: side-keyed summary read (PvC name-safe),
+        active-ship lookup, JSON column reassignment (never in-place mutation —
+        SQLAlchemy JSON gotcha), and non-fatal try/except (a write-back failure must
+        not abort the fight record).
+
+        Criminal side (user_id is None): skip — no cross-fight persistence for NPCs.
+        """
+        from persist.repositories.module_repository import ModuleRepository
+        from persist.repositories.player_repository import PlayerRepository
+        from persist.repositories.player_ship_repository import PlayerShipRepository
+
+        player_repo = PlayerRepository()
+        player_ship_repo = PlayerShipRepository()
+        module_repo = ModuleRepository()
+
+        summary = fight_results.metadata.get("summary", {})
+        combatants_summary = summary.get("combatants", {})
+
+        slot_map: list[tuple[str, int | None]] = [
+            ("1", combatant1_user_id),
+            ("2", combatant2_user_id),
+        ]
+
+        for slot_key, user_id in slot_map:
+            if user_id is None:
+                continue  # NPC side — no cross-fight consumption
+
+            cb_block = combatants_summary.get(slot_key, {})
+            # module_activations is sparse {module_key: count}; "emergency_system" absent => 0
+            es_activations: int = cb_block.get("module_activations", {}).get("emergency_system", 0)
+            if es_activations < 1:
+                continue  # ES did not fire on this side — nothing to consume
+
+            try:
+                player = await player_repo.get_by_user_and_guild(session, user_id, guild_id)
+                if player is None:
+                    flogger.warning(
+                        f"_consume_emergency_system: player not found user_id={user_id} guild_id={guild_id} — skipping"
+                    )
+                    continue
+
+                ship = await player_ship_repo.get_active_ship(session, player.id)
+                if ship is None:
+                    flogger.warning(f"_consume_emergency_system: no active ship for player_id={player.id} — skipping")
+                    continue
+
+                # Find the first equipped EmergencySystemModule by Item.type discriminator.
+                mods: list[str] = list(ship.modules or [])
+                removed: str | None = None
+                for idx, m_name in enumerate(mods):
+                    module = await module_repo.get_by_name(session, m_name)
+                    if module is not None and module.type == _EMERGENCY_SYSTEM_MODULE_TYPE:
+                        removed = mods.pop(idx)
+                        break
+
+                if removed is None:
+                    flogger.warning(
+                        f"_consume_emergency_system: ES activated but no {_EMERGENCY_SYSTEM_MODULE_TYPE} "
+                        f"found in ship {ship.id} modules={mods!r} (player_id={player.id}) — skipping"
+                    )
+                    continue
+
+                # Reassign the JSON column (never in-place mutation — SQLAlchemy JSON gotcha)
+                ship.modules = mods
+                await session.flush()
+                flogger.info(
+                    f"_consume_emergency_system: consumed {removed!r} from ship {ship.id} "
+                    f"(player_id={player.id}); modules now {mods!r}"
+                )
+
+            except Exception as exc:
+                # Non-fatal — consumption write-back failure should not abort the fight record
+                flogger.error(f"_consume_emergency_system failed: user_id={user_id} guild_id={guild_id}: {exc}")

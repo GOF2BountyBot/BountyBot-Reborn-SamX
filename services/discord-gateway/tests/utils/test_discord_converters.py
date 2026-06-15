@@ -161,9 +161,9 @@ class TestGuildConverter:
             nsfw_level="strict",
         )
 
-        from utils.discord_converters import GuildConverter
+        import utils.discord_converters as _dc_mod
 
-        result = GuildConverter.guild_to_summary(mock_guild)
+        result = _dc_mod.GuildConverter.guild_to_summary(mock_guild)
 
         assert result.id == 987654321
         assert result.name == "Test Guild"
@@ -201,9 +201,9 @@ class TestGuildConverter:
         mock_guild.preferred_locale = None
         mock_guild.nsfw_level = None
 
-        from utils.discord_converters import GuildConverter
+        import utils.discord_converters as _dc_mod
 
-        result = GuildConverter.guild_to_summary(mock_guild)
+        result = _dc_mod.GuildConverter.guild_to_summary(mock_guild)
 
         assert result.id == 987654321
         assert result.name == "Test Guild"
@@ -224,9 +224,9 @@ class TestGuildConverter:
 
     def test_guild_to_detail_is_alias_for_summary(self):
         """guild_to_detail should be alias for guild_to_summary."""
-        from utils.discord_converters import GuildConverter
+        import utils.discord_converters as _dc_mod
 
-        assert GuildConverter.guild_to_detail == GuildConverter.guild_to_summary
+        assert _dc_mod.GuildConverter.guild_to_detail == _dc_mod.GuildConverter.guild_to_summary
 
 
 class TestChannelConverter:
@@ -242,9 +242,9 @@ class TestChannelConverter:
             created_at=datetime(2024, 1, 1),
         )
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_summary(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_summary(mock_channel)
 
         assert result.id == 1234567890
         assert result.name == "test-channel"
@@ -263,9 +263,9 @@ class TestChannelConverter:
             created_at=datetime(2024, 1, 1),
         )
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_summary(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_summary(mock_channel)
 
         assert result.id == 1234567890
         assert result.name == "test-voice"
@@ -284,9 +284,9 @@ class TestChannelConverter:
             created_at=datetime(2024, 1, 1),
         )
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_summary(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_summary(mock_channel)
 
         assert result.id == 1234567890
         assert result.name == "test-category"
@@ -305,9 +305,9 @@ class TestChannelConverter:
         )
         mock_channel.position = None
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_summary(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_summary(mock_channel)
 
         assert result.position == 0
 
@@ -321,9 +321,9 @@ class TestChannelConverter:
         )
         mock_channel.position = "5"
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_summary(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_summary(mock_channel)
 
         assert result.position == 5
 
@@ -344,9 +344,9 @@ class TestChannelConverter:
         )
         mock_channel.category_id = parent_category_id
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_summary(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_summary(mock_channel)
 
         assert result.category_id == parent_category_id, (
             "channel_to_summary must include category_id for child channels (A.30)"
@@ -363,9 +363,9 @@ class TestChannelConverter:
         )
         # category_id defaults to None in the mock (top-level channel)
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_summary(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_summary(mock_channel)
 
         assert result.category_id is None
 
@@ -386,9 +386,9 @@ class TestChannelConverter:
         mock_channel.bitrate = None
         mock_channel.user_limit = None
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_detail(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_detail(mock_channel)
 
         assert result.id == 1234567890
         assert result.name == "test-channel"
@@ -421,9 +421,9 @@ class TestChannelConverter:
         mock_channel.slowmode_delay = None
         mock_channel.default_auto_archive_duration = None
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_detail(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_detail(mock_channel)
 
         assert result.id == 1234567890
         assert result.name == "test-voice"
@@ -449,9 +449,9 @@ class TestChannelConverter:
             created_at=datetime(2024, 1, 1),
         )
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.category_to_detail(mock_category)
+        result = _dc_mod.ChannelConverter.category_to_detail(mock_category)
 
         assert result.id == 1234567890
         assert result.name == "test-category"
@@ -478,9 +478,9 @@ class TestChannelConverter:
         mock_thread.applied_tags = None
         mock_thread.applied_tag_ids = None
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.thread_to_summary(mock_thread)
+        result = _dc_mod.ChannelConverter.thread_to_summary(mock_thread)
 
         assert result.id == 1234567890
         assert result.name == "test-thread"
@@ -517,9 +517,9 @@ class TestChannelConverter:
         mock_thread.parent = MagicMock()
         mock_thread.parent.id = 111111111
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.thread_to_summary(mock_thread)
+        result = _dc_mod.ChannelConverter.thread_to_summary(mock_thread)
 
         assert result.channel_id == 111111111
 
@@ -543,9 +543,9 @@ class TestChannelConverter:
         mock_thread.owner = MagicMock()
         mock_thread.owner.id = 222222222
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.thread_to_summary(mock_thread)
+        result = _dc_mod.ChannelConverter.thread_to_summary(mock_thread)
 
         assert result.owner_id == 222222222
 
@@ -571,9 +571,9 @@ class TestChannelConverter:
         )
         mock_thread.applied_tag_ids = None  # Set to None so applied_tags is used
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.thread_to_summary(mock_thread)
+        result = _dc_mod.ChannelConverter.thread_to_summary(mock_thread)
 
         assert result.applied_tag_ids == [111, 222]
         assert len(result.applied_tags) == 2
@@ -603,26 +603,26 @@ class TestChannelConverter:
         mock_thread.applied_tags = None  # Must be None for applied_tag_ids to be used
         mock_thread.applied_tag_ids = [111, 222]
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.thread_to_summary(mock_thread)
+        result = _dc_mod.ChannelConverter.thread_to_summary(mock_thread)
 
         assert result.applied_tag_ids == [111, 222]
         assert result.applied_tags is None
 
     def test_thread_to_detail_delegates_to_summary(self):
         """thread_to_detail should delegate to thread_to_summary."""
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        assert ChannelConverter.thread_to_detail == ChannelConverter.thread_to_summary
+        assert _dc_mod.ChannelConverter.thread_to_detail == _dc_mod.ChannelConverter.thread_to_summary
 
     def test_forum_tag_to_payload_converts_correctly(self):
         """forum_tag_to_payload should convert forum tag correctly."""
         mock_tag = DiscordMockUtils.create_mock_forum_tag(tag_id=111, name="test-tag", emoji="🏷️", channel_id=1)
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.forum_tag_to_payload(mock_tag, channel_id=111111111)
+        result = _dc_mod.ChannelConverter.forum_tag_to_payload(mock_tag, channel_id=111111111)
 
         assert result["id"] == 111
         assert result["channel_id"] == 111111111
@@ -643,9 +643,9 @@ class TestPermissionConverter:
 
         mock_overwrite = DiscordMockUtils.create_mock_permission_overwrite(allow=8, deny=4)
 
-        from utils.discord_converters import PermissionConverter
+        import utils.discord_converters as _dc_mod
 
-        result = PermissionConverter.overwrite_to_payload(mock_role, mock_overwrite, channel_id=1234567890)
+        result = _dc_mod.PermissionConverter.overwrite_to_payload(mock_role, mock_overwrite, channel_id=1234567890)
 
         assert result.id == "1234567890:111111111"
         assert result.channel_id == 1234567890
@@ -660,9 +660,9 @@ class TestPermissionConverter:
 
         mock_overwrite = DiscordMockUtils.create_mock_permission_overwrite(allow=16, deny=2)
 
-        from utils.discord_converters import PermissionConverter
+        import utils.discord_converters as _dc_mod
 
-        result = PermissionConverter.overwrite_to_payload(mock_member, mock_overwrite, channel_id=1234567890)
+        result = _dc_mod.PermissionConverter.overwrite_to_payload(mock_member, mock_overwrite, channel_id=1234567890)
 
         assert result.id == "1234567890:222222222"
         assert result.channel_id == 1234567890
@@ -680,9 +680,9 @@ class TestPermissionConverter:
 
         mock_overwrite = DiscordMockUtils.create_mock_permission_overwrite(allow=8, deny=4)
 
-        from utils.discord_converters import PermissionConverter
+        import utils.discord_converters as _dc_mod
 
-        result = PermissionConverter.overwrite_to_payload(mock_role, mock_overwrite)
+        result = _dc_mod.PermissionConverter.overwrite_to_payload(mock_role, mock_overwrite)
 
         assert result.id is None
         assert result.channel_id is None
@@ -711,9 +711,9 @@ class TestRoleConverter:
         mock_role.created_at = datetime(2024, 1, 1)
         mock_role.tags = None
 
-        from utils.discord_converters import RoleConverter
+        import utils.discord_converters as _dc_mod
 
-        result = RoleConverter.role_to_payload(mock_role)
+        result = _dc_mod.RoleConverter.role_to_payload(mock_role)
 
         assert result.id == 111111111
         assert result.guild_id == 987654321
@@ -748,9 +748,9 @@ class TestRoleConverter:
         mock_tags._premium_subscriber = True
         mock_role.tags = mock_tags
 
-        from utils.discord_converters import RoleConverter
+        import utils.discord_converters as _dc_mod
 
-        result = RoleConverter.role_to_payload(mock_role)
+        result = _dc_mod.RoleConverter.role_to_payload(mock_role)
 
         assert result.tags["bot_id"] == 111
         assert result.tags["integration_id"] == 222
@@ -774,9 +774,9 @@ class TestUserConverter:
         mock_user.avatar.url = "avatar_url"
         mock_user.created_at = datetime(2024, 1, 1)
 
-        from utils.discord_converters import UserConverter
+        import utils.discord_converters as _dc_mod
 
-        result = UserConverter.user_to_payload(mock_user)
+        result = _dc_mod.UserConverter.user_to_payload(mock_user)
 
         assert result.id == 111111111
         assert result.username == "test-user"
@@ -800,9 +800,9 @@ class TestUserConverter:
         mock_user.avatar = None
         mock_user.created_at = datetime(2024, 1, 1)
 
-        from utils.discord_converters import UserConverter
+        import utils.discord_converters as _dc_mod
 
-        result = UserConverter.user_to_payload(mock_user)
+        result = _dc_mod.UserConverter.user_to_payload(mock_user)
 
         assert result.bot is True
         assert result.system is True
@@ -835,9 +835,9 @@ class TestUserConverter:
         mock_member.guild_permissions = MagicMock()
         mock_member.guild_permissions.value = 104324673
 
-        from utils.discord_converters import UserConverter
+        import utils.discord_converters as _dc_mod
 
-        result = UserConverter.member_to_payload(mock_member)
+        result = _dc_mod.UserConverter.member_to_payload(mock_member)
 
         assert result.user.id == 111111111
         assert result.user.username == "test-user"
@@ -876,9 +876,9 @@ class TestUserConverter:
         mock_member.guild_permissions = MagicMock()
         mock_member.guild_permissions.value = 104324673
 
-        from utils.discord_converters import UserConverter
+        import utils.discord_converters as _dc_mod
 
-        result = UserConverter.member_to_payload(mock_member)
+        result = _dc_mod.UserConverter.member_to_payload(mock_member)
 
         assert result.deaf is False
         assert result.mute is False
@@ -903,9 +903,9 @@ class TestMessageConverter:
         mock_message.type = MagicMock()
         mock_message.type.name = "default"
 
-        from utils.discord_converters import MessageConverter
+        import utils.discord_converters as _dc_mod
 
-        result = MessageConverter.message_to_payload(mock_message)
+        result = _dc_mod.MessageConverter.message_to_payload(mock_message)
 
         assert result.id == 1234567890
         assert result.channel_id == 1234567890
@@ -948,9 +948,9 @@ class TestMessageConverter:
         mock_message.type = MagicMock()
         mock_message.type.name = "default"
 
-        from utils.discord_converters import MessageConverter
+        import utils.discord_converters as _dc_mod
 
-        result = MessageConverter.message_to_payload(mock_message)
+        result = _dc_mod.MessageConverter.message_to_payload(mock_message)
 
         assert result.content is not None
         assert result.content.title == "Test Embed"
@@ -966,9 +966,9 @@ class TestMessageConverter:
         )
         mock_message.author.name = "TestUser"
 
-        from utils.discord_converters import MessageConverter
+        import utils.discord_converters as _dc_mod
 
-        result = MessageConverter.message_to_summary(mock_message)
+        result = _dc_mod.MessageConverter.message_to_summary(mock_message)
 
         assert result.id == 1234567890
         assert result.author_id == 111111111
@@ -993,9 +993,9 @@ class TestMessageConverter:
         )
         mock_message.author.name = "TestUser"
 
-        from utils.discord_converters import MessageConverter
+        import utils.discord_converters as _dc_mod
 
-        result = MessageConverter.message_to_summary(mock_message)
+        result = _dc_mod.MessageConverter.message_to_summary(mock_message)
 
         assert result.content == "Test description"
 
@@ -1021,9 +1021,9 @@ class TestMessageConverter:
         )
         mock_message.author.name = "TestUser"
 
-        from utils.discord_converters import MessageConverter
+        import utils.discord_converters as _dc_mod
 
-        result = MessageConverter.message_to_summary(mock_message)
+        result = _dc_mod.MessageConverter.message_to_summary(mock_message)
 
         assert result.content == "Field1: Value1"
 
@@ -1040,14 +1040,14 @@ class TestGuildConverterExceptionPath:
         type(mock_guild).id = property(lambda self: (_ for _ in ()).throw(AttributeError("no id")))
         mock_guild.name = "Test"
 
-        from utils.discord_converters import GuildConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            GuildConverter.guild_to_summary(mock_guild)
+            _dc_mod.GuildConverter.guild_to_summary(mock_guild)
 
 
 # ---------------------------------------------------------------------------
-# ChannelConverter._coerce_position — exception path
+# _dc_mod.ChannelConverter._coerce_position — exception path
 # ---------------------------------------------------------------------------
 
 
@@ -1057,9 +1057,9 @@ class TestCoercePositionExceptionPath:
         mock_channel = DiscordMockUtils.create_mock_text_channel(channel_id=1, name="ch", guild_id=1)
         mock_channel.position = "not-a-number"  # int("not-a-number") raises ValueError
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.channel_to_summary(mock_channel)
+        result = _dc_mod.ChannelConverter.channel_to_summary(mock_channel)
         assert result.position == 0
 
 
@@ -1075,10 +1075,10 @@ class TestChannelConverterExceptionPaths:
         type(mock_channel).id = property(lambda self: (_ for _ in ()).throw(AttributeError("no id")))
         mock_channel.name = "ch"
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            ChannelConverter.channel_to_summary(mock_channel)
+            _dc_mod.ChannelConverter.channel_to_summary(mock_channel)
 
     def test_channel_to_detail_raises_on_missing_id(self):
         """channel_to_detail should propagate exception when channel.id raises."""
@@ -1086,10 +1086,10 @@ class TestChannelConverterExceptionPaths:
         type(mock_channel).id = property(lambda self: (_ for _ in ()).throw(AttributeError("no id")))
         mock_channel.name = "ch"
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            ChannelConverter.channel_to_detail(mock_channel)
+            _dc_mod.ChannelConverter.channel_to_detail(mock_channel)
 
     def test_category_to_detail_raises_on_missing_id(self):
         """category_to_detail should propagate exception when category.id raises."""
@@ -1097,14 +1097,14 @@ class TestChannelConverterExceptionPaths:
         type(mock_category).id = property(lambda self: (_ for _ in ()).throw(AttributeError("no id")))
         mock_category.name = "cat"
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            ChannelConverter.category_to_detail(mock_category)
+            _dc_mod.ChannelConverter.category_to_detail(mock_category)
 
 
 # ---------------------------------------------------------------------------
-# ChannelConverter.thread_to_summary — additional edge cases
+# _dc_mod.ChannelConverter.thread_to_summary — additional edge cases
 # ---------------------------------------------------------------------------
 
 
@@ -1116,9 +1116,9 @@ class TestThreadToSummaryEdgeCases:
         mock_thread.owner = None
         mock_thread.creator = None
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.thread_to_summary(mock_thread)
+        result = _dc_mod.ChannelConverter.thread_to_summary(mock_thread)
         assert result.owner_id == 0
 
     def test_thread_to_summary_applied_tags_with_integer_elements(self):
@@ -1128,9 +1128,9 @@ class TestThreadToSummaryEdgeCases:
         mock_thread.applied_tags = [111, 222, 333]
         mock_thread.applied_tag_ids = None
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.thread_to_summary(mock_thread)
+        result = _dc_mod.ChannelConverter.thread_to_summary(mock_thread)
         assert result.applied_tag_ids == [111, 222, 333]
 
     def test_thread_to_summary_applied_tag_ids_with_exception_is_none(self):
@@ -1140,9 +1140,9 @@ class TestThreadToSummaryEdgeCases:
         # applied_tag_ids will raise TypeError when iterated
         mock_thread.applied_tag_ids = ["not-int", None]
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
-        result = ChannelConverter.thread_to_summary(mock_thread)
+        result = _dc_mod.ChannelConverter.thread_to_summary(mock_thread)
         # int("not-int") raises, so applied_tag_ids becomes None
         assert result.applied_tag_ids is None
 
@@ -1152,10 +1152,10 @@ class TestThreadToSummaryEdgeCases:
         type(mock_thread).id = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken")))
         mock_thread.name = "t"
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            ChannelConverter.thread_to_summary(mock_thread)
+            _dc_mod.ChannelConverter.thread_to_summary(mock_thread)
 
     def test_forum_tag_to_payload_raises_on_tag_error(self):
         """forum_tag_to_payload should propagate exception when tag_to_dict raises."""
@@ -1168,7 +1168,7 @@ class TestThreadToSummaryEdgeCases:
 
         mock_tag.__class__ = type("BadTag", (), {"id": property(lambda self: boom())})
 
-        from utils.discord_converters import ChannelConverter
+        import utils.discord_converters as _dc_mod
 
         # tag_to_dict is resilient; instead test the re-raise path via a tag that
         # causes forum_tag_to_payload's own try-block to fail
@@ -1176,7 +1176,7 @@ class TestThreadToSummaryEdgeCases:
             patch("utils.discord_converters.tag_to_dict", side_effect=RuntimeError("boom")),
             pytest.raises(RuntimeError),
         ):
-            ChannelConverter.forum_tag_to_payload(mock_tag, channel_id=1)
+            _dc_mod.ChannelConverter.forum_tag_to_payload(mock_tag, channel_id=1)
 
 
 # ---------------------------------------------------------------------------
@@ -1193,10 +1193,10 @@ class TestPermissionConverterExceptionPath:
         mock_overwrite = MagicMock()
         mock_overwrite.pair = MagicMock(side_effect=AttributeError("no pair"))
 
-        from utils.discord_converters import PermissionConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            PermissionConverter.overwrite_to_payload(mock_role, mock_overwrite, channel_id=1)
+            _dc_mod.PermissionConverter.overwrite_to_payload(mock_role, mock_overwrite, channel_id=1)
 
 
 # ---------------------------------------------------------------------------
@@ -1211,10 +1211,10 @@ class TestRoleConverterExceptionPath:
         type(mock_role).id = property(lambda self: (_ for _ in ()).throw(AttributeError("no id")))
         mock_role.name = "TestRole"
 
-        from utils.discord_converters import RoleConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            RoleConverter.role_to_payload(mock_role)
+            _dc_mod.RoleConverter.role_to_payload(mock_role)
 
 
 # ---------------------------------------------------------------------------
@@ -1230,10 +1230,10 @@ class TestUserConverterExceptionPaths:
         mock_user.name = "TestUser"
         mock_user.discriminator = "0001"
 
-        from utils.discord_converters import UserConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            UserConverter.user_to_payload(mock_user)
+            _dc_mod.UserConverter.user_to_payload(mock_user)
 
     def test_member_to_payload_raises_on_missing_id(self):
         """member_to_payload should propagate exception when member.id raises."""
@@ -1242,10 +1242,10 @@ class TestUserConverterExceptionPaths:
         mock_member.display_name = "TestMember"
         mock_member.name = "TestMember"
 
-        from utils.discord_converters import UserConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            UserConverter.member_to_payload(mock_member)
+            _dc_mod.UserConverter.member_to_payload(mock_member)
 
 
 # ---------------------------------------------------------------------------
@@ -1265,9 +1265,9 @@ class TestMessageConverterAdditionalPaths:
         mock_message.type.name = "default"
 
         with patch("utils.discord_converters.EmbedConverter.embed_to_payload", side_effect=Exception("embed failed")):
-            from utils.discord_converters import MessageConverter
+            import utils.discord_converters as _dc_mod
 
-            result = MessageConverter.message_to_payload(mock_message)
+            result = _dc_mod.MessageConverter.message_to_payload(mock_message)
             assert result.content is None
 
     def test_message_to_payload_raises_on_critical_error(self):
@@ -1275,10 +1275,10 @@ class TestMessageConverterAdditionalPaths:
         mock_message = MagicMock()
         type(mock_message).id = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken")))
 
-        from utils.discord_converters import MessageConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            MessageConverter.message_to_payload(mock_message)
+            _dc_mod.MessageConverter.message_to_payload(mock_message)
 
     def test_message_to_summary_uses_embed_title_when_no_description(self):
         """message_to_summary should use embed title when description is absent."""
@@ -1299,9 +1299,9 @@ class TestMessageConverterAdditionalPaths:
         mock_ep.footer_text = None
 
         with patch("utils.discord_converters.EmbedConverter.embed_to_payload", return_value=mock_ep):
-            from utils.discord_converters import MessageConverter
+            import utils.discord_converters as _dc_mod
 
-            result = MessageConverter.message_to_summary(mock_message)
+            result = _dc_mod.MessageConverter.message_to_summary(mock_message)
             assert result.content == "The Embed Title"
 
     def test_message_to_summary_uses_embed_fields_when_no_title(self):
@@ -1325,9 +1325,9 @@ class TestMessageConverterAdditionalPaths:
         mock_ep.footer_text = None
 
         with patch("utils.discord_converters.EmbedConverter.embed_to_payload", return_value=mock_ep):
-            from utils.discord_converters import MessageConverter
+            import utils.discord_converters as _dc_mod
 
-            result = MessageConverter.message_to_summary(mock_message)
+            result = _dc_mod.MessageConverter.message_to_summary(mock_message)
             assert result.content == "Key: Val"
 
     def test_message_to_summary_uses_footer_when_nothing_else(self):
@@ -1344,9 +1344,9 @@ class TestMessageConverterAdditionalPaths:
         mock_ep.footer_text = "Footer content"
 
         with patch("utils.discord_converters.EmbedConverter.embed_to_payload", return_value=mock_ep):
-            from utils.discord_converters import MessageConverter
+            import utils.discord_converters as _dc_mod
 
-            result = MessageConverter.message_to_summary(mock_message)
+            result = _dc_mod.MessageConverter.message_to_summary(mock_message)
             assert result.content == "Footer content"
 
     def test_message_to_summary_fallback_raw_embed_on_converter_failure(self):
@@ -1362,9 +1362,9 @@ class TestMessageConverterAdditionalPaths:
         with patch(
             "utils.discord_converters.EmbedConverter.embed_to_payload", side_effect=Exception("converter failed")
         ):
-            from utils.discord_converters import MessageConverter
+            import utils.discord_converters as _dc_mod
 
-            result = MessageConverter.message_to_summary(mock_message)
+            result = _dc_mod.MessageConverter.message_to_summary(mock_message)
             assert result.content == "Raw description"
 
     def test_message_to_summary_raises_on_critical_error(self):
@@ -1372,7 +1372,7 @@ class TestMessageConverterAdditionalPaths:
         mock_message = MagicMock()
         type(mock_message).id = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken")))
 
-        from utils.discord_converters import MessageConverter
+        import utils.discord_converters as _dc_mod
 
         with pytest.raises(Exception):
-            MessageConverter.message_to_summary(mock_message)
+            _dc_mod.MessageConverter.message_to_summary(mock_message)

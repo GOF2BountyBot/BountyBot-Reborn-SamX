@@ -733,7 +733,7 @@ class TestCI19ProbeRetry:
         _probe_attempts = 3
         _probe_backoff_s = (0.0, 0.0, 0.0)  # instant backoff for tests
         _probe_ok = False
-        _last_probe_exc = None
+        _last_probe_exc_unused = None
         for _attempt in range(1, _probe_attempts + 1):
             try:
                 probe_resp = await http.get(f"{api_base}/health", timeout=3.0)
@@ -742,7 +742,7 @@ class TestCI19ProbeRetry:
                 _probe_ok = True
                 break
             except Exception as _exc:
-                _last_probe_exc = _exc
+                _last_probe_exc_unused = _exc
                 if _attempt < _probe_attempts:
                     await asyncio.sleep(_probe_backoff_s[_attempt - 1])
         if not _probe_ok:
@@ -784,7 +784,7 @@ class TestCI19ProbeRetry:
         _probe_attempts = 3
         _probe_backoff_s = (0.0, 0.0, 0.0)
         _probe_ok = False
-        _last_probe_exc = None
+        _last_probe_exc_unused = None
         for _attempt in range(1, _probe_attempts + 1):
             try:
                 probe_resp = await http.get(f"{api_base}/health", timeout=3.0)
@@ -793,7 +793,7 @@ class TestCI19ProbeRetry:
                 _probe_ok = True
                 break
             except Exception as _exc:
-                _last_probe_exc = _exc
+                _last_probe_exc_unused = _exc
                 if _attempt < _probe_attempts:
                     log.info(f"Probe attempt {_attempt} failed, retrying...")
                     await asyncio.sleep(_probe_backoff_s[_attempt - 1])
@@ -842,7 +842,7 @@ class TestCI19ProbeRetry:
         _probe_attempts = 3
         _probe_backoff_s = (0.0, 0.0, 0.0)
         _probe_ok = False
-        _last_probe_exc = None
+        _last_probe_exc_unused = None
         for _attempt in range(1, _probe_attempts + 1):
             try:
                 probe_resp = await http.get(f"{api_base}/health", timeout=3.0)
@@ -851,7 +851,7 @@ class TestCI19ProbeRetry:
                 _probe_ok = True
                 break
             except Exception as _exc:
-                _last_probe_exc = _exc
+                _last_probe_exc_unused = _exc
                 if _attempt < _probe_attempts:
                     await asyncio.sleep(_probe_backoff_s[_attempt - 1])
         if not _probe_ok:

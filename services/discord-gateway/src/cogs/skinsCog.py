@@ -413,16 +413,17 @@ class SkinsCog(commands.Cog):
             obj = resp.json()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                return await interaction.followup.send(f"❌ Ship '{ship}' not found.", ephemeral=True)
+                await interaction.followup.send(f"❌ Ship '{ship}' not found.", ephemeral=True)
+                return
             flogger.error(f"HTTP error fetching ship '{ship}': {e}")
-            return await interaction.followup.send(
-                "❌ API error fetching ship data. Please try again later.", ephemeral=True
-            )
+            await interaction.followup.send("❌ API error fetching ship data. Please try again later.", ephemeral=True)
+            return
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error fetching ship '{ship}': {e}")
-            return await interaction.followup.send(
+            await interaction.followup.send(
                 "⚠️ Unexpected error fetching ship data. Please try again later.", ephemeral=True
             )
+            return
 
         # select URL
         if skin == "Default":
@@ -432,7 +433,8 @@ class SkinsCog(commands.Cog):
             img_url = skins_map.get(skin)
 
         if not img_url:
-            return await interaction.followup.send(f"❌ Skin '{skin}' not found for ship '{ship}'.", ephemeral=True)
+            await interaction.followup.send(f"❌ Skin '{skin}' not found for ship '{ship}'.", ephemeral=True)
+            return
 
         embed = discord.Embed(title=f"{ship} — {skin}", color=discord.Color.green())
         embed.set_image(url=img_url)

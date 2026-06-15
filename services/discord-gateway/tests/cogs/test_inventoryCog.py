@@ -15,20 +15,18 @@ from tests.mocks.discord_mock_utils import DiscordMockUtils
 # Module-level mock setup — must run before any src imports
 # ---------------------------------------------------------------------------
 
-_mock_utils = DiscordMockUtils()
-
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
 # Track the module-level logger for assertion
-_module_logger = None
+_unused_module_logger = None
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock with common log-level methods."""
-    global _module_logger
+    global _unused_module_logger
     logger = MagicMock()
     logger.info = MagicMock()
     logger.debug = MagicMock()
@@ -37,7 +35,7 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.trace = MagicMock()
     logger.critical = MagicMock()
     logger.exception = MagicMock()
-    _module_logger = logger
+    _unused_module_logger = logger
     return logger
 
 
@@ -1935,7 +1933,6 @@ def _init_ac_caches_for_inventory_tests(
     """
     import utils.autocomplete_state as ac_state
     from cogs._shared.autocomplete_cache import AutocompleteCache
-    from utils.autocomplete_state import NormalizedChoice
     from utils.autocomplete_utils import normalize_for_search
 
     if ac_state.player_cache is None:
@@ -1962,7 +1959,7 @@ def _init_ac_caches_for_inventory_tests(
             label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
             value = str(item.get("id", item_name))
             norm = normalize_for_search(label)
-            inv_choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=item))
+            inv_choices.append(ac_state.NormalizedChoice(label=label, value=value, norm=norm, raw=item))
         ac_state.inventory_cache.set((guild_id, player_id), inv_choices)
 
     # Store ships as NormalizedChoice objects (as _refresh_ships does)
@@ -1978,7 +1975,7 @@ def _init_ac_caches_for_inventory_tests(
             label = f"{display_name} ({active_prefix}{ship_type})"
             value = str(ship.get("player_ship_id") or ship.get("id") or "")
             norm = normalize_for_search(label)
-            ship_choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=ship))
+            ship_choices.append(ac_state.NormalizedChoice(label=label, value=value, norm=norm, raw=ship))
         ac_state.ships_cache.set((guild_id, player_id), ship_choices)
 
 
@@ -2441,8 +2438,6 @@ class TestInventoryCogA46Choices:
         mock_inventory_cog.http_client.get = AsyncMock()
 
         target = _create_mock_interaction(user_id=222222222).user
-
-        import asyncio
 
         asyncio.run(
             mock_inventory_cog.give.callback(

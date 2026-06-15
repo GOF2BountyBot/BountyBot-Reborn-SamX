@@ -43,9 +43,6 @@ _ITEM_TYPE_TO_EQUIPMENT_CATEGORY: dict[str, str] = {
     "TurretWeapon": "turrets",
 }
 
-# Module class name prefix to identify modules
-_MODULE_TYPE_SUFFIXES = {"Module"}
-
 
 def _item_type_to_equipment_category(item_type: str) -> str | None:
     """Map an Item.type value to an equipment category string.

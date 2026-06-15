@@ -28,8 +28,8 @@ import concurrent.futures
 import os
 import sys
 import threading
+import types as _types
 from collections import OrderedDict
-from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -46,15 +46,13 @@ elif sys.path[0] != _SRC_DIR:
     sys.path.insert(0, _SRC_DIR)
 
 # Mock shared.bblogger (not installed in test env)
-_mock_shared = ModuleType("shared")
+_mock_shared = _types.ModuleType("shared")
 _mock_shared.bblogger = MagicMock()
 _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())
 sys.modules.setdefault("shared", _mock_shared)
 sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 
 # Mock sqlalchemy_utils (transitive import from models)
-import types as _types
-
 if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils = _types.ModuleType("sqlalchemy_utils")
     _sqla_utils.UUIDType = MagicMock()  # type: ignore[attr-defined]
@@ -163,15 +161,11 @@ def _build_app(renderer, graph, bounty_route=None):
     """
     import api.routers.bounties as bounties_module
     import api.routers.systems as systems_module
-    from api.routers.bounties import get_bounty_service
-    from api.routers.bounties import router as bounties_router
-    from api.routers.systems import get_db
-    from api.routers.systems import router as systems_router
     from fastapi import FastAPI
 
     app = FastAPI()
-    app.include_router(bounties_router, prefix="/api/v1")
-    app.include_router(systems_router, prefix="/api/v1")
+    app.include_router(bounties_module.router, prefix="/api/v1")
+    app.include_router(systems_module.router, prefix="/api/v1")
 
     app.state.map_renderer = renderer
     app.state.system_graph = graph
@@ -184,7 +178,7 @@ def _build_app(renderer, graph, bounty_route=None):
     async def override_get_db():
         yield AsyncMock()
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[systems_module.get_db] = override_get_db
 
     route = bounty_route if bounty_route is not None else ["A", "B", "C"]
 
@@ -197,7 +191,7 @@ def _build_app(renderer, graph, bounty_route=None):
         svc.bounty_repo.get_by_id = AsyncMock(return_value=bounty)
         return svc
 
-    app.dependency_overrides[get_bounty_service] = _make_bounty_service
+    app.dependency_overrides[bounties_module.get_bounty_service] = _make_bounty_service
     return app
 
 
@@ -934,13 +928,12 @@ class TestMissingRendererGuard:
     @patch("api.routers.bounties.get_db_session")
     def test_bounty_map_returns_503_when_renderer_absent(self, mock_get_db):
         """GET /bounties/{id}/map returns 503 when app.state.map_renderer is not set."""
-        from api.routers.bounties import get_bounty_service
-        from api.routers.bounties import router as bounties_router
+        import api.routers.bounties as bounties_module
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
         app = FastAPI()
-        app.include_router(bounties_router, prefix="/api/v1")
+        app.include_router(bounties_module.router, prefix="/api/v1")
         # Deliberately do NOT set app.state.map_renderer or app.state.system_graph.
 
         def _make_bounty_service():
@@ -952,7 +945,7 @@ class TestMissingRendererGuard:
             svc.bounty_repo.get_by_id = AsyncMock(return_value=bounty)
             return svc
 
-        app.dependency_overrides[get_bounty_service] = _make_bounty_service
+        app.dependency_overrides[bounties_module.get_bounty_service] = _make_bounty_service
 
         mock_session = AsyncMock()
         mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -968,19 +961,18 @@ class TestMissingRendererGuard:
 
     def test_systems_route_map_returns_503_when_renderer_absent(self):
         """GET /systems/route/map returns 503 when app.state.map_renderer is not set."""
-        from api.routers.systems import get_db
-        from api.routers.systems import router as systems_router
+        import api.routers.systems as systems_module
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
         app = FastAPI()
-        app.include_router(systems_router, prefix="/api/v1")
+        app.include_router(systems_module.router, prefix="/api/v1")
         # Deliberately do NOT set app.state.map_renderer or app.state.system_graph.
 
         async def override_get_db():
             yield AsyncMock()
 
-        app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[systems_module.get_db] = override_get_db
 
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/api/v1/systems/route/map?start=A&end=C")
@@ -996,8 +988,6 @@ class TestMissingRendererGuard:
         The endpoint uses _get_system_graph Depends which raises 503 when absent.
         """
         import api.routers.bounties as bounties_module
-        from api.routers.bounties import get_bounty_service
-        from api.routers.bounties import router as bounties_router
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from services.map_renderer import MapRenderer
@@ -1006,7 +996,7 @@ class TestMissingRendererGuard:
         renderer = MapRenderer(map_path=_MAP_PATH)
 
         app = FastAPI()
-        app.include_router(bounties_router, prefix="/api/v1")
+        app.include_router(bounties_module.router, prefix="/api/v1")
         app.state.map_renderer = renderer
         # app.state.system_graph deliberately absent
 
@@ -1023,7 +1013,7 @@ class TestMissingRendererGuard:
             svc.bounty_repo.get_by_id = AsyncMock(return_value=bounty)
             return svc
 
-        app.dependency_overrides[get_bounty_service] = _make_bounty_service
+        app.dependency_overrides[bounties_module.get_bounty_service] = _make_bounty_service
 
         mock_session = AsyncMock()
         mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -1046,8 +1036,6 @@ class TestMissingRendererGuard:
         more specific than) the renderer-absent test above which omits both.
         """
         import api.routers.systems as systems_module
-        from api.routers.systems import get_db
-        from api.routers.systems import router as systems_router
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         from services.map_renderer import MapRenderer
@@ -1056,7 +1044,7 @@ class TestMissingRendererGuard:
         renderer = MapRenderer(map_path=_MAP_PATH)
 
         app = FastAPI()
-        app.include_router(systems_router, prefix="/api/v1")
+        app.include_router(systems_module.router, prefix="/api/v1")
         app.state.map_renderer = renderer
         # app.state.system_graph deliberately absent
 
@@ -1067,7 +1055,7 @@ class TestMissingRendererGuard:
         async def override_get_db():
             yield AsyncMock()
 
-        app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[systems_module.get_db] = override_get_db
 
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/api/v1/systems/route/map?start=A&end=C")

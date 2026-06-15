@@ -113,7 +113,6 @@ _PLAYER_SHIP_COLS = [
 # Synthetic test IDs — chosen to be well outside real data ranges.
 _TEST_GUILD_ID = 999_999_977
 _TEST_USER_ID = 999_999_977_001
-_TEST_PLAYER_ID_SENTINEL = None  # set dynamically in fixtures
 
 
 # ---------------------------------------------------------------------------

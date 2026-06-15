@@ -289,7 +289,7 @@ class TestCreateApp:
             app.router.lifespan_context = None
 
             client = TestClient(app, raise_server_exceptions=False)
-            _response = client.get("/")
+            client.get("/")
             # Either 200 or startup error — we just verify the route exists
             route_paths = [r.path for r in app.routes]
             assert "/" in route_paths

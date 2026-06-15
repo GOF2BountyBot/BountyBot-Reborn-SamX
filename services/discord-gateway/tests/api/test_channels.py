@@ -51,9 +51,6 @@ _MockUser = type("User", (), {})
 _MockMember = type("Member", (), {})
 _MockRole = type("Role", (), {})
 _MockMessage = type("Message", (), {})
-_MockForbidden = type("Forbidden", (Exception,), {})
-_MockNotFound = type("NotFound", (Exception,), {})
-_MockHTTPException = type("HTTPException", (Exception,), {})
 
 _mock_discord.CategoryChannel = _MockCategoryChannel
 _mock_discord.TextChannel = _MockTextChannel

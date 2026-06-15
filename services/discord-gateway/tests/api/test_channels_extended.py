@@ -263,9 +263,9 @@ def _build_app(mock_bot, channel_detail_override=None):
         mock_ec.payload_to_embed.return_value = MagicMock()
         mock_cpo.return_value = MagicMock()
 
-        from api.routers.channels import router
+        import api.routers.channels as channels_module
 
-        app.include_router(router, prefix="/api/v1")
+        app.include_router(channels_module.router, prefix="/api/v1")
 
         yield (
             app,
@@ -388,9 +388,9 @@ class TestGetChannelCategoryRejection:
             mock_gea.side_effect = _get_entity
             mock_rb.side_effect = _resolve
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             resp = client.get("/api/v1/channels/1111111111")
@@ -489,9 +489,9 @@ class TestUpdateChannel:
             mock_gea.side_effect = _get_entity
             mock_rb.side_effect = _resolve
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             resp = client.put("/api/v1/channels/1111111111", json={"name": "x"})
@@ -574,7 +574,7 @@ class TestCreateChannelMessage:
 
     def test_create_message_success(self, channels_client, channels_app_and_mocks):
         """POST a message to a channel should return 201."""
-        _app, _mocks = channels_app_and_mocks
+        _app_unused, _mocks_unused = channels_app_and_mocks
         # The channel's send() is AsyncMock; set up a return value
         mock_msg = MagicMock()
         mock_msg.id = 9876543210
@@ -620,9 +620,9 @@ class TestCreateChannelMessage:
             mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
             mock_ec.payload_to_embed.return_value = MagicMock()
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            new_app.include_router(router, prefix="/api/v1")
+            new_app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(new_app)
             payload = {"content": {"title": "Hello", "description": "World"}}
@@ -708,9 +708,9 @@ class TestGetChannelPermissions:
             mock_pc.overwrite_to_payload.return_value = overwrite_payload
             mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             resp = client.get("/api/v1/channels/1234567890/permissions")
@@ -783,9 +783,9 @@ class TestUpdateChannelPermissions:
             mock_pc.overwrite_to_payload.return_value = {}
             mock_cpo.return_value = MagicMock()
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             payload = {"overwrites": [{"target_id": 777, "type": "role", "allow": 0, "deny": 0}]}
@@ -830,9 +830,9 @@ class TestUpdateChannelPermissions:
             mock_rb.side_effect = _resolve
             mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             payload = {"overwrites": [{"target_id": 888, "type": "member", "allow": 0, "deny": 0}]}
@@ -919,9 +919,9 @@ class TestListForumThreads:
             }
             mock_cc.thread_to_summary.return_value = thread_summary
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             resp = client.get("/api/v1/channels/3333333333/threads")
@@ -1015,9 +1015,9 @@ class TestCreateForumThread:
             mock_cc.thread_to_detail.return_value = thread_detail
             mock_ec.payload_to_embed.return_value = None
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             payload = {"name": "my-thread"}
@@ -1097,9 +1097,9 @@ class TestListForumTags:
                 "emoji": None,
             }
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             resp = client.get("/api/v1/channels/3333333333/tags")
@@ -1149,9 +1149,9 @@ class TestListForumTags:
             mock_gea.side_effect = _get_entity
             mock_rb.side_effect = _resolve
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             resp = client.get("/api/v1/channels/3333333333/tags")
@@ -1284,9 +1284,9 @@ def _build_app_with_discord_patch(mock_bot, discord_overrides=None, channel_deta
         mock_ec.payload_to_embed.return_value = MagicMock()
         mock_cpo.return_value = MagicMock()
 
-        from api.routers.channels import router
+        import api.routers.channels as channels_module
 
-        app.include_router(router, prefix="/api/v1")
+        app.include_router(channels_module.router, prefix="/api/v1")
 
         yield (
             app,
@@ -1344,9 +1344,9 @@ class TestGenericExceptionHandlers:
 
             mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             yield TestClient(app), mock_hde
 
@@ -1795,9 +1795,9 @@ class TestCreateMessageContentFallback:
             mock_ec.payload_to_embed.return_value = MagicMock()
             mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
 
-            from api.routers.channels import router
+            import api.routers.channels as channels_module
 
-            app.include_router(router, prefix="/api/v1")
+            app.include_router(channels_module.router, prefix="/api/v1")
 
             client = TestClient(app)
             # The EmbedPayload Pydantic model does have model_dump, but the router

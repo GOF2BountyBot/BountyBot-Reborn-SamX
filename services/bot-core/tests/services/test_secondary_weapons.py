@@ -216,7 +216,7 @@ class TestRocket:
 
     def test_range_gate_exact_boundary(self):
         """Range gate: distance = range_m → fires; distance = range_m + 1 → no fire. Test 4."""
-        rocket = _secondary(subtype="rocket", range_m=1100.0, damage=50.0, speed_ms=500)  # noqa: F841
+        _rocket_unused = _secondary(subtype="rocket", range_m=1100.0, damage=50.0, speed_ms=500)
         # At exact range: should fire with AlwaysHit
         l2 = _loadout(name="Target")
         # Force current_distance to exactly range_m by using a large range weapon

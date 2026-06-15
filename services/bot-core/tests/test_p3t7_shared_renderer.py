@@ -22,10 +22,10 @@ Adversarial-grade test suite with three guarantees:
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import os
 import sys
-from contextlib import asynccontextmanager
-from types import ModuleType
+import types as _types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,14 +45,13 @@ elif sys.path[0] != _SRC_DIR:
     sys.path.insert(0, _SRC_DIR)
 
 # Mock shared.bblogger (not installed in test env)
-_mock_shared = ModuleType("shared")
+_mock_shared = _types.ModuleType("shared")
 _mock_shared.bblogger = MagicMock()
 _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())
 sys.modules.setdefault("shared", _mock_shared)
 sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 
 # Mock sqlalchemy_utils (transitive import from models)
-import types as _types
 
 if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils = _types.ModuleType("sqlalchemy_utils")
@@ -173,14 +172,10 @@ def _build_app_with_shared_pair(map_renderer, system_graph) -> FastAPI:
     """
     import api.routers.bounties as bounties_module
     import api.routers.systems as systems_module
-    from api.routers.bounties import get_bounty_service
-    from api.routers.bounties import router as bounties_router
-    from api.routers.systems import get_db
-    from api.routers.systems import router as systems_router
 
     app = FastAPI()
-    app.include_router(bounties_router, prefix="/api/v1")
-    app.include_router(systems_router, prefix="/api/v1")
+    app.include_router(bounties_module.router, prefix="/api/v1")
+    app.include_router(systems_module.router, prefix="/api/v1")
 
     # Wire shared singletons on app.state (mirrors lifespan).
     # Needed for the optional getters used by admin-spawn.
@@ -196,7 +191,7 @@ def _build_app_with_shared_pair(map_renderer, system_graph) -> FastAPI:
     async def override_get_db():
         yield AsyncMock()
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[systems_module.get_db] = override_get_db
 
     # Wire a trivial bounty service that returns a fake bounty for map tests.
     def _make_bounty_service():
@@ -208,7 +203,7 @@ def _build_app_with_shared_pair(map_renderer, system_graph) -> FastAPI:
         svc.bounty_repo.get_by_id = AsyncMock(return_value=bounty)
         return svc
 
-    app.dependency_overrides[get_bounty_service] = _make_bounty_service
+    app.dependency_overrides[bounties_module.get_bounty_service] = _make_bounty_service
 
     return app
 
@@ -649,13 +644,12 @@ class TestMissingRendererGuard:
     def _build_app_without_renderer(self):
         """Return a TestClient whose app has NO map_renderer / system_graph on state."""
 
-        from api.routers.bounties import get_bounty_service
-        from api.routers.bounties import router as bounties_router
-        from api.routers.systems import router as systems_router
+        import api.routers.bounties as bounties_module
+        import api.routers.systems as systems_module
 
         app = FastAPI()
-        app.include_router(bounties_router, prefix="/api/v1")
-        app.include_router(systems_router, prefix="/api/v1")
+        app.include_router(bounties_module.router, prefix="/api/v1")
+        app.include_router(systems_module.router, prefix="/api/v1")
         # Deliberately do NOT set app.state.map_renderer or app.state.system_graph.
 
         # Wire a fake bounty service so the endpoint can reach the renderer check.
@@ -668,7 +662,7 @@ class TestMissingRendererGuard:
             svc.bounty_repo.get_by_id = AsyncMock(return_value=bounty)
             return svc
 
-        app.dependency_overrides[get_bounty_service] = _make_bounty_service
+        app.dependency_overrides[bounties_module.get_bounty_service] = _make_bounty_service
         return TestClient(app, raise_server_exceptions=False)
 
     @patch("api.routers.bounties.get_db_session")
@@ -696,18 +690,17 @@ class TestMissingRendererGuard:
         """GET /systems/route/map returns 503 when app.state.map_renderer is not set."""
         from unittest.mock import AsyncMock
 
-        from api.routers.systems import get_db
-        from api.routers.systems import router as systems_router
+        import api.routers.systems as systems_module
 
         app = FastAPI()
-        app.include_router(systems_router, prefix="/api/v1")
+        app.include_router(systems_module.router, prefix="/api/v1")
         # Do NOT set app.state.map_renderer or app.state.system_graph.
 
         # Override get_db so the DB call doesn't fail before the 503 guard fires.
         async def override_get_db():
             yield AsyncMock()
 
-        app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[systems_module.get_db] = override_get_db
 
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/api/v1/systems/route/map?start=A&end=C")
@@ -794,8 +787,6 @@ class TestAdminSpawnRendererSkip:
         from datetime import UTC, datetime
 
         import api.routers.bounties as bounties_module
-        from api.routers.bounties import get_bounty_service
-        from api.routers.bounties import router as bounties_router
 
         # Build fake bounty returned by spawn_bounty.
         # Must have proper types so BountyResponse.model_validate succeeds.
@@ -824,9 +815,9 @@ class TestAdminSpawnRendererSkip:
             return svc
 
         app = FastAPI()
-        app.include_router(bounties_router, prefix="/api/v1")
+        app.include_router(bounties_module.router, prefix="/api/v1")
         # No renderer on state — optional getters return None.
-        app.dependency_overrides[get_bounty_service] = _make_svc
+        app.dependency_overrides[bounties_module.get_bounty_service] = _make_svc
         app.dependency_overrides[bounties_module._get_map_renderer_optional] = lambda: None
         app.dependency_overrides[bounties_module._get_system_graph_optional] = lambda: None
 
@@ -887,7 +878,7 @@ def _make_mock_db_manager_for_lifespan():
     mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
     mock_db_mgr.shutdown = MagicMock()
 
-    @asynccontextmanager
+    @contextlib.asynccontextmanager
     async def _mock_get_session():
         yield mock_db_session
 
@@ -907,8 +898,6 @@ def _lifespan_patches(mock_db_mgr, mock_scheduler, load_graph_mock=None):
                           inspect call counts *without* relying on patch-ordering
                           tricks.  When None, a fresh AsyncMock() is created.
     """
-    import contextlib
-
     stack = contextlib.ExitStack()
 
     stack.enter_context(patch("main.db_manager", mock_db_mgr))

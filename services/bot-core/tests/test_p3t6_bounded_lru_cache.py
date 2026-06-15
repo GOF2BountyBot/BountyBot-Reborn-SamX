@@ -27,8 +27,8 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import types as _types
 from collections import OrderedDict
-from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,15 +45,13 @@ elif sys.path[0] != _SRC_DIR:
     sys.path.insert(0, _SRC_DIR)
 
 # Mock shared.bblogger (not installed in test env)
-_mock_shared = ModuleType("shared")
+_mock_shared = _types.ModuleType("shared")
 _mock_shared.bblogger = MagicMock()
 _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())
 sys.modules.setdefault("shared", _mock_shared)
 sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 
 # Mock sqlalchemy_utils (transitive import from models)
-import types as _types
-
 if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils = _types.ModuleType("sqlalchemy_utils")
     _sqla_utils.UUIDType = MagicMock()  # type: ignore[attr-defined]
@@ -96,40 +94,39 @@ class TestBountiesLruHelpers:
         m._map_cache = original
 
     def test_get_returns_none_on_miss(self):
-        from api.routers.bounties import _map_cache_get
+        import api.routers.bounties as m
 
-        assert _map_cache_get((1, ("A", "B"))) is None
+        assert m._map_cache_get((1, ("A", "B"))) is None
 
     def test_get_returns_default_on_miss(self):
-        from api.routers.bounties import _map_cache_get
+        import api.routers.bounties as m
 
         sentinel = b"default"
-        assert _map_cache_get((1, ("A", "B")), default=sentinel) is sentinel
+        assert m._map_cache_get((1, ("A", "B")), default=sentinel) is sentinel
 
     def test_set_then_get_returns_value(self):
-        from api.routers.bounties import _map_cache_get, _map_cache_set
+        import api.routers.bounties as m
 
         key = (42, ("X", "Y", "Z"))
         value = _make_unique_png(42)
-        _map_cache_set(key, value)
-        assert _map_cache_get(key) == value
+        m._map_cache_set(key, value)
+        assert m._map_cache_get(key) == value
 
     def test_set_overflow_evicts_lru(self):
         """Filling to cap+1 evicts the oldest (LRU) entry."""
         import api.routers.bounties as m
-        from api.routers.bounties import _map_cache_set
 
         cap = m._MAP_CACHE_MAX
         # Fill cache to capacity.
         keys = [(i, (f"Sys{i}",)) for i in range(cap)]
         for i, key in enumerate(keys):
-            _map_cache_set(key, _make_unique_png(i))
+            m._map_cache_set(key, _make_unique_png(i))
 
         assert len(m._map_cache) == cap
 
         # Insert one more — the oldest (keys[0]) must be evicted.
         new_key = (cap, (f"Sys{cap}",))
-        _map_cache_set(new_key, _make_unique_png(cap))
+        m._map_cache_set(new_key, _make_unique_png(cap))
 
         assert len(m._map_cache) == cap, f"Cache grew beyond cap ({cap}); got {len(m._map_cache)}"
         assert keys[0] not in m._map_cache, "LRU (first inserted) entry was not evicted on overflow"
@@ -138,20 +135,19 @@ class TestBountiesLruHelpers:
     def test_get_promotes_to_mru(self):
         """Accessing an entry via _map_cache_get bumps it to MRU position."""
         import api.routers.bounties as m
-        from api.routers.bounties import _map_cache_get, _map_cache_set
 
         cap = m._MAP_CACHE_MAX
         # Fill cache to capacity.
         keys = [(i, (f"S{i}",)) for i in range(cap)]
         for i, key in enumerate(keys):
-            _map_cache_set(key, _make_unique_png(i))
+            m._map_cache_set(key, _make_unique_png(i))
 
         # Access keys[0] — moves it from LRU to MRU.
-        _map_cache_get(keys[0])
+        m._map_cache_get(keys[0])
 
         # Now overflow: the new true-LRU is keys[1] (keys[0] was promoted).
         new_key = (cap, (f"S{cap}",))
-        _map_cache_set(new_key, _make_unique_png(cap))
+        m._map_cache_set(new_key, _make_unique_png(cap))
 
         assert keys[0] in m._map_cache, "Promoted (accessed) entry was incorrectly evicted"
         assert keys[1] not in m._map_cache, "True-LRU entry (keys[1]) was not evicted"
@@ -160,35 +156,33 @@ class TestBountiesLruHelpers:
     def test_set_existing_key_promotes_to_mru(self):
         """Re-setting an existing key updates the value and promotes it to MRU."""
         import api.routers.bounties as m
-        from api.routers.bounties import _map_cache_get, _map_cache_set
 
         cap = m._MAP_CACHE_MAX
         keys = [(i, (f"T{i}",)) for i in range(cap)]
         for i, key in enumerate(keys):
-            _map_cache_set(key, _make_unique_png(i))
+            m._map_cache_set(key, _make_unique_png(i))
 
         # Re-set keys[0] with new bytes — promotes it to MRU.
         new_bytes = b"updated_value"
-        _map_cache_set(keys[0], new_bytes)
+        m._map_cache_set(keys[0], new_bytes)
 
         # Overflow: keys[1] (now LRU) should be evicted.
         overflow_key = (cap, (f"T{cap}",))
-        _map_cache_set(overflow_key, _make_unique_png(cap))
+        m._map_cache_set(overflow_key, _make_unique_png(cap))
 
         assert keys[0] in m._map_cache, "Re-set key was incorrectly evicted"
-        assert _map_cache_get(keys[0]) == new_bytes, "Re-set value not stored correctly"
+        assert m._map_cache_get(keys[0]) == new_bytes, "Re-set value not stored correctly"
         assert keys[1] not in m._map_cache, "True-LRU (keys[1]) was not evicted after re-set"
 
     def test_cache_never_exceeds_cap(self):
         """Inserting 3× cap entries never causes cache to exceed cap."""
         import api.routers.bounties as m
-        from api.routers.bounties import _map_cache_set
 
         cap = m._MAP_CACHE_MAX
         total = cap * 3
         for i in range(total):
             key = (i, (f"U{i}",))
-            _map_cache_set(key, _make_unique_png(i))
+            m._map_cache_set(key, _make_unique_png(i))
             assert len(m._map_cache) <= cap, (
                 f"Cache size {len(m._map_cache)} exceeded cap {cap} after {i + 1} insertions"
             )
@@ -196,25 +190,24 @@ class TestBountiesLruHelpers:
     def test_rerender_after_eviction_byte_identical(self):
         """After a key is evicted and re-inserted, the returned bytes are correct."""
         import api.routers.bounties as m
-        from api.routers.bounties import _map_cache_get, _map_cache_set
 
         cap = m._MAP_CACHE_MAX
         victim_key = (0, ("V0",))
         original_bytes = _make_unique_png(999)
 
         # Insert victim at LRU position.
-        _map_cache_set(victim_key, original_bytes)
+        m._map_cache_set(victim_key, original_bytes)
         # Fill rest of cache — victim stays LRU.
         for i in range(1, cap):
-            _map_cache_set((i, (f"V{i}",)), _make_unique_png(i))
+            m._map_cache_set((i, (f"V{i}",)), _make_unique_png(i))
 
         # Overflow: victim should be evicted.
-        _map_cache_set((cap, (f"V{cap}",)), _make_unique_png(cap))
+        m._map_cache_set((cap, (f"V{cap}",)), _make_unique_png(cap))
         assert victim_key not in m._map_cache, "Victim key was not evicted as expected"
 
         # Re-insert with identical bytes (simulating re-render).
-        _map_cache_set(victim_key, original_bytes)
-        result = _map_cache_get(victim_key)
+        m._map_cache_set(victim_key, original_bytes)
+        result = m._map_cache_get(victim_key)
         assert result == original_bytes, (
             f"Re-inserted value differs from original: got {result!r}, expected {original_bytes!r}"
         )
@@ -233,31 +226,30 @@ class TestSystemsLruHelpers:
         m._route_map_cache = original
 
     def test_get_returns_none_on_miss(self):
-        from api.routers.systems import _route_map_cache_get
+        import api.routers.systems as m
 
-        assert _route_map_cache_get(("A", "B")) is None
+        assert m._route_map_cache_get(("A", "B")) is None
 
     def test_set_then_get_returns_value(self):
-        from api.routers.systems import _route_map_cache_get, _route_map_cache_set
+        import api.routers.systems as m
 
         key = ("Sol", "Proxima")
         value = _make_unique_png(7)
-        _route_map_cache_set(key, value)
-        assert _route_map_cache_get(key) == value
+        m._route_map_cache_set(key, value)
+        assert m._route_map_cache_get(key) == value
 
     def test_set_overflow_evicts_lru(self):
         import api.routers.systems as m
-        from api.routers.systems import _route_map_cache_set
 
         cap = m._ROUTE_MAP_CACHE_MAX
         keys = [(f"A{i}", f"B{i}") for i in range(cap)]
         for i, key in enumerate(keys):
-            _route_map_cache_set(key, _make_unique_png(i))
+            m._route_map_cache_set(key, _make_unique_png(i))
 
         assert len(m._route_map_cache) == cap
 
         new_key = (f"A{cap}", f"B{cap}")
-        _route_map_cache_set(new_key, _make_unique_png(cap))
+        m._route_map_cache_set(new_key, _make_unique_png(cap))
 
         assert len(m._route_map_cache) == cap, f"Cache grew beyond cap ({cap})"
         assert keys[0] not in m._route_map_cache, "LRU entry was not evicted on overflow"
@@ -265,19 +257,18 @@ class TestSystemsLruHelpers:
 
     def test_get_promotes_to_mru(self):
         import api.routers.systems as m
-        from api.routers.systems import _route_map_cache_get, _route_map_cache_set
 
         cap = m._ROUTE_MAP_CACHE_MAX
         keys = [(f"C{i}", f"D{i}") for i in range(cap)]
         for i, key in enumerate(keys):
-            _route_map_cache_set(key, _make_unique_png(i))
+            m._route_map_cache_set(key, _make_unique_png(i))
 
         # Access keys[0] — promotes it from LRU to MRU.
-        _route_map_cache_get(keys[0])
+        m._route_map_cache_get(keys[0])
 
         # Overflow: keys[1] (now LRU) must be evicted.
         new_key = (f"C{cap}", f"D{cap}")
-        _route_map_cache_set(new_key, _make_unique_png(cap))
+        m._route_map_cache_set(new_key, _make_unique_png(cap))
 
         assert keys[0] in m._route_map_cache, "Promoted entry was incorrectly evicted"
         assert keys[1] not in m._route_map_cache, "True-LRU entry (keys[1]) was not evicted"
@@ -285,34 +276,32 @@ class TestSystemsLruHelpers:
 
     def test_cache_never_exceeds_cap(self):
         import api.routers.systems as m
-        from api.routers.systems import _route_map_cache_set
 
         cap = m._ROUTE_MAP_CACHE_MAX
         total = cap * 3
         for i in range(total):
             key = (f"E{i}", f"F{i}")
-            _route_map_cache_set(key, _make_unique_png(i))
+            m._route_map_cache_set(key, _make_unique_png(i))
             assert len(m._route_map_cache) <= cap, (
                 f"Cache size {len(m._route_map_cache)} exceeded cap {cap} after {i + 1} insertions"
             )
 
     def test_rerender_after_eviction_byte_identical(self):
         import api.routers.systems as m
-        from api.routers.systems import _route_map_cache_get, _route_map_cache_set
 
         cap = m._ROUTE_MAP_CACHE_MAX
         victim_key = ("W0", "X0")
         original_bytes = _make_unique_png(888)
 
-        _route_map_cache_set(victim_key, original_bytes)
+        m._route_map_cache_set(victim_key, original_bytes)
         for i in range(1, cap):
-            _route_map_cache_set((f"W{i}", f"X{i}"), _make_unique_png(i))
+            m._route_map_cache_set((f"W{i}", f"X{i}"), _make_unique_png(i))
 
-        _route_map_cache_set((f"W{cap}", f"X{cap}"), _make_unique_png(cap))
+        m._route_map_cache_set((f"W{cap}", f"X{cap}"), _make_unique_png(cap))
         assert victim_key not in m._route_map_cache, "Victim key was not evicted as expected"
 
-        _route_map_cache_set(victim_key, original_bytes)
-        result = _route_map_cache_get(victim_key)
+        m._route_map_cache_set(victim_key, original_bytes)
+        result = m._route_map_cache_get(victim_key)
         assert result == original_bytes, (
             f"Re-inserted value differs from original: got {result!r}, expected {original_bytes!r}"
         )
@@ -335,8 +324,6 @@ _MAP_PATH = os.path.abspath(
         "system-map.png",
     )
 )
-
-_GOLDEN_PNG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "fixtures", "golden_route_abc.png"))
 
 
 def _make_node(name: str, x: int, y: int, neighbours: list[str]):
@@ -404,15 +391,11 @@ def thread_pool():
 def _build_app(renderer, graph, bounty_route=None):
     import api.routers.bounties as bounties_module
     import api.routers.systems as systems_module
-    from api.routers.bounties import get_bounty_service
-    from api.routers.bounties import router as bounties_router
-    from api.routers.systems import get_db
-    from api.routers.systems import router as systems_router
     from fastapi import FastAPI
 
     app = FastAPI()
-    app.include_router(bounties_router, prefix="/api/v1")
-    app.include_router(systems_router, prefix="/api/v1")
+    app.include_router(bounties_module.router, prefix="/api/v1")
+    app.include_router(systems_module.router, prefix="/api/v1")
 
     app.state.map_renderer = renderer
     app.state.system_graph = graph
@@ -425,7 +408,7 @@ def _build_app(renderer, graph, bounty_route=None):
     async def override_get_db():
         yield AsyncMock()
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[systems_module.get_db] = override_get_db
 
     route = bounty_route if bounty_route is not None else ["A", "B", "C"]
 
@@ -438,7 +421,7 @@ def _build_app(renderer, graph, bounty_route=None):
         svc.bounty_repo.get_by_id = AsyncMock(return_value=bounty)
         return svc
 
-    app.dependency_overrides[get_bounty_service] = _make_bounty_service
+    app.dependency_overrides[bounties_module.get_bounty_service] = _make_bounty_service
     return app
 
 
@@ -602,11 +585,8 @@ class TestEndpointBoundedSize:
         renderer.prewarm()
         graph = _FakeGraph()
 
-        from api.routers.bounties import get_bounty_service
-        from api.routers.bounties import router as bounties_router
-
         app = FastAPI()
-        app.include_router(bounties_router, prefix="/api/v1")
+        app.include_router(bounties_module.router, prefix="/api/v1")
         app.state.map_renderer = renderer
         app.state.system_graph = graph
         app.dependency_overrides[bounties_module._get_map_renderer] = lambda: renderer
@@ -628,7 +608,7 @@ class TestEndpointBoundedSize:
 
         for i in range(num_requests):
             # Swap the bounty service to return a different bounty_id each time.
-            app.dependency_overrides[get_bounty_service] = _make_service(i)
+            app.dependency_overrides[bounties_module.get_bounty_service] = _make_service(i)
             response = client.get(f"/api/v1/bounties/{i}/map")
             assert response.status_code == 200, f"Request {i} failed with {response.status_code}"
             assert len(bounties_module._map_cache) <= cap, (
@@ -649,20 +629,17 @@ class TestEndpointBoundedSize:
         renderer.prewarm()
         graph = _FakeGraph()
 
-        from api.routers.systems import _get_map_renderer, _get_system_graph, get_db
-        from api.routers.systems import router as systems_router
-
         app = FastAPI()
-        app.include_router(systems_router, prefix="/api/v1")
+        app.include_router(systems_module.router, prefix="/api/v1")
         app.state.map_renderer = renderer
         app.state.system_graph = graph
-        app.dependency_overrides[_get_system_graph] = lambda: graph
-        app.dependency_overrides[_get_map_renderer] = lambda: renderer
+        app.dependency_overrides[systems_module._get_system_graph] = lambda: graph
+        app.dependency_overrides[systems_module._get_map_renderer] = lambda: renderer
 
         async def override_get_db():
             yield AsyncMock()
 
-        app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[systems_module.get_db] = override_get_db
 
         client = TestClient(app)
 
@@ -816,11 +793,8 @@ class TestReRenderAfterEviction:
         renderer.prewarm()
         graph = _FakeGraph()
 
-        from api.routers.bounties import get_bounty_service
-        from api.routers.bounties import router as bounties_router
-
         app = FastAPI()
-        app.include_router(bounties_router, prefix="/api/v1")
+        app.include_router(bounties_module.router, prefix="/api/v1")
         app.state.map_renderer = renderer
         app.state.system_graph = graph
         app.dependency_overrides[bounties_module._get_map_renderer] = lambda: renderer
@@ -841,14 +815,14 @@ class TestReRenderAfterEviction:
         client = TestClient(app)
 
         # First request for bounty_id=0 — caches it at LRU position.
-        app.dependency_overrides[get_bounty_service] = _make_service(0)
+        app.dependency_overrides[bounties_module.get_bounty_service] = _make_service(0)
         resp_first = client.get("/api/v1/bounties/0/map")
         assert resp_first.status_code == 200
         first_bytes = resp_first.content
 
         # Fill cache to cap+1 with new bounty IDs — bounty_id=0 must be evicted.
         for i in range(1, cap + 1):
-            app.dependency_overrides[get_bounty_service] = _make_service(i)
+            app.dependency_overrides[bounties_module.get_bounty_service] = _make_service(i)
             r = client.get(f"/api/v1/bounties/{i}/map")
             assert r.status_code == 200
 
@@ -857,7 +831,7 @@ class TestReRenderAfterEviction:
         assert victim_key not in bounties_module._map_cache, "Victim key was not evicted"
 
         # Re-request bounty_id=0 — must re-render and return identical bytes.
-        app.dependency_overrides[get_bounty_service] = _make_service(0)
+        app.dependency_overrides[bounties_module.get_bounty_service] = _make_service(0)
         resp_rerender = client.get("/api/v1/bounties/0/map")
         assert resp_rerender.status_code == 200
         assert resp_rerender.content == first_bytes, (

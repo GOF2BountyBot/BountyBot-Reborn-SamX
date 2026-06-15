@@ -21,8 +21,6 @@ flogger = bblogger.get_logger("discord-gateway-BountyCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"bountyCog loading with API_BASE_URL: {api_base}")
 
-_VALID_DIVISIONS = ["bronze", "silver", "gold", "platinum"]
-
 # Canonical tier color palette (matches OPEN_ITEMS.md Appendix A ENH-02)
 TIER_COLORS: dict[str, int] = {
     "bronze": 0xCD7F32,  # 13467442

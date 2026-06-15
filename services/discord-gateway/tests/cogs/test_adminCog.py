@@ -9,9 +9,6 @@ import pytest
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
-# Create module-level mock utilities
-_mock_utils = DiscordMockUtils()
-
 # Setup mock shared.bblogger module
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -19,14 +16,14 @@ _mock_shared.__path__ = []
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
 # Track the module-level logger
-_module_logger = None
+_unused_module_logger = None
 # Track all loggers created (keyed by name) to support lookup after multi-logger inits.
 _all_loggers: dict[str, MagicMock] = {}
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock that already has common log-level methods."""
-    global _module_logger
+    global _unused_module_logger
     # Use the logger name if provided to allow targeted lookup.
     name = _args[0] if _args else None
     logger = MagicMock()
@@ -36,7 +33,7 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.error = MagicMock()
     logger.trace = MagicMock()
     logger.critical = MagicMock()
-    _module_logger = logger
+    _unused_module_logger = logger
     if name:
         _all_loggers[name] = logger
     return logger
@@ -138,9 +135,9 @@ def _evict_discord_modules():
 def mock_admin_cog(mock_bot):
     """Create a mock adminCog instance."""
     # Re-assert this file's own mock so that when adminCog is re-imported below
-    # it calls *our* _make_mock_logger (which populates _module_logger).
+    # it calls *our* _make_mock_logger (which populates _unused_module_logger).
     # Without this, whichever test file was imported last "owns" the shared
-    # sys.modules["shared.bblogger"] entry and the other file's _module_logger
+    # sys.modules["shared.bblogger"] entry and the other file's _unused_module_logger
     # stays None.
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
@@ -2447,7 +2444,7 @@ class TestPlayerShipAutocomplete:
         (key = (guild, player_id)) instead of a live GET /ships/player/{id} per keystroke.
         Seed player_cache (→ player_id=7) and ships_cache; assert ZERO HTTP GET for ships.
         """
-        from utils.autocomplete_state import NormalizedChoice
+        import utils.autocomplete_state as _ac_mod
 
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
@@ -2463,8 +2460,8 @@ class TestPlayerShipAutocomplete:
             ac.ships_cache.set(
                 (99, 7),
                 [
-                    NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
-                    NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
+                    _ac_mod.NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
+                    _ac_mod.NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
                 ],
             )
 
@@ -2531,7 +2528,7 @@ class TestPlayerShipAutocomplete:
 
     def test_filters_ships_by_current_input(self, mock_admin_cog):
         """Autocomplete filters results by the current typed prefix (Phase 2: ships_cache reuse)."""
-        from utils.autocomplete_state import NormalizedChoice
+        import utils.autocomplete_state as _ac_mod
 
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
@@ -2546,9 +2543,11 @@ class TestPlayerShipAutocomplete:
             ac.ships_cache.set(
                 (99, 7),
                 [
-                    NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
-                    NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
-                    NormalizedChoice(label="Bloodstar", value="3", norm="bloodstar", raw={"ship_name": "Bloodstar"}),
+                    _ac_mod.NormalizedChoice(label="Niode", value="1", norm="niode", raw={"ship_name": "Niode"}),
+                    _ac_mod.NormalizedChoice(label="Groza", value="2", norm="groza", raw={"ship_name": "Groza"}),
+                    _ac_mod.NormalizedChoice(
+                        label="Bloodstar", value="3", norm="bloodstar", raw={"ship_name": "Bloodstar"}
+                    ),
                 ],
             )
 
@@ -5389,7 +5388,7 @@ class TestRemoveItemAutocomplete:
         Phase 6: Both player_cache and inventory_cache are pre-populated.
         The admin function reads from cache — zero HTTP calls on hot path.
         """
-        from utils.autocomplete_state import NormalizedChoice
+        import utils.autocomplete_state as _ac_mod
         from utils.autocomplete_utils import normalize_for_search as nfs
 
         target_user = MagicMock()
@@ -5415,7 +5414,9 @@ class TestRemoveItemAutocomplete:
             inv_choices = []
             for item in raw_items:
                 label = f"{item['item_name']} ({item['item_type'].replace('_', ' ').title()})"
-                inv_choices.append(NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item))
+                inv_choices.append(
+                    _ac_mod.NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item)
+                )
             ac.inventory_cache.set((987654321, 7), inv_choices)
 
         # HTTP must not be called — all from cache

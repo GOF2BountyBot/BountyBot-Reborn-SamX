@@ -39,10 +39,11 @@ from __future__ import annotations
 import sys
 import types
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+SimpleNamespace = types.SimpleNamespace
 
 # ---------------------------------------------------------------------------
 # Shared mock-guard: bblogger + sqlalchemy_utils
@@ -449,7 +450,7 @@ class TestP6T3DBPagination:
         """
         from contextlib import asynccontextmanager
 
-        from api.routers.players import get_players_by_guild
+        import api.routers.players as players_module
 
         players_page = [self._make_player_response(i) for i in [2, 3]]
 
@@ -466,12 +467,10 @@ class TestP6T3DBPagination:
         async def _fake_session():
             yield mock_session
 
-        import api.routers.players as players_module
-
         original = players_module.get_db_session
         players_module.get_db_session = _fake_session
         try:
-            result = await get_players_by_guild(
+            result = await players_module.get_players_by_guild(
                 guild_id=67890,
                 skip=1,
                 limit=2,
@@ -498,7 +497,7 @@ class TestP6T3DBPagination:
         """Default skip=0, limit=100 passes limit=100 (not None) to the repo."""
         from contextlib import asynccontextmanager
 
-        from api.routers.players import get_players_by_guild
+        import api.routers.players as players_module
 
         players_all = [self._make_player_response(i) for i in range(1, 4)]
         mock_repo = AsyncMock()
@@ -512,12 +511,10 @@ class TestP6T3DBPagination:
         async def _fake_session():
             yield mock_session
 
-        import api.routers.players as players_module
-
         original = players_module.get_db_session
         players_module.get_db_session = _fake_session
         try:
-            result = await get_players_by_guild(
+            result = await players_module.get_players_by_guild(
                 guild_id=67890,
                 skip=0,
                 limit=100,
@@ -542,7 +539,7 @@ class TestP6T3DBPagination:
         """skip > total rows: repo returns [] (DB OFFSET past end of results)."""
         from contextlib import asynccontextmanager
 
-        from api.routers.players import get_players_by_guild
+        import api.routers.players as players_module
 
         mock_repo = AsyncMock()
         mock_repo.get_players_by_guild = AsyncMock(return_value=[])  # DB returns empty
@@ -555,12 +552,10 @@ class TestP6T3DBPagination:
         async def _fake_session():
             yield mock_session
 
-        import api.routers.players as players_module
-
         original = players_module.get_db_session
         players_module.get_db_session = _fake_session
         try:
-            result = await get_players_by_guild(
+            result = await players_module.get_players_by_guild(
                 guild_id=67890,
                 skip=100,
                 limit=10,
@@ -578,7 +573,7 @@ class TestP6T3DBPagination:
         """Tier-filtered path returns correct sliced page via Python-side slicing."""
         from contextlib import asynccontextmanager
 
-        from api.routers.players import get_players_by_guild
+        import api.routers.players as players_module
 
         all_gold = [self._make_player_response(i, tier="Gold") for i in range(1, 6)]
 
@@ -591,12 +586,10 @@ class TestP6T3DBPagination:
         async def _fake_session():
             yield mock_session
 
-        import api.routers.players as players_module
-
         original = players_module.get_db_session
         players_module.get_db_session = _fake_session
         try:
-            result = await get_players_by_guild(
+            result = await players_module.get_players_by_guild(
                 guild_id=67890,
                 skip=1,
                 limit=2,
@@ -753,7 +746,6 @@ class TestP6T4GuildStats:
         from contextlib import asynccontextmanager
 
         import api.routers.admin as admin_module
-        from api.routers.admin import get_guild_statistics
 
         expected_stats = {
             "guild_id": 67890,
@@ -783,7 +775,7 @@ class TestP6T4GuildStats:
         admin_module.get_db_session = _fake_session
         admin_module.verify_admin_permissions = AsyncMock(return_value=True)
         try:
-            result = await get_guild_statistics(
+            result = await admin_module.get_guild_statistics(
                 guild_id=67890,
                 user_id=12345,
                 player_service=mock_service,
@@ -1009,7 +1001,6 @@ class TestP6T5AboutShortCircuit:
         This is the short-circuit efficiency assertion.
         """
         import api.routers.about as about_module
-        from api.routers.about import get_object_by_name
         from api.routers.data import DataCategory
 
         repos = self._make_repo_set()
@@ -1029,7 +1020,7 @@ class TestP6T5AboutShortCircuit:
 
         db = _make_db()
         try:
-            result = await get_object_by_name("E2 Exoclad", db=db)
+            result = await about_module.get_object_by_name("E2 Exoclad", db=db)
         finally:
             for k, v in original_repos.items():
                 about_module.CATEGORY_REPOS[k] = v
@@ -1051,7 +1042,6 @@ class TestP6T5AboutShortCircuit:
     async def test_name_found_in_later_repo_earlier_repos_queried_once(self):
         """When name is only in the 5th repo (ship), exactly 5 repos are queried."""
         import api.routers.about as about_module
-        from api.routers.about import get_object_by_name
         from api.routers.data import DataCategory
 
         repos = self._make_repo_set()
@@ -1090,7 +1080,7 @@ class TestP6T5AboutShortCircuit:
 
         db = _make_db()
         try:
-            result = await get_object_by_name("Betty", db=db)
+            result = await about_module.get_object_by_name("Betty", db=db)
         finally:
             for k, v in original_repos.items():
                 about_module.CATEGORY_REPOS[k] = v
@@ -1111,7 +1101,6 @@ class TestP6T5AboutShortCircuit:
     async def test_unknown_name_queries_all_repos(self):
         """Unknown name: all 8 repos are queried before returning 404."""
         import api.routers.about as about_module
-        from api.routers.about import get_object_by_name
         from api.routers.data import DataCategory
         from fastapi import HTTPException
 
@@ -1130,7 +1119,7 @@ class TestP6T5AboutShortCircuit:
         db = _make_db()
         try:
             with pytest.raises(HTTPException) as exc_info:
-                await get_object_by_name("No Such Object", db=db)
+                await about_module.get_object_by_name("No Such Object", db=db)
         finally:
             for k, v in original_repos.items():
                 about_module.CATEGORY_REPOS[k] = v
@@ -1144,7 +1133,6 @@ class TestP6T5AboutShortCircuit:
     async def test_alias_found_in_first_repo_later_repos_not_queried(self):
         """Alias lookup short-circuits on first match: repos after the match not called."""
         import api.routers.about as about_module
-        from api.routers.about import get_object_by_alias
         from api.routers.data import DataCategory
 
         repos = self._make_repo_set()
@@ -1164,7 +1152,7 @@ class TestP6T5AboutShortCircuit:
 
         db = _make_db()
         try:
-            result = await get_object_by_alias("exo", db=db)
+            result = await about_module.get_object_by_alias("exo", db=db)
         finally:
             for k, v in original_repos.items():
                 about_module.CATEGORY_REPOS[k] = v
@@ -1178,7 +1166,6 @@ class TestP6T5AboutShortCircuit:
     async def test_unknown_alias_returns_404(self):
         """Unknown alias: all repos queried, 404 raised."""
         import api.routers.about as about_module
-        from api.routers.about import get_object_by_alias
         from api.routers.data import DataCategory
         from fastapi import HTTPException
 
@@ -1197,7 +1184,7 @@ class TestP6T5AboutShortCircuit:
         db = _make_db()
         try:
             with pytest.raises(HTTPException) as exc_info:
-                await get_object_by_alias("no_such_alias", db=db)
+                await about_module.get_object_by_alias("no_such_alias", db=db)
         finally:
             for k, v in original_repos.items():
                 about_module.CATEGORY_REPOS[k] = v

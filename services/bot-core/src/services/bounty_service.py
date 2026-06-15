@@ -9,6 +9,7 @@ Handles business logic for bounty generation including:
 - Bounty checking mechanic with cooldown and proximity hint support
 """
 
+import contextlib
 import enum
 import random
 from dataclasses import dataclass, field
@@ -1688,7 +1689,7 @@ class BountyService:
         proximity_hint = False
         recently_spotted = False
         distance = None
-        try:
+        with contextlib.suppress(ValueError, IndexError):
             answer_idx = bounty.route.index(bounty.answer)
             system_idx = bounty.route.index(system_name)
             distance = answer_idx - system_idx
@@ -1698,8 +1699,6 @@ class BountyService:
             # recently_spotted: criminal was here 1-2 stops ago (answer is 1-2 stops ahead)
             if 1 <= distance <= 2:
                 recently_spotted = True
-        except (ValueError, IndexError):
-            pass
 
         await self.bounty_repo.update(db, bounty)
         flogger.debug(f"Player {player_id} checked {system_name} on bounty {bounty.id}: incorrect")

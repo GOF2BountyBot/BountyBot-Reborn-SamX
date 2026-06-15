@@ -379,7 +379,9 @@ async def create_role(request: Request, guild_id: int, role_data: RoleCreateRequ
                     continue
                 raise
         # Shouldn't reach here, but rethrow last exception if it does
-        raise last_exc
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("retry loop exhausted without capturing an exception")
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught

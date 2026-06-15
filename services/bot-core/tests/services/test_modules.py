@@ -1301,7 +1301,6 @@ class TestAccuracyLiteralReplacement:
             weapons=[WeaponStats(name="Gun", dps=10.0, damage_per_shot=10, loading_speed_ms=100, range_m=5000.0)],
         )
         loadout_c2 = _armed_loadout(base_armour=2000)
-        _rng = random.Random(1)
 
         res_with = TickResolver(seed=1).resolve(loadout_with, loadout_c2, rng=random.Random(1))
         res_without = TickResolver(seed=1).resolve(loadout_without, loadout_c2, rng=random.Random(1))

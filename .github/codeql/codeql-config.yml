@@ -1,0 +1,14 @@
+name: "BountyBot CodeQL config (security)"
+
+# ---------------------------------------------------------------------------
+# Security-focused advanced setup. Code QUALITY (maintainability/reliability)
+# is handled by GitHub's separate managed "Code Quality" feature, which does
+# not read this file — so only security-relevant config belongs here.
+# ---------------------------------------------------------------------------
+queries:
+  - uses: security-extended
+
+paths-ignore:
+  # Vendored third-party git submodule (github.com/Trimatix/AEPi, pinned in
+  # .gitmodules). Not our code; don't scan it for vulnerabilities.
+  - 'services/blender-service/src/lib/AEPi/**'

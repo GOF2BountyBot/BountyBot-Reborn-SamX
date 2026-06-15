@@ -18,9 +18,6 @@ from fastapi.testclient import TestClient
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
-# Create module-level mock utilities
-_mock_utils = DiscordMockUtils()
-
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 

@@ -185,7 +185,6 @@ def _enable_fk(conn: sa.engine.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 _TEST_GUILD_ID = 999_999_991
-_TEST_BOUNTY_ID_SEED = 0  # We'll use BIGSERIAL; track the inserted ID
 
 
 # ---------------------------------------------------------------------------

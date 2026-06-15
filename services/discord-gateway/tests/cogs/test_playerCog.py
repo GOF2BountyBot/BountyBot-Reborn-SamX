@@ -15,20 +15,18 @@ from tests.mocks.discord_mock_utils import DiscordMockUtils
 # Module-level mock setup — must run before any src imports
 # ---------------------------------------------------------------------------
 
-_mock_utils = DiscordMockUtils()
-
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
 # Track the module-level logger for assertion
-_module_logger = None
+_unused_module_logger = None
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock with common log-level methods."""
-    global _module_logger
+    global _unused_module_logger
     logger = MagicMock()
     logger.info = MagicMock()
     logger.debug = MagicMock()
@@ -37,7 +35,7 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.trace = MagicMock()
     logger.critical = MagicMock()
     logger.exception = MagicMock()
-    _module_logger = logger
+    _unused_module_logger = logger
     return logger
 
 
@@ -131,7 +129,7 @@ def mock_bot():
 @pytest.fixture
 def mock_player_cog(mock_bot):
     """Create a PlayerCog instance with mocked bot and http_client."""
-    # Re-assert our module's mock so the logger is wired to _module_logger.
+    # Re-assert our module's mock so the logger is wired to _unused_module_logger.
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
@@ -3401,15 +3399,9 @@ class TestPromoteTierRoleSwap:
 
         # CORRECT expected outcome: if add_roles fails, remove_roles must NOT have run.
         # The user keeps their Bronze role rather than ending up with no role at all.
-        # This assertion FAILS on the current implementation (proving DEF-B39-001).
-        (
-            interaction.user.remove_roles.assert_not_awaited(),
-            (
-                "DEF-B39-001: When add_roles fails, remove_roles must not have fired. "
-                "The implementation must add the new role BEFORE removing the old one so that "
-                "a failure in add_roles aborts without stripping the user's existing tier role."
-            ),
-        )
+        # DEF-B39-001: the implementation must add the new role BEFORE removing the old one
+        # so that a failure in add_roles aborts without stripping the user's existing tier role.
+        interaction.user.remove_roles.assert_not_awaited()
 
     def test_promote_notifications_disabled_does_not_add_new_role(self, mock_player_cog):
         """Notification opt-out: stored bounty_notifications_enabled=False — Silver role

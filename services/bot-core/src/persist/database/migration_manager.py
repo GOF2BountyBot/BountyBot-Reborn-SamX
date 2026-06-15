@@ -138,7 +138,6 @@ class MigrationManager:
         flogger.debug("from_env: Building MigrationManager from environment variables")
         sync_url = _build_sync_url_from_env()
         # Extract password from URL for masking
-        _user = os.getenv("POSTGRES_USER", "bounty")
         pw = os.getenv("POSTGRES_PASSWORD", "bounty")
         masked_url = sync_url.replace(pw, "***") if pw else sync_url
         flogger.debug(f"from_env: Connection URL: {masked_url}")
@@ -201,6 +200,7 @@ class MigrationManager:
 
         # Retry get_current_revision to absorb transient DB startup races.
         # Only OperationalError is retried — other errors indicate real problems.
+        current_rev: str | None = None  # guard against a non-positive retry-max misconfig
         for attempt in range(1, _CONNECTION_RETRY_MAX_ATTEMPTS + 1):
             try:
                 current_rev = self.get_current_revision()

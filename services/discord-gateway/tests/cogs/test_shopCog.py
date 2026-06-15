@@ -15,21 +15,19 @@ from tests.mocks.discord_mock_utils import DiscordMockUtils
 # Module-level mock setup — must run before any src imports
 # ---------------------------------------------------------------------------
 
-_mock_utils = DiscordMockUtils()
-
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
-_module_logger = None
+_unused_module_logger = None
 # Track all loggers created (keyed by name) to support lookup after multi-logger inits.
 _all_loggers: dict[str, MagicMock] = {}
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock with common log-level methods."""
-    global _module_logger
+    global _unused_module_logger
     name = _args[0] if _args else None
     logger = MagicMock()
     logger.info = MagicMock()
@@ -39,7 +37,7 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.trace = MagicMock()
     logger.critical = MagicMock()
     logger.exception = MagicMock()
-    _module_logger = logger
+    _unused_module_logger = logger
     if name:
         _all_loggers[name] = logger
     return logger
@@ -152,9 +150,9 @@ def mock_shop_cog(mock_bot):
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
 
-    from cogs.shopCog import ShopCog
+    import cogs.shopCog as shop_module
 
-    cog = ShopCog(mock_bot)
+    cog = shop_module.ShopCog(mock_bot)
     cog.http_client = MagicMock()
     cog.http_client.aclose = AsyncMock()
     return cog
@@ -1553,7 +1551,7 @@ class TestSellItemAutocomplete:
 
     def _make_normalized_choices(self, items):
         """Build NormalizedChoice objects from raw inventory item dicts (as inventory_cache stores them)."""
-        from utils.autocomplete_state import NormalizedChoice
+        import utils.autocomplete_state as ac_state
         from utils.autocomplete_utils import normalize_for_search
 
         choices = []
@@ -1567,7 +1565,7 @@ class TestSellItemAutocomplete:
             label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
             value = str(item.get("id", item_name))
             norm = normalize_for_search(label)
-            choices.append(NormalizedChoice(label=label, value=value, norm=norm, raw=item))
+            choices.append(ac_state.NormalizedChoice(label=label, value=value, norm=norm, raw=item))
         return choices
 
     def _init_ac_state(self, player, inventory_items, guild_id=987654321, user_id=111111111):
@@ -1702,7 +1700,6 @@ class TestSellItemAutocomplete:
         """
         import utils.autocomplete_state as ac_state
         from cogs._shared.autocomplete_cache import AutocompleteCache
-        from utils.autocomplete_state import NormalizedChoice
         from utils.autocomplete_utils import normalize_for_search
 
         interaction = _create_mock_interaction()
@@ -1730,7 +1727,7 @@ class TestSellItemAutocomplete:
         }
         # Pre-computed label has empty parens (the bug scenario)
         label_with_empty_parens = "Betty ()"
-        ship_nc = NormalizedChoice(
+        ship_nc = ac_state.NormalizedChoice(
             label=label_with_empty_parens,
             value="42",
             norm=normalize_for_search(label_with_empty_parens),
@@ -1759,7 +1756,6 @@ class TestSellItemAutocomplete:
         """Inactive ship WITH a real nickname shows nickname in label (not ship name)."""
         import utils.autocomplete_state as ac_state
         from cogs._shared.autocomplete_cache import AutocompleteCache
-        from utils.autocomplete_state import NormalizedChoice
         from utils.autocomplete_utils import normalize_for_search
 
         interaction = _create_mock_interaction()
@@ -1782,7 +1778,7 @@ class TestSellItemAutocomplete:
             "is_active": False,
             "player_ship_id": 99,
         }
-        ship_nc = NormalizedChoice(
+        ship_nc = ac_state.NormalizedChoice(
             label="Speedy (Niode)",
             value="99",
             norm=normalize_for_search("Speedy (Niode)"),
@@ -2032,15 +2028,13 @@ class TestCogSetup:
         sys.modules["shared.bblogger"] = _mock_bblogger
         _evict_discord_modules()
 
-        from cogs.shopCog import setup
+        import cogs.shopCog as shop_module
 
-        asyncio.run(setup(mock_bot))
+        asyncio.run(shop_module.setup(mock_bot))
 
         mock_bot.add_cog.assert_called_once()
         added_arg = mock_bot.add_cog.call_args[0][0]
-        from cogs.shopCog import ShopCog
-
-        assert isinstance(added_arg, ShopCog)
+        assert isinstance(added_arg, shop_module.ShopCog)
 
 
 # ===========================================================================
@@ -2343,9 +2337,9 @@ class TestFormatShopItemStats:
     def _get_format_fn(self):
         """Import the helper from the module under test."""
         _evict_discord_modules()
-        from cogs.shopCog import _format_shop_item_stats
+        import cogs.shopCog as shop_module
 
-        return _format_shop_item_stats
+        return shop_module._format_shop_item_stats
 
     # ── Weapon types ─────────────────────────────────────────────────────────
 
@@ -2608,9 +2602,9 @@ class TestFormatShopItemStatsAdversarial:
     def _get_format_fn(self):
         """Import the helper from the module under test."""
         _evict_discord_modules()
-        from cogs.shopCog import _format_shop_item_stats
+        import cogs.shopCog as shop_module
 
-        return _format_shop_item_stats
+        return shop_module._format_shop_item_stats
 
     def test_module_zero_shield_nonzero_armour_shows_armour(self):
         """Module with shield=0 but armour=250 should show armour, not empty string.

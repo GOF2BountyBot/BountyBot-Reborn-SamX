@@ -15,8 +15,6 @@ from tests.mocks.discord_mock_utils import DiscordMockUtils
 # Module-level mock setup — must run before any src imports
 # ---------------------------------------------------------------------------
 
-_mock_utils = DiscordMockUtils()
-
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 
@@ -1021,13 +1019,6 @@ class TestCheckCommandRespx:
             "message": "No bounty.",
             "outcomes": [{"result": "incorrect", "bounty_id": None}],
         }
-
-        captured_calls: list = []
-        original_send = mock_bounty_cog.http_client.send
-
-        async def _capture_send(request_obj, **kwargs):
-            captured_calls.append(request_obj)
-            return await original_send(request_obj, **kwargs)
 
         env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
         with (
@@ -2082,7 +2073,7 @@ class TestFormatCombatSummaryCI12:
     """CI-12 regression: outcome header derives from actual hull data, not combat_won flag.
 
     Also validates the approved compact-worded layout:
-      ⚔️ Combat vs {criminal_name} — {Victory|Defeat|Stalemate} in {duration}s
+      :crossed_swords: Combat vs {criminal_name} — {Victory|Defeat|Stalemate} in {duration}s
       You ({ship}) — survived|destroyed
         Shield S · Armour A · Hull H  ·  dealt D · acc% acc (hits/fired)
       {criminal_name} ({ship}) — survived|destroyed
@@ -2228,7 +2219,7 @@ class TestFormatCombatSummaryCI12:
     # -- Layout: header format --
 
     def test_layout_header_contains_combat_vs(self):
-        """Header starts with '⚔️ Combat vs {criminal_name}'."""
+        """Header starts with the crossed-swords emoji + ' Combat vs {criminal_name}'."""
         combat = _make_combat_result_with_summary(duration_s=15.0)
         result = self.cog._format_combat_summary(combat, criminal_name="Hector")
         assert result.startswith("⚔️ Combat vs Hector")

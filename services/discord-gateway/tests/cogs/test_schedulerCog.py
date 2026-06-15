@@ -106,15 +106,13 @@ def cog(mock_bot, monkeypatch):
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
 
-    from cogs.schedulerCog import SchedulerCog
+    import cogs.schedulerCog as _sched_module
 
-    sched_cog = SchedulerCog(mock_bot)
+    sched_cog = _sched_module.SchedulerCog(mock_bot)
 
     # Bypass the super-admin gate for all happy-path tests in this file.
     # Tests that specifically test the gate do their own patching via
     # cogs.schedulerCog._check_is_super_admin.
-    import cogs.schedulerCog as _sched_module
-
     async def _always_super_admin(_interaction):
         return True
 
@@ -644,9 +642,9 @@ class TestCogSetupAndUnload:
 
     def test_setup_function_adds_cog_to_bot(self, mock_bot):
         """setup() adds SchedulerCog to the bot."""
-        from cogs.schedulerCog import setup
+        import cogs.schedulerCog as sched_module
 
-        asyncio.run(setup(mock_bot))
+        asyncio.run(sched_module.setup(mock_bot))
         mock_bot.add_cog.assert_awaited_once()
 
     def test_cog_unload_closes_http_client(self, cog):

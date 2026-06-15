@@ -7,12 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import httpx
 import pytest
 
-# Import discord_mock_utils for consistent mock patterns
-from tests.mocks.discord_mock_utils import DiscordMockUtils
-
-# Create module-level mock utilities
-_mock_utils = DiscordMockUtils()
-
 # Setup mock shared.bblogger module
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []

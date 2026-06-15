@@ -186,10 +186,9 @@ def test_app(mock_db_manager, mock_message_repo):
     So routes are accessible at "/api/v1/time/...".
     """
     import api.routers.announcements.time_announcement as ta_module
-    from api.routers.announcements.time_announcement import router as time_router
 
     app = FastAPI()
-    app.include_router(time_router, prefix="/api/v1")
+    app.include_router(ta_module.router, prefix="/api/v1")
     app.state.db_manager = mock_db_manager
 
     # Replace the module-level repo instance so all route handlers use our mock
@@ -227,10 +226,10 @@ class TestCreateTimeAnnouncement:
         mock_http.post = AsyncMock(return_value=make_mock_http_response())
 
         # Wire up from_orm to return a serialisable object
-        from api.routers.announcements.time_announcement import DiscordMessageResponse
+        import api.routers.announcements.time_announcement as ta_module
 
         with patch.object(
-            DiscordMessageResponse,
+            ta_module.DiscordMessageResponse,
             "from_orm",
             return_value=MagicMock(
                 id=str(SAMPLE_UUID),
@@ -366,10 +365,10 @@ class TestUpdateTimeAnnouncement:
         mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_http.put = AsyncMock(return_value=make_mock_http_response())
 
-        from api.routers.announcements.time_announcement import DiscordMessageResponse
+        import api.routers.announcements.time_announcement as ta_module
 
         with patch.object(
-            DiscordMessageResponse,
+            ta_module.DiscordMessageResponse,
             "from_orm",
             return_value=MagicMock(
                 id=str(SAMPLE_UUID),
@@ -574,10 +573,10 @@ class TestGetTimeAnnouncement:
 
     def test_get_happy_path(self, client, mock_message_repo):
         """Returns 200 with DiscordMessageResponse when announcement exists."""
-        from api.routers.announcements.time_announcement import DiscordMessageResponse
+        import api.routers.announcements.time_announcement as ta_module
 
         with patch.object(
-            DiscordMessageResponse,
+            ta_module.DiscordMessageResponse,
             "from_orm",
             return_value=MagicMock(
                 id=str(SAMPLE_UUID),
@@ -619,10 +618,10 @@ class TestListTimeAnnouncementsByGuild:
 
     def test_list_by_guild_happy_path(self, client, mock_message_repo):
         """Returns 200 with list of announcements for the given guild."""
-        from api.routers.announcements.time_announcement import DiscordMessageResponse
+        import api.routers.announcements.time_announcement as ta_module
 
         with patch.object(
-            DiscordMessageResponse,
+            ta_module.DiscordMessageResponse,
             "from_orm",
             return_value=MagicMock(
                 id=str(SAMPLE_UUID),
@@ -661,10 +660,10 @@ class TestListTimeAnnouncementsByChannel:
 
     def test_list_by_channel_happy_path(self, client, mock_message_repo):
         """Returns 200 with list of announcements for the given guild+channel."""
-        from api.routers.announcements.time_announcement import DiscordMessageResponse
+        import api.routers.announcements.time_announcement as ta_module
 
         with patch.object(
-            DiscordMessageResponse,
+            ta_module.DiscordMessageResponse,
             "from_orm",
             return_value=MagicMock(
                 id=str(SAMPLE_UUID),
@@ -703,10 +702,10 @@ class TestListTimeAnnouncementsByType:
 
     def test_list_by_type_happy_path(self, client, mock_message_repo):
         """Returns 200 with list of announcements for the given guild+type."""
-        from api.routers.announcements.time_announcement import DiscordMessageResponse
+        import api.routers.announcements.time_announcement as ta_module
 
         with patch.object(
-            DiscordMessageResponse,
+            ta_module.DiscordMessageResponse,
             "from_orm",
             return_value=MagicMock(
                 id=str(SAMPLE_UUID),

@@ -37,20 +37,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 # ---------------------------------------------------------------------------
 
 import utils.autocomplete_state as state_mod
-from utils.autocomplete_state import (
-    NormalizedChoice,
-    clear_all,
-    get_http_client,
-    get_player,
-    get_player_id,
-    invalidate_inventory,
-    invalidate_player,
-    invalidate_ships,
-    set_inventory,
-    set_player,
-    set_ships,
-)
 from utils.autocomplete_utils import normalize_for_search
+
+NormalizedChoice = state_mod.NormalizedChoice
+clear_all = state_mod.clear_all
+get_http_client = state_mod.get_http_client
+get_player = state_mod.get_player
+get_player_id = state_mod.get_player_id
+invalidate_inventory = state_mod.invalidate_inventory
+invalidate_player = state_mod.invalidate_player
+invalidate_ships = state_mod.invalidate_ships
+set_inventory = state_mod.set_inventory
+set_player = state_mod.set_player
+set_ships = state_mod.set_ships
 
 API_BASE = "http://bot-core:8000/api/v1"
 
@@ -386,7 +385,7 @@ class TestRefreshInventoryPrecomputesNorm:
         and the function under test operate on the SAME module object.
         """
         # initialized_state returns the real_http_client used to init the module
-        real_http_client = initialized_state  # noqa: F841 (used for clarity)
+        _unused_real_http_client = initialized_state  # kept for clarity; value unused, side-effect is module init
 
         items_response = [
             {
@@ -436,7 +435,7 @@ class TestRefreshInventoryPrecomputesNorm:
         reference caused by ``_evict_discord_modules()`` in cog test fixtures.
         """
         # initialized_state returns the real_http_client used to init the module
-        real_http_client = initialized_state  # noqa: F841 (kept for clarity)
+        _unused_real_http_client = initialized_state  # kept for clarity; value unused, side-effect is module init
 
         ships_response = [
             {

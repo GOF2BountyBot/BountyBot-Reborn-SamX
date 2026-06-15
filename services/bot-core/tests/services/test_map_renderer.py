@@ -264,14 +264,12 @@ class TestBountyMapEndpoint:
     def _make_app(self, mock_bounty_service, mock_renderer, mock_graph):
         """Build a test FastAPI app with dependency overrides."""
         import api.routers.bounties as bounty_module
-        from api.routers.bounties import get_bounty_service
-        from api.routers.bounties import router as bounty_router
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
         app = FastAPI()
-        app.include_router(bounty_router, prefix="/api/v1")
-        app.dependency_overrides[get_bounty_service] = lambda: mock_bounty_service
+        app.include_router(bounty_module.router, prefix="/api/v1")
+        app.dependency_overrides[bounty_module.get_bounty_service] = lambda: mock_bounty_service
 
         # Wire shared singletons on app.state (P3-T7: no module-level singletons).
         app.state.map_renderer = mock_renderer

@@ -33,9 +33,9 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from tests.mocks.discord_mock_utils import DiscordMockUtils
+import tests.mocks.discord_mock_utils as discord_mock_utils
 
-_mock_utils = DiscordMockUtils()
+DiscordMockUtils = discord_mock_utils.DiscordMockUtils
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []

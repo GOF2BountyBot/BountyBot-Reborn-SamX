@@ -45,7 +45,9 @@ if _SRC_DIR not in sys.path:
 # ---------------------------------------------------------------------------
 
 import utils.executors.pg_backup_executor as _exec_mod
-from utils.executors.pg_backup_executor import _dump_and_compress, execute_pg_backup_job
+
+_dump_and_compress = _exec_mod._dump_and_compress
+execute_pg_backup_job = _exec_mod.execute_pg_backup_job
 
 # ---------------------------------------------------------------------------
 # Helpers

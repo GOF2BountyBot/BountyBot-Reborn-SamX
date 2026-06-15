@@ -3743,8 +3743,10 @@ class PermissionsTests(BaseTests):
         ft = ForumTests(self.guild_id, self.user_id, self.delay, self.vdelay)
         return ft._create_forum_channel()
 
-    def _create_thread(self) -> int | None:
-        return ForumTests(self.guild_id, self.user_id, self.delay, self.vdelay)._create_thread()
+    def _create_thread(self, forum_channel_id: int, name: str, initial_message: dict | None = None) -> int | None:
+        return ForumTests(self.guild_id, self.user_id, self.delay, self.vdelay)._create_thread(
+            forum_channel_id, name, initial_message
+        )
 
     def _mk_category(self) -> int | None:
         return CategoryTests(self.guild_id, self.user_id, self.delay, self.vdelay)._mk_category()

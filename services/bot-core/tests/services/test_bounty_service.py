@@ -1098,7 +1098,8 @@ async def test_spawn_bounty_division_tl_map_center_values(spawn_service, mock_db
         ):
             result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division=division, tech_level=None)
 
-        mock_pick_tl.assert_called_once_with(expected_center), (f"Expected center_tl={expected_center} for {division}")
+        # Asserts pick_random_item_tl was called with the expected center TL for this division.
+        mock_pick_tl.assert_called_once_with(expected_center)
         assert result is not None
 
 

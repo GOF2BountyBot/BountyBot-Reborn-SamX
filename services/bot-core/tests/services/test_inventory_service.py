@@ -30,8 +30,8 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
+import services.inventory_service as inv_svc_module
 from services.exceptions import InvalidItemTypeError
-from services.inventory_service import InventoryService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -152,8 +152,8 @@ def service(
     mock_secondary_weapon_repo,
     mock_turret_weapon_repo,
     mock_module_repo,
-) -> InventoryService:
-    svc = InventoryService()
+) -> inv_svc_module.InventoryService:
+    svc = inv_svc_module.InventoryService()
     svc.inventory_repo = mock_inventory_repo
     svc.player_repo = mock_player_repo
     svc.player_ship_repo = mock_player_ship_repo
@@ -891,8 +891,6 @@ class TestConsolidateInventoryExtra:
     async def test_reraises_exception_on_unexpected_error(self, service):
         """If an exception occurs inside consolidate_inventory, it propagates."""
         # We need to make the try block raise - monkey-patch flogger
-        import services.inventory_service as inv_svc_module
-
         original_flogger = inv_svc_module.flogger
         bad_flogger = MagicMock()
         # Make the info log at the end raise (won't be reached, but we can make

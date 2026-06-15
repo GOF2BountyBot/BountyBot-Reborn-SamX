@@ -218,9 +218,6 @@ class TestOrchestratorDirectAddJob:
 
         add_job_calls: list[dict] = []
 
-        def _capture(**kwargs):
-            add_job_calls.append(kwargs)
-
         sched = _make_spawn_scheduler(add_job_side_effect=lambda *a, **kw: add_job_calls.append(kw))
 
         with (

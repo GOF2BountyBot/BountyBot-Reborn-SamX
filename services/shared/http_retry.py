@@ -149,6 +149,10 @@ async def with_transient_retry(fn, *args, **kwargs):
             if hasattr(result, "raise_for_status"):
                 result.raise_for_status()
             return result
+    # Unreachable in practice: AsyncRetrying(reraise=True) either returns from
+    # the loop body or re-raises the last exception. Explicit for clarity and to
+    # satisfy static analysis (all code paths return).
+    return None
 
 
 # Re-export so callers can ``from shared.http_retry import retry_if_exception_type``

@@ -11,6 +11,7 @@ Handles bounty-related operations including:
 """
 
 import asyncio
+import contextlib
 import os
 from collections import OrderedDict
 
@@ -724,11 +725,9 @@ async def admin_spawn_bounties(
                             fname = item.get("filename", "")
                             # Reverse: "route_map_{bid}.png" -> bid
                             if fname.startswith("route_map_") and fname.endswith(".png"):
-                                try:
+                                with contextlib.suppress(ValueError, KeyError):
                                     bid = int(fname[len("route_map_") : -len(".png")])
                                     route_map_urls[bid] = item["attachment_url"]
-                                except (ValueError, KeyError):
-                                    pass
                     except Exception as up_exc:  # pylint: disable=broad-exception-caught
                         flogger.warning(
                             f"Admin spawn: batch upload failed for {len(batch)} maps: "

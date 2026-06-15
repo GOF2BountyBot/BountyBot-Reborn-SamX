@@ -57,7 +57,9 @@ async def _post_with_retry(url: str, payload: dict, timeout: float = 10.0) -> ht
                 await asyncio.sleep(_RETRY_DELAY)
         except httpx.HTTPStatusError:  # pylint: disable=try-except-raise
             raise
-    raise last_exc  # type: ignore[misc]
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("retry loop exhausted without capturing an exception")
 
 
 async def _put_with_retry(url: str, payload: dict, timeout: float = 10.0) -> httpx.Response:
@@ -76,7 +78,9 @@ async def _put_with_retry(url: str, payload: dict, timeout: float = 10.0) -> htt
                 await asyncio.sleep(_RETRY_DELAY)
         except httpx.HTTPStatusError:  # pylint: disable=try-except-raise
             raise
-    raise last_exc  # type: ignore[misc]
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("retry loop exhausted without capturing an exception")
 
 
 @router.post(

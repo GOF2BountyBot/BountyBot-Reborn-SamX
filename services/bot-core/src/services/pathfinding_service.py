@@ -12,6 +12,7 @@ the zero heuristic is perfectly adequate.
 from __future__ import annotations
 
 import enum
+import functools
 import heapq
 from dataclasses import dataclass, field
 
@@ -31,6 +32,7 @@ class PathfindingError(enum.Enum):
     NO_ROUTE_FOUND = "no_route_found"
 
 
+@functools.total_ordering
 @dataclass
 class _AStarNode:
     """Internal node used during A* search."""

@@ -16,19 +16,17 @@ from tests.mocks.discord_mock_utils import DiscordMockUtils
 # Module-level mock setup — must run before any src imports
 # ---------------------------------------------------------------------------
 
-_mock_utils = DiscordMockUtils()
-
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
-_module_logger = None
+_unused_module_logger = None
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock with common log-level methods."""
-    global _module_logger
+    global _unused_module_logger
     logger = MagicMock()
     logger.info = MagicMock()
     logger.debug = MagicMock()
@@ -37,7 +35,7 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.trace = MagicMock()
     logger.critical = MagicMock()
     logger.exception = MagicMock()
-    _module_logger = logger
+    _unused_module_logger = logger
     return logger
 
 
@@ -257,13 +255,6 @@ class TestDuelChallengeCommand:
         error_response.status_code = 400
         error_response.json.return_value = {"detail": "A player cannot challenge themselves to a duel."}
         http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-
-        async def post_side_effect(*args, **kwargs):
-            if mock_duel_cog.http_client.post.call_count <= 2:
-                if mock_duel_cog.http_client.post.call_count == 1:
-                    return challenger_player_resp
-                return target_player_resp
-            raise http_error
 
         mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, http_error])
 

@@ -10,7 +10,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
-from tests.mocks.discord_mock_utils import DiscordMockUtils
+import tests.mocks.discord_mock_utils as discord_mock_utils
+
+DiscordMockUtils = discord_mock_utils.DiscordMockUtils
 
 # Create module-level mock utilities
 _mock_utils = DiscordMockUtils()

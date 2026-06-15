@@ -792,7 +792,7 @@ class TestAdminAutocomplete:
         Phase 6: Both player_cache and inventory_cache are pre-populated.
         The admin function reads from cache — no HTTP calls on the hot path.
         """
-        from utils.autocomplete_state import NormalizedChoice
+        import utils.autocomplete_state as _ac_mod
         from utils.autocomplete_utils import normalize_for_search as nfs
 
         interaction = _create_mock_interaction()
@@ -815,7 +815,9 @@ class TestAdminAutocomplete:
             inv_choices = []
             for item in raw_items:
                 label = f"{item['item_name']} ({item['item_type'].replace('_', ' ').title()})"
-                inv_choices.append(NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item))
+                inv_choices.append(
+                    _ac_mod.NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item)
+                )
             ac.inventory_cache.set((987654321, 10), inv_choices)
 
         # HTTP must not be called — data comes from cache
@@ -833,7 +835,7 @@ class TestAdminAutocomplete:
 
     def test_remove_item_autocomplete_filters_by_current(self, mock_admin_cog):
         """remove_item_autocomplete filters inventory items by current text (Phase 6: cache)."""
-        from utils.autocomplete_state import NormalizedChoice
+        import utils.autocomplete_state as _ac_mod
         from utils.autocomplete_utils import normalize_for_search as nfs
 
         interaction = _create_mock_interaction()
@@ -856,7 +858,9 @@ class TestAdminAutocomplete:
             inv_choices = []
             for item in raw_items:
                 label = f"{item['item_name']} ({item['item_type'].replace('_', ' ').title()})"
-                inv_choices.append(NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item))
+                inv_choices.append(
+                    _ac_mod.NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item)
+                )
             ac.inventory_cache.set((987654321, 10), inv_choices)
 
         # HTTP must not be called

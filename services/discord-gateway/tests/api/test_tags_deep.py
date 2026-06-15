@@ -28,7 +28,9 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from tests.mocks.discord_mock_utils import DiscordMockUtils
+import tests.mocks.discord_mock_utils as discord_mock_utils
+
+DiscordMockUtils = discord_mock_utils.DiscordMockUtils
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -808,7 +810,6 @@ class TestUpdateTagDeep:
 
         # First normalize call is for the request emoji (in update_kwargs) → succeed
         # Second call is for the best-effort reflect → raise
-        _side_effects = [MagicMock(return_value="🚀"), ValueError("bad")]
         call_seq = [0]
 
         def _norm(emoji):
@@ -2221,9 +2222,7 @@ class TestDeleteTagProxyToDictCalled:
         guild.channels = [ch]
         bot.guilds = [guild]
 
-        # Patch tags payloads to include id for the proxy
-        _original_build = None  # use the real available_tags loop in delete handler
-
+        # Use the real available_tags loop in delete handler (no patch needed)
         for app in _build_delete_app(bot):
             client = TestClient(app)
             response = client.delete("/api/v1/tags/1234567890")

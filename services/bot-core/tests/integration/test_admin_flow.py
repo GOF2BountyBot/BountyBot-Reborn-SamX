@@ -93,7 +93,7 @@ async def test_create_guild_config(
     config_repo: ConfigRepository,
 ):
     """A guild config can be created and retrieved by guild_id."""
-    _config = await _create_guild_config(db_session, guild_id=8001, starting_credits=750)
+    await _create_guild_config(db_session, guild_id=8001, starting_credits=750)
 
     result = await config_repo.get_by_guild_id(db_session, guild_id=8001)
 
@@ -107,7 +107,7 @@ async def test_guild_config_defaults_are_correct(
     config_repo: ConfigRepository,
 ):
     """A newly created guild config has sensible default values."""
-    _config = await _create_guild_config(db_session, guild_id=8002)
+    await _create_guild_config(db_session, guild_id=8002)
 
     result = await config_repo.get_by_guild_id(db_session, guild_id=8002)
 
@@ -124,7 +124,7 @@ async def test_create_default_config_via_repo(
     config_repo: ConfigRepository,
 ):
     """ConfigRepository.create_default_config produces a complete, queryable config."""
-    _config = await config_repo.create_default_config(db_session, guild_id=8003)
+    await config_repo.create_default_config(db_session, guild_id=8003)
 
     fetched = await config_repo.get_by_guild_id(db_session, guild_id=8003)
 
@@ -139,7 +139,7 @@ async def test_update_guild_config_admin_role(
     config_repo: ConfigRepository,
 ):
     """Updating a guild config admin_role_id persists correctly."""
-    _config = await _create_guild_config(db_session, guild_id=8004, admin_role_id=None)
+    await _create_guild_config(db_session, guild_id=8004, admin_role_id=None)
 
     # Update admin role via create_or_update
     updated = await config_repo.create_or_update(db_session, {"guild_id": 8004, "admin_role_id": 99999})
@@ -163,7 +163,7 @@ async def test_add_player_data(
     """A player can be added to a guild and retrieved by user+guild combination."""
     await _create_guild_config(db_session, guild_id=8005)
     user = await _create_user(db_session, user_id=300001, username="admin_tester")
-    _player = await _create_player(db_session, user_id=user.id, guild_id=8005, credits=1500)
+    await _create_player(db_session, user_id=user.id, guild_id=8005, credits=1500)
 
     result = await player_repo.get_by_user_and_guild(db_session, user_id=user.id, guild_id=8005)
 

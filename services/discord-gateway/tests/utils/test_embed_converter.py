@@ -237,17 +237,17 @@ class TestEmbedConverter:
 
     def test_coerce_to_embed_payload_returns_payload_unchanged(self, mock_embed_payload):
         """_coerce_to_embed_payload should return EmbedPayload unchanged."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter._coerce_to_embed_payload(mock_embed_payload)
+        result = _ec_mod.EmbedConverter._coerce_to_embed_payload(mock_embed_payload)
         assert result == mock_embed_payload
 
     def test_coerce_to_embed_payload_converts_dict_to_payload(self, mock_embed_payload):
         """_coerce_to_embed_payload should convert dict to EmbedPayload."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         payload_dict = mock_embed_payload.model_dump()
-        result = EmbedConverter._coerce_to_embed_payload(payload_dict)
+        result = _ec_mod.EmbedConverter._coerce_to_embed_payload(payload_dict)
         assert result.title == mock_embed_payload.title
         assert result.description == mock_embed_payload.description
 
@@ -259,24 +259,24 @@ class TestEmbedConverter:
                 return mock_embed_payload.model_dump()
 
         mock_model = MockPydanticModel()
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter._coerce_to_embed_payload(mock_model)
+        result = _ec_mod.EmbedConverter._coerce_to_embed_payload(mock_model)
         assert result.title == mock_embed_payload.title
         assert result.description == mock_embed_payload.description
 
     def test_coerce_to_embed_payload_raises_on_unsupported_type(self):
         """_coerce_to_embed_payload should raise TypeError on unsupported type."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         with pytest.raises(TypeError):
-            EmbedConverter._coerce_to_embed_payload(123)
+            _ec_mod.EmbedConverter._coerce_to_embed_payload(123)
 
     def test_payload_to_embed_converts_basic_payload(self, mock_embed_payload):
         """payload_to_embed should convert basic payload to Discord embed."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.payload_to_embed(mock_embed_payload)
+        result = _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
 
         assert result.title == "Test Title"
         assert result.description == "Test Description"
@@ -294,65 +294,65 @@ class TestEmbedConverter:
     def test_payload_to_embed_handles_invalid_color(self, mock_embed_payload):
         """payload_to_embed should handle invalid color values gracefully."""
         mock_embed_payload.color = "invalid_color"
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         with pytest.raises(Exception):
-            EmbedConverter.payload_to_embed(mock_embed_payload)
+            _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
 
     def test_payload_to_embed_handles_none_color(self, mock_embed_payload):
         """payload_to_embed should handle None color gracefully."""
         mock_embed_payload.color = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.payload_to_embed(mock_embed_payload)
+        result = _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
         assert result.color is None
 
     def test_payload_to_embed_handles_none_fields(self, mock_embed_payload):
         """payload_to_embed should handle None fields gracefully."""
         mock_embed_payload.fields = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.payload_to_embed(mock_embed_payload)
+        result = _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
         assert len(result.fields) == 0
 
     def test_payload_to_embed_handles_none_footer(self, mock_embed_payload):
         """payload_to_embed should handle None footer gracefully."""
         mock_embed_payload.footer_text = None
         mock_embed_payload.footer_icon_url = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.payload_to_embed(mock_embed_payload)
+        result = _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
         assert not result.footer
 
     def test_payload_to_embed_handles_none_timestamp(self, mock_embed_payload):
         """payload_to_embed should handle None timestamp gracefully."""
         mock_embed_payload.timestamp = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.payload_to_embed(mock_embed_payload)
+        result = _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
         assert result.timestamp is None
 
     def test_payload_to_embed_handles_none_thumbnail(self, mock_embed_payload):
         """payload_to_embed should handle None thumbnail gracefully."""
         mock_embed_payload.thumbnail_url = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.payload_to_embed(mock_embed_payload)
+        result = _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
         assert not result.thumbnail
 
     def test_payload_to_embed_handles_none_image(self, mock_embed_payload):
         """payload_to_embed should handle None image gracefully."""
         mock_embed_payload.image_url = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.payload_to_embed(mock_embed_payload)
+        result = _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
         assert not result.image
 
     def test_embed_to_payload_converts_basic_embed(self, mock_discord_embed):
         """embed_to_payload should convert basic Discord embed to payload."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.embed_to_payload(mock_discord_embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
 
         assert result.title == "Test Title"
         assert result.description == "Test Description"
@@ -370,66 +370,66 @@ class TestEmbedConverter:
     def test_embed_to_payload_handles_none_title(self, mock_discord_embed):
         """embed_to_payload should handle None title gracefully."""
         mock_discord_embed.title = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.embed_to_payload(mock_discord_embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert result.title is None
 
     def test_embed_to_payload_handles_none_description(self, mock_discord_embed):
         """embed_to_payload should handle None description gracefully."""
         mock_discord_embed.description = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.embed_to_payload(mock_discord_embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert result.description is None
 
     def test_embed_to_payload_handles_none_color(self, mock_discord_embed):
         """embed_to_payload should handle None color gracefully."""
         mock_discord_embed.color = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.embed_to_payload(mock_discord_embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert result.color is None
 
     def test_embed_to_payload_handles_empty_fields(self, mock_discord_embed):
         """embed_to_payload should handle empty fields gracefully."""
         mock_discord_embed.fields = []
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.embed_to_payload(mock_discord_embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert len(result.fields) == 0
 
     def test_embed_to_payload_handles_none_footer(self, mock_discord_embed):
         """embed_to_payload should handle None footer gracefully."""
         mock_discord_embed.footer = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.embed_to_payload(mock_discord_embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert result.footer_text is None
         assert result.footer_icon_url is None
 
     def test_embed_to_payload_handles_none_timestamp(self, mock_discord_embed):
         """embed_to_payload should handle None timestamp gracefully."""
         mock_discord_embed.timestamp = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.embed_to_payload(mock_discord_embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert result.timestamp is None
 
     def test_embed_to_payload_handles_none_thumbnail(self, mock_discord_embed):
         """embed_to_payload should handle None thumbnail gracefully."""
         mock_discord_embed.thumbnail = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.embed_to_payload(mock_discord_embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert result.thumbnail_url is None
 
     def test_embed_to_payload_handles_none_image(self, mock_discord_embed):
         """embed_to_payload should handle None image gracefully."""
         mock_discord_embed.image = None
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.embed_to_payload(mock_discord_embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert result.image_url is None
 
     def test_payload_to_grid_embed_injects_spacers(self, mock_embed_payload):
@@ -440,9 +440,9 @@ class TestEmbedConverter:
 
         mock_embed_payload.fields.append(EmbedField(name="Field3", value="Value3", inline=True))
 
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.payload_to_grid_embed(mock_embed_payload, fields_per_row=2)
+        result = _ec_mod.EmbedConverter.payload_to_grid_embed(mock_embed_payload, fields_per_row=2)
 
         # Should have original 3 fields + 1 spacer (after the 2nd field)
         assert len(result.fields) == 4
@@ -454,25 +454,25 @@ class TestEmbedConverter:
     def test_payload_to_grid_embed_handles_few_fields(self, mock_embed_payload):
         """payload_to_grid_embed should handle few fields without unnecessary spacers."""
         mock_embed_payload.fields = [mock_embed_payload.fields[0]]
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.payload_to_grid_embed(mock_embed_payload, fields_per_row=2)
+        result = _ec_mod.EmbedConverter.payload_to_grid_embed(mock_embed_payload, fields_per_row=2)
         assert len(result.fields) == 1  # No spacer needed
 
     def test_test_round_trip_consistency_with_valid_payload(self, mock_embed_payload):
         """test_round_trip_consistency should return True for valid payload."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.test_round_trip_consistency(mock_embed_payload)
+        result = _ec_mod.EmbedConverter.test_round_trip_consistency(mock_embed_payload)
         assert result is True
 
     def test_test_round_trip_consistency_with_invalid_payload(self):
         """test_round_trip_consistency should return False for invalid payload."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         # Use a completely invalid type that cannot be coerced to EmbedPayload
         invalid_payload = 12345
-        result = EmbedConverter.test_round_trip_consistency(invalid_payload)
+        result = _ec_mod.EmbedConverter.test_round_trip_consistency(invalid_payload)
         assert result is False
 
     def test_test_round_trip_consistency_with_empty_payload(self):
@@ -480,24 +480,24 @@ class TestEmbedConverter:
         from api.schemas.message_schemas import EmbedPayload
 
         empty_payload = EmbedPayload()
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
-        result = EmbedConverter.test_round_trip_consistency(empty_payload)
+        result = _ec_mod.EmbedConverter.test_round_trip_consistency(empty_payload)
         assert result is True  # Should handle empty payload gracefully
 
     def test_payload_to_embed_with_thumbnail_and_image(self, mock_embed_payload):
         """Test that thumbnail and image fields are properly converted."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         mock_embed_payload.thumbnail_url = "https://example.com/thumb.png"
         mock_embed_payload.image_url = "https://example.com/image.png"
-        embed = EmbedConverter.payload_to_embed(mock_embed_payload)
+        embed = _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
         assert embed.thumbnail is not None
         assert embed.image is not None
 
     def test_embed_to_payload_with_multiple_fields(self, mock_discord_embed):
         """Test that multiple fields are properly extracted from embed."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         field1 = MagicMock()
         field1.name = "Field 1"
@@ -508,21 +508,21 @@ class TestEmbedConverter:
         field2.value = "Value 2"
         field2.inline = False
         mock_discord_embed.fields = [field1, field2]
-        payload = EmbedConverter.embed_to_payload(mock_discord_embed)
+        payload = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert len(payload.fields) == 2
         assert payload.fields[0].name == "Field 1"
         assert payload.fields[1].name == "Field 2"
 
     def test_coerce_to_embed_payload_with_none_input(self):
         """Test that None input raises appropriate error."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         with pytest.raises(Exception):
-            EmbedConverter._coerce_to_embed_payload(None)
+            _ec_mod.EmbedConverter._coerce_to_embed_payload(None)
 
     def test_payload_to_embed_with_all_fields(self, mock_embed_payload):
         """Test payload_to_embed with all fields populated."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         # Set various fields
         mock_embed_payload.title = "Full Embed"
@@ -531,31 +531,31 @@ class TestEmbedConverter:
         mock_embed_payload.footer_text = "Footer"
         mock_embed_payload.footer_icon_url = "https://example.com/footer.png"
 
-        embed = EmbedConverter.payload_to_embed(mock_embed_payload)
+        embed = _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
         assert embed.title == "Full Embed"
         assert embed.description == "Complete embed with all fields"
 
     def test_embed_to_payload_defensive_access(self, mock_discord_embed):
         """Test that embed_to_payload safely handles missing attributes."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         # Remove fields attribute to test defensive access
         mock_discord_embed.fields = None
-        payload = EmbedConverter.embed_to_payload(mock_discord_embed)
+        payload = _ec_mod.EmbedConverter.embed_to_payload(mock_discord_embed)
         assert payload.fields == []
 
     def test_payload_to_grid_embed_with_fields(self, mock_embed_payload):
         """Test that payload_to_grid_embed properly formats embed for grid layout."""
         # Add some fields to the payload
+        import utils.embed_converter as _ec_mod
         from api.schemas.message_schemas import EmbedField
-        from utils.embed_converter import EmbedConverter
 
         field1 = EmbedField(name="Field 1", value="Value 1", inline=True)
         field2 = EmbedField(name="Field 2", value="Value 2", inline=True)
         mock_embed_payload.fields = [field1, field2]
         mock_embed_payload.title = "Grid Embed"
 
-        grid_embed = EmbedConverter.payload_to_grid_embed(mock_embed_payload, fields_per_row=2)
+        grid_embed = _ec_mod.EmbedConverter.payload_to_grid_embed(mock_embed_payload, fields_per_row=2)
         assert grid_embed is not None
 
     # ------------------------------------------------------------------
@@ -565,19 +565,19 @@ class TestEmbedConverter:
     # Lines 52-54: _coerce_to_embed_payload — model_dump() path raises
     def test_coerce_to_embed_payload_model_dump_raises_reraises(self):
         """When model_dump() raises, _coerce_to_embed_payload should log and re-raise (lines 52-54)."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         class BadModelDump:
             def model_dump(self):
                 raise ValueError("model_dump exploded")
 
         with pytest.raises(ValueError, match="model_dump exploded"):
-            EmbedConverter._coerce_to_embed_payload(BadModelDump())
+            _ec_mod.EmbedConverter._coerce_to_embed_payload(BadModelDump())
 
     # Lines 58-62: _coerce_to_embed_payload — .dict() path (happy path)
     def test_coerce_to_embed_payload_uses_dict_method_on_pydantic_v1_model(self, mock_embed_payload):
         """_coerce_to_embed_payload should call .dict() on pydantic v1-style objects (lines 58-62)."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         class PydanticV1Style:
             """Mimics a pydantic-v1 model (has .dict() but NOT .model_dump())."""
@@ -588,27 +588,27 @@ class TestEmbedConverter:
             # deliberately no model_dump attribute
 
         obj = PydanticV1Style()
-        result = EmbedConverter._coerce_to_embed_payload(obj)
+        result = _ec_mod.EmbedConverter._coerce_to_embed_payload(obj)
         assert result.title == mock_embed_payload.title
         assert result.description == mock_embed_payload.description
 
     # Lines 58-62: _coerce_to_embed_payload — .dict() path raises
     def test_coerce_to_embed_payload_dict_method_raises_reraises(self):
         """When .dict() raises, _coerce_to_embed_payload should log and re-raise (lines 60-62)."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         class BadDictMethod:
             def dict(self):
                 raise RuntimeError("dict() exploded")
 
         with pytest.raises(RuntimeError, match="dict\\(\\) exploded"):
-            EmbedConverter._coerce_to_embed_payload(BadDictMethod())
+            _ec_mod.EmbedConverter._coerce_to_embed_payload(BadDictMethod())
 
     # Lines 70-74: _coerce_to_embed_payload — iterable mapping succeeds as dict but
     # EmbedPayload validation fails → re-raises from inner try/except
     def test_coerce_to_embed_payload_iterable_mapping_invalid_fields_reraises(self):
         """dict(payload) succeeds but EmbedPayload(**dict) fails → lines 70-74 are executed."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         # An iterable of key-value pairs that becomes a valid dict but contains
         # fields that fail EmbedPayload validation (e.g. extra unknown required field
@@ -623,21 +623,21 @@ class TestEmbedConverter:
                 return iter([("fields", "not-a-list")])
 
         with pytest.raises(Exception):
-            EmbedConverter._coerce_to_embed_payload(IterableMapping())
+            _ec_mod.EmbedConverter._coerce_to_embed_payload(IterableMapping())
 
     # Line 134-135: payload_to_embed — non-datetime timestamp raises TypeError
     def test_payload_to_embed_non_datetime_timestamp_raises_type_error(self, mock_embed_payload):
         """payload_to_embed should raise TypeError when timestamp is not a datetime (lines 134-135)."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         mock_embed_payload.timestamp = "2024-01-01T00:00:00Z"  # string, not datetime
         with pytest.raises(TypeError, match="timestamp must be a datetime instance"):
-            EmbedConverter.payload_to_embed(mock_embed_payload)
+            _ec_mod.EmbedConverter.payload_to_embed(mock_embed_payload)
 
     # Lines 209-211: embed_to_payload — color.value is None → fallback to int(embed.color)
     def test_embed_to_payload_color_fallback_to_int_when_value_is_none(self):
         """embed_to_payload should fall back to int(embed.color) when .value is None (lines 209-211)."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         class ColorWithNoValue:
             """Simulates a color object where .value returns None but int() works."""
@@ -649,13 +649,13 @@ class TestEmbedConverter:
 
         embed = _MockEmbed()
         embed.color = ColorWithNoValue()
-        result = EmbedConverter.embed_to_payload(embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(embed)
         assert result.color == 0xFF0000
 
     # Lines 209-211 (except branch): embed_to_payload — int(embed.color) also raises
     def test_embed_to_payload_color_fallback_int_raises_sets_none(self):
         """embed_to_payload should set color=None when both .value and int() fail (line 211)."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         class BadColor:
             value = None
@@ -665,13 +665,13 @@ class TestEmbedConverter:
 
         embed = _MockEmbed()
         embed.color = BadColor()
-        result = EmbedConverter.embed_to_payload(embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(embed)
         assert result.color is None
 
     # Lines 235-238: embed_to_payload — footer access raises → swallowed
     def test_embed_to_payload_footer_access_raises_is_swallowed(self):
         """embed_to_payload should swallow exceptions when accessing footer (lines 235-238)."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         class ExplodingFooter:
             """Accessing any attribute raises."""
@@ -683,14 +683,14 @@ class TestEmbedConverter:
         # Make embed.footer a truthy object so the `if` branch is entered,
         # but then accessing footer.text raises.
         object.__setattr__(embed, "footer", ExplodingFooter())
-        result = EmbedConverter.embed_to_payload(embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(embed)
         assert result.footer_text is None
         assert result.footer_icon_url is None
 
     # Lines 246-247: embed_to_payload — thumbnail access raises → swallowed
     def test_embed_to_payload_thumbnail_access_raises_is_swallowed(self):
         """embed_to_payload should swallow exceptions when accessing thumbnail (lines 246-247)."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         class ExplodingThumbnail:
             @property
@@ -699,13 +699,13 @@ class TestEmbedConverter:
 
         embed = _MockEmbed()
         embed.thumbnail = ExplodingThumbnail()
-        result = EmbedConverter.embed_to_payload(embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(embed)
         assert result.thumbnail_url is None
 
     # Lines 253-254: embed_to_payload — image access raises → swallowed
     def test_embed_to_payload_image_access_raises_is_swallowed(self):
         """embed_to_payload should swallow exceptions when accessing image (lines 253-254)."""
-        from utils.embed_converter import EmbedConverter
+        import utils.embed_converter as _ec_mod
 
         class ExplodingImage:
             @property
@@ -714,5 +714,5 @@ class TestEmbedConverter:
 
         embed = _MockEmbed()
         embed.image = ExplodingImage()
-        result = EmbedConverter.embed_to_payload(embed)
+        result = _ec_mod.EmbedConverter.embed_to_payload(embed)
         assert result.image_url is None

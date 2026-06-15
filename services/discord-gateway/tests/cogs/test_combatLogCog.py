@@ -27,8 +27,6 @@ import pytest
 # ---------------------------------------------------------------------------
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
-_mock_utils = DiscordMockUtils()
-
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
 
@@ -170,9 +168,9 @@ def mock_bot():
 @pytest.fixture(scope="module")
 def cog(mock_bot):
     _evict_cog_modules()
-    from cogs.combatLogCog import CombatLogCog
+    import cogs.combatLogCog as clc
 
-    c = CombatLogCog(mock_bot)
+    c = clc.CombatLogCog(mock_bot)
     c.http_client = MagicMock()
     c.http_client.aclose = AsyncMock()
     return c
@@ -530,14 +528,14 @@ class TestAdminBattleAutocomplete:
 
     async def test_hint_choice_when_user_unfilled(self, cog):
         """Discord cannot enforce fill-order: unfilled user → sentinel hint choice."""
-        from cogs.combatLogCog import _SELECT_USER_FIRST
+        import cogs.combatLogCog as clc
 
         interaction = _create_interaction()
         interaction.namespace.user = None
 
         choices = await cog.admin_battle_autocomplete(interaction, current="")
         assert len(choices) == 1
-        assert choices[0].value == _SELECT_USER_FIRST
+        assert choices[0].value == clc._SELECT_USER_FIRST
         assert "select a user" in choices[0].name.lower()
 
     async def test_returns_empty_when_no_guild(self, cog):
@@ -586,12 +584,12 @@ class TestAdminCombatLogCommand:
         cog.http_client.get.assert_not_called()
 
     async def test_sentinel_battle_rejected(self, cog):
-        from cogs.combatLogCog import _SELECT_USER_FIRST
+        import cogs.combatLogCog as clc
 
         cog.http_client.get = AsyncMock()
         interaction = _create_interaction()
 
-        await cog.admin_combat_log.callback(cog, interaction, user=_make_target_user(), battle=_SELECT_USER_FIRST)
+        await cog.admin_combat_log.callback(cog, interaction, user=_make_target_user(), battle=clc._SELECT_USER_FIRST)
 
         interaction.followup.send.assert_called_once()
         args = interaction.followup.send.call_args

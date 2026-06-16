@@ -13,7 +13,7 @@ combat_service.py and imports TickResolver (and other symbols it needs) from
 this module.
 """
 
-import bisect
+import itertools
 import math
 import random
 from dataclasses import dataclass, field
@@ -2181,12 +2181,12 @@ def _extract_key_events(
         (shock-blast / booster push) knocked it out and closure brought it back.
         Multi-range loadouts therefore "spool up" in range order as the gap
         closes (and again after each displacement). Detection is purely from the
-        stored timeline: distance is monotonic except at shock_blast/booster_push
-        causes, and a weapon can only fire in range, so a fire whose preceding
-        same-weapon fire is separated by the reconstructed distance exceeding the
-        weapon's demonstrated range (range_est) is a re-enter. No resolver change.
-        Nukes and shock-blasts are excluded here (they get per-fire lines below).
-        Duplicate-named weapon instances are collapsed to one line per tick.
+        stored timeline and uses the weapon's firing cadence: a ready weapon fires
+        every reload-interval while in range (closure only shrinks distance), so a
+        fire separated from the previous same-weapon fire by a gap materially
+        larger than that cadence marks a re-acquire after a displacement pushed it
+        out. No resolver change. Nukes and shock-blasts are excluded here (they get
+        per-fire lines below). Duplicate-named instances collapse to one line/tick.
 
       * Per-fire beats: every nuke detonation (with opp/self damage) and every
         shock-blast use (with the reset distance).
@@ -2218,9 +2218,7 @@ def _extract_key_events(
         return _label_for_side(data.get("side")) or actor or "?"
 
     # ---- pass 1: distance track, per-weapon fires, shock resets, attribution, start HP ----
-    cur_dist = None
     fires: dict[str, list[dict]] = {}
-    dist_track: list[tuple[int, float]] = []
     shock_reset: dict[tuple[int, str], float] = {}
     start_total: dict[str, int] = {}
     attrib: dict[tuple[int, str], str] = {}
@@ -2231,25 +2229,23 @@ def _extract_key_events(
         typ = ev.get("type", "")
         tick = int(ev.get("tick", 0))
         if typ == "fight_start":
-            cur_dist = data.get("initial_distance")
             for i, cb in enumerate(data.get("combatants", [])):
                 hp = cb.get("hp", {})
                 start_total[str(i + 1)] = hp.get("hull", 0) + hp.get("armour", 0) + hp.get("shield", 0)
         elif typ == "weapon_fire":
             w = data.get("weapon", "?")
-            fires.setdefault(w, []).append({"tick": tick, "dist": cur_dist, "side": data.get("side"), "data": data})
+            fires.setdefault(w, []).append({"tick": tick, "side": data.get("side"), "data": data})
         elif typ == "distance":
-            to = data.get("to")
             if data.get("cause") == "shock_blast":
-                shock_reset[(tick, str(data.get("side")))] = to
-            if to is not None:
-                dist_track.append((tick, to))
-                cur_dist = to
+                shock_reset[(tick, str(data.get("side")))] = data.get("to")
         elif typ == "damage":
+            # Attribution: weapon that removed the most HP from the target this tick.
+            # Guard absorbed > 0 (sentinel 0): EmergencySystem-invuln damage rows carry
+            # absorbed=0 and must NOT win attribution for the resulting break/milestone.
             absorbed = data.get("absorbed", 0) or 0
             tside = str(data.get("side")) if data.get("side") is not None else None
             wpn = (data.get("source", {}) or {}).get("weapon")
-            if tside and wpn and absorbed > attrib_best.get((tick, tside), -1):
+            if tside and wpn and absorbed > attrib_best.get((tick, tside), 0):
                 attrib_best[(tick, tside)] = absorbed
                 attrib[(tick, tside)] = wpn
 
@@ -2286,20 +2282,9 @@ def _extract_key_events(
             return f"{h}/{f} hit" if h else "miss"
         return "hit" if d.get("hit") else "miss"
 
-    _dt_ticks = [t for t, _ in dist_track]
-    _dt_vals = [v for _, v in dist_track]
-
-    def _max_dist_between(a: int, b: int) -> float:
-        lo = bisect.bisect_right(_dt_ticks, a)
-        hi = bisect.bisect_left(_dt_ticks, b)
-        return max(_dt_vals[lo:hi], default=-1.0)
-
     for w, flist in fires.items():
         if flist[0]["data"].get("subtype") in ("nuke", "shock-blast"):
             continue
-        flist.sort(key=lambda x: x["tick"])
-        dists = [f["dist"] for f in flist if f["dist"] is not None]
-        range_est = max(dists) if dists else None
         # Collapse duplicate-named instances to one entry per tick (prefer a hit for display).
         by_tick: dict[int, dict] = {}
         for f in flist:
@@ -2309,11 +2294,21 @@ def _extract_key_events(
             cur_hitful = bool(cur and (cur["data"].get("hit") or (cur["data"].get("hits") or 0)))
             if cur is None or (hitful and not cur_hitful):
                 by_tick[t] = f
+        fire_ticks = sorted(by_tick)
+        # Re-enter detection via firing CADENCE, not a distance proxy. A ready weapon fires
+        # every `cadence` ticks (its reload) for as long as it is in range; closure only ever
+        # shrinks distance, so the sole cause of a gap materially larger than cadence is the
+        # weapon having been pushed out of range (shock-blast/booster) and re-acquiring. The
+        # first fire after such a gap is a re-enter. This needs no range estimate and so cannot
+        # be fooled by it — a long-range weapon firing straight through a reset keeps gap ==
+        # cadence and is correctly NOT flagged.
+        diffs = [b - a for a, b in itertools.pairwise(fire_ticks)]
+        cadence = min(diffs) if diffs else None
         prev_tick: int | None = None
-        for t in sorted(by_tick):
+        for t in fire_ticks:
             f = by_tick[t]
             acquire = prev_tick is None
-            if prev_tick is not None and range_est is not None and _max_dist_between(prev_tick, t) > range_est:
+            if prev_tick is not None and cadence is not None and (t - prev_tick) > 1.5 * cadence:
                 acquire = True
             if acquire:
                 lbl = _label_for_side(f["side"]) or "?"

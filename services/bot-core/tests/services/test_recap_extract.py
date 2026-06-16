@@ -210,29 +210,31 @@ class TestRangeInR1:
 
 class TestReEnterR2AfterShockBlast:
     def test_reenter_after_shock_blast_displacement(self):
-        """Weapon fires, shock-blast resets dist > range, weapon fires again → 're-enters range'."""
-        # Missile fires at tick 10 (dist ~2000 = range_est)
-        # Shock-blast at tick 20 resets dist to 5000 (> range_est)
-        # Closure at tick 100 brings dist back to 1500 < range_est
-        # Missile fires again at tick 110 → re-enter
+        """A firing gap >> cadence (weapon pushed out by a shock-blast, then re-acquires) → 're-enters'.
+
+        Re-enter detection is cadence-based: the weapon establishes a steady cadence (fires every
+        20 ticks), a shock-blast pushes it out of range so firing stops, and after a long gap it
+        resumes — the 140-tick gap is far larger than the 20-tick cadence, so the resuming fire is
+        flagged as a re-enter.
+        """
         timeline = [
             _fight_start(dist=2000.0),
+            # Cadence baseline: Tomahawk fires every 20 ticks while in range.
             _weapon_fire(10, "Alice", "Tomahawk", subtype="missile", hit=True, side=1),
-            _distance_event(20, cause="shock_blast", from_m=2000.0, to_m=5000.0, side=2),
+            _weapon_fire(30, "Alice", "Tomahawk", subtype="missile", hit=False, side=1),
+            _weapon_fire(50, "Alice", "Tomahawk", subtype="missile", hit=True, side=1),
+            # Shock-blast pushes the ships apart → Tomahawk out of range (firing stops).
+            _distance_event(60, cause="shock_blast", from_m=2000.0, to_m=5000.0, side=2),
             {
-                "tick": 20,
+                "tick": 60,
                 "type": "weapon_fire",
                 "actor": "Bob",
                 "target": "Alice",
-                "data": {
-                    "slot": "secondary",
-                    "subtype": "shock-blast",
-                    "weapon": "Shock Device",
-                    "side": 2,
-                },
+                "data": {"slot": "secondary", "subtype": "shock-blast", "weapon": "Shock Device", "side": 2},
             },
-            _distance_event(100, cause="closure", from_m=5000.0, to_m=1500.0, side=2),
-            _weapon_fire(110, "Alice", "Tomahawk", subtype="missile", hit=True, side=1),
+            _distance_event(190, cause="closure", from_m=5000.0, to_m=1500.0, side=2),
+            # Long gap (140 ticks since the last Tomahawk fire) → re-acquire.
+            _weapon_fire(190, "Alice", "Tomahawk", subtype="missile", hit=True, side=1),
         ]
         result = _extract_key_events(timeline)
         wir = [e for e in result if e["event_type"] == "Weapon in range"]
@@ -240,7 +242,7 @@ class TestReEnterR2AfterShockBlast:
         r1 = next(e for e in wir if "re-enters" not in e["detail"])
         r2 = next(e for e in wir if "re-enters" in e["detail"])
         assert r1["tick"] == 10
-        assert r2["tick"] == 110
+        assert r2["tick"] == 190
         assert "Tomahawk" in r2["detail"]
 
     def test_no_reenter_without_displacement(self):

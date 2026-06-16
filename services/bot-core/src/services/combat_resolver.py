@@ -1018,8 +1018,9 @@ def _build_fight_summary(
     NOT dict keys — the timeline holds dataclass instances, not dicts (§12 precision note).
 
     Per-combatant fields derived from the event scan:
-      shots_fired       — count of weapon_fire events actor==combatant
-      shots_hit         — count of weapon_fire events actor==combatant AND data["hit"]==True
+      shots_fired       — aimed shots: +1 per primary/turret/rocket/missile fire, + the
+                          sub-munition count for cluster-missiles; nukes & shock-blasts excluded
+      shots_hit         — landed aimed shots: +1 per hit, + landed sub-munitions for clusters
       accuracy          — shots_hit/shots_fired; 0.0 if no shots
       module_activations          — {module_key: count} SPARSE (cloak/booster/emergency_system only)
       secondary_fired             — {subtype: count} SPARSE (secondaries only)
@@ -1094,13 +1095,23 @@ def _build_fight_summary(
     for ev in events:
         if ev.type == CombatEventType.weapon_fire:
             ev_slot = _slot_from_event(ev)
+            sub = ev.data.get("subtype", "")
             if ev_slot in shots_fired:
-                shots_fired[ev_slot] += 1
-                if ev.data.get("hit") is True:
-                    shots_hit[ev_slot] += 1
+                # Accuracy accounting: cluster-missiles count at sub-munition granularity
+                # (each burst round is a shot; each landed sub-munition a hit), so a 3/4 cluster
+                # reads 75% rather than a flat miss. Nukes and shock-blasts have no hit/miss
+                # semantics (AoE detonation / guaranteed displacement) and are excluded from
+                # shot counts entirely. Everything else (primaries, turrets, rockets, missiles,
+                # ionizing-missiles) is one aimed shot that hits iff data["hit"] is True.
+                if sub == "cluster-missile":
+                    shots_fired[ev_slot] += ev.data.get("fired", 0)
+                    shots_hit[ev_slot] += ev.data.get("hits", 0)
+                elif sub not in ("nuke", "shock-blast"):
+                    shots_fired[ev_slot] += 1
+                    if ev.data.get("hit") is True:
+                        shots_hit[ev_slot] += 1
             # secondary_fired — count by subtype for secondaries (data["slot"] == "secondary")
             if ev.data.get("slot") == "secondary" and ev_slot in secondary_fired:
-                sub = ev.data.get("subtype", "")
                 if sub:
                     secondary_fired[ev_slot][sub] = secondary_fired[ev_slot].get(sub, 0) + 1
                 # secondary_rounds_by_weapon — count by weapon name (same slot criterion);

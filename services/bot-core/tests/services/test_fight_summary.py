@@ -333,6 +333,71 @@ class TestAccuracyCounting:
         assert s["combatants"]["1"]["shots_hit"] == 7
         assert s["combatants"]["1"]["accuracy"] == pytest.approx(0.70)
 
+    @staticmethod
+    def _secondary_fire(subtype: str, *, tick: int = 1, **data) -> CombatEvent:
+        return CombatEvent(
+            tick=tick,
+            type=CombatEventType.weapon_fire,
+            actor="C1",
+            target="C2",
+            data={"slot": "secondary", "subtype": subtype, "weapon": "Sec", **data},
+        )
+
+    def test_accuracy_cluster_counts_submunitions(self):
+        """A 3/4 cluster volley counts as 4 shots / 3 hits -> 75%, not a flat miss."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            self._secondary_fire("cluster-missile", tick=1, fired=4, hits=3, accuracy=0.6),
+            _fight_end_event(2, None, "time_cap", 2, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 2, None)
+        assert s["combatants"]["1"]["shots_fired"] == 4
+        assert s["combatants"]["1"]["shots_hit"] == 3
+        assert s["combatants"]["1"]["accuracy"] == pytest.approx(0.75)
+
+    def test_accuracy_nuke_excluded(self):
+        """Nukes have no hit/miss semantics -> excluded from shots entirely."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            self._secondary_fire("nuke", tick=1, opponent_damage=200, self_damage=5),
+            _fight_end_event(2, None, "time_cap", 2, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 2, None)
+        assert s["combatants"]["1"]["shots_fired"] == 0
+        assert s["combatants"]["1"]["shots_hit"] == 0
+        assert s["combatants"]["1"]["accuracy"] == 0.0
+
+    def test_accuracy_shock_blast_excluded(self):
+        """Shock-blast is a guaranteed displacement, not an aimed shot -> excluded."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            self._secondary_fire("shock-blast", tick=1, hit=True, accuracy=1.0),
+            _fight_end_event(2, None, "time_cap", 2, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 2, None)
+        assert s["combatants"]["1"]["shots_fired"] == 0
+        assert s["combatants"]["1"]["accuracy"] == 0.0
+
+    def test_accuracy_mixed_primary_cluster_nuke(self):
+        """Primary hit + 3/4 cluster + a nuke -> 5 fired / 4 hit (nuke excluded)."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _weapon_fire_event("C1", "C2", tick=1, hit=True),
+            self._secondary_fire("cluster-missile", tick=2, fired=4, hits=3, accuracy=0.6),
+            self._secondary_fire("nuke", tick=3, opponent_damage=100, self_damage=0),
+            _fight_end_event(4, None, "time_cap", 4, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 4, None)
+        assert s["combatants"]["1"]["shots_fired"] == 5
+        assert s["combatants"]["1"]["shots_hit"] == 4
+        assert s["combatants"]["1"]["accuracy"] == pytest.approx(0.8)
+        # secondary_fired still counts fire ACTIONS (cluster=1 volley, nuke=1), not sub-munitions
+        assert s["combatants"]["1"]["secondary_fired"] == {"cluster-missile": 1, "nuke": 1}
+
     def test_shots_not_double_counted_across_combatants(self):
         """C1's shots do NOT increment C2's shots_fired and vice versa."""
         c1, c2 = _make_states()

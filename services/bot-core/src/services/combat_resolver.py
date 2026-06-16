@@ -5,7 +5,7 @@ TickResolver class) that can be safely imported in a forkserver process-pool
 child without pulling in SQLAlchemy, FastAPI, persist, or any service module.
 
 Also contains key-event extraction helpers (_extract_key_events,
-_ticks_to_seconds, _TICK_MS, _SECONDARY_SUBTYPES) moved from combat_log_service.
+_ticks_to_seconds, _TICK_MS) moved from combat_log_service.
 
 P2-T0c: This module is the split point — everything above class CombatService
 in the original combat_service.py lives here.  CombatService itself stays in
@@ -2155,12 +2155,6 @@ class TickResolver:
 # Tick duration used when persisting (10 ms per tick — from GameConstants default).
 # Key-event time conversion uses this value.
 _TICK_MS: int = 10
-
-# Secondary weapon subtypes that count as "notable" fires for key-events.
-# CI-16/CI-13: added "ionizing-missile" (was missing; it fires and should log); "emp-bomb" is deferred but kept.
-_SECONDARY_SUBTYPES: frozenset[str] = frozenset(
-    {"rocket", "missile", "cluster-missile", "nuke", "shock-blast", "emp-bomb", "ionizing-missile"}
-)
 
 # HP layer labels (used for layer_depleted event detail)
 # CI-15: "hull" added to match the new layer_depleted/hull event emitted by _apply_damage.

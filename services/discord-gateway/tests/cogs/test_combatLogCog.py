@@ -453,7 +453,7 @@ class TestCombatLogCommand:
         key_field = next((f for f in embed_call.fields if "Key Events" in f.name), None)
         assert key_field is not None, "Key Events field must be present"
         # Every key_events field (primary + continuations) must respect the 1024-char limit
-        key_event_fields = [f for f in embed_call.fields if "Key Events" in f.name or f.name == "​"]
+        key_event_fields = [f for f in embed_call.fields if "Key Events" in f.name or f.name == "\u200b"]
         for field in key_event_fields:
             assert len(field.value) <= 1024, (
                 f"Key Events field value length {len(field.value)} exceeds Discord's 1024-char limit"
@@ -490,7 +490,7 @@ class TestCombatLogCommand:
 
         embed_call = interaction.followup.send.call_args.kwargs.get("embed")
         # Collect all key-events-related fields
-        ke_fields = [f for f in embed_call.fields if "Key Events" in f.name or f.name == "​"]
+        ke_fields = [f for f in embed_call.fields if "Key Events" in f.name or f.name == "\u200b"]
         # Must have spilled into at least one continuation field
         primary = [f for f in ke_fields if "Key Events" in f.name]
         assert len(primary) == 1, f"Exactly one '🎯 Key Events' field expected; got {len(primary)}"

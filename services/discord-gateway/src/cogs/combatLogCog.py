@@ -355,9 +355,21 @@ class CombatLogCog(commands.Cog):
             acc_str = f" | Accuracy: {acc:.0%}" if acc is not None else ""
             return f"HP: {start_total} → {final_total}{acc_str} | Dmg dealt: {c.get('damage_dealt', 0)}"
 
+        def _stats_line(c: dict) -> str:
+            # Surfaces the otherwise-invisible primary-weapon work (shots fired vs hit)
+            # plus secondary/module usage counts. DESIGN_COMBAT_LOG_RECAP §6.
+            fired = c.get("shots_fired", 0)
+            hit = c.get("shots_hit", 0)
+            return (
+                f"Shots: {fired} fired / {hit} hit "
+                f"| Secondaries: {c.get('secondaries_fired', 0)} "
+                f"| Modules: {c.get('modules_activated', 0)}"
+            )
+
         summary_lines = [
             f"**{c1.get('name', '?')}** ({c1.get('ship', '?')})",
             _hp_line(c1),
+            _stats_line(c1),
         ]
         if pvc_dr > 0:
             summary_lines.append(f"🛡️ PvC damage reduction: {round(pvc_dr * 100)}%")
@@ -365,6 +377,7 @@ class CombatLogCog(commands.Cog):
             "",
             f"**{c2.get('name', '?')}** ({c2.get('ship', '?')})",
             _hp_line(c2),
+            _stats_line(c2),
         ]
 
         duration_s = data.get("duration_s", 0.0)
@@ -382,39 +395,53 @@ class CombatLogCog(commands.Cog):
         embed.add_field(name="📊 Summary", value=summary_value, inline=False)
 
         # --- Key Events section ---
-        # Discord hard limit: 1024 chars per embed field value.
-        # We accumulate lines until adding the next would push us past ~980 chars
-        # (leaving ~44 chars for a "(+N more events)" trailer).
+        # Discord hard limit: 1024 chars per embed field value, 25 fields / 6000 chars
+        # per embed.  Rather than truncate, we pack lines into the first "🎯 Key Events"
+        # field and spill the remainder into additional HEADERLESS continuation fields
+        # (Discord requires a non-empty field name, so we use a zero-width space).
+        # Only a final overall-budget guard drops events.  DESIGN_COMBAT_LOG_RECAP §6.
         _FIELD_LIMIT = 1024
-        _FIELD_SOFT_CAP = 980  # headroom for the trailer line
         _DETAIL_MAX = 80  # max chars per detail string to bound each line
+        _ZWSP = "​"  # zero-width space → renders as a headerless continuation field
+        _MAX_EVENT_FIELDS = 6  # safety cap on continuation fields (well under Discord's 25)
 
         key_events: list[dict] = data.get("key_events", [])
         if key_events:
-            event_lines: list[str] = []
-            used = 0  # running length of "\n".join(event_lines)
-            skipped = 0
+            # Build all lines first, then pack greedily into <=1024-char field chunks.
+            lines: list[str] = []
             for ev in key_events:
                 time_s = ev.get("time_s", 0.0)
                 detail = ev.get("detail", "")
                 if len(detail) > _DETAIL_MAX:
                     detail = detail[: _DETAIL_MAX - 1] + "…"
-                line = f"`{time_s:6.1f}s` {detail}"
-                # Account for the newline separator between lines
-                new_used = used + len(line) + (1 if event_lines else 0)
-                if new_used > _FIELD_SOFT_CAP:
-                    skipped += 1
-                else:
-                    event_lines.append(line)
-                    used = new_used
-            if skipped:
-                trailer = f"…(+{skipped} more event{'s' if skipped != 1 else ''})"
-                event_lines.append(trailer)
-            value = "\n".join(event_lines)
-            # Final hard-cap safety net — should never trigger given the logic above
-            if len(value) > _FIELD_LIMIT:
-                value = value[: _FIELD_LIMIT - 1] + "…"
-            embed.add_field(name="🎯 Key Events", value=value, inline=False)
+                lines.append(f"`{time_s:6.1f}s` {detail}")
+
+            chunks: list[str] = []
+            cur: list[str] = []
+            cur_len = 0
+            for line in lines:
+                add = len(line) + (1 if cur else 0)
+                if cur and cur_len + add > _FIELD_LIMIT:
+                    chunks.append("\n".join(cur))
+                    cur, cur_len = [], 0
+                    add = len(line)
+                cur.append(line)
+                cur_len += add
+            if cur:
+                chunks.append("\n".join(cur))
+
+            # Respect the continuation-field cap; if exceeded, note the dropped remainder.
+            dropped = 0
+            if len(chunks) > _MAX_EVENT_FIELDS:
+                shown = sum(c.count("\n") + 1 for c in chunks[:_MAX_EVENT_FIELDS])
+                dropped = len(lines) - shown
+                chunks = chunks[:_MAX_EVENT_FIELDS]
+                if dropped:
+                    chunks[-1] += f"\n…(+{dropped} more event{'s' if dropped != 1 else ''})"
+
+            for i, chunk in enumerate(chunks):
+                name = "🎯 Key Events" if i == 0 else _ZWSP
+                embed.add_field(name=name, value=chunk[:_FIELD_LIMIT], inline=False)
         else:
             embed.add_field(name="🎯 Key Events", value="*(no secondary weapons or modules used)*", inline=False)
 

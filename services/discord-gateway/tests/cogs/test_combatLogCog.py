@@ -418,17 +418,22 @@ class TestCombatLogCommand:
         assert "Armour depleted" in key_field.value
 
     async def test_key_events_field_stays_under_discord_limit_many_events(self, cog):
-        """Key Events embed field must not exceed Discord's 1024-char per-field limit.
+        """Key Events embed fields must not exceed Discord's 1024-char per-field limit.
 
-        Generates 40 events with long actor/weapon names (~90 chars per line) to
-        exercise the truncation path; asserts field value ≤ 1024 chars and that
-        the truncation indicator appears when some events were clipped.
+        NEW behavior (DESIGN_COMBAT_LOG_RECAP §6): rather than truncating with '(+N more)',
+        the embed packs lines into the first '🎯 Key Events' field and spills overflow into
+        additional HEADERLESS continuation fields (zero-width space name), capped at 6 fields.
+        Events that exceed 6 fields get a truncation indicator in the last continuation field.
+
+        Generates 40 events with long names (~90 chars per line after detail truncation).
+        40 × ~90 = ~3600 chars ÷ 1024/field = ~4 fields — well within the 6-field cap.
+        So all 40 events appear across multiple fields with no truncation indicator.
         """
         long_detail = (
             "VeryLongActorNameThatIsQuiteExcessive fires "
             "AnExtremelyLongWeaponNameForTestPurposes at "
             "AnotherExtremelyLongTargetShipName dealing 9999 dmg"
-        )  # ~113 chars
+        )  # ~113 chars (will be truncated to 80 by _build_detail_embed)
 
         many_events = [
             {"tick": i * 100, "time_s": i * 1.0, "actor": "ActorA", "event_type": "damage", "detail": long_detail}
@@ -444,15 +449,54 @@ class TestCombatLogCommand:
         await cog.combat_log.callback(cog, interaction, battle=1)
 
         embed_call = interaction.followup.send.call_args.kwargs.get("embed")
+        # Must have at least one '🎯 Key Events' named field
         key_field = next((f for f in embed_call.fields if "Key Events" in f.name), None)
         assert key_field is not None, "Key Events field must be present"
-        assert len(key_field.value) <= 1024, (
-            f"Key Events field value length {len(key_field.value)} exceeds Discord's 1024-char limit"
+        # Every key_events field (primary + continuations) must respect the 1024-char limit
+        key_event_fields = [f for f in embed_call.fields if "Key Events" in f.name or f.name == "​"]
+        for field in key_event_fields:
+            assert len(field.value) <= 1024, (
+                f"Key Events field value length {len(field.value)} exceeds Discord's 1024-char limit"
+            )
+        # The 40 events should span multiple fields (the new spill behavior)
+        assert len(key_event_fields) > 1, (
+            f"40 long-detail events should spill into continuation fields; got {len(key_event_fields)} field(s)"
         )
-        # Truncation indicator must appear when events were clipped
-        assert "more event" in key_field.value, (
-            "Expected '…(+N more events)' truncation indicator in clipped Key Events field"
-        )
+
+    async def test_key_events_overflow_uses_continuation_fields(self, cog):
+        """NEW: when events don't fit in one field they spill into HEADERLESS continuation fields.
+
+        This replaces the old single-field '(+N more)' truncation. The continuation
+        fields have a zero-width space (\\u200b) as their name so Discord renders them
+        without a visible header.
+        """
+        # 15 medium events (~60 chars each including time prefix) → 15*60 = ~900 chars/field
+        # so they need 2 fields
+        medium_events = [
+            {
+                "tick": i * 50,
+                "time_s": i * 0.5,
+                "actor": "A",
+                "event_type": "Event",
+                "detail": f"Some moderately long detail string number {i:03d} for field spill test",
+            }
+            for i in range(25)
+        ]
+        detail_payload = {**_make_detail(), "key_events": medium_events}
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(detail_payload))
+        interaction = _create_interaction()
+
+        await cog.combat_log.callback(cog, interaction, battle=1)
+
+        embed_call = interaction.followup.send.call_args.kwargs.get("embed")
+        # Collect all key-events-related fields
+        ke_fields = [f for f in embed_call.fields if "Key Events" in f.name or f.name == "​"]
+        # Must have spilled into at least one continuation field
+        primary = [f for f in ke_fields if "Key Events" in f.name]
+        assert len(primary) == 1, f"Exactly one '🎯 Key Events' field expected; got {len(primary)}"
+        # All field values must respect the per-field Discord limit
+        for field in ke_fields:
+            assert len(field.value) <= 1024
 
     async def test_key_events_no_truncation_indicator_when_all_fit(self, cog):
         """When all events fit within the limit, no truncation indicator is added."""
@@ -491,6 +535,59 @@ class TestCombatLogCommand:
         # The 200-char detail should have been trimmed
         assert "X" * 200 not in key_field.value
         assert "…" in key_field.value
+
+    async def test_summary_stats_line_shows_shots_secondaries_modules(self, cog):
+        """Summary section includes per-combatant stats line with shots fired/hit, secondaries, modules.
+
+        DESIGN_COMBAT_LOG_RECAP §6: the new stats line is
+        'Shots: {fired} fired / {hit} hit | Secondaries: {n} | Modules: {n}'.
+        """
+        detail = _make_detail()
+        # Inject secondaries_fired and modules_activated into combatant dicts
+        detail["combatant1"] = {
+            **detail["combatant1"],
+            "secondaries_fired": 3,
+            "modules_activated": 1,
+        }
+        detail["combatant2"] = {
+            **detail["combatant2"],
+            "secondaries_fired": 0,
+            "modules_activated": 2,
+        }
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(detail))
+        interaction = _create_interaction()
+
+        await cog.combat_log.callback(cog, interaction, battle=1)
+
+        embed_call = interaction.followup.send.call_args.kwargs.get("embed")
+        summary_field = next((f for f in embed_call.fields if "Summary" in f.name), None)
+        assert summary_field is not None, "Summary field must be present"
+        value = summary_field.value
+        # Stats line format: "Shots: {fired} fired / {hit} hit | Secondaries: {n} | Modules: {n}"
+        assert "Shots:" in value, f"'Shots:' must appear in Summary; got:\n{value}"
+        assert "Secondaries:" in value, f"'Secondaries:' must appear in Summary; got:\n{value}"
+        assert "Modules:" in value, f"'Modules:' must appear in Summary; got:\n{value}"
+        # Combatant 1 specific values
+        assert "Secondaries: 3" in value, f"Expected 'Secondaries: 3' for c1; got:\n{value}"
+        assert "Modules: 1" in value, f"Expected 'Modules: 1' for c1; got:\n{value}"
+        assert "Modules: 2" in value, f"Expected 'Modules: 2' for c2; got:\n{value}"
+
+    async def test_summary_stats_line_zero_values_when_fields_absent(self, cog):
+        """Stats line shows 0 for secondaries/modules when fields are absent (old rows)."""
+        detail = _make_detail()
+        # combatant1/2 have no secondaries_fired or modules_activated keys (legacy row)
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(detail))
+        interaction = _create_interaction()
+
+        await cog.combat_log.callback(cog, interaction, battle=1)
+
+        embed_call = interaction.followup.send.call_args.kwargs.get("embed")
+        summary_field = next((f for f in embed_call.fields if "Summary" in f.name), None)
+        assert summary_field is not None
+        value = summary_field.value
+        # Should gracefully show 0 for missing fields
+        assert "Secondaries: 0" in value, f"Expected 'Secondaries: 0' for legacy row; got:\n{value}"
+        assert "Modules: 0" in value, f"Expected 'Modules: 0' for legacy row; got:\n{value}"
 
 
 # ---------------------------------------------------------------------------

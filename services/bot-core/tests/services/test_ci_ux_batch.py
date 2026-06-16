@@ -205,16 +205,22 @@ class TestCI20NameIdentity:
         assert s["combatants"]["2"]["name"] == "Betty"
 
     def test_old_row_no_side_key_extract_key_events_no_crash(self):
-        """Old rows without data['side'] in events fall back to actor name without crashing."""
+        """Old rows without data['side'] in events fall back to actor name without crashing.
+
+        NEW behavior: event_type is 'Layer depleted' (not 'Armour depleted');
+        detail still contains the layer label string 'Armour depleted'.
+        """
         timeline = [
             # Old-style: no 'side' key in data
             {"tick": 100, "type": "layer_depleted", "actor": "Betty", "target": None, "data": {"layer": "armour"}},
         ]
         result = CombatLogService._extract_key_events(timeline, combatants_map={})
-        # Should produce one armour-depleted event using raw actor as label
+        # Should produce one layer-depleted event using raw actor as label
         assert len(result) == 1
-        assert result[0]["event_type"] == "Armour depleted"
+        assert result[0]["event_type"] == "Layer depleted"
         assert "Betty" in result[0]["detail"]
+        # Detail contains the human-readable layer label
+        assert "Armour depleted" in result[0]["detail"]
 
     def test_extract_key_events_uses_side_for_label(self):
         """When data['side'] is set, combatants_map[side]['name'] is used as label."""
@@ -371,11 +377,17 @@ class TestCI22BaselineEvents:
         result = CombatLogService._extract_key_events(timeline)
         assert any(e["event_type"] == "Engagement" for e in result)
 
-    def test_first_hit_per_side_appears(self):
-        """First hit per side → First hit baseline line."""
+    def test_primary_fires_appear_as_weapon_in_range(self):
+        """Primary fires now produce 'Weapon in range' range-in beats (not 'First hit').
+
+        NEW behavior: 'First hit' event_type is GONE. Both C1 and C2 firing the same
+        primary weapon produces R1 (first enter) range-in beats per side.
+        C1 misses first then hits → only ONE range-in line (no re-entry between ticks 1→2
+        without a displacement distance event).
+        """
         combatants_map = {"1": {"name": "SamX", "ship": "Betty"}, "2": {"name": "H'Soc", "ship": "Vossk"}}
         timeline = [
-            # C1 misses first, then hits
+            # C1 misses first, then hits — both same weapon "Gun"
             {
                 "tick": 1,
                 "type": "weapon_fire",
@@ -390,24 +402,29 @@ class TestCI22BaselineEvents:
                 "target": "Vossk",
                 "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 1},
             },
-            # C2 hits
+            # C2 fires a different weapon so we get separate range-in events
             {
                 "tick": 3,
                 "type": "weapon_fire",
                 "actor": "Vossk",
                 "target": "Betty",
-                "data": {"slot": "primary", "subtype": "primary", "weapon": "Gun", "hit": True, "side": 2},
+                "data": {"slot": "primary", "subtype": "primary", "weapon": "VosskGun", "hit": True, "side": 2},
             },
         ]
         result = CombatLogService._extract_key_events(timeline, combatants_map=combatants_map)
+        # No "First hit" events — that event_type is GONE
         first_hits = [e for e in result if e["event_type"] == "First hit"]
-        assert len(first_hits) == 2  # one per side
-        sides_fired = {e["tick"] for e in first_hits}
-        assert 2 in sides_fired  # C1's first hit was at tick 2
-        assert 3 in sides_fired  # C2's first hit was at tick 3
+        assert first_hits == [], f"'First hit' must be gone, got: {first_hits}"
+        # Instead: "Weapon in range" range-in beats
+        wir = [e for e in result if e["event_type"] == "Weapon in range"]
+        # C1's "Gun" → R1 at tick 1 (first fire); C2's "VosskGun" → R1 at tick 3
+        assert len(wir) == 2, f"Expected 2 range-in events (one per weapon), got: {wir}"
+        ticks = {e["tick"] for e in wir}
+        assert 1 in ticks  # C1's Gun enters range at tick 1 (first fire)
+        assert 3 in ticks  # C2's VosskGun enters range at tick 3
 
-    def test_first_hit_per_side_only_once_each(self):
-        """First hit line fires at most once per side even with multiple hits."""
+    def test_weapon_in_range_fires_once_for_continuous_same_weapon(self):
+        """Same weapon fired continuously without displacement → only ONE range-in line (R1)."""
         timeline = [
             {
                 "tick": 1,
@@ -425,8 +442,8 @@ class TestCI22BaselineEvents:
             },
         ]
         result = CombatLogService._extract_key_events(timeline)
-        first_hits = [e for e in result if e["event_type"] == "First hit"]
-        assert len(first_hits) == 1  # only once for side 1
+        wir = [e for e in result if e["event_type"] == "Weapon in range"]
+        assert len(wir) == 1, f"Continuous fires → only one range-in event, got: {wir}"
 
     def test_outcome_line_win(self):
         """fight_end with winner → Outcome line."""
@@ -599,7 +616,11 @@ class TestCI22BaselineEvents:
         assert result[0]["event_type"] == "Engagement"
 
     def test_full_fight_has_all_baseline_tiers(self):
-        """Full resolver fight has Engagement + First-hit + Outcome in key_events."""
+        """Full resolver fight has Engagement + Weapon in range + Outcome in key_events.
+
+        NEW behavior: 'First hit' is GONE, replaced by 'Weapon in range' range-in beats.
+        Any fight where C1 has weapons should produce at least one 'Weapon in range' event.
+        """
         att = _loadout("Att", base_armour=200, weapons=[_gun(dps=300, dmg=300, speed_ms=100)])
         defn = _loadout("Def", base_armour=50)
         result = TickResolver(seed=0).resolve(att, defn, combatant1_label="Player1", combatant2_label="Criminal1")
@@ -612,7 +633,9 @@ class TestCI22BaselineEvents:
         key_events = CombatLogService._extract_key_events(timeline, tick_ms=tick_ms, combatants_map=combatants_map)
         event_types = {e["event_type"] for e in key_events}
         assert "Engagement" in event_types, f"Missing Engagement. Got: {event_types}"
-        assert "First hit" in event_types, f"Missing First hit. Got: {event_types}"
+        # "First hit" is GONE; "Weapon in range" replaces it
+        assert "First hit" not in event_types, f"'First hit' must be gone; got: {event_types}"
+        assert "Weapon in range" in event_types, f"Missing Weapon in range. Got: {event_types}"
         assert "Outcome" in event_types, f"Missing Outcome. Got: {event_types}"
 
 

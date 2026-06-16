@@ -563,7 +563,11 @@ class TestLegacyFallback:
         assert detail["id"] == saved.id
 
     async def test_legacy_row_key_events_extracted_from_timeline(self, repo, db_session):
-        """Legacy row: key_events in output are extracted from the timeline, not stored."""
+        """Legacy row: key_events in output are extracted from the timeline, not stored.
+
+        NEW behavior: layer_depleted → event_type "Layer depleted" (not "Armour depleted").
+        The detail string still contains "Armour depleted" but event_type is "Layer depleted".
+        """
         log = _insert_new_row(repo, db_session, with_key_events=False)
         saved = await repo.add(db_session, log)
 
@@ -574,10 +578,11 @@ class TestLegacyFallback:
 
         key_events = detail["key_events"]
         assert isinstance(key_events, list)
-        # _extract_key_events on _TIMELINE_EVENTS should produce Engagement + Armour depleted + Outcome
+        # _extract_key_events on _TIMELINE_EVENTS should produce Engagement + Layer depleted + Outcome
         types_found = {ev["event_type"] for ev in key_events}
         assert "Engagement" in types_found
-        assert "Armour depleted" in types_found
+        # New event_type is "Layer depleted" (not "Armour depleted"); detail still says "Armour depleted"
+        assert "Layer depleted" in types_found
         assert "Outcome" in types_found
 
     async def test_legacy_row_output_identical_to_direct_extraction(self, repo, db_session):
@@ -711,7 +716,10 @@ class TestLegacyFallback:
         # - Outcome at tick 5000 (fight_end)
         types_found = {ev["event_type"] for ev in detail["key_events"]}
         assert "Engagement" in types_found, "Fallback did not extract Engagement from timeline"
-        assert "Shield depleted" in types_found, "Fallback did not extract Shield depleted — timeline was not loaded"
+        # New behavior: event_type is "Layer depleted" (not "Shield depleted"); detail contains "Shield depleted"
+        assert "Layer depleted" in types_found, (
+            f"Fallback did not extract Layer depleted (shield) — timeline was not loaded. Got: {types_found}"
+        )
         assert "Outcome" in types_found, "Fallback did not extract Outcome from timeline"
 
     async def test_ownership_gate_applies_before_fallback_decision(self, repo, db_session):

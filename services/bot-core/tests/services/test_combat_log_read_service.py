@@ -250,9 +250,10 @@ class TestExtractKeyEvents:
         }
 
     def test_secondary_fires_included(self):
+        """Secondaries (rocket) appear as 'Weapon in range' R1 lines; nuke as 'Nuke detonation'."""
         events = [
             self._make_weapon_fire_event(100, "Betty", "secondary", "rocket", "Rockets MK1"),
-            # CI-13: nuke events now show "detonated (opp: N, self: M)" not hit/miss
+            # Nuke: per-fire beat with opponent_damage / self_damage
             {
                 "tick": 200,
                 "type": "weapon_fire",
@@ -269,22 +270,28 @@ class TestExtractKeyEvents:
         ]
         result = CombatLogService._extract_key_events(events)
         assert len(result) == 2
-        assert result[0]["event_type"] == "Secondary fire (rocket)"
+        # Rocket → "Weapon in range" (R1 range-in beat)
+        assert result[0]["event_type"] == "Weapon in range"
+        assert "enters range" in result[0]["detail"]
         assert "hit" in result[0]["detail"]
-        # CI-13: nuke shows "detonated" not "miss"
+        # Nuke → "Nuke detonation" per-fire beat with detonated/damage detail
+        assert result[1]["event_type"] == "Nuke detonation"
         assert "detonated" in result[1]["detail"]
         assert "80" in result[1]["detail"]  # opponent damage shown
 
-    def test_primary_fires_excluded_no_side(self):
-        """Primary weapon_fire event WITHOUT side= produces no key events (no First-hit line)."""
+    def test_primary_fires_included_as_weapon_in_range(self):
+        """Primary weapon_fire (any slot, with or without side=) now produces a 'Weapon in range' event."""
         events = [
             self._make_weapon_fire_event(100, "Betty", "primary", "primary", "Nirai Impulse EX 1"),
         ]
         result = CombatLogService._extract_key_events(events)
-        assert len(result) == 0
+        # Primaries are now included as range-in beats (not excluded like before)
+        assert len(result) == 1
+        assert result[0]["event_type"] == "Weapon in range"
+        assert "Nirai Impulse EX 1" in result[0]["detail"]
 
-    def test_primary_fires_with_side_and_hit_produces_first_hit(self):
-        """Primary weapon_fire WITH side=1, hit=True produces exactly one 'First hit' event."""
+    def test_primary_fires_with_side_produces_weapon_in_range_not_first_hit(self):
+        """Primary weapon_fire WITH side=1, hit=True produces a 'Weapon in range' line; 'First hit' is GONE."""
         events = [
             {
                 "tick": 100,
@@ -301,8 +308,13 @@ class TestExtractKeyEvents:
             },
         ]
         result = CombatLogService._extract_key_events(events)
+        # No "First hit" event — that event type is GONE
         first_hits = [e for e in result if e["event_type"] == "First hit"]
-        assert len(first_hits) == 1
+        assert len(first_hits) == 0
+        # Instead: "Weapon in range" range-in beat
+        wir = [e for e in result if e["event_type"] == "Weapon in range"]
+        assert len(wir) == 1
+        assert "Nirai Impulse EX 1" in wir[0]["detail"]
 
     def test_module_activations_included(self):
         events = [self._make_module_event(500, "Betty", "U'tool")]
@@ -312,20 +324,26 @@ class TestExtractKeyEvents:
         assert "U'tool" in result[0]["detail"]
 
     def test_layer_depleted_shield(self):
+        """Shield depletion → event_type 'Layer depleted', detail contains 'Shield depleted'."""
         events = [self._make_layer_event(800, "Betty", "shield")]
         result = CombatLogService._extract_key_events(events)
         assert len(result) == 1
-        assert result[0]["event_type"] == "Shield depleted"
+        assert result[0]["event_type"] == "Layer depleted"
+        assert "Shield depleted" in result[0]["detail"]
 
     def test_layer_depleted_armour(self):
+        """Armour depletion → event_type 'Layer depleted', detail contains 'Armour depleted'."""
         events = [self._make_layer_event(1200, "Betty", "armour")]
         result = CombatLogService._extract_key_events(events)
-        assert result[0]["event_type"] == "Armour depleted"
+        assert result[0]["event_type"] == "Layer depleted"
+        assert "Armour depleted" in result[0]["detail"]
 
-    def test_layer_depleted_hull(self):
+    def test_layer_depleted_hull_not_emitted(self):
+        """Hull depletion is NOT emitted as a key event — the kill is shown by the Outcome line only."""
         events = [self._make_layer_event(3488, "Betty", "hull")]
         result = CombatLogService._extract_key_events(events)
-        assert result[0]["event_type"] == "Hull depleted (dead)"
+        # Hull layer_depleted is suppressed; no event emitted
+        assert len(result) == 0
 
     def test_time_conversion(self):
         """Tick 100 at 10ms/tick = 1.0 seconds."""
@@ -444,25 +462,21 @@ class TestExtractKeyEvents:
         assert "Stalemate" in result[0]["detail"]
 
     def test_same_tick_causal_order_preserved(self):
-        """CI-29: same-tick events must come out in causal (insertion) order.
+        """CI-29: same-tick events must come out in causal sub-order.
 
         Scenario at tick 1200: the resolver emits in this order:
-          1. weapon_fire (secondary hit) — "Secondary fire (rocket)"
-          2. layer_depleted (armour) — "Armour depleted"
-          3. secondary_depleted — "Secondary depleted"
-          4. damage → crosses the 50% HP milestone — "HP milestone (50%)"
+          1. weapon_fire (secondary hit) — now "Weapon in range" (range-in beat, k=1)
+          2. layer_depleted (armour) — now "Layer depleted" (effect beat, k=2)
+          3. secondary_depleted — "Ammo depleted" (ammo-out beat, k=4)
+          4. damage → crosses the 50% HP milestone — "HP milestone (50%)" (effect beat, k=2)
 
-        Old sort key (tick, event_type) would sort alphabetically within the tick:
-          "Armour depleted" < "HP milestone (50%)" < "Secondary depleted" < "Secondary fire (rocket)"
-        This makes "ran out of rockets" appear BEFORE "fired rockets — hit" — backwards.
+        The causal sub-order keys (k values) define the within-tick ordering:
+          weapon action (k=1) → effect/milestone (k=2) → ammo-out (k=4)
 
-        Stable tick-only sort must preserve causal emission order.
-        The test is constructed so it FAILS with the old (tick, event_type) key and
-        PASSES with the tick-only key.
-
-        NOTE: side is omitted from the weapon_fire data so "First hit" is not generated
-        (First hit only fires when side is present AND it's the first hit for that side).
-        This isolates the Secondary fire / Secondary depleted ordering bug.
+        NOTE: HP milestone fires BEFORE ammo-out because damage processing (k=2) happens
+        before secondary_depleted (k=4) in the causal ordering. The layer_depleted for
+        slot 2 also fires at k=2 but precedes the milestone because the layer event comes
+        earlier in the timeline scan.
         """
         tick = 1200
         events = [
@@ -484,7 +498,7 @@ class TestExtractKeyEvents:
                     "initial_distance": 3000,
                 },
             },
-            # 1. secondary weapon_fire hit (causal first) — no side= to avoid First hit branch
+            # 1. secondary weapon_fire hit (causal first)
             {
                 "tick": tick,
                 "type": "weapon_fire",
@@ -531,17 +545,18 @@ class TestExtractKeyEvents:
         # Filter to same-tick events only (tick 1200)
         same_tick = [e for e in result if e["tick"] == tick]
 
-        # Expected causal order: Secondary fire → Armour depleted → Secondary depleted → HP milestone
+        # Expected causal sub-order (k values): Weapon in range (k=1) → Layer depleted (k=2)
+        # → HP milestone (k=2, comes after layer) → Ammo depleted (k=4)
         event_types = [e["event_type"] for e in same_tick]
         expected_order = [
-            "Secondary fire (rocket)",
-            "Armour depleted",
-            "Secondary depleted",
+            "Weapon in range",
+            "Layer depleted",
             "HP milestone (50%)",
+            "Ammo depleted",
         ]
         assert event_types == expected_order, (
             f"Causal order violated. Expected {expected_order}, got {event_types}. "
-            "Hint: was (tick, event_type) alphabetical sort re-applied?"
+            "Hint: sub-order keys must be weapon=1, effect=2, ammo-out=4."
         )
 
         # Global invariant: Engagement is first, Outcome absent (no fight_end here)
@@ -814,6 +829,9 @@ class TestGetDetail:
 
         P4-T7b: when get_subpath_for_detail returns key_events=None (legacy row),
         get_detail falls back to a full get_by_id load + _extract_key_events.
+
+        NEW behavior: layer_depleted → event_type "Layer depleted"; rocket fires
+        → "Weapon in range" range-in beats.
         """
         timeline = [
             {"tick": 100, "type": "layer_depleted", "actor": "Betty", "target": None, "data": {"layer": "armour"}},
@@ -837,8 +855,9 @@ class TestGetDetail:
         detail = await svc.get_detail(MagicMock(), battle_id=4, user_id=100)
         assert len(detail["key_events"]) == 2
         types_found = {ev["event_type"] for ev in detail["key_events"]}
-        assert "Armour depleted" in types_found
-        assert "Secondary fire (rocket)" in types_found
+        # New event types: "Layer depleted" (not "Armour depleted"), "Weapon in range" (not "Secondary fire (rocket)")
+        assert "Layer depleted" in types_found
+        assert "Weapon in range" in types_found
 
     async def test_stalemate_outcome(self):
         # P4-T7b fast path: stalemate detected via sub-path row is_stalemate flag.

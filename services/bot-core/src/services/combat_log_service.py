@@ -495,6 +495,10 @@ class CombatLogService:
             "accuracy": accuracy,
             "damage_dealt": int(c.get("damage_dealt", 0)),
             "damage_taken": int(c.get("damage_taken", 0)),
+            # Recap stats line (DESIGN_COMBAT_LOG_RECAP §6): counts of secondary fires
+            # and module activations, summed from the sparse per-subtype/per-key dicts.
+            "secondaries_fired": sum((c.get("secondary_fired") or {}).values()),
+            "modules_activated": sum((c.get("module_activations") or {}).values()),
         }
 
     @staticmethod

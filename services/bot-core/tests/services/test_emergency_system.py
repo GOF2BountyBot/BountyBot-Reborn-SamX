@@ -932,8 +932,13 @@ class TestCI27ESHullDeathEvent:
             f"Time-cap stalemate must NOT emit any hull layer_depleted; got: {hull_dead_events}"
         )
 
-    def test_extract_key_events_renders_hull_dead_for_true_death(self):
-        """_extract_key_events correctly renders 'Hull depleted (dead)' for a true-death fight."""
+    def test_extract_key_events_renders_outcome_for_true_death(self):
+        """_extract_key_events renders the kill via an 'Outcome' line, NOT 'Hull depleted (dead)'.
+
+        NEW behavior: hull layer_depleted events are NOT emitted as key events — the
+        kill is represented solely by the 'Outcome' line (winner wins — loser destroyed).
+        The old 'Hull depleted (dead)' event_type is GONE from key_events.
+        """
         from src.services.combat_log_service import CombatLogService
 
         att = _loadout(
@@ -957,8 +962,17 @@ class TestCI27ESHullDeathEvent:
         ]
         key_events = CombatLogService._extract_key_events(timeline)
 
+        # Hull depleted is NOT a key event — kill is shown by Outcome only
         hull_dead_labels = [ke for ke in key_events if "Hull depleted (dead)" in ke.get("event_type", "")]
-        assert len(hull_dead_labels) >= 1, (
-            f"_extract_key_events should produce at least one 'Hull depleted (dead)' entry for a true death; "
-            f"got key_events={key_events}"
+        assert hull_dead_labels == [], (
+            f"'Hull depleted (dead)' must not appear in key_events (kill shown via Outcome); got: {hull_dead_labels}"
+        )
+
+        # Outcome line must be present and indicate the kill
+        outcome_events = [ke for ke in key_events if ke.get("event_type") == "Outcome"]
+        assert len(outcome_events) == 1, (
+            f"Expected exactly one 'Outcome' event for a true-death fight; got: {outcome_events}"
+        )
+        assert "wins" in outcome_events[0]["detail"], (
+            f"Outcome detail must mention 'wins'; got: {outcome_events[0]['detail']!r}"
         )

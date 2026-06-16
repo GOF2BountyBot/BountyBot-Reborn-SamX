@@ -59,6 +59,8 @@ class CombatantSummary(BaseModel):
     accuracy: float | None  # None when shots_fired == 0
     damage_dealt: int
     damage_taken: int
+    secondaries_fired: int = 0  # count of secondary-weapon fires (recap stats line)
+    modules_activated: int = 0  # count of module activations (recap stats line)
 
 
 class CombatLogDetail(BaseModel):

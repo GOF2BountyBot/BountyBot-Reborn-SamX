@@ -2259,7 +2259,9 @@ def _extract_key_events(
         if ev_type == "weapon_fire":
             side_val = data.get("side")
             slot_str = str(side_val) if side_val is not None else None
-            if slot_str and slot_str not in _first_hit_done and data.get("hit") is True:
+            # cluster-missiles carry no `hit` bool — a volley landing ≥1 sub-munition counts
+            _was_hit = data.get("hit") is True or (data.get("hits") or 0) >= 1
+            if slot_str and slot_str not in _first_hit_done and _was_hit:
                 _first_hit_done.add(slot_str)
                 a_label = _actor_label(actor, data)
                 weapon_name = data.get("weapon", "weapon")
@@ -2285,6 +2287,12 @@ def _extract_key_events(
                     hit_str = f"detonated (opp: {opp_dmg}, self: {self_dmg})"
                 elif subtype == "shock-blast":
                     hit_str = "distance reset"
+                elif subtype == "cluster-missile":
+                    # Condensed volley event carries hits/fired counts, not a `hit` bool.
+                    # Show the landed fraction (e.g. "3/4 hit") instead of a flat "miss".
+                    hits = data.get("hits", 0)
+                    fired = data.get("fired", 0)
+                    hit_str = f"{hits}/{fired} hit" if hits else "miss"
                 else:
                     hit = data.get("hit", False)
                     hit_str = "hit" if hit else "miss"

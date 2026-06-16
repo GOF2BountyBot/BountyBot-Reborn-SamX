@@ -19,6 +19,7 @@ name: ${COMPOSE_PROJECT_NAME:-bountybot-stack}
 services:
   db:
     image: postgres:18
+    pull_policy: always
     container_name: ${STACK_PREFIX:-bountybot}-db
     restart: unless-stopped
     networks:
@@ -42,6 +43,7 @@ services:
 
   bot-core:
     image: ghcr.io/gof2bountybot/bountybot-reborn-samx/bot-core:${BOUNTYBOT_VERSION:-latest}
+    pull_policy: always
     container_name: ${STACK_PREFIX:-bountybot}-bot-core
     networks:
       - botnetv2
@@ -66,6 +68,7 @@ services:
 
   discord-gateway:
     image: ghcr.io/gof2bountybot/bountybot-reborn-samx/discord-gateway:${BOUNTYBOT_VERSION:-latest}
+    pull_policy: always
     container_name: ${STACK_PREFIX:-bountybot}-discord-gateway
     networks:
       - botnetv2
@@ -88,6 +91,7 @@ services:
 
   blender-service:
     image: ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service-gpu:${BOUNTYBOT_VERSION:-latest}
+    pull_policy: always
     container_name: ${STACK_PREFIX:-bountybot}-blender-service
     # Comment out/remove the deploy block if you don't have an NVIDIA GPU
     deploy:

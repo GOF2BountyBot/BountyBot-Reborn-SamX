@@ -543,6 +543,63 @@ def _init_bounty_caches(
         cog._bounty_cache.set(guild_id, bounties)
 
 
+class TestBountiesDisplayLiveFetch:
+    """Fix A: the /bounties DISPLAY must read live, never the stale _bounty_cache.
+
+    _bounty_cache is populated on spawn / the ~10-min refresh timer and is NOT
+    invalidated on /check, so its per-system `checked` counts drift stale. The
+    display command must fetch live (like /route) so its count matches /route.
+    The cache is retained for the bounty-picker autocomplete (slight staleness there
+    is harmless), but must NOT back the display count.
+    """
+
+    def test_display_ignores_stale_cache_and_uses_live_count(self, mock_bounty_cog):
+        guild_id = 987654321
+        user_id = 111111111
+        route = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
+        # Stale cached copy: only 1 system checked.
+        stale = [
+            _make_bounty_public(
+                1,
+                "Trent",
+                "bronze",
+                route=route,
+                checked={"Alpha": 7, "Beta": -1, "Gamma": -1, "Delta": -1, "Epsilon": -1},
+            )
+        ]
+        # Live server copy of the same bounty: 2 systems checked.
+        live = [
+            _make_bounty_public(
+                1,
+                "Trent",
+                "bronze",
+                route=route,
+                checked={"Alpha": 7, "Beta": -1, "Gamma": -1, "Delta": 7, "Epsilon": -1},
+            )
+        ]
+        _init_bounty_caches(
+            guild_id=guild_id, user_id=user_id, player_tier="Bronze", bounties=stale, cog=mock_bounty_cog
+        )
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value=live)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
+
+        # A live fetch to /bounties/ must have happened — the cache was bypassed.
+        mock_bounty_cog.http_client.get.assert_awaited_once()
+        assert mock_bounty_cog.http_client.get.call_args[0][0].endswith("/bounties/")
+
+        # The embed shows the LIVE count (2/5), never the stale cached count (1/5).
+        embed = interaction.followup.send.call_args[1]["embed"]
+        field_text = "\n".join(f.value for f in embed.fields)
+        assert "2/5 checked" in field_text
+        assert "1/5 checked" not in field_text
+
+
 class TestBountyAutocomplete:
     """Tests for bounty_autocomplete method (Phase 6: zero-HTTP, cache-backed)."""
 
@@ -1163,11 +1220,15 @@ class TestBountiesCommand:
         assert "error occurred" in call_kwargs[0][0].lower()
 
 
-class TestBountiesCommandCachePeekFirst:
-    """/bounties command reads from _bounty_cache.peek() when cache is warm (Item A).
+class TestBountiesCommandLiveFetch:
+    """/bounties DISPLAY always fetches live from bot-core — never the stale
+    _bounty_cache (Fix A).
 
-    The Item A overhaul adds _bounty_cache.peek(guild_id) as the primary read path
-    before falling back to HTTP. These tests verify the cache-first behavior.
+    The earlier "Item A" overhaul made the display read _bounty_cache.peek() first,
+    but that cache is populated on spawn / the ~10-min refresh timer and is NOT
+    invalidated on /check, so its `checked` counts drift stale and disagreed with the
+    live /route command. The display now always issues GET /bounties/; the bounty-picker
+    autocomplete still uses the cache, where slight staleness is harmless.
     """
 
     def _setup_player_cache(self, guild_id, user_id, tier="Bronze"):
@@ -1179,48 +1240,36 @@ class TestBountiesCommandCachePeekFirst:
             ac_state.player_cache = AutocompleteCache(name="player-test-bounties")
         ac_state.player_cache.set((guild_id, user_id), {"id": 1, "tier": tier})
 
-    def test_bounties_reads_from_bounty_cache_no_http_get(self, mock_bounty_cog, make_mock_response):
-        """/bounties uses _bounty_cache.peek() when warm — no GET to bot-core.
-
-        When the bounty cache is warm AND the player cache knows the tier, /bounties
-        must serve entirely from cache without any HTTP call to bot-core.
-        """
+    def test_bounties_fetches_live_even_when_cache_warm(self, mock_bounty_cog, make_mock_response):
+        """A warm _bounty_cache must NOT suppress the live GET (the core fix)."""
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
-        # Pre-populate player cache so no POST /players/ needed
+        # Player cache warm (no POST) AND bounty cache warm — display must still fetch live.
         self._setup_player_cache(guild_id, user_id, tier="Bronze")
+        mock_bounty_cog._bounty_cache.set(guild_id, [_make_bounty_public(1, "StaleViper", "bronze")])
 
-        # Pre-populate bounty cache
-        bounties = [_make_bounty_public(1, "TestViper", "bronze")]
-        mock_bounty_cog._bounty_cache.set(guild_id, bounties)
-
-        # HTTP must NOT be called at all — both caches are warm
+        bounty_resp = make_mock_response([_make_bounty_public(1, "LiveViper", "bronze")])
         mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP POST must not be called"))
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP GET must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
 
         asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
+        mock_bounty_cog.http_client.get.assert_awaited_once()
+        assert mock_bounty_cog.http_client.get.call_args[0][0].endswith("/bounties/")
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        embed = call_kwargs.get("embed")
-        assert embed is not None, "Expected embed in successful cache-hit path"
+        assert interaction.followup.send.call_args[1].get("embed") is not None
 
-    def test_bounties_falls_back_to_http_when_bounty_cache_cold(self, mock_bounty_cog, make_mock_response):
-        """/bounties falls back to HTTP GET when _bounty_cache is cold (no cached bounties).
-
-        Player cache is warm (no POST), but bounty cache is cold → GET /bounties/ is made.
-        """
+    def test_bounties_cold_cache_also_fetches_live(self, mock_bounty_cog, make_mock_response):
+        """Cold _bounty_cache → still a single live GET /bounties/ (unchanged behavior)."""
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
-        # Player cache warm, bounty cache cold
         self._setup_player_cache(guild_id, user_id, tier="Bronze")
         mock_bounty_cog._bounty_cache.invalidate(guild_id)
 
-        # HTTP GET will be called for the fallback
         bounty_resp = make_mock_response([_make_bounty_public(1, "FallbackViper", "bronze")])
         mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP POST must not be called"))
         mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
@@ -1230,54 +1279,48 @@ class TestBountiesCommandCachePeekFirst:
         mock_bounty_cog.http_client.get.assert_awaited_once()
         interaction.followup.send.assert_awaited_once()
 
-    def test_bounties_show_all_warm_cache_no_http(self, mock_bounty_cog):
-        """/bounties show_all=True with warm cache → no HTTP calls at all."""
+    def test_bounties_show_all_fetches_live_no_division(self, mock_bounty_cog, make_mock_response):
+        """/bounties show_all=True fetches live with no division filter, even with warm cache."""
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
-        # Pre-populate bounty cache with mixed-tier bounties
-        bounties = [
-            _make_bounty_public(1, "BronzeViper", "bronze"),
-            _make_bounty_public(2, "GoldHawk", "gold"),
-        ]
-        mock_bounty_cog._bounty_cache.set(guild_id, bounties)
+        mock_bounty_cog._bounty_cache.set(
+            guild_id,
+            [_make_bounty_public(1, "BronzeViper", "bronze"), _make_bounty_public(2, "GoldHawk", "gold")],
+        )
 
-        # Neither HTTP POST nor GET should be called
+        bounty_resp = make_mock_response(
+            [_make_bounty_public(1, "BronzeViper", "bronze"), _make_bounty_public(2, "GoldHawk", "gold")]
+        )
         mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("No POST expected"))
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("No GET expected"))
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
 
         asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
+        mock_bounty_cog.http_client.get.assert_awaited_once()
+        assert "division" not in (mock_bounty_cog.http_client.get.call_args.kwargs.get("params") or {})
         interaction.followup.send.assert_awaited_once()
-        embed = interaction.followup.send.call_args[1]["embed"]
-        assert "All Tiers" in embed.title
+        assert "All Tiers" in interaction.followup.send.call_args[1]["embed"].title
 
-    def test_bounties_cache_filters_by_tier_when_warm(self, mock_bounty_cog):
-        """/bounties with warm cache filters bounties by player tier client-side."""
+    def test_bounties_passes_division_filter_to_live_fetch(self, mock_bounty_cog, make_mock_response):
+        """Tier filtering is delegated to the live API via the division query param."""
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
-        # Player cache warm with Silver tier
         self._setup_player_cache(guild_id, user_id, tier="Silver")
 
-        # Bounty cache has both bronze and silver bounties
-        bounties = [
-            _make_bounty_public(1, "BronzeViper", "bronze"),
-            _make_bounty_public(2, "SilverFox", "silver"),
-        ]
-        mock_bounty_cog._bounty_cache.set(guild_id, bounties)
-
+        bounty_resp = make_mock_response([_make_bounty_public(2, "SilverFox", "silver")])
         mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("No POST expected"))
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("No GET expected"))
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
 
         asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
+        mock_bounty_cog.http_client.get.assert_awaited_once()
+        assert mock_bounty_cog.http_client.get.call_args.kwargs["params"].get("division") == "silver"
         interaction.followup.send.assert_awaited_once()
-        embed = interaction.followup.send.call_args[1]["embed"]
-        # Only Silver bounty should appear in the title
-        assert "Silver" in embed.title
+        assert "Silver" in interaction.followup.send.call_args[1]["embed"].title
 
 
 # ---------------------------------------------------------------------------

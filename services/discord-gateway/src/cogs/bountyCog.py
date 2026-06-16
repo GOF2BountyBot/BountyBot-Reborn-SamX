@@ -858,29 +858,24 @@ class BountyCog(commands.Cog):
                 division = None
                 title_suffix = " — All Tiers"
 
-            # Try cache first for bounty list — fall back to HTTP on miss or empty cache.
-            # Use truthiness check (not `is not None`) so a stale empty list doesn't
-            # suppress an HTTP fetch that would return real bounties.
+            # Always fetch live for the display. The per-system "checked" counts mutate
+            # on every /check, but the gateway _bounty_cache (populated on spawn / the
+            # ~10-min refresh timer) is NOT invalidated on check — so a cached read here
+            # undercounts vs the live /route command (the reported /bounties-vs-/route
+            # discrepancy). The cache is retained for the bounty-picker autocomplete,
+            # where slightly-stale names/IDs are harmless; a user-invoked display command
+            # warrants one live fetch.
             guild_id = interaction.guild_id
-            cached_bounties = self._bounty_cache.peek(guild_id)
-            if cached_bounties:
-                # Filter by division if needed
-                if division is not None:
-                    bounty_list = [b for b in cached_bounties if b.get("division", "").lower() == division]
-                else:
-                    bounty_list = list(cached_bounties)
-            else:
-                # Cache miss — fetch from HTTP
-                params: dict = {"guild_id": guild_id}
-                if division is not None:
-                    params["division"] = division
-                resp = await self.http_client.get(
-                    f"{api_base}/bounties/",
-                    params=params,
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                bounty_list = resp.json()
+            params: dict = {"guild_id": guild_id}
+            if division is not None:
+                params["division"] = division
+            resp = await self.http_client.get(
+                f"{api_base}/bounties/",
+                params=params,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            bounty_list = resp.json()
 
             title = f"📋 Active Bounties{title_suffix}"
 

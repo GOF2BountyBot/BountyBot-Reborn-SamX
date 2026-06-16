@@ -402,7 +402,7 @@ class CombatLogCog(commands.Cog):
         # Only a final overall-budget guard drops events.  DESIGN_COMBAT_LOG_RECAP §6.
         _FIELD_LIMIT = 1024
         _DETAIL_MAX = 80  # max chars per detail string to bound each line
-        _ZWSP = "​"  # zero-width space → renders as a headerless continuation field
+        _ZWSP = "\u200b"  # zero-width space → renders as a headerless continuation field
         _MAX_EVENT_FIELDS = 6  # safety cap on continuation fields (well under Discord's 25)
 
         key_events: list[dict] = data.get("key_events", [])

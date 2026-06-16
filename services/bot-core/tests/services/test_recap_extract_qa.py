@@ -58,25 +58,53 @@ from services.combat_resolver import _extract_key_events
 # Helpers (minimal)
 # ---------------------------------------------------------------------------
 
-def _fight_start(dist: float = 3000.0, c1_name: str = "Alice", c2_name: str = "Bob",
-                 c1_hp: dict | None = None, c2_hp: dict | None = None) -> dict:
+
+def _fight_start(
+    dist: float = 3000.0,
+    c1_name: str = "Alice",
+    c2_name: str = "Bob",
+    c1_hp: dict | None = None,
+    c2_hp: dict | None = None,
+) -> dict:
     return {
-        "tick": 0, "type": "fight_start", "actor": None, "target": None,
+        "tick": 0,
+        "type": "fight_start",
+        "actor": None,
+        "target": None,
         "data": {
             "combatants": [
-                {"name": c1_name, "display_name": c1_name, "ship": "Specter", "slot": 1,
-                 "hp": c1_hp or {"hull": 100, "armour": 50, "shield": 0}},
-                {"name": c2_name, "display_name": c2_name, "ship": "Wraith", "slot": 2,
-                 "hp": c2_hp or {"hull": 100, "armour": 50, "shield": 0}},
+                {
+                    "name": c1_name,
+                    "display_name": c1_name,
+                    "ship": "Specter",
+                    "slot": 1,
+                    "hp": c1_hp or {"hull": 100, "armour": 50, "shield": 0},
+                },
+                {
+                    "name": c2_name,
+                    "display_name": c2_name,
+                    "ship": "Wraith",
+                    "slot": 2,
+                    "hp": c2_hp or {"hull": 100, "armour": 50, "shield": 0},
+                },
             ],
             "initial_distance": dist,
         },
     }
 
 
-def _wfire(tick: int, actor: str, weapon: str, *, subtype: str = "missile",
-           hit: bool = True, side: int = 1, hits: int | None = None,
-           fired: int | None = None, dist: float | None = None) -> dict:
+def _wfire(
+    tick: int,
+    actor: str,
+    weapon: str,
+    *,
+    subtype: str = "missile",
+    hit: bool = True,
+    side: int = 1,
+    hits: int | None = None,
+    fired: int | None = None,
+    dist: float | None = None,
+) -> dict:
     data: dict = {"slot": "secondary", "subtype": subtype, "weapon": weapon, "side": side}
     if subtype == "cluster-missile":
         data["hits"] = hits or 0
@@ -89,17 +117,23 @@ def _wfire(tick: int, actor: str, weapon: str, *, subtype: str = "missile",
 
 def _dist_ev(tick: int, *, cause: str, from_m: float, to_m: float, side: int = 2) -> dict:
     return {
-        "tick": tick, "type": "distance", "actor": None, "target": None,
+        "tick": tick,
+        "type": "distance",
+        "actor": None,
+        "target": None,
         "data": {"cause": cause, "from": from_m, "to": to_m, "side": side},
     }
 
 
-def _dmg_ev(tick: int, *, target_side: int, absorbed: float, weapon: str,
-             hp_after: dict | None = None) -> dict:
+def _dmg_ev(tick: int, *, target_side: int, absorbed: float, weapon: str, hp_after: dict | None = None) -> dict:
     return {
-        "tick": tick, "type": "damage", "actor": None, "target": "T",
+        "tick": tick,
+        "type": "damage",
+        "actor": None,
+        "target": "T",
         "data": {
-            "amount": absorbed, "absorbed": absorbed,
+            "amount": absorbed,
+            "absorbed": absorbed,
             "hp_after": hp_after or {"hull": 50, "armour": 0, "shield": 0},
             "source": {"weapon": weapon, "attacker": "A"},
             "side": target_side,
@@ -109,7 +143,10 @@ def _dmg_ev(tick: int, *, target_side: int, absorbed: float, weapon: str,
 
 def _fight_end(tick: int, winner: str | None, *, c1_hull: int = 80, c2_hull: int = 0) -> dict:
     return {
-        "tick": tick, "type": "fight_end", "actor": None, "target": None,
+        "tick": tick,
+        "type": "fight_end",
+        "actor": None,
+        "target": None,
         "data": {
             "winner": winner,
             "reason": "hp_depleted" if winner else "time_cap",
@@ -125,6 +162,7 @@ def _fight_end(tick: int, winner: str | None, *, c1_hull: int = 80, c2_hull: int
 # ---------------------------------------------------------------------------
 # BUG-1: range_est underestimation → false re-enter
 # ---------------------------------------------------------------------------
+
 
 class TestBug1RangeEstUnderestimation:
     """BUG: weapon with true range > max observed fire distance gets a false re-enter.
@@ -162,6 +200,7 @@ class TestBug1RangeEstUnderestimation:
 # BUG-2: ES-invuln absorbed=0 → false attribution
 # ---------------------------------------------------------------------------
 
+
 class TestBug2ESInvulnFalseAttribution:
     """BUG: damage events during ES invuln have absorbed=0; attribution threshold is -1.
 
@@ -178,9 +217,13 @@ class TestBug2ESInvulnFalseAttribution:
         timeline = [
             _fight_start(dist=2000.0),
             {
-                "tick": 10, "type": "damage", "actor": None, "target": "Bob",
+                "tick": 10,
+                "type": "damage",
+                "actor": None,
+                "target": "Bob",
                 "data": {
-                    "amount": 0, "absorbed": 0,
+                    "amount": 0,
+                    "absorbed": 0,
                     "hp_after": {"hull": 45, "armour": 0, "shield": 0},
                     "source": {"weapon": "InvulnBlockedGun", "attacker": "Alice"},
                     "blocked_by": "emergency_system_invuln",
@@ -192,8 +235,7 @@ class TestBug2ESInvulnFalseAttribution:
         milestones = [e for e in result if "HP milestone" in e.get("event_type", "")]
         for m in milestones:
             assert "(by InvulnBlockedGun)" not in m["detail"], (
-                f"BUG-2: Invuln-blocked weapon (absorbed=0) falsely attributed to HP milestone: "
-                f"{m['detail']!r}"
+                f"BUG-2: Invuln-blocked weapon (absorbed=0) falsely attributed to HP milestone: {m['detail']!r}"
             )
 
     def test_invuln_blocked_does_not_outcompete_real_damage_same_tick(self):
@@ -202,34 +244,44 @@ class TestBug2ESInvulnFalseAttribution:
         timeline = [
             _fight_start(dist=2000.0),
             # Real damage first: absorbed=30 → sets attrib_best to 30
-            _dmg_ev(10, target_side=2, absorbed=30.0, weapon="RealCannon",
-                    hp_after={"hull": 45, "armour": 0, "shield": 0}),
+            _dmg_ev(
+                10, target_side=2, absorbed=30.0, weapon="RealCannon", hp_after={"hull": 45, "armour": 0, "shield": 0}
+            ),
             # Then invuln-blocked event: absorbed=0 → 0 > 30? No → should NOT override
             {
-                "tick": 10, "type": "damage", "actor": None, "target": "Bob",
+                "tick": 10,
+                "type": "damage",
+                "actor": None,
+                "target": "Bob",
                 "data": {
-                    "amount": 0, "absorbed": 0,
+                    "amount": 0,
+                    "absorbed": 0,
                     "hp_after": {"hull": 45, "armour": 0, "shield": 0},
                     "source": {"weapon": "InvulnGun", "attacker": "Alice"},
                     "blocked_by": "emergency_system_invuln",
                     "side": 2,
                 },
             },
-            {"tick": 10, "type": "layer_depleted", "actor": "Bob", "target": None,
-             "data": {"layer": "armour", "side": 2}},
+            {
+                "tick": 10,
+                "type": "layer_depleted",
+                "actor": "Bob",
+                "target": None,
+                "data": {"layer": "armour", "side": 2},
+            },
         ]
         result = _extract_key_events(timeline, combatants_map=cmap)
         layer_ev = next((e for e in result if e["event_type"] == "Layer depleted"), None)
         assert layer_ev is not None
         assert "(by RealCannon)" in layer_ev["detail"], (
-            f"Real damage (absorbed=30) should win over invuln-blocked (absorbed=0): "
-            f"{layer_ev['detail']!r}"
+            f"Real damage (absorbed=30) should win over invuln-blocked (absorbed=0): {layer_ev['detail']!r}"
         )
 
 
 # ---------------------------------------------------------------------------
 # GAP-1: Same-tick fire+shock → missed re-enter
 # ---------------------------------------------------------------------------
+
 
 class TestGap1SameTickFireAndShock:
     """When weapon fires and shock-blast fires on the SAME tick, the shock's distance event
@@ -269,6 +321,7 @@ class TestGap1SameTickFireAndShock:
 # GAP-2: Mutual death — kill collapse must not suppress events
 # ---------------------------------------------------------------------------
 
+
 class TestGap2MutualDeathNoCollapse:
     """When both combatants die on the same tick, winner=None and loser_slot must be None.
     No kill collapse should occur — both sides' layer/milestone events must be emitted.
@@ -280,25 +333,54 @@ class TestGap2MutualDeathNoCollapse:
         timeline = [
             _fight_start(dist=2000.0),
             {
-                "tick": 50, "type": "damage", "actor": None, "target": "Both",
-                "data": {"amount": 200, "absorbed": 200,
-                         "hp_after": {"hull": 0, "armour": 0, "shield": 0},
-                         "source": {"weapon": "BigGun", "attacker": "??"}, "side": 1},
-            },
-            {
-                "tick": 50, "type": "damage", "actor": None, "target": "Both",
-                "data": {"amount": 200, "absorbed": 200,
-                         "hp_after": {"hull": 0, "armour": 0, "shield": 0},
-                         "source": {"weapon": "BigGun", "attacker": "??"}, "side": 2},
-            },
-            {"tick": 50, "type": "layer_depleted", "actor": "Alice", "target": None,
-             "data": {"layer": "armour", "side": 1}},
-            {"tick": 50, "type": "layer_depleted", "actor": "Bob", "target": None,
-             "data": {"layer": "armour", "side": 2}},
-            {
-                "tick": 50, "type": "fight_end", "actor": None, "target": None,
+                "tick": 50,
+                "type": "damage",
+                "actor": None,
+                "target": "Both",
                 "data": {
-                    "winner": None, "reason": "mutual", "duration_ticks": 51,
+                    "amount": 200,
+                    "absorbed": 200,
+                    "hp_after": {"hull": 0, "armour": 0, "shield": 0},
+                    "source": {"weapon": "BigGun", "attacker": "??"},
+                    "side": 1,
+                },
+            },
+            {
+                "tick": 50,
+                "type": "damage",
+                "actor": None,
+                "target": "Both",
+                "data": {
+                    "amount": 200,
+                    "absorbed": 200,
+                    "hp_after": {"hull": 0, "armour": 0, "shield": 0},
+                    "source": {"weapon": "BigGun", "attacker": "??"},
+                    "side": 2,
+                },
+            },
+            {
+                "tick": 50,
+                "type": "layer_depleted",
+                "actor": "Alice",
+                "target": None,
+                "data": {"layer": "armour", "side": 1},
+            },
+            {
+                "tick": 50,
+                "type": "layer_depleted",
+                "actor": "Bob",
+                "target": None,
+                "data": {"layer": "armour", "side": 2},
+            },
+            {
+                "tick": 50,
+                "type": "fight_end",
+                "actor": None,
+                "target": None,
+                "data": {
+                    "winner": None,
+                    "reason": "mutual",
+                    "duration_ticks": 51,
                     "final_hp": {
                         "c1": {"hull": 0, "armour": 0, "shield": 0},
                         "c2": {"hull": 0, "armour": 0, "shield": 0},
@@ -308,14 +390,13 @@ class TestGap2MutualDeathNoCollapse:
         ]
         result = _extract_key_events(timeline, combatants_map=cmap)
         layer_events = [e for e in result if e["event_type"] == "Layer depleted"]
-        assert len(layer_events) == 2, (
-            f"Mutual death must not collapse either side's layer events. Got: {layer_events}"
-        )
+        assert len(layer_events) == 2, f"Mutual death must not collapse either side's layer events. Got: {layer_events}"
 
 
 # ---------------------------------------------------------------------------
 # GAP-3: Same-ship-name fight — side-keying holds
 # ---------------------------------------------------------------------------
+
 
 class TestGap3SameShipNameFight:
     """Both combatants share the exact same name. Collapse and outcome must use slot (c1/c2),
@@ -328,20 +409,30 @@ class TestGap3SameShipNameFight:
         timeline = [
             _fight_start(dist=2000.0, c1_name="Alpha", c2_name="Alpha"),
             {
-                "tick": 50, "type": "damage", "actor": None, "target": "Alpha",
-                "data": {"amount": 200, "absorbed": 200,
-                         "hp_after": {"hull": 0, "armour": 0, "shield": 0},
-                         "source": {"weapon": "Cannon", "attacker": "Alpha"}, "side": 2},
+                "tick": 50,
+                "type": "damage",
+                "actor": None,
+                "target": "Alpha",
+                "data": {
+                    "amount": 200,
+                    "absorbed": 200,
+                    "hp_after": {"hull": 0, "armour": 0, "shield": 0},
+                    "source": {"weapon": "Cannon", "attacker": "Alpha"},
+                    "side": 2,
+                },
             },
-            {"tick": 50, "type": "layer_depleted", "actor": "Alpha", "target": None,
-             "data": {"layer": "armour", "side": 2}},  # should be suppressed (loser)
+            {
+                "tick": 50,
+                "type": "layer_depleted",
+                "actor": "Alpha",
+                "target": None,
+                "data": {"layer": "armour", "side": 2},
+            },  # should be suppressed (loser)
             _fight_end(50, "Alpha", c1_hull=80, c2_hull=0),
         ]
         result = _extract_key_events(timeline, combatants_map=cmap)
         layer_events = [e for e in result if e["event_type"] == "Layer depleted"]
-        assert layer_events == [], (
-            f"c2's armour break on kill tick must be suppressed. Got: {layer_events}"
-        )
+        assert layer_events == [], f"c2's armour break on kill tick must be suppressed. Got: {layer_events}"
         outcome = next((e for e in result if e["event_type"] == "Outcome"), None)
         assert outcome is not None and "wins" in outcome["detail"], (
             f"Outcome must say wins even with same-named ships: {outcome}"
@@ -352,6 +443,7 @@ class TestGap3SameShipNameFight:
 # GAP-4: Primary weapon appears in Weapon in range
 # ---------------------------------------------------------------------------
 
+
 class TestGap4PrimaryWeaponWIR:
     """Primary weapon fires (subtype='primary') must appear as 'Weapon in range' events.
     The commit message says 'primaries are no longer invisible'.
@@ -361,9 +453,13 @@ class TestGap4PrimaryWeaponWIR:
         """A weapon_fire with subtype='primary' generates a 'Weapon in range' event."""
         timeline = [
             _fight_start(dist=2000.0),
-            {"tick": 10, "type": "weapon_fire", "actor": "Alice", "target": "Bob",
-             "data": {"slot": "primary", "subtype": "primary", "weapon": "Railgun",
-                      "side": 1, "hit": True}},
+            {
+                "tick": 10,
+                "type": "weapon_fire",
+                "actor": "Alice",
+                "target": "Bob",
+                "data": {"slot": "primary", "subtype": "primary", "weapon": "Railgun", "side": 1, "hit": True},
+            },
         ]
         result = _extract_key_events(timeline)
         wir = [e for e in result if e["event_type"] == "Weapon in range"]
@@ -375,6 +471,7 @@ class TestGap4PrimaryWeaponWIR:
 # ---------------------------------------------------------------------------
 # GAP-5: Booster-push displacement triggers re-enter
 # ---------------------------------------------------------------------------
+
 
 class TestGap5BoosterPushReEnter:
     """A booster push that opens distance and suppresses a weapon's fire must trigger a
@@ -391,8 +488,13 @@ class TestGap5BoosterPushReEnter:
             _wfire(30, "Alice", "Tomahawk", subtype="missile", hit=False, side=1),
             _wfire(50, "Alice", "Tomahawk", subtype="missile", hit=True, side=1),
             # Booster push opens the gap → Tomahawk out of range, firing stops.
-            {"tick": 55, "type": "distance", "actor": "Bob", "target": None,
-             "data": {"cause": "booster_push", "from": 1800.0, "to": 3500.0, "side": 2}},
+            {
+                "tick": 55,
+                "type": "distance",
+                "actor": "Bob",
+                "target": None,
+                "data": {"cause": "booster_push", "from": 1800.0, "to": 3500.0, "side": 2},
+            },
             _dist_ev(150, cause="closure", from_m=3500.0, to_m=1500.0, side=2),
             # Resumes after a 110-tick gap (>> 20-tick cadence) → re-enter.
             _wfire(160, "Alice", "Tomahawk", subtype="missile", hit=True, side=1),
@@ -408,38 +510,34 @@ class TestGap5BoosterPushReEnter:
 # GAP-6: Cluster-missile 0/N miss displays "miss"
 # ---------------------------------------------------------------------------
 
+
 class TestGap6ClusterMissileMissDisplay:
     """A cluster-missile fire with hits=0 must show '— miss', not '— 0/N hit'."""
 
     def test_cluster_zero_hits_shows_miss(self):
         timeline = [
             _fight_start(dist=2000.0),
-            _wfire(10, "Alice", "ClusterBomb", subtype="cluster-missile",
-                   side=1, hits=0, fired=6),
+            _wfire(10, "Alice", "ClusterBomb", subtype="cluster-missile", side=1, hits=0, fired=6),
         ]
         result = _extract_key_events(timeline)
         wir = [e for e in result if e["event_type"] == "Weapon in range"]
         assert len(wir) == 1
-        assert "— miss" in wir[0]["detail"], (
-            f"Cluster with hits=0 must show '— miss', got: {wir[0]['detail']!r}"
-        )
+        assert "— miss" in wir[0]["detail"], f"Cluster with hits=0 must show '— miss', got: {wir[0]['detail']!r}"
 
     def test_cluster_partial_hits_shows_fraction(self):
         timeline = [
             _fight_start(dist=2000.0),
-            _wfire(10, "Alice", "ClusterBomb", subtype="cluster-missile",
-                   side=1, hits=3, fired=6),
+            _wfire(10, "Alice", "ClusterBomb", subtype="cluster-missile", side=1, hits=3, fired=6),
         ]
         result = _extract_key_events(timeline)
         wir = [e for e in result if e["event_type"] == "Weapon in range"]
-        assert "3/6 hit" in wir[0]["detail"], (
-            f"Cluster with 3/6 hits must show fraction: {wir[0]['detail']!r}"
-        )
+        assert "3/6 hit" in wir[0]["detail"], f"Cluster with 3/6 hits must show fraction: {wir[0]['detail']!r}"
 
 
 # ---------------------------------------------------------------------------
 # GAP-7: Double-milestone (50%+25% crossed by single damage event)
 # ---------------------------------------------------------------------------
+
 
 class TestGap7DoubleMilestone:
     """A single large damage event that drops HP from above 50% to below 25% must fire
@@ -450,12 +548,15 @@ class TestGap7DoubleMilestone:
         """HP drops from 100% to 16% in one shot → both 50% and 25% milestones fire."""
         cmap = {"1": {"name": "Alice"}, "2": {"name": "Bob"}}
         timeline = [
-            _fight_start(dist=2000.0,
-                         c1_hp={"hull": 300, "armour": 0, "shield": 0},
-                         c2_hp={"hull": 300, "armour": 0, "shield": 0}),
+            _fight_start(
+                dist=2000.0,
+                c1_hp={"hull": 300, "armour": 0, "shield": 0},
+                c2_hp={"hull": 300, "armour": 0, "shield": 0},
+            ),
             # Bob takes 250 dmg → hp_after=50 → 50/300 = 16.7% (below both thresholds)
-            _dmg_ev(10, target_side=2, absorbed=250.0, weapon="BigGun",
-                    hp_after={"hull": 50, "armour": 0, "shield": 0}),
+            _dmg_ev(
+                10, target_side=2, absorbed=250.0, weapon="BigGun", hp_after={"hull": 50, "armour": 0, "shield": 0}
+            ),
         ]
         result = _extract_key_events(timeline, combatants_map=cmap)
         milestones = [e for e in result if "HP milestone" in e.get("event_type", "")]
@@ -469,6 +570,7 @@ class TestGap7DoubleMilestone:
 # GAP-8: start_total=0 guard prevents division-by-zero
 # ---------------------------------------------------------------------------
 
+
 class TestGap8StartTotalZeroGuard:
     """fight_start combatants with all-zero HP → start_total[side]=0.
     The damage milestone check guards with 'start_total.get(side)' (falsy=0) → skipped.
@@ -478,13 +580,20 @@ class TestGap8StartTotalZeroGuard:
     def test_zero_start_hp_no_crash(self):
         """No crash when combatant HP totals are zero (would divide by zero without guard)."""
         timeline = [
-            {"tick": 0, "type": "fight_start", "actor": None, "target": None,
-             "data": {"combatants": [
-                 {"name": "A", "hp": {"hull": 0, "armour": 0, "shield": 0}},
-                 {"name": "B", "hp": {"hull": 0, "armour": 0, "shield": 0}},
-             ], "initial_distance": 2000.0}},
-            _dmg_ev(10, target_side=2, absorbed=10.0, weapon="Gun",
-                    hp_after={"hull": 0, "armour": 0, "shield": 0}),
+            {
+                "tick": 0,
+                "type": "fight_start",
+                "actor": None,
+                "target": None,
+                "data": {
+                    "combatants": [
+                        {"name": "A", "hp": {"hull": 0, "armour": 0, "shield": 0}},
+                        {"name": "B", "hp": {"hull": 0, "armour": 0, "shield": 0}},
+                    ],
+                    "initial_distance": 2000.0,
+                },
+            },
+            _dmg_ev(10, target_side=2, absorbed=10.0, weapon="Gun", hp_after={"hull": 0, "armour": 0, "shield": 0}),
         ]
         try:
             result = _extract_key_events(timeline)
@@ -497,6 +606,7 @@ class TestGap8StartTotalZeroGuard:
 # ---------------------------------------------------------------------------
 # GAP-9: Empty / None combatants_map is safe
 # ---------------------------------------------------------------------------
+
 
 class TestGap9NoneCombatnatsMap:
     """combatants_map=None and combatants_map={} must not crash."""
@@ -516,8 +626,13 @@ class TestGap9NoneCombatnatsMap:
     def test_stalemate_with_empty_cmap_uses_question_marks(self):
         """Stalemate outcome with empty combatants_map uses '?' as combatant names."""
         timeline = [
-            {"tick": 18000, "type": "fight_end", "actor": None, "target": None,
-             "data": {"winner": None, "reason": "time_cap", "duration_ticks": 18000}},
+            {
+                "tick": 18000,
+                "type": "fight_end",
+                "actor": None,
+                "target": None,
+                "data": {"winner": None, "reason": "time_cap", "duration_ticks": 18000},
+            },
         ]
         result = _extract_key_events(timeline, combatants_map={})
         outcome = next((e for e in result if e["event_type"] == "Outcome"), None)

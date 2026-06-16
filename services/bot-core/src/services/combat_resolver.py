@@ -2265,13 +2265,17 @@ def _extract_key_events(
 
     def _emit(tick: int, k: int, event_type: str, detail: str, actor: str | None = None) -> None:
         staged.append(
-            (tick, k, {
-                "tick": tick,
-                "time_s": _ticks_to_seconds(tick, tick_ms),
-                "actor": actor,
-                "event_type": event_type,
-                "detail": detail,
-            })
+            (
+                tick,
+                k,
+                {
+                    "tick": tick,
+                    "time_s": _ticks_to_seconds(tick, tick_ms),
+                    "actor": actor,
+                    "event_type": event_type,
+                    "detail": detail,
+                },
+            )
         )
 
     # ---- Engagement (k=0) ----
@@ -2283,8 +2287,12 @@ def _extract_key_events(
             al = a.get("display_name") or a.get("name", "?")
             bl = b.get("display_name") or b.get("name", "?")
             dist_m = int((fs.get("data", {}) or {}).get("initial_distance", 0))
-            _emit(0, 0, "Engagement",
-                  f"Engagement: {al} ({a.get('ship', '?')}) vs {bl} ({b.get('ship', '?')}) — {dist_m}m")
+            _emit(
+                0,
+                0,
+                "Engagement",
+                f"Engagement: {al} ({a.get('ship', '?')}) vs {bl} ({b.get('ship', '?')}) — {dist_m}m",
+            )
 
     # ---- Weapon range-in beats R1/R2 (k=1); skip nuke + shock-blast ----
     def _hitstr(d: dict) -> str:
@@ -2301,8 +2309,8 @@ def _extract_key_events(
         for f in flist:
             t = f["tick"]
             cur = by_tick.get(t)
-            hitful = bool(f["data"].get("hit") or (f["data"].get("hits") or 0))
-            cur_hitful = bool(cur and (cur["data"].get("hit") or (cur["data"].get("hits") or 0)))
+            hitful = bool(f["data"].get("hit") or f["data"].get("hits"))
+            cur_hitful = bool(cur and (cur["data"].get("hit") or cur["data"].get("hits")))
             if cur is None or (hitful and not cur_hitful):
                 by_tick[t] = f
         fire_ticks = sorted(by_tick)
@@ -2337,9 +2345,13 @@ def _extract_key_events(
         lbl = _actor_label(ev.get("actor"), d)
         w = d.get("weapon", "?")
         if sub == "nuke":
-            _emit(tick, 1, "Nuke detonation",
-                  f"{lbl} fired {w} — detonated (opp: {d.get('opponent_damage', 0)}, self: {d.get('self_damage', 0)})",
-                  actor=lbl)
+            _emit(
+                tick,
+                1,
+                "Nuke detonation",
+                f"{lbl} fired {w} — detonated (opp: {d.get('opponent_damage', 0)}, self: {d.get('self_damage', 0)})",
+                actor=lbl,
+            )
         elif sub == "shock-blast":
             to = shock_reset.get((tick, str(d.get("side"))), GameConstants.STARTING_DISTANCE_M)
             _emit(tick, 1, "Shock blast", f"{lbl} fired {w} — distance reset to {int(to)}m", actor=lbl)
@@ -2407,11 +2419,15 @@ def _extract_key_events(
         if winner is None:
             c1, c2 = cmap.get("1", {}), cmap.get("2", {})
             aggr, pas = (c1, c2) if c1.get("damage_dealt", 0) >= c2.get("damage_dealt", 0) else (c2, c1)
-            _emit(ftick, 9, "Outcome",
-                  f"Stalemate ({dur_s:.0f}s) — {aggr.get('name', '?')} landed "
-                  f"{aggr.get('shots_hit', 0)}/{aggr.get('shots_fired', 0)} hits "
-                  f"({aggr.get('damage_dealt', 0)} dmg) but couldn't out-damage "
-                  f"{pas.get('name', '?')}'s regen; {pas.get('name', '?')} dealt {pas.get('damage_dealt', 0)}.")
+            _emit(
+                ftick,
+                9,
+                "Outcome",
+                f"Stalemate ({dur_s:.0f}s) — {aggr.get('name', '?')} landed "
+                f"{aggr.get('shots_hit', 0)}/{aggr.get('shots_fired', 0)} hits "
+                f"({aggr.get('damage_dealt', 0)} dmg) but couldn't out-damage "
+                f"{pas.get('name', '?')}'s regen; {pas.get('name', '?')} dealt {pas.get('damage_dealt', 0)}.",
+            )
         elif loser_slot is not None:
             winner_slot = "2" if loser_slot == "1" else "1"
             winner_label = cmap.get(winner_slot, {}).get("name", winner)

@@ -1073,7 +1073,9 @@ class TestInventoryCommandAdditionalBranches:
 # ---------------------------------------------------------------------------
 
 
-def _make_ship_data(ship_id=10, ship_name="Eagle", is_active=True, weapons=None, modules=None, turrets=None):
+def _make_ship_data(
+    ship_id=10, ship_name="Eagle", is_active=True, weapons=None, modules=None, turrets=None, secondaries=None
+):
     """Return a minimal ship data dict."""
     return {
         "id": ship_id,
@@ -1082,6 +1084,7 @@ def _make_ship_data(ship_id=10, ship_name="Eagle", is_active=True, weapons=None,
         "nickname": None,
         "is_active": is_active,
         "weapons": weapons or [],
+        "secondary_weapons": secondaries or [],
         "modules": modules or [],
         "turrets": turrets or [],
         "created_at": "2024-01-01T00:00:00",
@@ -1121,6 +1124,53 @@ class TestEquipCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         assert call_kwargs.get("ephemeral", False), "/equip success response must be ephemeral"
+
+    def test_equip_ok_loadout_lists_equipped_secondaries(self, mock_inventory_cog, make_mock_response):
+        """Current Loadout must include a Secondaries line listing equipped secondaries.
+
+        Regression: equipping to an empty slot rendered Weapons/Modules/Turrets but
+        dropped the Secondaries line entirely, hiding already-equipped secondaries.
+        """
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(weapons=["OldLaser"], secondaries=["Shesha"])])
+        check_resp = make_mock_response(_make_check_response(status="ok", equipment_type="weapons"))
+        # Equip response: empty weapon slot filled, secondaries already present.
+        equip_resp = make_mock_response(
+            _make_ship_data(weapons=["OldLaser", "NewCannon"], secondaries=["Shesha", "Garuda-IV"])
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, check_resp, equip_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="NewCannon"))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        loadout = next((f.value for f in embed.fields if f.name == "Current Loadout"), None)
+        assert loadout is not None, "Current Loadout field missing"
+        assert "Secondaries: Shesha, Garuda-IV" in loadout, f"Secondaries line missing/wrong: {loadout!r}"
+        # Canonical W/S/M/T order: Secondaries between Weapons and Modules.
+        assert loadout.index("Weapons:") < loadout.index("Secondaries:") < loadout.index("Modules:")
+
+    def test_equip_ok_loadout_secondaries_none_when_empty(self, mock_inventory_cog, make_mock_response):
+        """With no secondaries equipped, the line still renders as 'Secondaries: None'."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(weapons=["OldLaser"])])
+        check_resp = make_mock_response(_make_check_response(status="ok", equipment_type="weapons"))
+        equip_resp = make_mock_response(_make_ship_data(weapons=["OldLaser", "NewCannon"]))
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, check_resp, equip_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="NewCannon"))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        loadout = next((f.value for f in embed.fields if f.name == "Current Loadout"), None)
+        assert loadout is not None
+        assert "Secondaries: None" in loadout
 
     def test_equip_no_active_ship_returns_error(self, mock_inventory_cog, make_mock_response):
         """/equip with no active ship sends ephemeral error."""

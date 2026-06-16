@@ -742,10 +742,12 @@ class InventoryCog(commands.Cog):
                 embed.add_field(name="Slot", value=(equipment_type or "auto").title(), inline=True)
 
                 weapons = ship_data.get("weapons") or []
+                secondaries = ship_data.get("secondary_weapons") or []
                 modules = ship_data.get("modules") or []
                 turrets = ship_data.get("turrets") or []
                 loadout_text = (
                     f"Weapons: {', '.join(weapons) or 'None'}\n"
+                    f"Secondaries: {', '.join(secondaries) or 'None'}\n"
                     f"Modules: {', '.join(modules) or 'None'}\n"
                     f"Turrets: {', '.join(turrets) or 'None'}"
                 )

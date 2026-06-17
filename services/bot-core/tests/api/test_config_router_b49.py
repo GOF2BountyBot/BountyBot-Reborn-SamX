@@ -171,7 +171,7 @@ class TestGetGameConstants:
     """GET /api/v1/config/guild/{guild_id}/game-constants."""
 
     @patch("api.routers.config.get_db_session")
-    def test_returns_200_with_all_25_fields(self, mock_get_db, client, mock_config_service):
+    def test_returns_200_with_all_override_fields(self, mock_get_db, client, mock_config_service):
         """Returns 200 with all override fields present (null for fresh guild)."""
         _configure_db_mock(mock_get_db)
 

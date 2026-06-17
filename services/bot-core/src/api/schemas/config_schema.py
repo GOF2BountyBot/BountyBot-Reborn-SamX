@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 class GameConstantsOverridesMixin(BaseModel):
-    """Mixin holding the 25 per-guild game-constant override fields (B.49).
+    """Mixin holding the per-guild game-constant override fields (B.49; extended over time).
 
     All fields are ``| None = None``.  NULL means "use the global GameConstants
     default" — the service layer resolves the actual value via ``resolve_constant``.
@@ -50,6 +50,15 @@ class GameConstantsOverridesMixin(BaseModel):
     # Demotion
     demotion_credit_penalty_pct: int | None = Field(None, ge=0, le=100)
 
+    # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
+    long_range_threshold_m: int | None = Field(None, ge=0)
+    criminal_long_range_pct: float | None = Field(None, ge=0.0, le=1.0)
+    primary_tl_band_weights: dict[str, int] | None = None
+    criminal_cloak_chance_by_division: dict[str, int] | None = None
+    criminal_booster_chance_by_division: dict[str, int] | None = None
+    criminal_emergency_chance_by_division: dict[str, int] | None = None
+    criminal_weaponmod_chance_by_division: dict[str, int] | None = None
+
     @field_validator("division_max_tl", mode="before")
     @classmethod
     def validate_division_max_tl(cls, v: Any) -> Any:
@@ -63,6 +72,45 @@ class GameConstantsOverridesMixin(BaseModel):
         for key, val in v.items():
             if not isinstance(val, int) or not 1 <= val <= 10:
                 raise ValueError(f"division_max_tl[{key!r}] must be an integer between 1 and 10")
+        return v
+
+    @field_validator(
+        "criminal_cloak_chance_by_division",
+        "criminal_booster_chance_by_division",
+        "criminal_emergency_chance_by_division",
+        "criminal_weaponmod_chance_by_division",
+        mode="before",
+    )
+    @classmethod
+    def validate_criminal_division_chance(cls, v: Any, info: Any) -> Any:
+        """Per-division equip-chance dict: keys exactly {bronze,silver,gold,platinum}, ints 0–100."""
+        if v is None:
+            return v
+        name = info.field_name
+        if not isinstance(v, dict):
+            raise ValueError(f"{name} must be a dict")
+        required_keys = {"bronze", "silver", "gold", "platinum"}
+        if set(v.keys()) != required_keys:
+            raise ValueError(f"{name} must have exactly keys: {required_keys}")
+        for key, val in v.items():
+            if isinstance(val, bool) or not isinstance(val, int) or not 0 <= val <= 100:
+                raise ValueError(f"{name}[{key!r}] must be an integer between 0 and 100")
+        return v
+
+    @field_validator("primary_tl_band_weights", mode="before")
+    @classmethod
+    def validate_primary_tl_band_weights(cls, v: Any) -> Any:
+        """TL-band weights: keys exactly {center,minus1,plus1}, non-negative ints."""
+        if v is None:
+            return v
+        if not isinstance(v, dict):
+            raise ValueError("primary_tl_band_weights must be a dict")
+        required_keys = {"center", "minus1", "plus1"}
+        if set(v.keys()) != required_keys:
+            raise ValueError(f"primary_tl_band_weights must have exactly keys: {required_keys}")
+        for key, val in v.items():
+            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+                raise ValueError(f"primary_tl_band_weights[{key!r}] must be a non-negative integer")
         return v
 
     @model_validator(mode="after")

@@ -485,6 +485,16 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "turret_spawn_probability": config.turret_spawn_probability,
                 "kaamo_max_capacity": config.kaamo_max_capacity,
                 "classic_credits_per_check": config.classic_credits_per_check,
+                "demotion_credit_penalty_pct": config.demotion_credit_penalty_pct,
+                "tier_change_cooldown": config.tier_change_cooldown,
+                # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
+                "long_range_threshold_m": config.long_range_threshold_m,
+                "criminal_long_range_pct": config.criminal_long_range_pct,
+                "primary_tl_band_weights": config.primary_tl_band_weights,
+                "criminal_cloak_chance_by_division": config.criminal_cloak_chance_by_division,
+                "criminal_booster_chance_by_division": config.criminal_booster_chance_by_division,
+                "criminal_emergency_chance_by_division": config.criminal_emergency_chance_by_division,
+                "criminal_weaponmod_chance_by_division": config.criminal_weaponmod_chance_by_division,
             }
 
         except Exception as e:

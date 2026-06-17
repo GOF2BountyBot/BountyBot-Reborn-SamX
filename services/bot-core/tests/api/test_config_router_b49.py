@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 def make_mock_config(**overrides):
     """Build a minimal config dict that satisfies GuildConfigResponse.
 
-    All 25 per-guild override fields default to None (the fresh-guild state).
+    All per-guild override fields default to None (the fresh-guild state).
     """
     defaults = dict(
         guild_id=67890,
@@ -67,6 +67,16 @@ def make_mock_config(**overrides):
         turret_spawn_probability=None,
         kaamo_max_capacity=None,
         classic_credits_per_check=None,
+        tier_change_cooldown=None,
+        demotion_credit_penalty_pct=None,  # per-guild demotion penalty % (0–100; NULL → global default)
+        # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
+        long_range_threshold_m=None,
+        criminal_long_range_pct=None,
+        primary_tl_band_weights=None,
+        criminal_cloak_chance_by_division=None,
+        criminal_booster_chance_by_division=None,
+        criminal_emergency_chance_by_division=None,
+        criminal_weaponmod_chance_by_division=None,
     )
     defaults.update(overrides)
     return defaults
@@ -109,6 +119,14 @@ _OVERRIDE_FIELD_NAMES = [
     "classic_credits_per_check",
     "tier_change_cooldown",
     "demotion_credit_penalty_pct",  # per-guild demotion penalty % (0–100; NULL → global default 10)
+    # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
+    "long_range_threshold_m",
+    "criminal_long_range_pct",
+    "primary_tl_band_weights",
+    "criminal_cloak_chance_by_division",
+    "criminal_booster_chance_by_division",
+    "criminal_emergency_chance_by_division",
+    "criminal_weaponmod_chance_by_division",
 ]
 
 

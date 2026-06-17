@@ -123,6 +123,35 @@ class GameConstants:
     MAX_ROUTE_LENGTH: int = 50  # A* pathfinding limit
 
     # ------------------------------------------------------------------
+    # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & Thread 4)
+    # All per-guild overridable via the matching snake_case GuildConfig column,
+    # resolved through resolve_constant(cfg, "<key>", GameConstants.<NAME>).
+    # ------------------------------------------------------------------
+
+    # Thread 3 — primary long-range selection.
+    # A primary weapon is LONG iff range_m > LONG_RANGE_THRESHOLD_M, else SHORT.
+    # Per-guild override: long_range_threshold_m on GuildConfig.
+    LONG_RANGE_THRESHOLD_M: int = 2600
+
+    # Floor share of long-range primaries per ship (ceil(pct * max_primaries)),
+    # plus the per-remaining-slot long roll. GLOBAL float in [0.0, 1.0].
+    # Per-guild override: criminal_long_range_pct on GuildConfig.
+    CRIMINAL_LONG_RANGE_PCT: float = 0.50
+
+    # Per-slot ±1 TL-band pick weights for primary selection (center=target TL).
+    # Per-guild override: primary_tl_band_weights on GuildConfig (dict with keys
+    # exactly {center, minus1, plus1}, non-negative ints).
+    PRIMARY_TL_BAND_WEIGHTS: dict[str, int] = {"center": 70, "minus1": 20, "plus1": 10}
+
+    # Thread 4 — criminal two-gate module Gate-1 equip chances by division (%).
+    # Each is a dict keyed exactly {bronze, silver, gold, platinum} with ints 0–100.
+    # Per-guild overrides: the matching snake_case GuildConfig columns.
+    CRIMINAL_CLOAK_CHANCE_BY_DIVISION: dict[str, int] = {"bronze": 0, "silver": 25, "gold": 66, "platinum": 100}
+    CRIMINAL_BOOSTER_CHANCE_BY_DIVISION: dict[str, int] = {"bronze": 50, "silver": 100, "gold": 100, "platinum": 100}
+    CRIMINAL_EMERGENCY_CHANCE_BY_DIVISION: dict[str, int] = {"bronze": 0, "silver": 25, "gold": 50, "platinum": 100}
+    CRIMINAL_WEAPONMOD_CHANCE_BY_DIVISION: dict[str, int] = {"bronze": 0, "silver": 25, "gold": 50, "platinum": 100}
+
+    # ------------------------------------------------------------------
     # CI-17: Criminal secondary weapons (owner-decision knobs #1–#3)
     # All four constants are tunable here; nowhere else.
     # ------------------------------------------------------------------
@@ -422,6 +451,10 @@ class GameConstants:
         cls.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE = _track_int("CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE", 20)
         cls.CRIMINAL_MAX_GEAR_UPGRADE = _track_int("CRIMINAL_MAX_GEAR_UPGRADE", 1)
         cls.SHIP_VALUE_REWARD_PERCENTAGE = _track_float("SHIP_VALUE_REWARD_PERCENTAGE", 0.01)
+
+        # Criminal loadout balance — scalar knobs (dict knobs are per-guild-only, no env form)
+        cls.LONG_RANGE_THRESHOLD_M = _track_int("LONG_RANGE_THRESHOLD_M", 2600)
+        cls.CRIMINAL_LONG_RANGE_PCT = _track_float("CRIMINAL_LONG_RANGE_PCT", 0.50)
 
         # Activity
         cls.MIN_GUILD_ACTIVITY = _track_float("MIN_GUILD_ACTIVITY", 1.0)

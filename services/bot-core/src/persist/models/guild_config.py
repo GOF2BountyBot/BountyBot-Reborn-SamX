@@ -134,6 +134,30 @@ class GuildConfig(Base):
     demotion_credit_penalty_pct: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     # ------------------------------------------------------------------
+    # Criminal loadout balance overrides (BALANCE_JOURNAL §A — Thread 3 & 4)
+    # NULL == "use the matching GameConstants default". resolve_constant() handles fallback.
+    # ------------------------------------------------------------------
+
+    # Thread 3 — primary long-range selection
+    long_range_threshold_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_long_range_pct: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    primary_tl_band_weights: Mapped[dict[str, int] | None] = mapped_column(_JSONB, nullable=True, default=None)
+
+    # Thread 4 — criminal two-gate module Gate-1 equip chances by division (%)
+    criminal_cloak_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
+        _JSONB, nullable=True, default=None
+    )
+    criminal_booster_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
+        _JSONB, nullable=True, default=None
+    )
+    criminal_emergency_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
+        _JSONB, nullable=True, default=None
+    )
+    criminal_weaponmod_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
+        _JSONB, nullable=True, default=None
+    )
+
+    # ------------------------------------------------------------------
     # Combat System — Phase-1 per-guild overrides (Appendix A constants)
     # NULL == "use GameConstants default". resolve_constant() handles fallback.
     # ------------------------------------------------------------------

@@ -36,7 +36,7 @@ router = APIRouter(
 )
 
 # ---------------------------------------------------------------------------
-# B.49: all 25 per-guild override field names
+# B.49: per-guild game-constant override field names (extended over time)
 # ---------------------------------------------------------------------------
 _OVERRIDE_FIELDS: tuple[str, ...] = (
     "division_max_tl",
@@ -67,6 +67,14 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "kaamo_max_capacity",
     "classic_credits_per_check",
     "demotion_credit_penalty_pct",
+    # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
+    "long_range_threshold_m",
+    "criminal_long_range_pct",
+    "primary_tl_band_weights",
+    "criminal_cloak_chance_by_division",
+    "criminal_booster_chance_by_division",
+    "criminal_emergency_chance_by_division",
+    "criminal_weaponmod_chance_by_division",
 )
 
 

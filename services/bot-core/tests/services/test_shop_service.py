@@ -2142,11 +2142,11 @@ class TestSecondaryQuantityScalers:
         return quantities[0]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("subtype", ["nuke", "shock-blast"])
+    @pytest.mark.parametrize("subtype", ["nuke", "shock-blast", "cluster-missile"])
     async def test_heavy_subtypes_use_heavy_scaler(
         self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, subtype
     ):
-        """nuke/shock-blast: rolled 3 × HEAVY scaler (5) = 15."""
+        """nuke/shock-blast/cluster-missile: rolled 3 × HEAVY scaler (5) = 15."""
         weapon = _make_secondary_weapon("AMR Extinctor", tech_level=1, subtype=subtype)
         qty = await self._refresh_and_capture_quantity(
             service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon
@@ -2157,11 +2157,11 @@ class TestSecondaryQuantityScalers:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("subtype", ["missile", "rocket", "cluster-missile"])
+    @pytest.mark.parametrize("subtype", ["missile", "rocket"])
     async def test_standard_subtypes_use_standard_scaler(
         self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, subtype
     ):
-        """missile/rocket/cluster-missile: rolled 3 × STANDARD scaler (10) = 30."""
+        """missile/rocket: rolled 3 × STANDARD scaler (10) = 30."""
         weapon = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype=subtype)
         qty = await self._refresh_and_capture_quantity(
             service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo, weapon

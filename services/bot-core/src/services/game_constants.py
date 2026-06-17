@@ -199,7 +199,7 @@ class GameConstants:
     # single refresh cycle (6h default) can supply multiple players. Heavy ordnance
     # scales less than standard ammo (missile, rocket, cluster-missile, ...).
     # An item whose subtype is missing/unknown gets the STANDARD scaler.
-    SHOP_HEAVY_SECONDARY_SUBTYPES: frozenset[str] = frozenset({"nuke", "shock-blast"})
+    SHOP_HEAVY_SECONDARY_SUBTYPES: frozenset[str] = frozenset({"nuke", "shock-blast", "cluster-missile"})
     SHOP_SECONDARY_QTY_SCALER_HEAVY: int = 5
     SHOP_SECONDARY_QTY_SCALER_STANDARD: int = 10
 

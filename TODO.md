@@ -1,5 +1,23 @@
 # Combat-System Phase-1 — Implementation TODO
 
+> ## ✅ COMPLETE — ALL TASKS SHIPPED (status as of 2026-06-18)
+> Every task T1–T11 below is **implemented, tested, and merged**. The tick-based combat system,
+> combat-log persistence + `/combat-log`, Player lifetime stats, and item-detail embed enrichment
+> are all live. The canonical, up-to-date combat behavior lives in `COMBAT_SPEC_LOCKED.md` (locked
+> spec), `COMBAT.md` (overview), and the AGENTS.md set — **not here.** This file is retained as the
+> historical decomposition record.
+>
+> **Note on drift since this was written:** T1 lists a `ShipLoadout.manual_turret_mode` field and T7 a
+> "mode switch" — both were later **removed**; turret/primary switching is now **range-driven**
+> (migration `0018`, `COMBAT_SPEC_LOCKED.md` §6.3). The "25 Appendix A constants" in T1 has since grown
+> (combat knobs + the criminal loadout-balance knobs of migrations `0020`/`0021`). Trust the spec +
+> code over the task wording below.
+>
+> **Subsequent balance work (Threads 1/3/4/6 + Thread-5 combat chain) is NOT part of this TODO** — it
+> post-dates the Phase-1 decomposition and is documented in `COMBAT_SPEC_LOCKED.md` /
+> `services/bot-core/src/services/AGENTS.md`. Remaining follow-ups for it live in `OPEN_ITEMS.md`
+> (`BAL-deploy` / `BAL-emp-phase2` / `BAL-dead-const`).
+
 This is the **scoped task list** for implementing the Phase-1 combat system
 described in `/proj/COMBAT_SPEC_LOCKED.md`. Each task below is bounded for a
 single GPT-4o implementation pass (~5–9h).

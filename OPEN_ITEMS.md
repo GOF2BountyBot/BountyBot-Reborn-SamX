@@ -1,6 +1,6 @@
 # BountyBot Open Items
 
-Last updated: 2026-05-24 (cross-checked against codebase; B.95/B.96/B.82/B.63/ENH-02/ENH-03/CI-01/Appendix B closed)
+Last updated: 2026-06-18 (criminal loadout-balance + combat-log fixes landed on `dev` + documented; added BAL-deploy / BAL-emp-phase2 / BAL-dead-const follow-ups)
 
 ---
 
@@ -58,6 +58,9 @@ Fixed-in-code items are treated as closed. Live re-test is confirmatory only.
 
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
+| BAL-deploy | 🟠 | Deploy criminal loadout-balance + combat-log fixes `dev → main` | The Threads 1/3/4/6 balance changes + Thread-5 combat chain + combat-log embed/re-enter fixes are implemented, tested, and merged to `dev`, and docs are reconciled (`COMBAT_SPEC_LOCKED.md`, `COMBAT.md`, AGENTS.md set). **Pending sign-off** before the `dev → main` promotion + prod deploy. Migrations `0020`/`0021` apply on startup via `MigrationManager.ensure_current()`. |
+| BAL-emp-phase2 | 🔵 | EMP `emp_damage` is a deferred phase-2+ combat feature | The engine bakes `emp_damage` for combat-log fidelity but applies **0 HP** (`combat_resolver.py`; `COMBAT_SPEC_LOCKED.md` §4). Thread-6's `criminal_exclude_emp_weapons` toggle (default ON) keeps pure-EMP weapons out of criminal loadouts *because* of this. When real EMP mechanics ship, flip the toggle OFF (per-guild) so EMP weapons become eligible again — the toggle was designed to auto-disable cleanly at that point. Tracked here so the dependency isn't lost. |
+| BAL-dead-const | 🔵 | Dead constant `CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE` (=20) | Defined + env-tracked in `game_constants.py` but referenced by **no** selection path — superseded by Thread-6's deterministic `_is_primarily_emp` exclusion. Safe to delete in a future cleanup pass (code + env-tracking line). Documented in `services/bot-core/src/services/AGENTS.md`. |
 | ENH-04 | 🔵 | Allow duel commands additionally in `#bounty-discussions` channel | Duel challenges get lost in `#bounty-hunting` noise. Goal: `/duel-challenge`, `/duel-accept`, `/duel-reject` should be usable in **both** `#bounty-hunting` (unchanged) **and** `#bounty-discussions` (new). All bounty activity (spawns, captures, `/check`, etc.) stays limited to `#bounty-hunting` — this is additive only. Implementation requires: (1) add `bounty_discussions_channel_id` to `GuildConfig` model + Alembic migration, (2) add it to `/setup` config flow, (3) add channel allow-list check in `duelCog.py` for all three duel commands. Tabled for deeper investigation. |
 | ENH-01 | 🔵 | Shop item TNN re-indexing — replace global auto-increment IDs with human-readable `TNN` codes (`T`=tier digit, `NN`=position within tier, e.g. `105` = Bronze item #5) | **Tabled for later.** Fully scoped and designed — see Appendix A. Recommended implementation: display-layer only (no DB migration). ~6h effort. Requires coordinated changes in `shopCog.py`, `shops.py` router, `shops_schema.py`, and a new `shop_tnn.py` helper. Currently shopCog still uses raw `item_id` — `shop_tnn.py` does not exist in either service. |
 | B.88 | 🔵 | `/admin_config_constants` UX is rough — needs redesign | Flagged during `feat/promote-flow-correctness` work; deferred out of that PR. Constant-editing admin flow suffers param sprawl and poor discoverability — wants a usability pass (grouped categories, search/autocomplete, clearer reset semantics). |

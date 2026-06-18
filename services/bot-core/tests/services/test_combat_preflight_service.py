@@ -436,6 +436,31 @@ class TestSynthesizeCriminals:
             assert 1 <= tl <= 2
 
     @pytest.mark.asyncio
+    async def test_synthesize_forwards_division_to_generate_loadout(self):
+        """Task 2 plumbing: _synthesize_criminals forwards its division to
+        generate_loadout (drives per-division equip chances)."""
+        svc = _make_service()
+        recorded_divisions: list[str] = []
+
+        # Patched at the class level → called as a bound method, so the real
+        # BountyService instance arrives as ``self``.  Accept it explicitly so
+        # the call signature matches and the broad except in _synthesize_criminals
+        # cannot silently swallow a mismatch.
+        async def _mock_generate(self, db, tl, *, division, cfg=None):
+            recorded_divisions.append(division)
+            return {"ship_name": "Ship", "ship_armour": 100, "weapons": [], "turrets": []}
+
+        with patch(
+            "services.combat_preflight_service.BountyService.generate_loadout",
+            new=_mock_generate,
+        ):
+            await svc._synthesize_criminals(MagicMock(), "gold", count=3)
+
+        assert recorded_divisions == ["gold", "gold", "gold"], (
+            f"division not forwarded to generate_loadout: {recorded_divisions}"
+        )
+
+    @pytest.mark.asyncio
     async def test_synthesize_partial_failure_returns_what_succeeded(self):
         """If some generate_loadout calls fail, successfully built ones are still returned."""
         svc = _make_service()

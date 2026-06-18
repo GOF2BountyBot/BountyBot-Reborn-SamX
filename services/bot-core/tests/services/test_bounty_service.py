@@ -106,9 +106,21 @@ def _make_weapon(
     value: int = 2577,
     dps: float = 9.09,
     tech_level: int = 1,
+    range_m: float = 1300.0,
 ) -> SimpleNamespace:
-    """Return a PrimaryWeapon-like SimpleNamespace."""
-    return SimpleNamespace(name=name, value=value, dps=dps, tech_level=tech_level)
+    """Return a PrimaryWeapon-like SimpleNamespace.
+
+    ``range_m`` lives in the canonical doubly-nested ``extra_atts`` dict
+    (``{"extra_atts": {"range_m": ...}}``) so the long/short classifier in
+    ``generate_loadout`` (§ Spec D) reads it correctly.  Default 1300 = SHORT.
+    """
+    return SimpleNamespace(
+        name=name,
+        value=value,
+        dps=dps,
+        tech_level=tech_level,
+        extra_atts={"extra_atts": {"range_m": range_m, "subtype": "auto-cannon"}},
+    )
 
 
 def _make_module(
@@ -218,6 +230,14 @@ def service() -> BountyService:
     # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids (batched).
     # Default to empty list; tests that need payout breakdown content can override.
     svc.player_repo.get_by_ids = AsyncMock(return_value=[])
+
+    # Task 2 (§ Spec C/D): generate_loadout now gathers the full catalog for a
+    # type via item_repo.get_all(db, item_type) (replacing the old per-TL
+    # get_all_by_tech_level + _find_typed_module path).  Default to an empty
+    # catalog so tests that don't care about primaries/modules get empty
+    # weapons/modules instead of awaiting a bare MagicMock.  Tests that DO
+    # assert loadout content override get_all explicitly.
+    svc.item_repo.get_all = AsyncMock(return_value=[])
 
     return svc
 
@@ -513,17 +533,21 @@ async def test_generate_loadout_returns_valid_dict(service, mock_db):
 
 @pytest.mark.asyncio
 async def test_generate_loadout_equips_weapons(service, mock_db):
-    """Weapons are equipped up to ship.max_primaries."""
-    ship = _make_ship("Groza", value=251600, max_primaries=3, max_modules=2)
-    weapon = _make_weapon(dps=9.09)
+    """Weapons are equipped up to ship.max_primaries (§ Spec D).
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    The primary pool now comes from item_repo.get_all("primary_weapon").  A
+    single short weapon at the item_tl band still fills every slot (the
+    long-floor falls back to short when no long variant exists anywhere).
+    """
+    ship = _make_ship("Groza", value=251600, max_primaries=3, max_modules=0)
+    weapon = _make_weapon(dps=9.09, tech_level=1, range_m=1300.0)
+
+    async def _get_all(db, item_type):
+        return [weapon] if item_type == "primary_weapon" else []
+
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
         _setup_mock_db_query(mock_db, [ship])
-        # Weapons and modules both come from get_all_by_tech_level
-        service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[weapon])
+        service.item_repo.get_all = _get_all
 
         result = await service.generate_loadout(mock_db, tech_level=2)
 
@@ -532,56 +556,57 @@ async def test_generate_loadout_equips_weapons(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_generate_loadout_armour_at_tl_gt_1(service, mock_db):
-    """Armour module is guaranteed to be the first module at TL > 1."""
+async def test_generate_loadout_armour_is_guaranteed_any_tl(service, mock_db):
+    """Armour is an unconditional GUARANTEED category (§ Spec C).
+
+    The legacy armour-TL>1 gate is removed: even a TL1 criminal (item_tl=1)
+    equips armour.  The priority walk places it after Scanner; with no Scanner
+    variant in the pool, Armour takes the first slot.
+    """
     ship = _make_ship("Groza", value=251600, max_primaries=0, max_modules=3)
-    armour_mod = _make_module("E2 Exoclad Armour", value=1070, tech_level=1)
+    # item_tl for tech_level=2 is 1, but armour at TL1 still equips (no gate).
+    armour_mod = _make_module("E2 Exoclad Armour", value=1070, tech_level=1, type="ArmourModule")
+
+    async def _get_all(db, item_type):
+        return [armour_mod] if item_type == "module" else []
 
     with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
         _setup_mock_db_query(mock_db, [ship])
+        service.item_repo.get_all = _get_all
+        result = await service.generate_loadout(mock_db, tech_level=2)
 
-        # generic modules list (for filling remaining slots) — use a different type so armour slot isn't blocked
-        generic_mod = _make_module("Generic Module", value=500, tech_level=1, type="CabinModule")
-        service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[generic_mod])
-
-        with patch.object(
-            service,
-            "_find_typed_module",
-            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
-        ):
-            result = await service.generate_loadout(mock_db, tech_level=2)
-
-    assert len(result["modules"]) > 0
-    # First module should be the armour one
-    assert "armour" in result["modules"][0]["name"].lower() or result["modules"][0]["name"] == armour_mod.name
+    module_types = [m["type"] for m in result["modules"]]
+    assert "ArmourModule" in module_types, f"Armour must be guaranteed: {module_types}"
+    # No Scanner variant in pool → Armour is the first module slotted.
+    assert result["modules"][0]["type"] == "ArmourModule"
 
 
 @pytest.mark.asyncio
-async def test_generate_loadout_shield_at_tl_gt_3(service, mock_db):
-    """Shield module is guaranteed at TL > 3."""
-    ship = _make_ship("Ghost", value=6000000, max_primaries=0, max_modules=5)
-    armour_mod = _make_module("E2 Exoclad Armour", value=1070, tech_level=1)
-    shield_mod = _make_module("Beamshield II Shield", value=39331, tech_level=4)
+async def test_generate_loadout_scanner_armour_shield_all_guaranteed(service, mock_db):
+    """Scanner / Armour / Shield are all GUARANTEED, in priority order (§ Spec C).
 
-    async def fake_find_typed_module(db, kw, tl):
-        if kw == "armour":
-            return armour_mod
-        if kw == "shield":
-            return shield_mod
-        return None
+    Removes the legacy shield-TL>3 gate: a low item_tl criminal still gets a
+    shield via nearest-TL.  With a 3-slot ship and one variant of each base
+    type, the walk fills Scanner→Armour→Shield in that exact order.
+    """
+    ship = _make_ship("Ghost", value=6000000, max_primaries=0, max_modules=3)
+    scanner_mod = _make_module("Scanner II", value=2000, tech_level=2, type="ScannerModule")
+    armour_mod = _make_module("E2 Exoclad Armour", value=1070, tech_level=1, type="ArmourModule")
+    shield_mod = _make_module("Beamshield II Shield", value=39331, tech_level=1, type="ShieldModule")
 
+    async def _get_all(db, item_type):
+        return [scanner_mod, armour_mod, shield_mod] if item_type == "module" else []
+
+    # item_tl=3 (tech_level=4); shield at TL1 still equips via nearest-TL (no gate).
     with patch.object(service, "find_item_tl", new=AsyncMock(return_value=3)):
         _setup_mock_db_query(mock_db, [ship])
+        service.item_repo.get_all = _get_all
+        result = await service.generate_loadout(mock_db, tech_level=4)
 
-        generic_mod = _make_module("Generic", value=500, tech_level=3, type="CabinModule")
-        service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[generic_mod])
-
-        with patch.object(service, "_find_typed_module", new=AsyncMock(side_effect=fake_find_typed_module)):
-            result = await service.generate_loadout(mock_db, tech_level=4)
-
-    module_names = [m["name"] for m in result["modules"]]
-    assert armour_mod.name in module_names, f"Armour mod missing: {module_names}"
-    assert shield_mod.name in module_names, f"Shield mod missing: {module_names}"
+    module_types = [m["type"] for m in result["modules"]]
+    assert module_types == ["ScannerModule", "ArmourModule", "ShieldModule"], (
+        f"Base 3 must slot in priority order: {module_types}"
+    )
 
 
 @pytest.mark.asyncio
@@ -619,21 +644,16 @@ async def test_generate_loadout_calculates_total_value(service, mock_db):
 
 @pytest.mark.asyncio
 async def test_generate_loadout_module_dict_includes_type(service, mock_db):
-    """Each module in the loadout dict must include a 'type' key."""
+    """Each module in the loadout dict must include 'type' and 'extra_atts'."""
     ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=2)
     armour_mod = _make_module("E2 Exoclad", value=1070, tech_level=1, type="ArmourModule")
     cabin_mod = _make_module("Large Cabin", value=5000, tech_level=1, type="CabinModule")
 
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[cabin_mod])
+    async def _get_all(db, item_type):
+        return [armour_mod, cabin_mod] if item_type == "module" else []
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(
-            service,
-            "_find_typed_module",
-            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
-        ),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=2)
 
@@ -645,25 +665,22 @@ async def test_generate_loadout_module_dict_includes_type(service, mock_db):
 
 @pytest.mark.asyncio
 async def test_generate_loadout_no_duplicate_types_when_limit_1(service, mock_db):
-    """Only one module of each type with limit=1 may appear (type-class uniqueness)."""
-    # Ship with 4 module slots; armour guaranteed at slot 1
+    """A guaranteed (limit-1) category appears at most once (§ Spec C).
+
+    Armour is walked exactly once in the priority order, so even with two
+    ArmourModule variants in the pool only one is equipped.  Remaining slots
+    fall through to the filler tail (Cabin is the only other type here).
+    """
     ship = _make_ship("Groza", value=251600, max_primaries=0, max_modules=4)
     armour_mod = _make_module("D'iol", value=51449, tech_level=7, type="ArmourModule")
-    # Pool contains two different ArmourModules — only one should appear
     armour_mod_2 = _make_module("E2 Exoclad", value=1070, tech_level=1, type="ArmourModule")
     cabin_mod = _make_module("Large Cabin", value=5000, tech_level=1, type="CabinModule")
 
-    # Generic pool: two armour variants + one cabin (unlimited)
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[armour_mod_2, cabin_mod])
+    async def _get_all(db, item_type):
+        return [armour_mod, armour_mod_2, cabin_mod] if item_type == "module" else []
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(
-            service,
-            "_find_typed_module",
-            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
-        ),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=2)
 
@@ -673,24 +690,26 @@ async def test_generate_loadout_no_duplicate_types_when_limit_1(service, mock_db
 
 
 @pytest.mark.asyncio
-async def test_generate_loadout_unlimited_type_allows_multiple(service, mock_db):
-    """Modules with limit=-1 (CabinModule) can fill all remaining slots."""
-    # Ship with 3 slots; no guaranteed slots (TL=1, tech_level not > 1 means no armour)
+async def test_generate_loadout_filler_b_fills_remaining_slots(service, mock_db):
+    """Filler-B (∞-limit Cabin) repeats to fill remaining slots (§ Spec C).
+
+    With only a CabinModule in the catalog: no combat category matches, Filler-A
+    is empty, so Filler-B repeats Cabin until all 3 slots are full.
+    """
     ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=3)
     cabin_mod = _make_module("Large Cabin", value=5000, tech_level=1, type="CabinModule")
 
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[cabin_mod])
+    async def _get_all(db, item_type):
+        return [cabin_mod] if item_type == "module" else []
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=1)
 
     module_types = [m["type"] for m in result["modules"]]
     cabin_count = module_types.count("CabinModule")
-    assert cabin_count == 3, f"Expected 3 CabinModules (unlimited), got {cabin_count}: {module_types}"
+    assert cabin_count == 3, f"Expected 3 CabinModules (∞-limit filler), got {cabin_count}: {module_types}"
 
 
 @pytest.mark.asyncio
@@ -714,33 +733,30 @@ async def test_generate_loadout_limit_0_type_not_equipped(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_generate_loadout_type_tracking_counts_guaranteed_slots(service, mock_db):
-    """Armour/shield guaranteed slots count toward type tracking before generic fill."""
-    # Ship with 2 slots: slot 1 = armour guaranteed, slot 2 = generic fill
+async def test_generate_loadout_single_category_pool_leaves_slot_unfilled(service, mock_db):
+    """A category is walked once; a pool of only that category can't refill (§ Spec C).
+
+    With a 2-slot ship and a catalog containing only ArmourModule variants:
+    Armour is equipped once (guaranteed), every other priority category and
+    both filler buckets have no variants, so the second slot stays empty — no
+    duplicate Armour, no displacement.
+    """
     ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=2)
     armour_mod = _make_module("D'iol", value=51449, tech_level=7, type="ArmourModule")
-    # Generic pool: only another ArmourModule — should be blocked by type limit
     armour_mod_2 = _make_module("E2 Exoclad", value=1070, tech_level=1, type="ArmourModule")
 
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[armour_mod_2])
+    async def _get_all(db, item_type):
+        return [armour_mod, armour_mod_2] if item_type == "module" else []
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(
-            service,
-            "_find_typed_module",
-            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
-        ),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=2)
 
-    # Only the guaranteed armour should be equipped; generic fill blocked by limit=1
     module_types = [m["type"] for m in result["modules"]]
     assert module_types.count("ArmourModule") == 1, (
-        f"Expected exactly 1 ArmourModule (guaranteed slot already used), got: {module_types}"
+        f"Expected exactly 1 ArmourModule (category walked once), got: {module_types}"
     )
-    # Only 1 module total (second slot couldn't be filled due to type limit)
     assert len(result["modules"]) == 1, f"Expected 1 module total, got {len(result['modules'])}"
 
 
@@ -828,6 +844,25 @@ async def test_spawn_bounty_success(spawn_service, mock_db):
     assert result.route == SAMPLE_ROUTE
     assert result.status == "active"
     spawn_service.bounty_repo.create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_spawn_bounty_threads_division_into_generate_loadout(spawn_service, mock_db):
+    """Task 2 plumbing: spawn_bounty forwards its ``division`` to generate_loadout.
+
+    generate_loadout now drives per-division equip chances, so the division must
+    reach it (it previously only received tech_level)."""
+    criminal = _make_criminal("Viper", "terran")
+    spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
+    spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+    spawn_service.bounty_repo.create = AsyncMock(return_value=_make_created_bounty(criminal_name="Viper"))
+
+    gen_spy = AsyncMock(return_value=SAMPLE_LOADOUT)
+    with patch.object(spawn_service, "generate_loadout", new=gen_spy):
+        await spawn_service.spawn_bounty(mock_db, guild_id=1, division="platinum", tech_level=7)
+
+    gen_spy.assert_awaited_once()
+    assert gen_spy.await_args.kwargs.get("division") == "platinum", f"division not forwarded: {gen_spy.await_args}"
 
 
 @pytest.mark.asyncio
@@ -3137,16 +3172,11 @@ async def test_generate_loadout_hp_with_armour_module(service, mock_db):
         extra_atts={"armour": 160},
     )
 
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+    async def _get_all(db, item_type):
+        return [armour_mod] if item_type == "module" else []
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(
-            service,
-            "_find_typed_module",
-            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
-        ),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=2)
 
@@ -3176,19 +3206,11 @@ async def test_generate_loadout_hp_with_shield_module(service, mock_db):
         extra_atts={"shield": 380},
     )
 
-    async def fake_find_typed_module(db, kw, tl):
-        if kw == "armour":
-            return armour_mod
-        if kw == "shield":
-            return shield_mod
-        return None
+    async def _get_all(db, item_type):
+        return [armour_mod, shield_mod] if item_type == "module" else []
 
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
-
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=3)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(side_effect=fake_find_typed_module)),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=3)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=4)
 
@@ -3211,12 +3233,13 @@ async def test_generate_loadout_hp_with_gamma_shield_module(service, mock_db):
         extra_atts={"shield": 500},
     )
 
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[gamma_mod])
+    # Gamma Shield is a Filler-A type; as the only variant in the catalog it is
+    # the only thing that can fill the single module slot.
+    async def _get_all(db, item_type):
+        return [gamma_mod] if item_type == "module" else []
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=5)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=5)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=6)
 
@@ -3270,16 +3293,11 @@ async def test_generate_loadout_module_extra_atts_in_dict(service, mock_db):
         extra_atts={"armour": 160, "other_stat": 42},
     )
 
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+    async def _get_all(db, item_type):
+        return [armour_mod] if item_type == "module" else []
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(
-            service,
-            "_find_typed_module",
-            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
-        ),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=2)
 

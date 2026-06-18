@@ -11,12 +11,12 @@ P6-T1: _build_payout_breakdown — N+1 → single batched WHERE id IN (...) quer
     - Call count asserted: player_repo.get_by_ids called exactly 1 time
       regardless of how many rewards are present (not N calls to get_by_id).
 
-P6-T9a: generate_loadout quadratic module re-filter → targeted removal.
-    - Module selection result (which modules are picked) must be identical over
-      a fixed RNG seed.  We run the same seeded scenario with the old code
-      path replicated inline and compare results.
-    - Pool-capped removal still correctly drops all instances of the newly-full
-      type (non-vacuous: a mutation that skips removal fails the uniqueness test).
+P6-T9a: generate_loadout module selection (rewritten in Task 2, § Spec C).
+    - A limit-1 combat category (Armour) is walked exactly once → appears at
+      most once even with several variants in the pool.
+    - The ∞-limit filler type (Cabin) repeats to fill every remaining module
+      slot.  (The original de-quadratic-loop equivalence test was retired with
+      that loop; the uniqueness / ∞-fill invariants it guarded are kept here.)
 
 P6-T9b: generate_loadout double select(Ship) on fallback → reuse cached.
     - When ship_tl != -1 but no matching ships are found (forcing fallback),
@@ -28,7 +28,6 @@ P6-T9b: generate_loadout double select(Ship) on fallback → reuse cached.
 
 from __future__ import annotations
 
-import random
 import sys
 import types
 from types import SimpleNamespace
@@ -98,6 +97,10 @@ def _make_service() -> BountyService:
     svc.player_repo = MagicMock()
     svc.config_repo = MagicMock()
     svc.config_repo.get_by_guild_id = AsyncMock(return_value=None)
+    # Task 2 (§ Spec C/D): generate_loadout gathers the full type catalog via
+    # item_repo.get_all(db, item_type).  Default to an empty catalog; tests that
+    # assert module/weapon content override get_all explicitly.
+    svc.item_repo.get_all = AsyncMock(return_value=[])
     return svc
 
 
@@ -305,9 +308,11 @@ async def test_p6t1_payout_breakdown_display_name_fallback():
 
 @pytest.mark.asyncio
 async def test_p6t9a_module_type_uniqueness_preserved():
-    """After de-quadratic fix, limit=1 types still appear at most once."""
+    """A limit-1 combat category (Armour) appears at most once (§ Spec C walk).
+
+    Armour is walked exactly once; the remaining slots fall to the ∞-limit
+    Cabin filler.  Three Armour variants in the pool still yield one Armour."""
     ship = _make_ship("Groza", value=251600, max_primaries=0, max_modules=4)
-    # Pool: 3 ArmourModules (limit=1) + 2 CabinModules (unlimited)
     armour1 = _make_module("Armour A", type="ArmourModule")
     armour2 = _make_module("Armour B", type="ArmourModule")
     armour3 = _make_module("Armour C", type="ArmourModule")
@@ -315,121 +320,37 @@ async def test_p6t9a_module_type_uniqueness_preserved():
     cabin2 = _make_module("Cabin B", type="CabinModule")
 
     svc = _make_service()
-    svc.item_repo.get_all_by_tech_level = AsyncMock(return_value=[armour1, armour2, armour3, cabin1, cabin2])
+
+    async def _get_all(db, item_type):
+        return [armour1, armour2, armour3, cabin1, cabin2] if item_type == "module" else []
+
+    svc.item_repo.get_all = _get_all
     db = _make_db_for_ship_query([ship])
 
-    with (
-        patch.object(svc, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(svc, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(svc, "find_item_tl", new=AsyncMock(return_value=1)):
         result = await svc.generate_loadout(db, tech_level=1)
 
     module_types = [m["type"] for m in result["modules"]]
-    # ArmourModule has limit=1: must appear at most once despite 3 in pool
     armour_count = module_types.count("ArmourModule")
-    assert armour_count <= 1, f"ArmourModule should appear ≤1 time, got {armour_count}: {module_types}"
-    # Total modules should be ≤ max_modules (4)
-    assert len(result["modules"]) <= 4
-
-
-@pytest.mark.asyncio
-async def test_p6t9a_module_selection_seeded_determinism():
-    """Fixed-seed run produces the same module selection before and after the de-quadratic fix.
-
-    We replicate the OLD loop behavior inline and compare against the new
-    service implementation under an identical seed, verifying behavioral
-    equivalence.
-    """
-    from services.game_constants import GameConstants
-
-    ship = _make_ship("Groza", value=251600, max_primaries=0, max_modules=5)
-    # Mix of types with limits
-    pool = [
-        _make_module("Armour X", type="ArmourModule"),
-        _make_module("Shield X", type="ShieldModule"),
-        _make_module("Cabin A", type="CabinModule"),
-        _make_module("Cabin B", type="CabinModule"),
-        _make_module("Thruster X", type="ThrusterModule"),
-        _make_module("Cabin C", type="CabinModule"),
-    ]
-
-    # ------------------------------------------------------------------
-    # Simulate OLD behavior (quadratic re-filter from a fresh copy)
-    # ------------------------------------------------------------------
-    rng_state = random.getstate()  # capture state before seeding
-    random.seed(42)
-
-    def _can_equip_old(module, equipped_type_counts_ref) -> bool:
-        mtype = getattr(module, "type", "")
-        limit = GameConstants.MODULE_EQUIP_LIMITS.get(mtype, -1)
-        if limit == 0:
-            return False
-        if limit == -1:
-            return True
-        return equipped_type_counts_ref.get(mtype, 0) < limit
-
-    equipped_old = []
-    equipped_type_counts_old: dict[str, int] = {}
-    available_pool_old = [m for m in pool if _can_equip_old(m, equipped_type_counts_old)]
-    while len(equipped_old) < ship.max_modules and available_pool_old:
-        chosen = random.choice(available_pool_old)
-        equipped_old.append(chosen)
-        mtype = getattr(chosen, "type", "")
-        equipped_type_counts_old[mtype] = equipped_type_counts_old.get(mtype, 0) + 1
-        available_pool_old = [m for m in available_pool_old if _can_equip_old(m, equipped_type_counts_old)]
-
-    old_names = [m.name for m in equipped_old]
-
-    # ------------------------------------------------------------------
-    # Simulate NEW behavior (targeted removal)
-    # ------------------------------------------------------------------
-    random.seed(42)
-
-    def _can_equip_new(module, equipped_type_counts_ref) -> bool:
-        mtype = getattr(module, "type", "")
-        limit = GameConstants.MODULE_EQUIP_LIMITS.get(mtype, -1)
-        if limit == 0:
-            return False
-        if limit == -1:
-            return True
-        return equipped_type_counts_ref.get(mtype, 0) < limit
-
-    equipped_new = []
-    equipped_type_counts_new: dict[str, int] = {}
-    available_pool_new = [m for m in pool if _can_equip_new(m, equipped_type_counts_new)]
-    while len(equipped_new) < ship.max_modules and available_pool_new:
-        chosen = random.choice(available_pool_new)
-        equipped_new.append(chosen)
-        mtype = getattr(chosen, "type", "")
-        new_count = equipped_type_counts_new.get(mtype, 0) + 1
-        equipped_type_counts_new[mtype] = new_count
-        limit = GameConstants.MODULE_EQUIP_LIMITS.get(mtype, -1)
-        if limit != -1 and new_count >= limit:
-            available_pool_new = [m for m in available_pool_new if getattr(m, "type", "") != mtype]
-
-    new_names = [m.name for m in equipped_new]
-
-    # Restore original RNG state
-    random.setstate(rng_state)
-
-    # Both paths must produce identical selection under the same seed
-    assert old_names == new_names, f"Module selection diverged under seed=42:\n  old={old_names}\n  new={new_names}"
+    assert armour_count == 1, f"ArmourModule should appear exactly once, got {armour_count}: {module_types}"
+    assert len(result["modules"]) == 4  # 1 Armour + 3 Cabin filler
 
 
 @pytest.mark.asyncio
 async def test_p6t9a_unlimited_type_still_fills_all_slots():
-    """Unlimited-type modules (CabinModule) still fill all available slots after fix."""
+    """∞-limit filler (CabinModule) still fills all available slots (§ Spec C Filler-B)."""
     ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=3)
     cabin = _make_module("Large Cabin", type="CabinModule")
 
     svc = _make_service()
-    svc.item_repo.get_all_by_tech_level = AsyncMock(return_value=[cabin])
+
+    async def _get_all(db, item_type):
+        return [cabin] if item_type == "module" else []
+
+    svc.item_repo.get_all = _get_all
     db = _make_db_for_ship_query([ship])
 
-    with (
-        patch.object(svc, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(svc, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(svc, "find_item_tl", new=AsyncMock(return_value=1)):
         result = await svc.generate_loadout(db, tech_level=1)
 
     assert len(result["modules"]) == 3, f"Expected 3 CabinModules, got {len(result['modules'])}"
@@ -437,25 +358,28 @@ async def test_p6t9a_unlimited_type_still_fills_all_slots():
 
 
 @pytest.mark.asyncio
-async def test_p6t9a_mutation_proof_removal_is_noop_for_unlimited():
-    """Targeted-removal is a no-op when limit=-1; pool stays full so unlimited types fill slots."""
-    # If the optimization incorrectly removes unlimited-type modules, fewer slots would fill.
+async def test_p6t9a_unlimited_filler_repeats_to_fill():
+    """Filler-B repeats the ∞-limit type to fill every remaining slot (§ Spec C).
+
+    Two distinct Cabin variants in the pool still fill all 4 slots (the type is
+    repeatable, so the pool never drains)."""
     ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=4)
     cabin_a = _make_module("Cabin A", type="CabinModule")
     cabin_b = _make_module("Cabin B", type="CabinModule")
 
     svc = _make_service()
-    svc.item_repo.get_all_by_tech_level = AsyncMock(return_value=[cabin_a, cabin_b])
+
+    async def _get_all(db, item_type):
+        return [cabin_a, cabin_b] if item_type == "module" else []
+
+    svc.item_repo.get_all = _get_all
     db = _make_db_for_ship_query([ship])
 
-    with (
-        patch.object(svc, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(svc, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(svc, "find_item_tl", new=AsyncMock(return_value=1)):
         result = await svc.generate_loadout(db, tech_level=1)
 
-    # All 4 slots must be filled — if removal incorrectly fired for limit=-1, pool would drain early
-    assert len(result["modules"]) == 4, f"Expected 4 modules (unlimited fill), got {len(result['modules'])}"
+    assert len(result["modules"]) == 4, f"Expected 4 modules (∞-limit fill), got {len(result['modules'])}"
+    assert all(m["type"] == "CabinModule" for m in result["modules"])
 
 
 # ---------------------------------------------------------------------------

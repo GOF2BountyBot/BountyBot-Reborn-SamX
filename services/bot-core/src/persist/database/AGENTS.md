@@ -23,7 +23,7 @@ UPDATE alembic_version SET version_num = '0001';
 
 ## Current Migration Chain
 
-`revisions/versions/` as of 2026-06-11 (each entry's `down_revision` points to
+`revisions/versions/` as of 2026-06-18 (each entry's `down_revision` points to
 the one above it):
 
 | Revision | File | Change |
@@ -46,7 +46,10 @@ the one above it):
 | `0015` | `0015_ci18_player_inventory_unique.py` | CI-18 unique constraint on `player_inventories` |
 | `0016` | `0016_p4t8_json_to_jsonb_non_fragile.py` | JSON → JSONB (non-fragile columns) |
 | `0017` | `0017_p4t9_json_to_jsonb_fragile.py` | JSON → JSONB (fragile columns) |
-| `0018` | `0018_drop_manual_turret_mode.py` | Drop `player_ships.manual_turret_mode` (turret switching is now range-driven; idempotent) — **head** |
+| `0018` | `0018_drop_manual_turret_mode.py` | Drop `player_ships.manual_turret_mode` (turret switching is now range-driven; idempotent) |
+| `0019` | `0019_add_notification_preferences.py` | `players.bounty_notifications_enabled` + `shop_notifications_enabled` (D-019) |
+| `0020` | `0020_criminal_loadout_balance_knobs.py` | `guild_configs` criminal loadout-balance overrides (`long_range_threshold_m`, `criminal_long_range_pct`, `primary_tl_band_weights`, `criminal_{cloak,booster,emergency,weaponmod}_chance_by_division`) — Threads 3/4 (down_revision `0019`; idempotent add/drop loop) |
+| `0021` | `0021_criminal_exclude_emp_weapons.py` | `guild_configs.criminal_exclude_emp_weapons` (Boolean toggle) — Thread 6 (down_revision `0020`; idempotent) — **head** |
 
 ---
 

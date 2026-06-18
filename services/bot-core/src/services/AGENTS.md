@@ -298,6 +298,85 @@ safety net for any future edge case the dedup doesn't cover.
 
 ---
 
+## Criminal loadout-generation algorithm — CANONICAL REFERENCE (Threads 1/3/4/6, 2026-06-18)
+
+This is the authoritative description of how `BountyService.generate_loadout`
+builds a **criminal/NPC** loadout. Player loadouts are untouched by all of this.
+Implemented in `bounty_service.py` (`_select_primaries` ~964, `_select_modules`
+~1019, helpers `nearest_tl_pick` ~275 / `tl_band_pick` ~298, EMP guard
+`_is_primarily_emp` ~248). Every numeric is a **tunable knob**: a
+`GameConstants` default + a per-guild `GuildConfig` override resolved via
+`resolve_constant(cfg, "<key>", default)`. No `import_data/` (game-data) edits
+anywhere. **The DLC attribute on any item is informational only — never used as
+an eligibility/gating filter.**
+
+`item_tl = max(1, tech_level - 1)` is the "target TL" all nearest-TL / TL-band
+picks aim at.
+
+### Shared nearest-TL rule (`nearest_tl_pick`)
+Pick the variant minimising `|variant.TL − item_tl|`. **Tie-break is
+division-aware:** `gold`/`platinum` prefer the **higher** TL, `bronze`/`silver`
+the **lower**. When the chosen TL has more than one variant, pick **uniformly at
+random** among them. (A single-variant module like Emergency System resolves to
+its sole entry regardless of criminal TL — this is why no separate "rarity
+bypass" exists.)
+
+### Thread 1 — cluster missiles are a HEAVY shop secondary
+`"cluster-missile"` is in `GameConstants.SHOP_HEAVY_SECONDARY_SUBTYPES`
+(`{"nuke", "shock-blast", "cluster-missile"}`), so its shop quantity scaler is
+the heavy 5× (not the standard 10×) — 10–20 rounds/refresh, matching nukes. This
+is a *supply-side* change in `shop_service.py`, not a loadout-generation change,
+but it lives in the same balance pass.
+
+### Thread 3 — PRIMARY long-range floor + ±1 TL-band pick (`_select_primaries`)
+Replaces the old hard-pinned exact-`weapon_tl` random pick. Per ship:
+- Classify any primary: **LONG iff `range_m > LONG_RANGE_THRESHOLD_M` (2600)**, else SHORT.
+- **Floor:** `min_long = ceil(CRIMINAL_LONG_RANGE_PCT × max_primaries)` (pct default **0.50**, global). Those slots are forced LONG; each *remaining* slot independently rolls LONG at the same pct → total long ∈ `[min_long, max_primaries]` (floor guaranteed, RNG may exceed). `ceil` means 1-slot hulls are always long.
+- **Per-slot pick is CATEGORY-FIRST:** the long/short gate picks the bucket, then `tl_band_pick` chooses the TL from the window `{item_tl−1, item_tl, item_tl+1}` weighted by `PRIMARY_TL_BAND_WEIGHTS` (`{center: 70, minus1: 20, plus1: 10}`), then a random weapon of that category at that TL.
+- **Missing-band redistribution:** an out-of-bounds or empty *side* band donates its weight to the **other side** band ("push to other side"). An empty *center* band splits its weight **evenly** to both neighbours (e.g. target=TL4 LONG → TL3 55% / TL5 45%, the only interior center-empty case in the catalog).
+
+### Thread 4 — MODULE selection by priority walk (`_select_modules`)
+Walk a fixed priority order, filling slots until `len(equipped) == ship.max_modules`, then **STOP** (no displacement; a full hull short-circuits the rest of the walk, so later/gated categories are simply never reached). A failed Gate-1 roll leaves the slot for the next category. The order and gate kinds are module-level constants in `bounty_service.py`:
+
+| # | Category (`Item.type`) | Gate | Knob |
+|---|---|---|---|
+| 1 | `ScannerModule` | guaranteed | — |
+| 2 | `ArmourModule` | guaranteed | — (removes legacy TL>1 gate) |
+| 3 | `ShieldModule` | guaranteed | — (removes legacy TL>3 gate) |
+| 4 | `CloakModule` | two-gate | `criminal_cloak_chance_by_division` (B0/S25/G66/P100) |
+| 5 | `BoosterModule` | two-gate | `criminal_booster_chance_by_division` (B50/S100/G100/P100) |
+| 6 | `EmergencySystemModule` | two-gate | `criminal_emergency_chance_by_division` (B0/S25/G50/P100) |
+| 7 | `RepairBotModule` | guaranteed | — |
+| 8 | `PrimaryWeaponModModule` | two-gate | `criminal_weaponmod_chance_by_division` (B0/S25/G50/P100) |
+| 9 | `ThrusterModule` | guaranteed | — |
+
+- **Guaranteed:** always `nearest_tl_pick` into the slot if one is free.
+- **Two-gate:** Gate-1 = `randint(1,100) <= resolve(<knob>[division])` (per-division equip %); on pass, Gate-2 = `nearest_tl_pick`.
+- **Filler tail** (only if slots remain): **Filler-A** (`GammaShield, SpectralFilter, RepairBeam, Signature, MiningDrill, TractorBeam` — each at most once, drawn random-without-replacement) then **Filler-B** (`Compressor, Cabin` — drawn random-with-replacement, repeats to fill). Variant pick within a filler type uses the same nearest-TL rule.
+- **Never equipped** (`_NEVER_EQUIP_TYPES`, import-time-asserted disjoint from every equippable list): `TransfusionBeam`, `ShieldInjector`, `TimeExtender` (misleading no-ops), `JumpDrive` (banned).
+
+The 9 priority categories are exactly the module types wired into the combat engine; the filler types are combat-inert (loaded for fidelity, no effect).
+
+### Thread 6 — exclude primarily-EMP criminal weapons (`_is_primarily_emp`)
+A criminal primary OR secondary is dropped from the candidate pool **before**
+selection when `emp_damage > real_damage`. `real_damage` is `damage_per_shot`
+for primaries / the `damage` column for secondaries; the engine applies **0 HP**
+from `emp_damage` (EMP is a deferred phase-2+ feature, see `COMBAT_SPEC_LOCKED.md`
+§4), so a pure-EMP weapon would do no real damage and hand the player a free win.
+Gated by the per-guild toggle **`criminal_exclude_emp_weapons`** (default
+**ON** = `GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS = True`). This is a
+behavioral toggle, not a numeric knob, but follows the same `resolve_constant`
+pattern; it **auto-disables cleanly** once real EMP mechanics ship. Filters
+weapons like the Luna/Sol/Dia EMP primaries and Mamba/Neétha EMP secondaries;
+KEEPS real-damage hybrids (e.g. Dephase EMP, where 120 real > 100 emp).
+
+> **Stale-constant note:** `GameConstants.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE`
+> (=20) is **dead** — defined + env-tracked but referenced by no selection path.
+> Superseded by Thread-6's deterministic exclusion. Flagged for future cleanup
+> (`OPEN_ITEMS.md`).
+
+---
+
 ## Item-Type Vocabulary & Normalizer Contract (A.36 fix, 2026-04-22)
 
 **Storage invariant**: `player_inventories.item_type` and `guild_shops.item_type` always store
@@ -421,7 +500,7 @@ await AuditService.log_action(
 
 Core bounty system business logic:
 - `spawn_bounty(db, guild_id, division, tech_level=None, expiry_minutes=None)` — full spawn orchestration: select criminal (excluding active ones), determine tech level, generate A* route (up to 3 attempts), pick the answer system, generate criminal loadout, calculate reward
-- `select_criminal` / `find_item_tl` / `generate_loadout` — spawn building blocks; criminal gear loops `range(ship.max_primaries)` / `range(ship.max_turrets)` and fills modules up to `ship.max_modules` against the same static `ship` row players use
+- `select_criminal` / `find_item_tl` / `generate_loadout(db, tech_level, division="bronze", cfg=None)` — spawn building blocks. `generate_loadout` takes a **`division`** arg (threaded in from `spawn_bounty` and `combat_preflight_service._synthesize_criminals`) because criminal primary + module selection is division-aware (per-division equip odds, nearest-TL tie-breaks). Internals: primaries via `_select_primaries` (long-range floor + ±1 TL-band pick), modules via `_select_modules` (fixed priority walk + two-gate per-division %), both EMP-filtered. See the **"Criminal loadout-generation algorithm"** canonical section below for the full rules. Turrets still loop `range(ship.max_turrets)`; everything is capped against the same static `ship` row players use.
 - `check_bounty(...)` — records a system check; returns proximity hints via `CheckResult` / `CheckResponse` / `MultiCheckResponse`
 - `calc_rewards` / `distribute_rewards` — winner + consolation payouts (`RewardInfo`)
 - `expire_bounty(db, bounty_id)` — marks bounty as expired
@@ -472,6 +551,12 @@ DB-free leaf module containing all combat-math symbols (constants, runtime datac
 - **Auto-turrets** (`automatic=True`) always fire on their own cooldown; accuracy = `pilot_turret_acc × GameConstants.AUTO_TURRET_ACCURACY_MULTIPLIER` (0.85).
 - **Manual turrets** (`automatic=False`, non-plasma) fire ONLY while NO primary is in range — i.e. during the approach phase, after a shock-blast distance reset, or while a booster push holds the gap open. The instant any primary is in range (cooldown irrelevant) manual turrets go inert. A ship with zero primaries uses its manual turrets all fight. Accuracy = `pilot_primary_acc` (full §5, NOT 0.85-multiplied).
 - The static per-ship `manual_turret_mode` flag is fully removed: gone from `ShipLoadout`, `_CombatantState`, `LoadoutBuilder`, the `PlayerShip` ORM, and the DB column (migration `0018_drop_manual_turret_mode.py`).
+
+**Thread-5 chained module activations (2026-06-18, baseline — NOT tunable, no config flag):**
+- **Activation caps removed.** Cloak (`_CloakRuntime`) and Booster (`_BoosterRuntime`) no longer carry a per-fight cap (was 2/4) nor one-shot threshold consumption — thresholds are **re-armable**. `activation_count` is retained as **telemetry only** and never gates. The sole gates in `_eval_hp_threshold_modules` are `cooldown_remaining_ms <= 0 AND effect_remaining_ms == 0`, PLUS a cloak **no-activate-while-invuln** guard (skip the whole cloak path while `es_runtime.invuln_remaining_ms > 0`).
+- **Chain (`_try_activate_chained_module`):** Trigger A — when ES fires in `_eval_emergency_system` (~816), the **booster** activates if off cooldown (marker `trigger:"emergency_activate"`). Trigger B — when the invuln window ticks `>0 → 0` in the Phase-1 tick-down (~1500), the **cloak** activates if off cooldown (marker `trigger:"emergency_end"`). Both are one-shot at the trigger instant — on cooldown ⇒ lost, no retry; already-active is never refreshed/cut short.
+- **Same-tick ES result:** ES✓ / Booster✓ (if off cd) / Cloak✗ — falls out of phase order (ES step 4a before HP-threshold step 5) + the cloak invuln guard; no bespoke arbitration.
+- **Telemetry markers:** `module_activation` events carry `trigger:"emergency_activate"`/`"emergency_end"` (chained) vs `trigger_hp_pct` (normal crossing); all count toward `module_activations` stats. The detailed-log formatter (~2502) renders distinct phrasing per marker. Mirrors `COMBAT_SPEC_LOCKED.md` §7.7 / §8.
 
 ---
 
@@ -568,6 +653,7 @@ Key constant groups:
 - `SHOP_DEFAULT_*_NUM` — shop stock counts per category
 - `CURRENTLY_ENABLED_TYPES` — surface-gating frozenset (currently all 5 concrete types)
 - `*_RETENTION_*` — db_retention windows (`BOUNTY_RETENTION_HOURS`, `DUEL_RETENTION_HOURS`, `AUDIT_RETENTION_DAYS`, `COMBAT_LOG_RETENTION_HOURS`)
+- **Criminal loadout-balance knobs (Threads 1/3/4/6, 2026-06-18; per-guild overridable via `GuildConfig` + `resolve_constant`)** — `SHOP_HEAVY_SECONDARY_SUBTYPES` (now includes `cluster-missile`), `LONG_RANGE_THRESHOLD_M` (2600), `CRIMINAL_LONG_RANGE_PCT` (0.50), `PRIMARY_TL_BAND_WEIGHTS` (`{center:70, minus1:20, plus1:10}`), the four per-division equip-% dicts `CRIMINAL_{CLOAK,BOOSTER,EMERGENCY,WEAPONMOD}_CHANCE_BY_DIVISION`, and the toggle `CRIMINAL_EXCLUDE_EMP_WEAPONS` (default True). See the "Criminal loadout-generation algorithm" section above. `CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE` (20) is **dead** (no consumer) — flagged for cleanup.
 - B.48: `DIVISION_NAMES`, `DIVISION_BOUNDARIES`, and `XP_LEVEL_BOUNDARIES` were
   deleted along with the level/division progression system.
 

@@ -151,7 +151,7 @@ When a model has two relationships to the same target, **always specify `foreign
 | `criminal.py` | `Criminal` | `criminal` | id, name, aliases (ARRAY), built_in, faction, icon, is_player, wiki |
 | `discord_message.py` | `DiscordMessage` | `discord_message` | id (UUIDType), guild_id, channel_id, message_id, message_type, embed_payload (Text), reference_id, created_at, updated_at; unique (guild_id, channel_id, message_id) |
 | `duel_request.py` | `DuelRequest` | `duel_requests` | id, guild_id, challenger_id, target_id, stakes, status, created_at, expires_at |
-| `guild_config.py` | `GuildConfig` | `guild_configs` | id, guild_id (unique), admin_role_id, per-division channel/role IDs (bronze/silver/gold/platinum bounty channels + roles, shop/hunting/discussion/image channels, shop_announcements_role_id), shop count/quantity ranges (JSONB), tech_level_probabilities, sale_price_factor, starting_credits, xp_thresholds, division_temperatures, bounty_max_per_tier/expiry/spawn-interval, plus ~50 nullable per-guild game-constant overrides (B.49 + combat Phase-1; NULL = use `GameConstants` default), created_at, updated_at; `shops` relationship (cascade="all, delete-orphan") |
+| `guild_config.py` | `GuildConfig` | `guild_configs` | id, guild_id (unique), admin_role_id, per-division channel/role IDs (bronze/silver/gold/platinum bounty channels + roles, shop/hunting/discussion/image channels, shop_announcements_role_id), shop count/quantity ranges (JSONB), tech_level_probabilities, sale_price_factor, starting_credits, xp_thresholds, division_temperatures, bounty_max_per_tier/expiry/spawn-interval, plus ~50 nullable per-guild game-constant overrides (B.49 + combat Phase-1 + criminal loadout-balance; NULL = use `GameConstants` default), created_at, updated_at; `shops` relationship (cascade="all, delete-orphan"). **Criminal loadout-balance overrides (rev 0020/0021, 2026-06-18):** `long_range_threshold_m` (Int), `criminal_long_range_pct` (Float), `primary_tl_band_weights` (JSONB), `criminal_{cloak,booster,emergency,weaponmod}_chance_by_division` (JSONB per-division %), `criminal_exclude_emp_weapons` (Boolean; NULL = use `GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS`=True) |
 | `guild_shop.py` | `GuildShop` | `guild_shops` | id, guild_id (FK→guild_configs.guild_id), tier, tech_level, item_type, item_name, quantity, price, last_restocked, refresh_interval_hours. `tech_level` stores each row's ITEM's real tech level (per-item drawn TL on refresh; catalog/value-derived TL on sell-back) — NOT a single batch-wide shop TL |
 | `item.py` | `Item` | `item` | id, name, aliases (ARRAY), built_in, emoji, icon, value, wiki, type |
 | `weapon.py` | `Weapon` | `weapon` | id (FK→item.id), tech_level, extra_atts (JSONB) |
@@ -228,8 +228,9 @@ This ensures all SQLAlchemy model classes are registered with the mapper before 
 
 ---
 
-*Last updated: 2026-06-11 (true-to-source audit: added CombatLog + Commodity;
-corrected Criminal/DiscordMessage/GuildConfig/GuildShop/SecondaryWeapon/
+*Last updated: 2026-06-18 (added GuildConfig criminal loadout-balance overrides,
+revs 0020/0021). Prior: 2026-06-11 true-to-source audit — added CombatLog +
+Commodity; corrected Criminal/DiscordMessage/GuildConfig/GuildShop/SecondaryWeapon/
 TurretWeapon/PlayerInventory/PlayerShip/SchemaVersion/Ship/System/User column
 lists; recorded manual_turret_mode drop (rev 0018) and JSONB migration
-(revs 0016/0017))*
+(revs 0016/0017).*

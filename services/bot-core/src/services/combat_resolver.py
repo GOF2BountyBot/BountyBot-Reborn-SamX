@@ -172,30 +172,37 @@ _UTOOL_LOADING_SPEED_MS = 2_000
 class _CloakRuntime:
     """Per-combatant runtime state for the cloak module (§7.2 / §8).
 
-    Tracks activation count, effect/cooldown timers, and consumed thresholds.
-    Initial state: cooldown=0, effect=0, activation_count=0 (§1 / §8).
+    Tracks effect/cooldown timers. Initial state: cooldown=0, effect=0 (§1 / §8).
+
+    Thread-5 (combat chained activations, BALANCE_JOURNAL §E / decision log): activation
+    limits were REMOVED. There is no per-fight cap and thresholds are re-armable (no
+    consumed-threshold tracking). The only gates are `cooldown_remaining_ms <= 0` AND
+    `effect_remaining_ms == 0` (plus the no-activate-while-ES-invuln guard in Phase 5).
+    `activation_count` is retained for TELEMETRY ONLY — it never gates activation.
     """
 
     stats: ModuleStats  # effective cloak module stats (equipped or U'tool virtual)
     cooldown_remaining_ms: int = 0
     effect_remaining_ms: int = 0
-    activation_count: int = 0
-    consumed_thresholds: list = field(default_factory=list)  # list[int] of consumed threshold pct values
+    activation_count: int = 0  # TELEMETRY ONLY (Thread 5) — never gates activation
 
 
 @dataclass(slots=True)
 class _BoosterRuntime:
     """Per-combatant runtime state for the booster module (§7.3 / §8).
 
-    Tracks activation count, effect/cooldown timers, and consumed thresholds.
-    Initial state: cooldown=0, effect=0, activation_count=0 (§1 / §8).
+    Tracks effect/cooldown timers. Initial state: cooldown=0, effect=0 (§1 / §8).
+
+    Thread-5 (combat chained activations, BALANCE_JOURNAL §E / decision log): activation
+    limits were REMOVED. There is no per-fight cap and thresholds are re-armable (no
+    consumed-threshold tracking). The only gates are `cooldown_remaining_ms <= 0` AND
+    `effect_remaining_ms == 0`. `activation_count` is retained for TELEMETRY ONLY.
     """
 
     stats: ModuleStats  # effective booster module stats
     cooldown_remaining_ms: int = 0
     effect_remaining_ms: int = 0
-    activation_count: int = 0
-    consumed_thresholds: list = field(default_factory=list)  # list[int] of consumed threshold pct values
+    activation_count: int = 0  # TELEMETRY ONLY (Thread 5) — never gates activation
 
 
 @dataclass(slots=True)
@@ -671,6 +678,57 @@ def _tick_module_effects(state: _CombatantState, tick: int, events: list[CombatE
                 )
 
 
+def _try_activate_chained_module(
+    state: _CombatantState,
+    module_key: str,
+    trigger: str,
+    tick: int,
+    events: list[CombatEvent],
+) -> bool:
+    """Activate cloak/booster via the emergency-system chain (Thread 5 — BALANCE_JOURNAL §E).
+
+    ONE-SHOT at the trigger instant (G2): the activation is attempted exactly once, here and now.
+    Gates are identical to a normal HP-threshold activation — the module must be off cooldown
+    (`cooldown_remaining_ms <= 0`) AND not already active (`effect_remaining_ms == 0`). If either
+    gate fails (e.g. the target module is on cooldown, or an already-active instance from a previous
+    tick is still running) the chain activation is simply LOST — no deferral, no retry, and an
+    already-active module is NEVER refreshed nor cut short (decision #3 / G4).
+
+    Emits a `module_activation` event carrying a distinct ``trigger`` marker
+    (``"emergency_activate"`` for the booster via Trigger A, ``"emergency_end"`` for the cloak
+    via Trigger B) so it is distinguishable in logs from the normal ``trigger_hp_pct`` crossings,
+    while still counting toward ``module_activations`` stats (same ``module`` key).
+
+    Cooldown is NOT set here — it starts at effect EXPIRY in ``_tick_module_effects`` (§7.2 / §7.3),
+    mirroring the normal HP-threshold activation path.
+
+    Returns True if the module activated, False otherwise.
+    """
+    if module_key == "cloak":
+        mod_rt = state.cloak_runtime
+    elif module_key == "booster":
+        mod_rt = state.booster_runtime
+    else:  # pragma: no cover — defensive; only cloak/booster chain
+        return False
+    if mod_rt is None:
+        return False
+    # Sole gates (Thread 5): off cooldown AND not already active. No cap, no consumed-threshold check.
+    if mod_rt.cooldown_remaining_ms > 0 or mod_rt.effect_remaining_ms != 0:
+        return False
+    mod_rt.effect_remaining_ms = mod_rt.stats.effect_duration_ms
+    mod_rt.activation_count += 1  # telemetry only
+    events.append(
+        CombatEvent(
+            tick=tick,
+            type=CombatEventType.module_activation,
+            actor=state.name,
+            target=None,
+            data={"module": module_key, "trigger": trigger, "side": state.slot},
+        )
+    )
+    return True
+
+
 def _eval_hp_threshold_modules(
     state: _CombatantState,
     tick: int,
@@ -681,57 +739,75 @@ def _eval_hp_threshold_modules(
     """Phase 5: evaluate HP-threshold module activations for one combatant (§8).
 
     Crossing detection: previous-tick HP-pct was above threshold; post-damage HP-pct is at or below.
-    Threshold consumed regardless of whether device activates (universal trigger rule §8).
+
+    Thread-5 (combat chained activations, BALANCE_JOURNAL §E / decision log):
+    - Activation limits REMOVED — no per-fight cap and thresholds are RE-ARMABLE (no
+      consumed-threshold tracking). A downward re-cross of a threshold (only possible after HP
+      recovers back above it via regen) can re-fire, cooldown permitting. The only gates are
+      `cooldown_remaining_ms <= 0` AND `effect_remaining_ms == 0` (not-already-active). The
+      `prev_hp_pct` crossing rule keeps this self-regulating (no downward re-cross without first
+      recovering above the threshold).
+    - Cloak no-activate-while-invuln guard: if the EmergencySystem invuln window is active
+      (`es_runtime.invuln_remaining_ms > 0`) the cloak is SKIPPED entirely this phase. This is the
+      belt-and-suspenders half of the no-co-activation invariant — cloak is deferred to ES-end via
+      Trigger B, so it never co-activates with ES (same-tick ES result: ES✓/Booster✓/Cloak✗).
+
     Booster-user can still fire (§7.3) — no phase-3 suppression needed here.
     """
     current_pct = _compute_hp_pct(state)
     prev_pct = state.prev_hp_pct
 
     # --- Cloak (§7.2) ---
-    if state.cloak_runtime is not None:
+    # Thread-5 guard: never activate the cloak while the ES invuln window is open — accuracy
+    # reduction is wasted during invuln, and cloak must not co-activate with ES (Trigger B covers
+    # the post-ES recovery instead). Skip the whole cloak path while invuln is active.
+    _invuln_active = state.es_runtime is not None and state.es_runtime.invuln_remaining_ms > 0
+    if state.cloak_runtime is not None and not _invuln_active:
         cr = state.cloak_runtime
         for threshold in cloak_thresholds:
             threshold_frac = threshold / 100.0
-            # Crossing: was above threshold last tick, now at or below (§8 definition)
-            if prev_pct > threshold_frac >= current_pct and threshold not in cr.consumed_thresholds:
-                cr.consumed_thresholds.append(threshold)
-                # Check activation eligibility (§7.2)
-                eligible = cr.cooldown_remaining_ms <= 0 and cr.activation_count < 2 and cr.effect_remaining_ms == 0
-                if eligible:
-                    cr.effect_remaining_ms = cr.stats.effect_duration_ms
-                    cr.activation_count += 1
-                    events.append(
-                        CombatEvent(
-                            tick=tick,
-                            type=CombatEventType.module_activation,
-                            actor=state.name,
-                            target=None,
-                            data={"module": "cloak", "trigger_hp_pct": threshold, "side": state.slot},
-                        )
+            # Crossing: was above threshold last tick, now at or below (§8 definition).
+            # Re-armable (Thread 5): no consumed-threshold check; gated only by cooldown + not-active.
+            # When not activated (cooling/already active) the threshold stays RE-ARMABLE — it can
+            # fire on a later downward re-cross once HP recovers above it and cooldown clears.
+            if (
+                prev_pct > threshold_frac >= current_pct
+                and cr.cooldown_remaining_ms <= 0
+                and cr.effect_remaining_ms == 0
+            ):
+                cr.effect_remaining_ms = cr.stats.effect_duration_ms
+                cr.activation_count += 1  # telemetry only — never gates (Thread 5)
+                events.append(
+                    CombatEvent(
+                        tick=tick,
+                        type=CombatEventType.module_activation,
+                        actor=state.name,
+                        target=None,
+                        data={"module": "cloak", "trigger_hp_pct": threshold, "side": state.slot},
                     )
-                # else: threshold consumed but not activated (cooling or active or count cap)
-                # Universal rule: threshold never retried (§8)
+                )
 
     # --- Booster (§7.3) ---
     if state.booster_runtime is not None:
         br = state.booster_runtime
         for threshold in booster_thresholds:
             threshold_frac = threshold / 100.0
-            if prev_pct > threshold_frac >= current_pct and threshold not in br.consumed_thresholds:
-                br.consumed_thresholds.append(threshold)
-                eligible = br.cooldown_remaining_ms <= 0 and br.activation_count < 4 and br.effect_remaining_ms == 0
-                if eligible:
-                    br.effect_remaining_ms = br.stats.effect_duration_ms
-                    br.activation_count += 1
-                    events.append(
-                        CombatEvent(
-                            tick=tick,
-                            type=CombatEventType.module_activation,
-                            actor=state.name,
-                            target=None,
-                            data={"module": "booster", "trigger_hp_pct": threshold, "side": state.slot},
-                        )
+            if (
+                prev_pct > threshold_frac >= current_pct
+                and br.cooldown_remaining_ms <= 0
+                and br.effect_remaining_ms == 0
+            ):
+                br.effect_remaining_ms = br.stats.effect_duration_ms
+                br.activation_count += 1  # telemetry only — never gates (Thread 5)
+                events.append(
+                    CombatEvent(
+                        tick=tick,
+                        type=CombatEventType.module_activation,
+                        actor=state.name,
+                        target=None,
+                        data={"module": "booster", "trigger_hp_pct": threshold, "side": state.slot},
                     )
+                )
 
     # Update prev_hp_pct for next tick's crossing detection
     state.prev_hp_pct = current_pct
@@ -760,6 +836,14 @@ def _eval_emergency_system(
     trigger_hp_pct is intentionally OMITTED for ES (§12 explicit — cloak/booster carry it; ES does not).
 
     NOT an HP-threshold device (§8). This function must NOT be called from Phase 5.
+
+    Thread-5 (combat chained activations, BALANCE_JOURNAL §E / decision log) — Trigger A:
+    immediately after ES fires, the BOOSTER is chain-activated (if off cooldown AND not already
+    active) so mobility helps reposition DURING the immunity window. This is the Phase-4a half of
+    the same-tick ES invariant (ES✓/Booster✓): because Phase 4a runs before the Phase-5 HP-threshold
+    check, the booster is already active when its own threshold crossing is evaluated this tick, so
+    that crossing no-ops (already-active) — no bespoke arbitration. The chain is one-shot (G2): if
+    the booster is on cooldown at this instant it is simply lost.
     """
     if state.es_runtime is None:
         return  # no ES equipped
@@ -782,6 +866,9 @@ def _eval_emergency_system(
             # trigger_hp_pct intentionally OMITTED per §12 / locked decision Q5
         )
     )
+
+    # Trigger A (Thread 5): ES activates → chain-activate the Booster (off-cooldown + not-active only).
+    _try_activate_chained_module(state, "booster", "emergency_activate", tick, events)
 
 
 def _apply_damage(
@@ -1406,6 +1493,12 @@ class TickResolver:
                 # Colocated with cooldown decrements per TASK_0009 §3 (phase 1 choice).
                 if _cs.es_runtime is not None and _cs.es_runtime.invuln_remaining_ms > 0:
                     _cs.es_runtime.invuln_remaining_ms = max(0, _cs.es_runtime.invuln_remaining_ms - tick_ms)
+                    # Trigger B (Thread 5): the invuln >0 → 0 transition IS "ES ends" → chain-activate
+                    # the Cloak (off-cooldown + not-active only) to cover the vulnerable post-ES
+                    # recovery. One-shot (G2): if cloak is on cooldown at this instant it is lost.
+                    # G3: if the fight already ended this tick, Trigger B simply never reaches here.
+                    if _cs.es_runtime.invuln_remaining_ms == 0:
+                        _try_activate_chained_module(_cs, "cloak", "emergency_end", tick, events)
 
             # ------------------------------------------------------------------
             # Phase 2: Apply regen pulses (C1 then C2; shield + repair bot parallel)
@@ -2399,7 +2492,22 @@ def _extract_key_events(
         elif typ == "module_activation":
             lbl = _actor_label(ev.get("actor"), d)
             module_name = d.get("module", d.get("name", "module"))
-            _emit(tick, 3, "Module activated", f"{lbl} activated {module_name}", actor=ev.get("actor"))
+            # Thread-5 (BALANCE_JOURNAL §E): annotate WHY the module activated so the chained
+            # activations read clearly in both the detailed log and the user-facing summary.
+            # Distinct "trigger" markers from the emergency-system chain vs the HP-threshold path:
+            #   trigger=="emergency_activate"  → booster chained off ES activating
+            #   trigger=="emergency_end"       → cloak chained off ES ending
+            #   else falls back to the trigger_hp_pct HP-threshold crossing.
+            _trigger = d.get("trigger")
+            if _trigger == "emergency_activate":
+                _why = " (emergency system activated)"
+            elif _trigger == "emergency_end":
+                _why = " (emergency system ended)"
+            elif d.get("trigger_hp_pct") is not None:
+                _why = f" (at {d.get('trigger_hp_pct')}% HP)"
+            else:
+                _why = ""
+            _emit(tick, 3, "Module activated", f"{lbl} activated {module_name}{_why}", actor=ev.get("actor"))
         elif typ == "secondary_depleted":
             lbl = _actor_label(ev.get("actor"), d)
             _emit(tick, 4, "Ammo depleted", f"{lbl} out of {d.get('weapon', '?')}", actor=ev.get("actor"))

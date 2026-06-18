@@ -39,6 +39,7 @@ Separately, bot-core's `/api/v1/admin/*` REST endpoints are gated by the `ADMIN_
   - [Setting an Override](#setting-an-override)
   - [Resetting Overrides](#resetting-overrides)
   - [Full Override Reference Table](#full-override-reference-table)
+  - [Criminal Loadout Balance (per-guild)](#criminal-loadout-balance-per-guild)
 - [Player Management](#player-management)
   - [Viewing Player Stats](#viewing-player-stats)
   - [Adjusting Credits](#adjusting-credits)
@@ -323,7 +324,7 @@ When generating shop stock, the probability distribution for item tech level rel
 
 ## Per-Guild Game Constant Overrides
 
-26 global `GameConstants` values can be overridden per-guild via the API (`_OVERRIDE_FIELDS` in bot-core's config router); 25 of them are settable through the `/admin_config_constants` slash command (`demotion_credit_penalty_pct` is API-only — it is missing from the gateway's field list). When set to `NULL` (the default), the global constant applies. When set to a value, only this guild uses that value.
+34 global `GameConstants` values can be overridden per-guild via the API (`_OVERRIDE_FIELDS` in bot-core's config router); 25 of them are settable through the `/admin_config_constants` slash command. The remaining 9 are **API-only** — they are absent from the gateway's `_GAME_CONSTANT_FIELDS` slash list: `demotion_credit_penalty_pct` plus the eight criminal-loadout balance knobs (see [Criminal Loadout Balance](#criminal-loadout-balance-per-guild)). When set to `NULL` (the default), the global constant applies. When set to a value, only this guild uses that value.
 
 ### Viewing Overrides
 
@@ -387,6 +388,23 @@ Use `int_value` for integer fields, `float_value` for float fields, `json_value`
 | `classic_credits_per_check` | int | `1000` | credits | Intended: credit floor per system check. **Effectively inert** — only consumed by the deprecated `reward_per_sys_check()` formula, which the spawn path no longer calls. |
 
 > `bounty_pvc_armour_buff_factor` and `duel_variance_percent` were retired in the T10 combat migration (the old `SimpleTTKResolver` was removed) and are no longer overridable.
+
+### Criminal Loadout Balance (per-guild)
+
+These eight knobs tune how bounty-criminal ships are equipped (primary-weapon range/TL selection and module equip odds). Like every row above, each is a **per-guild override of the `GameConstants` default**: `NULL` (unset) falls back to the global default; a set value applies only to this guild. Unlike the slash-settable constants, these are **API-only** — set them via `PUT /api/v1/config/guild/{guild_id}` (they are in `_OVERRIDE_FIELDS` but not in the gateway's `_GAME_CONSTANT_FIELDS` slash list, so `/admin_config_constants` will not autocomplete them).
+
+For the full selection mechanics, see `services/bot-core/src/services/AGENTS.md` → "Criminal loadout-generation algorithm" (Threads 1/3/4/6).
+
+| Setting Name | Type | Default | What It Controls |
+|---|---|---|---|
+| `long_range_threshold_m` | int | `2600` | Thread 3 — a primary weapon is classified LONG iff its `range_m` exceeds this (metres); otherwise SHORT. Validated `>= 0`. |
+| `criminal_long_range_pct` | float | `0.50` | Thread 3 — floor share of long-range primaries equipped per criminal ship (`ceil(pct × max_primaries)`), plus a per-remaining-slot long roll. Validated `0.0–1.0`. |
+| `primary_tl_band_weights` | dict | `{"center":70,"minus1":20,"plus1":10}` | Thread 3 — relative pick weights for the ±1 tech-level band when selecting a criminal primary (`center` = target TL). Keys must be exactly `{center, minus1, plus1}`; values non-negative ints. |
+| `criminal_cloak_chance_by_division` | dict | `{"bronze":0,"silver":25,"gold":66,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips a Cloak, by division. Keys exactly `{bronze, silver, gold, platinum}`; values ints `0–100`. |
+| `criminal_booster_chance_by_division` | dict | `{"bronze":50,"silver":100,"gold":100,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips a Booster module, by division. Same key/range rules. |
+| `criminal_emergency_chance_by_division` | dict | `{"bronze":0,"silver":25,"gold":50,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips an Emergency System module, by division. Same key/range rules. |
+| `criminal_weaponmod_chance_by_division` | dict | `{"bronze":0,"silver":25,"gold":50,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips a Weapon Mod module, by division. Same key/range rules. |
+| `criminal_exclude_emp_weapons` | bool | `true` | Thread 6 — when on, excludes primarily-EMP weapons (`emp_damage > real_damage`) from criminal primary + secondary selection. Strict bool (`0`/`1`/`"true"` are rejected). Intended to auto-disable once EMP mechanics ship. |
 
 ---
 

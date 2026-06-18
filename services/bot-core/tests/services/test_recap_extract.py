@@ -259,6 +259,68 @@ class TestReEnterR2AfterShockBlast:
         assert "re-enters" not in wir[0]["detail"]
 
 
+class TestReEnterKeyedBySideAndWeapon:
+    """Regression: re-enter detection must key on (side, weapon), not weapon name alone.
+
+    When BOTH combatants carry the same-named weapon, keying on the name merged their fire
+    ticks into one interleaved list, collapsing the cadence (min inter-fire gap) to the tiny
+    inter-combatant firing offset. The `gap > 1.5*cadence` test then mislabelled almost every
+    shot as 're-enters range' (prod battles 137/138: 62/36 false Berger re-enters). Grouping
+    by (side, weapon) restores each ship's own cadence.
+    """
+
+    def test_same_named_weapon_both_sides_no_false_reenter(self):
+        """Both sides fire the SAME weapon at a uniform cadence, continuously in range.
+
+        Side 1 fires every 60 ticks; side 2 every 75 ticks, offset by 30 ticks so their fires
+        interleave. Under the old name-only keying the merged min-gap collapses to ~30 and nearly
+        every fire flags 're-enters'. Per-(side, weapon) keeps cadence 60 / 75 → only the FIRST
+        fire per side is an 'enters range'; ZERO re-enters.
+        """
+        timeline = [_fight_start(dist=2000.0)]
+        # Side 1: ticks 10, 70, 130, 190, 250 (cadence 60)
+        for t in (10, 70, 130, 190, 250):
+            timeline.append(_weapon_fire(t, "Alice", "Berger FlaK 9-9", subtype="missile", hit=True, side=1))
+        # Side 2: ticks 40, 115, 190, 265 (cadence 75), interleaved with side 1
+        for t in (40, 115, 190, 265):
+            timeline.append(_weapon_fire(t, "Bob", "Berger FlaK 9-9", subtype="missile", hit=False, side=2))
+
+        result = _extract_key_events(timeline)
+        wir = [e for e in result if e["event_type"] == "Weapon in range"]
+        reenters = [e for e in wir if "re-enters" in e["detail"]]
+        enters = [e for e in wir if "re-enters" not in e["detail"]]
+        assert reenters == [], f"No displacement → ZERO re-enters expected, got: {reenters}"
+        # Exactly one 'enters range' per side (the first fire of each ship's Berger).
+        assert len(enters) == 2, f"Expected one enters-range per side, got: {enters}"
+        assert {e["tick"] for e in enters} == {10, 40}
+
+    def test_genuine_reenter_per_side_after_gap(self):
+        """A real out-of-range gap (>> that side's cadence) still emits exactly one re-enter.
+
+        Side 1's Berger fires at cadence 60, gets pushed out, and re-acquires after a 300-tick gap.
+        Side 2's same-named Berger fires steadily throughout (no gap) and must NOT be flagged.
+        """
+        timeline = [_fight_start(dist=2000.0)]
+        # Side 1: steady cadence 60, then a 300-tick gap, then re-acquire.
+        for t in (10, 70, 130):
+            timeline.append(_weapon_fire(t, "Alice", "Berger FlaK 9-9", subtype="missile", hit=True, side=1))
+        timeline.append(_weapon_fire(430, "Alice", "Berger FlaK 9-9", subtype="missile", hit=True, side=1))
+        # Side 2: steady cadence 60 across the whole window, no displacement.
+        for t in (40, 100, 160, 220, 280, 340, 400):
+            timeline.append(_weapon_fire(t, "Bob", "Berger FlaK 9-9", subtype="missile", hit=False, side=2))
+
+        combatants_map = {"1": {"name": "Alice", "ship": "S"}, "2": {"name": "Bob", "ship": "W"}}
+        result = _extract_key_events(timeline, combatants_map=combatants_map)
+        wir = [e for e in result if e["event_type"] == "Weapon in range"]
+        reenters = [e for e in wir if "re-enters" in e["detail"]]
+        assert len(reenters) == 1, f"Exactly one genuine re-enter expected, got: {reenters}"
+        assert reenters[0]["tick"] == 430
+        assert reenters[0]["actor"] == "Alice", f"Re-enter must be attributed to side 1, got: {reenters[0]}"
+        # The continuously-firing side-2 Berger must not be flagged.
+        side2_reenters = [e for e in reenters if e["tick"] in (40, 100, 160, 220, 280, 340, 400)]
+        assert side2_reenters == [], f"Steady side-2 weapon must not re-enter, got: {side2_reenters}"
+
+
 # ---------------------------------------------------------------------------
 # 3. Duplicate-named weapon collapse (same weapon + same tick → ONE line)
 # ---------------------------------------------------------------------------

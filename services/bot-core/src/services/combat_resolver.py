@@ -2315,8 +2315,12 @@ def _extract_key_events(
     def _actor_label(actor: str | None, data: dict) -> str:
         return _label_for_side(data.get("side")) or actor or "?"
 
-    # ---- pass 1: distance track, per-weapon fires, shock resets, attribution, start HP ----
-    fires: dict[str, list[dict]] = {}
+    # ---- pass 1: distance track, per-(side,weapon) fires, shock resets, attribution, start HP ----
+    # Keyed by (side, weapon) — NOT weapon name alone. When both combatants carry the same-named
+    # weapon, keying on the name merges their fire ticks into one interleaved list, which collapses
+    # the per-ship cadence (min inter-fire gap) to the tiny inter-combatant offset and floods the
+    # re-enter detector with false positives. Per-(side, weapon) preserves each ship's own cadence.
+    fires: dict[tuple, list[dict]] = {}
     shock_reset: dict[tuple[int, str], float] = {}
     start_total: dict[str, int] = {}
     attrib: dict[tuple[int, str], str] = {}
@@ -2332,7 +2336,7 @@ def _extract_key_events(
                 start_total[str(i + 1)] = hp.get("hull", 0) + hp.get("armour", 0) + hp.get("shield", 0)
         elif typ == "weapon_fire":
             w = data.get("weapon", "?")
-            fires.setdefault(w, []).append({"tick": tick, "side": data.get("side"), "data": data})
+            fires.setdefault((data.get("side"), w), []).append({"tick": tick, "side": data.get("side"), "data": data})
         elif typ == "distance":
             if data.get("cause") == "shock_blast":
                 shock_reset[(tick, str(data.get("side")))] = data.get("to")
@@ -2388,7 +2392,7 @@ def _extract_key_events(
             return f"{h}/{f} hit" if h else "miss"
         return "hit" if d.get("hit") else "miss"
 
-    for w, flist in fires.items():
+    for (_fside, w), flist in fires.items():
         if flist[0]["data"].get("subtype") in ("nuke", "shock-blast"):
             continue
         # Collapse duplicate-named instances to one entry per tick (prefer a hit for display).

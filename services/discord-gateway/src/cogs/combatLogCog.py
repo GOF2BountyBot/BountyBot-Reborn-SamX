@@ -401,7 +401,13 @@ class CombatLogCog(commands.Cog):
         # (Discord requires a non-empty field name, so we use a zero-width space).
         # Only a final overall-budget guard drops events.  DESIGN_COMBAT_LOG_RECAP §6.
         _FIELD_LIMIT = 1024
-        _DETAIL_MAX = 80  # max chars per detail string to bound each line
+        # Cosmetic per-line bound only — Discord's hard limits are enforced below by the
+        # 1024-char field packing + the 6000-char aggregate budget, NOT by this clamp.
+        # 80 was too aggressive: it chopped legitimate lines mid-word (the stalemate Outcome
+        # why-line ~132 chars, and Engagement lines with long player/ship names ~86 chars).
+        # 200 matches the gateway's _DETAIL_MAX_CHARS convention (http_error_handler) and
+        # preserves every real-world line while still bounding pathological 255-char names.
+        _DETAIL_MAX = 200  # max chars per detail string to bound each line
         _ZWSP = "\u200b"  # zero-width space → renders as a headerless continuation field
         _MAX_EVENT_FIELDS = 6  # safety cap on continuation fields (well under Discord's 25)
         # Discord rejects any embed whose AGGREGATE size (title + every field name + value +

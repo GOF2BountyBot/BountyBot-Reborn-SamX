@@ -425,15 +425,16 @@ class TestCombatLogCommand:
         additional HEADERLESS continuation fields (zero-width space name), capped at 6 fields.
         Events that exceed 6 fields get a truncation indicator in the last continuation field.
 
-        Generates 40 events with long names (~90 chars per line after detail truncation).
-        40 × ~90 = ~3600 chars ÷ 1024/field = ~4 fields — well within the 6-field cap.
+        Generates 40 events with long names (~123 chars per line; the ~113-char detail is
+        under _DETAIL_MAX=200 so it is NOT truncated).
+        40 × ~123 = ~4920 chars ÷ 1024/field = ~5 fields — still within the 6-field cap.
         So all 40 events appear across multiple fields with no truncation indicator.
         """
         long_detail = (
             "VeryLongActorNameThatIsQuiteExcessive fires "
             "AnExtremelyLongWeaponNameForTestPurposes at "
             "AnotherExtremelyLongTargetShipName dealing 9999 dmg"
-        )  # ~113 chars (will be truncated to 80 by _build_detail_embed)
+        )  # ~113 chars (under _DETAIL_MAX=200 → not truncated by _build_detail_embed)
 
         many_events = [
             {"tick": i * 100, "time_s": i * 1.0, "actor": "ActorA", "event_type": "damage", "detail": long_detail}
@@ -508,7 +509,7 @@ class TestCombatLogCommand:
         UNGUARDED size would exceed 6000 and that the guarded embed stays safely under it, with the
         omission honestly surfaced.
         """
-        # ~75-char detail (after the 80-char per-line truncation) → ~84-char rendered line.
+        # ~77-char detail (under _DETAIL_MAX=200, so untruncated) → ~87-char rendered line.
         # 100 such lines ≈ 8400 chars → far more than 6 × 1024, so without the budget guard the
         # embed would blow past 6000 (matching the real battle-137 failure).
         big_detail = "SsilverLeopard's Berger FlaK 9-9 re-enters range and connects — hit for 12 dmg"
@@ -529,8 +530,8 @@ class TestCombatLogCommand:
         # Non-vacuity: prove the guard is actually doing work. The raw rendered event-line text
         # for this exact input (the bytes that an UNGUARDED build would pour into the event fields)
         # far exceeds 6000, so without the budget guard the embed could not stay legal. Mirror the
-        # cog's own line rendering: `{time_s:6.1f}s` prefix + the (≤80-char truncated) detail.
-        detail_max = 80
+        # cog's own line rendering: `{time_s:6.1f}s` prefix + the (≤200-char truncated) detail.
+        detail_max = 200
         truncated = big_detail[: detail_max - 1] + "…" if len(big_detail) > detail_max else big_detail
         raw_event_text = "\n".join(f"`{ev['time_s']:6.1f}s` {truncated}" for ev in big_events)
         assert len(raw_event_text) > 6000, (
@@ -616,8 +617,8 @@ class TestCombatLogCommand:
         assert "more event" not in key_field.value
 
     async def test_key_events_long_detail_strings_are_truncated(self, cog):
-        """Individual detail strings longer than 80 chars are truncated with '…'."""
-        very_long_detail = "X" * 200
+        """Individual detail strings longer than _DETAIL_MAX (200) chars are truncated with '…'."""
+        very_long_detail = "X" * 250
         events = [{"tick": 1, "time_s": 1.0, "actor": "A", "event_type": "damage", "detail": very_long_detail}]
         detail_payload = {**_make_detail(), "key_events": events}
 
@@ -630,8 +631,8 @@ class TestCombatLogCommand:
         key_field = next((f for f in embed_call.fields if "Key Events" in f.name), None)
         assert key_field is not None
         assert len(key_field.value) <= 1024
-        # The 200-char detail should have been trimmed
-        assert "X" * 200 not in key_field.value
+        # The 250-char detail should have been trimmed to _DETAIL_MAX (200)
+        assert "X" * 250 not in key_field.value
         assert "…" in key_field.value
 
     async def test_summary_stats_line_shows_shots_secondaries_modules(self, cog):

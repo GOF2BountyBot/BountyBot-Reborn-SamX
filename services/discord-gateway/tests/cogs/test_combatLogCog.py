@@ -498,6 +498,45 @@ class TestCombatLogCommand:
         for field in ke_fields:
             assert len(field.value) <= 1024
 
+    def test_embed_under_6000_with_battle137_sized_log(self, cog):
+        """Regression: a battle-137-sized recap must not exceed Discord's 6000-char embed limit.
+
+        Prod battle 137 (`/combat-log`) threw 400 (50035) "Embed size exceeds maximum size of 6000":
+        its 103-event recap packed summary (≤1024) + 6×1024 event chunks ≈ 7200 > 6000. The
+        per-field (1024) and field-count (6) guards do not bound the AGGREGATE size. This builds a
+        comparable payload (100 ~75-char event lines → 6 full chunks) and asserts both that the
+        UNGUARDED size would exceed 6000 and that the guarded embed stays safely under it, with the
+        omission honestly surfaced.
+        """
+        # ~75-char detail (after the 80-char per-line truncation) → ~84-char rendered line.
+        # 100 such lines ≈ 8400 chars → far more than 6 × 1024, so without the budget guard the
+        # embed would blow past 6000 (matching the real battle-137 failure).
+        big_detail = "SsilverLeopard's Berger FlaK 9-9 re-enters range and connects — hit for 12 dmg"
+        big_events = [
+            {
+                "tick": i * 30,
+                "time_s": i * 0.3,
+                "actor": "SsilverLeopard",
+                "event_type": "Weapon in range",
+                "detail": big_detail,
+            }
+            for i in range(100)
+        ]
+        detail_payload = {**_make_detail(), "key_events": big_events}
+        user = MagicMock()
+        user.display_name = "SsilverLeopard"
+
+        embed = cog._build_detail_embed(detail_payload, user)
+
+        # Aggregate size is bounded below Discord's hard 6000 limit.
+        assert len(embed) < 6000, f"Embed aggregate size {len(embed)} must stay under Discord's 6000 limit"
+        # Every individual field still respects the 1024 per-field cap.
+        for field in embed.fields:
+            assert len(field.value) <= 1024
+        # The drop must be surfaced honestly (not silently truncated).
+        all_text = "\n".join(f.value for f in embed.fields)
+        assert "omitted" in all_text, "Dropped events must be signalled with an omission trailer"
+
     async def test_key_events_no_truncation_indicator_when_all_fit(self, cog):
         """When all events fit within the limit, no truncation indicator is added."""
         short_events = [

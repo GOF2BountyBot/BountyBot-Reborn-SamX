@@ -404,6 +404,12 @@ class CombatLogCog(commands.Cog):
         _DETAIL_MAX = 80  # max chars per detail string to bound each line
         _ZWSP = "\u200b"  # zero-width space → renders as a headerless continuation field
         _MAX_EVENT_FIELDS = 6  # safety cap on continuation fields (well under Discord's 25)
+        # Discord rejects any embed whose AGGREGATE size (title + every field name + value +
+        # footer + author) exceeds 6000 chars with a 400 (50035). The per-field (1024) and
+        # field-count (_MAX_EVENT_FIELDS) guards above are not sufficient on their own: summary
+        # (≤1024) + 6×1024 event chunks ≈ 7200 > 6000. Track len(embed) as we add event fields and
+        # stop before crossing this budget, leaving headroom for the omission trailer + footer.
+        _EMBED_BUDGET = 5800
 
         key_events: list[dict] = data.get("key_events", [])
         if key_events:
@@ -436,15 +442,38 @@ class CombatLogCog(commands.Cog):
                 shown = sum(c.count("\n") + 1 for c in chunks[:_MAX_EVENT_FIELDS])
                 dropped = len(lines) - shown
                 chunks = chunks[:_MAX_EVENT_FIELDS]
-                if dropped:
-                    chunks[-1] += f"\n…(+{dropped} more event{'s' if dropped != 1 else ''})"
 
+            # Set the footer up front so it is counted in len(embed) by the aggregate-budget guard.
+            embed.set_footer(text=f"Battle ID #{battle_id} | Requested by {user.display_name}")
+
+            # Add event fields one at a time, honouring Discord's 6000-char aggregate limit.
+            # If a chunk would push the embed over budget, stop and roll its (and any remaining
+            # chunks') line count into `dropped`, so the omission is surfaced honestly.
+            shown_chunks: list[str] = []
             for i, chunk in enumerate(chunks):
+                value = chunk[:_FIELD_LIMIT]
                 name = "🎯 Key Events" if i == 0 else _ZWSP
-                embed.add_field(name=name, value=chunk[:_FIELD_LIMIT], inline=False)
-        else:
-            embed.add_field(name="🎯 Key Events", value="*(no secondary weapons or modules used)*", inline=False)
+                # +len(name)+len(value) is the field's contribution to len(embed).
+                if shown_chunks and len(embed) + len(name) + len(value) > _EMBED_BUDGET:
+                    dropped += sum(c.count("\n") + 1 for c in chunks[i:])
+                    break
+                embed.add_field(name=name, value=value, inline=False)
+                shown_chunks.append(chunk)
 
+            # Surface any omission (field-cap and/or budget) as a trailer on the last shown field.
+            if dropped and shown_chunks:
+                trailer = f"\n…(+{dropped} more event{'s' if dropped != 1 else ''} omitted)"
+                idx = len(shown_chunks) - 1
+                name = "🎯 Key Events" if idx == 0 else _ZWSP
+                embed.set_field_at(
+                    idx,
+                    name=name,
+                    value=(shown_chunks[idx][:_FIELD_LIMIT] + trailer)[:_FIELD_LIMIT],
+                    inline=False,
+                )
+            return embed
+
+        embed.add_field(name="🎯 Key Events", value="*(no secondary weapons or modules used)*", inline=False)
         embed.set_footer(text=f"Battle ID #{battle_id} | Requested by {user.display_name}")
         return embed
 

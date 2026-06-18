@@ -2388,7 +2388,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     # B.49/B.50: /admin_config_constants — per-guild game-constant overrides
     # ------------------------------------------------------------------
 
-    # All 25 per-guild game-constant override field names (must match _OVERRIDE_FIELDS in bot-core config router)
+    # All 33 slash-settable per-guild game-constant override field names (subset of _OVERRIDE_FIELDS in
+    # bot-core config router; demotion_credit_penalty_pct remains API-only)
     _GAME_CONSTANT_FIELDS: tuple[str, ...] = (
         "division_max_tl",
         "ship_value_reward_percentage",
@@ -2417,6 +2418,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "turret_spawn_probability",
         "kaamo_max_capacity",
         "classic_credits_per_check",
+        # Criminal loadout balance (Threads 3/4/6)
+        "long_range_threshold_m",
+        "criminal_long_range_pct",
+        "primary_tl_band_weights",
+        "criminal_cloak_chance_by_division",
+        "criminal_booster_chance_by_division",
+        "criminal_emergency_chance_by_division",
+        "criminal_weaponmod_chance_by_division",
+        "criminal_exclude_emp_weapons",
     )
 
     async def constants_autocomplete(
@@ -2436,7 +2446,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         setting="The game-constant field name (leave blank to list all)",
         int_value="Integer value to set",
         float_value="Float value to set",
-        json_value="JSON value to set (for dict fields like division_max_tl)",
+        json_value="JSON value to set (for dict/bool fields like division_max_tl, "
+        "criminal_cloak_chance_by_division, criminal_exclude_emp_weapons)",
     )
     @app_commands.autocomplete(setting=constants_autocomplete)
     async def admin_config_constants(
@@ -2609,7 +2620,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         description="[ADMIN] Reset per-guild game-constant overrides to global defaults (B.49/B.50)",
     )
     @app_commands.describe(
-        setting="Specific field to reset (leave blank to reset ALL 25 overrides)",
+        setting="Specific field to reset (leave blank to reset ALL 33 overrides)",
     )
     @app_commands.autocomplete(setting=constants_autocomplete)
     async def admin_config_constants_reset(
@@ -2632,7 +2643,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
             return
 
-        action_desc = f"reset override for **{setting}**" if setting else "reset **all 25** game-constant overrides"
+        action_desc = f"reset override for **{setting}**" if setting else "reset **all 33** game-constant overrides"
 
         view = ConfirmView(action=f"{action_desc} for guild {guild_id}", timeout=60)
         warning_embed = discord.Embed(

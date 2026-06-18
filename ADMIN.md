@@ -324,12 +324,12 @@ When generating shop stock, the probability distribution for item tech level rel
 
 ## Per-Guild Game Constant Overrides
 
-34 global `GameConstants` values can be overridden per-guild via the API (`_OVERRIDE_FIELDS` in bot-core's config router); 25 of them are settable through the `/admin_config_constants` slash command. The remaining 9 are **API-only** — they are absent from the gateway's `_GAME_CONSTANT_FIELDS` slash list: `demotion_credit_penalty_pct` plus the eight criminal-loadout balance knobs (see [Criminal Loadout Balance](#criminal-loadout-balance-per-guild)). When set to `NULL` (the default), the global constant applies. When set to a value, only this guild uses that value.
+34 global `GameConstants` values can be overridden per-guild via the API (`_OVERRIDE_FIELDS` in bot-core's config router); 33 of them are settable through the `/admin_config_constants` slash command. The remaining 1 is **API-only** — it is absent from the gateway's `_GAME_CONSTANT_FIELDS` slash list: `demotion_credit_penalty_pct`. When set to `NULL` (the default), the global constant applies. When set to a value, only this guild uses that value.
 
 ### Viewing Overrides
 
 ```
-# List the 25 slash-settable constants with current values (NULL shown as *default*)
+# List the 33 slash-settable constants with current values (NULL shown as *default*)
 /admin_config_constants
 
 # See only constants that have been explicitly set for this guild
@@ -391,7 +391,7 @@ Use `int_value` for integer fields, `float_value` for float fields, `json_value`
 
 ### Criminal Loadout Balance (per-guild)
 
-These eight knobs tune how bounty-criminal ships are equipped (primary-weapon range/TL selection and module equip odds). Like every row above, each is a **per-guild override of the `GameConstants` default**: `NULL` (unset) falls back to the global default; a set value applies only to this guild. Unlike the slash-settable constants, these are **API-only** — set them via `PUT /api/v1/config/guild/{guild_id}` (they are in `_OVERRIDE_FIELDS` but not in the gateway's `_GAME_CONSTANT_FIELDS` slash list, so `/admin_config_constants` will not autocomplete them).
+These eight knobs tune how bounty-criminal ships are equipped (primary-weapon range/TL selection and module equip odds). Like every row above, each is a **per-guild override of the `GameConstants` default**: `NULL` (unset) falls back to the global default; a set value applies only to this guild. They are **slash-settable** via `/admin_config_constants` (in addition to `PUT /api/v1/config/guild/{guild_id}`): the per-division dicts and `primary_tl_band_weights` take a JSON object in `json_value`, `criminal_exclude_emp_weapons` takes a JSON `true`/`false` in `json_value`, and the scalars (`long_range_threshold_m`, `criminal_long_range_pct`) take a number. Value correctness is enforced server-side by the config schema.
 
 For the full selection mechanics, see `services/bot-core/src/services/AGENTS.md` → "Criminal loadout-generation algorithm" (Threads 1/3/4/6).
 

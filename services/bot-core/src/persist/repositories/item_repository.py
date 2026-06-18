@@ -157,6 +157,37 @@ class ItemRepository(GenericRepository[Item]):
             raise
 
     # ------------------------------------------------------------------
+    # get_all
+    # ------------------------------------------------------------------
+
+    async def get_all(
+        self,
+        db: AsyncSession,
+        item_type: str,
+    ) -> list[Any]:
+        """Return every item of *item_type*, across all tech levels.
+
+        Unlike :meth:`get_all_by_tech_level`, this applies no tech-level
+        filter — it is the "give me the whole catalog for this type" query,
+        used by criminal loadout generation to gather all variants of a
+        module type / weapon class before applying the nearest-TL / TL-band
+        selection rules in-memory.
+
+        Ships have no tech_level column but ARE a valid type here; passing
+        ``"ship"`` returns every ship.
+        """
+        flogger.trace(f"get_all entry: item_type={item_type!r}")
+        try:
+            model = self._get_model(item_type)
+            result = await db.execute(select(model))
+            items = list(result.scalars().all())
+            flogger.trace(f"get_all exit: found {len(items)} items (type={item_type})")
+            return items
+        except Exception as e:
+            flogger.error(f"Error in get_all with item_type={item_type!r}: {e}")
+            raise
+
+    # ------------------------------------------------------------------
     # get_random_by_tech_level
     # ------------------------------------------------------------------
 

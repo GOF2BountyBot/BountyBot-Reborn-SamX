@@ -99,7 +99,7 @@ class CombatPreflightService:
         for _ in range(count):
             tl = random.randint(min_tl, max_tl)
             try:
-                loadout = await bounty_svc.generate_loadout(db, tl)
+                loadout = await bounty_svc.generate_loadout(db, tl, division=division)
                 synthetics.append(SimpleNamespace(criminal_ship=loadout))
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"preflight: synthesis failed at tl={tl} division={division}: {exc}")

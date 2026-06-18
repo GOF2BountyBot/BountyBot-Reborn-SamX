@@ -7,7 +7,7 @@ economic factors, progression thresholds, and administrative settings.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, Float, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -156,6 +156,10 @@ class GuildConfig(Base):
     criminal_weaponmod_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
         _JSONB, nullable=True, default=None
     )
+
+    # Thread 6 — exclude primarily-EMP weapons from criminal selection.
+    # NULL == "use GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS (True)".
+    criminal_exclude_emp_weapons: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
 
     # ------------------------------------------------------------------
     # Combat System — Phase-1 per-guild overrides (Appendix A constants)

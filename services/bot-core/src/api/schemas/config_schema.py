@@ -59,6 +59,9 @@ class GameConstantsOverridesMixin(BaseModel):
     criminal_emergency_chance_by_division: dict[str, int] | None = None
     criminal_weaponmod_chance_by_division: dict[str, int] | None = None
 
+    # Thread 6 — behavioral toggle (strict bool: reject 0/1/"true" coercion).
+    criminal_exclude_emp_weapons: bool | None = Field(None, strict=True)
+
     @field_validator("division_max_tl", mode="before")
     @classmethod
     def validate_division_max_tl(cls, v: Any) -> Any:

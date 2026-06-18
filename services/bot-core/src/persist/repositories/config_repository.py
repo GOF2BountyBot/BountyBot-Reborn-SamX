@@ -495,6 +495,8 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "criminal_booster_chance_by_division": config.criminal_booster_chance_by_division,
                 "criminal_emergency_chance_by_division": config.criminal_emergency_chance_by_division,
                 "criminal_weaponmod_chance_by_division": config.criminal_weaponmod_chance_by_division,
+                # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 6)
+                "criminal_exclude_emp_weapons": config.criminal_exclude_emp_weapons,
             }
 
         except Exception as e:

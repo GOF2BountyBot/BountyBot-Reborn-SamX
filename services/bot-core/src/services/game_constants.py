@@ -151,6 +151,15 @@ class GameConstants:
     CRIMINAL_EMERGENCY_CHANCE_BY_DIVISION: dict[str, int] = {"bronze": 0, "silver": 25, "gold": 50, "platinum": 100}
     CRIMINAL_WEAPONMOD_CHANCE_BY_DIVISION: dict[str, int] = {"bronze": 0, "silver": 25, "gold": 50, "platinum": 100}
 
+    # Thread 6 — exclude primarily-EMP weapons (emp_damage > real_damage) from
+    # CRIMINAL primary + secondary selection.  Default ON: emp_damage is a
+    # phase-2+ deferred feature (engine applies 0 HP delta), so EMP-dominant
+    # weapons do ~no real damage → free player win.  Behavioral toggle, not a
+    # numeric knob — auto-disable (set False) cleanly once EMP mechanics ship.
+    # Per-guild-only override: criminal_exclude_emp_weapons on GuildConfig
+    # (no env form, matching the dict knobs above).
+    CRIMINAL_EXCLUDE_EMP_WEAPONS: bool = True
+
     # ------------------------------------------------------------------
     # CI-17: Criminal secondary weapons (owner-decision knobs #1–#3)
     # All four constants are tunable here; nowhere else.

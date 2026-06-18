@@ -299,3 +299,54 @@ def test_resolve_long_range_threshold_zero_is_valid_override():
     cfg.long_range_threshold_m = 0
     result = resolve_constant(cfg, "long_range_threshold_m", GameConstants.LONG_RANGE_THRESHOLD_M)
     assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# Thread 6 — criminal_exclude_emp_weapons toggle (default ON, per-guild, strict bool)
+# ---------------------------------------------------------------------------
+
+
+def test_criminal_exclude_emp_weapons_default_on():
+    assert GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS is True
+
+
+def test_resolve_exclude_emp_override_false_wins():
+    cfg = MagicMock()
+    cfg.criminal_exclude_emp_weapons = False
+    result = resolve_constant(cfg, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS)
+    assert result is False
+
+
+def test_resolve_exclude_emp_none_falls_back_to_true():
+    cfg = MagicMock()
+    cfg.criminal_exclude_emp_weapons = None
+    result = resolve_constant(cfg, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS)
+    assert result is True
+
+
+def test_resolve_exclude_emp_no_config_falls_back_to_true():
+    result = resolve_constant(None, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS)
+    assert result is True
+
+
+def test_schema_accepts_exclude_emp_bool():
+    m = GameConstantsOverridesMixin(criminal_exclude_emp_weapons=False)
+    assert m.criminal_exclude_emp_weapons is False
+    m2 = GameConstantsOverridesMixin(criminal_exclude_emp_weapons=True)
+    assert m2.criminal_exclude_emp_weapons is True
+
+
+def test_schema_exclude_emp_default_none():
+    m = GameConstantsOverridesMixin()
+    assert m.criminal_exclude_emp_weapons is None
+
+
+def test_schema_rejects_exclude_emp_int_coercion():
+    """Strict bool: an int (0/1) must NOT coerce into the toggle."""
+    with pytest.raises(ValidationError):
+        GameConstantsOverridesMixin(criminal_exclude_emp_weapons=1)
+
+
+def test_schema_rejects_exclude_emp_string():
+    with pytest.raises(ValidationError):
+        GameConstantsOverridesMixin(criminal_exclude_emp_weapons="true")

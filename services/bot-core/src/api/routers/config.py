@@ -75,6 +75,8 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "criminal_booster_chance_by_division",
     "criminal_emergency_chance_by_division",
     "criminal_weaponmod_chance_by_division",
+    # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 6)
+    "criminal_exclude_emp_weapons",
 )
 
 

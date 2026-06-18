@@ -77,6 +77,7 @@ def make_mock_config(**overrides):
         criminal_booster_chance_by_division=None,
         criminal_emergency_chance_by_division=None,
         criminal_weaponmod_chance_by_division=None,
+        criminal_exclude_emp_weapons=None,
     )
     defaults.update(overrides)
     return defaults
@@ -127,6 +128,7 @@ _OVERRIDE_FIELD_NAMES = [
     "criminal_booster_chance_by_division",
     "criminal_emergency_chance_by_division",
     "criminal_weaponmod_chance_by_division",
+    "criminal_exclude_emp_weapons",
 ]
 
 

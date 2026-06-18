@@ -14,7 +14,7 @@ import random
 from unittest.mock import MagicMock
 
 import pytest
-from src.services.temperature_service import TemperatureService
+from services.temperature_service import TemperatureService
 
 # ---------------------------------------------------------------------------
 # decay_temperature — guild_config=None (global defaults)

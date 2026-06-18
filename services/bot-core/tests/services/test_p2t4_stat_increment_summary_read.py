@@ -40,15 +40,15 @@ if "sqlalchemy_utils" not in sys.modules:
 import inspect
 
 import pytest
-from src.services.combat_models import (
+from services.combat_models import (
     CombatEvent,
     CombatEventType,
     FightResults,
     FightStats,
     ShipLoadout,
 )
-from src.services.combat_resolver import _ACTIVATION_MODULES, _build_fight_summary, _init_combatant
-from src.services.combat_service import CombatService
+from services.combat_resolver import _ACTIVATION_MODULES, _build_fight_summary, _init_combatant
+from services.combat_service import CombatService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -245,8 +245,8 @@ class TestNormalFightStatReads:
         This proves that for NORMAL fights the summary-read path is byte-identical
         to what the old timeline scan would have produced.
         """
-        from src.services.combat_models import ModuleStats, WeaponStats
-        from src.services.combat_resolver import (
+        from services.combat_models import ModuleStats, WeaponStats
+        from services.combat_resolver import (
             _CLOAK_MODULE_TYPE,
             _EMERGENCY_SYSTEM_MODULE_TYPE,
         )

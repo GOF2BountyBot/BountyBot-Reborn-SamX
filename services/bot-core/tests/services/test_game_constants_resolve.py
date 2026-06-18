@@ -7,7 +7,7 @@ zero-int override, zero-float override, and dict override.
 from unittest.mock import MagicMock
 
 import pytest
-from src.services.game_constants import GameConstants, resolve_constant
+from services.game_constants import GameConstants, resolve_constant
 
 # ---------------------------------------------------------------------------
 # Fallback paths (no config, or field is None / missing)

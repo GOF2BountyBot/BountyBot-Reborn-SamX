@@ -35,7 +35,7 @@ _MAP_PATH = os.path.abspath(
 # root conftest), we can import directly.
 # ---------------------------------------------------------------------------
 
-from src.services.map_renderer import MapRenderer
+from services.map_renderer import MapRenderer
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -189,7 +189,7 @@ class TestBaseMapCaching:
 
         renderer = MapRenderer(map_path=_MAP_PATH)
 
-        with patch("src.services.map_renderer.Image.open", side_effect=counting_open):
+        with patch("services.map_renderer.Image.open", side_effect=counting_open):
             renderer.render_route(["Augmenta"], _SAMPLE_COORDS)  # first: triggers open
             renderer.render_route(["Pan"], _SAMPLE_COORDS)  # second: should use cache
             renderer.render_route(["Nesla", "Augmenta"], _SAMPLE_COORDS)  # third: still cached

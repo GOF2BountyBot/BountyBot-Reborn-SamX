@@ -34,7 +34,7 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
 import pytest
-from src.services.combat_models import (
+from services.combat_models import (
     CombatEvent,
     CombatEventType,
     CombatMeta,
@@ -42,7 +42,7 @@ from src.services.combat_models import (
     FightStats,
     ShipLoadout,
 )
-from src.services.combat_resolver import _apply_damage, _build_fight_summary, _init_combatant
+from services.combat_resolver import _apply_damage, _build_fight_summary, _init_combatant
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -99,7 +99,7 @@ class TestCombatLogServiceContextValidation:
     @pytest.mark.asyncio
     async def test_invalid_context_raises_value_error(self):
         """persist(context='garbage') raises ValueError."""
-        from src.services.combat_log_service import CombatLogService
+        from services.combat_log_service import CombatLogService
 
         svc = CombatLogService()
         fr = _make_fight_results()
@@ -111,7 +111,7 @@ class TestCombatLogServiceContextValidation:
     @pytest.mark.asyncio
     async def test_valid_contexts_accepted(self):
         """persist() accepts all three valid contexts without raising."""
-        from src.services.combat_log_service import CombatLogService
+        from services.combat_log_service import CombatLogService
 
         svc = CombatLogService()
         meta = CombatMeta(guild_id=1)
@@ -137,7 +137,7 @@ class TestCombatLogServiceNPCInvariant:
     @pytest.mark.asyncio
     async def test_both_null_raises_value_error(self):
         """NPC-vs-NPC (both user_ids NULL) raises ValueError before DB call."""
-        from src.services.combat_log_service import CombatLogService
+        from services.combat_log_service import CombatLogService
 
         svc = CombatLogService()
         fr = _make_fight_results(c1_user_id=None, c2_user_id=None)
@@ -159,7 +159,7 @@ class TestCombatLogServiceSerialization:
     @pytest.mark.asyncio
     async def test_combat_events_serialised_to_dict(self):
         """Timeline CombatEvent objects become plain dicts in the data blob."""
-        from src.services.combat_log_service import CombatLogService
+        from services.combat_log_service import CombatLogService
 
         svc = CombatLogService()
         meta = CombatMeta(guild_id=1)
@@ -414,7 +414,7 @@ class TestDbRetentionExecutorCombatLogPass:
             mock_ctx.__aexit__ = AsyncMock(return_value=False)
             mock_manager.get_session = MagicMock(return_value=mock_ctx)
 
-            from src.utils.executors.db_retention_executor import execute_db_retention_job
+            from utils.executors.db_retention_executor import execute_db_retention_job
 
             result = await execute_db_retention_job("test-job", {})
 

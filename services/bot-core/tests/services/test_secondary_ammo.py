@@ -39,15 +39,15 @@ if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
-from src.services.combat_models import (
+from services.combat_models import (
     CombatEvent,
     CombatEventType,
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_resolver import TickResolver
-from src.services.game_constants import GameConstants
-from src.services.loadout_consistency_service import LoadoutConsistencyService
+from services.combat_resolver import TickResolver
+from services.game_constants import GameConstants
+from services.loadout_consistency_service import LoadoutConsistencyService
 
 TICK_MS: int = GameConstants.TICK_MS  # 10
 MIN_DIST: float = float(GameConstants.MIN_DISTANCE_M)
@@ -308,8 +308,8 @@ class TestConsumeSecondaryAmmo:
         We call the internal logic by injecting the repos via the
         persist.repositories module-level class replacement pattern.
         """
-        from src.services.combat_models import FightResults, FightStats
-        from src.services.combat_service import CombatService
+        from services.combat_models import FightResults, FightStats
+        from services.combat_service import CombatService
 
         weapon_fire_events = [
             CombatEvent(
@@ -360,9 +360,8 @@ class TestConsumeSecondaryAmmo:
         mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=mock_player)
         mock_ship_repo.get_active_ship = AsyncMock(return_value=mock_ship)
 
-        # The service uses deferred imports: `from persist.repositories.player_repository import PlayerRepository`
-        # (not `src.persist.` — the conftest adds src/ to sys.path so both refer to same physical module
-        # but sys.modules has two different keys). Patch the canonical key used by the service.
+        # The service uses deferred imports: `from persist.repositories.player_repository import PlayerRepository`.
+        # Patch the canonical `persist.*` module key that the service actually imports.
         import persist.repositories.player_repository as _pr
         import persist.repositories.player_ship_repository as _psr
 
@@ -390,8 +389,8 @@ class TestConsumeSecondaryAmmo:
     @pytest.mark.asyncio
     async def test_consume_ammo_depletes_to_zero_auto_unequips(self):
         """When rounds hit 0, weapon name is removed from both secondary_weapons and secondary_ammo."""
-        from src.services.combat_models import FightResults, FightStats
-        from src.services.combat_service import CombatService
+        from services.combat_models import FightResults, FightStats
+        from services.combat_service import CombatService
 
         weapon_fire_events = [
             CombatEvent(
@@ -464,8 +463,8 @@ class TestConsumeSecondaryAmmo:
     @pytest.mark.asyncio
     async def test_npc_side_no_writeback(self):
         """Criminal side (user_id=None) must not touch DB at all."""
-        from src.services.combat_models import FightResults, FightStats
-        from src.services.combat_service import CombatService
+        from services.combat_models import FightResults, FightStats
+        from services.combat_service import CombatService
 
         fight_results = FightResults(
             winner_name="NPC",
@@ -868,7 +867,7 @@ class TestShopPurchaseTopUp:
     @pytest.mark.asyncio
     async def test_purchase_equipped_secondary_tops_up_ammo(self):
         """Buying 5 rounds of Rocket (already equipped) → ammo += 5, no cargo add."""
-        from src.services.shop_service import ShopService
+        from services.shop_service import ShopService
 
         shop_item = SimpleNamespace(
             id=1,
@@ -920,7 +919,7 @@ class TestShopPurchaseTopUp:
     @pytest.mark.asyncio
     async def test_purchase_unequipped_secondary_goes_to_cargo(self):
         """Buying rounds of Missile (not equipped) → cargo."""
-        from src.services.shop_service import ShopService
+        from services.shop_service import ShopService
 
         shop_item = SimpleNamespace(
             id=2,
@@ -1234,14 +1233,14 @@ class TestBug4RouterSecondaryAmmo:
 
     def test_ship_response_schema_has_secondary_ammo_field(self):
         """ShipResponse schema declares secondary_ammo: dict[str, int] | None."""
-        from src.api.schemas.ships_schema import ShipResponse
+        from api.schemas.ships_schema import ShipResponse
 
         fields = ShipResponse.model_fields
         assert "secondary_ammo" in fields, "ShipResponse must have secondary_ammo field"
 
     def test_ship_response_accepts_secondary_ammo(self):
         """ShipResponse correctly round-trips secondary_ammo data."""
-        from src.api.schemas.ships_schema import ShipResponse
+        from api.schemas.ships_schema import ShipResponse
 
         resp = ShipResponse(
             id=1,
@@ -1260,7 +1259,7 @@ class TestBug4RouterSecondaryAmmo:
 
     def test_ship_response_secondary_ammo_defaults_to_none(self):
         """ShipResponse.secondary_ammo defaults to None when not provided."""
-        from src.api.schemas.ships_schema import ShipResponse
+        from api.schemas.ships_schema import ShipResponse
 
         resp = ShipResponse(
             id=1,
@@ -1278,14 +1277,14 @@ class TestBug4RouterSecondaryAmmo:
 
     def test_ship_loadout_summary_response_has_secondary_ammo_field(self):
         """ShipLoadoutSummaryResponse declares secondary_ammo: dict[str, int]."""
-        from src.api.schemas.ships_schema import ShipLoadoutSummaryResponse
+        from api.schemas.ships_schema import ShipLoadoutSummaryResponse
 
         fields = ShipLoadoutSummaryResponse.model_fields
         assert "secondary_ammo" in fields, "ShipLoadoutSummaryResponse must have secondary_ammo field"
 
     def test_ship_loadout_summary_response_accepts_secondary_ammo(self):
         """ShipLoadoutSummaryResponse correctly round-trips secondary_ammo data."""
-        from src.api.schemas.ships_schema import ShipLoadoutSummaryResponse
+        from api.schemas.ships_schema import ShipLoadoutSummaryResponse
 
         resp = ShipLoadoutSummaryResponse(
             ship_id=1,
@@ -1423,7 +1422,7 @@ class TestCi17CriminalSecondaryIntegration:
     @staticmethod
     def _resolve_criminal_vs_player(criminal_ship_dict: dict) -> list:
         """Build criminal loadout, resolve vs a durable player, return combat log."""
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         criminal_loadout = LoadoutBuilder.from_criminal_ship(criminal_ship_dict)
         # Durable player with high HP, no weapons (so fight ends by ammo exhaustion or tick limit)
@@ -1486,7 +1485,7 @@ class TestCi17CriminalSecondaryIntegration:
 
     def test_criminal_secondaries_absent_in_criminal_ship_gives_empty_list(self):
         """from_criminal_ship with no 'secondaries' key → secondary_weapons=[] (no crash)."""
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         criminal_ship = {
             "ship_name": "Criminal Scout",
@@ -1516,7 +1515,7 @@ class TestCi17CriminalSecondaryIntegration:
           - The fire event carries ``opponent_damage`` directly, giving a single
             field to inspect without chasing a separate damage event.
         """
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         criminal_ship = {
             "ship_name": "CI-17 Guard Criminal",
@@ -1636,7 +1635,7 @@ def _make_fight_results_with_summary(
     secondary_rounds_by_weapon for each slot defaults to {} if not supplied.
     The combat_log is intentionally empty — P2-T5 does NOT read it.
     """
-    from src.services.combat_models import FightResults, FightStats
+    from services.combat_models import FightResults, FightStats
 
     return FightResults(
         winner_name=combatant1_name,
@@ -1706,7 +1705,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         New read: reads secondary_rounds_by_weapon["Rocket1"]==2 from summary.
         Decrement must be identical.
         """
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket1": 2})
 
@@ -1742,7 +1741,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
     @pytest.mark.asyncio
     async def test_byte_identity_multi_weapon(self):
         """BYTE-IDENTITY: two secondary weapons, each fired some rounds → correct decrements."""
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"RocketA": 3, "MissileB": 2})
 
@@ -1781,8 +1780,8 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         Old scan: ev.actor == 'Eagle Scout' but combatant_name == 'Hunter' → 0 counted.
         New read: summary slot '1' has secondary_rounds_by_weapon == {'Rocket': 3} → ammo decremented.
         """
-        from src.services.combat_models import FightResults, FightStats
-        from src.services.combat_service import CombatService
+        from services.combat_models import FightResults, FightStats
+        from services.combat_service import CombatService
 
         # Player display_name is 'Hunter'; ship name is 'Eagle Scout'
         fight_results = FightResults(
@@ -1851,8 +1850,8 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         double-counted or mis-attributed rounds.  New summary is slot-keyed so each
         side's secondary_rounds_by_weapon is isolated.
         """
-        from src.services.combat_models import FightResults, FightStats
-        from src.services.combat_service import CombatService
+        from services.combat_models import FightResults, FightStats
+        from services.combat_service import CombatService
 
         fight_results = FightResults(
             winner_name="Eagle",
@@ -1929,7 +1928,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
     @pytest.mark.asyncio
     async def test_invariant_ammo_never_negative(self):
         """INVARIANT: fire count > current ammo → new ammo = 0 (clamped, not negative)."""
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         # Summary says 10 rounds fired but ship only has 3
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 10})
@@ -1966,7 +1965,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
     @pytest.mark.asyncio
     async def test_invariant_zero_ammo_start_no_negative(self):
         """INVARIANT: ship starts with 0 ammo → remains at 0 (weapon already absent via auto-unequip on prior fight)."""
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         # If ammo key is present with 0 and summary says 1 fired, must clamp
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 1})
@@ -2005,7 +2004,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         primary weapon names are never in the dict — ship.secondary_ammo for unrelated
         primary keys is not touched.
         """
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         # Summary has only one secondary weapon
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 2})
@@ -2042,7 +2041,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
     @pytest.mark.asyncio
     async def test_invariant_no_secondary_fires_nothing_written(self):
         """INVARIANT: secondary_rounds_by_weapon == {} → no DB writes, no flush."""
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         # Empty secondary_rounds_by_weapon
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={})
@@ -2084,7 +2083,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         If the function still walked the timeline it would find 0 events → no decrement.
         With summary-read it correctly decrements from the summary counts.
         """
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Nuke": 2})
         # Confirm combat_log is indeed empty
@@ -2124,7 +2123,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
     @pytest.mark.asyncio
     async def test_partial_ammo_multi_weapon_exhaustive(self):
         """Exhaustive: three secondary weapon types, partial ammo, various fire counts."""
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         fight_results = _make_fight_results_with_summary(
             secondary_rounds_by_weapon_slot1={"RocketA": 3, "MissileB": 7, "NukeC": 1}
@@ -2169,7 +2168,7 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
     @pytest.mark.asyncio
     async def test_weapon_not_in_ammo_dict_skipped(self):
         """Summary has a weapon key not in ship's secondary_ammo → skipped gracefully."""
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         # Summary says Rocket fired 3 rounds but ship has no Rocket in ammo dict
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 3})

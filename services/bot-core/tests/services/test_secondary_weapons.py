@@ -38,9 +38,9 @@ if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
-from src.services.combat_models import ModuleStats, ShipLoadout, WeaponStats
-from src.services.combat_resolver import TickResolver, _init_combatant, _nuke_dmg, _rocket_accuracy, _shock_blast_apply
-from src.services.game_constants import GameConstants
+from services.combat_models import ModuleStats, ShipLoadout, WeaponStats
+from services.combat_resolver import TickResolver, _init_combatant, _nuke_dmg, _rocket_accuracy, _shock_blast_apply
+from services.game_constants import GameConstants
 
 TICK_MS: int = GameConstants.TICK_MS  # 10
 MIN_DIST: float = float(GameConstants.MIN_DISTANCE_M)  # 300.0
@@ -700,7 +700,7 @@ class TestNukeD014:
 
     def test_window_lr_regime(self):
         """d > threshold → window = [NEAR_FRAC × d, d]; no overshoot at range."""
-        from src.services.combat_resolver import _nuke_window
+        from services.combat_resolver import _nuke_window
 
         assert _nuke_window(3200.0) == (1280.0, 3200.0)
         assert _nuke_window(2000.0) == (800.0, 2000.0)
@@ -708,7 +708,7 @@ class TestNukeD014:
 
     def test_window_cr_regime(self):
         """d ≤ threshold → window = [max(0, d−SHORT), d+OVERSHOOT]; floor at 0."""
-        from src.services.combat_resolver import _nuke_window
+        from services.combat_resolver import _nuke_window
 
         assert _nuke_window(1000.0) == (400.0, 1400.0)  # boundary is CR (strict >)
         assert _nuke_window(700.0) == (100.0, 1100.0)
@@ -717,7 +717,7 @@ class TestNukeD014:
 
     def test_window_regime_boundary_continuous(self):
         """Window low edges meet at the regime boundary (0.40×1000 == 1000−600)."""
-        from src.services.combat_resolver import _nuke_window
+        from services.combat_resolver import _nuke_window
 
         lo_cr, _ = _nuke_window(1000.0)
         lo_lr, _ = _nuke_window(1000.0 + 1e-9)
@@ -1212,7 +1212,7 @@ class TestDataModel:
 
     def test_shp_loadout_secondary_weapons_default_empty(self):
         """ShipLoadout.secondary_weapons defaults to empty list."""
-        from src.services.combat_models import ShipLoadout
+        from services.combat_models import ShipLoadout
 
         sl = ShipLoadout(ship_name="Test", base_armour=100)
         assert sl.secondary_weapons == []
@@ -1324,7 +1324,7 @@ class TestBuilderFedIntegration:
         """from_player populates secondary_weapons with typed WeaponStats. D0.5."""
         from unittest.mock import patch
 
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         # Mock DB objects
         player = MagicMock()
@@ -1401,7 +1401,7 @@ class TestBuilderFedIntegration:
         """from_player populates primaries with loading_speed_ms + range_m (T6 true-up). D0.5."""
         from unittest.mock import patch
 
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         player = MagicMock()
         player.id = 1
@@ -1467,7 +1467,7 @@ class TestBuilderFedIntegration:
         """Fight from builder-produced loadout fires secondaries (not hand-built). D0.5."""
         from unittest.mock import patch
 
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         # Player with a cluster missile equipped
         player = MagicMock()
@@ -1642,7 +1642,7 @@ class TestCoverageGaps:
         """
         from unittest.mock import patch
 
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         player = MagicMock()
         player.id = 1

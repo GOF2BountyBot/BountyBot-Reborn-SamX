@@ -12,14 +12,14 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy.exc import OperationalError, ProgrammingError
-from src.persist.database.migration_manager import (
+from persist.database.migration_manager import (
     _CONNECTION_RETRY_DELAY_SECONDS,
     _CONNECTION_RETRY_MAX_ATTEMPTS,
     MigrationManager,
     _async_to_sync_url,
     _build_sync_url_from_env,
 )
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 # ---------------------------------------------------------------------------
 # Module-level helpers
@@ -178,7 +178,7 @@ class TestEnsureCurrent:
         """ensure_current() must delegate to alembic.command.upgrade with 'head'."""
         mgr = MigrationManager(SYNC_URL)
         with (
-            patch("src.persist.database.migration_manager.command") as mock_cmd,
+            patch("persist.database.migration_manager.command") as mock_cmd,
             patch.object(mgr, "get_current_revision", return_value="abc123"),
             patch.object(mgr, "get_head_revision", return_value="def456"),
         ):
@@ -195,10 +195,10 @@ class TestEnsureCurrent:
         side_effects = [op_error, op_error, "abc123"]
 
         with (
-            patch("src.persist.database.migration_manager.command"),
+            patch("persist.database.migration_manager.command"),
             patch.object(mgr, "get_current_revision", side_effect=side_effects) as mock_gcr,
             patch.object(mgr, "get_head_revision", return_value="abc123"),
-            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,
+            patch("persist.database.migration_manager.time.sleep") as mock_sleep,
         ):
             mgr.ensure_current()  # must not raise
 
@@ -214,9 +214,9 @@ class TestEnsureCurrent:
         op_error = OperationalError("connection refused", None, None)
 
         with (
-            patch("src.persist.database.migration_manager.command"),
+            patch("persist.database.migration_manager.command"),
             patch.object(mgr, "get_current_revision", side_effect=op_error) as mock_gcr,
-            patch("src.persist.database.migration_manager.time.sleep"),
+            patch("persist.database.migration_manager.time.sleep"),
             pytest.raises(OperationalError),
         ):
             mgr.ensure_current()
@@ -230,9 +230,9 @@ class TestEnsureCurrent:
         prog_error = ProgrammingError("syntax error", None, None)
 
         with (
-            patch("src.persist.database.migration_manager.command"),
+            patch("persist.database.migration_manager.command"),
             patch.object(mgr, "get_current_revision", side_effect=prog_error) as mock_gcr,
-            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,
+            patch("persist.database.migration_manager.time.sleep") as mock_sleep,
             pytest.raises(ProgrammingError),
         ):
             mgr.ensure_current()
@@ -246,10 +246,10 @@ class TestEnsureCurrent:
         mgr = MigrationManager(SYNC_URL)
 
         with (
-            patch("src.persist.database.migration_manager.command"),
+            patch("persist.database.migration_manager.command"),
             patch.object(mgr, "get_current_revision", return_value="abc123") as mock_gcr,
             patch.object(mgr, "get_head_revision", return_value="abc123"),
-            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,
+            patch("persist.database.migration_manager.time.sleep") as mock_sleep,
         ):
             mgr.ensure_current()
 
@@ -265,7 +265,7 @@ class TestEnsureCurrent:
 class TestAutoGenerate:
     def test_calls_alembic_revision_with_autogenerate(self) -> None:
         mgr = MigrationManager(SYNC_URL)
-        with patch("src.persist.database.migration_manager.command") as mock_cmd:
+        with patch("persist.database.migration_manager.command") as mock_cmd:
             mgr.auto_generate("add reputation column")
             mock_cmd.revision.assert_called_once()
             kwargs = mock_cmd.revision.call_args[1]
@@ -274,7 +274,7 @@ class TestAutoGenerate:
 
     def test_passes_message_to_alembic(self) -> None:
         mgr = MigrationManager(SYNC_URL)
-        with patch("src.persist.database.migration_manager.command") as mock_cmd:
+        with patch("persist.database.migration_manager.command") as mock_cmd:
             mgr.auto_generate("my migration")
             kwargs = mock_cmd.revision.call_args[1]
             assert kwargs["message"] == "my migration"
@@ -288,14 +288,14 @@ class TestAutoGenerate:
 class TestDowngrade:
     def test_default_target_is_minus_one(self) -> None:
         mgr = MigrationManager(SYNC_URL)
-        with patch("src.persist.database.migration_manager.command") as mock_cmd:
+        with patch("persist.database.migration_manager.command") as mock_cmd:
             mgr.downgrade()
             _cfg, target = mock_cmd.downgrade.call_args[0]
             assert target == "-1"
 
     def test_custom_target_passed_through(self) -> None:
         mgr = MigrationManager(SYNC_URL)
-        with patch("src.persist.database.migration_manager.command") as mock_cmd:
+        with patch("persist.database.migration_manager.command") as mock_cmd:
             mgr.downgrade("base")
             _cfg, target = mock_cmd.downgrade.call_args[0]
             assert target == "base"
@@ -317,7 +317,7 @@ class TestHistory:
 
         mock_cmd.history.side_effect = fake_history
 
-        with patch("src.persist.database.migration_manager.command", mock_cmd):
+        with patch("persist.database.migration_manager.command", mock_cmd):
             result = mgr.history()
 
         assert isinstance(result, list)
@@ -329,7 +329,7 @@ class TestHistory:
         mock_cmd = MagicMock()
         mock_cmd.history.side_effect = lambda cfg: None  # writes nothing
 
-        with patch("src.persist.database.migration_manager.command", mock_cmd):
+        with patch("persist.database.migration_manager.command", mock_cmd):
             result = mgr.history()
 
         assert result == []

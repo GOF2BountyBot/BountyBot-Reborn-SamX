@@ -38,7 +38,7 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
 import pytest
-from src.services.combat_models import (
+from services.combat_models import (
     CombatEvent,
     CombatEventType,
     CombatMeta,
@@ -199,7 +199,7 @@ class TestLegacyGuardDataclassBranch:
     @pytest.mark.asyncio
     async def test_dataclass_timeline_serialised_via_asdict(self):
         """Passing list[CombatEvent] to persist yields plain dicts in data.timeline (is_dataclass guard)."""
-        from src.services.combat_log_service import CombatLogService
+        from services.combat_log_service import CombatLogService
 
         svc = CombatLogService()
         meta = CombatMeta(guild_id=1)
@@ -227,7 +227,7 @@ class TestLegacyGuardDataclassBranch:
     @pytest.mark.asyncio
     async def test_dataclass_timeline_values_match_asdict(self):
         """Each dict in data.timeline matches dataclasses.asdict of the original CombatEvent."""
-        from src.services.combat_log_service import CombatLogService
+        from services.combat_log_service import CombatLogService
 
         svc = CombatLogService()
         meta = CombatMeta(guild_id=1)
@@ -262,8 +262,8 @@ class TestNoAsdictOnHotPath:
     @pytest.mark.asyncio
     async def test_asdict_not_called_when_timeline_is_dicts(self):
         """Spy on dataclasses.asdict — must not be called when combat_log is list[dict]."""
-        import src.services.combat_log_service as cls_module
-        from src.services.combat_log_service import CombatLogService
+        import services.combat_log_service as cls_module
+        from services.combat_log_service import CombatLogService
 
         svc = CombatLogService()
         meta = CombatMeta(guild_id=1)
@@ -300,7 +300,7 @@ class TestNoAsdictOnHotPath:
     @pytest.mark.asyncio
     async def test_dict_timeline_passthrough_byte_identical(self):
         """Plain dicts in combat_log are stored byte-identically in data.timeline."""
-        from src.services.combat_log_service import CombatLogService
+        from services.combat_log_service import CombatLogService
 
         svc = CombatLogService()
         meta = CombatMeta(guild_id=1)
@@ -342,7 +342,7 @@ class TestPersistedByteIdentity:
         4. Assert it equals the canonical list[dict] element-by-element.
         """
         from compute.combat_worker import run_fight as real_run_fight
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         FIXED_SEED = 42
         l1, l2 = _make_loadouts()
@@ -434,7 +434,7 @@ class TestFightShipsNoRehydration:
     @pytest.mark.asyncio
     async def test_fight_ships_combat_log_is_list_of_dicts(self):
         """fight_ships (log_result=False) returns FightResults.combat_log as list[dict]."""
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         service = CombatService()
         l1, l2 = _make_loadouts()
@@ -447,7 +447,7 @@ class TestFightShipsNoRehydration:
     @pytest.mark.asyncio
     async def test_fight_ships_dict_events_have_expected_keys(self):
         """Every dict in combat_log has the 5 expected CombatEvent keys."""
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         service = CombatService()
         l1, l2 = _make_loadouts()
@@ -462,7 +462,7 @@ class TestFightShipsNoRehydration:
     @pytest.mark.asyncio
     async def test_no_combat_event_instances_in_combat_log(self):
         """combat_log must NOT contain CombatEvent dataclass instances (re-hydration removed)."""
-        from src.services.combat_service import CombatService
+        from services.combat_service import CombatService
 
         service = CombatService()
         l1, l2 = _make_loadouts()
@@ -486,7 +486,7 @@ class TestCombatLogReadPathRegression:
     @pytest.mark.asyncio
     async def test_get_detail_with_dict_timeline(self):
         """CombatLogService.get_detail extracts key_events correctly from list[dict] timeline."""
-        from src.services.combat_log_service import CombatLogService
+        from services.combat_log_service import CombatLogService
 
         svc = CombatLogService()
 

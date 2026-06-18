@@ -37,9 +37,9 @@ if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
-from src.services.combat_models import ModuleStats, ShipLoadout, WeaponStats
-from src.services.combat_resolver import TickResolver, _init_combatant
-from src.services.game_constants import GameConstants
+from services.combat_models import ModuleStats, ShipLoadout, WeaponStats
+from services.combat_resolver import TickResolver, _init_combatant
+from services.game_constants import GameConstants
 
 TICK_MS: int = GameConstants.TICK_MS  # 10
 MIN_DIST: float = float(GameConstants.MIN_DISTANCE_M)  # 300.0
@@ -338,8 +338,8 @@ def test_auto_turret_cloak_override_compounds():
     # Build a combat where pilot_turret_acc is already CLOAK_SET_VALUE (pre-computed by T4).
     # We verify the math holds via _init_combatant — the acc calculation happens in the resolver.
     # We use a wrapper to patch the compute_pilot_accuracy to return cloak values:
-    import src.services.combat_resolver as cr_module
-    from src.services.combat_balance import compute_pilot_accuracy
+    import services.combat_resolver as cr_module
+    from services.combat_balance import compute_pilot_accuracy
 
     original_compute = compute_pilot_accuracy
 
@@ -475,7 +475,7 @@ def test_manual_turret_uses_primary_accuracy():
 
     # Accuracy must be pilot_primary_acc, NOT multiplied by 0.85
     # Expected: weapon_accuracy(PLAYER_BASE_ACC, ws_ref) — no scanner, no thruster, no cloak
-    from src.services.combat_balance import weapon_accuracy
+    from services.combat_balance import weapon_accuracy
 
     expected_acc = weapon_accuracy(PLAYER_BASE_ACC, manual)
     for evt in fires[:3]:
@@ -936,7 +936,7 @@ async def test_builder_fed_turret_fight():
     fake_player = MagicMock()
     fake_player.active_ship_id = 1
 
-    from src.services.loadout_builder import LoadoutBuilder
+    from services.loadout_builder import LoadoutBuilder
 
     with patch("persist.repositories.player_repository.PlayerRepository") as MockPlayerRepo:
         mock_repo_instance = MockPlayerRepo.return_value

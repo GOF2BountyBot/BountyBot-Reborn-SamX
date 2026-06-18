@@ -51,7 +51,7 @@ def _module(name: str, type_str: str) -> SimpleNamespace:
 
 def _fight_results(*, slot_block: dict, slot_key: str = "1"):
     """Build a minimal FightResults whose summary carries one combatant block."""
-    from src.services.combat_models import FightResults, FightStats
+    from services.combat_models import FightResults, FightStats
 
     return FightResults(
         winner_name="Human",
@@ -77,7 +77,7 @@ async def _run_consume(
 
     Returns (player_repo_mock, ship_repo_mock, module_repo_mock) for assertions.
     """
-    from src.services.combat_service import CombatService
+    from services.combat_service import CombatService
 
     mock_player_repo = AsyncMock()
     mock_ship_repo = AsyncMock()

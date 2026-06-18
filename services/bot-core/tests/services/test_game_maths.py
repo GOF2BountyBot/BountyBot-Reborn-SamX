@@ -14,8 +14,8 @@ import random
 from collections import Counter
 
 import pytest
-from src.services.game_constants import GameConstants
-from src.services.game_maths import (
+from services.game_constants import GameConstants
+from services.game_maths import (
     pick_random_item_tl,
     reward_per_sys_check,
     ship_tech_level_for_value,

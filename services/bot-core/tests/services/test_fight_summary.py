@@ -38,14 +38,14 @@ if "sqlalchemy_utils" not in sys.modules:
 # Imports under test
 # ---------------------------------------------------------------------------
 import pytest
-from src.services.combat_models import (
+from services.combat_models import (
     CombatEvent,
     CombatEventType,
     ModuleStats,
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_resolver import (
+from services.combat_resolver import (
     _BOOSTER_MODULE_TYPE,
     _CLOAK_MODULE_TYPE,
     _EMERGENCY_SYSTEM_MODULE_TYPE,
@@ -54,7 +54,7 @@ from src.services.combat_resolver import (
     _CombatantState,
     _init_combatant,
 )
-from src.services.game_constants import GameConstants
+from services.game_constants import GameConstants
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1124,7 +1124,7 @@ class TestSecondaryRoundsByWeapon:
         """A TickResolver fight with a secondary-equipped ship produces secondary_rounds_by_weapon
         in the summary, and the total count matches weapon_fire events in the combat log.
         """
-        from src.services.combat_models import WeaponStats
+        from services.combat_models import WeaponStats
 
         rocket = WeaponStats(
             name="Viper Rocket",

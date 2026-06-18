@@ -17,9 +17,9 @@ Mirrors tests/services/test_game_constants_resolve.py style.
 from unittest.mock import MagicMock
 
 import pytest
+from api.schemas.config_schema import GameConstantsOverridesMixin
 from pydantic import ValidationError
-from src.api.schemas.config_schema import GameConstantsOverridesMixin
-from src.services.game_constants import GameConstants, resolve_constant
+from services.game_constants import GameConstants, resolve_constant
 
 # ---------------------------------------------------------------------------
 # 1. GameConstants defaults (locked journal values)

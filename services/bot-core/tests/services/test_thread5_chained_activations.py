@@ -39,13 +39,13 @@ if "sqlalchemy_utils" not in sys.modules:
 # ---------------------------------------------------------------------------
 # Imports under test
 # ---------------------------------------------------------------------------
-from src.services.combat_models import (
+from services.combat_models import (
     CombatEventType,
     ModuleStats,
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_resolver import (
+from services.combat_resolver import (
     _BOOSTER_MODULE_TYPE,
     _CLOAK_MODULE_TYPE,
     _EMERGENCY_SYSTEM_MODULE_TYPE,
@@ -60,7 +60,7 @@ from src.services.combat_resolver import (
     _tick_shield_regen,
     _try_activate_chained_module,
 )
-from src.services.game_constants import GameConstants
+from services.game_constants import GameConstants
 
 TICK_MS = GameConstants.TICK_MS
 INVULN_MS = GameConstants.EMERGENCY_SYSTEM_INVULN_S * 1000
@@ -357,7 +357,7 @@ class TestTelemetryAndRendering:
 # ---------------------------------------------------------------------------
 import random
 
-from src.services.combat_resolver import TickResolver
+from services.combat_resolver import TickResolver
 
 
 def _glass_cannon_attacker() -> ShipLoadout:
@@ -492,12 +492,12 @@ class TestG3FightEndsDuringInvuln:
     def test_time_cap_inside_invuln_no_cloak_chain(self):
         import random
 
-        from src.services import combat_resolver as _cr
-        from src.services.combat_resolver import TickResolver
+        from services.combat_resolver import TickResolver
 
-        # NB: combat_resolver imports GameConstants under the ``services.*`` namespace, which is a
-        # DISTINCT class object from ``src.services.game_constants.GameConstants`` imported at module
-        # top. Patch the resolver's own reference so ``resolve`` actually reads the capped value.
+        from services import combat_resolver as _cr
+
+        # Patch the resolver's own GameConstants reference (``_cr.GameConstants``) so ``resolve``
+        # actually reads the capped value, rather than mutating a different import alias.
         _gc = _cr.GameConstants
 
         attacker = _glass_cannon_attacker()

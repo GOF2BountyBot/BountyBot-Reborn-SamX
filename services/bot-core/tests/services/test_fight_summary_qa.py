@@ -32,9 +32,9 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
 import pytest
-from src.services.combat_log_service import CombatLogService
-from src.services.combat_models import CombatEvent, CombatEventType, ShipLoadout
-from src.services.combat_resolver import _build_fight_summary, _CombatantState, _init_combatant
+from services.combat_log_service import CombatLogService
+from services.combat_models import CombatEvent, CombatEventType, ShipLoadout
+from services.combat_resolver import _build_fight_summary, _CombatantState, _init_combatant
 
 # ---------------------------------------------------------------------------
 # Helpers — mirrors test_fight_summary.py to stay self-contained

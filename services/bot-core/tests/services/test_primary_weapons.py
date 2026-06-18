@@ -24,9 +24,9 @@ Test categories (per TASK_0005.md §Test surface):
 from __future__ import annotations
 
 import pytest
-from src.services.combat_models import ModuleStats, ShipLoadout, WeaponStats
-from src.services.combat_resolver import TickResolver, _init_combatant
-from src.services.game_constants import GameConstants
+from services.combat_models import ModuleStats, ShipLoadout, WeaponStats
+from services.combat_resolver import TickResolver, _init_combatant
+from services.game_constants import GameConstants
 
 TICK_MS: int = GameConstants.TICK_MS  # 10
 STARTING_DIST: float = float(GameConstants.STARTING_DISTANCE_M)  # 5000.0

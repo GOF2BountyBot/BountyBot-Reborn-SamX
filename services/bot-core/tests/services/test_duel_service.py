@@ -38,14 +38,14 @@ if "sqlalchemy_utils" not in sys.modules:
 
 from unittest.mock import patch
 
-from services.duel_service import DuelService
-from services.loadout_builder import LoadoutBuilder
-from src.services.combat_models import (
+from services.combat_models import (
     FightResults,
     FightStats,
     ShipLoadout,
 )
-from src.services.combat_service import CombatService
+from services.combat_service import CombatService
+from services.duel_service import DuelService
+from services.loadout_builder import LoadoutBuilder
 
 # ---------------------------------------------------------------------------
 # Helpers / factory functions

@@ -44,13 +44,13 @@ if "sqlalchemy_utils" not in sys.modules:
 # ---------------------------------------------------------------------------
 # Imports under test
 # ---------------------------------------------------------------------------
-from src.services.combat_models import (
+from services.combat_models import (
     CombatEventType,
     ModuleStats,
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_resolver import (
+from services.combat_resolver import (
     _EMERGENCY_SYSTEM_MODULE_TYPE,
     TickResolver,
     _apply_damage,
@@ -61,7 +61,7 @@ from src.services.combat_resolver import (
     _tick_repair_bot_regen,
     _tick_shield_regen,
 )
-from src.services.game_constants import GameConstants
+from services.game_constants import GameConstants
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -644,7 +644,7 @@ class TestESEndToEnd:
         # We need a combatant with both ES AND a cloak/booster to detect ordering.
         # Set up so that ES fires on a lethal-damage tick, and cloak MIGHT also trigger.
         # The ES event must precede any phase-5 module_activation events.
-        from src.services.combat_resolver import _CLOAK_MODULE_TYPE
+        from services.combat_resolver import _CLOAK_MODULE_TYPE
 
         cloak_mod = ModuleStats(
             name="TestCloak",
@@ -939,7 +939,7 @@ class TestCI27ESHullDeathEvent:
         kill is represented solely by the 'Outcome' line (winner wins — loser destroyed).
         The old 'Hull depleted (dead)' event_type is GONE from key_events.
         """
-        from src.services.combat_log_service import CombatLogService
+        from services.combat_log_service import CombatLogService
 
         att = _loadout(
             ship_name="Att",

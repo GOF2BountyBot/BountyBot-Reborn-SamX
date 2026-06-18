@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from src.services.game_constants import GameConstants
+from services.game_constants import GameConstants
 
 # ---------------------------------------------------------------------------
 # Helpers

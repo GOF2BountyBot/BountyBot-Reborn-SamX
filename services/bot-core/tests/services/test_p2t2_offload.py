@@ -36,8 +36,8 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
 import pytest
-from src.services.combat_models import ShipLoadout, WeaponStats
-from src.services.combat_service import CombatService, _is_orm_model
+from services.combat_models import ShipLoadout, WeaponStats
+from services.combat_service import CombatService, _is_orm_model
 
 # ---------------------------------------------------------------------------
 # Shared loadout helper
@@ -245,8 +245,8 @@ class TestLogResultTrue:
 
         service = CombatService()
 
-        # fight_ships is defined in the module that CombatService was imported from.
-        # We import from src.services.combat_service, so we must patch the same module.
+        # fight_ships is defined in the module that CombatService was imported from
+        # (services.combat_service), so we must patch run_fight in that same module.
         # Use fight_ships.__globals__ to get the exact module dict and patch run_fight in it.
         cs_globals = service.fight_ships.__func__.__globals__
         orig_run_fight = cs_globals["run_fight"]
@@ -395,7 +395,7 @@ class TestFightResultsReconstructionCompleteness:
           timeline (via dataclasses.asdict), metadata, and combat_log_id (None).
         """
 
-        from src.services.combat_resolver import TickResolver
+        from services.combat_resolver import TickResolver
 
         FIXED_SEED = 42
         l1, l2 = _make_loadouts()

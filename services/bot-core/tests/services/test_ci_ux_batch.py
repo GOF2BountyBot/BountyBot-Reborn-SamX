@@ -35,10 +35,10 @@ import os
 
 os.environ.setdefault("BOUNTYBOT_COMBAT_LAYER_REEMIT_FRACTION", "0.25")
 
-from src.services.combat_log_service import CombatLogService
-from src.services.combat_models import CombatEvent, CombatEventType, ModuleStats, ShipLoadout, WeaponStats
-from src.services.combat_resolver import TickResolver, _build_fight_summary, _CombatantState, _init_combatant
-from src.services.game_constants import GameConstants
+from services.combat_log_service import CombatLogService
+from services.combat_models import CombatEvent, CombatEventType, ModuleStats, ShipLoadout, WeaponStats
+from services.combat_resolver import TickResolver, _build_fight_summary, _CombatantState, _init_combatant
+from services.game_constants import GameConstants
 
 TICK_MS = GameConstants.TICK_MS
 

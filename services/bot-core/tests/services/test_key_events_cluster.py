@@ -36,7 +36,7 @@ if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
-from src.services.combat_resolver import _extract_key_events
+from services.combat_resolver import _extract_key_events
 
 # ---------------------------------------------------------------------------
 # Helpers

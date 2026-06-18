@@ -28,14 +28,14 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
 import pytest
-from src.services.combat_models import (
+from services.combat_models import (
     FightResults,
     FightStats,
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_service import CombatService
-from src.services.game_constants import GameConstants
+from services.combat_service import CombatService
+from services.game_constants import GameConstants
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -226,9 +226,9 @@ class TestFightShipsLogResultTrue:
             # Delegate to the real run_fight so we get a valid result dict back
             return fn(*args, **kwargs)
 
-        # CombatService is imported from src.services.combat_service, so fight_ships
-        # uses src.services.combat_service's globals — patch there, not services.combat_service.
-        with patch("src.services.combat_service.offload_cpu", new=_spy_offload_cpu):
+        # fight_ships uses services.combat_service's module globals — patch offload_cpu there,
+        # i.e. on the same module object production imports.
+        with patch("services.combat_service.offload_cpu", new=_spy_offload_cpu):
             await service.fight_ships(l1, l2, log_result=False, pvc_damage_reduction=0.33)
 
         assert captured_pvc_dr == pytest.approx(0.33)

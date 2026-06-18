@@ -39,14 +39,14 @@ if "sqlalchemy_utils" not in sys.modules:
 import random
 
 import pytest
-from src.services.combat_balance import thruster_ramp
-from src.services.combat_models import (
+from services.combat_balance import thruster_ramp
+from services.combat_models import (
     CombatEventType,
     ModuleStats,
     ShipLoadout,
     WeaponStats,
 )
-from src.services.combat_resolver import (
+from services.combat_resolver import (
     _BOOSTER_MODULE_TYPE,
     _CLOAK_MODULE_TYPE,
     _THRUSTER_MODULE_TYPE,
@@ -59,7 +59,7 @@ from src.services.combat_resolver import (
     _eval_hp_threshold_modules,
     _init_combatant,
 )
-from src.services.game_constants import GameConstants
+from services.game_constants import GameConstants
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -473,7 +473,7 @@ class TestCloakActivation:
         Per §7.2 timing fix: the cooldown equals exactly loading_speed_ms at the expiry tick
         and reaches 0 exactly loading_speed_ms/tick_ms ticks later (no off-by-one).
         """
-        from src.services.combat_resolver import _tick_module_effects
+        from services.combat_resolver import _tick_module_effects
 
         loading_speed_ms = 2_000  # matches _cloak_mod() default
         effect_duration_ms = 10_000  # matches _cloak_mod() default
@@ -520,7 +520,7 @@ class TestCloakActivation:
             f"still has {cr.cooldown_remaining_ms}ms remaining"
         )
         # Exactly one cooldown_end event emitted on the final tick
-        from src.services.combat_models import CombatEventType
+        from services.combat_models import CombatEventType
 
         cd_end_events = [e for e in cooldown_end_events if e.type == CombatEventType.cooldown_end]
         assert len(cd_end_events) == 1
@@ -543,7 +543,7 @@ class TestCloakAccuracyEffect:
         state_c2.cloak_runtime.effect_remaining_ms = 50_000  # cloak active
 
         # Verify c1's accuracy computation sees cloak active
-        from src.services.combat_balance import compute_pilot_accuracy
+        from services.combat_balance import compute_pilot_accuracy
 
         acc_primary, acc_turret = compute_pilot_accuracy(
             combatant_base=GameConstants.PLAYER_BASE_ACCURACY,
@@ -567,7 +567,7 @@ class TestCloakAccuracyEffect:
         state = _init_combatant(_loadout(base_armour=1000), is_player=True)
         assert state.cloak_runtime is None
 
-        from src.services.combat_balance import compute_pilot_accuracy
+        from services.combat_balance import compute_pilot_accuracy
 
         acc_primary, _acc_turret = compute_pilot_accuracy(
             combatant_base=GameConstants.PLAYER_BASE_ACCURACY,
@@ -891,7 +891,7 @@ class TestThrusterRamp:
 
     def test_thruster_primaries_only_turret_excluded(self):
         """Thruster bonus goes into own_thruster_bonus_pp, which compute_pilot_accuracy excludes from turret."""
-        from src.services.combat_balance import compute_pilot_accuracy
+        from services.combat_balance import compute_pilot_accuracy
 
         thruster_bonus_pp = 40.0 * 0.10 * 1.0  # full ramp
         acc_primary, acc_turret = compute_pilot_accuracy(
@@ -985,7 +985,7 @@ class TestModuleStatsFromExtra:
 
     def test_cloak_fields_from_inner_extra_atts(self):
         """U'tool seed nested shape: outer has inner extra_atts with duration_ms / loading_speed_ms."""
-        from src.services.loadout_builder import _module_stats_from_extra
+        from services.loadout_builder import _module_stats_from_extra
 
         outer = {
             "duration": 10,  # legacy top-level field (ignored for T8)
@@ -1002,7 +1002,7 @@ class TestModuleStatsFromExtra:
 
     def test_booster_fields_from_inner_extra_atts(self):
         """Polytron seed shape: inner extra_atts has effect_pct / duration_ms / loading_speed_ms."""
-        from src.services.loadout_builder import _module_stats_from_extra
+        from services.loadout_builder import _module_stats_from_extra
 
         outer = {
             "duration": 6,
@@ -1021,7 +1021,7 @@ class TestModuleStatsFromExtra:
 
     def test_thruster_fields_from_inner_extra_atts(self):
         """Pendular Thrust seed: inner extra_atts has effect_pct."""
-        from src.services.loadout_builder import _module_stats_from_extra
+        from services.loadout_builder import _module_stats_from_extra
 
         outer = {
             "handlingMultiplier": 1.4,
@@ -1037,7 +1037,7 @@ class TestModuleStatsFromExtra:
 
     def test_legacy_flat_extra_atts_still_works(self):
         """Flat extra_atts (no nesting) still works for backward compat (armour/shield)."""
-        from src.services.loadout_builder import _module_stats_from_extra
+        from services.loadout_builder import _module_stats_from_extra
 
         flat = {"armour": 200, "armour_multiplier": 1.2}
         stats = _module_stats_from_extra("Armour Mod", flat, module_type="ArmourModule")
@@ -1046,7 +1046,7 @@ class TestModuleStatsFromExtra:
 
     def test_module_type_empty_string_backward_compat(self):
         """Legacy callers that don't pass module_type get empty string (no regression)."""
-        from src.services.loadout_builder import _module_stats_from_extra
+        from services.loadout_builder import _module_stats_from_extra
 
         stats = _module_stats_from_extra("Old Module", {})
         assert stats.module_type == ""
@@ -1094,7 +1094,7 @@ class TestBuilderIntegration:
     async def test_cloak_module_type_and_t8_fields_populated(self):
         """from_player builds ModuleStats with CloakModule type + T8 fields via mocked DB."""
 
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         mock_player = MagicMock()
         mock_player.active_ship_id = 1
@@ -1140,7 +1140,7 @@ class TestBuilderIntegration:
 
     async def test_primary_weapon_mod_detection_with_module_type(self):
         """PrimaryWeaponMod detection works when module_type is populated."""
-        from src.services.loadout_builder import _module_stats_from_extra
+        from services.loadout_builder import _module_stats_from_extra
 
         # Build stats as from_player would produce
         outer = {"extra_atts": {"damage_pct": 15, "fire_rate_pct": 10}}
@@ -1151,7 +1151,7 @@ class TestBuilderIntegration:
 
     def test_criminal_ship_cloak_module_type_populated(self):
         """from_criminal_ship passes 'type' from criminal_ship dict to _module_stats_from_extra."""
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         criminal_ship = {
             "ship_name": "Scimitar",
@@ -1180,7 +1180,7 @@ class TestBuilderIntegration:
 
     def test_criminal_ship_booster_module_type_populated(self):
         """from_criminal_ship: BoosterModule gets effect_pct and timing fields."""
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         criminal_ship = {
             "ship_name": "Fighter",
@@ -1208,7 +1208,7 @@ class TestBuilderIntegration:
 
     def test_criminal_ship_thruster_module_type_populated(self):
         """from_criminal_ship: ThrusterModule gets effect_pct."""
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         criminal_ship = {
             "ship_name": "Fighter",
@@ -1241,7 +1241,7 @@ class TestBuilderIntegration:
 
         This is the end-to-end path: builder → ModuleStats → ShipLoadout → fight.
         """
-        from src.services.loadout_builder import LoadoutBuilder
+        from services.loadout_builder import LoadoutBuilder
 
         # Build the ThrusterModule via the builder (the part the builder owns)
         criminal_ship_with = {

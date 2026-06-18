@@ -17,7 +17,7 @@ Coverage:
 import random
 
 import pytest
-from src.services.temperature_service import TemperatureService
+from services.temperature_service import TemperatureService
 
 # ---------------------------------------------------------------------------
 # TestRaiseTemperature

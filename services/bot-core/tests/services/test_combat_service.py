@@ -11,13 +11,13 @@ Remaining coverage: get_dps, get_armour, get_shield, collect_stats — unchanged
 from __future__ import annotations
 
 import pytest
-from src.services.combat_models import (
+from services.combat_models import (
     ModuleStats,
     ShipLoadout,
     UpgradeStats,
     WeaponStats,
 )
-from src.services.combat_service import CombatService
+from services.combat_service import CombatService
 
 # ---------------------------------------------------------------------------
 # Test helper
@@ -285,14 +285,14 @@ class TestCombatServiceT10:
         """SimpleTTKResolver is retired — not importable from combat_service."""
         import importlib
 
-        cs = importlib.import_module("src.services.combat_service")
+        cs = importlib.import_module("services.combat_service")
         assert not hasattr(cs, "SimpleTTKResolver"), "SimpleTTKResolver must be deleted in T10"
 
     def test_no_variance_helpers(self):
         """_apply_variance / _apply_variance_float are retired — not in combat_service."""
         import importlib
 
-        cs = importlib.import_module("src.services.combat_service")
+        cs = importlib.import_module("services.combat_service")
         assert not hasattr(cs, "_apply_variance"), "_apply_variance must be deleted in T10"
         assert not hasattr(cs, "_apply_variance_float"), "_apply_variance_float must be deleted in T10"
 
@@ -306,7 +306,7 @@ class TestCombatServiceT10:
     @pytest.mark.asyncio
     async def test_fight_ships_rejects_player_armour_buff(self):
         """fight_ships raises TypeError on legacy player_armour_buff kwarg."""
-        from src.services.combat_models import ShipLoadout
+        from services.combat_models import ShipLoadout
 
         service = CombatService()
         l1 = ShipLoadout(ship_name="A", base_armour=100)
@@ -317,7 +317,7 @@ class TestCombatServiceT10:
 
     def test_combat_service_uses_tick_resolver(self):
         """CombatService._tick_resolver is a TickResolver instance."""
-        from src.services.combat_service import TickResolver
+        from services.combat_service import TickResolver
 
         service = CombatService()
         assert isinstance(service._tick_resolver, TickResolver), "CombatService must use TickResolver"
@@ -325,7 +325,7 @@ class TestCombatServiceT10:
     @pytest.mark.asyncio
     async def test_fight_ships_log_result_false_requires_no_context(self):
         """fight_ships(log_result=False) does not require context — returns FightResults."""
-        from src.services.combat_models import ShipLoadout
+        from services.combat_models import ShipLoadout
 
         service = CombatService()
         l1 = ShipLoadout(ship_name="A", base_armour=100)
@@ -337,7 +337,7 @@ class TestCombatServiceT10:
     @pytest.mark.asyncio
     async def test_fight_ships_log_result_true_requires_context(self):
         """fight_ships(log_result=True, context=None) raises ValueError."""
-        from src.services.combat_models import ShipLoadout
+        from services.combat_models import ShipLoadout
 
         service = CombatService()
         l1 = ShipLoadout(ship_name="A", base_armour=100)
@@ -357,7 +357,7 @@ class TestCombatServiceT10:
         """
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        from src.services.combat_models import ShipLoadout
+        from services.combat_models import ShipLoadout
 
         # C1 survives (armour=100), C2 dies (armour=0) → decisive outcome, winner_side must be 1
         l1 = ShipLoadout(ship_name="Winner", base_armour=100)

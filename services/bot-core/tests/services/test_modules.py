@@ -191,24 +191,31 @@ class TestInitialModuleState:
     """All activation modules start ready at tick 0 (§1 / §8)."""
 
     def test_cloak_initial_state(self):
-        """Cloak module starts with all timers zero, activation_count=0."""
+        """Cloak module starts with all timers zero, activation_count=0.
+
+        Thread-5: consumed_thresholds was REMOVED (thresholds are re-armable); activation_count
+        is retained for telemetry only.
+        """
         state = _init_combatant(_loadout(modules=[_cloak_mod()]), is_player=False)
         assert state.cloak_runtime is not None
         cr = state.cloak_runtime
         assert cr.cooldown_remaining_ms == 0
         assert cr.effect_remaining_ms == 0
         assert cr.activation_count == 0
-        assert cr.consumed_thresholds == []
+        assert not hasattr(cr, "consumed_thresholds")  # Thread-5: field removed
 
     def test_booster_initial_state(self):
-        """Booster module starts with all timers zero, activation_count=0."""
+        """Booster module starts with all timers zero, activation_count=0.
+
+        Thread-5: consumed_thresholds REMOVED; activation_count retained for telemetry only.
+        """
         state = _init_combatant(_loadout(modules=[_booster_mod()]), is_player=False)
         assert state.booster_runtime is not None
         br = state.booster_runtime
         assert br.cooldown_remaining_ms == 0
         assert br.effect_remaining_ms == 0
         assert br.activation_count == 0
-        assert br.consumed_thresholds == []
+        assert not hasattr(br, "consumed_thresholds")  # Thread-5: field removed
 
     def test_thruster_initial_state(self):
         """Thruster ModuleStats is populated; no runtime timer state needed."""
@@ -290,14 +297,18 @@ class TestCloakActivation:
         assert acts2[0].data["trigger_hp_pct"] == 33
         assert state.cloak_runtime.activation_count == 2
 
-    def test_third_cloak_activation_blocked_by_count_cap(self):
-        """After 2 activations, further threshold crossings do not activate."""
+    def test_third_cloak_activation_rearmable_no_count_cap(self):
+        """Thread-5: per-fight cap REMOVED — a third crossing DOES activate (cooldown permitting).
+
+        Old behaviour asserted activation_count<2 blocked the 3rd activation. New design has no cap:
+        the sole gates are off-cooldown + not-already-active, so this crossing fires.
+        """
         state = self._state_with_cloak(hull=100)
         cr = state.cloak_runtime
-        cr.activation_count = 2
+        cr.activation_count = 2  # would have been the cap under the old design
         cr.cooldown_remaining_ms = 0
         cr.effect_remaining_ms = 0
-        # Simulate a threshold crossing
+        # Simulate a fresh downward threshold crossing
         state.prev_hp_pct = 0.70
         state.current_hull = 65
         events: list = []
@@ -308,11 +319,16 @@ class TestCloakActivation:
             cloak_thresholds=CLOAK_THRESHOLDS,
             booster_thresholds=BOOSTER_THRESHOLDS,
         )
-        assert len(_find_module_activations(events, "cloak")) == 0
-        assert cr.activation_count == 2  # not incremented
+        assert len(_find_module_activations(events, "cloak")) == 1  # fires despite count==2
+        assert cr.activation_count == 3  # incremented (telemetry only)
+        assert cr.effect_remaining_ms == 10_000
 
     def test_cloak_skipped_while_cooling(self):
-        """Threshold crosses while cooldown > 0 → consumed but no activation."""
+        """Threshold crosses while cooldown > 0 → no activation (cooldown is the sole rate limiter).
+
+        Thread-5: thresholds are no longer "consumed". A crossing while on cooldown simply does not
+        activate; the threshold remains re-armable for a later downward re-cross once cooldown clears.
+        """
         state = self._state_with_cloak(hull=100)
         cr = state.cloak_runtime
         cr.cooldown_remaining_ms = 5_000  # still cooling
@@ -326,41 +342,50 @@ class TestCloakActivation:
             cloak_thresholds=CLOAK_THRESHOLDS,
             booster_thresholds=BOOSTER_THRESHOLDS,
         )
-        # No activation event
+        # No activation event (on cooldown)
         assert len(_find_module_activations(events, "cloak")) == 0
-        # Threshold IS consumed
-        assert 66 in cr.consumed_thresholds
         # activation_count unchanged
         assert cr.activation_count == 0
 
-    def test_consumed_threshold_not_retried(self):
-        """Once 66% is consumed (whether activated or not), it never fires again."""
+    def test_threshold_rearms_after_recovery(self):
+        """Thread-5: a threshold re-fires on a later downward re-cross (was one-shot/consumed before).
+
+        Old behaviour: once 66% was consumed it never fired again. New design: thresholds are
+        re-armable — after HP recovers back above 66% (e.g. via regen) and cooldown clears, a fresh
+        downward cross through 66% activates the cloak again.
+        """
         state = self._state_with_cloak(hull=100)
         cr = state.cloak_runtime
-        cr.consumed_thresholds = [66]  # already consumed
-        cr.cooldown_remaining_ms = 0
-        cr.effect_remaining_ms = 0
+        # First cross at 66% — fires.
         state.prev_hp_pct = 0.70
         state.current_hull = 65
         events: list = []
         _eval_hp_threshold_modules(
-            state,
-            tick=0,
-            events=events,
-            cloak_thresholds=CLOAK_THRESHOLDS,
-            booster_thresholds=BOOSTER_THRESHOLDS,
+            state, tick=0, events=events, cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS
         )
-        assert len(_find_module_activations(events, "cloak")) == 0
+        assert len(_find_module_activations(events, "cloak")) == 1
+        # Recovered above 66% and cooldown cleared (effect expired).
+        cr.cooldown_remaining_ms = 0
+        cr.effect_remaining_ms = 0
+        state.prev_hp_pct = 0.70  # back above 66%
+        state.current_hull = 65  # cross 66% downward again
+        events2: list = []
+        _eval_hp_threshold_modules(
+            state, tick=1, events=events2, cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS
+        )
+        # Re-armable: it fires AGAIN (would have been blocked by consumed_thresholds before).
+        assert len(_find_module_activations(events2, "cloak")) == 1
+        assert cr.activation_count == 2
 
     def test_single_tick_crosses_both_cloak_thresholds_activates_once(self):
         """HP drops from 100% to 20% in a single tick, crossing both 66% and 33% simultaneously.
 
-        Per §8 'threshold skipped while cooling — no retry':
+        Thread-5: "activates once" is PRESERVED by the not-already-active gate (no longer by
+        consumed-threshold tracking):
         - Only ONE activation fires (at the first threshold crossed, 66%).
-        - The second threshold (33%) is consumed but does NOT trigger a second activation
-          because the cloak is now active (effect_remaining_ms > 0) at the time the 33%
-          threshold is evaluated in the same tick.
-        - No retry happens on subsequent ticks for the consumed 33% threshold.
+        - The second threshold (33%) does NOT trigger a second activation because the cloak is now
+          active (effect_remaining_ms > 0) when 33% is evaluated in the same tick.
+        - With no fresh downward re-cross on the next tick (HP stays below 33%), nothing re-fires.
         """
         state = self._state_with_cloak(hull=100)
         cr = state.cloak_runtime
@@ -383,10 +408,7 @@ class TestCloakActivation:
         assert len(acts) == 1, f"Expected 1 activation, got {len(acts)}: {[e.data for e in acts]}"
         assert acts[0].data["trigger_hp_pct"] == 66
         assert cr.activation_count == 1
-        # Both thresholds consumed
-        assert 66 in cr.consumed_thresholds
-        assert 33 in cr.consumed_thresholds
-        # Second threshold is consumed — no retry on a subsequent call (even after cooldown clears)
+        # No fresh downward re-cross (HP already below both thresholds) → no re-fire even off cooldown.
         cr.cooldown_remaining_ms = 0
         cr.effect_remaining_ms = 0  # cloak expired
         state.prev_hp_pct = 0.25  # still below 33%, no new crossing
@@ -399,13 +421,14 @@ class TestCloakActivation:
             booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events2, "cloak")) == 0, (
-            "33% threshold should be consumed-not-retried after single-tick double crossing"
+            "no fresh downward re-cross → no re-fire (re-arm requires recovering above the threshold)"
         )
 
     def test_single_tick_crosses_both_booster_thresholds_activates_once(self):
         """HP drops from 100% to 55% in one tick, crossing both 80% and 60% simultaneously.
 
-        Same §8 mechanic for booster: only one activation fires; second threshold consumed.
+        Thread-5: only one activation fires (second threshold sees booster already active); no
+        consumed-threshold tracking, but re-arm requires a later downward re-cross.
         """
         state = _init_combatant(_loadout(base_armour=100, modules=[_booster_mod()]), is_player=False)
         br = state.booster_runtime
@@ -428,13 +451,10 @@ class TestCloakActivation:
         assert len(acts) == 1, f"Expected 1 activation, got {len(acts)}: {[e.data for e in acts]}"
         assert acts[0].data["trigger_hp_pct"] == 80
         assert br.activation_count == 1
-        # Both thresholds consumed
-        assert 80 in br.consumed_thresholds
-        assert 60 in br.consumed_thresholds
-        # Consumed 60% threshold is not retried after effect expires
+        # No fresh downward re-cross on the next tick (HP stays below 60%) → no re-fire.
         br.cooldown_remaining_ms = 0
         br.effect_remaining_ms = 0
-        state.prev_hp_pct = 0.62  # still below 60%; no new crossing
+        state.prev_hp_pct = 0.55  # same HP as current (already below 60%); no new crossing
         events2: list = []
         _eval_hp_threshold_modules(
             state,
@@ -444,7 +464,7 @@ class TestCloakActivation:
             booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events2, "booster")) == 0, (
-            "60% threshold should be consumed-not-retried after single-tick double crossing"
+            "no fresh downward re-cross → no re-fire (re-arm requires recovering above the threshold)"
         )
 
     def test_cooldown_starts_at_effect_expiry(self):
@@ -658,11 +678,15 @@ class TestBoosterActivation:
         assert len(all_acts) == 4
         assert state.booster_runtime.activation_count == 4
 
-    def test_fifth_booster_activation_blocked(self):
-        """activation_count=4 blocks any further activation."""
+    def test_fifth_booster_activation_rearmable_no_count_cap(self):
+        """Thread-5: per-fight cap REMOVED — a 5th crossing DOES activate (cooldown permitting).
+
+        Old behaviour asserted activation_count==4 blocked further activations. New design has no
+        cap: off-cooldown + not-active is sufficient, so this crossing fires.
+        """
         state = self._state_with_booster(hull=100)
         br = state.booster_runtime
-        br.activation_count = 4
+        br.activation_count = 4  # would have been the cap under the old design
         br.cooldown_remaining_ms = 0
         br.effect_remaining_ms = 0
         state.prev_hp_pct = 0.85
@@ -675,8 +699,8 @@ class TestBoosterActivation:
             cloak_thresholds=CLOAK_THRESHOLDS,
             booster_thresholds=BOOSTER_THRESHOLDS,
         )
-        assert len(_find_module_activations(events, "booster")) == 0
-        assert br.activation_count == 4
+        assert len(_find_module_activations(events, "booster")) == 1  # fires despite count==4
+        assert br.activation_count == 5  # incremented (telemetry only)
 
 
 # ---------------------------------------------------------------------------
@@ -890,10 +914,19 @@ class TestThrusterRamp:
 
 
 class TestUniversalTriggerRule:
-    """Universal trigger rule: missed/cooldown threshold = consumed, no retry (§8)."""
+    """Trigger rule: a crossing while on cooldown does not activate; re-arm needs a fresh re-cross.
 
-    def test_threshold_consumed_while_cooling_not_retried(self):
-        """66% consumed while cooling; after cooldown ends, it is NOT retroactively re-fired."""
+    Thread-5: thresholds are no longer "consumed". The self-regulating property now comes purely
+    from the prev_hp_pct crossing rule — you cannot re-cross a threshold downward without first
+    recovering above it — combined with the cooldown gate.
+    """
+
+    def test_no_retry_when_cooling_then_no_recross(self):
+        """Cross 66% while cooling (no activation); after cooldown ends but WITHOUT recovering above
+        66%, there is no fresh downward crossing → still no activation.
+
+        This is the Thread-5 self-regulation: re-firing requires HP to climb back above 66% first.
+        """
         state = _init_combatant(_loadout(base_armour=100, modules=[_cloak_mod()]), is_player=False)
         cr = state.cloak_runtime
         cr.cooldown_remaining_ms = 2_000  # cooling
@@ -910,11 +943,9 @@ class TestUniversalTriggerRule:
             booster_thresholds=BOOSTER_THRESHOLDS,
         )
         assert len(_find_module_activations(events, "cloak")) == 0
-        assert 66 in cr.consumed_thresholds
 
-        # Cooldown ends
+        # Cooldown ends, but HP did NOT recover above 66% → no fresh downward crossing → no retry.
         cr.cooldown_remaining_ms = 0
-        # Even though we're still at 65%, threshold is already consumed — no retry
         state.prev_hp_pct = state.current_hull / 100.0  # same HP, no new crossing
         events2: list = []
         _eval_hp_threshold_modules(

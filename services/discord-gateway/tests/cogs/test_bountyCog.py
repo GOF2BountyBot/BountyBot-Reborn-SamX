@@ -4268,6 +4268,76 @@ class TestBuildCaptureEmbedRedesign:
         assert "CheckerC" in breakdown_field.value
 
     # -----------------------------------------------------------------------
+    # Regression: bronze 2× combat bonus must render alongside the breakdown.
+    # Repro of bounty #4327 / battle #164: the bonus was paid (logs confirm
+    # +3,228 cr to the winner) but the embed hid it because the old code used
+    # `if breakdown / elif bonus_won` — and bronze ALWAYS has a breakdown, so
+    # the bonus line was dead code.
+    # -----------------------------------------------------------------------
+
+    def test_capture_embed_bonus_won_renders_bonus_line_with_breakdown(self):
+        """When bonus_won=True AND a breakdown is present, a combat-bonus line must appear."""
+        data = {
+            "criminal_name": "Vilhelm Lindon",
+            "division": "bronze",
+            "reward": 3228,
+            "total_reward": 6456,
+            "bonus_won": True,
+            "winner_name": "SsilverLeopard",
+            "payout_breakdown": [
+                {"player_display_name": "SsilverLeopard", "role": "capture claim", "amount": 3228},
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next((f for f in embed.fields if "Payout Breakdown" in (f.name or "")), None)
+        assert breakdown_field is not None
+        value = breakdown_field.value
+        # Base capture claim still present...
+        assert "🏆 SsilverLeopard — capture claim — 3,228 cr" in value
+        # ...AND the combat bonus line (the bit that used to vanish).
+        assert "combat bonus" in value
+        assert "💥 SsilverLeopard — combat bonus — 3,228 cr" in value
+
+    def test_capture_embed_bonus_amount_derives_from_total_when_no_claim_entry(self):
+        """Defensive: if the breakdown has no 'capture claim' entry, the bonus falls back to
+        total_reward // 2 (and is still attributed to the winner)."""
+        data = {
+            "criminal_name": "Edge Case",
+            "division": "bronze",
+            "reward": 1000,
+            "total_reward": 2000,
+            "bonus_won": True,
+            "winner_name": "LoneHunter",
+            # Breakdown present (so the `if breakdown` branch is taken) but no capture-claim role.
+            "payout_breakdown": [
+                {"player_display_name": "CheckerX", "role": "system check", "amount": 50},
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next((f for f in embed.fields if "Payout Breakdown" in (f.name or "")), None)
+        assert breakdown_field is not None
+        assert "💥 LoneHunter — combat bonus — 1,000 cr" in breakdown_field.value
+
+    def test_capture_embed_no_bonus_line_when_bonus_not_won(self):
+        """Negative: bonus_won=False must NOT add a combat-bonus line to the breakdown."""
+        data = {
+            "criminal_name": "NoBonus",
+            "division": "bronze",
+            "reward": 3228,
+            "total_reward": 3228,
+            "bonus_won": False,
+            "winner_name": "SsilverLeopard",
+            "payout_breakdown": [
+                {"player_display_name": "SsilverLeopard", "role": "capture claim", "amount": 3228},
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next((f for f in embed.fields if "Payout Breakdown" in (f.name or "")), None)
+        assert breakdown_field is not None
+        assert "combat bonus" not in breakdown_field.value
+        assert "💥" not in breakdown_field.value
+
+    # -----------------------------------------------------------------------
     # AC 4: Sort order — highest amount first
     # -----------------------------------------------------------------------
 

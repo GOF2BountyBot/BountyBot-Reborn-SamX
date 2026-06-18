@@ -397,7 +397,6 @@ async def test_p6t9b_fallback_reuses_cached_ships_one_query():
     ship = _make_ship("Groza", value=251600, max_primaries=3, max_modules=2)
 
     svc = _make_service()
-    svc.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
     db = _make_db_for_ship_query([ship])
 
     # find_item_tl returns a TL that differs from the ship's actual TL
@@ -405,10 +404,7 @@ async def test_p6t9b_fallback_reuses_cached_ships_one_query():
     actual_ship_tl = ship_tech_level_for_value(ship.value)
     target_tl = actual_ship_tl + 1 if actual_ship_tl < 10 else actual_ship_tl - 1
 
-    with (
-        patch.object(svc, "find_item_tl", new=AsyncMock(return_value=target_tl)),
-        patch.object(svc, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(svc, "find_item_tl", new=AsyncMock(return_value=target_tl)):
         result = await svc.generate_loadout(db, tech_level=2)
 
     # The ship should be resolved (fallback picks from all_ships)
@@ -423,14 +419,10 @@ async def test_p6t9b_ship_tl_minus1_fallback_still_works():
     ship = _make_ship("Groza", value=251600, max_primaries=3, max_modules=2)
 
     svc = _make_service()
-    svc.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
     db = _make_db_for_ship_query([ship])
 
     # find_item_tl returns -1 → entire TL-match block is skipped
-    with (
-        patch.object(svc, "find_item_tl", new=AsyncMock(return_value=-1)),
-        patch.object(svc, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(svc, "find_item_tl", new=AsyncMock(return_value=-1)):
         result = await svc.generate_loadout(db, tech_level=2)
 
     assert result["ship_name"] == "Groza"
@@ -449,14 +441,10 @@ async def test_p6t9b_normal_path_also_one_query():
     actual_tl = ship_tech_level_for_value(ship.value)
 
     svc = _make_service()
-    svc.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
     db = _make_db_for_ship_query([ship])
 
     # find_item_tl returns exactly the ship's actual TL → TL-match succeeds, no fallback
-    with (
-        patch.object(svc, "find_item_tl", new=AsyncMock(return_value=actual_tl)),
-        patch.object(svc, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(svc, "find_item_tl", new=AsyncMock(return_value=actual_tl)):
         result = await svc.generate_loadout(db, tech_level=2)
 
     assert result["ship_name"] == "Groza"

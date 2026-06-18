@@ -231,12 +231,11 @@ def service() -> BountyService:
     # Default to empty list; tests that need payout breakdown content can override.
     svc.player_repo.get_by_ids = AsyncMock(return_value=[])
 
-    # Task 2 (§ Spec C/D): generate_loadout now gathers the full catalog for a
-    # type via item_repo.get_all(db, item_type) (replacing the old per-TL
-    # get_all_by_tech_level + _find_typed_module path).  Default to an empty
-    # catalog so tests that don't care about primaries/modules get empty
-    # weapons/modules instead of awaiting a bare MagicMock.  Tests that DO
-    # assert loadout content override get_all explicitly.
+    # Task 2 (§ Spec C/D): generate_loadout's module/primary selection gathers the
+    # full catalog for a type via item_repo.get_all(db, item_type).  Default to an
+    # empty catalog so tests that don't care about primaries/modules get empty
+    # weapons/modules instead of awaiting a bare MagicMock.  Tests that DO assert
+    # loadout content override get_all explicitly.
     svc.item_repo.get_all = AsyncMock(return_value=[])
 
     return svc
@@ -611,30 +610,33 @@ async def test_generate_loadout_calculates_total_value(service, mock_db):
     """total_value equals ship.value + sum(weapon values) + sum(module values)."""
     ship = _make_ship("Betty", value=16038, max_primaries=1, max_modules=2)
     weapon = _make_weapon("Micro Gun", value=2577, dps=9.09)
-    module1 = _make_module("E2 Exoclad", value=1070, tech_level=1, type="CabinModule")
+    # Real path: an ArmourModule (priority walk, guaranteed) is equipped from the
+    # module pool, so its value MUST flow into total_value.  If module values were
+    # ever dropped from the total, expected_module_sum > 0 while total omits it.
     armour_mod = _make_module("Armour Plate", value=500, tech_level=1, type="ArmourModule")
 
-    async def _get_all_by_tl(db, tl, item_type=None):
+    async def _get_all(db, item_type):
         if item_type == "primary_weapon":
             return [weapon]
         if item_type == "module":
-            return [module1]
+            return [armour_mod]
         return []
 
     with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
         _setup_mock_db_query(mock_db, [ship])
-        service.item_repo.get_all_by_tech_level = _get_all_by_tl
+        service.item_repo.get_all = _get_all
+        result = await service.generate_loadout(mock_db, tech_level=2)
 
-        with patch.object(
-            service,
-            "_find_typed_module",
-            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
-        ):
-            result = await service.generate_loadout(mock_db, tech_level=2)
+    # The ArmourModule must actually have been equipped (else the assertion below
+    # is vacuous: 0 module value trivially "included").
+    assert armour_mod.value in [m["value"] for m in result["modules"]], (
+        "ArmourModule was not equipped — module-value assertion would be vacuous"
+    )
 
     # total_value must equal ship value + all weapon values + all module values
     expected_weapon_sum = sum(w["value"] for w in result["weapons"])
     expected_module_sum = sum(m["value"] for m in result["modules"])
+    assert expected_module_sum > 0, "module pool produced no equipped module value"
     expected_total = ship.value + expected_weapon_sum + expected_module_sum
     assert result["total_value"] == expected_total
 
@@ -3157,10 +3159,7 @@ async def test_generate_loadout_hp_no_modules(service, mock_db):
     # Manually set armour on the ship so we can verify it's picked up
     ship.armour = 120
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=-1)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=-1)):
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=2)
 
@@ -3272,18 +3271,20 @@ async def test_generate_loadout_hp_armour_module_no_extra_atts(service, mock_db)
         extra_atts=None,  # No extra_atts
     )
 
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+    # Real path: the null-extra_atts ArmourModule is in the module pool and IS
+    # equipped via the guaranteed priority walk; it must contribute 0 HP bonus.
+    async def _get_all(db, item_type):
+        return [armour_mod] if item_type == "module" else []
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(
-            service,
-            "_find_typed_module",
-            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
-        ),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=2)
+
+    # The module must actually have been equipped, else "0 bonus" is vacuous
+    # (indistinguishable from no module being equipped at all).
+    assert result["modules"], "ArmourModule was not equipped — HP assertion would be vacuous"
+    assert result["modules"][0]["type"] == "ArmourModule"
 
     # ArmourModule with no extra_atts contributes 0 armour bonus
     assert result["armor_hp"] == 100
@@ -4914,21 +4915,13 @@ async def test_generate_loadout_tl_matched_path_excludes_non_combat_ships(servic
     _setup_mock_db_query_with_filter(mock_db, combat_ships=[combat_ship])
 
     weapon = _make_weapon()
-    module = _make_module()
 
-    async def _get_all_by_tl(db, tl, item_type=None):
-        if item_type == "primary_weapon":
-            return [weapon]
-        if item_type == "module":
-            return [module]
-        return []
+    async def _get_all(db, item_type):
+        return [weapon] if item_type == "primary_weapon" else []
 
-    service.item_repo.get_all_by_tech_level = _get_all_by_tl
+    service.item_repo.get_all = _get_all
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
         result = await service.generate_loadout(mock_db, tech_level=2)
 
     # The non-combat ship (Cormorant) was never in the query result, so it is never selected
@@ -4954,11 +4947,7 @@ async def test_generate_loadout_fallback_path_excludes_non_combat_ships(service,
     # We simulate by making matching_ships empty: we give the ship a value such
     # that ship_tech_level_for_value(value) != ship_tl.
     # Betty value=16038 → TL 1; find_item_tl returns 5 → no match → fallback.
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=5)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
-        service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=5)):
         result = await service.generate_loadout(mock_db, tech_level=6)
 
     # Fallback path selected the only available (combat) ship
@@ -4982,11 +4971,11 @@ async def test_generate_loadout_never_produces_non_combat_ship(service, mock_db)
 
     weapon = _make_weapon()
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
-        service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[weapon])
+    async def _get_all(db, item_type):
+        return [weapon] if item_type == "primary_weapon" else []
+
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         for _ in range(20):
             result = await service.generate_loadout(mock_db, tech_level=2)
             # Every selected ship must have at least 1 primary weapon slot
@@ -5952,20 +5941,18 @@ def _make_loadout_for_secondary_test(
     Returns an awaitable calling service.generate_loadout with:
     - ship selection mocked to return ``ship``
     - SecondaryWeaponRepository.list_all mocked to return ``all_secondaries``
-    - item_repo returning empty lists (no primaries/turrets needed)
-    - _find_typed_module returning None (no modules needed)
+    - item_repo.get_all returning empty lists (no primaries/modules/turrets needed;
+      the ``service`` fixture defaults get_all to [] already)
     """
 
     async def _run():
         with (
             patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-            patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
             patch(
                 "services.bounty_service.SecondaryWeaponRepository",
                 return_value=MagicMock(list_all=AsyncMock(return_value=all_secondaries)),
             ),
         ):
-            service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
             _setup_mock_db_query(db, [ship])
             return await service.generate_loadout(db, tech_level=tech_level)
 

@@ -1034,37 +1034,6 @@ class BountyService:
             base_armour = 100
         return ShipLoadout(ship_name=ship_name, base_armour=base_armour)
 
-    async def _find_typed_module(self, db: AsyncSession, module_keyword: str, item_tl: int):
-        """Find the first module whose name contains *module_keyword* (case-insensitive).
-
-        Searches at *item_tl* first, then broadens to all tech levels.
-
-        Args:
-            db:             Async database session.
-            module_keyword: Substring to match in module name (e.g. ``"armour"``).
-            item_tl:        Preferred tech level to search first.
-
-        Returns:
-            A matching module object, or None if none found.
-        """
-        # Search at item_tl first
-        modules_at_tl = await self.item_repo.get_all_by_tech_level(db, item_tl, item_type="module")
-        keyword_lower = module_keyword.lower()
-        matches = [m for m in modules_at_tl if keyword_lower in m.name.lower()]
-        if matches:
-            return random.choice(matches)
-
-        # Broaden search across all TLs
-        for tl in range(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL + 1):
-            if tl == item_tl:
-                continue
-            modules = await self.item_repo.get_all_by_tech_level(db, tl, item_type="module")
-            matches = [m for m in modules if keyword_lower in m.name.lower()]
-            if matches:
-                return random.choice(matches)
-
-        return None
-
     async def scrub_player_checks_outside_tier(
         self,
         db: AsyncSession,

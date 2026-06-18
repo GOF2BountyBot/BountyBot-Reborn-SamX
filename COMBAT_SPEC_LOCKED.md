@@ -54,7 +54,7 @@ When a formula uses a lowercase symbol whose value is sourced from a config knob
   distance_gained_m = base_speed × (effect_pct / 100) × (duration_ms / 1000)
   ```
   During the boost window, passive closure is suspended; the booster's outward velocity dominates. After expiry, normal closure resumes.
-- **No upper distance bound.** `current_distance` is naturally bounded by per-module booster limits (`effect_pct × duration_ms`) and the 4-activation-per-fight cap on boosters; there is no synthetic `MAX_DISTANCE_M` cap. Weapons stop firing once they exceed their own `range_m`; otherwise no special behavior at extreme distances.
+- **No upper distance bound.** `current_distance` is naturally bounded by per-module booster limits (`effect_pct × duration_ms`) and by the booster's **cooldown** — there is no per-fight booster activation cap (the legacy fixed-count cap was removed in the Thread-5 combat-chain change; see §7.3 / §8), and no synthetic `MAX_DISTANCE_M` cap. Booster re-activation is rate-limited solely by cooldown, so the practical distance ceiling is the gap one boost opens before passive closure resumes. Weapons stop firing once they exceed their own `range_m`; otherwise no special behavior at extreme distances.
 - **Shock-blast distance reset:** instantly resets both ships to the starting distance (5000 m). 100% guaranteed (no accuracy roll). No damage. Fires on cooldown (`loading_speed_ms`); no per-fight cap; no HP-threshold gating. **Close-range trigger gate (FIX 2):** fires only when `current_distance < SHOCK_BLAST_TRIGGER_RANGE_M` (default **500 m**) — at long range the reset is pointless and would waste a cooldown/round. (Phase-1 weapons resolve same-tick, so in-flight projectile interaction is moot.)
 
 ---
@@ -324,8 +324,9 @@ Three tiers:
 
 ### 7.2 Cloaks
 - **Effect:** while active, the opponent's hit-chance against you is **hard-set to an absolute value** `cloak_set_value` (default **0.25**, `CLOAK_SET_VALUE`). NOT a relative reduction; NOT a forced miss. Replaces the §5 layered formula entirely.
-- **Activation:** HP thresholds **66 % / 33 %** — up to 2 activations per fight.
-- **Trigger rule:** activates iff off cooldown at the threshold crossing; missed threshold = skipped, no retry. Cooldown timer starts at *effect expiry*.
+- **Activation:** HP thresholds **66 % / 33 %**. **No per-fight activation cap** (the legacy 2-activation cap was removed in the Thread-5 combat-chain change) — thresholds are **re-armable** (see §8). The only gates are *off cooldown* AND *not already active*, plus the **no-activate-while-invuln** guard below.
+- **Trigger rule:** activates iff off cooldown AND not already active at the threshold crossing; missed threshold = skipped (but stays re-armable — it can fire on a later downward re-cross once HP recovers above it and cooldown clears). Cooldown timer starts at *effect expiry*.
+- **No-activate-while-EmergencySystem-invuln (Thread-5 guard):** the cloak is **skipped entirely** while the ship's EmergencySystem invuln window is open (`invuln_remaining_ms > 0`) — accuracy reduction is wasted during invuln. The cloak instead covers the vulnerable post-ES recovery via the **emergency-end chain** (§7.7 Trigger B). This guarantees cloak never co-activates with ES.
 - **Duration:** per-module `effect_duration_ms` from wiki (U'tool = 10 s, Sight Suppressor II = 20 s, Shadow Ninja = 40 s). **Phase-1: all cloaks share the same `cloak_set_value`; tiers differ by duration only.**
 - **Cooldown:** per-module `loading_speed_ms` from wiki.
 - **Built-in cloaks (Scimitar + Specter):** these ships carry an implicit U'tool cloak (`builtinModules: ["U'tool"]`) that DOES function in combat — same mechanic, duration, cooldown, HP-threshold activation. The built-in does NOT count against `max_modules` (off-slot). **Supersession rule:** if the pilot equips a cloak module, the equipped one wins:
@@ -338,8 +339,8 @@ Three tiers:
 - **Two simultaneous effects** while active:
   - **(a) Distance push** — formula in §2 (uses `effect_pct`).
   - **(b) Opponent accuracy debuff** — formula in §5: `debuff_pp = effect_pct × k_boost`, default `k_boost = 0.10`.
-- **Activation:** HP thresholds **80 % / 60 % / 40 % / 20 %** — up to 4 activations if cooldown permits.
-- **Trigger rule:** universal HP-threshold rule (§8).
+- **Activation:** HP thresholds **80 % / 60 % / 40 % / 20 %**. **No per-fight activation cap** (the legacy fixed-count cap was removed in the Thread-5 combat-chain change) — thresholds are **re-armable** (see §8); cooldown is the sole rate limiter. The booster may now activate more times per fight than the old fixed cap allowed (intended).
+- **Trigger rule:** universal HP-threshold rule (§8) — off cooldown AND not already active. ADDITIONALLY, the booster activates off the **emergency-system-activate chain** (§7.7 Trigger A): when this ship's ES fires, the booster also activates if off cooldown, to help reposition during the invuln window.
 - **Booster-user can still fire during boost** (accepted simplification; mirrors GoF2 base behavior).
 - Per-module debuff at default `k_boost`: Linear 6 pp / Cyclotron 8 pp / Synchrotron 16 pp / Me'al 20 pp / Polytron 30 pp.
 
@@ -366,6 +367,16 @@ Three tiers:
 - **HP at expiry:** `1 + 10 s × applicable regen rates`, capped per-layer max. Edge case (no shield, no Repair Bot) → HP = 1 at expiry.
 - **Consumable:** removed from loadout after use; player must manually re-equip a spare from inventory. **Once per fight by consumption.**
 - **Not an HP-threshold device:** despite being grouped with cloak/booster in §8 for activation-rule discussion, ES does NOT use the universal HP-threshold trigger rule. It fires from the lethal-damage check above, at step 4 of the tick (not step 5).
+
+#### Chained activations (Thread-5 combat-chain — baseline behavior, NOT tunable)
+The EmergencySystem lifecycle drives the booster and cloak so the two evasion tools fire when they actually help. Both chain activations are **one-shot at the trigger instant** — if the target module is on cooldown (or already active) at that instant, the chain activation is simply **lost** (no deferral, no retry); an already-active module is never refreshed nor cut short.
+
+- **Trigger A — ES ACTIVATES → Booster.** At the tick where ES fires (step 4a), the **booster** also activates *if off cooldown and not already active*. Rationale: the booster's distance push lets the ship reposition during the 10 s invuln window; its accuracy debuff carries into the post-invuln recovery. Injected inside `_eval_emergency_system` immediately after ES fires.
+- **Trigger B — ES ENDS → Cloak.** At the tick where the invuln window expires (`invuln_remaining_ms` transitions `>0 → 0`, in the Phase-1 tick-down), the **cloak** activates *if off cooldown and not already active*. Rationale: the cloak's accuracy reduction is wasted *during* invuln (all damage is already blocked) but valuable for the vulnerable post-ES recovery — hence it fires on ES **end**, never on ES start. Reinforced by the §7.2 no-activate-while-invuln guard.
+- **Same-tick resolution (ES tick):** ES ✓ / Booster ✓ (if off cooldown) / Cloak ✗. This falls out of phase order (ES at step 4a runs before HP-threshold checks at step 5) plus the cloak invuln guard — no bespoke arbitration code. The booster's same-tick HP-threshold crossing is a no-op because Trigger A already activated it; the cloak's same-tick crossing is suppressed by the invuln guard and deferred to Trigger B.
+- **Telemetry:** chained activations emit a `module_activation` event carrying a distinct **`trigger`** marker — `"emergency_activate"` for the booster (Trigger A) and `"emergency_end"` for the cloak (Trigger B) — to distinguish them from a normal HP-threshold crossing (which carries `trigger_hp_pct`). They still count toward `module_activations` stats under the same `module` key. See §12 event vocabulary.
+- **No config flag:** this chain (and the §7.2/§7.3/§8 cap removal it depends on) is a baseline core-combat correction, deliberately exempt from the §0.1 tunable directive.
+- **Edge cases:** fight ends during invuln → Trigger B never fires (G3). Booster duration (3–6 s) shorter than the 10 s invuln → the Trigger-A booster may expire mid-invuln; no auto re-fire (G5). Regen continues during invuln (§7.7 above, G1 — intended, symmetric with players).
 
 ### 7.8 PrimaryWeaponMod
 Passive per-shot stat modifier. **Unique-equip** (§10) — only one PrimaryWeaponMod can be slotted at a time.
@@ -425,12 +436,12 @@ The resolver loads these but applies no combat effect:
 
 | Device | Thresholds | Max activations | Notes |
 |---|---|---|---|
-| Cloak | 66 % / 33 % | 2 | Universal HP-threshold rule below. Fires at Appendix B step 5. |
-| Booster | 80 % / 60 % / 40 % / 20 % | 4 (if cooldown permits) | Universal HP-threshold rule below. Fires at Appendix B step 5. |
+| Cloak | 66 % / 33 % | **uncapped** (cooldown-limited; re-armable) | Universal HP-threshold rule below. Fires at Appendix B step 5. Skipped while ES invuln active (§7.2 guard); also fires off ES-end chain (§7.7 Trigger B). |
+| Booster | 80 % / 60 % / 40 % / 20 % | **uncapped** (cooldown-limited; re-armable) | Universal HP-threshold rule below. Fires at Appendix B step 5. Also fires off ES-activate chain (§7.7 Trigger A). |
 | Thruster | — (passive) | — | Always active when `current_distance < 750 m`. No activation event. |
-| EmergencySystem | End-of-damage-phase hull ≤ 0 (not a %) | 1 (consumable) | NOT an HP-threshold device. Fires at Appendix B step 4 (after damage applies, before clamp). See §7.7. |
+| EmergencySystem | End-of-damage-phase hull ≤ 0 (not a %) | 1 (consumable) | NOT an HP-threshold device. Fires at Appendix B step 4 (after damage applies, before clamp). Drives the booster/cloak chain (§7.7). See §7.7. |
 
-**Universal trigger rule:** at any HP-threshold crossing, the device activates **iff off cooldown**. Still cooling = threshold *skipped*, no retry. Cooldown timer starts when **effect expires**, NOT when activated.
+**Universal trigger rule (Thread-5):** at any HP-threshold crossing, the device activates **iff off cooldown AND not already active**. There is **no per-fight activation cap** and **no one-shot threshold consumption** — thresholds are **re-armable**: a threshold that is skipped (cooling or already active) can fire on a *later* downward re-cross, once HP recovers above it (via regen) and cooldown clears. Cooldown is the sole rate limiter. Crossing detection still uses `prev_hp_pct` (a threshold can't re-cross downward without first recovering above it → self-regulating). Cooldown timer starts when **effect expires**, NOT when activated. (The legacy fixed-count caps and the one-shot threshold-consumption tracking were both removed; an `activation_count` is retained for telemetry only and never gates.)
 
 **HP-percent definition:** the percent that thresholds are evaluated against is the **sum-of-layers / sum-of-maxes** across all three HP layers:
 
@@ -618,7 +629,7 @@ The Tier-0 summary carries: outcome / reason / duration; per-combatant module ac
 | `regen` | shield recharge pulse or repair-bot hull/armour pulse applies | `{layer, amount, hp_after}` |
 | `weapon_fire` | a primary / secondary / turret fires (incl. miss) | Base shape `{slot, subtype, weapon, hit, accuracy}` for accuracy-roll fires. Cluster-missile, nuke, and shock-blast substitute or extend per the table below. |
 | `damage` | HP applied to a target after a hit | `{amount, absorbed, breakdown:{shield,armour,hull}, hp_after, source}`. `absorbed` (T10) = HP actually removed, overkill excluded — the authoritative input to the summary's `damage_dealt`/`damage_taken`. During an active EmergencySystem invuln window (§7.7), the event still emits but with `amount: 0`, `absorbed: 0`, `breakdown` omitted, `hp_after` unchanged, and a `blocked_by: "emergency_system_invuln"` annotation. |
-| `module_activation` | a discrete activation occurs — Phase-1: cloak / booster (HP-threshold crossing) or EmergencySystem (lethal-hull trigger). Passive modules (Repair Bot, Thruster, PrimaryWeaponMod, shield regen) do NOT emit this event. | `{module, trigger_hp_pct}` (trigger_hp_pct omitted for EmergencySystem) |
+| `module_activation` | a discrete activation occurs — Phase-1: cloak / booster (HP-threshold crossing OR Thread-5 ES chain) or EmergencySystem (lethal-hull trigger). Passive modules (Repair Bot, Thruster, PrimaryWeaponMod, shield regen) do NOT emit this event. | `{module, trigger_hp_pct}` for a normal HP-threshold crossing (trigger_hp_pct omitted for EmergencySystem); **chained** activations instead carry `{module, trigger: "emergency_activate"}` (booster via §7.7 Trigger A) or `{module, trigger: "emergency_end"}` (cloak via Trigger B). All variants count toward `module_activations` stats under the same `module` key. |
 | `cooldown_end` | a weapon or module comes off cooldown | `{system}` |
 | `layer_depleted` | a ship's shield → 0 or armour → 0 | `{layer}` |
 | `distance` | distance changes (booster push, closing, shock-blast reset) | `{from, to, cause}` |

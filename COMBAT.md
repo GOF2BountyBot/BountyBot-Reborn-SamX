@@ -87,11 +87,17 @@ Most defensive gadgets trigger **automatically** when your hull drops to set dan
 - **Emergency System** — a one-shot lifeline. When you're on the brink, it grants a brief window of near-invulnerability to weather the storm.
 - **Repair bot / shield recharge** — slow, steady healing that ticks away in the background.
 
+These gadgets aren't capped at a fixed number of uses anymore — cloak and booster can fire again and again over a long fight, held back only by their own recharge timers (so a drawn-out brawl can see several boosts or cloaks, not just two or four).
+
+**The Emergency System sets off a chain.** When it kicks in, your **booster** fires too (if it's recharged) — the extra speed helps you reposition while you're untouchable. Then, the moment the invulnerability *wears off*, your **cloak** snaps on (if it's recharged) to cover the dangerous recovery — a cloak would be wasted *during* invulnerability, so it deliberately waits for the window to close. It's a "panic button → reposition → vanish" sequence that turns a near-death moment into an escape.
+
 ---
 
 ## Hunting criminals (Player vs Criminal)
 
 When you, a player, take on a criminal NPC for a bounty, the game gives you a built-in **damage-reduction edge** so the fight isn't stacked against you — by default a criminal's shots land for roughly a **third less** damage against a player. (In a straight player-vs-player duel, no such handicap applies — it's an even match.)
+
+**How a criminal is kitted out.** A criminal's loadout is generated to roughly match the threat level of its division (Bronze through Platinum), not hand-picked. Its main guns lean toward **long range** — at least half its primary slots are guaranteed long-range weapons, with the exact gun drawn from a small band around the criminal's tech level. Its gadgets are filled in by a fixed **priority order** — scanner, armour and shield first (always fitted), then the situational gear (cloak, booster, emergency system, weapon mod) whose odds rise sharply with division (a Bronze thug rarely cloaks; a Platinum boss almost always does), then a repair bot and thruster, and finally harmless filler if any slots remain. One deliberate exclusion: weapons that deal mostly **EMP** disruption (which does no real hull damage in the current combat model) are kept *out* of criminal hands — otherwise a criminal could field guns that look threatening but can't actually win, handing you a free kill. (All of these knobs — the long-range share, the per-division gadget odds, the EMP exclusion — are tunable per server.)
 
 ---
 

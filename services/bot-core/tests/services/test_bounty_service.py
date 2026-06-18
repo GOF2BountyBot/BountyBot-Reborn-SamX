@@ -493,20 +493,17 @@ async def test_generate_loadout_returns_valid_dict(service, mock_db):
     weapon = _make_weapon()
     module = _make_module()
 
-    # Return weapons-only list for primary_weapon queries, modules-only for module queries
-    async def _get_all_by_tl(db, tl, item_type=None):
+    # Real path: the pool comes from item_repo.get_all(db, item_type) — weapons
+    # for "primary_weapon", modules for "module".
+    async def _get_all(db, item_type):
         if item_type == "primary_weapon":
             return [weapon]
         if item_type == "module":
             return [module]
         return []
 
-    service.item_repo.get_all_by_tech_level = _get_all_by_tl
-
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=module)),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=2)
 
@@ -713,23 +710,37 @@ async def test_generate_loadout_filler_b_fills_remaining_slots(service, mock_db)
 
 
 @pytest.mark.asyncio
-async def test_generate_loadout_limit_0_type_not_equipped(service, mock_db):
-    """Modules with limit=0 (e.g. JumpDriveModule) must never be equipped."""
-    ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=3)
+async def test_generate_loadout_never_equip_type_excluded_real_path(service, mock_db):
+    """A NEVER-equip type (JumpDriveModule) is excluded from the real selection
+    walk while a normally-equippable category still equips (§ Spec C).
+
+    Drives the rewritten path: the pool comes from item_repo.get_all("module")
+    (whole catalog, no TL filter).  The pool holds a JumpDriveModule (NEVER-equip:
+    absent from the priority order and both filler buckets) alongside a guaranteed
+    ArmourModule and a Filler-B CabinModule.  With free module slots the Jump
+    Drive must NOT appear, but the normal modules CAN — so this fails if the
+    never-equip exclusion (JumpDrive's absence from every equip list) regressed.
+    """
+    ship = _make_ship("Groza", value=251600, max_primaries=0, max_modules=3)
     jump_drive = _make_module("Jump Drive", value=99999, tech_level=1, type="JumpDriveModule")
+    armour_mod = _make_module("E2 Exoclad Armour", value=1070, tech_level=1, type="ArmourModule")
     cabin_mod = _make_module("Large Cabin", value=5000, tech_level=1, type="CabinModule")
 
-    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[jump_drive, cabin_mod])
+    async def _get_all(db, item_type):
+        return [jump_drive, armour_mod, cabin_mod] if item_type == "module" else []
 
-    with (
-        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
-        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
-    ):
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        service.item_repo.get_all = _get_all
         _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=1)
 
     module_types = [m["type"] for m in result["modules"]]
-    assert "JumpDriveModule" not in module_types, f"JumpDriveModule should never be equipped: {module_types}"
+    assert "JumpDriveModule" not in module_types, f"JumpDriveModule must never be equipped: {module_types}"
+    # A normally-equippable module DID slot — proves the walk ran (not vacuous):
+    # guaranteed Armour is present and the remaining free slots fall to Cabin filler.
+    assert "ArmourModule" in module_types, f"guaranteed ArmourModule must equip: {module_types}"
+    assert set(module_types) == {"ArmourModule", "CabinModule"}, f"only non-banned types may fill: {module_types}"
+    assert len(result["modules"]) == 3, f"all 3 slots filled from non-banned pool: {module_types}"
 
 
 @pytest.mark.asyncio

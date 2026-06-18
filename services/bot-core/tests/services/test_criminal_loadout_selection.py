@@ -236,6 +236,26 @@ async def test_two_gate_honors_per_division_rate_statistically():
 
 
 @pytest.mark.asyncio
+async def test_two_gate_honors_per_division_rate_statistically_gold():
+    """Gold cloak chance = 66%: equip rate across many trials lands near 66%.
+
+    Mirrors the silver@25 case for the spec-called-out middle value (gold@66).
+    Only Scanner/Armour/Shield precede Cloak and all have variants, so Cloak is
+    always reached with a free slot (max_modules large) — the only thing gating
+    it is the per-division 66% roll."""
+    svc = _service_with_modules(_all_combat_modules())
+    hits = 0
+    trials = 400
+    random.seed(98765)
+    for _ in range(trials):
+        equipped = await svc._select_modules(db=AsyncMock(), item_tl=4, division="gold", max_modules=9, cfg=None)
+        if "CloakModule" in {m.type for m in equipped}:
+            hits += 1
+    rate = hits / trials
+    assert 0.58 <= rate <= 0.74, f"gold cloak rate {rate:.2f} should be ~0.66"
+
+
+@pytest.mark.asyncio
 async def test_failed_gate_leaves_slot_for_next_category():
     """A failed TWO-GATE roll does NOT consume the slot — the next category fills it.
 

@@ -417,23 +417,41 @@ class TestSynthesizeCriminals:
 
     @pytest.mark.asyncio
     async def test_synthesize_uses_division_max_tl(self):
-        """Synthesis calls generate_loadout with TL within the division's range."""
+        """Synthesis rolls every loadout TL within [MIN_TECH_LEVEL, DIVISION_MAX_TL].
+
+        The mock is patched at the class level, so generate_loadout is invoked as
+        a BOUND method: the real BountyService instance arrives as ``self``.  The
+        signature accepts ``self`` explicitly so binding succeeds and the broad
+        ``except`` in ``_synthesize_criminals`` cannot silently swallow a
+        TypeError (which would leave ``recorded_tls`` empty and make the bound
+        assertion vacuously pass).
+        """
+        from services.game_constants import GameConstants
+
         svc = _make_service()
         recorded_tls: list[int] = []
 
-        async def _mock_generate(db, tl, **kwargs):
+        async def _mock_generate(self, db, tl, *, division, cfg=None):
             recorded_tls.append(tl)
             return {"ship_name": "Ship", "ship_armour": 100, "weapons": [], "turrets": []}
 
+        # Gold (max TL 7) gives real headroom: a missing division cap or an
+        # off-by-one in the roll would land outside [1, 7] and fail the band.
+        division = "gold"
+        count = 30
         with patch(
             "services.combat_preflight_service.BountyService.generate_loadout",
             new=_mock_generate,
         ):
-            await svc._synthesize_criminals(MagicMock(), "bronze", count=5)
+            await svc._synthesize_criminals(MagicMock(), division, count=count)
 
-        # Bronze max TL is 2; min TL is 1
+        max_tl = GameConstants.DIVISION_MAX_TL[division]
+        min_tl = GameConstants.MIN_TECH_LEVEL
+        assert max_tl == 7  # guards the gold cap the band below depends on
+        # Non-vacuity: every call must have recorded a TL (no swallowed binding error).
+        assert len(recorded_tls) == count, f"expected {count} recorded TLs, got {len(recorded_tls)}"
         for tl in recorded_tls:
-            assert 1 <= tl <= 2
+            assert min_tl <= tl <= max_tl, f"TL {tl} outside division '{division}' band [{min_tl}, {max_tl}]"
 
     @pytest.mark.asyncio
     async def test_synthesize_forwards_division_to_generate_loadout(self):

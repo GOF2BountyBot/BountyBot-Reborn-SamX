@@ -371,7 +371,7 @@ Use `int_value` for integer fields, `float_value` for float fields, `json_value`
 | `min_guild_activity` | float | `1.0` | temperature | Temperature floor per division |
 | `activity_temp_per_player` | int | `1` | temp units | Intended: temperature rise per player system check. **Currently inert** — `TemperatureService.raise_temperature()` is never called by production code. See [Activity Temperature System](#activity-temperature-system). |
 | `ship_value_reward_percentage` | float | `0.01` | fraction | Fraction of criminal ship value used as bounty reward (0.01 = 1%) |
-| `criminal_equip_damageless_weapon_chance` | int | `20` | percent | % chance a criminal equips a cosmetic/zero-DPS weapon |
+| `criminal_equip_damageless_weapon_chance` | int | `20` | percent | **Dead constant — no consumer in the loadout selection path** (superseded by the Thread-6 EMP exclusion `criminal_exclude_emp_weapons`; tuning this has no effect). See OPEN_ITEMS.md `BAL-dead-const`. |
 | `criminal_max_gear_upgrade` | int | `1` | TL levels | Max TL above criminal's base TL their gear can be |
 | `bounty_reward_to_xp_gain_mult` | float | `0.1` | multiplier | XP = reward_credits × this multiplier |
 | `bounty_winner_reserve_factor` | float | `0.25` | fraction | Fraction of reward guaranteed to winner (rest split as consolation) |

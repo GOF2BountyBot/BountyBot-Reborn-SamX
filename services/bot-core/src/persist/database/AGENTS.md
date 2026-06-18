@@ -10,7 +10,7 @@ On 2026-04-22 the then-existing revisions 0002–0007 were **collapsed into
 0001_initial_schema.py**. Revision 0001 creates all tables from current ORM
 metadata via `Base.metadata.sorted_tables` (skipping tables that already
 exist). New revisions have been added since — see "Current Migration Chain"
-below; the chain head is now `0018`.
+below; the chain head is now `0021` (…0018 → 0019 → 0020 → 0021).
 
 **IMPORTANT**: Revision 0001 assumes a fresh database (no previous
 `alembic_version` row). If upgrading a pre-flattening deployment without a DB
@@ -386,7 +386,7 @@ This is encapsulated in `MigrationManager.from_async_url()` — always prefer th
 
 ---
 
-*Last updated: 2026-06-11 (true-to-source audit: corrected pool defaults,
+*Last updated: 2026-06-18 (true-to-source audit: corrected pool defaults,
 health-info shape, MigrationManager method list, run_migration CLI syntax,
-SchemaManager location, TableNames entries; documented the full 0001→0018
-migration chain incl. 0018_drop_manual_turret_mode)*
+SchemaManager location, TableNames entries; documented the full 0001→0021
+migration chain through 0021_criminal_exclude_emp_weapons)*

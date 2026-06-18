@@ -208,6 +208,19 @@ _NEVER_EQUIP_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# Enforced never-equip invariant (import-time guard): the banned set MUST be
+# disjoint from every equippable list.  Exclusion is otherwise purely structural
+# (banned types simply happen to appear in none of the equippable lists), giving
+# zero protection against a future filler-list typo silently re-admitting a
+# banned module.  This assertion makes the exclusion a checked invariant.
+_EQUIPPABLE_MODULE_TYPES: frozenset[str] = frozenset(
+    {entry[0] for entry in _MODULE_PRIORITY_ORDER} | set(_FILLER_A_TYPES) | set(_FILLER_B_TYPES)
+)
+assert not (_NEVER_EQUIP_TYPES & _EQUIPPABLE_MODULE_TYPES), (
+    "Never-equip module type(s) leaked into an equippable list: "
+    f"{sorted(_NEVER_EQUIP_TYPES & _EQUIPPABLE_MODULE_TYPES)}"
+)
+
 # Divisions whose nearest-TL tie-break prefers the HIGHER tech level.
 _HIGHER_TL_TIE_DIVISIONS: frozenset[str] = frozenset({"gold", "platinum"})
 

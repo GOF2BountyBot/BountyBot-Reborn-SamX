@@ -532,8 +532,13 @@ class TestSameTickKillCollapse:
 
 
 class TestStalemateWhyLine:
-    def test_stalemate_outcome_includes_why_line(self):
-        """Stalemate outcome includes 'couldn't out-damage' why-line with aggressor stats."""
+    def test_time_cap_stalemate_uses_neutral_why_line(self):
+        """A time_cap stalemate (clock expired, both alive) gets a neutral why-line.
+
+        It must NOT presume regen or single out an "aggressor" — running the clock can be down
+        to high effective HP, evasion, or just a tanky opponent. Per-combatant damage/hit stats
+        already live in the Summary field, so the Outcome line only states the headline reason.
+        """
         combatants_map = {
             "1": {"name": "Alice", "ship": "S", "damage_dealt": 200, "shots_hit": 50, "shots_fired": 80},
             "2": {"name": "Bob", "ship": "W", "damage_dealt": 100, "shots_hit": 20, "shots_fired": 60},
@@ -560,35 +565,46 @@ class TestStalemateWhyLine:
         assert outcome is not None
         detail = outcome["detail"]
         assert "Stalemate" in detail
-        # Alice dealt more damage (200 vs 100) → is the aggressor
-        assert "Alice" in detail
-        assert "couldn't out-damage" in detail
-        # Why-line includes shot stats and damage
-        assert "50/80" in detail
-        assert "200" in detail
+        assert "neither side could score a fatal blow in the time allotted" in detail
+        # No presumptuous regen framing, no aggressor/defender call-out, no per-combatant stats.
+        assert "regen" not in detail
+        assert "out-damage" not in detail
+        assert "Alice" not in detail
+        assert "Bob" not in detail
+        # Concise enough to survive the gateway's 200-char per-line clamp untruncated.
+        assert len(detail) <= 200
 
-    def test_stalemate_lower_damage_side_is_defender(self):
-        """The lower-damage side is called out as the defender (their regen won)."""
+    def test_mutual_destruction_uses_distinct_why_line(self):
+        """A 'mutual' stalemate (both hulls hit 0 same tick) is a double-KO, not a regen survival.
+
+        The regen/out-damage framing only fits time_cap (one side survives). A mutual kill has no
+        survivor to out-damage, so it gets a dedicated 'mutual destruction' line — and that line is
+        short enough (~50 chars) that the gateway's per-line clamp never chops it.
+        """
         combatants_map = {
-            "1": {"name": "Alice", "ship": "S", "damage_dealt": 200, "shots_hit": 50, "shots_fired": 80},
-            "2": {"name": "Bob", "ship": "W", "damage_dealt": 100, "shots_hit": 20, "shots_fired": 60},
+            "1": {"name": "Alice", "ship": "S", "damage_dealt": 310, "shots_hit": 8, "shots_fired": 8},
+            "2": {"name": "Bob", "ship": "W", "damage_dealt": 135, "shots_hit": 12, "shots_fired": 22},
         }
         timeline = [
             {
-                "tick": 18000,
+                "tick": 1367,
                 "type": "fight_end",
                 "actor": None,
                 "target": None,
-                "data": {"winner": None, "reason": "time_cap", "duration_ticks": 18000},
+                "data": {"winner": None, "reason": "mutual", "duration_ticks": 1368},
             }
         ]
         result = _extract_key_events(timeline, combatants_map=combatants_map)
         outcome = next((e for e in result if e["event_type"] == "Outcome"), None)
         assert outcome is not None
         detail = outcome["detail"]
-        # Bob's regen prevailed; Bob's dealt damage appears after the semicolon
-        assert "Bob" in detail
-        assert "regen" in detail
+        assert "mutual destruction" in detail
+        assert "both ships destroyed" in detail
+        # The misleading regen framing must NOT appear for a double-KO.
+        assert "regen" not in detail
+        assert "out-damage" not in detail
+        # Short enough to survive the gateway's 200-char per-line clamp untruncated.
+        assert len(detail) <= 200
 
 
 # ---------------------------------------------------------------------------

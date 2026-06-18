@@ -2523,17 +2523,18 @@ def _extract_key_events(
         dur_s = _ticks_to_seconds(int(fd.get("duration_ticks", 0)), tick_ms)
         ftick = int(fe.get("tick", 0))
         if winner is None:
-            c1, c2 = cmap.get("1", {}), cmap.get("2", {})
-            aggr, pas = (c1, c2) if c1.get("damage_dealt", 0) >= c2.get("damage_dealt", 0) else (c2, c1)
-            _emit(
-                ftick,
-                9,
-                "Outcome",
-                f"Stalemate ({dur_s:.0f}s) — {aggr.get('name', '?')} landed "
-                f"{aggr.get('shots_hit', 0)}/{aggr.get('shots_fired', 0)} hits "
-                f"({aggr.get('damage_dealt', 0)} dmg) but couldn't out-damage "
-                f"{pas.get('name', '?')}'s regen; {pas.get('name', '?')} dealt {pas.get('damage_dealt', 0)}.",
-            )
+            # Two stalemate reasons (§9): "mutual" — both hulls hit 0 on the same tick (a true
+            # double-KO) — and "time_cap" — the clock expired with both still alive. Neither
+            # warrants the old per-combatant "couldn't out-damage their regen" framing: it was
+            # wordy AND presumptuous (regen is only one of several reasons a fight runs the clock
+            # — high effective HP, evasion, or a simply tanky opponent do too). Per-combatant
+            # damage/hit stats already live in the Summary field, so the Outcome line just states
+            # the headline reason. Both variants stay well under the gateway's per-line clamp.
+            if fd.get("reason") == "mutual":
+                detail = f"Stalemate ({dur_s:.0f}s) — mutual destruction; both ships destroyed."
+            else:
+                detail = f"Stalemate ({dur_s:.0f}s) — neither side could score a fatal blow in the time allotted."
+            _emit(ftick, 9, "Outcome", detail)
         elif loser_slot is not None:
             winner_slot = "2" if loser_slot == "1" else "1"
             winner_label = cmap.get(winner_slot, {}).get("name", winner)

@@ -526,6 +526,18 @@ class TestCombatLogCommand:
         user = MagicMock()
         user.display_name = "SsilverLeopard"
 
+        # Non-vacuity: prove the guard is actually doing work. The raw rendered event-line text
+        # for this exact input (the bytes that an UNGUARDED build would pour into the event fields)
+        # far exceeds 6000, so without the budget guard the embed could not stay legal. Mirror the
+        # cog's own line rendering: `{time_s:6.1f}s` prefix + the (≤80-char truncated) detail.
+        detail_max = 80
+        truncated = big_detail[: detail_max - 1] + "…" if len(big_detail) > detail_max else big_detail
+        raw_event_text = "\n".join(f"`{ev['time_s']:6.1f}s` {truncated}" for ev in big_events)
+        assert len(raw_event_text) > 6000, (
+            f"Test is vacuous: raw event-line text is only {len(raw_event_text)} chars; "
+            "it must exceed 6000 so the guard provably has something to bound"
+        )
+
         embed = cog._build_detail_embed(detail_payload, user)
 
         # Aggregate size is bounded below Discord's hard 6000 limit.
@@ -536,6 +548,53 @@ class TestCombatLogCommand:
         # The drop must be surfaced honestly (not silently truncated).
         all_text = "\n".join(f.value for f in embed.fields)
         assert "omitted" in all_text, "Dropped events must be signalled with an omission trailer"
+
+    def test_omission_trailer_survives_when_shown_chunk_packs_to_exactly_1024(self, cog):
+        """Regression (FIX 1): the omission trailer must NOT be sliced off when the last shown
+        chunk already packs to exactly 1024 chars.
+
+        Greedy packing yields exactly 1024 chars for 25 lines whose rendered length is 40 each:
+        25*40 + 24 newlines = 1024. We then append many more events so a drop is forced. Before
+        the fix, the trailer was appended as `(chunk[:1024] + trailer)[:1024]`, so the final slice
+        cut the 27-char '…(+N more events omitted)' trailer back off and the user saw a hard
+        cutoff with NO explanation. The trailer must always be present, and the field must still
+        respect the 1024 per-field cap.
+        """
+        # Rendered line = `{time_s:6.1f}s ` (10 chars) + detail. With detail-len 30 → line len 40.
+        # 25 such lines pack to exactly 1024 in the first chunk (25*40 + 24 newlines = 1024).
+        detail_30 = "X" * 30
+        exact_chunk_events = [
+            {"tick": i, "time_s": float(i), "actor": "B", "event_type": "E", "detail": detail_30} for i in range(25)
+        ]
+        # Plenty of additional events to force a drop after the first (exactly-1024) chunk is shown.
+        overflow_events = [
+            {"tick": 1000 + i, "time_s": float(100 + i), "actor": "B", "event_type": "E", "detail": "Y" * 30}
+            for i in range(200)
+        ]
+        detail_payload = {**_make_detail(), "key_events": exact_chunk_events + overflow_events}
+        user = MagicMock()
+        user.display_name = "B"
+
+        embed = cog._build_detail_embed(detail_payload, user)
+
+        ke_fields = [f for f in embed.fields if "Key Events" in f.name or f.name == "\u200b"]
+        all_text = "\n".join(f.value for f in ke_fields)
+        # Sanity: a drop was genuinely forced \u2014 measured INDEPENDENTLY of the trailer (each rendered
+        # event line starts with a backtick; the trailer line starts with '\u2026'). With 225 input
+        # events and the field-count / budget guards, fewer than 225 lines can be shown. This must
+        # hold regardless of whether the (possibly-buggy) trailer survived, so the regression below
+        # is non-vacuous even when the trailer is silently sliced off.
+        shown_event_lines = sum(1 for line in all_text.splitlines() if line.startswith("`"))
+        assert shown_event_lines < 225, (
+            f"test setup must force a drop: {shown_event_lines}/225 event lines shown, expected fewer"
+        )
+        # The honesty guarantee: the omission trailer is present despite the exact-1024 packing.
+        assert "omitted" in all_text, (
+            "omission trailer was sliced off when the shown chunk packed to exactly 1024 chars"
+        )
+        # And every field still respects the 1024 per-field cap.
+        for field in ke_fields:
+            assert len(field.value) <= 1024, f"field value {len(field.value)} exceeds the 1024 per-field cap"
 
     async def test_key_events_no_truncation_indicator_when_all_fit(self, cog):
         """When all events fit within the limit, no truncation indicator is added."""

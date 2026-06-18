@@ -465,10 +465,14 @@ class CombatLogCog(commands.Cog):
                 trailer = f"\n…(+{dropped} more event{'s' if dropped != 1 else ''} omitted)"
                 idx = len(shown_chunks) - 1
                 name = "🎯 Key Events" if idx == 0 else _ZWSP
+                # Make room for the trailer BEFORE appending so the final slice can never cut it
+                # back off: the field still never exceeds _FIELD_LIMIT, but the omission notice is
+                # guaranteed to survive even when the shown chunk already packs to exactly 1024.
+                value = shown_chunks[idx][: _FIELD_LIMIT - len(trailer)] + trailer
                 embed.set_field_at(
                     idx,
                     name=name,
-                    value=(shown_chunks[idx][:_FIELD_LIMIT] + trailer)[:_FIELD_LIMIT],
+                    value=value,
                     inline=False,
                 )
             return embed

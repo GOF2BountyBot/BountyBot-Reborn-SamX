@@ -192,6 +192,22 @@ class TestCriminalLoadoutSetForwarding:
         body = _put_call_payload(mock_admin_cog)
         assert body["long_range_threshold_m"] == 3000
 
+    def test_set_float_field_via_float_value(self, mock_admin_cog):
+        # Exercises the float_value branch: a bare float must forward as-is.
+        self._run_set(mock_admin_cog, setting="criminal_long_range_pct", float_value=0.65)
+        body = _put_call_payload(mock_admin_cog)
+        assert body == {"guild_id": _create_mock_interaction().guild_id, "criminal_long_range_pct": 0.65}
+
+    def test_set_band_weights_field_via_json_value(self, mock_admin_cog):
+        # Distinct dict structure from the *_chance_by_division fields.
+        payload = '{"center": 70, "minus1": 20, "plus1": 10}'
+        self._run_set(mock_admin_cog, setting="primary_tl_band_weights", json_value=payload)
+        body = _put_call_payload(mock_admin_cog)
+        assert body == {
+            "guild_id": _create_mock_interaction().guild_id,
+            "primary_tl_band_weights": {"center": 70, "minus1": 20, "plus1": 10},
+        }
+
     def test_malformed_json_value_is_rejected_without_put(self, mock_admin_cog):
         # Same handling as every existing dict field: parse failure → no API call.
         interaction = _create_mock_interaction()

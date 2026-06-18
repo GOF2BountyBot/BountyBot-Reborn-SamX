@@ -443,7 +443,7 @@ async def reset_game_constants(
 ):
     """Reset per-guild game-constant overrides to NULL (global defaults).
 
-    Pass ``fields`` list to reset specific fields, or omit/pass null to reset all 25.
+    Pass ``fields`` list to reset specific fields, or omit/pass null to reset all per-guild overrides.
     """
     flogger.info(f"Resetting game constants for guild {guild_id}: fields={request.fields}")
 

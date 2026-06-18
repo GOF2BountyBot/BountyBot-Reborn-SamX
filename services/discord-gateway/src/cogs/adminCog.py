@@ -2620,7 +2620,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         description="[ADMIN] Reset per-guild game-constant overrides to global defaults (B.49/B.50)",
     )
     @app_commands.describe(
-        setting="Specific field to reset (leave blank to reset ALL 33 overrides)",
+        setting="Specific field to reset (leave blank to reset all per-guild game-constant overrides)",
     )
     @app_commands.autocomplete(setting=constants_autocomplete)
     async def admin_config_constants_reset(
@@ -2643,7 +2643,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
             return
 
-        action_desc = f"reset override for **{setting}**" if setting else "reset **all 33** game-constant overrides"
+        action_desc = (
+            f"reset override for **{setting}**" if setting else "reset **all per-guild game-constant overrides**"
+        )
 
         view = ConfirmView(action=f"{action_desc} for guild {guild_id}", timeout=60)
         warning_embed = discord.Embed(

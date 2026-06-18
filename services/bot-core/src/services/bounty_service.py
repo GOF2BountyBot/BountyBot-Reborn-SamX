@@ -232,6 +232,46 @@ def _weapon_range_m(weapon) -> float:
     return float(inner.get("range_m", 0.0) or 0.0)
 
 
+def _weapon_emp_damage(weapon) -> float:
+    """Read a weapon's ``emp_damage`` via the canonical doubly-nested unwrap.
+
+    Defaults to 0.0 when absent (the common case — most weapons carry no EMP
+    component).  The engine currently bakes ``emp_damage`` for combat-log
+    fidelity but applies 0 HP delta (phase-2+ deferred feature), so this value
+    is "cosmetic" damage for balance purposes.
+    """
+    outer: dict = getattr(weapon, "extra_atts", None) or {}
+    inner: dict = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+    return float(inner.get("emp_damage", 0.0) or 0.0)
+
+
+def _is_primarily_emp(weapon, *, is_secondary: bool) -> bool:
+    """True iff a weapon's EMP component exceeds its real (HP) damage.
+
+    BALANCE_JOURNAL §A Thread 6 (locked): exclude a primary or secondary from
+    the CRIMINAL candidate pool when ``emp_damage > real_damage``, because the
+    combat engine applies 0 HP delta for ``emp_damage`` (phase-2+ deferred), so
+    an EMP-dominant weapon does ~no real damage → free player win.
+
+    real_damage source per weapon class (data-model correct):
+      - PRIMARY:   ``damage_per_shot`` from the inner ``extra_atts`` dict
+                   (``weapon.extra_atts["extra_atts"]["damage_per_shot"]``).
+      - SECONDARY: the ``damage`` column on ``secondary_weapon`` (surfaced on
+                   the ORM item as ``item.damage``).
+    emp_damage is always read from the inner ``extra_atts`` dict (default 0).
+
+    Strictly ``>`` (ties keep the weapon — e.g. Dephase EMP: real 120 ≥ emp 100).
+    """
+    emp_damage = _weapon_emp_damage(weapon)
+    if is_secondary:
+        real_damage = float(getattr(weapon, "damage", 0) or 0)
+    else:
+        outer: dict = getattr(weapon, "extra_atts", None) or {}
+        inner: dict = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+        real_damage = float(inner.get("damage_per_shot", 0.0) or 0.0)
+    return emp_damage > real_damage
+
+
 def nearest_tl_pick(variants: list, item_tl: int, division: str):
     """Pick one module variant whose TL is nearest to *item_tl*.
 
@@ -806,6 +846,14 @@ class BountyService:
             _sw_repo = SecondaryWeaponRepository()
             _all_secondary = await _sw_repo.list_all(db)
 
+            # Thread 6: exclude primarily-EMP secondaries (emp_damage > damage)
+            # from the candidate pool (toggle, default ON).  Catches the two
+            # EMP Rockets that survive the deferred-subtype + min-damage filters;
+            # keeps Dephase EMP (real 120 ≥ emp 100).
+            _exclude_emp = resolve_constant(
+                cfg, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS
+            )
+
             # Compute TL window: prefer item_tl, search down to MIN_TECH_LEVEL
             # then up by criminal_max_gear_upgrade (mirrors primary/turret logic).
             _tl_candidates: list[int] = list(range(item_tl, GameConstants.MIN_TECH_LEVEL - 1, -1)) + list(
@@ -820,6 +868,8 @@ class BountyService:
                     continue
                 _sw_damage = int(getattr(_sw, "damage", 0) or 0)
                 if _sw_damage <= GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE:
+                    continue
+                if _exclude_emp and _is_primarily_emp(_sw, is_secondary=True):
                     continue
                 if _sw.name not in _seen_names:
                     _seen_names.add(_sw.name)
@@ -922,10 +972,19 @@ class BountyService:
         threshold = resolve_constant(cfg, "long_range_threshold_m", GameConstants.LONG_RANGE_THRESHOLD_M)
         pct = resolve_constant(cfg, "criminal_long_range_pct", GameConstants.CRIMINAL_LONG_RANGE_PCT)
         band_weights = resolve_constant(cfg, "primary_tl_band_weights", GameConstants.PRIMARY_TL_BAND_WEIGHTS)
+        exclude_emp = resolve_constant(cfg, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS)
 
         all_weapons = await self.item_repo.get_all(db, "primary_weapon")
         if not all_weapons:
             return []
+
+        # Thread 6: drop primarily-EMP primaries (emp_damage > damage_per_shot)
+        # from the candidate pool BEFORE long/short bucketing + TL-band pick, so
+        # criminals are never handed a ~0-real-damage weapon (toggle, default ON).
+        if exclude_emp:
+            all_weapons = [w for w in all_weapons if not _is_primarily_emp(w, is_secondary=False)]
+            if not all_weapons:
+                return []
 
         # Bucket weapons by category, indexed by exact TL.
         long_by_tl: dict[int, list] = {}

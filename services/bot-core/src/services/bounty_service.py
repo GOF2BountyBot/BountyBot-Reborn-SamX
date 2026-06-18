@@ -11,6 +11,7 @@ Handles business logic for bounty generation including:
 
 import contextlib
 import enum
+import math
 import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -143,6 +144,149 @@ def _extract_secondary_combat_fields(item) -> dict:
         "magnitude_m": float(inner.get("magnitude_m", 0.0) or 0.0),
         "steerable": bool(inner.get("steerable", False)),
     }
+
+
+# ----------------------------------------------------------------------
+# Criminal loadout generation — module/primary selection (Task 2)
+# ----------------------------------------------------------------------
+# Module categories are keyed on the Item.type discriminator (e.g.
+# "CloakModule"), confirmed against the live item catalog.
+#
+# Priority walk (§ Consolidated Spec C / Thread 4 decision-log): combat
+# modules are slotted in this strict order until ``ship.max_modules`` is
+# reached.  Each entry is (module_type, gate_kind, chance_key):
+#   - gate_kind "guaranteed": always nearest_tl_pick if a slot is free.
+#   - gate_kind "two_gate":  roll randint(1,100) <= per-division chance %;
+#                            on pass, nearest_tl_pick.  chance_key names the
+#                            GameConstants per-division dict + its lowercase
+#                            GuildConfig override field (same string).
+_GUARANTEED = "guaranteed"
+_TWO_GATE = "two_gate"
+
+_MODULE_PRIORITY_ORDER: list[tuple[str, str, str | None]] = [
+    ("ScannerModule", _GUARANTEED, None),
+    ("ArmourModule", _GUARANTEED, None),
+    ("ShieldModule", _GUARANTEED, None),
+    ("CloakModule", _TWO_GATE, "criminal_cloak_chance_by_division"),
+    ("BoosterModule", _TWO_GATE, "criminal_booster_chance_by_division"),
+    ("EmergencySystemModule", _TWO_GATE, "criminal_emergency_chance_by_division"),
+    ("RepairBotModule", _GUARANTEED, None),
+    ("PrimaryWeaponModModule", _TWO_GATE, "criminal_weaponmod_chance_by_division"),
+    ("ThrusterModule", _GUARANTEED, None),
+]
+
+# GameConstants attribute names paired to each chance_key (per-division dict
+# default lookups via resolve_constant).
+_CHANCE_KEY_TO_CONSTANT: dict[str, str] = {
+    "criminal_cloak_chance_by_division": "CRIMINAL_CLOAK_CHANCE_BY_DIVISION",
+    "criminal_booster_chance_by_division": "CRIMINAL_BOOSTER_CHANCE_BY_DIVISION",
+    "criminal_emergency_chance_by_division": "CRIMINAL_EMERGENCY_CHANCE_BY_DIVISION",
+    "criminal_weaponmod_chance_by_division": "CRIMINAL_WEAPONMOD_CHANCE_BY_DIVISION",
+}
+
+# Filler tail (no combat effect).  Filler-A: each limit-1, drawn at random
+# WITHOUT replacement.  Filler-B: ∞-limit, drawn at random WITH replacement
+# to fill any remaining slots.
+_FILLER_A_TYPES: list[str] = [
+    "GammaShieldModule",
+    "SpectralFilterModule",
+    "RepairBeamModule",
+    "SignatureModule",
+    "MiningDrillModule",
+    "TractorBeamModule",
+]
+_FILLER_B_TYPES: list[str] = ["CompressorModule", "CabinModule"]
+
+# Never equipped (misleading no-ops + banned).  Jump Drive is also limit-0 in
+# MODULE_EQUIP_LIMITS; listed here for an explicit, self-documenting guard.
+_NEVER_EQUIP_TYPES: frozenset[str] = frozenset(
+    {
+        "TransfusionBeamModule",
+        "ShieldInjectorModule",
+        "TimeExtenderModule",
+        "JumpDriveModule",
+    }
+)
+
+# Divisions whose nearest-TL tie-break prefers the HIGHER tech level.
+_HIGHER_TL_TIE_DIVISIONS: frozenset[str] = frozenset({"gold", "platinum"})
+
+
+def _weapon_range_m(weapon) -> float:
+    """Read a weapon's ``range_m`` via the canonical doubly-nested unwrap."""
+    outer: dict = getattr(weapon, "extra_atts", None) or {}
+    inner: dict = outer.get("extra_atts", outer) if isinstance(outer, dict) else {}
+    return float(inner.get("range_m", 0.0) or 0.0)
+
+
+def nearest_tl_pick(variants: list, item_tl: int, division: str):
+    """Pick one module variant whose TL is nearest to *item_tl*.
+
+    *variants* is every item of a single category (module type), TL-unfiltered.
+    Returns None if empty.  Chooses ``best_tl`` minimizing ``|tl - item_tl|``;
+    on a tie the higher TL wins for gold/platinum, else the lower TL.  Among
+    the variants at ``best_tl`` (a single TL may have several) one is chosen
+    uniformly at random.
+    """
+    if not variants:
+        return None
+    prefer_higher = division in _HIGHER_TL_TIE_DIVISIONS
+
+    def _key(tl: int) -> tuple[int, int]:
+        # Primary: distance.  Secondary: tie-break — for "prefer higher" we
+        # negate the TL so the larger TL sorts first (smaller key).
+        return (abs(tl - item_tl), -tl if prefer_higher else tl)
+
+    best_tl = min((v.tech_level for v in variants), key=_key)
+    at_best = [v for v in variants if v.tech_level == best_tl]
+    return random.choice(at_best)
+
+
+def tl_band_pick(by_tl: dict[int, list], target: int, weights: dict[str, int]):
+    """Pick a weapon by ±1 TL-band weighting around *target*.
+
+    *by_tl* maps an exact TL -> list of candidate weapons of the chosen
+    category (long/short).  *weights* is PRIMARY_TL_BAND_WEIGHTS
+    (``{"center","minus1","plus1"}``).  A band TL is VALID iff 1<=tl<=10 AND
+    ``by_tl`` has >=1 weapon at that exact TL.  Invalid bands redistribute:
+    an invalid SIDE band pushes its weight to the OTHER side band; an invalid
+    CENTER band splits evenly across the two side bands.  Returns a random
+    weapon of the chosen band, or None if no band is valid.
+    """
+
+    def _valid(tl: int) -> bool:
+        return GameConstants.MIN_TECH_LEVEL <= tl <= GameConstants.MAX_TECH_LEVEL and bool(by_tl.get(tl))
+
+    center_tl, minus_tl, plus_tl = target, target - 1, target + 1
+    w_center = weights.get("center", 0)
+    w_minus = weights.get("minus1", 0)
+    w_plus = weights.get("plus1", 0)
+
+    eff_center = w_center if _valid(center_tl) else 0
+    eff_minus = w_minus if _valid(minus_tl) else 0
+    eff_plus = w_plus if _valid(plus_tl) else 0
+
+    # Redistribute invalid SIDE bands to the OTHER side band.
+    if not _valid(minus_tl):
+        eff_plus += w_minus if _valid(plus_tl) else 0
+    if not _valid(plus_tl):
+        eff_minus += w_plus if _valid(minus_tl) else 0
+    # Redistribute invalid CENTER band evenly across the two side bands.
+    if not _valid(center_tl):
+        half = w_center / 2
+        if _valid(minus_tl):
+            eff_minus += half
+        if _valid(plus_tl):
+            eff_plus += half
+
+    band_tls = [center_tl, minus_tl, plus_tl]
+    band_weights = [eff_center, eff_minus, eff_plus]
+    pool_tls = [tl for tl, w in zip(band_tls, band_weights, strict=True) if w > 0]
+    pool_weights = [w for w in band_weights if w > 0]
+    if not pool_tls:
+        return None
+    chosen_tl = random.choices(pool_tls, weights=pool_weights, k=1)[0]
+    return random.choice(by_tl[chosen_tl])
 
 
 # Sentinel values used in bounty.checked maps.
@@ -489,16 +633,21 @@ class BountyService:
     # Loadout Generation
     # ------------------------------------------------------------------
 
-    async def generate_loadout(self, db: AsyncSession, tech_level: int, cfg=None) -> dict:
+    async def generate_loadout(self, db: AsyncSession, tech_level: int, division: str = "bronze", cfg=None) -> dict:
         """Generate a criminal's ship loadout for the given tech level.
 
         At tech level 0 a fixed beginner loadout (Betty) is returned.
         Otherwise selects a ship at the appropriate tech level and equips
-        primary weapons and modules following the legacy behaviour.
+        primary weapons (long-range-floor, ±1 TL band — § Spec D) and modules
+        (priority-walk with per-division two-gate equips — § Spec C).
 
         Args:
             db:          Async database session.
             tech_level:  Criminal tech level (0-10).
+            division:    Criminal division (bronze/silver/gold/platinum).
+                         Drives per-division equip chances and nearest-TL
+                         tie-breaks.  Defaults to "bronze".
+            cfg:         Optional GuildConfig for per-guild knob overrides.
 
         Returns:
             Dict containing ship info, equipped weapons, modules, and
@@ -590,87 +739,18 @@ class BountyService:
             }
 
         # ----------------------------------------------------------------
-        # Primary weapon selection
+        # Primary weapon selection (§ Spec D — long-range floor + ±1 TL band)
         # ----------------------------------------------------------------
         equipped_weapons = []
-        _criminal_equip_damageless_chance = resolve_constant(
-            cfg, "criminal_equip_damageless_weapon_chance", GameConstants.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE
-        )
         if ship.max_primaries > 0:
-            weapon_tl = await self.find_item_tl(
-                db,
-                center=item_tl,
-                min_tl=GameConstants.MIN_TECH_LEVEL,
-                max_tl=GameConstants.MAX_TECH_LEVEL,
-                upper_bound=_criminal_max_gear_upgrade,
-                item_type="primary_weapon",
-            )
-            if weapon_tl != -1:
-                all_weapons = await self.item_repo.get_all_by_tech_level(db, weapon_tl, item_type="primary_weapon")
-                damaging = [w for w in all_weapons if w.dps > 0]
-                non_damaging = [w for w in all_weapons if w.dps <= 0]
-
-                for _ in range(ship.max_primaries):
-                    # 20% chance to pick a non-damaging weapon (if available)
-                    pick_non_damaging = non_damaging and random.randint(1, 100) <= _criminal_equip_damageless_chance
-                    pool = non_damaging if pick_non_damaging else (damaging or all_weapons)
-                    if pool:
-                        equipped_weapons.append(random.choice(pool))
+            equipped_weapons = await self._select_primaries(db, item_tl, ship.max_primaries, cfg)
 
         # ----------------------------------------------------------------
-        # Module selection
+        # Module selection (§ Spec C — priority walk + per-division two-gate)
         # ----------------------------------------------------------------
         equipped_modules = []
         if ship.max_modules > 0:
-            # Resolve all modules at item_tl for generic slots
-            generic_modules = await self.item_repo.get_all_by_tech_level(db, item_tl, item_type="module")
-
-            # Slot 1: armour module guaranteed at TL > 1
-            if tech_level > 1 and len(equipped_modules) < ship.max_modules:
-                armour_mod = await self._find_typed_module(db, "armour", item_tl)
-                if armour_mod:
-                    equipped_modules.append(armour_mod)
-
-            # Slot 2: shield module guaranteed at TL > 3
-            if tech_level > 3 and len(equipped_modules) < ship.max_modules:
-                shield_mod = await self._find_typed_module(db, "shield", item_tl)
-                if shield_mod:
-                    equipped_modules.append(shield_mod)
-
-            # Fill remaining slots with random modules at item_tl, respecting type-class uniqueness
-            # Track equipped module type counts using MODULE_EQUIP_LIMITS (type-class, not name-based)
-            equipped_type_counts: dict[str, int] = {}
-            for m in equipped_modules:
-                mtype = getattr(m, "type", "")
-                equipped_type_counts[mtype] = equipped_type_counts.get(mtype, 0) + 1
-
-            def _can_equip(module) -> bool:
-                mtype = getattr(module, "type", "")
-                limit = GameConstants.MODULE_EQUIP_LIMITS.get(mtype, -1)
-                if limit == 0:
-                    return False
-                if limit == -1:
-                    return True
-                return equipped_type_counts.get(mtype, 0) < limit
-
-            available_pool = [m for m in generic_modules if _can_equip(m)]
-            while len(equipped_modules) < ship.max_modules and available_pool:
-                chosen = random.choice(available_pool)
-                equipped_modules.append(chosen)
-                mtype = getattr(chosen, "type", "")
-                new_count = equipped_type_counts.get(mtype, 0) + 1
-                equipped_type_counts[mtype] = new_count
-                # P6-T9a: de-quadratic re-filter.  After equipping `chosen` of
-                # type `mtype`, only that type's limit can newly become exceeded —
-                # all other types are untouched.  So instead of re-scanning the
-                # entire pool (O(pool) per pick), we remove items of `mtype` only
-                # when the count has just reached its limit.  Items of other types
-                # remain valid and need not be re-tested.
-                limit = GameConstants.MODULE_EQUIP_LIMITS.get(mtype, -1)
-                if limit != -1 and new_count >= limit:
-                    # This type is now full; drop every remaining entry of this type.
-                    available_pool = [m for m in available_pool if getattr(m, "type", "") != mtype]
-                # else: limit is -1 (unlimited) or not yet reached → pool unchanged.
+            equipped_modules = await self._select_modules(db, item_tl, division, ship.max_modules, cfg)
 
         # ----------------------------------------------------------------
         # Calculate partial values (weapons + modules) before turret selection
@@ -817,6 +897,106 @@ class BountyService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    async def _select_primaries(self, db: AsyncSession, item_tl: int, n_slots: int, cfg) -> list:
+        """Select *n_slots* primary weapons per § Spec D (long-range floor).
+
+        Classifies every primary weapon as LONG/SHORT by ``range_m`` vs the
+        tunable threshold.  Dedicates ``ceil(pct*N)`` slots to LONG, rolls the
+        remaining slots LONG at ``pct``, then picks each slot's weapon by a ±1
+        TL band weighting around ``item_tl`` within the slot's category bucket.
+        """
+        threshold = resolve_constant(cfg, "long_range_threshold_m", GameConstants.LONG_RANGE_THRESHOLD_M)
+        pct = resolve_constant(cfg, "criminal_long_range_pct", GameConstants.CRIMINAL_LONG_RANGE_PCT)
+        band_weights = resolve_constant(cfg, "primary_tl_band_weights", GameConstants.PRIMARY_TL_BAND_WEIGHTS)
+
+        all_weapons = await self.item_repo.get_all(db, "primary_weapon")
+        if not all_weapons:
+            return []
+
+        # Bucket weapons by category, indexed by exact TL.
+        long_by_tl: dict[int, list] = {}
+        short_by_tl: dict[int, list] = {}
+        for w in all_weapons:
+            tl = getattr(w, "tech_level", None)
+            if tl is None:
+                continue
+            bucket = long_by_tl if _weapon_range_m(w) > threshold else short_by_tl
+            bucket.setdefault(tl, []).append(w)
+
+        # Step 1: assign a category to each slot — floor min, RNG may exceed.
+        min_long = math.ceil(pct * n_slots)
+        categories = ["long"] * min_long
+        for _ in range(n_slots - min_long):
+            categories.append("long" if random.random() < pct else "short")
+
+        # Step 2: pick a weapon per slot (category-first, then TL band).
+        equipped: list = []
+        for category in categories:
+            by_tl = long_by_tl if category == "long" else short_by_tl
+            weapon = tl_band_pick(by_tl, item_tl, band_weights)
+            if weapon is None:
+                # No weapon of this category anywhere in the catalog — fall back
+                # to the other bucket so the slot is still filled.
+                other = short_by_tl if category == "long" else long_by_tl
+                weapon = tl_band_pick(other, item_tl, band_weights)
+            if weapon is not None:
+                equipped.append(weapon)
+        return equipped
+
+    async def _select_modules(self, db: AsyncSession, item_tl: int, division: str, max_modules: int, cfg) -> list:
+        """Select up to *max_modules* modules per § Spec C (priority walk).
+
+        Walks the fixed priority order (guaranteed + per-division two-gate),
+        appending until the module budget is full, then appends a filler tail
+        (Filler-A unique without-replacement, then Filler-B repeatable).  No
+        displacement: once full, the walk stops.
+        """
+        all_modules = await self.item_repo.get_all(db, "module")
+        # Index every variant by its type discriminator (DLC ignored).
+        by_type: dict[str, list] = {}
+        for m in all_modules:
+            mtype = getattr(m, "type", "")
+            if mtype:
+                by_type.setdefault(mtype, []).append(m)
+
+        equipped: list = []
+
+        def _append(module) -> None:
+            if module is not None:
+                equipped.append(module)
+
+        # 1) Priority walk over the 9 combat categories.
+        for module_type, gate_kind, chance_key in _MODULE_PRIORITY_ORDER:
+            if len(equipped) >= max_modules:
+                break
+            variants = by_type.get(module_type, [])
+            if gate_kind == _GUARANTEED:
+                _append(nearest_tl_pick(variants, item_tl, division))
+            else:  # two-gate
+                const_name = _CHANCE_KEY_TO_CONSTANT[chance_key]
+                chance_by_div = resolve_constant(cfg, chance_key, getattr(GameConstants, const_name))
+                chance = chance_by_div.get(division, 0)
+                if random.randint(1, 100) <= chance:
+                    _append(nearest_tl_pick(variants, item_tl, division))
+            # A failed gate / empty category leaves the slot for the next category.
+
+        # 2) Filler-A: each limit-1, random type WITHOUT replacement.
+        if len(equipped) < max_modules:
+            pool_a = _FILLER_A_TYPES[:]
+            random.shuffle(pool_a)
+            while len(equipped) < max_modules and pool_a:
+                _append(nearest_tl_pick(by_type.get(pool_a.pop(), []), item_tl, division))
+
+        # 3) Filler-B: ∞-limit, random type WITH replacement, repeat to fill.
+        #    Restrict to B types that actually have variants so the loop always
+        #    makes progress (avoids spinning on an empty type).
+        filler_b = [t for t in _FILLER_B_TYPES if by_type.get(t)]
+        while len(equipped) < max_modules and filler_b:
+            ftype = random.choice(filler_b)
+            _append(nearest_tl_pick(by_type.get(ftype, []), item_tl, division))
+
+        return equipped
 
     def _build_player_loadout(self, player, player_ship=None) -> ShipLoadout:
         """Build a minimal ShipLoadout from a player's active ship.
@@ -1224,7 +1404,7 @@ class BountyService:
         answer = random.choice(route)
 
         # Step 5: Generate loadout
-        loadout = await self.generate_loadout(db, tech_level, cfg=cfg)
+        loadout = await self.generate_loadout(db, tech_level, division=division, cfg=cfg)
 
         # Step 6: Calculate reward using the winner-reserve / consolation-pool model.
         # The total reward is seeded by the legacy per-sys formula, but reward_per_sys

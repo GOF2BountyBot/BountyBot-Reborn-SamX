@@ -49,11 +49,15 @@ from src.services.combat_resolver import (
     _BOOSTER_MODULE_TYPE,
     _CLOAK_MODULE_TYPE,
     _EMERGENCY_SYSTEM_MODULE_TYPE,
+    _REPAIR_BOT_MODULE_TYPE,
     _CombatantState,
     _eval_emergency_system,
     _eval_hp_threshold_modules,
     _extract_key_events,
     _init_combatant,
+    _tick_module_effects,
+    _tick_repair_bot_regen,
+    _tick_shield_regen,
     _try_activate_chained_module,
 )
 from src.services.game_constants import GameConstants
@@ -93,6 +97,16 @@ def _booster_mod(
         effect_duration_ms=effect_duration_ms,
         loading_speed_ms=loading_speed_ms,
     )
+
+
+def _repair_bot_mod(name: str = "Ketar Repair Bot", repair_rate: float = 0.05) -> ModuleStats:
+    """Repair Bot module. NOTE: module_type MUST be set — _init_combatant only reads repair_rate
+    from modules whose module_type == _REPAIR_BOT_MODULE_TYPE (combat_resolver.py:317-319)."""
+    return ModuleStats(name=name, module_type=_REPAIR_BOT_MODULE_TYPE, repair_rate=repair_rate)
+
+
+def _shield_mod(name: str = "Shield", shield: int = 100, shield_recharge_ms: int = 1_000) -> ModuleStats:
+    return ModuleStats(name=name, shield=shield, shield_recharge_ms=shield_recharge_ms)
 
 
 def _loadout(*, base_armour: int = 100, modules=None, weapons=None) -> ShipLoadout:
@@ -380,3 +394,251 @@ def _run_es_fight_full():
     """Returns (summary_dict, events) with BOTH chained activations present."""
     result = _resolve_fight(with_cloak=True, with_booster=True)
     return result.metadata["summary"], result.combat_log
+
+
+# ===========================================================================
+# Adversarial edge-case anchors (BALANCE_JOURNAL Thread-5 §EDGE-CASE/GAP REVIEW
+# G1 / G3 / G5 + the same-tick cloak-expiry G2 corollary). Code is signed-off
+# correct; these lock in the named edge cases that lacked explicit coverage.
+# ===========================================================================
+
+
+def _state_with_armour(*, modules, base_armour: int = 100, armour: int = 0) -> _CombatantState:
+    """Real combatant; optionally inject a flat armour layer via an armour-bearing module."""
+    mods = list(modules)
+    if armour > 0:
+        mods.append(ModuleStats(name="Armour", armour=armour))
+    return _init_combatant(_loadout(base_armour=base_armour, modules=mods), is_player=False)
+
+
+# ---------------------------------------------------------------------------
+# G1 — regen continues DURING the ES invuln window (hull/armour + shield both tick UP)
+# ---------------------------------------------------------------------------
+class TestG1RegenContinuesDuringInvuln:
+    """BALANCE_JOURNAL G1 (LOCKED): Phase-2 regen is UNGATED by invuln. With a Repair Bot
+    equipped (hull/armour below max) AND shield below max, both regen paths must tick UP across
+    invuln ticks — proving Phase-2 regen is not frozen during the ES immunity window.
+
+    Non-vacuity: if either regen were gated on `invuln_remaining_ms > 0`, the asserted upticks
+    would never happen and these assertions fail.
+    """
+
+    def test_repair_bot_and_shield_regen_tick_up_during_invuln(self):
+        # Repair Bot (rate 0.05) + Shield (100 cap, fast recharge). base_armour=hull=100, +50 armour.
+        s = _state_with_armour(
+            modules=[_es_mod(), _repair_bot_mod(repair_rate=0.05), _shield_mod(shield=100, shield_recharge_ms=TICK_MS)],
+            base_armour=100,
+            armour=50,
+        )
+        # Sanity: repair actually engaged (module_type wired) and shield schedule exists.
+        assert s.repair_bot_rate_per_sec == 0.05
+        assert s.max_shield == 100
+        assert s.shield_regen_schedules, "shield regen schedule must be present"
+
+        # Enter the invuln window with deficits on ALL three layers so regen has somewhere to go.
+        # Hull near-full (small deficit) so Repair Bot fills hull FIRST then SPILLS into armour,
+        # exercising both layers within the loop (repair fills hull→armour in that order).
+        s.es_runtime.invuln_remaining_ms = INVULN_MS
+        s.es_runtime.consumed = True
+        s.current_hull = 98  # deficit 2 (max 100) — fills fast, then spillover hits armour
+        s.current_armour = 10  # below max (50)
+        s.current_shield = 0  # below max (100)
+
+        hull0, armour0, shield0 = s.current_hull, s.current_armour, s.current_shield
+
+        # Drive enough invuln ticks for both accumulators to flush several times.
+        # Repair delta/tick = (100+50)*0.05*(10/1000) = 0.075/tick → ~15 HP over 200 ticks:
+        # 2 to hull (clears deficit) then ~13 spill into armour.
+        # Shield period = ceil(1000/100/10) = 1 tick → +1 shield/tick.
+        events: list = []
+        ticks = 200
+        for t in range(ticks):
+            assert s.es_runtime.invuln_remaining_ms > 0, "must stay inside invuln for the whole loop"
+            _tick_repair_bot_regen(s, tick=t, events=events)
+            _tick_shield_regen(s, tick=t, events=events)
+            # Mirror the resolver's Phase-1 invuln tick-down so we stay honest about the window.
+            s.es_runtime.invuln_remaining_ms = max(0, s.es_runtime.invuln_remaining_ms - TICK_MS)
+
+        # Repair Bot fills hull first, then armour — both must have climbed above their start.
+        assert s.current_hull > hull0, "hull regen must tick UP during invuln"
+        assert s.current_armour > armour0, "armour regen must tick UP during invuln"
+        # Shield regen is likewise ungated by invuln.
+        assert s.current_shield > shield0, "shield regen must tick UP during invuln"
+        # And genuine regen events were emitted (not a silent counter bump).
+        regen = [e for e in events if e.type == CombatEventType.regen]
+        layers = {e.data.get("layer") for e in regen}
+        assert "shield" in layers
+        assert {"hull", "armour"} & layers
+
+
+# ---------------------------------------------------------------------------
+# G3 — fight ENDS during invuln: no crash, Trigger B never fires (cloak not chained)
+# ---------------------------------------------------------------------------
+class TestG3FightEndsDuringInvuln:
+    """BALANCE_JOURNAL G3 (accept): if the fight terminates while a combatant is still inside the
+    ES invuln window, the loop breaks at Phase-8 BEFORE the next Phase-1 invuln>0→0 transition, so
+    Trigger B (ES-end → Cloak) never fires. Resolution must complete cleanly with no cloak chain.
+
+    Construction: a glass-cannon attacker with HUGE hull (never dies) vs a defender that has ES +
+    cloak but ZERO survivability backing — once ES is consumed and its 10s invuln lapses the
+    defender dies the very next lethal volley. We force the fight to end *inside* the window by
+    capping MAX_FIGHT_TICKS below ES-tick + invuln duration so the loop hits the time-cap stalemate
+    while invuln is still open on the defender.
+
+    Non-vacuity: if Trigger B fired regardless of loop termination (e.g. an unconditional ES-end
+    chain), a cloak emergency_end activation would appear and the assertion fails.
+    """
+
+    def test_time_cap_inside_invuln_no_cloak_chain(self):
+        import random
+
+        from src.services import combat_resolver as _cr
+        from src.services.combat_resolver import TickResolver
+
+        # NB: combat_resolver imports GameConstants under the ``services.*`` namespace, which is a
+        # DISTINCT class object from ``src.services.game_constants.GameConstants`` imported at module
+        # top. Patch the resolver's own reference so ``resolve`` actually reads the capped value.
+        _gc = _cr.GameConstants
+
+        attacker = _glass_cannon_attacker()
+        defender = ShipLoadout(
+            ship_name="Defender",
+            base_armour=300,
+            modules=[_es_mod(), _cloak_mod()],
+            weapons=[],
+        )
+
+        original_max = _gc.MAX_FIGHT_TICKS
+        try:
+            # Run once at full length to learn the ES-activation tick, then cap the fight to land
+            # strictly inside [es_tick, es_tick + invuln) so termination happens mid-invuln.
+            probe = TickResolver().resolve(defender, attacker, rng=random.Random(1234))
+            es_acts = [
+                e
+                for e in probe.combat_log
+                if e.type == CombatEventType.module_activation and e.data.get("module") == "emergency_system"
+            ]
+            assert es_acts, "ES must fire in the probe fight"
+            es_tick = es_acts[0].tick
+            invuln_ticks = INVULN_MS // TICK_MS
+            # Cap a few ticks past ES so invuln is open but well short of the >0→0 transition.
+            _gc.MAX_FIGHT_TICKS = es_tick + (invuln_ticks // 2)
+            assert es_tick + invuln_ticks > _gc.MAX_FIGHT_TICKS
+
+            result = TickResolver().resolve(defender, attacker, rng=random.Random(1234))
+        finally:
+            _gc.MAX_FIGHT_TICKS = original_max
+
+        # Resolution completed without error and produced a terminal outcome.
+        assert result.metadata["summary"]["outcome"] in {"win", "stalemate"}
+        # ES fired but its invuln never reached the >0→0 edge before the loop broke → no cloak chain.
+        cloak_chain = _acts(result.combat_log, module="cloak", trigger="emergency_end")
+        assert cloak_chain == [], "Trigger B must NOT fire when the fight ends mid-invuln"
+        # Belt: no cloak activation of ANY kind (HP-threshold path is invuln-suppressed too).
+        assert _acts(result.combat_log, module="cloak") == []
+
+
+# ---------------------------------------------------------------------------
+# G5 — Trigger-A booster expires MID-invuln and does NOT re-fire (chain consumed, damage blocked)
+# ---------------------------------------------------------------------------
+class TestG5BoosterExpiresMidInvuln:
+    """BALANCE_JOURNAL G5 (accept): booster effect duration (here 4.4s) < invuln (10s). The
+    Trigger-A booster activates the instant ES fires, then EXPIRES while invuln is still open.
+    It must NOT re-activate: the ES-chain is one-shot (already consumed) and the HP-threshold path
+    can't re-fire because incoming damage is blocked during invuln → HP never moves → no crossing.
+
+    Non-vacuity: if booster re-fired from a lingering chain or from a phantom HP crossing during
+    invuln, a SECOND booster activation event would appear after expiry and the count assertion
+    fails. (Confirmed by checking the activation count stays at exactly 1.)
+    """
+
+    def test_booster_expires_during_invuln_no_refire(self):
+        # Short booster (4.4s effect) so it expires well inside the 10s invuln window.
+        booster = _booster_mod(effect_duration_ms=4_400, loading_speed_ms=10_000)
+        s = _state(modules=[_es_mod(), _cloak_mod(), booster])
+        # Full HP at the start of "last tick" so a same-tick lethal hit crosses booster thresholds.
+        s.prev_hp_pct = 1.0
+        s.current_hull = -10  # lethal this tick → ES fires (Trigger A activates booster)
+
+        events: list = []
+        # Phase 4a: ES fires + Trigger-A booster.
+        _eval_emergency_system(s, tick=0, events=events, invuln_ms=INVULN_MS)
+        assert s.booster_runtime.effect_remaining_ms == booster.effect_duration_ms
+        assert s.booster_runtime.activation_count == 1
+        # Phase 4b clamp + Phase 5 (same tick): booster already active → its threshold no-ops.
+        s.current_hull = max(0, s.current_hull)
+        _eval_hp_threshold_modules(
+            s, tick=0, events=events, cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS
+        )
+        assert s.booster_runtime.activation_count == 1, "no same-tick double-fire (already active)"
+
+        # Now tick forward through the invuln window. Damage is blocked during invuln, so HP never
+        # changes — there is no downward crossing to re-arm the threshold. The booster effect must
+        # expire mid-invuln and then sit on cooldown, NOT re-activate.
+        booster_expired_tick = None
+        for t in range(1, (INVULN_MS // TICK_MS)):
+            assert s.es_runtime.invuln_remaining_ms > 0, "still inside invuln for this loop"
+            _tick_module_effects(s, tick=t, events=events, tick_ms=TICK_MS)
+            # Resolver Phase-1 invuln tick-down (kept >0 by loop bound so Trigger B never fires here).
+            s.es_runtime.invuln_remaining_ms = max(0, s.es_runtime.invuln_remaining_ms - TICK_MS)
+            # HP-threshold phase re-evaluated each tick (HP frozen → no new crossing).
+            _eval_hp_threshold_modules(
+                s, tick=t, events=events, cloak_thresholds=CLOAK_THRESHOLDS, booster_thresholds=BOOSTER_THRESHOLDS
+            )
+            if booster_expired_tick is None and s.booster_runtime.effect_remaining_ms == 0:
+                booster_expired_tick = t
+
+        # The booster DID expire inside the invuln window...
+        assert booster_expired_tick is not None, "booster should expire mid-invuln (4.4s < 10s)"
+        assert booster_expired_tick * TICK_MS < INVULN_MS
+        # ...and it is now on cooldown (loading_speed_ms set at expiry), having NEVER re-fired.
+        assert s.booster_runtime.cooldown_remaining_ms > 0
+        assert s.booster_runtime.activation_count == 1, "booster must NOT re-activate mid-invuln"
+        assert len(_acts(events, module="booster")) == 1
+
+
+# ---------------------------------------------------------------------------
+# Same-tick edge — cloak effect expires the EXACT tick invuln hits 0 → Trigger B sees it on
+# cooldown → chain activation is correctly LOST (G2 corollary).
+# ---------------------------------------------------------------------------
+class TestSameTickCloakExpiryInvulnEnd:
+    """When cloak `effect_remaining_ms` and ES `invuln_remaining_ms` both reach 0 on the SAME
+    Phase-1 tick, the resolver order is: T8 `_tick_module_effects` (sets cloak cooldown =
+    loading_speed_ms on expiry) runs BEFORE T9 invuln>0→0 + Trigger B. So Trigger B observes the
+    cloak ON COOLDOWN and the ES-end chain activation is LOST (G2). The cloak must NOT chain-fire.
+
+    This reproduces the resolver's Phase-1 ordering using the REAL functions in the REAL order
+    (_tick_module_effects, then the invuln tick-down + _try_activate_chained_module), so the
+    cooldown-before-Trigger-B causality is exercised, not reimplemented.
+
+    Non-vacuity: if Trigger B ran BEFORE the cloak cooldown were set (order swapped), the cloak
+    would see cooldown==0 + effect==0 and chain-fire → an emergency_end cloak activation appears
+    and the assertion fails.
+    """
+
+    def test_cloak_expiry_coincident_with_invuln_end_loses_chain(self):
+        s = _state(modules=[_es_mod(), _cloak_mod()])
+        # Arrange BOTH timers to hit 0 on this single tick.
+        s.cloak_runtime.effect_remaining_ms = TICK_MS  # expires this tick
+        s.es_runtime.invuln_remaining_ms = TICK_MS  # invuln >0 → 0 this tick
+        s.es_runtime.consumed = True
+        load_ms = s.cloak_runtime.stats.loading_speed_ms
+        assert load_ms > 0, "cloak must have a real cooldown so on-cooldown is observable"
+
+        events: list = []
+        tick = 7
+        # --- Resolver Phase-1 ordering, real functions ---
+        # T8: effect expiry sets cloak cooldown = loading_speed_ms BEFORE Trigger B is evaluated.
+        _tick_module_effects(s, tick=tick, events=events, tick_ms=TICK_MS)
+        assert s.cloak_runtime.effect_remaining_ms == 0, "cloak effect expired this tick"
+        assert s.cloak_runtime.cooldown_remaining_ms == load_ms, "cloak put ON COOLDOWN at expiry"
+        # T9: invuln >0 → 0 transition fires Trigger B (ES-end → Cloak), but cloak is on cooldown.
+        s.es_runtime.invuln_remaining_ms = max(0, s.es_runtime.invuln_remaining_ms - TICK_MS)
+        assert s.es_runtime.invuln_remaining_ms == 0
+        fired = _try_activate_chained_module(s, "cloak", "emergency_end", tick=tick, events=events)
+
+        # Chain activation LOST (G2): cloak was on cooldown the instant ES ended.
+        assert fired is False, "cloak chain must be LOST — it was on cooldown when ES ended"
+        assert _acts(events, module="cloak", trigger="emergency_end") == []
+        assert s.cloak_runtime.effect_remaining_ms == 0  # not re-activated
+        assert s.cloak_runtime.cooldown_remaining_ms == load_ms  # still cooling, untouched

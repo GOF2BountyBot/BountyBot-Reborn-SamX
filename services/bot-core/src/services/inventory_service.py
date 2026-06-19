@@ -15,6 +15,7 @@ Vocabulary contract (A.36):
 
 from typing import Any
 
+from persist.repositories.commodity_repository import CommodityRepository
 from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.module_repository import ModuleRepository
 from persist.repositories.player_repository import PlayerRepository
@@ -42,6 +43,8 @@ class InventoryService:
         self.secondary_weapon_repo = SecondaryWeaponRepository()
         self.turret_weapon_repo = TurretWeaponRepository()
         self.module_repo = ModuleRepository()
+        # C-1 (PvC loot): commodity is a first-class concrete inventory type.
+        self.commodity_repo = CommodityRepository()
 
     async def get_player_inventory(
         self, db: AsyncSession, player_id: int, item_type: str | None = None, include_ships: bool = False
@@ -615,6 +618,9 @@ class InventoryService:
             self.secondary_weapon_repo,
             self.turret_weapon_repo,
             self.module_repo,
+            # C-1 (PvC loot): commodities are first-class cargo, so an
+            # item_type="commodity" write must validate against commodity rows.
+            self.commodity_repo,
         ]
         for repo in repos:
             if await repo.get_by_name(db, item_name):

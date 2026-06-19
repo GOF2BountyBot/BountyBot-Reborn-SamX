@@ -264,23 +264,28 @@ class GameConstants:
     # ------------------------------------------------------------------
 
     # All concrete item types present in the data model (used for browsing/catalog).
+    # "commodity" is a first-class concrete type (PvC loot C-1): it is pure cargo —
+    # validated/priced/sellable, but NEVER stocked in a GuildShop (that gate is the
+    # separate _CONCRETE_TO_CONFIG_KEY map in shop_service.py, which has no commodity).
     CATALOG_ITEM_TYPES: frozenset[str] = frozenset(
-        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module", "commodity"}
     )
 
     # All concrete item types the data model has slots for (must match CATALOG_ITEM_TYPES
     # once all mechanics are enabled; currently identical).
     PLAYABLE_ITEM_TYPES: frozenset[str] = frozenset(
-        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module", "commodity"}
     )
 
     # Concrete item types exposed on the user-facing economy/equip surface TODAY.
     # secondary_weapon is included; the shop excludes deferred subtypes (emp-bomb,
     # mine, sentry-gun) via DEFERRED_SECONDARY_SUBTYPES in combat_models.py.
+    # commodity is included (PvC loot C-1) — first-class cargo, but never shop-stocked
+    # (shop gating is _CONCRETE_TO_CONFIG_KEY, not this set).
     # This is the SINGLE lever that gates item-type exposure across all
     # economy/loadout flows — no scattered if-branches needed.
     CURRENTLY_ENABLED_TYPES: frozenset[str] = frozenset(
-        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module", "commodity"}
     )
 
     # Generic alias → concrete type expansion (catalog-flavoured; includes all types).
@@ -298,6 +303,19 @@ class GameConstants:
 
     MAX_SHIP_NICKNAME_LENGTH: int = 30
     KAAMO_MAX_CAPACITY: int = 70
+
+    # ------------------------------------------------------------------
+    # Loot (PvC)
+    # ------------------------------------------------------------------
+
+    # Commodity sell payout = Item.value × quantity × LOOT_COMMODITY_SELL_FRACTION.
+    # 1.0 = pay 100% face value. Commodities sell as a pure credit sink (units are
+    # destroyed, never added to a GuildShop) — see shop_service.sell_item.
+    # T2: wire as tunable knob (BOUNTYBOT_LOOT_COMMODITY_SELL_FRACTION env override +
+    # per-guild GuildConfig column + config_repository/config_schema plumbing + migration).
+    # For T1 this is a plain default read from GameConstants so T2 can make it tunable
+    # without touching sell_item.
+    LOOT_COMMODITY_SELL_FRACTION: float = 1.0
 
     # ------------------------------------------------------------------
     # Demotion

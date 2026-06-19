@@ -962,6 +962,9 @@ class TestValidateItemExists:
         mock_secondary_weapon_repo.get_by_name.return_value = None
         mock_turret_weapon_repo.get_by_name.return_value = None
         mock_module_repo.get_by_name.return_value = None
+        # T1: commodity_repo is now consulted last — must also miss for a False result.
+        service.commodity_repo = AsyncMock()
+        service.commodity_repo.get_by_name = AsyncMock(return_value=None)
 
         result = await service._validate_item_exists(mock_db, "NonExistentItem", "weapon")
 
@@ -1011,6 +1014,9 @@ class TestValidateItemExists:
         mock_secondary_weapon_repo.get_by_name.return_value = None
         mock_turret_weapon_repo.get_by_name.return_value = None
         mock_module_repo.get_by_name.return_value = None
+        # T1: commodity_repo is now consulted last — must also miss for a False result.
+        service.commodity_repo = AsyncMock()
+        service.commodity_repo.get_by_name = AsyncMock(return_value=None)
 
         result = await service._validate_item_exists(mock_db, "NotARealShip9999", "ship")
 
@@ -1323,4 +1329,84 @@ class TestInventoryServiceDbExceptionHandling:
         with pytest.raises(ValueError, match="could not be retrieved"):
             await service.remove_item_from_inventory(
                 mock_db, player_id=1, item_type="primary_weapon", item_name="Laser"
+            )
+
+
+# ===========================================================================
+# T1 (PvC loot C-1): commodity is a first-class concrete inventory type.
+# add_item_to_inventory must accept item_type="commodity" and validate the
+# existence check against commodity rows (CommodityRepository), not just the
+# five non-commodity repos.
+# ===========================================================================
+
+
+class TestCommodityInventoryCitizenship:
+    """T1/C-1: commodities can be written to inventory and are validated via
+    CommodityRepository in _validate_item_exists."""
+
+    @pytest.mark.asyncio
+    async def test_validate_item_exists_passes_for_real_commodity(self, service, mock_db, mock_primary_weapon_repo):
+        """A valid commodity name resolves via commodity_repo even when the five
+        non-commodity repos miss it (commodity_repo is consulted last)."""
+        # Make every NON-commodity repo miss (incl. the fixture's default truthy
+        # primary-weapon hit) so validation must fall through to commodity_repo.
+        mock_primary_weapon_repo.get_by_name.return_value = None
+        service.commodity_repo = AsyncMock()
+        service.commodity_repo.get_by_name = AsyncMock(return_value=MagicMock(name="Booze", value=42))
+
+        ok = await service._validate_item_exists(mock_db, "Booze", "commodity")
+
+        assert ok is True
+        service.commodity_repo.get_by_name.assert_awaited_once_with(mock_db, "Booze")
+
+    @pytest.mark.asyncio
+    async def test_validate_item_exists_fails_for_bogus_commodity(self, service, mock_db, mock_primary_weapon_repo):
+        """A bogus name that no repo (including commodity_repo) recognises fails."""
+        mock_primary_weapon_repo.get_by_name.return_value = None
+        service.commodity_repo = AsyncMock()
+        service.commodity_repo.get_by_name = AsyncMock(return_value=None)
+
+        ok = await service._validate_item_exists(mock_db, "Definitely Not Real", "commodity")
+
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_add_item_accepts_commodity_type(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_primary_weapon_repo
+    ):
+        """add_item_to_inventory accepts a commodity write end-to-end: the
+        'commodity' concrete type passes the playable-context write guard and the
+        existence check resolves via commodity_repo."""
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
+        # Non-commodity repos miss; commodity_repo provides the hit.
+        mock_primary_weapon_repo.get_by_name.return_value = None
+        service.commodity_repo = AsyncMock()
+        service.commodity_repo.get_by_name = AsyncMock(return_value=MagicMock(name="Booze", value=42))
+        mock_inventory_repo.add_item.return_value = _make_inventory_item(
+            item_type="commodity", item_name="Booze", quantity=16
+        )
+
+        result = await service.add_item_to_inventory(
+            mock_db, player_id=1, item_type="commodity", item_name="Booze", quantity=16
+        )
+
+        assert result["item_type"] == "commodity"
+        assert result["item_name"] == "Booze"
+        assert result["quantity_added"] == 16
+        # The inventory write uses the concrete 'commodity' type.
+        mock_inventory_repo.add_item.assert_awaited_once_with(mock_db, 1, "commodity", "Booze", 16, commit=True)
+
+    @pytest.mark.asyncio
+    async def test_add_item_rejects_bogus_commodity_name(
+        self, service, mock_db, mock_player_repo, mock_primary_weapon_repo
+    ):
+        """A commodity write with a name no repo recognises raises ValueError."""
+        mock_player_repo.get_by_id_for_update.return_value = _make_player()
+        mock_primary_weapon_repo.get_by_name.return_value = None
+        service.commodity_repo = AsyncMock()
+        service.commodity_repo.get_by_name = AsyncMock(return_value=None)
+
+        with pytest.raises(ValueError, match="does not exist or is not of type"):
+            await service.add_item_to_inventory(
+                mock_db, player_id=1, item_type="commodity", item_name="Ghost Cargo", quantity=1
             )

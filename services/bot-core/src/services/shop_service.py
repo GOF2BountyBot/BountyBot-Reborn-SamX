@@ -14,6 +14,7 @@ from typing import Any
 
 from persist.models.guild_shop import GuildShop
 from persist.models.player_ship import PlayerShip
+from persist.repositories.commodity_repository import CommodityRepository
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.item_repository import ItemRepository
@@ -61,6 +62,9 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         self.secondary_weapon_repo = SecondaryWeaponRepository()
         self.turret_weapon_repo = TurretWeaponRepository()
         self.module_repo = ModuleRepository()
+        # C-1 (PvC loot): commodities are priced from Item.value like any other item,
+        # but are never stocked in a GuildShop (no _CONCRETE_TO_CONFIG_KEY entry).
+        self.commodity_repo = CommodityRepository()
 
         # In-memory cache for static game data, populated by
         # preload_static_data() before bulk refresh operations.
@@ -90,11 +94,19 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             "module": await self.module_repo.list_all(db),
             "turret": await self.turret_weapon_repo.list_all(db),
         }
-        # Build price lookup from all item types (includes secondary weapons)
+        # Build price lookup from all item types (includes secondary weapons).
         self._price_cache = {}
         for items in self._static_cache.values():
             for item in items:
                 self._price_cache[item.name] = item.value
+
+        # C-1 (PvC loot): commodities are priced from Item.value like any other item
+        # so a commodity sell resolves a real face value (not 0). They are added to the
+        # PRICE cache only — NOT to _static_cache's shop-generation keys — so refresh_shop
+        # (which iterates _CONCRETE_TO_CONFIG_KEY, with no commodity entry) never stocks them.
+        _commodities = await self.commodity_repo.list_all(db)
+        for item in _commodities:
+            self._price_cache[item.name] = item.value
 
         flogger.info(
             f"Preloaded static data: "
@@ -103,6 +115,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             f"{len(self._static_cache['secondary'])} secondary weapons, "
             f"{len(self._static_cache['module'])} modules, "
             f"{len(self._static_cache['turret'])} turrets, "
+            f"{len(_commodities)} commodities, "
             f"{len(self._price_cache)} prices cached"
         )
 
@@ -465,6 +478,54 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
             # Calculate item price from static item data (full value, no sell tax)
             base_price = await self._get_item_base_price(db, item_name)
+
+            # C-1 (PvC loot): commodities sell as a PURE FACE-VALUE SINK — the player is
+            # paid Item.value × qty × LOOT_COMMODITY_SELL_FRACTION and the units are
+            # DESTROYED. A commodity must NEVER be added to a GuildShop (it cannot be
+            # bought), so this branch removes from inventory + credits the player but does
+            # NOT call _add_item_to_shop. Weapon/Module selling is unchanged (the else
+            # path below stocks the shop).
+            if concrete_type == "commodity":
+                # T2: wire LOOT_COMMODITY_SELL_FRACTION as a tunable knob (env + per-guild
+                # override). Read from GameConstants here so that change won't touch sell_item.
+                sell_fraction = GameConstants.LOOT_COMMODITY_SELL_FRACTION
+                # §5.7 / §9 C-2: payout = Item.value × qty × fraction with the
+                # truncation applied ONCE to the full product. Truncating per-unit
+                # before multiplying silently underpays once the fraction is tunable
+                # below 1.0 (e.g. value=1, fraction=0.5, qty=10 → per-unit int(0.5)=0
+                # would credit 0; the single-truncation product correctly credits 5).
+                total_sell_value = int(base_price * sell_fraction * quantity)
+                # Display-only per-unit figure, derived AFTER from the credited total
+                # so it can never diverge from what was actually paid. Guard qty=0
+                # (callers reject quantity<1 upstream, but keep the division safe).
+                unit_sell_price = total_sell_value // quantity if quantity else 0
+
+                # Player row already locked (FOR UPDATE) at the top of this method (D5-T2).
+                # Destroy the sold units (cargo-only remove) — no shop write.
+                await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity, commit=False)
+
+                new_credits = player.credits + total_sell_value
+                await self.player_repo.update_credits(db, player_id, new_credits, commit=False)
+
+                transaction_details = {
+                    "player_id": player_id,
+                    "item_type": concrete_type,
+                    "item_name": item_name,
+                    "quantity": quantity,
+                    "unit_sell_price": unit_sell_price,
+                    "total_sell_value": total_sell_value,
+                    "new_credits": new_credits,
+                    # No store involved: commodities are a sink, never stocked.
+                    "target_shop_tier": None,
+                    "sunk": True,
+                }
+
+                flogger.info(
+                    f"Player {player_id} sold (sink) {quantity}x {item_name} (commodity) "
+                    f"for {total_sell_value} credits; units destroyed (no shop)"
+                )
+                return transaction_details
+
             unit_sell_price = base_price
             total_sell_value = unit_sell_price * quantity
 
@@ -889,6 +950,9 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             self.secondary_weapon_repo,
             self.turret_weapon_repo,
             self.module_repo,
+            # C-1 (PvC loot): commodities are priced from Item.value too (used by the
+            # face-value sell sink). Returned 0 before this repo was wired in.
+            self.commodity_repo,
         ):
             item = await repo.get_by_name(db, item_name)
             if item is not None:

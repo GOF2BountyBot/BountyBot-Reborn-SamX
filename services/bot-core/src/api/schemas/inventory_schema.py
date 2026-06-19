@@ -46,7 +46,9 @@ class RemoveItemRequest(BaseModel):
 class TransferItemRequest(BaseModel):
     from_player_id: int
     to_player_id: int
-    item_type: Literal["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
+    # C-1 (PvC loot): "commodity" is a first-class transferable type so a commodity
+    # /give passes schema validation instead of 422-ing before reaching the service.
+    item_type: Literal["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module", "commodity"]
     item_name: str
     quantity: int = Field(gt=0, default=1)
 

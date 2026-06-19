@@ -104,12 +104,19 @@ class TestPlayableContext:
         result = expand_item_type_to_concrete("secondary_weapon", context="playable")
         assert result == ("secondary_weapon",)
 
-    def test_concrete_type_raises_if_disabled_playable(self):
-        """Concrete type that is not in CURRENTLY_ENABLED_TYPES raises InvalidItemTypeError."""
-        # Use a type that is genuinely not in CURRENTLY_ENABLED_TYPES for this invariant test.
-        # (secondary_weapon was the example before CI-5 enabled it; now we use a hypothetical type.)
+    def test_concrete_type_raises_if_disabled_playable(self, monkeypatch):
+        """Concrete type that is in CATALOG but NOT in CURRENTLY_ENABLED_TYPES raises.
+
+        As of T1 (PvC loot) every catalog type — including 'commodity' — is enabled,
+        so there is no longer a permanently-disabled catalog type to use as the example.
+        We temporarily disable 'commodity' (keeping it in CATALOG_ITEM_TYPES) to prove
+        the gate still rejects a cataloged-but-disabled concrete type on the write path.
+        """
         from services.exceptions import InvalidItemTypeError as _ITE
 
+        disabled = GameConstants.CURRENTLY_ENABLED_TYPES - {"commodity"}
+        monkeypatch.setattr(GameConstants, "CURRENTLY_ENABLED_TYPES", disabled)
+        assert "commodity" in GameConstants.CATALOG_ITEM_TYPES  # still cataloged
         with pytest.raises(_ITE):
             expand_item_type_to_concrete("commodity", context="playable")
 

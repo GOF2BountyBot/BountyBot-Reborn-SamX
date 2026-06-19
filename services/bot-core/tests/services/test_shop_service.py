@@ -1103,7 +1103,9 @@ class TestGetItemBasePrice:
     @pytest.mark.asyncio
     async def test_returns_zero_when_item_not_found(self, service, mock_db):
         """Returns 0 when the item is not found in any repository."""
-        # All repos return None (default fixture setup)
+        # All repos return None (default fixture setup). T1 added commodity_repo as
+        # the last fallback — it must also miss for the 0 result.
+        service.commodity_repo.get_by_name = AsyncMock(return_value=None)
         price = await service._get_item_base_price(mock_db, "NonExistentItem")
 
         assert price == 0
@@ -2249,3 +2251,299 @@ class TestSecondaryQuantityScalers:
         # Unknown item → ""
         mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=None)
         assert await service._get_secondary_subtype_by_name(mock_db, "Nonexistent") == ""
+
+
+# ===========================================================================
+# T1 (PvC loot C-1): commodity economy citizenship in ShopService.
+#   - pricing: commodity Item.value resolves (was 0 before this wiring)
+#   - selling: commodity is a face-value SINK (never stocked in a GuildShop)
+#   - refresh: commodities are NEVER generated into shop stock
+# ===========================================================================
+
+
+class TestCommodityPricing:
+    """T1/C-1: _get_item_base_price resolves a commodity's Item.value."""
+
+    @pytest.mark.asyncio
+    async def test_commodity_price_resolves_to_item_value_slow_path(self, service, mock_db):
+        """Slow path (no preload cache): a commodity's value comes from commodity_repo,
+        not 0. The five non-commodity repos miss; commodity_repo provides Item.value."""
+        commodity = MagicMock()
+        commodity.value = 1234
+        service.commodity_repo.get_by_name = AsyncMock(return_value=commodity)
+        # All other repos already default to get_by_name -> None.
+
+        price = await service._get_item_base_price(mock_db, "Booze")
+
+        assert price == 1234  # NOT 0 (the pre-T1 behaviour for commodities)
+
+    @pytest.mark.asyncio
+    async def test_preload_caches_commodity_prices(self, service, mock_db):
+        """preload_static_data adds commodity prices to the price cache so a cached
+        lookup resolves a commodity's Item.value (and shop generation is unaffected)."""
+        # Empty non-commodity static lists; one commodity with a real value.
+        for repo_name in (
+            "ship_repo",
+            "primary_weapon_repo",
+            "secondary_weapon_repo",
+            "module_repo",
+            "turret_weapon_repo",
+        ):
+            getattr(service, repo_name).list_all = AsyncMock(return_value=[])
+        commodity = MagicMock()
+        commodity.name = "Booze"
+        commodity.value = 999
+        service.commodity_repo.list_all = AsyncMock(return_value=[commodity])
+
+        await service.preload_static_data(mock_db)
+
+        # Cached lookup resolves the commodity price.
+        price = await service._get_item_base_price(mock_db, "Booze")
+        assert price == 999
+
+
+class TestSellCommoditySink:
+    """T1/C-1/§5.7: selling a commodity pays Item.value × qty × fraction and
+    DESTROYS the units — it must never be added to a GuildShop."""
+
+    @pytest.mark.asyncio
+    async def test_commodity_sell_pays_face_value_and_does_not_stock_shop(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo
+    ):
+        """Commodity sell: credits = value×qty×fraction; _add_item_to_shop NOT called;
+        no shop write occurs (pure sink)."""
+        player = _make_player(credits=100, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=16, item_type="commodity", item_name="Booze")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+
+        service._get_item_base_price = AsyncMock(return_value=50)
+        # Spy on the shop-add path to prove it is never invoked for a commodity.
+        service._add_item_to_shop = AsyncMock()
+
+        with patch.object(GameConstants, "LOOT_COMMODITY_SELL_FRACTION", 1.0):
+            result = await service.sell_item(mock_db, player_id=1, item_name="Booze", quantity=16)
+
+        # value (50) × qty (16) × fraction (1.0) = 800
+        assert result["item_type"] == "commodity"
+        assert result["unit_sell_price"] == 50
+        assert result["total_sell_value"] == 800
+        assert result["new_credits"] == 900  # 100 + 800
+        assert result["target_shop_tier"] is None
+        assert result["sunk"] is True
+        # The units are removed from cargo (destroyed)...
+        mock_inventory_repo.remove_item.assert_awaited_once_with(mock_db, 1, "commodity", "Booze", 16, commit=False)
+        # ...but NEVER added to any GuildShop.
+        service._add_item_to_shop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_commodity_sell_applies_fraction(self, service, mock_db, mock_player_repo, mock_inventory_repo):
+        """LOOT_COMMODITY_SELL_FRACTION scales the payout (read from GameConstants)."""
+        player = _make_player(credits=0, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=10, item_type="commodity", item_name="Ore")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+        service._get_item_base_price = AsyncMock(return_value=100)
+        service._add_item_to_shop = AsyncMock()
+
+        with patch.object(GameConstants, "LOOT_COMMODITY_SELL_FRACTION", 0.5):
+            result = await service.sell_item(mock_db, player_id=1, item_name="Ore", quantity=10)
+
+        # value (100) × 0.5 = 50/unit; × qty 10 = 500
+        assert result["unit_sell_price"] == 50
+        assert result["total_sell_value"] == 500
+        service._add_item_to_shop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_commodity_sell_single_truncation_no_underpay(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo
+    ):
+        """§9 C-2 rounding regression: payout truncates ONCE on the full product.
+
+        value=1, fraction=0.5, qty=10. The correct credit is int(1*0.5*10)=5.
+        The old per-unit-first math computed int(1*0.5)=0 per unit, then *10 = 0,
+        silently destroying the cargo for zero credits. This test FAILS against the
+        old math (credits 0) and passes against the single-truncation fix (credits 5).
+        """
+        player = _make_player(credits=0, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=10, item_type="commodity", item_name="Scrap")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+        service._get_item_base_price = AsyncMock(return_value=1)
+        service._add_item_to_shop = AsyncMock()
+
+        with patch.object(GameConstants, "LOOT_COMMODITY_SELL_FRACTION", 0.5):
+            result = await service.sell_item(mock_db, player_id=1, item_name="Scrap", quantity=10)
+
+        # int(1 * 0.5 * 10) == 5 — NOT int(0.5)*10 == 0.
+        assert result["total_sell_value"] == 5, "single-truncation product must credit 5, not 0"
+        assert result["new_credits"] == 5  # 0 + 5
+        # Per-unit display is derived from the credited total (5 // 10 == 0).
+        assert result["unit_sell_price"] == 0
+        # The credited balance is what update_credits actually received.
+        mock_player_repo.update_credits.assert_awaited_once_with(mock_db, 1, 5, commit=False)
+        service._add_item_to_shop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_commodity_sell_value_zero_credits_nothing(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo
+    ):
+        """A value-0 commodity credits 0, destroys the units, raises no error, no shop add."""
+        player = _make_player(credits=250, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=4, item_type="commodity", item_name="Dust")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+        service._get_item_base_price = AsyncMock(return_value=0)
+        service._add_item_to_shop = AsyncMock()
+
+        with patch.object(GameConstants, "LOOT_COMMODITY_SELL_FRACTION", 1.0):
+            result = await service.sell_item(mock_db, player_id=1, item_name="Dust", quantity=4)
+
+        assert result["total_sell_value"] == 0
+        assert result["unit_sell_price"] == 0
+        assert result["new_credits"] == 250  # unchanged
+        assert result["sunk"] is True
+        assert result["target_shop_tier"] is None
+        # Units destroyed even though payout is 0.
+        mock_inventory_repo.remove_item.assert_awaited_once_with(mock_db, 1, "commodity", "Dust", 4, commit=False)
+        # Balance unchanged but the credit write still happens with the same value.
+        mock_player_repo.update_credits.assert_awaited_once_with(mock_db, 1, 250, commit=False)
+        # Never stocked into any GuildShop.
+        service._add_item_to_shop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_commodity_sell_partial_stack(self, service, mock_db, mock_player_repo, mock_inventory_repo):
+        """Partial sell (16 in cargo, sell 6): credits int(value*fraction*6); no shop add."""
+        player = _make_player(credits=0, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=16, item_type="commodity", item_name="Ore")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+        service._get_item_base_price = AsyncMock(return_value=30)
+        service._add_item_to_shop = AsyncMock()
+
+        with patch.object(GameConstants, "LOOT_COMMODITY_SELL_FRACTION", 0.5):
+            result = await service.sell_item(mock_db, player_id=1, item_name="Ore", quantity=6)
+
+        # int(30 * 0.5 * 6) == 90.
+        assert result["total_sell_value"] == 90
+        assert result["quantity"] == 6
+        assert result["new_credits"] == 90  # 0 + 90
+        mock_player_repo.update_credits.assert_awaited_once_with(mock_db, 1, 90, commit=False)
+        # Only the sold 6 are removed; the remove_item call carries qty=6 (cargo decremented to 10).
+        mock_inventory_repo.remove_item.assert_awaited_once_with(mock_db, 1, "commodity", "Ore", 6, commit=False)
+        service._add_item_to_shop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_commodity_sell_single_unit(self, service, mock_db, mock_player_repo, mock_inventory_repo):
+        """qty=1 single-unit stack sold entirely: correct credit, row removed, no shop add."""
+        player = _make_player(credits=10, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=1, item_type="commodity", item_name="Gem")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+        service._get_item_base_price = AsyncMock(return_value=40)
+        service._add_item_to_shop = AsyncMock()
+
+        with patch.object(GameConstants, "LOOT_COMMODITY_SELL_FRACTION", 0.5):
+            result = await service.sell_item(mock_db, player_id=1, item_name="Gem", quantity=1)
+
+        # int(40 * 0.5 * 1) == 20.
+        assert result["total_sell_value"] == 20
+        assert result["unit_sell_price"] == 20  # 20 // 1
+        assert result["new_credits"] == 30  # 10 + 20
+        mock_player_repo.update_credits.assert_awaited_once_with(mock_db, 1, 30, commit=False)
+        mock_inventory_repo.remove_item.assert_awaited_once_with(mock_db, 1, "commodity", "Gem", 1, commit=False)
+        service._add_item_to_shop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_commodity_sell_credits_update_awaited_with_resulting_balance(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo
+    ):
+        """update_credits is awaited exactly once with the correct resulting balance.
+
+        Locks the sink's credit write to the player's starting credits PLUS the
+        single-truncation payout — not merely that the return dict holds a number.
+        """
+        player = _make_player(credits=137, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=3, item_type="commodity", item_name="Spice")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+        service._get_item_base_price = AsyncMock(return_value=25)
+        service._add_item_to_shop = AsyncMock()
+
+        with patch.object(GameConstants, "LOOT_COMMODITY_SELL_FRACTION", 0.5):
+            result = await service.sell_item(mock_db, player_id=1, item_name="Spice", quantity=3)
+
+        # payout = int(25 * 0.5 * 3) == 37; resulting balance = 137 + 37 == 174.
+        assert result["total_sell_value"] == 37
+        assert result["new_credits"] == 174
+        mock_player_repo.update_credits.assert_awaited_once_with(mock_db, 1, 174, commit=False)
+        service._add_item_to_shop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_weapon_sell_still_stocks_shop_regression(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo
+    ):
+        """Regression: selling a Weapon/Module is UNCHANGED — it still stocks the
+        player's tier GuildShop via _add_item_to_shop (no sink branch)."""
+        player = _make_player(credits=0, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=1, item_type="primary_weapon", item_name="Gun")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+        service._get_item_base_price = AsyncMock(return_value=300)
+        service._add_item_to_shop = AsyncMock()
+
+        result = await service.sell_item(mock_db, player_id=1, item_name="Gun", quantity=1)
+
+        assert result["item_type"] == "primary_weapon"
+        assert result["target_shop_tier"] == "Bronze"
+        assert "sunk" not in result
+        # The weapon IS stocked into the shop.
+        service._add_item_to_shop.assert_awaited_once()
+        shop_call = service._add_item_to_shop.await_args
+        assert shop_call.args[3] == "primary_weapon"  # concrete_type
+        assert shop_call.args[4] == "Gun"  # item_name
+
+
+class TestRefreshExcludesCommodities:
+    """T1/C-1 regression: refresh_shop must NOT generate commodities into shop
+    stock even though 'commodity' is now in CURRENTLY_ENABLED_TYPES — the shop
+    gate is _CONCRETE_TO_CONFIG_KEY (which has no commodity entry)."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_never_stocks_commodity(self, service, mock_db, mock_config_repo, mock_shop_repo):
+        """No generated shop row has item_type='commodity', and the commodity type is
+        never passed to the item-selection helper."""
+        from services.shop_service import _CONCRETE_TO_CONFIG_KEY
+
+        # Sanity: 'commodity' is enabled but has no shop config key → excluded from generation.
+        assert "commodity" in GameConstants.CURRENTLY_ENABLED_TYPES
+        assert "commodity" not in _CONCRETE_TO_CONFIG_KEY
+
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        seen_types: list[str] = []
+
+        async def _fake_get_random(db, item_type, tl):
+            seen_types.append(item_type)
+            return f"{item_type}-item"
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=300)
+        mock_shop_repo.create_or_update = AsyncMock(return_value=_make_shop_item())
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=5)
+
+        # The selection helper is never asked for a commodity...
+        assert "commodity" not in seen_types
+        # ...and no generated shop row is a commodity.
+        generated_types = {call.args[1]["item_type"] for call in mock_shop_repo.create_or_update.call_args_list}
+        assert "commodity" not in generated_types

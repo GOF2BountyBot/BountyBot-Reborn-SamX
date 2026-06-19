@@ -490,3 +490,85 @@ class TestTypeConversion:
         assert pytest.approx(GameConstants.PVC_DAMAGE_REDUCTION) == 0.15
         assert isinstance(GameConstants.PVC_DAMAGE_REDUCTION, float)
         _reset_constants()
+
+
+class TestLootKnobDefaults:
+    """Absolute-value assertions for all 19 tunable loot knobs (+ the fixed
+    LOOT_DROP_CHANCE), per LOOT_JOURNAL §8.
+
+    These pin every default to its exact value so a future transposed/typo'd
+    default (e.g. swapping band-select %s) is caught automatically — a T2-review
+    fold-in (T3 part D).  Kept distinct from the env-override tests above.
+    """
+
+    # §5.3 — tractor → chance tiers (int percent).
+    def test_loot_chance_tractor_t1(self) -> None:
+        assert GameConstants.LOOT_CHANCE_TRACTOR_T1 == 20
+
+    def test_loot_chance_tractor_t2(self) -> None:
+        assert GameConstants.LOOT_CHANCE_TRACTOR_T2 == 40
+
+    def test_loot_chance_tractor_t3(self) -> None:
+        assert GameConstants.LOOT_CHANCE_TRACTOR_T3 == 60
+
+    def test_loot_chance_tractor_t4(self) -> None:
+        assert GameConstants.LOOT_CHANCE_TRACTOR_T4 == 80
+
+    def test_loot_chance_no_tractor(self) -> None:
+        assert GameConstants.LOOT_CHANCE_NO_TRACTOR == 0
+
+    # §5.8.4 — band-select weights (must sum to 100 at defaults).
+    def test_loot_band1_select_pct(self) -> None:
+        assert GameConstants.LOOT_BAND1_SELECT_PCT == 10
+
+    def test_loot_band2_select_pct(self) -> None:
+        assert GameConstants.LOOT_BAND2_SELECT_PCT == 20
+
+    def test_loot_band3_select_pct(self) -> None:
+        assert GameConstants.LOOT_BAND3_SELECT_PCT == 70
+
+    def test_loot_band_select_pcts_sum_to_100(self) -> None:
+        assert (
+            GameConstants.LOOT_BAND1_SELECT_PCT
+            + GameConstants.LOOT_BAND2_SELECT_PCT
+            + GameConstants.LOOT_BAND3_SELECT_PCT
+        ) == 100
+
+    # §5.8.4 — Band-1 ±TL window.
+    def test_loot_band1_tl_window(self) -> None:
+        assert GameConstants.LOOT_BAND1_TL_WINDOW == 1
+
+    # §5.8.1 — Band-1 quantity triangular (1,1,3) → 50/33/17.
+    def test_loot_band1_qty_min(self) -> None:
+        assert GameConstants.LOOT_BAND1_QTY_MIN == 1
+
+    def test_loot_band1_qty_max(self) -> None:
+        assert GameConstants.LOOT_BAND1_QTY_MAX == 3
+
+    def test_loot_band1_qty_mode(self) -> None:
+        assert GameConstants.LOOT_BAND1_QTY_MODE == 1
+
+    # §5.8.2 — Band-2 quantity triangular (4,8,12).
+    def test_loot_band2_qty_min(self) -> None:
+        assert GameConstants.LOOT_BAND2_QTY_MIN == 4
+
+    def test_loot_band2_qty_max(self) -> None:
+        assert GameConstants.LOOT_BAND2_QTY_MAX == 12
+
+    def test_loot_band2_qty_mode(self) -> None:
+        assert GameConstants.LOOT_BAND2_QTY_MODE == 8
+
+    # §5.8.3 — Band-3 quantity triangular (10,16,22).
+    def test_loot_band3_qty_min(self) -> None:
+        assert GameConstants.LOOT_BAND3_QTY_MIN == 10
+
+    def test_loot_band3_qty_max(self) -> None:
+        assert GameConstants.LOOT_BAND3_QTY_MAX == 22
+
+    def test_loot_band3_qty_mode(self) -> None:
+        assert GameConstants.LOOT_BAND3_QTY_MODE == 16
+
+    # §5.7 / C-2 — commodity sell fraction (float, 100%).
+    def test_loot_commodity_sell_fraction(self) -> None:
+        assert GameConstants.LOOT_COMMODITY_SELL_FRACTION == 1.0
+        assert isinstance(GameConstants.LOOT_COMMODITY_SELL_FRACTION, float)

@@ -238,6 +238,15 @@ def service() -> BountyService:
     # loadout content override get_all explicitly.
     svc.item_repo.get_all = AsyncMock(return_value=[])
 
+    # T4 (loot): spawn_bounty now lazy-warms the LootService static cache and rolls
+    # the criminal's cargo item.  Neutralise that path by default so the existing
+    # spawn tests (which use a MagicMock db) don't drive the real preload/roll —
+    # loot is orthogonal to what they assert.  T4-specific tests override these.
+    svc.loot_service = MagicMock()
+    svc.loot_service.is_loaded = True
+    svc.loot_service.preload_static_data = AsyncMock()
+    svc.loot_service.roll_loot = MagicMock(return_value=None)
+
     return svc
 
 

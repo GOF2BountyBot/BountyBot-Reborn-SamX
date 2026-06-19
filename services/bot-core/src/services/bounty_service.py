@@ -36,6 +36,7 @@ from services.game_maths import (
     reward_per_sys_check,
     ship_tech_level_for_value,
 )
+from services.loot_service import LootService
 from services.pathfinding_service import PathfindingService
 from services.system_graph_service import SystemGraphService
 
@@ -515,6 +516,7 @@ class BountyService:
         self.graph_service = SystemGraphService()
         self.pathfinding_service = PathfindingService(self.graph_service)
         self.combat_service = CombatService()
+        self.loot_service = LootService()
 
     # ------------------------------------------------------------------
     # Criminal Selection
@@ -1363,6 +1365,18 @@ class BountyService:
             "scheduler_jobs_deleted": scheduler_jobs_deleted,
         }
 
+    async def _ensure_loot_cache_loaded(self, db: AsyncSession) -> None:
+        """Lazily warm the LootService static cache before a spawn-time loot roll.
+
+        T3 deliberately left the preload call to the consumer (no central startup
+        hook exists — ``spawn_bounty`` is invoked from several executors/routers,
+        each constructing a fresh ``BountyService``).  This guard makes the spawn
+        roll total: if the per-instance cache is cold, build it once; ``is_loaded``
+        gates the rebuild so warm caches are never re-queried (LOOT_JOURNAL §5.8.4).
+        """
+        if not self.loot_service.is_loaded:
+            await self.loot_service.preload_static_data(db)
+
     async def spawn_bounty(
         self,
         db: AsyncSession,
@@ -1446,6 +1460,32 @@ class BountyService:
 
         # Step 5: Generate loadout
         loadout = await self.generate_loadout(db, tech_level, division=division, cfg=cfg)
+
+        # Step 5b: Roll the criminal's single cargo loot item (LOOT_JOURNAL §5.1 /
+        # T4).  The item is selected ONCE, at spawn, anchored on the division-derived
+        # ``tech_level`` (§7.3), and persisted inside the ``criminal_ship`` JSONB under
+        # a ``cargo`` key so the win-branch loot write (T5) reads it rather than
+        # re-rolling, and T4b can advertise it pre-fight.  Lazy-ensure the static loot
+        # cache is warm first so a cold cache can NEVER roll an empty pool and silently
+        # drop the §5.1 100%-carry guarantee.
+        await self._ensure_loot_cache_loaded(db)
+        loot_roll = self.loot_service.roll_loot(tech_level, random.Random(), guild_config=cfg)
+        if loot_roll is not None:
+            loadout["cargo"] = {
+                "item_type": loot_roll.item_type,
+                "item_name": loot_roll.item_name,
+                "quantity": loot_roll.quantity,
+            }
+        else:
+            # Defensive: an empty chosen-band pool yields None.  Per §5.1 every
+            # criminal carries exactly one item, so a None here means seed data is
+            # missing the band's pool entirely — log loudly; the bounty still spawns
+            # (no cargo key) so the kill path is crash-safe (T5 treats absent cargo as
+            # "nothing to loot").
+            flogger.warning(
+                f"Loot roll returned no item for guild={guild_id} div={division} tl={tech_level}; "
+                "criminal spawns with no cargo (check loot pools / seed data)"
+            )
 
         # Step 6: Calculate reward using the winner-reserve / consolation-pool model.
         # The total reward is seeded by the legacy per-sys formula, but reward_per_sys

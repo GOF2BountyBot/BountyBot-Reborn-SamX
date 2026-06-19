@@ -1,6 +1,93 @@
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+def _extract_cargo(criminal_ship: Any) -> dict | None:
+    """Project a bounty's ``criminal_ship["cargo"]`` blob into a BountyCargo dict.
+
+    Returns None (no cargo line — never an error) for every legacy / malformed
+    shape: ``criminal_ship`` is None or not a dict, the ``cargo`` key is absent or
+    not a dict, the name is missing/blank, or the quantity is missing/non-positive.
+    """
+    if not isinstance(criminal_ship, dict):
+        return None
+    cargo = criminal_ship.get("cargo")
+    if not isinstance(cargo, dict):
+        return None
+    item_name = cargo.get("item_name")
+    quantity = cargo.get("quantity")
+    if not isinstance(item_name, str) or not item_name:
+        return None
+    if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 1:
+        return None
+    item_type = cargo.get("item_type")
+    return {
+        "item_name": item_name,
+        "item_type": item_type if isinstance(item_type, str) else "",
+        "quantity": quantity,
+    }
+
+
+def _inject_cargo(data: Any) -> Any:
+    """``mode="before"`` validator body: populate ``cargo`` from ``criminal_ship``.
+
+    Handles both validation inputs: a mapping (``dict``) and an ORM object
+    (``from_attributes=True``).  Never raises — a malformed/absent blob yields no
+    ``cargo`` key, so the field defaults to ``None``.  An explicitly-supplied
+    ``cargo`` (e.g. in a hand-built dict) is left untouched.
+    """
+    if isinstance(data, dict):
+        if data.get("cargo") is not None:
+            return data
+        derived = _extract_cargo(data.get("criminal_ship"))
+        if derived is not None:
+            data = {**data, "cargo": derived}
+        return data
+    # ORM object (or any attribute-bearing object) — always derive from
+    # ``criminal_ship``; a real Bounty row has no ``cargo`` attribute, so we never
+    # trust a pre-existing one here (it would be a mock artifact, not real data).
+    criminal_ship = getattr(data, "criminal_ship", None)
+    derived = _extract_cargo(criminal_ship)
+    # Wrap so we can overlay the derived (or absent) cargo while preserving attribute
+    # access for every other field.  The overlay forces ``cargo`` regardless of any
+    # spurious attribute on the wrapped object.
+    return _CargoOverlay(data, derived)
+
+
+class _CargoOverlay:
+    """Thin attribute proxy that overlays a derived ``cargo`` onto an ORM object.
+
+    Lets the ``mode="before"`` validator inject ``cargo`` without mutating the ORM
+    instance, while Pydantic's ``from_attributes`` reads every other field straight
+    through ``getattr``.
+    """
+
+    __slots__ = ("_cargo", "_wrapped")
+
+    def __init__(self, wrapped: Any, cargo: dict | None) -> None:
+        self._wrapped = wrapped
+        self._cargo = cargo
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "cargo":
+            return self._cargo
+        return getattr(self._wrapped, name)
+
+
+class BountyCargo(BaseModel):
+    """The single loot item a criminal carries (LOOT_JOURNAL §5.1 / T4).
+
+    Surfaced read-only on bounty payloads (T4b) so the gateway can advertise what
+    is lootable pre-fight.  ``None`` on the parent payload when the bounty has no
+    rolled cargo (legacy / no-roll bounties)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    item_name: str
+    item_type: str
+    quantity: int
 
 
 class BountyResponse(BaseModel):
@@ -20,9 +107,16 @@ class BountyResponse(BaseModel):
     end_time: datetime | None = None
     tech_level: int
     criminal_ship: dict | None = None
+    # T4b: the criminal's lootable cargo, derived read-only from criminal_ship["cargo"].
+    cargo: BountyCargo | None = None
     status: str
     escape_count: int = 0
     win_user_id: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_cargo(cls, data: Any) -> Any:
+        return _inject_cargo(data)
 
 
 class BountyCreateRequest(BaseModel):
@@ -51,6 +145,13 @@ class BountyPublicResponse(BaseModel):
     end_time: datetime | None = None
     tech_level: int
     status: str
+    # T4b: the criminal's lootable cargo, derived read-only from criminal_ship["cargo"].
+    cargo: BountyCargo | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_cargo(cls, data: Any) -> Any:
+        return _inject_cargo(data)
 
 
 class BountyCheckRequest(BaseModel):

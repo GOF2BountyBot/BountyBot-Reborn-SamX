@@ -131,6 +131,15 @@ def build_loadout_embed(
         _add_field_safe(embed, name, value)
         used += len(name) + len(value)
 
+        # 2b. Loot aboard (criminal path, T4b) — the prospective loot the criminal
+        # carries, shown pre-fight as a single "Nx <Item>" line.  Omitted entirely
+        # (no blank field, no error) when no cargo was rolled (legacy bounties).
+        loot_field = _format_loot_cargo_field(response)
+        if loot_field is not None:
+            loot_name, loot_value = loot_field
+            _add_field_safe(embed, loot_name, loot_value)
+            used += len(loot_name) + len(loot_value)
+
         # Apply 4-tier truncation strategy and render remaining sections.
         sections = _apply_truncation_strategy(
             response,
@@ -290,6 +299,29 @@ def _format_secondary_line(secondary: dict) -> str:
     if loading is not None:
         line = f"{line} | Loading: **{loading} ms**"
     return line
+
+
+def _format_loot_cargo_field(response: dict) -> tuple[str, str] | None:
+    """Build the 'Loot aboard' field for a criminal's prospective loot (T4b).
+
+    Reads ``response["loot_cargo"]`` (``{item_name, item_type, quantity}``) and
+    renders a single ``Nx <Item>`` line — the quantity is ALWAYS shown, even ``1x``
+    (consistent with the loot-result messaging, LOOT_JOURNAL §5.9).
+
+    Returns ``None`` (the caller omits the field entirely — no blank field, no
+    error) for every legacy / malformed shape: ``loot_cargo`` absent or not a dict,
+    name missing/blank, or quantity missing / not a positive int.
+    """
+    loot = response.get("loot_cargo")
+    if not isinstance(loot, dict):
+        return None
+    name = loot.get("item_name")
+    quantity = loot.get("quantity")
+    if not isinstance(name, str) or not name:
+        return None
+    if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 1:
+        return None
+    return ("Loot aboard", f"{quantity}x {name}")
 
 
 def _format_cargo_line(item: dict) -> str:

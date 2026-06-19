@@ -1906,3 +1906,77 @@ class TestPrimaryWeaponModModuleLine:
             }
         )
         assert line == "<:noc:1> Nirai Overcharge | Damage: **+20%** | Fire Rate: **-10%** | Net DPS: **×1.1**"
+
+
+# ---------------------------------------------------------------------------
+# T4b — "Loot aboard" field (criminal's prospective loot, shown pre-fight)
+# ---------------------------------------------------------------------------
+
+
+class TestLootCargoField:
+    """The criminal's loot_cargo renders as a single 'Loot aboard: Nx <Item>' field.
+
+    Used by BOTH the bounty announcement embed and the /criminal-loadout embed,
+    since both share build_loadout_embed.  Quantity is ALWAYS shown (even 1x).
+    Absent / malformed loot_cargo → NO field at all (legacy bounty, graceful).
+    """
+
+    def test_commodity_stack_renders_nx_item(self):
+        resp = _make_criminal_response(loot_cargo={"item_type": "commodity", "item_name": "Booze", "quantity": 16})
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        field = _get_field(embed, "Loot aboard")
+        assert field is not None
+        assert field.value == "16x Booze"
+
+    def test_qty_one_still_shows_quantity(self):
+        resp = _make_criminal_response(
+            loot_cargo={"item_type": "primary_weapon", "item_name": "AB-1 Retractor", "quantity": 1}
+        )
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        field = _get_field(embed, "Loot aboard")
+        assert field is not None
+        assert field.value == "1x AB-1 Retractor"
+
+    def test_absent_loot_cargo_renders_no_field(self):
+        """Legacy bounty with no loot_cargo → the field is omitted entirely."""
+        resp = _make_criminal_response()  # no loot_cargo key
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert _get_field(embed, "Loot aboard") is None
+
+    def test_none_loot_cargo_renders_no_field(self):
+        resp = _make_criminal_response(loot_cargo=None)
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+        assert _get_field(embed, "Loot aboard") is None
+
+    def test_malformed_loot_cargo_renders_no_field(self):
+        for blob in (
+            {"item_type": "commodity", "item_name": "", "quantity": 5},  # blank name
+            {"item_type": "commodity", "item_name": "Booze", "quantity": 0},  # zero qty
+            {"item_type": "commodity", "item_name": "Booze", "quantity": -2},  # negative
+            {"item_type": "commodity", "item_name": "Booze"},  # missing qty
+            {"item_type": "commodity", "quantity": 5},  # missing name
+            "not-a-dict",  # wrong shape
+        ):
+            resp = _make_criminal_response(loot_cargo=blob)
+            embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
+            assert _get_field(embed, "Loot aboard") is None, f"expected no field for {blob!r}"
+
+    def test_loot_field_suppressed_when_captured(self):
+        """captured=True suppresses loadout sections — loot is part of that suppression."""
+        resp = _make_criminal_response(loot_cargo={"item_type": "commodity", "item_name": "Booze", "quantity": 16})
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True, captured=True)
+        assert _get_field(embed, "Loot aboard") is None
+
+    def test_announcement_style_render_includes_loot(self):
+        """Announcement path (prefix/suffix fields + criminal loadout) shows loot line."""
+        resp = _make_criminal_response(loot_cargo={"item_type": "commodity", "item_name": "Ore Core", "quantity": 8})
+        embed = build_loadout_embed(
+            resp,
+            viewer_is_owner_or_admin=True,
+            title_override="Dark Mage",
+            prefix_fields=[{"name": "Reward Pool", "value": "10,000 credits", "inline": True}],
+            suffix_fields=[{"name": "Route", "value": "Sol, Vega", "inline": False}],
+        )
+        field = _get_field(embed, "Loot aboard")
+        assert field is not None
+        assert field.value == "8x Ore Core"

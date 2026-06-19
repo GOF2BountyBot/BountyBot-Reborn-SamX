@@ -16,6 +16,7 @@ from api.schemas.loadout_schema import (
     LoadoutModuleItem,
     LoadoutResponse,
     LoadoutWeaponItem,
+    LootCargoItem,
     ShipStats,
 )
 from shared import bblogger
@@ -553,6 +554,11 @@ class LoadoutResponseService:
         # Thumbnail prefers criminal portrait; falls back to None (gateway null-guards)
         thumbnail_url = criminal.icon if criminal and criminal.icon else None
 
+        # T4b — surface the criminal's prospective loot pre-fight.  The cargo is
+        # rolled & persisted at spawn (T4) under ``criminal_ship["cargo"]``; the key
+        # may be ABSENT (legacy bounties / defensive no-roll branch) → loot_cargo=None.
+        loot_cargo = self._build_loot_cargo(criminal_ship.get("cargo"))
+
         return LoadoutResponse(
             subject_kind="criminal",
             subject_name=criminal_name,
@@ -571,6 +577,30 @@ class LoadoutResponseService:
             modules_total_count=modules_total_count,
             cargo=[],
             cargo_total_count=0,
+            loot_cargo=loot_cargo,
+        )
+
+    @staticmethod
+    def _build_loot_cargo(cargo: object) -> LootCargoItem | None:
+        """Project a persisted ``criminal_ship["cargo"]`` blob into a LootCargoItem.
+
+        Returns None (render nothing — no crash) for every malformed / legacy shape:
+        the key is absent, the value is not a dict, the name is missing/blank, or the
+        quantity is missing/non-positive.  ``item_type`` defaults to "" when absent.
+        """
+        if not isinstance(cargo, dict):
+            return None
+        item_name = cargo.get("item_name")
+        quantity = cargo.get("quantity")
+        if not isinstance(item_name, str) or not item_name:
+            return None
+        if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 1:
+            return None
+        item_type = cargo.get("item_type")
+        return LootCargoItem(
+            item_name=item_name,
+            item_type=item_type if isinstance(item_type, str) else "",
+            quantity=quantity,
         )
 
     @staticmethod

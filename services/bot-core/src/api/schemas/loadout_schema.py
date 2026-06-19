@@ -58,6 +58,24 @@ class CargoItem(BaseModel):
     emoji: str | None = None
 
 
+class LootCargoItem(BaseModel):
+    """The single loot item a criminal carries (LOOT_JOURNAL §5.1 / T4).
+
+    Rolled and persisted at spawn in ``Bounty.criminal_ship["cargo"]`` and
+    surfaced pre-fight (T4b) so players can see what is lootable before engaging.
+    This is distinct from the criminal's equipment :class:`CargoItem` list (which
+    is empty for criminals): ``loot_cargo`` is the prospective *loot*, not the
+    criminal's own cargo hold.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    item_name: str
+    # Concrete loot item_type (e.g. "commodity", "primary_weapon", "module").
+    item_type: str
+    quantity: int
+
+
 class ShipStats(BaseModel):
     """Base ship stats used for the 'Ship Stats' embed field."""
 
@@ -116,6 +134,11 @@ class LoadoutResponse(BaseModel):
     # Cargo
     cargo: list[CargoItem] = Field(default_factory=list)
     cargo_total_count: int = 0  # Sum of CargoItem.quantity — used in 'Cargo Hold <N/M>' header
+
+    # Loot aboard (criminal path only, T4b) — the single lootable item the criminal
+    # carries, surfaced pre-fight. None when the bounty has no rolled cargo (legacy /
+    # no-roll bounties). Informational only; capture still gates on the tractor roll.
+    loot_cargo: LootCargoItem | None = None
 
     # Modules
     modules_total_count: int = 0  # True equipped module count (pre-dedup) — used in 'Modules <N/M>' header

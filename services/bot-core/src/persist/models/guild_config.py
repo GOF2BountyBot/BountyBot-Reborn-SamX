@@ -162,6 +162,41 @@ class GuildConfig(Base):
     criminal_exclude_emp_weapons: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
 
     # ------------------------------------------------------------------
+    # Loot (PvC) tunable-knob overrides (LOOT_JOURNAL §8 / T2)
+    # NULL == "use the matching GameConstants default". resolve_constant() handles fallback.
+    # 18 integer knobs (int-percent / TL window / qty min/max/mode) + 1 float (sell fraction).
+    # ------------------------------------------------------------------
+
+    # §5.3 — loot-roll chance by tractor-beam tier (int-percent 0–100)
+    loot_chance_tractor_t1: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_chance_tractor_t2: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_chance_tractor_t3: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_chance_tractor_t4: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_chance_no_tractor: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # §5.8.4 — band-select weights (int-percent 0–100)
+    loot_band1_select_pct: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band2_select_pct: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band3_select_pct: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # §5.8.4 — Band-1 ±TL window vs criminal TL
+    loot_band1_tl_window: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # §5.8.1–.3 — per-band quantity triangular (min/max/mode)
+    loot_band1_qty_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band1_qty_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band1_qty_mode: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band2_qty_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band2_qty_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band2_qty_mode: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band3_qty_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band3_qty_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    loot_band3_qty_mode: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # §5.7 / C-2 — commodity sell payout fraction (float)
+    loot_commodity_sell_fraction: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    # ------------------------------------------------------------------
     # Combat System — Phase-1 per-guild overrides (Appendix A constants)
     # NULL == "use GameConstants default". resolve_constant() handles fallback.
     # ------------------------------------------------------------------

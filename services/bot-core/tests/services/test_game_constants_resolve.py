@@ -132,3 +132,53 @@ def test_resolve_constant_fallback_type_preserved_dict():
     fallback = {"bronze": 2, "silver": 4, "gold": 7, "platinum": 10}
     result = resolve_constant(None, "division_max_tl", fallback)
     assert result == fallback
+
+
+# ---------------------------------------------------------------------------
+# Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2) — table-driven over all 19.
+# Each: NULL guild column -> GameConstants default; set column -> override.
+# ---------------------------------------------------------------------------
+
+# (snake_case guild column, GameConstants default, a distinct override value)
+_LOOT_KNOBS = [
+    ("loot_chance_tractor_t1", GameConstants.LOOT_CHANCE_TRACTOR_T1, 15),
+    ("loot_chance_tractor_t2", GameConstants.LOOT_CHANCE_TRACTOR_T2, 35),
+    ("loot_chance_tractor_t3", GameConstants.LOOT_CHANCE_TRACTOR_T3, 55),
+    ("loot_chance_tractor_t4", GameConstants.LOOT_CHANCE_TRACTOR_T4, 75),
+    ("loot_chance_no_tractor", GameConstants.LOOT_CHANCE_NO_TRACTOR, 5),
+    ("loot_band1_select_pct", GameConstants.LOOT_BAND1_SELECT_PCT, 15),
+    ("loot_band2_select_pct", GameConstants.LOOT_BAND2_SELECT_PCT, 25),
+    ("loot_band3_select_pct", GameConstants.LOOT_BAND3_SELECT_PCT, 60),
+    ("loot_band1_tl_window", GameConstants.LOOT_BAND1_TL_WINDOW, 2),
+    ("loot_band1_qty_min", GameConstants.LOOT_BAND1_QTY_MIN, 2),
+    ("loot_band1_qty_max", GameConstants.LOOT_BAND1_QTY_MAX, 5),
+    ("loot_band1_qty_mode", GameConstants.LOOT_BAND1_QTY_MODE, 2),
+    ("loot_band2_qty_min", GameConstants.LOOT_BAND2_QTY_MIN, 5),
+    ("loot_band2_qty_max", GameConstants.LOOT_BAND2_QTY_MAX, 14),
+    ("loot_band2_qty_mode", GameConstants.LOOT_BAND2_QTY_MODE, 9),
+    ("loot_band3_qty_min", GameConstants.LOOT_BAND3_QTY_MIN, 12),
+    ("loot_band3_qty_max", GameConstants.LOOT_BAND3_QTY_MAX, 24),
+    ("loot_band3_qty_mode", GameConstants.LOOT_BAND3_QTY_MODE, 18),
+    ("loot_commodity_sell_fraction", GameConstants.LOOT_COMMODITY_SELL_FRACTION, 0.5),
+]
+
+
+def test_loot_knob_count_is_nineteen():
+    """Exactly 19 tunable loot knobs are wired (LOOT_DROP_CHANCE stays fixed)."""
+    assert len(_LOOT_KNOBS) == 19
+
+
+@pytest.mark.parametrize("field, default, override_val", _LOOT_KNOBS)
+def test_loot_knob_resolves_to_default_when_null(field, default, override_val):
+    """NULL guild column resolves to the GameConstants default."""
+    cfg = MagicMock()
+    setattr(cfg, field, None)
+    assert resolve_constant(cfg, field, default) == default
+
+
+@pytest.mark.parametrize("field, default, override_val", _LOOT_KNOBS)
+def test_loot_knob_resolves_to_override_when_set(field, default, override_val):
+    """A set guild column overrides the GameConstants default."""
+    cfg = MagicMock()
+    setattr(cfg, field, override_val)
+    assert resolve_constant(cfg, field, default) == override_val

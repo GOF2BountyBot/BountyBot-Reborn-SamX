@@ -486,8 +486,10 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # NOT call _add_item_to_shop. Weapon/Module selling is unchanged (the else
             # path below stocks the shop).
             if concrete_type == "commodity":
-                # T2: wire LOOT_COMMODITY_SELL_FRACTION as a tunable knob (env + per-guild
-                # override). Read from GameConstants here so that change won't touch sell_item.
+                # LOOT_COMMODITY_SELL_FRACTION is now a tunable knob (T2): env-overridable
+                # via BOUNTYBOT_LOOT_COMMODITY_SELL_FRACTION + per-guild GuildConfig column.
+                # The sell site reads the (env-resolved) GameConstants default; per-guild
+                # resolution at this call site is deferred to the loot-core task (out of T2).
                 sell_fraction = GameConstants.LOOT_COMMODITY_SELL_FRACTION
                 # §5.7 / §9 C-2: payout = Item.value × qty × fraction with the
                 # truncation applied ONCE to the full product. Truncating per-unit

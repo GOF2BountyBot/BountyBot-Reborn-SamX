@@ -68,9 +68,33 @@ _NEW_CRIMINAL_FIELDS = (
     "criminal_exclude_emp_weapons",
 )
 
-# Full slash-settable surface after the change (33 fields; demotion_credit_penalty_pct
-# stays API-only). Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
-_EXPECTED_SLASH_FIELD_COUNT = 33
+# The 19 PvC loot tunable knobs newly exposed through the slash command (T2).
+_NEW_LOOT_FIELDS = (
+    "loot_chance_tractor_t1",
+    "loot_chance_tractor_t2",
+    "loot_chance_tractor_t3",
+    "loot_chance_tractor_t4",
+    "loot_chance_no_tractor",
+    "loot_band1_select_pct",
+    "loot_band2_select_pct",
+    "loot_band3_select_pct",
+    "loot_band1_tl_window",
+    "loot_band1_qty_min",
+    "loot_band1_qty_max",
+    "loot_band1_qty_mode",
+    "loot_band2_qty_min",
+    "loot_band2_qty_max",
+    "loot_band2_qty_mode",
+    "loot_band3_qty_min",
+    "loot_band3_qty_max",
+    "loot_band3_qty_mode",
+    "loot_commodity_sell_fraction",
+)
+
+# Full slash-settable surface after the change (52 fields; demotion_credit_penalty_pct
+# stays API-only). 25 prior + 8 criminal-loadout + 19 loot = 52.
+# Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
+_EXPECTED_SLASH_FIELD_COUNT = 52
 
 
 def _evict_discord_modules():
@@ -131,8 +155,12 @@ class TestCriminalLoadoutFieldExposure:
         for field in _NEW_CRIMINAL_FIELDS:
             assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
 
-    def test_slash_field_count_is_33(self, mock_admin_cog):
-        # Locks the slash-settable surface: 25 prior + 8 criminal-loadout = 33.
+    def test_all_new_loot_fields_in_game_constant_fields(self, mock_admin_cog):
+        for field in _NEW_LOOT_FIELDS:
+            assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
+
+    def test_slash_field_count_is_52(self, mock_admin_cog):
+        # Locks the slash-settable surface: 25 prior + 8 criminal-loadout + 19 loot = 52.
         # demotion_credit_penalty_pct stays API-only and must NOT appear here.
         assert len(mock_admin_cog._GAME_CONSTANT_FIELDS) == _EXPECTED_SLASH_FIELD_COUNT
         assert "demotion_credit_penalty_pct" not in mock_admin_cog._GAME_CONSTANT_FIELDS

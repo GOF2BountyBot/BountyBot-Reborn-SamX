@@ -305,16 +305,43 @@ class GameConstants:
     KAAMO_MAX_CAPACITY: int = 70
 
     # ------------------------------------------------------------------
-    # Loot (PvC)
+    # Loot (PvC) — tunable knobs (LOOT_JOURNAL §8, T2).
+    # All per-guild overridable via the matching snake_case GuildConfig column,
+    # resolved through resolve_constant(cfg, "<key>", GameConstants.<NAME>), and
+    # env-overridable via BOUNTYBOT_<NAME> (wired in load() with _track_int/_track_float).
+    # LOOT_DROP_CHANCE stays a FIXED constant (m-5) — no column, no env, no override.
     # ------------------------------------------------------------------
 
-    # Commodity sell payout = Item.value × quantity × LOOT_COMMODITY_SELL_FRACTION.
+    # §5.3 — loot-roll chance by equipped tractor-beam tier. INT PERCENT (0–100),
+    # matching the 0020 chance-knob convention (e.g. duel_cloak_chance). No beam = 0%.
+    LOOT_CHANCE_TRACTOR_T1: int = 20  # % — AB-1 "Retractor"
+    LOOT_CHANCE_TRACTOR_T2: int = 40  # % — AB-2 "Glue Gun"
+    LOOT_CHANCE_TRACTOR_T3: int = 60  # % — AB-3 "Kingfisher"
+    LOOT_CHANCE_TRACTOR_T4: int = 80  # % — AB-4 "Octopus"
+    LOOT_CHANCE_NO_TRACTOR: int = 0  # % — no tractor beam equipped
+
+    # §5.8.4 — band-select weights. INT PERCENT (0–100); sum to 100 at defaults.
+    LOOT_BAND1_SELECT_PCT: int = 10  # % — Band 1 (Weapons + Modules)
+    LOOT_BAND2_SELECT_PCT: int = 20  # % — Band 2 (ore_core, rare)
+    LOOT_BAND3_SELECT_PCT: int = 70  # % — Band 3 (bulk commodities)
+
+    # §5.8.4 — Band-1 item must be within ±this many TL of the criminal.
+    LOOT_BAND1_TL_WINDOW: int = 1
+
+    # §5.8.1–.3 — per-band quantity triangular (MIN, MODE, MAX). Integer counts.
+    LOOT_BAND1_QTY_MIN: int = 1
+    LOOT_BAND1_QTY_MAX: int = 3
+    LOOT_BAND1_QTY_MODE: int = 1
+    LOOT_BAND2_QTY_MIN: int = 4
+    LOOT_BAND2_QTY_MAX: int = 12
+    LOOT_BAND2_QTY_MODE: int = 8
+    LOOT_BAND3_QTY_MIN: int = 10
+    LOOT_BAND3_QTY_MAX: int = 22
+    LOOT_BAND3_QTY_MODE: int = 16
+
+    # §5.7 / C-2 — Commodity sell payout = Item.value × quantity × this FLOAT fraction.
     # 1.0 = pay 100% face value. Commodities sell as a pure credit sink (units are
     # destroyed, never added to a GuildShop) — see shop_service.sell_item.
-    # T2: wire as tunable knob (BOUNTYBOT_LOOT_COMMODITY_SELL_FRACTION env override +
-    # per-guild GuildConfig column + config_repository/config_schema plumbing + migration).
-    # For T1 this is a plain default read from GameConstants so T2 can make it tunable
-    # without touching sell_item.
     LOOT_COMMODITY_SELL_FRACTION: float = 1.0
 
     # ------------------------------------------------------------------
@@ -482,6 +509,27 @@ class GameConstants:
         # Criminal loadout balance — scalar knobs (dict knobs are per-guild-only, no env form)
         cls.LONG_RANGE_THRESHOLD_M = _track_int("LONG_RANGE_THRESHOLD_M", 2600)
         cls.CRIMINAL_LONG_RANGE_PCT = _track_float("CRIMINAL_LONG_RANGE_PCT", 0.50)
+
+        # Loot (PvC) tunable knobs (LOOT_JOURNAL §8, T2). All scalar → env + per-guild.
+        cls.LOOT_CHANCE_TRACTOR_T1 = _track_int("LOOT_CHANCE_TRACTOR_T1", 20)
+        cls.LOOT_CHANCE_TRACTOR_T2 = _track_int("LOOT_CHANCE_TRACTOR_T2", 40)
+        cls.LOOT_CHANCE_TRACTOR_T3 = _track_int("LOOT_CHANCE_TRACTOR_T3", 60)
+        cls.LOOT_CHANCE_TRACTOR_T4 = _track_int("LOOT_CHANCE_TRACTOR_T4", 80)
+        cls.LOOT_CHANCE_NO_TRACTOR = _track_int("LOOT_CHANCE_NO_TRACTOR", 0)
+        cls.LOOT_BAND1_SELECT_PCT = _track_int("LOOT_BAND1_SELECT_PCT", 10)
+        cls.LOOT_BAND2_SELECT_PCT = _track_int("LOOT_BAND2_SELECT_PCT", 20)
+        cls.LOOT_BAND3_SELECT_PCT = _track_int("LOOT_BAND3_SELECT_PCT", 70)
+        cls.LOOT_BAND1_TL_WINDOW = _track_int("LOOT_BAND1_TL_WINDOW", 1)
+        cls.LOOT_BAND1_QTY_MIN = _track_int("LOOT_BAND1_QTY_MIN", 1)
+        cls.LOOT_BAND1_QTY_MAX = _track_int("LOOT_BAND1_QTY_MAX", 3)
+        cls.LOOT_BAND1_QTY_MODE = _track_int("LOOT_BAND1_QTY_MODE", 1)
+        cls.LOOT_BAND2_QTY_MIN = _track_int("LOOT_BAND2_QTY_MIN", 4)
+        cls.LOOT_BAND2_QTY_MAX = _track_int("LOOT_BAND2_QTY_MAX", 12)
+        cls.LOOT_BAND2_QTY_MODE = _track_int("LOOT_BAND2_QTY_MODE", 8)
+        cls.LOOT_BAND3_QTY_MIN = _track_int("LOOT_BAND3_QTY_MIN", 10)
+        cls.LOOT_BAND3_QTY_MAX = _track_int("LOOT_BAND3_QTY_MAX", 22)
+        cls.LOOT_BAND3_QTY_MODE = _track_int("LOOT_BAND3_QTY_MODE", 16)
+        cls.LOOT_COMMODITY_SELL_FRACTION = _track_float("LOOT_COMMODITY_SELL_FRACTION", 1.0)
 
         # Activity
         cls.MIN_GUILD_ACTIVITY = _track_float("MIN_GUILD_ACTIVITY", 1.0)

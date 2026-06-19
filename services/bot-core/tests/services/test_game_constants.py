@@ -412,6 +412,24 @@ class TestEnvVarOverride:
         GameConstants.load()
         assert GameConstants.BOUNTY_SPAWN_JITTER == 60
 
+    def test_loot_chance_tractor_t1_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Representative int loot knob: BOUNTYBOT_LOOT_CHANCE_TRACTOR_T1 flows into load()."""
+        monkeypatch.setenv("BOUNTYBOT_LOOT_CHANCE_TRACTOR_T1", "33")
+        GameConstants.load()
+        assert GameConstants.LOOT_CHANCE_TRACTOR_T1 == 33
+
+    def test_loot_band3_qty_max_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A second representative int loot knob (band qty) via env."""
+        monkeypatch.setenv("BOUNTYBOT_LOOT_BAND3_QTY_MAX", "30")
+        GameConstants.load()
+        assert GameConstants.LOOT_BAND3_QTY_MAX == 30
+
+    def test_loot_commodity_sell_fraction_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The float loot knob: BOUNTYBOT_LOOT_COMMODITY_SELL_FRACTION flows into load()."""
+        monkeypatch.setenv("BOUNTYBOT_LOOT_COMMODITY_SELL_FRACTION", "0.75")
+        GameConstants.load()
+        assert pytest.approx(GameConstants.LOOT_COMMODITY_SELL_FRACTION) == 0.75
+
     def test_env_var_reverts_after_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """After removing the env var and calling load() again the default is restored."""
         monkeypatch.setenv("BOUNTYBOT_MAX_BOUNTIES_PER_DIVISION", "99")

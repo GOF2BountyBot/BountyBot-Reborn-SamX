@@ -62,6 +62,29 @@ class GameConstantsOverridesMixin(BaseModel):
     # Thread 6 — behavioral toggle (strict bool: reject 0/1/"true" coercion).
     criminal_exclude_emp_weapons: bool | None = Field(None, strict=True)
 
+    # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2).
+    # Chances + band-select are int-percent (0–100); qty/window are non-negative ints;
+    # sell fraction is a non-negative float (default 1.0 = 100% face value).
+    loot_chance_tractor_t1: int | None = Field(None, ge=0, le=100)
+    loot_chance_tractor_t2: int | None = Field(None, ge=0, le=100)
+    loot_chance_tractor_t3: int | None = Field(None, ge=0, le=100)
+    loot_chance_tractor_t4: int | None = Field(None, ge=0, le=100)
+    loot_chance_no_tractor: int | None = Field(None, ge=0, le=100)
+    loot_band1_select_pct: int | None = Field(None, ge=0, le=100)
+    loot_band2_select_pct: int | None = Field(None, ge=0, le=100)
+    loot_band3_select_pct: int | None = Field(None, ge=0, le=100)
+    loot_band1_tl_window: int | None = Field(None, ge=0)
+    loot_band1_qty_min: int | None = Field(None, ge=0)
+    loot_band1_qty_max: int | None = Field(None, ge=0)
+    loot_band1_qty_mode: int | None = Field(None, ge=0)
+    loot_band2_qty_min: int | None = Field(None, ge=0)
+    loot_band2_qty_max: int | None = Field(None, ge=0)
+    loot_band2_qty_mode: int | None = Field(None, ge=0)
+    loot_band3_qty_min: int | None = Field(None, ge=0)
+    loot_band3_qty_max: int | None = Field(None, ge=0)
+    loot_band3_qty_mode: int | None = Field(None, ge=0)
+    loot_commodity_sell_fraction: float | None = Field(None, ge=0.0)
+
     @field_validator("division_max_tl", mode="before")
     @classmethod
     def validate_division_max_tl(cls, v: Any) -> Any:

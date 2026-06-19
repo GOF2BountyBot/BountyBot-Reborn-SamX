@@ -77,6 +77,26 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "criminal_weaponmod_chance_by_division",
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 6)
     "criminal_exclude_emp_weapons",
+    # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2)
+    "loot_chance_tractor_t1",
+    "loot_chance_tractor_t2",
+    "loot_chance_tractor_t3",
+    "loot_chance_tractor_t4",
+    "loot_chance_no_tractor",
+    "loot_band1_select_pct",
+    "loot_band2_select_pct",
+    "loot_band3_select_pct",
+    "loot_band1_tl_window",
+    "loot_band1_qty_min",
+    "loot_band1_qty_max",
+    "loot_band1_qty_mode",
+    "loot_band2_qty_min",
+    "loot_band2_qty_max",
+    "loot_band2_qty_mode",
+    "loot_band3_qty_min",
+    "loot_band3_qty_max",
+    "loot_band3_qty_mode",
+    "loot_commodity_sell_fraction",
 )
 
 

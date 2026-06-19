@@ -78,6 +78,26 @@ def make_mock_config(**overrides):
         criminal_emergency_chance_by_division=None,
         criminal_weaponmod_chance_by_division=None,
         criminal_exclude_emp_weapons=None,
+        # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2) — all null by default
+        loot_chance_tractor_t1=None,
+        loot_chance_tractor_t2=None,
+        loot_chance_tractor_t3=None,
+        loot_chance_tractor_t4=None,
+        loot_chance_no_tractor=None,
+        loot_band1_select_pct=None,
+        loot_band2_select_pct=None,
+        loot_band3_select_pct=None,
+        loot_band1_tl_window=None,
+        loot_band1_qty_min=None,
+        loot_band1_qty_max=None,
+        loot_band1_qty_mode=None,
+        loot_band2_qty_min=None,
+        loot_band2_qty_max=None,
+        loot_band2_qty_mode=None,
+        loot_band3_qty_min=None,
+        loot_band3_qty_max=None,
+        loot_band3_qty_mode=None,
+        loot_commodity_sell_fraction=None,
     )
     defaults.update(overrides)
     return defaults
@@ -129,6 +149,26 @@ _OVERRIDE_FIELD_NAMES = [
     "criminal_emergency_chance_by_division",
     "criminal_weaponmod_chance_by_division",
     "criminal_exclude_emp_weapons",
+    # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2)
+    "loot_chance_tractor_t1",
+    "loot_chance_tractor_t2",
+    "loot_chance_tractor_t3",
+    "loot_chance_tractor_t4",
+    "loot_chance_no_tractor",
+    "loot_band1_select_pct",
+    "loot_band2_select_pct",
+    "loot_band3_select_pct",
+    "loot_band1_tl_window",
+    "loot_band1_qty_min",
+    "loot_band1_qty_max",
+    "loot_band1_qty_mode",
+    "loot_band2_qty_min",
+    "loot_band2_qty_max",
+    "loot_band2_qty_mode",
+    "loot_band3_qty_min",
+    "loot_band3_qty_max",
+    "loot_band3_qty_mode",
+    "loot_commodity_sell_fraction",
 ]
 
 

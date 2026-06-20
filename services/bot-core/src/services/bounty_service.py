@@ -27,6 +27,7 @@ from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
+from utils.bounty_announcement_payload import is_recently_spotted, resolve_spotted_window
 
 from services.cargo_utils import compute_free_cargo, is_over_cap
 from services.combat_models import DEFERRED_SECONDARY_SUBTYPES, ShipLoadout
@@ -1595,6 +1596,53 @@ class BountyService:
             flogger.debug(f"Could not resolve tractor emoji for {beam_name!r}: {exc}")
             return None
 
+    def _generate_route(
+        self,
+        jump_gate_systems: list[str],
+        min_systems: int,
+        attempts: int = 8,
+    ) -> list[str] | None:
+        """Generate a bounty route of at least ``min_systems`` systems.
+
+        Picks random distinct jump-gate endpoints and runs A* shortest-path,
+        retrying up to ``attempts`` times until the route meets the minimum
+        length. If none reach the minimum (e.g. a tiny/sparse map), the longest
+        route found is returned best-effort so a spawn never fails purely on a
+        too-short route. Returns ``None`` only if no route could be built at all.
+        """
+        best: list[str] | None = None
+        for _attempt in range(max(1, attempts)):
+            start = random.choice(jump_gate_systems)
+            end = random.choice(jump_gate_systems)
+            while end == start:
+                end = random.choice(jump_gate_systems)
+
+            result = self.pathfinding_service.make_route(start, end)
+            if not isinstance(result, list):
+                continue
+            if len(result) >= min_systems:
+                return result
+            if best is None or len(result) > len(best):
+                best = result
+
+        if best is not None and len(best) < min_systems:
+            flogger.warning(
+                f"Route generation could not reach min_systems={min_systems} after "
+                f"{attempts} attempts; using longest found ({len(best)} systems)"
+            )
+        return best
+
+    @staticmethod
+    def _roll_spotted_window(cfg) -> int:
+        """Roll the per-bounty 'recently spotted' look-ahead width B in [0, max].
+
+        The lower bound is 0: a bounty that rolls B=0 shows no "recently spotted"
+        hint at all (is_recently_spotted is False for every distance), which adds
+        a further layer of uncertainty on top of the randomized window width.
+        """
+        max_window = resolve_constant(cfg, "recently_spotted_max_window", GameConstants.RECENTLY_SPOTTED_MAX_WINDOW)
+        return random.randint(0, max(0, max_window))
+
     async def spawn_bounty(
         self,
         db: AsyncSession,
@@ -1608,7 +1656,7 @@ class BountyService:
         Orchestrates the full bounty generation:
         1. Select criminal (exclude active ones)
         2. Determine tech level (if not provided, use pick_random_item_tl)
-        3. Generate route via A* pathfinding (up to 3 attempts)
+        3. Generate route via A* pathfinding (≥ min_route_systems, via _generate_route)
         4. Select answer (random system from route)
         5. Generate criminal loadout
         6. Calculate reward
@@ -1647,7 +1695,7 @@ class BountyService:
             max_tl = _division_max_tl.get(division, 10)
             tech_level = min(tech_level, max_tl)
 
-        # Step 3: Generate route (up to 3 attempts)
+        # Step 3: Generate route (≥ min_route_systems, via _generate_route)
         await self.graph_service.load_graph(db)
 
         jump_gate_systems = self.graph_service.get_systems_with_jump_gates()
@@ -1655,26 +1703,16 @@ class BountyService:
             flogger.warning("Not enough systems with jump gates for route generation")
             return None
 
-        route = None
-        for attempt in range(3):
-            start = random.choice(jump_gate_systems)
-            end = random.choice(jump_gate_systems)
-            while end == start:
-                end = random.choice(jump_gate_systems)
-
-            result = self.pathfinding_service.make_route(start, end)
-            if isinstance(result, list):
-                route = result
-                break
-            # If PathfindingError, retry
-            flogger.debug(f"Route attempt {attempt + 1} failed: {result}")
+        min_systems = resolve_constant(cfg, "min_route_systems", GameConstants.MIN_ROUTE_SYSTEMS)
+        route = self._generate_route(jump_gate_systems, min_systems)
 
         if route is None:
-            flogger.warning(f"Failed to generate route after 3 attempts for guild={guild_id}")
+            flogger.warning(f"Failed to generate route for guild={guild_id}")
             return None
 
-        # Step 4: Select answer
+        # Step 4: Select answer + roll the per-bounty "recently spotted" window B
         answer = random.choice(route)
+        spotted_window = self._roll_spotted_window(cfg)
 
         # Step 5: Generate loadout
         loadout = await self.generate_loadout(db, tech_level, division=division, cfg=cfg)
@@ -1735,6 +1773,7 @@ class BountyService:
             criminal_faction=criminal.faction,
             route=route,
             answer=answer,
+            spotted_window=spotted_window,
             reward=total_reward,
             reward_per_sys=rps,
             checked=checked,
@@ -2231,9 +2270,9 @@ class BountyService:
             close_threshold = resolve_constant(cfg, "close_bounty_threshold", GameConstants.CLOSE_BOUNTY_THRESHOLD)
             if 0 < distance < close_threshold:
                 proximity_hint = True
-            # recently_spotted: criminal was here 1-2 stops ago (answer is 1-2 stops ahead)
-            if 1 <= distance <= 2:
-                recently_spotted = True
+            # recently_spotted: criminal was here 1..B stops ago, where B is the
+            # per-bounty look-ahead window rolled at spawn (resolve_spotted_window).
+            recently_spotted = is_recently_spotted(distance, resolve_spotted_window(bounty))
 
         await self.bounty_repo.update(db, bounty)
         flogger.debug(f"Player {player_id} checked {system_name} on bounty {bounty.id}: incorrect")
@@ -2894,6 +2933,7 @@ class BountyService:
             return None
 
         # Generate new route (same logic as spawn_bounty step 3)
+        cfg = await self.config_repo.get_by_guild_id(db, bounty.guild_id)
         await self.graph_service.load_graph(db)
         jump_gate_systems = self.graph_service.get_systems_with_jump_gates()
 
@@ -2901,29 +2941,21 @@ class BountyService:
             flogger.warning("Not enough systems for respawn route")
             return None
 
-        route = None
-        for _attempt in range(3):
-            start = random.choice(jump_gate_systems)
-            end = random.choice(jump_gate_systems)
-            while end == start:
-                end = random.choice(jump_gate_systems)
-
-            result = self.pathfinding_service.make_route(start, end)
-            if isinstance(result, list):
-                route = result
-                break
+        min_systems = resolve_constant(cfg, "min_route_systems", GameConstants.MIN_ROUTE_SYSTEMS)
+        route = self._generate_route(jump_gate_systems, min_systems)
 
         if route is None:
             flogger.warning(f"Failed to generate respawn route for bounty {bounty_id}")
             return None
 
-        # New answer and checked dict
+        # New answer, re-rolled spotted window, and fresh checked dict
         answer = random.choice(route)
         checked = {system: -1 for system in route}
 
         # Update bounty
         bounty.route = route
         bounty.answer = answer
+        bounty.spotted_window = self._roll_spotted_window(cfg)
         bounty.checked = checked
         bounty.status = "active"
         bounty.respawn_time = None

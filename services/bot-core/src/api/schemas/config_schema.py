@@ -24,6 +24,10 @@ class GameConstantsOverridesMixin(BaseModel):
     # Bounty mechanics
     close_bounty_threshold: int | None = Field(None, ge=1)
     max_route_length: int | None = Field(None, ge=1, le=500)
+    min_route_systems: int | None = Field(None, ge=2, le=50)
+    # ge=0: a max window of 0 disables the "recently spotted" hint guild-wide
+    # (every bounty rolls B=0). Per-bounty B is rolled from [0, this value].
+    recently_spotted_max_window: int | None = Field(None, ge=0, le=50)
     bounty_delay_random_min: int | None = Field(None, ge=0)
     bounty_delay_random_max: int | None = Field(None, ge=0)
     bounty_spawn_jitter: int | None = Field(None, ge=0)

@@ -470,6 +470,8 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "duel_cloak_chance": config.duel_cloak_chance,
                 "close_bounty_threshold": config.close_bounty_threshold,
                 "max_route_length": config.max_route_length,
+                "min_route_systems": config.min_route_systems,
+                "recently_spotted_max_window": config.recently_spotted_max_window,
                 "bounty_delay_random_min": config.bounty_delay_random_min,
                 "bounty_delay_random_max": config.bounty_delay_random_max,
                 "bounty_spawn_jitter": config.bounty_spawn_jitter,

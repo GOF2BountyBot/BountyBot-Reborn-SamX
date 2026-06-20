@@ -107,6 +107,9 @@ class GuildConfig(Base):
     # Bounty mechanics
     close_bounty_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     max_route_length: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # NULL == "use GameConstants.MIN_ROUTE_SYSTEMS (3)" / ".RECENTLY_SPOTTED_MAX_WINDOW (3)"
+    min_route_systems: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    recently_spotted_max_window: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_delay_random_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_delay_random_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_spawn_jitter: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

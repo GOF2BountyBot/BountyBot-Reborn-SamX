@@ -121,6 +121,14 @@ class GameConstants:
     CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE: int = 20  # %
     CRIMINAL_MAX_GEAR_UPGRADE: int = 1  # TL levels above criminal
     MAX_ROUTE_LENGTH: int = 50  # A* pathfinding limit
+    MIN_ROUTE_SYSTEMS: int = 3  # reject too-short routes (no adjacent-gate 2-system hunts)
+    # "Recently spotted" look-ahead window B is rolled once per bounty from
+    # [0, RECENTLY_SPOTTED_MAX_WINDOW] at spawn and persisted on the bounty.
+    # A checked system shows "recently spotted" iff it is 1..B stops before the
+    # answer; B=0 means the bounty shows no "recently spotted" hint at all.
+    # Rolling B per-bounty (and never revealing it) stops players from
+    # triangulating the exact answer the way the old fixed 1–2 window allowed.
+    RECENTLY_SPOTTED_MAX_WINDOW: int = 3
 
     # ------------------------------------------------------------------
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & Thread 4)
@@ -549,6 +557,8 @@ class GameConstants:
         cls.MAX_BOUNTIES_PER_DIVISION = _track_int("MAX_BOUNTIES_PER_DIVISION", 5)
         cls.CLOSE_BOUNTY_THRESHOLD = _track_int("CLOSE_BOUNTY_THRESHOLD", 4)
         cls.MAX_ROUTE_LENGTH = _track_int("MAX_ROUTE_LENGTH", 50)
+        cls.MIN_ROUTE_SYSTEMS = _track_int("MIN_ROUTE_SYSTEMS", 3)
+        cls.RECENTLY_SPOTTED_MAX_WINDOW = _track_int("RECENTLY_SPOTTED_MAX_WINDOW", 3)
         cls.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE = _track_int("CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE", 20)
         cls.CRIMINAL_MAX_GEAR_UPGRADE = _track_int("CRIMINAL_MAX_GEAR_UPGRADE", 1)
         cls.SHIP_VALUE_REWARD_PERCENTAGE = _track_float("SHIP_VALUE_REWARD_PERCENTAGE", 0.01)

@@ -909,7 +909,11 @@ async def test_spawn_bounty_no_criminal_available(spawn_service_minimal, mock_db
 
 @pytest.mark.asyncio
 async def test_spawn_bounty_route_generation_fails(spawn_service, mock_db):
-    """spawn_bounty returns None when pathfinding fails all 3 attempts."""
+    """spawn_bounty returns None when pathfinding fails every attempt.
+
+    _generate_route retries up to 8 times (default) and returns None only when
+    no route could be built at all (every attempt a PathfindingError).
+    """
     from services.pathfinding_service import PathfindingError
 
     criminal = _make_criminal("Viper", "terran")
@@ -921,7 +925,7 @@ async def test_spawn_bounty_route_generation_fails(spawn_service, mock_db):
     result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=3)
 
     assert result is None
-    assert spawn_service.pathfinding_service.make_route.call_count == 3
+    assert spawn_service.pathfinding_service.make_route.call_count == 8
 
 
 @pytest.mark.asyncio
@@ -945,6 +949,105 @@ async def test_spawn_bounty_route_retries(spawn_service, mock_db):
 
     assert result is not None
     assert spawn_service.pathfinding_service.make_route.call_count == 2
+
+
+def _captured_bounty(spawn_service):
+    """Return the Bounty ORM object passed to bounty_repo.create(db, bounty)."""
+    return spawn_service.bounty_repo.create.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_spawn_bounty_rolls_spotted_window_in_default_range(spawn_service, mock_db):
+    """spawn_bounty persists a per-bounty spotted_window in [0, RECENTLY_SPOTTED_MAX_WINDOW]."""
+    from services.game_constants import GameConstants
+
+    criminal = _make_criminal("Viper", "terran")
+    spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
+    spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+    spawn_service.bounty_repo.create = AsyncMock(return_value=_make_created_bounty(criminal_name="Viper"))
+
+    with patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)):
+        await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=3)
+
+    window = _captured_bounty(spawn_service).spotted_window
+    assert window is not None
+    assert 0 <= window <= GameConstants.RECENTLY_SPOTTED_MAX_WINDOW
+
+
+@pytest.mark.asyncio
+async def test_spawn_bounty_spotted_window_rolls_from_zero_floor_to_guild_max(spawn_service, mock_db):
+    """The window is rolled from [0, recently_spotted_max_window].
+
+    Verifies the curve-ball zero floor (B=0 == no hint) and that the per-guild
+    max is the upper bound passed to the roll.
+    """
+    criminal = _make_criminal("Viper", "terran")
+    spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
+    spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+    spawn_service.bounty_repo.create = AsyncMock(return_value=_make_created_bounty(criminal_name="Viper"))
+    spawn_service.config_repo.get_by_guild_id = AsyncMock(
+        return_value=SimpleNamespace(recently_spotted_max_window=2, min_route_systems=None)
+    )
+
+    with (
+        patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
+        patch("services.bounty_service.random.randint", return_value=0) as mock_randint,
+    ):
+        await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=3)
+
+    assert _captured_bounty(spawn_service).spotted_window == 0
+    mock_randint.assert_called_once_with(0, 2)
+
+
+@pytest.mark.asyncio
+async def test_spawn_bounty_min_route_systems_override_rejects_short_route(spawn_service, mock_db):
+    """min_route_systems=4 rejects a 3-system route and keeps trying for a longer one."""
+    criminal = _make_criminal("Viper", "terran")
+    spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
+    spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+    spawn_service.bounty_repo.create = AsyncMock(return_value=_make_created_bounty(criminal_name="Viper"))
+    spawn_service.config_repo.get_by_guild_id = AsyncMock(
+        return_value=SimpleNamespace(recently_spotted_max_window=3, min_route_systems=4)
+    )
+    # First route too short (3), second meets the min (4).
+    spawn_service.pathfinding_service.make_route = MagicMock(side_effect=[["A", "B", "C"], ["A", "B", "C", "D"]])
+
+    with patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)):
+        await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=3)
+
+    assert len(_captured_bounty(spawn_service).route) == 4
+    assert spawn_service.pathfinding_service.make_route.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# _generate_route helper (min-length enforcement + best-effort fallback)
+# ---------------------------------------------------------------------------
+
+
+def test_generate_route_returns_first_route_meeting_min(spawn_service):
+    spawn_service.pathfinding_service.make_route = MagicMock(return_value=["A", "B", "C", "D"])
+    route = spawn_service._generate_route(["A", "B", "C", "D", "E"], min_systems=3)
+    assert route == ["A", "B", "C", "D"]
+    assert spawn_service.pathfinding_service.make_route.call_count == 1
+
+
+def test_generate_route_falls_back_to_longest_when_none_meet_min(spawn_service):
+    # Every attempt returns a too-short route; helper returns the longest seen.
+    spawn_service.pathfinding_service.make_route = MagicMock(
+        side_effect=[["A", "B"], ["A", "B", "C"], ["A", "B"], ["A", "B"]]
+    )
+    route = spawn_service._generate_route(["A", "B", "C"], min_systems=5, attempts=4)
+    assert route == ["A", "B", "C"]
+    assert spawn_service.pathfinding_service.make_route.call_count == 4
+
+
+def test_generate_route_none_when_all_attempts_error(spawn_service):
+    from services.pathfinding_service import PathfindingError
+
+    spawn_service.pathfinding_service.make_route = MagicMock(return_value=PathfindingError.NO_ROUTE_FOUND)
+    route = spawn_service._generate_route(["A", "B", "C"], min_systems=3, attempts=5)
+    assert route is None
+    assert spawn_service.pathfinding_service.make_route.call_count == 5
 
 
 @pytest.mark.asyncio
@@ -1364,8 +1467,13 @@ def _make_active_bounty(
     answer: str = "Sol",
     criminal_name: str = "Zara",
     checked: dict | None = None,
+    spotted_window: int | None = None,
 ) -> SimpleNamespace:
-    """Return a Bounty-like SimpleNamespace for check_bounty tests."""
+    """Return a Bounty-like SimpleNamespace for check_bounty tests.
+
+    spotted_window defaults to None so existing tests exercise the legacy
+    fallback (window 2); pass an int to test the per-bounty window directly.
+    """
     if route is None:
         route = ["Alpha", "Beta", "Gamma", "Sol", "Omega"]
     if checked is None:
@@ -1376,6 +1484,7 @@ def _make_active_bounty(
         answer=answer,
         criminal_name=criminal_name,
         checked=checked,
+        spotted_window=spotted_window,
         status="active",  # X3-bounty: _process_single_bounty_check now checks status under lock
     )
 
@@ -1708,6 +1817,69 @@ async def test_check_bounty_not_recently_spotted_when_ahead_of_answer(service, m
 
     assert result.result == CheckResult.INCORRECT
     assert result.recently_spotted is False
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_window_zero_never_recently_spotted(service, mock_db):
+    """A bounty whose spotted_window=0 shows no 'recently spotted' hint at any distance."""
+    service.player_repo.get_by_id = AsyncMock()
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
+    service.bounty_repo.update = AsyncMock()
+
+    player = _make_player()
+    # answer = Sol (idx 3); check Gamma (idx 2) → distance 1, which WOULD be spotted
+    # under any window >= 1, but window=0 disables the hint entirely.
+    bounty = _make_active_bounty(route=["Alpha", "Beta", "Gamma", "Sol"], answer="Sol", spotted_window=0)
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty
+    service.bounty_repo.update.return_value = bounty
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Gamma", guild_id=1)
+
+    assert result.result == CheckResult.INCORRECT
+    assert result.recently_spotted is False
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_window_one_only_adjacent(service, mock_db):
+    """spotted_window=1: distance 1 is spotted, distance 2 is not."""
+    service.player_repo.get_by_id = AsyncMock(return_value=_make_player())
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
+    service.bounty_repo.update = AsyncMock()
+
+    # route: A(0) B(1) C(2) Sol(3); window=1
+    bounty = _make_active_bounty(route=["A", "B", "C", "Sol"], answer="Sol", spotted_window=1)
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty
+    service.bounty_repo.update.return_value = bounty
+
+    # C is 1 stop behind → spotted
+    spotted = await service.check_bounty(mock_db, player_id=1, system_name="C", guild_id=1)
+    assert spotted.recently_spotted is True
+    # B is 2 stops behind → NOT spotted (window only 1)
+    not_spotted = await service.check_bounty(mock_db, player_id=1, system_name="B", guild_id=1)
+    assert not_spotted.recently_spotted is False
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_window_three_includes_three_stops(service, mock_db):
+    """spotted_window=3: a system 3 stops behind the answer is recently_spotted."""
+    service.player_repo.get_by_id = AsyncMock(return_value=_make_player())
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.get_by_id_for_update = AsyncMock()
+    service.bounty_repo.update = AsyncMock()
+
+    # route: A(0) B(1) C(2) D(3) Sol(4); answer Sol; check B (idx1) → distance 3
+    bounty = _make_active_bounty(route=["A", "B", "C", "D", "Sol"], answer="Sol", spotted_window=3)
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.get_by_id_for_update.return_value = bounty
+    service.bounty_repo.update.return_value = bounty
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="B", guild_id=1)
+    assert result.recently_spotted is True
 
 
 @pytest.mark.asyncio
@@ -2652,6 +2824,23 @@ async def test_respawn_bounty_resets_checked(respawn_service, mock_db):
     assert all(v == -1 for v in result.checked.values())
     # All keys should be from the new route
     assert set(result.checked.keys()) == set(result.route)
+
+
+@pytest.mark.asyncio
+async def test_respawn_bounty_rerolls_spotted_window(respawn_service, mock_db):
+    """Respawn re-rolls a fresh per-bounty spotted_window in the default [0, max] range."""
+    from services.game_constants import GameConstants
+
+    bounty = _make_expiry_bounty(status="escaped")
+    bounty.spotted_window = None  # legacy / unset before respawn
+    respawn_service.bounty_repo.get_by_id = AsyncMock(return_value=bounty)
+    respawn_service.bounty_repo.update = AsyncMock(return_value=bounty)
+
+    result = await respawn_service.respawn_bounty(mock_db, bounty_id=1)
+
+    assert result is not None
+    assert result.spotted_window is not None
+    assert 0 <= result.spotted_window <= GameConstants.RECENTLY_SPOTTED_MAX_WINDOW
 
 
 @pytest.mark.asyncio

@@ -33,6 +33,38 @@ FACTION_COLORS: dict[str, int] = {
 _DEFAULT_COLOR: int = 10181046  # #9B59B6
 _CAPTURED_COLOR: int = 3066993  # #2ECC71 (green)
 
+# ---------------------------------------------------------------------------
+# "Recently spotted" window resolution (shared by the check path in
+# bounty_service and the route-embed rendering below, so they never drift).
+#
+# The look-ahead width B is rolled once per bounty at spawn from
+# [0, recently_spotted_max_window] and persisted as Bounty.spotted_window.
+# A checked system is "recently spotted" iff it sits 1..B stops *before* the
+# answer; B=0 means the bounty shows no "recently spotted" hint at all.
+# Legacy bounties (spotted_window NULL) fall back to the historical fixed
+# window of 2.
+# ---------------------------------------------------------------------------
+LEGACY_SPOTTED_WINDOW: int = 2
+
+
+def resolve_spotted_window(bounty: Any) -> int:
+    """Return the per-bounty 'recently spotted' look-ahead width B.
+
+    New bounties persist B in ``Bounty.spotted_window``; legacy bounties (NULL)
+    fall back to ``LEGACY_SPOTTED_WINDOW`` (the historical fixed 1–2 behavior).
+    """
+    window = getattr(bounty, "spotted_window", None)
+    return LEGACY_SPOTTED_WINDOW if window is None else window
+
+
+def is_recently_spotted(distance: int, window: int) -> bool:
+    """True iff a checked system is 1..``window`` stops before the answer.
+
+    ``distance`` is ``answer_idx - system_idx`` (positive == answer is ahead).
+    """
+    return 1 <= distance <= window
+
+
 # Canonical tier color palette (ENH-02 — also used by bountyCog.py)
 TIER_COLORS: dict[str, int] = {
     "bronze": 0xCD7F32,  # 13467442
@@ -396,7 +428,7 @@ def _project_checked(bounty) -> dict | None:
 
     Status values produced:
       - "found"            → answer system has been hit
-      - "recently_spotted" → 1-2 stops before the answer
+      - "recently_spotted" → 1..B stops before the answer (B = per-bounty window)
       - "checked"          → already-checked but not answer
     """
     checked_map = getattr(bounty, "checked", None)
@@ -413,6 +445,8 @@ def _project_checked(bounty) -> dict | None:
         except (ValueError, IndexError):
             answer_idx = None
 
+    window = resolve_spotted_window(bounty)
+
     out: dict[str, str] = {}
     for system_name, checker_id in checked_map.items():
         if checker_id == -1:  # unchecked sentinel
@@ -420,14 +454,13 @@ def _project_checked(bounty) -> dict | None:
         if system_name == answer:
             out[system_name] = "found"
             continue
-        is_recently_spotted = False
+        spotted = False
         if answer_idx is not None and route:
             with contextlib.suppress(ValueError, IndexError):
                 sys_idx = route.index(system_name)
                 distance = answer_idx - sys_idx
-                if 1 <= distance <= 2:
-                    is_recently_spotted = True
-        out[system_name] = "recently_spotted" if is_recently_spotted else "checked"
+                spotted = is_recently_spotted(distance, window)
+        out[system_name] = "recently_spotted" if spotted else "checked"
     return out or None
 
 

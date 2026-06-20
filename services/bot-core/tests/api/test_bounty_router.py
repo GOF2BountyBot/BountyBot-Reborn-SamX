@@ -27,6 +27,9 @@ def make_mock_bounty(**overrides):
         criminal_faction="Void Syndicate",
         route=["Sol", "Proxima", "Tau Ceti"],
         answer="Tau Ceti",
+        # Default to the legacy fixed window (B=2) so existing route-status tests
+        # keep their "1-2 stops before answer = recently_spotted" expectation.
+        spotted_window=2,
         reward=5000,
         reward_per_sys=1000,
         checked={"Sol": 1, "Proxima": 2},

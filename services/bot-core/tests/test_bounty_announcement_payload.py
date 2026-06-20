@@ -55,6 +55,7 @@ def _make_bounty(
     answer: str | None = None,
     bounty_id: int = 5,
     division: str = "platinum",
+    spotted_window: int | None = None,
 ):
     if end_time is None:
         end_time = datetime(2050, 1, 1, tzinfo=UTC)  # known timestamp for assertions
@@ -70,6 +71,7 @@ def _make_bounty(
         checked=checked,
         answer=answer,
         division=division,
+        spotted_window=spotted_window,
         criminal_ship={"ship_name": "Darkzov", "weapons": [], "turrets": [], "modules": []},
     )
 
@@ -550,3 +552,87 @@ class TestPayoutMetadataFields:
         b = _make_bounty(route=["Omega"])
         out = await build_bounty_announcement_request(MagicMock(), b)
         assert out["metadata"]["route_length"] == 1
+
+
+# ===========================================================================
+# Per-bounty "recently spotted" window (B rolled at spawn from [1, max])
+# ===========================================================================
+class TestRecentlySpottedWindow:
+    """The look-ahead width B varies per bounty; a checked system is
+    'recently_spotted' iff it is 1..B stops *before* the answer."""
+
+    # Route A B C D E with answer E (idx 4). All non-answer systems checked.
+    _ROUTE = ["A", "B", "C", "D", "E"]
+    _CHECKED = {"A": 1, "B": 1, "C": 1, "D": 1}  # distances to E: 4,3,2,1
+
+    def _spotted(self, window: int | None) -> set[str]:
+        from utils.bounty_announcement_payload import _project_checked
+
+        b = _make_bounty(route=self._ROUTE, answer="E", checked=dict(self._CHECKED), spotted_window=window)
+        statuses = _project_checked(b) or {}
+        return {s for s, v in statuses.items() if v == "recently_spotted"}
+
+    def test_window_0_no_spotting_at_all(self):
+        # Curve-ball: B=0 means the bounty shows no "recently spotted" hint.
+        assert self._spotted(0) == set()
+
+    def test_window_1_only_adjacent(self):
+        assert self._spotted(1) == {"D"}
+
+    def test_window_2_two_back(self):
+        assert self._spotted(2) == {"C", "D"}
+
+    def test_window_3_three_back(self):
+        assert self._spotted(3) == {"B", "C", "D"}
+
+    def test_legacy_null_window_falls_back_to_2(self):
+        # spotted_window NULL (legacy bounty) → historical fixed window of 2.
+        assert self._spotted(None) == {"C", "D"}
+
+    def test_answer_never_marked_spotted(self):
+        from utils.bounty_announcement_payload import _project_checked
+
+        b = _make_bounty(route=self._ROUTE, answer="E", checked={"E": 1, "D": 1}, spotted_window=3)
+        statuses = _project_checked(b) or {}
+        assert statuses["E"] == "found"
+
+    def test_systems_after_answer_not_spotted(self):
+        # A system *after* the answer (negative distance) is never recently_spotted.
+        b_spotted = self._spotted(3)
+        assert "A" not in b_spotted  # A is 4 back (beyond window 3), stays plain checked
+
+
+class TestSpottedWindowHelpers:
+    def test_resolve_spotted_window_null_is_legacy_two(self):
+        from utils.bounty_announcement_payload import LEGACY_SPOTTED_WINDOW, resolve_spotted_window
+
+        assert resolve_spotted_window(SimpleNamespace(spotted_window=None)) == LEGACY_SPOTTED_WINDOW == 2
+
+    def test_resolve_spotted_window_uses_persisted_value(self):
+        from utils.bounty_announcement_payload import resolve_spotted_window
+
+        assert resolve_spotted_window(SimpleNamespace(spotted_window=3)) == 3
+
+    def test_resolve_spotted_window_missing_attr_is_legacy(self):
+        from utils.bounty_announcement_payload import resolve_spotted_window
+
+        # An object lacking the attribute entirely (very old mock) → fallback.
+        assert resolve_spotted_window(SimpleNamespace()) == 2
+
+    @pytest.mark.parametrize(
+        "distance,window,expected",
+        [
+            (0, 3, False),
+            (1, 3, True),
+            (2, 3, True),
+            (3, 3, True),
+            (4, 3, False),
+            (1, 1, True),
+            (2, 1, False),
+            (1, 0, False),  # window 0 → never spotted
+        ],
+    )
+    def test_is_recently_spotted_boundaries(self, distance, window, expected):
+        from utils.bounty_announcement_payload import is_recently_spotted
+
+        assert is_recently_spotted(distance, window) is expected

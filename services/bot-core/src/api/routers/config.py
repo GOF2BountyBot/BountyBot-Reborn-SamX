@@ -50,6 +50,8 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "duel_cloak_chance",
     "close_bounty_threshold",
     "max_route_length",
+    "min_route_systems",
+    "recently_spotted_max_window",
     "bounty_delay_random_min",
     "bounty_delay_random_max",
     "bounty_spawn_jitter",

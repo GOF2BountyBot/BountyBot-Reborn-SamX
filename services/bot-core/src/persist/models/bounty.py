@@ -32,6 +32,13 @@ class Bounty(Base):
     route: Mapped[list] = mapped_column(_JSONB, nullable=False)
     answer: Mapped[str] = mapped_column(String(255), nullable=False)
 
+    # "Recently spotted" look-ahead width B, rolled once at spawn/respawn from
+    # [0, RECENTLY_SPOTTED_MAX_WINDOW]. A checked system shows "recently spotted"
+    # iff it is 1..B stops before the answer; B=0 means no hint at all. NULL ==
+    # legacy bounty → callers fall back to the historical fixed window (2).
+    # Added in revision 0024.
+    spotted_window: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     # Rewards
     reward: Mapped[int] = mapped_column(Integer, nullable=False)
     reward_per_sys: Mapped[int] = mapped_column(Integer, nullable=False)

@@ -242,6 +242,53 @@ class GameConstants:
     SHOP_SECONDARY_QTY_SCALER_STANDARD: int = 10
 
     # ------------------------------------------------------------------
+    # Shop Module Buckets
+    # ------------------------------------------------------------------
+    # Membership mirrors the criminal loadout classification in bounty_service
+    # (_MODULE_PRIORITY_ORDER / _FILLER_A_TYPES / _FILLER_B_TYPES /
+    # _NEVER_EQUIP_TYPES) with TWO shop-specific overrides:
+    #   (1) TractorBeamModule is moved from FILLER into COMBAT (it gates PvC
+    #       loot, so it is first-class in the shop).
+    #   (2) JUNK is removed from shop draws entirely.
+    # Defined literally here (not imported) because game_constants is a leaf
+    # module and must not import bounty_service. The disjoint+coverage assertion
+    # below is the drift guard (21 distinct module types total in the catalog).
+    SHOP_JUNK_MODULE_TYPES: frozenset[str] = frozenset(
+        {
+            "TransfusionBeamModule",
+            "ShieldInjectorModule",
+            "TimeExtenderModule",
+            "JumpDriveModule",
+        }
+    )
+    SHOP_FILLER_MODULE_TYPES: frozenset[str] = frozenset(
+        {
+            "GammaShieldModule",
+            "SpectralFilterModule",
+            "RepairBeamModule",
+            "SignatureModule",
+            "MiningDrillModule",
+            "CompressorModule",
+            "CabinModule",
+        }
+    )
+    SHOP_COMBAT_MODULE_TYPES: frozenset[str] = frozenset(
+        {
+            "ScannerModule",
+            "ArmourModule",
+            "ShieldModule",
+            "CloakModule",
+            "BoosterModule",
+            "EmergencySystemModule",
+            "RepairBotModule",
+            "PrimaryWeaponModModule",
+            "ThrusterModule",
+            "TractorBeamModule",
+        }
+    )
+    SHOP_COMBAT_MODULE_PROB: float = 0.75
+
+    # ------------------------------------------------------------------
     # Shop Rank Counts
     # ------------------------------------------------------------------
 
@@ -561,6 +608,7 @@ class GameConstants:
         cls.TURRET_SPAWN_PROBABILITY = _track_int("TURRET_SPAWN_PROBABILITY", 45)
         cls.SHOP_SECONDARY_QTY_SCALER_HEAVY = _track_int("SHOP_SECONDARY_QTY_SCALER_HEAVY", 5)
         cls.SHOP_SECONDARY_QTY_SCALER_STANDARD = _track_int("SHOP_SECONDARY_QTY_SCALER_STANDARD", 10)
+        cls.SHOP_COMBAT_MODULE_PROB = _track_float("SHOP_COMBAT_MODULE_PROB", 0.75)
 
         # Duels
         cls.DUEL_LOG_MAX_LENGTH = _track_int("DUEL_LOG_MAX_LENGTH", 10)
@@ -627,6 +675,32 @@ class GameConstants:
             _flogger.info(f"GameConstants env overrides detected: {', '.join(_overrides)}")
         else:
             _flogger.info("GameConstants.load() — no env overrides, using defaults")
+
+
+# ---------------------------------------------------------------------------
+# Module-level invariant assertions — drift guards for the shop module buckets.
+# All 21 distinct module Item.type discriminators must be covered exactly once.
+# ---------------------------------------------------------------------------
+assert GameConstants.SHOP_JUNK_MODULE_TYPES.isdisjoint(GameConstants.SHOP_FILLER_MODULE_TYPES), (
+    "SHOP_JUNK_MODULE_TYPES and SHOP_FILLER_MODULE_TYPES share members: "
+    f"{GameConstants.SHOP_JUNK_MODULE_TYPES & GameConstants.SHOP_FILLER_MODULE_TYPES}"
+)
+assert GameConstants.SHOP_JUNK_MODULE_TYPES.isdisjoint(GameConstants.SHOP_COMBAT_MODULE_TYPES), (
+    "SHOP_JUNK_MODULE_TYPES and SHOP_COMBAT_MODULE_TYPES share members: "
+    f"{GameConstants.SHOP_JUNK_MODULE_TYPES & GameConstants.SHOP_COMBAT_MODULE_TYPES}"
+)
+assert GameConstants.SHOP_FILLER_MODULE_TYPES.isdisjoint(GameConstants.SHOP_COMBAT_MODULE_TYPES), (
+    "SHOP_FILLER_MODULE_TYPES and SHOP_COMBAT_MODULE_TYPES share members: "
+    f"{GameConstants.SHOP_FILLER_MODULE_TYPES & GameConstants.SHOP_COMBAT_MODULE_TYPES}"
+)
+_ALL_SHOP_MODULE_TYPES = (
+    GameConstants.SHOP_JUNK_MODULE_TYPES
+    | GameConstants.SHOP_FILLER_MODULE_TYPES
+    | GameConstants.SHOP_COMBAT_MODULE_TYPES
+)
+assert len(_ALL_SHOP_MODULE_TYPES) == 21, (
+    f"Expected 21 total module types across all shop buckets, got {len(_ALL_SHOP_MODULE_TYPES)}"
+)
 
 
 def resolve_constant[T](guild_config: Any | None, field: str, fallback: T) -> T:

@@ -1137,6 +1137,7 @@ class InventoryCog(commands.Cog):
         amount="Amount of credits to give (for credits only)",
         item="Item to give — use autocomplete to pick from your inventory",
         ship="Ship to give — use autocomplete to pick a non-active ship",
+        quantity="Quantity to give (for item only, default: 1)",
     )
     @app_commands.choices(
         give_type=[
@@ -1155,6 +1156,7 @@ class InventoryCog(commands.Cog):
         amount: int | None = None,
         item: str | None = None,
         ship: str | None = None,
+        quantity: app_commands.Range[int, 1] = 1,
     ):
         """Give credits, an item, or a ship to another player in the same guild."""
         flogger.info(f"/give: guild={interaction.guild_id} user={interaction.user.id} type={give_type}")
@@ -1245,6 +1247,13 @@ class InventoryCog(commands.Cog):
                     await interaction.followup.send("❌ Please select an item to give.", ephemeral=True)
                     return
 
+                # Server-side guard mirroring /sell — Discord min_value should already
+                # reject this, but defend against any client that bypasses it. Holdings
+                # checks ("not enough to give") are surfaced by the backend 400 below.
+                if quantity <= 0:
+                    await interaction.followup.send("❌ Quantity must be positive.", ephemeral=True)
+                    return
+
                 # Parse item name and type from autocomplete value ("name::type").
                 # If "::" is absent the user typed freehand instead of picking from autocomplete;
                 # reject with a friendly message — A.46 spec §4.2 "reject freehand" path.
@@ -1263,7 +1272,7 @@ class InventoryCog(commands.Cog):
                         "to_player_id": target_player["id"],
                         "item_type": item_type,
                         "item_name": item_name,
-                        "quantity": 1,
+                        "quantity": quantity,
                     },
                     timeout=10,
                 )

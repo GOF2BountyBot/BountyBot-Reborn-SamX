@@ -360,6 +360,160 @@ class TestGiveItem:
 
 
 # -------------------------------------------------------------------------
+# Tests: /give item quantity (loot T9)
+# -------------------------------------------------------------------------
+
+
+def _transfer_payload(http_post_mock):
+    """Return the JSON body of the LAST http_client.post call (the transfer call)."""
+    return http_post_mock.call_args[1]["json"]
+
+
+class TestGiveItemQuantity:
+    """T9: /give item exposes a `quantity` arg, plumbed to the transfer payload."""
+
+    def test_give_item_quantity_passthrough(self, inventory_cog):
+        """/give item with quantity=N sends `quantity: N` in the transfer payload."""
+        interaction = _create_mock_interaction(user_id=111111111)
+        target = _create_mock_member(user_id=222222222)
+
+        source_player_resp = _player_resp(player_id=10)
+        target_player_resp = _player_resp(player_id=20)
+        transfer_resp = _make_http_resp(200, {"from_player_id": 10, "to_player_id": 20, "item_name": "Booze"})
+
+        post_mock = AsyncMock(side_effect=[source_player_resp, target_player_resp, transfer_resp])
+        inventory_cog.http_client.post = post_mock
+
+        asyncio.run(
+            inventory_cog.give.callback(
+                inventory_cog,
+                interaction,
+                target=target,
+                give_type="item",
+                amount=None,
+                item="Booze::commodity",
+                quantity=7,
+                ship=None,
+            )
+        )
+
+        payload = _transfer_payload(post_mock)
+        assert payload["quantity"] == 7
+        assert payload["item_type"] == "commodity"
+        assert payload["item_name"] == "Booze"
+        interaction.followup.send.assert_awaited_once()
+
+    def test_give_item_default_quantity_is_one(self, inventory_cog):
+        """Backward-compatible: omitting quantity sends `quantity: 1`."""
+        interaction = _create_mock_interaction(user_id=111111111)
+        target = _create_mock_member(user_id=222222222)
+
+        source_player_resp = _player_resp(player_id=10)
+        target_player_resp = _player_resp(player_id=20)
+        transfer_resp = _make_http_resp(200, {"from_player_id": 10, "to_player_id": 20, "item_name": "Pulse Laser"})
+
+        post_mock = AsyncMock(side_effect=[source_player_resp, target_player_resp, transfer_resp])
+        inventory_cog.http_client.post = post_mock
+
+        # Note: NOT passing quantity — relies on the default value of the param.
+        asyncio.run(
+            inventory_cog.give.callback(
+                inventory_cog,
+                interaction,
+                target=target,
+                give_type="item",
+                amount=None,
+                item="Pulse Laser::weapon",
+                ship=None,
+            )
+        )
+
+        payload = _transfer_payload(post_mock)
+        assert payload["quantity"] == 1
+
+    def test_give_item_quantity_zero_rejected(self, inventory_cog):
+        """Server-side guard mirrors /sell: quantity <= 0 is rejected before any transfer."""
+        interaction = _create_mock_interaction(user_id=111111111)
+        target = _create_mock_member(user_id=222222222)
+
+        source_player_resp = _player_resp(player_id=10)
+        target_player_resp = _player_resp(player_id=20)
+
+        # Only the two player-resolve POSTs should happen — NO transfer POST.
+        post_mock = AsyncMock(side_effect=[source_player_resp, target_player_resp])
+        inventory_cog.http_client.post = post_mock
+
+        asyncio.run(
+            inventory_cog.give.callback(
+                inventory_cog,
+                interaction,
+                target=target,
+                give_type="item",
+                amount=None,
+                item="Booze::commodity",
+                quantity=0,
+                ship=None,
+            )
+        )
+
+        # Exactly the 2 player-resolve calls; the transfer call was never made.
+        assert post_mock.await_count == 2
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert call_kwargs.get("ephemeral") is True
+
+    def test_give_item_quantity_param_has_min_one(self, inventory_cog):
+        """The Discord-layer `quantity` param is exposed with a minimum of 1.
+
+        Mirrors the min-of-1 contract via `app_commands.Range[int, 1]`, so the
+        slash command rejects 0/negative at the Discord layer (not just server-side).
+        """
+        params = inventory_cog.give.parameters
+        qparam = next((p for p in params if p.name == "quantity"), None)
+        assert qparam is not None, "quantity param must be exposed on /give"
+        assert qparam.min_value == 1
+        # Default keeps the command backward-compatible.
+        assert qparam.default == 1
+
+    def test_give_commodity_quantity_end_to_end(self, inventory_cog):
+        """A commodity give with quantity=N flows through the cog unchanged.
+
+        The transfer Literal already allows `commodity` (T1); confirm the cog path
+        does not special-case it away and emits the commodity payload with the qty.
+        """
+        interaction = _create_mock_interaction(user_id=111111111)
+        target = _create_mock_member(user_id=222222222)
+
+        source_player_resp = _player_resp(player_id=10)
+        target_player_resp = _player_resp(player_id=20)
+        transfer_resp = _make_http_resp(200, {"from_player_id": 10, "to_player_id": 20, "item_name": "Ore"})
+
+        post_mock = AsyncMock(side_effect=[source_player_resp, target_player_resp, transfer_resp])
+        inventory_cog.http_client.post = post_mock
+
+        asyncio.run(
+            inventory_cog.give.callback(
+                inventory_cog,
+                interaction,
+                target=target,
+                give_type="item",
+                amount=None,
+                item="Ore::commodity",
+                quantity=16,
+                ship=None,
+            )
+        )
+
+        payload = _transfer_payload(post_mock)
+        assert payload["item_type"] == "commodity"
+        assert payload["quantity"] == 16
+        interaction.followup.send.assert_awaited_once()
+        # Success embed (not an ephemeral error) was sent.
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+
+# -------------------------------------------------------------------------
 # Tests: /give ship
 # -------------------------------------------------------------------------
 

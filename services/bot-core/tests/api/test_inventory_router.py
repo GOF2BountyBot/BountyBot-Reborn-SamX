@@ -175,6 +175,47 @@ class TestGetPlayerInventory:
         assert item["item_details"] == {"damage": 10}
 
     @patch("api.routers.inventory.get_db_session")
+    def test_get_player_inventory_commodity_and_null_details_serialize_200(
+        self, mock_get_db, client, mock_inventory_service
+    ):
+        """Regression: a commodity item (resolved details) AND an item whose details
+        are None must both serialize — the endpoint returns 200, not 400.
+
+        Previously a None item_details failed the non-nullable schema and rejected the
+        WHOLE list (HTTP 400), which emptied the gateway inventory cache and broke
+        /sell ("nothing available"). item_details is now nullable.
+        """
+        _configure_db_mock(mock_get_db)
+        mock_inventory_service.get_player_inventory.return_value = [
+            {
+                "id": 5,
+                "item_type": "commodity",
+                "item_name": "Chemicals",
+                "quantity": 14,
+                "acquired_at": "2026-06-20T00:00:00",
+                "item_details": {"name": "Chemicals", "tech_level": 3, "value": 120, "type": "commodity"},
+            },
+            {
+                "id": 6,
+                "item_type": "module",
+                "item_name": "Ghost Item",  # catalog row gone missing → None details
+                "quantity": 1,
+                "acquired_at": "2026-06-20T00:00:00",
+                "item_details": None,
+            },
+        ]
+
+        response = client.get("/api/v1/inventory/player/1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        commodity = next(i for i in data if i["item_type"] == "commodity")
+        assert commodity["item_details"]["type"] == "commodity"
+        ghost = next(i for i in data if i["item_name"] == "Ghost Item")
+        assert ghost["item_details"] is None  # nullable — no longer 400s the whole list
+
+    @patch("api.routers.inventory.get_db_session")
     def test_get_player_inventory_with_item_type_filter(self, mock_get_db, client, mock_inventory_service):
         """Passes item_type query param to service and returns filtered results."""
         _configure_db_mock(mock_get_db)

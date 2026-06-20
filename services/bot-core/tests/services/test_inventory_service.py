@@ -143,6 +143,13 @@ def mock_module_repo() -> AsyncMock:
 
 
 @pytest.fixture
+def mock_commodity_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
 def service(
     mock_inventory_repo,
     mock_player_repo,
@@ -152,6 +159,7 @@ def service(
     mock_secondary_weapon_repo,
     mock_turret_weapon_repo,
     mock_module_repo,
+    mock_commodity_repo,
 ) -> inv_svc_module.InventoryService:
     svc = inv_svc_module.InventoryService()
     svc.inventory_repo = mock_inventory_repo
@@ -162,6 +170,7 @@ def service(
     svc.secondary_weapon_repo = mock_secondary_weapon_repo
     svc.turret_weapon_repo = mock_turret_weapon_repo
     svc.module_repo = mock_module_repo
+    svc.commodity_repo = mock_commodity_repo
     # By default make item validation pass (first repo returns a truthy hit)
     mock_primary_weapon_repo.get_by_name.return_value = MagicMock(name="DefaultItem", tech_level=1, value=100)
     return svc

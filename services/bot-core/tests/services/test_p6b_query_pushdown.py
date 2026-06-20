@@ -4,7 +4,7 @@ P6-T2  Batch inventory ``_get_item_details`` (kill N×5 lookups)
     - Output of ``get_player_inventory`` (item_details dicts) is identical across
       mixed-type inventories, empty inventories, and inventories containing an
       unknown item name.
-    - Query count drops: ``_get_items_details_batch`` issues at most 5 repo calls
+    - Query count drops: ``_get_items_details_batch`` issues at most 6 repo calls
       regardless of how many items are in the inventory (not N×5).
     - All five item-type repos (primary_weapon, secondary_weapon, turret_weapon,
       module, ship) contribute to the batch and map to the correct ``type`` key.
@@ -132,6 +132,7 @@ def _make_inventory_service() -> InventoryService:
     svc.secondary_weapon_repo = MagicMock()
     svc.turret_weapon_repo = MagicMock()
     svc.module_repo = MagicMock()
+    svc.commodity_repo = MagicMock()
     svc.ship_repo = MagicMock()
 
     # Default: no items found
@@ -139,6 +140,7 @@ def _make_inventory_service() -> InventoryService:
     svc.secondary_weapon_repo.get_by_names = AsyncMock(return_value=[])
     svc.turret_weapon_repo.get_by_names = AsyncMock(return_value=[])
     svc.module_repo.get_by_names = AsyncMock(return_value=[])
+    svc.commodity_repo.get_by_names = AsyncMock(return_value=[])
     svc.ship_repo.get_by_names = AsyncMock(return_value=[])
     return svc
 
@@ -172,6 +174,7 @@ class TestP6T2BatchItemDetails:
         svc.secondary_weapon_repo.get_by_names.assert_not_called()
         svc.turret_weapon_repo.get_by_names.assert_not_called()
         svc.module_repo.get_by_names.assert_not_called()
+        svc.commodity_repo.get_by_names.assert_not_called()
         svc.ship_repo.get_by_names.assert_not_called()
 
     @pytest.mark.asyncio
@@ -222,6 +225,25 @@ class TestP6T2BatchItemDetails:
         }
 
     @pytest.mark.asyncio
+    async def test_batch_commodity_detail_correct(self):
+        """A looted commodity name resolves with type='commodity' (regression: a None
+        item_details here previously 400'd the whole inventory endpoint, breaking /sell)."""
+        svc = _make_inventory_service()
+        commodity = SimpleNamespace(name="Chemicals", tech_level=3, value=120)
+        svc.commodity_repo.get_by_names = AsyncMock(return_value=[commodity])
+        db = _make_db()
+
+        result = await svc._get_items_details_batch(db, ["Chemicals"])
+
+        assert result["Chemicals"] == {
+            "name": "Chemicals",
+            "tech_level": 3,
+            "value": 120,
+            "type": "commodity",
+        }
+        assert result["Chemicals"] is not None  # never None → no schema rejection
+
+    @pytest.mark.asyncio
     async def test_batch_ship_detail_correct_no_tech_level(self):
         """A ship name resolves with type='ship' and tech_level=None."""
         svc = _make_inventory_service()
@@ -269,11 +291,11 @@ class TestP6T2BatchItemDetails:
         assert result["Betty"]["type"] == "ship"
 
     @pytest.mark.asyncio
-    async def test_batch_query_count_5_for_n_items(self):
-        """For N=3 distinct item names (different types), at most 5 repo calls total — not N×5.
+    async def test_batch_query_count_6_for_n_items(self):
+        """For N=3 distinct item names (different types), at most 6 repo calls total — not N×6.
 
-        This is the key efficiency assertion: the old code called up to 5 repos per item
-        (so 15 for 3 items); the new code calls each repo once (5 total) regardless of N.
+        This is the key efficiency assertion: the old code called up to 6 repos per item
+        (so 18 for 3 items); the new code calls each repo once (6 total) regardless of N.
         """
         svc = _make_inventory_service()
         weapon = _make_weapon_obj("Gun", tech_level=1, value=500)
@@ -287,23 +309,24 @@ class TestP6T2BatchItemDetails:
 
         await svc._get_items_details_batch(db, ["Gun", "Shield", "Betty"])
 
-        # Each of the 5 repos is called at most once — never N×repo.
+        # Each repo is called at most once — never N×repo.
         assert svc.primary_weapon_repo.get_by_names.call_count == 1
         assert svc.secondary_weapon_repo.get_by_names.call_count == 1
-        # module and ship repos are called once too (resolved items are skipped on
-        # subsequent repos, but unresolved names still get forwarded to them)
+        # module/commodity/ship repos are called once too (resolved items are skipped
+        # on subsequent repos, but unresolved names still get forwarded to them)
         total_calls = sum(
             [
                 svc.primary_weapon_repo.get_by_names.call_count,
                 svc.secondary_weapon_repo.get_by_names.call_count,
                 svc.turret_weapon_repo.get_by_names.call_count,
                 svc.module_repo.get_by_names.call_count,
+                svc.commodity_repo.get_by_names.call_count,
                 svc.ship_repo.get_by_names.call_count,
             ]
         )
-        # At most 5 total calls (one per repo type) regardless of N items.
-        # N×5 = 15 for 3 items; our batched path is ≤ 5.
-        assert total_calls <= 5, f"Expected ≤5 total repo calls, got {total_calls}"
+        # At most 6 total calls (one per repo type) regardless of N items.
+        # N×6 = 18 for 3 items; our batched path is ≤ 6.
+        assert total_calls <= 6, f"Expected ≤6 total repo calls, got {total_calls}"
 
     @pytest.mark.asyncio
     async def test_batch_short_circuits_early_when_all_resolved(self):

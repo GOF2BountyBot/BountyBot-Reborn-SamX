@@ -10,7 +10,11 @@ class InventoryItemResponse(BaseModel):
     item_name: str
     quantity: int
     acquired_at: str
-    item_details: dict[str, Any]
+    # Nullable so a single unresolved item (e.g. a catalog row gone missing) can
+    # never reject the WHOLE inventory list. Normal items resolve to a detail
+    # dict; commodities resolve via the commodity repo (see
+    # InventoryService._get_items_details_batch).
+    item_details: dict[str, Any] | None = None
 
 
 class InventorySummaryResponse(BaseModel):

@@ -526,13 +526,13 @@ class InventoryService:
     ) -> dict[str, dict[str, Any] | None]:
         """Batch-fetch item details for a list of item names.
 
-        P6-T2: replaces N×5 sequential ``_get_item_details`` calls (one per item
-        name × five repos) with 5 batched ``WHERE name IN (...)`` queries — one
+        P6-T2: replaces N×6 sequential ``_get_item_details`` calls (one per item
+        name × six repos) with 6 batched ``WHERE name IN (...)`` queries — one
         per repo type.  For an inventory with N distinct item names this reduces
-        the query count from up to 5·N to exactly 5.
+        the query count from up to 6·N to exactly 6.
 
         The priority ordering mirrors ``_get_item_details``: primary_weapon →
-        secondary_weapon → turret_weapon → module → ship.  If the same name
+        secondary_weapon → turret_weapon → module → commodity → ship.  If the same name
         somehow appears in two repos (shouldn't happen in practice) the first
         match wins, matching the old sequential-scan behaviour.
 
@@ -554,11 +554,15 @@ class InventoryService:
         details: dict[str, dict[str, Any] | None] = dict.fromkeys(unique_names, None)
 
         # Repos in priority order (mirrors _get_item_details lookup sequence).
+        # commodity is included so looted commodities (C-1) resolve to a detail
+        # dict — otherwise their item_details is None and the non-nullable
+        # response schema rejects the WHOLE inventory list (breaks /sell).
         repo_type_pairs = [
             (self.primary_weapon_repo, "primary_weapon"),
             (self.secondary_weapon_repo, "secondary_weapon"),
             (self.turret_weapon_repo, "turret_weapon"),
             (self.module_repo, "module"),
+            (self.commodity_repo, "commodity"),
             (self.ship_repo, "ship"),
         ]
 

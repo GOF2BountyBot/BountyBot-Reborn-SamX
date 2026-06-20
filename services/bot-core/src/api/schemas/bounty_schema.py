@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -159,6 +159,42 @@ class BountyCheckRequest(BaseModel):
     system_name: str
 
 
+class LootResult(BaseModel):
+    """PvC loot result attached to a player COMBAT-WIN ``/check`` outcome.
+
+    The bot-core -> gateway contract for the §5.9 ``<beam-emoji> Loot`` embed
+    line (rendered by T8, NOT here).  Populated from the internal
+    :class:`~services.bounty_service.LootOutcome` produced on a combat win
+    (T5); ``None`` on the parent outcome whenever there is no loot to render
+    (no tractor beam equipped / nothing looted — the internal ``none`` state),
+    so the gateway omits the Loot field entirely (§5.9 omission rule).
+
+    Only the four *renderable* states are ever emitted here — ``none`` maps to a
+    ``None`` parent field, never to a ``LootResult`` instance, hence it is
+    excluded from :attr:`outcome`'s ``Literal``.
+
+    Fields (the §5.9 set):
+
+    * ``outcome``       — ``looted`` | ``partial`` | ``failed`` | ``cargo_full``.
+    * ``item_name``     — looted item's display name (``None`` for failed/cargo_full).
+    * ``qty_looted``    — units actually taken (``< qty_total`` on ``partial``).
+    * ``qty_total``     — units that were available to loot.
+    * ``tractor_emoji`` — the equipped beam's custom Discord emoji (field-name emoji).
+    * ``cargo_current`` / ``cargo_max`` — back the ``cargo_full`` "(NN/XX)" line.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    outcome: Literal["looted", "partial", "failed", "cargo_full"]
+    item_name: str | None = None
+    qty_looted: int = 0
+    qty_total: int = 0
+    tractor_emoji: str | None = None
+    # Present (NN/XX) on the cargo_full outcome; None otherwise.
+    cargo_current: int | None = None
+    cargo_max: int | None = None
+
+
 class BountyCheckOutcome(BaseModel):
     """Per-bounty outcome of a single ``/check`` invocation.
 
@@ -194,6 +230,10 @@ class BountyCheckOutcome(BaseModel):
     # Per-outcome proximity hint (mainly for INCORRECT outcomes)
     proximity_hint: bool = False
     distance_to_answer: int | None = None
+    # PvC loot result (T6): present only on a player COMBAT WIN with a renderable
+    # loot outcome (§5.9). None when there is no loot to render (no beam / nothing
+    # looted) — the gateway then omits the Loot field entirely (§5.9 omission rule).
+    loot: LootResult | None = None
 
 
 class BountyCheckResponse(BaseModel):
@@ -224,6 +264,9 @@ class BountyCheckResponse(BaseModel):
     recently_spotted: bool = False
     # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
     cooldown_until: int | None = None
+    # PvC loot result (T6): legacy single-bounty mirror of outcomes[0].loot, per the
+    # existing combat-field mirror convention. None when the first outcome has no loot.
+    loot: LootResult | None = None
 
 
 class CombatBonusRequest(BaseModel):

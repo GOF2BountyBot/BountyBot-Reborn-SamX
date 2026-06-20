@@ -37,6 +37,7 @@ from api.schemas.bounty_schema import (
     ClearBountiesResponse,
     CombatBonusRequest,
     CombatBonusResponse,
+    LootResult,
 )
 from api.schemas.loadout_schema import LoadoutResponse
 
@@ -142,6 +143,30 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 
 
+def _loot_to_schema(loot) -> LootResult | None:
+    """Map an internal :class:`~services.bounty_service.LootOutcome` to a wire
+    :class:`LootResult`, applying the §5.9 omission rule.
+
+    Returns ``None`` (the gateway omits the Loot field entirely) whenever there
+    is no loot to render — ``loot is None`` (no combat win / no loot write) OR
+    ``loot.outcome == "none"`` (no tractor beam equipped / nothing looted).  Only
+    the four renderable states (``looted``/``partial``/``failed``/``cargo_full``)
+    yield a :class:`LootResult`.  ``item_type`` is intentionally NOT surfaced —
+    the gateway never needs it (§5.9).
+    """
+    if loot is None or loot.outcome == "none":
+        return None
+    return LootResult(
+        outcome=loot.outcome,
+        item_name=loot.item_name,
+        qty_looted=loot.qty_looted,
+        qty_total=loot.qty_total,
+        tractor_emoji=loot.tractor_emoji,
+        cargo_current=loot.cargo_current,
+        cargo_max=loot.cargo_max,
+    )
+
+
 def _outcome_to_schema(outcome) -> BountyCheckOutcome:
     """Convert a service-layer :class:`CheckResponse` to its API schema."""
     return BountyCheckOutcome(
@@ -163,6 +188,7 @@ def _outcome_to_schema(outcome) -> BountyCheckOutcome:
         recently_spotted=outcome.recently_spotted,
         proximity_hint=outcome.proximity_hint,
         distance_to_answer=outcome.distance_to_answer,
+        loot=_loot_to_schema(outcome.loot),
     )
 
 
@@ -194,6 +220,8 @@ def _build_check_response(multi) -> BountyCheckResponse:
         recently_spotted=first.recently_spotted if first else False,
         # cooldown_until is only populated on the ON_COOLDOWN outcome.
         cooldown_until=(multi.outcomes[0].cooldown_until if multi.outcomes else None),
+        # T6: legacy single-bounty mirror of outcomes[0].loot (None if first has none).
+        loot=first.loot if first else None,
     )
 
 

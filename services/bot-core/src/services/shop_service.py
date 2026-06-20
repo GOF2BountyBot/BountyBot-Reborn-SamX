@@ -33,7 +33,7 @@ from services._item_type_normalizer import expand_item_type_to_concrete
 from services.bounty_service import get_secondary_subtype
 from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
 from services.exceptions import InvalidItemTypeError
-from services.game_constants import GameConstants
+from services.game_constants import GameConstants, resolve_constant
 from services.game_maths import ship_tech_level_for_value
 
 flogger = bblogger.get_logger("shop-service")
@@ -486,11 +486,17 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # NOT call _add_item_to_shop. Weapon/Module selling is unchanged (the else
             # path below stocks the shop).
             if concrete_type == "commodity":
-                # LOOT_COMMODITY_SELL_FRACTION is now a tunable knob (T2): env-overridable
-                # via BOUNTYBOT_LOOT_COMMODITY_SELL_FRACTION + per-guild GuildConfig column.
-                # The sell site reads the (env-resolved) GameConstants default; per-guild
-                # resolution at this call site is deferred to the loot-core task (out of T2).
-                sell_fraction = GameConstants.LOOT_COMMODITY_SELL_FRACTION
+                # LOOT_COMMODITY_SELL_FRACTION is a tunable knob (T2): env-overridable via
+                # BOUNTYBOT_LOOT_COMMODITY_SELL_FRACTION + a per-guild GuildConfig column
+                # (guild_configs.loot_commodity_sell_fraction). Resolve the per-guild
+                # override here off the seller's guild config (NULL column ⇒ env-resolved
+                # GameConstants default), consistent with the other 18 loot knobs. The
+                # config lookup is best-effort: an unconfigured guild falls back to the
+                # default rather than blocking a sell.
+                guild_config = await self.config_repo.get_by_guild_id(db, player.guild_id)
+                sell_fraction = resolve_constant(
+                    guild_config, "loot_commodity_sell_fraction", GameConstants.LOOT_COMMODITY_SELL_FRACTION
+                )
                 # §5.7 / §9 C-2: payout = Item.value × qty × fraction with the
                 # truncation applied ONCE to the full product. Truncating per-unit
                 # before multiplying silently underpays once the fraction is tunable

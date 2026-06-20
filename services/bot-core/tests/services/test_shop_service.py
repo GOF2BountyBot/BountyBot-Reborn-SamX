@@ -2487,6 +2487,66 @@ class TestSellCommoditySink:
         service._add_item_to_shop.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_commodity_sell_uses_per_guild_fraction_override(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_config_repo
+    ):
+        """T11 fix: a guild whose guild_configs.loot_commodity_sell_fraction override is
+        SET pays int(value × override × qty) — the PER-GUILD value — even though the
+        GameConstants default is the catalog default (1.0). This proves the per-guild
+        column now takes effect at the sell site (regression for the T2-deferred gap
+        where the sell site read GameConstants directly and ignored the column)."""
+        player = _make_player(guild_id=4242, credits=0, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=10, item_type="commodity", item_name="Ore")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+        service._get_item_base_price = AsyncMock(return_value=100)
+        service._add_item_to_shop = AsyncMock()
+
+        # Per-guild override = 0.5; GameConstants default left at the catalog default 1.0.
+        guild_config = _make_config()
+        guild_config.loot_commodity_sell_fraction = 0.5
+        mock_config_repo.get_by_guild_id.return_value = guild_config
+
+        with patch.object(GameConstants, "LOOT_COMMODITY_SELL_FRACTION", 1.0):
+            result = await service.sell_item(mock_db, player_id=1, item_name="Ore", quantity=10)
+
+        # PER-GUILD: int(100 × 0.5 × 10) == 500, NOT the default int(100 × 1.0 × 10) == 1000.
+        assert result["total_sell_value"] == 500
+        assert result["unit_sell_price"] == 50
+        # The seller's own guild config was consulted.
+        mock_config_repo.get_by_guild_id.assert_awaited_once_with(mock_db, 4242)
+        service._add_item_to_shop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_commodity_sell_null_override_falls_back_to_default(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_config_repo
+    ):
+        """T11 fix: a guild whose loot_commodity_sell_fraction column is NULL falls back
+        to the GameConstants default (here the catalog default 1.0), so the payout is the
+        full face value. NULL ⇒ default is the documented per-guild resolution semantics."""
+        player = _make_player(guild_id=7, credits=0, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inv = _make_inventory_item(quantity=10, item_type="commodity", item_name="Ore")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inv]
+        service._get_item_base_price = AsyncMock(return_value=100)
+        service._add_item_to_shop = AsyncMock()
+
+        # Column NULL on an otherwise-configured guild.
+        guild_config = _make_config()
+        guild_config.loot_commodity_sell_fraction = None
+        mock_config_repo.get_by_guild_id.return_value = guild_config
+
+        with patch.object(GameConstants, "LOOT_COMMODITY_SELL_FRACTION", 1.0):
+            result = await service.sell_item(mock_db, player_id=1, item_name="Ore", quantity=10)
+
+        # NULL override ⇒ default 1.0 ⇒ full face value 100 × 10 == 1000.
+        assert result["total_sell_value"] == 1000
+        assert result["unit_sell_price"] == 100
+        service._add_item_to_shop.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_weapon_sell_still_stocks_shop_regression(
         self, service, mock_db, mock_player_repo, mock_inventory_repo
     ):

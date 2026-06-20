@@ -428,14 +428,19 @@ class BountyCog(commands.Cog):
                     f"💀 {criminal_name}",
                     "Combat loss — system checks reset for this bounty.",
                 )
+            # Post-fight loot RESULT line (LOOT_JOURNAL §5.9) appended into the
+            # captured bounty's own field, per-bounty from that outcome's loot.
+            # Omitted when there is no loot (no beam / no loot written → null).
+            loot_line = self._format_loot_line(outcome.get("loot"))
+            loot_suffix = f"\n{loot_line}" if loot_line else ""
             if bonus_won:
                 return (
                     f"{title_prefix} — Captured!",
-                    f"💰 **{total_reward:,}** credits (2× combat bonus!)",
+                    f"💰 **{total_reward:,}** credits (2× combat bonus!){loot_suffix}",
                 )
             return (
                 f"{title_prefix} — Captured!",
-                f"💰 **{reward:,}** credits",
+                f"💰 **{reward:,}** credits{loot_suffix}",
             )
         if result == "incorrect":
             recently_spotted = outcome.get("recently_spotted", False)
@@ -651,6 +656,50 @@ class BountyCog(commands.Cog):
                 return discord.Color(color_int)
         return discord.Color.blue()
 
+    @staticmethod
+    def _format_loot_line(loot: dict | None) -> str | None:
+        """Render the post-fight loot RESULT message text (LOOT_JOURNAL §5.9).
+
+        The displayed quantity is ALWAYS shown (even ``1x``). Returns ``None``
+        when there is no loot to render — i.e. ``loot`` is ``None``/absent (no
+        tractor beam equipped or no loot written), in which case the caller
+        omits the Loot field entirely (no blank field, no nag on a no-beam kill).
+
+        The returned text is emoji-free; the equipped beam's custom emoji lives
+        in the field NAME (see ``loot.tractor_emoji``), not the value.
+
+        ``outcome`` is one of ``{looted, partial, failed, cargo_full}`` (the
+        ``none`` case serializes as ``null`` loot and never reaches here).
+        ``item_name``/``qty_*`` are absent on ``failed``/``cargo_full`` so they
+        are not referenced for those two states.
+        """
+        if not loot:
+            return None
+        outcome = loot.get("outcome")
+        if outcome == "looted":
+            return f"Tractored {loot.get('qty_looted')}x {loot.get('item_name')}."
+        if outcome == "partial":
+            return (
+                f"Tractored {loot.get('qty_looted')} of {loot.get('qty_total')} {loot.get('item_name')} — cargo full."
+            )
+        if outcome == "failed":
+            return "Tractor beam failed — nothing looted."
+        if outcome == "cargo_full":
+            return f"Cargo hold full ({loot.get('cargo_current')}/{loot.get('cargo_max')}) — No room for loot."
+        # Unknown / unexpected outcome — render nothing rather than a malformed field.
+        return None
+
+    @staticmethod
+    def _loot_field_name(loot: dict | None) -> str:
+        """Build the Loot field NAME using the equipped beam's custom emoji.
+
+        The emoji comes straight from ``loot.tractor_emoji`` (already the
+        equipped beam's custom Discord emoji). Defensive fallback: if the emoji
+        is somehow missing, render a plain ``Loot`` field name (never crash).
+        """
+        emoji = (loot or {}).get("tractor_emoji")
+        return f"{emoji} Loot" if emoji else "Loot"
+
     def _build_check_embed(self, data: dict) -> discord.Embed:
         """Build an embed for the /check command based on the full response data dict."""
         result = data.get("result", "")
@@ -815,6 +864,13 @@ class BountyCog(commands.Cog):
             )
         else:
             embed.add_field(name="💰 Total Payout", value=f"**{total_reward:,} cr**", inline=False)
+
+        # Post-fight loot RESULT (LOOT_JOURNAL §5.9), after the Payout Breakdown.
+        # Omitted entirely when there is no loot (no beam / no loot written → null).
+        loot = data.get("loot")
+        loot_line = self._format_loot_line(loot)
+        if loot_line:
+            embed.add_field(name=self._loot_field_name(loot), value=loot_line, inline=False)
 
         return embed
 

@@ -5208,3 +5208,329 @@ class TestBuildMultiCheckEmbedPayoutBreakdown:
         assert any("Payout" in n and "BronzeTarget" in n for n in field_names), (
             f"Bronze capture (combat_won=None) must produce a payout field, but got: {field_names}"
         )
+
+
+# ===========================================================================
+# T8 — Post-fight loot RESULT embeds (LOOT_JOURNAL §5.9)
+# ===========================================================================
+#
+# Renders a `<beam-emoji> Loot` field (capture embed, after Payout Breakdown)
+# and a per-bounty loot line (multi-check embed). Verifies the EXACT §5.9
+# message text per outcome, the emoji-from-payload field name + defensive
+# fallback, and the omission rules (null loot / loss / stalemate → no field).
+# ===========================================================================
+
+# A representative equipped-beam custom emoji (LOOT_JOURNAL §5.9 example).
+_OCTO_EMOJI = "<:ab4octopus:723707140967235697>"
+
+
+def _make_loot(
+    outcome: str = "looted",
+    *,
+    item_name: str | None = "Booze",
+    qty_looted: int = 16,
+    qty_total: int = 16,
+    tractor_emoji: str | None = _OCTO_EMOJI,
+    cargo_current: int = 50,
+    cargo_max: int = 50,
+) -> dict:
+    """Build a LootResult JSON dict matching the T6 contract.
+
+    item_name/qty_* are null/0 on `failed`/`cargo_full` in the real payload, but
+    the renderer must not reference them there, so the defaults are harmless.
+    """
+    return {
+        "outcome": outcome,
+        "item_name": item_name,
+        "qty_looted": qty_looted,
+        "qty_total": qty_total,
+        "tractor_emoji": tractor_emoji,
+        "cargo_current": cargo_current,
+        "cargo_max": cargo_max,
+    }
+
+
+class TestBuildCaptureEmbedLootField:
+    """T8: `<beam-emoji> Loot` field in _build_capture_embed (LOOT_JOURNAL §5.9)."""
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    def _capture(self, loot: dict | None):
+        data = {
+            "result": "captured",
+            "criminal_name": "Pirate Bob",
+            "reward": 500,
+            "total_reward": 500,
+            "bonus_won": False,
+            "combat_result": None,
+            "division": "bronze",
+        }
+        if loot is not None:
+            data["loot"] = loot
+        return self.cog._build_capture_embed(data)
+
+    @staticmethod
+    def _loot_field(embed):
+        return next((f for f in embed.fields if "Loot" in (f.name or "")), None)
+
+    # --- §5.9 EXACT message text per outcome ---
+
+    def test_looted_renders_exact_text(self):
+        """`looted` → `Tractored {qty}x {item}.`"""
+        f = self._loot_field(self._capture(_make_loot("looted", item_name="Booze", qty_looted=16)))
+        assert f is not None
+        assert f.value == "Tractored 16x Booze."
+
+    def test_looted_quantity_one_still_shown(self):
+        """Quantity ALWAYS shown, even `1x` (LOOT_JOURNAL §5.9)."""
+        f = self._loot_field(self._capture(_make_loot("looted", item_name="AB-1 Retractor", qty_looted=1, qty_total=1)))
+        assert f is not None
+        assert f.value == "Tractored 1x AB-1 Retractor."
+
+    def test_partial_renders_exact_text(self):
+        """`partial` → `Tractored {got} of {total} {item} — cargo full.` (em dash)."""
+        f = self._loot_field(self._capture(_make_loot("partial", item_name="Booze", qty_looted=6, qty_total=16)))
+        assert f is not None
+        assert f.value == "Tractored 6 of 16 Booze — cargo full."
+
+    def test_failed_renders_exact_text(self):
+        """`failed` → `Tractor beam failed — nothing looted.` (no item/qty referenced)."""
+        f = self._loot_field(self._capture(_make_loot("failed", item_name=None, qty_looted=0, qty_total=0)))
+        assert f is not None
+        assert f.value == "Tractor beam failed — nothing looted."
+
+    def test_cargo_full_renders_exact_text(self):
+        """`cargo_full` → `Cargo hold full (NN/XX) — No room for loot.`"""
+        f = self._loot_field(
+            self._capture(_make_loot("cargo_full", item_name=None, qty_looted=0, cargo_current=48, cargo_max=50))
+        )
+        assert f is not None
+        assert f.value == "Cargo hold full (48/50) — No room for loot."
+
+    # --- field name: emoji from payload + defensive fallback ---
+
+    def test_field_name_uses_tractor_emoji(self):
+        """Field NAME uses the equipped beam's custom emoji from loot.tractor_emoji."""
+        f = self._loot_field(self._capture(_make_loot("looted")))
+        assert f is not None
+        assert f.name == f"{_OCTO_EMOJI} Loot"
+
+    def test_field_name_falls_back_to_plain_loot_when_emoji_missing(self):
+        """Defensive: missing tractor_emoji → plain `Loot` field name, no crash."""
+        f = self._loot_field(self._capture(_make_loot("looted", tractor_emoji=None)))
+        assert f is not None
+        assert f.name == "Loot"
+
+    def test_loot_text_is_emoji_free(self):
+        """The §5.9 message text carries NO emoji (emoji lives in the field name)."""
+        f = self._loot_field(self._capture(_make_loot("looted")))
+        assert f is not None
+        assert "<:ab4octopus" not in f.value
+
+    # --- placement: AFTER the Payout Breakdown field ---
+
+    def test_loot_field_placed_after_payout(self):
+        """The Loot field is placed AFTER the payout field in the capture embed."""
+        embed = self._capture(_make_loot("looted"))
+        names = [f.name for f in embed.fields]
+        payout_idx = next(i for i, n in enumerate(names) if "Payout" in n)
+        loot_idx = next(i for i, n in enumerate(names) if "Loot" in n)
+        assert loot_idx > payout_idx, f"Loot field must come after Payout; got order {names}"
+
+    # --- omission rules ---
+
+    def test_no_loot_field_when_loot_absent(self):
+        """No `loot` key → omit the Loot field entirely (no blank field)."""
+        assert self._loot_field(self._capture(None)) is None
+
+    def test_no_loot_field_when_loot_null(self):
+        """`loot=None` (serialized null) → omit the Loot field entirely."""
+        assert self._loot_field(self._capture(None)) is None
+
+
+class TestBuildMultiCheckEmbedLootLine:
+    """T8: per-bounty loot line in _build_multi_check_embed (LOOT_JOURNAL §5.9)."""
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    @staticmethod
+    def _capture_field(embed, criminal_name: str):
+        # The captured bounty's own summary row field (NOT the separate Payout field).
+        return next(
+            (
+                f
+                for f in embed.fields
+                if criminal_name in (f.name or "") and "Captured" in (f.name or "") and "Payout" not in (f.name or "")
+            ),
+            None,
+        )
+
+    def test_capture_field_gets_loot_line(self):
+        """A captured bounty's field carries its own §5.9 loot line."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 1,
+                "criminal_name": "Qyrr Myfft",
+                "combat_won": True,
+                "reward": 3188,
+                "total_reward": 3188,
+                "bonus_won": False,
+                "loot": _make_loot("looted", item_name="Booze", qty_looted=12, qty_total=12),
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Magnetar", outcomes)
+        f = self._capture_field(embed, "Qyrr Myfft")
+        assert f is not None
+        assert "Tractored 12x Booze." in f.value
+
+    def test_bonus_capture_field_gets_loot_line(self):
+        """Bonus (2×) capture row also carries its loot line."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 9,
+                "criminal_name": "BonusCrim",
+                "combat_won": True,
+                "reward": 1000,
+                "total_reward": 2000,
+                "bonus_won": True,
+                "loot": _make_loot("looted", item_name="Ore", qty_looted=8, qty_total=8),
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Sol", outcomes)
+        f = self._capture_field(embed, "BonusCrim")
+        assert f is not None
+        assert "2× combat bonus!" in f.value
+        assert "Tractored 8x Ore." in f.value
+
+    def test_mixed_outcomes_loot_present_and_absent(self):
+        """Mix: one captured-with-loot, one captured-no-loot → line present/absent per outcome."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 1,
+                "criminal_name": "WithLoot",
+                "combat_won": True,
+                "reward": 1000,
+                "total_reward": 1000,
+                "loot": _make_loot("looted", item_name="Booze", qty_looted=5, qty_total=5),
+            },
+            {
+                "result": "correct",
+                "bounty_id": 2,
+                "criminal_name": "NoLoot",
+                "combat_won": True,
+                "reward": 1000,
+                "total_reward": 1000,
+                "loot": None,
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Tau", outcomes)
+        with_loot = self._capture_field(embed, "WithLoot")
+        no_loot = self._capture_field(embed, "NoLoot")
+        assert with_loot is not None and "Tractored 5x Booze." in with_loot.value
+        assert no_loot is not None and "Tractored" not in no_loot.value
+
+    def test_partial_outcome_in_multi(self):
+        """`partial` outcome renders the exact §5.9 partial line in the capture row."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 3,
+                "criminal_name": "PartialCrim",
+                "combat_won": True,
+                "reward": 1000,
+                "total_reward": 1000,
+                "loot": _make_loot("partial", item_name="Booze", qty_looted=6, qty_total=16),
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Nexus", outcomes)
+        f = self._capture_field(embed, "PartialCrim")
+        assert f is not None
+        assert "Tractored 6 of 16 Booze — cargo full." in f.value
+
+    def test_combat_loss_outcome_has_no_loot_line(self):
+        """A combat-loss outcome (combat_won=False) never carries a loot line."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 4,
+                "criminal_name": "LostFight",
+                "combat_won": False,
+                "combat_result": {"is_stalemate": False},
+                # Defensive: even if loot were somehow present, a loss must show none.
+                "loot": _make_loot("looted", item_name="Booze", qty_looted=9),
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Sol", outcomes)
+        loss_field = next((f for f in embed.fields if "LostFight" in (f.name or "")), None)
+        assert loss_field is not None
+        assert "Tractored" not in loss_field.value
+
+    def test_stalemate_outcome_has_no_loot_line(self):
+        """A stalemate outcome (combat_won=False, is_stalemate) never carries a loot line."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 5,
+                "criminal_name": "StaleCrim",
+                "combat_won": False,
+                "combat_result": {"is_stalemate": True},
+                "loot": _make_loot("looted", item_name="Booze", qty_looted=9),
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Sol", outcomes)
+        stale_field = next((f for f in embed.fields if "StaleCrim" in (f.name or "")), None)
+        assert stale_field is not None
+        assert "Tractored" not in stale_field.value
+
+
+class TestBuildCheckEmbedNoLootOnNonWin:
+    """T8: loss / stalemate / defeat single embeds carry NO Loot field (LOOT_JOURNAL §5.9)."""
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    def test_combat_loss_embed_has_no_loot_field(self):
+        """result=correct + combat_won=False (defeat) → no Loot field."""
+        embed = self.cog._build_check_embed(
+            {
+                "result": "correct",
+                "combat_won": False,
+                "criminal_name": "Pirate Bob",
+                "combat_result": {"is_stalemate": False},
+                "loot": _make_loot("looted"),  # defensive: must still be ignored
+            }
+        )
+        assert not any("Loot" in (f.name or "") for f in embed.fields)
+
+    def test_stalemate_embed_has_no_loot_field(self):
+        """result=correct + combat_won=False + stalemate → no Loot field."""
+        embed = self.cog._build_check_embed(
+            {
+                "result": "correct",
+                "combat_won": False,
+                "criminal_name": "Pirate Bob",
+                "combat_result": {"is_stalemate": True},
+                "loot": _make_loot("looted"),
+            }
+        )
+        assert not any("Loot" in (f.name or "") for f in embed.fields)
+
+    def test_combat_loss_result_type_has_no_loot_field(self):
+        """Legacy result='combat_loss' defeat embed → no Loot field."""
+        embed = self.cog._build_check_embed(
+            {
+                "result": "combat_loss",
+                "criminal_name": "Pirate Bob",
+                "combat_result": None,
+                "loot": _make_loot("looted"),
+            }
+        )
+        assert not any("Loot" in (f.name or "") for f in embed.fields)

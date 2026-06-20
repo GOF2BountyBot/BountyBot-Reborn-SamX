@@ -558,10 +558,24 @@ class LoadoutResponseService:
         # Thumbnail prefers criminal portrait; falls back to None (gateway null-guards)
         thumbnail_url = criminal.icon if criminal and criminal.icon else None
 
-        # T4b — surface the criminal's prospective loot pre-fight.  The cargo is
-        # rolled & persisted at spawn (T4) under ``criminal_ship["cargo"]``; the key
-        # may be ABSENT (legacy bounties / defensive no-roll branch) → loot_cargo=None.
+        # T4b — surface the criminal's prospective loot pre-fight.  The loot IS the
+        # criminal's cargo-hold contents, so render it in the Cargo Hold section
+        # (Cargo Hold <N/M>) rather than a separate "Loot aboard" field.  Rolled &
+        # persisted at spawn (T4) under ``criminal_ship["cargo"]``; the key may be
+        # ABSENT (legacy bounties / defensive no-roll branch) → empty cargo.
         loot_cargo = self._build_loot_cargo(criminal_ship.get("cargo"))
+        if loot_cargo is not None:
+            criminal_cargo = [
+                CargoItem(
+                    item_name=loot_cargo.item_name,
+                    item_type=loot_cargo.item_type,
+                    quantity=loot_cargo.quantity,
+                )
+            ]
+            criminal_cargo_count = loot_cargo.quantity
+        else:
+            criminal_cargo = []
+            criminal_cargo_count = 0
 
         return LoadoutResponse(
             subject_kind="criminal",
@@ -579,9 +593,9 @@ class LoadoutResponseService:
             secondaries=secondary_items,
             modules=module_items,
             modules_total_count=modules_total_count,
-            cargo=[],
-            cargo_total_count=0,
-            loot_cargo=loot_cargo,
+            cargo=criminal_cargo,
+            cargo_total_count=criminal_cargo_count,
+            loot_cargo=None,
         )
 
     @staticmethod

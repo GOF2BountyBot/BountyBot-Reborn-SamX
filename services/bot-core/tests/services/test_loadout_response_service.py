@@ -1091,16 +1091,20 @@ class TestNormalizeWeaponDict:
 
 
 # ---------------------------------------------------------------------------
-# T4b — criminal loot_cargo surfacing on the bounty LoadoutResponse
+# T4b — criminal loot rendered as Cargo Hold contents on the bounty LoadoutResponse
 # ---------------------------------------------------------------------------
 
 
 class TestBuildBountyLootCargo:
-    """build_bounty_loadout surfaces the criminal's rolled cargo as loot_cargo (T4b).
+    """build_bounty_loadout renders the criminal's rolled loot as its Cargo Hold
+    contents — the loot IS the criminal's cargo.
 
-    The cargo is persisted at spawn (T4) under criminal_ship["cargo"] = {item_type,
-    item_name, quantity}; the key may be ABSENT for legacy / no-roll bounties, which
-    MUST render as loot_cargo=None (never an error).
+    The loot is persisted at spawn (T4) under criminal_ship["cargo"] = {item_type,
+    item_name, quantity} and surfaced in the LoadoutResponse ``cargo`` list with
+    ``cargo_total_count`` (rendered as 'Cargo Hold <N/M>'), NOT a separate
+    'Loot aboard' field — so ``loot_cargo`` is now always None. The key may be
+    ABSENT for legacy / no-roll bounties, which MUST render as empty cargo (never
+    an error).
     """
 
     def _make_bounty(self, *, criminal_ship):
@@ -1122,8 +1126,8 @@ class TestBuildBountyLootCargo:
             "cargo": cargo,
         }
 
-    async def test_loot_cargo_present_commodity_stack(self):
-        """A rolled commodity stack surfaces as loot_cargo with name/type/quantity."""
+    async def test_loot_renders_as_cargo_commodity_stack(self):
+        """A rolled commodity stack renders as a Cargo Hold item with name/type/quantity."""
         cargo = {"item_type": "commodity", "item_name": "Booze", "quantity": 16}
         bounty = self._make_bounty(criminal_ship=self._ship_with_cargo(cargo))
         svc = _make_svc(bounty=bounty, criminal=None)
@@ -1132,13 +1136,15 @@ class TestBuildBountyLootCargo:
         result = await svc.build_bounty_loadout(db, bounty_id=7)
 
         assert result is not None
-        assert result.loot_cargo is not None
-        assert result.loot_cargo.item_name == "Booze"
-        assert result.loot_cargo.item_type == "commodity"
-        assert result.loot_cargo.quantity == 16
+        assert result.loot_cargo is None  # no separate "Loot aboard" field anymore
+        assert len(result.cargo) == 1
+        assert result.cargo[0].item_name == "Booze"
+        assert result.cargo[0].item_type == "commodity"
+        assert result.cargo[0].quantity == 16
+        assert result.cargo_total_count == 16
 
-    async def test_loot_cargo_present_qty_one_weapon(self):
-        """A qty-1 equippable still surfaces (quantity always carried, even 1)."""
+    async def test_loot_renders_as_cargo_qty_one_weapon(self):
+        """A qty-1 equippable still renders (quantity always carried, even 1)."""
         cargo = {"item_type": "primary_weapon", "item_name": "AB-1 Retractor", "quantity": 1}
         bounty = self._make_bounty(criminal_ship=self._ship_with_cargo(cargo))
         svc = _make_svc(bounty=bounty, criminal=None)
@@ -1146,12 +1152,14 @@ class TestBuildBountyLootCargo:
 
         result = await svc.build_bounty_loadout(db, bounty_id=7)
 
-        assert result.loot_cargo is not None
-        assert result.loot_cargo.item_name == "AB-1 Retractor"
-        assert result.loot_cargo.quantity == 1
+        assert result.loot_cargo is None
+        assert len(result.cargo) == 1
+        assert result.cargo[0].item_name == "AB-1 Retractor"
+        assert result.cargo[0].quantity == 1
+        assert result.cargo_total_count == 1
 
-    async def test_legacy_no_cargo_key_yields_none(self):
-        """A bounty whose criminal_ship has NO 'cargo' key → loot_cargo=None (graceful)."""
+    async def test_legacy_no_cargo_key_yields_empty_cargo(self):
+        """A bounty whose criminal_ship has NO 'cargo' key → empty cargo (graceful)."""
         ship = {
             "ship_name": "Interceptor",
             "ship_armour": 95,
@@ -1167,9 +1175,11 @@ class TestBuildBountyLootCargo:
 
         assert result is not None
         assert result.loot_cargo is None
+        assert result.cargo == []
+        assert result.cargo_total_count == 0
 
-    async def test_missing_criminal_ship_has_no_loot_cargo(self):
-        """The 'no criminal_ship' message branch leaves loot_cargo at None."""
+    async def test_missing_criminal_ship_has_empty_cargo(self):
+        """The 'no criminal_ship' message branch leaves cargo empty."""
         bounty = self._make_bounty(criminal_ship=None)
         svc = _make_svc(bounty=bounty)
         db = MagicMock()
@@ -1178,9 +1188,11 @@ class TestBuildBountyLootCargo:
 
         assert result is not None
         assert result.loot_cargo is None
+        assert result.cargo == []
+        assert result.cargo_total_count == 0
 
-    async def test_malformed_cargo_blobs_yield_none(self):
-        """Malformed cargo shapes (bad type, blank name, non-positive qty) → None."""
+    async def test_malformed_cargo_blobs_yield_empty_cargo(self):
+        """Malformed cargo shapes (bad type, blank name, non-positive qty) → empty cargo."""
         bad_blobs = [
             {"item_type": "commodity", "item_name": "", "quantity": 5},  # blank name
             {"item_type": "commodity", "item_name": "Booze", "quantity": 0},  # zero qty
@@ -1196,9 +1208,11 @@ class TestBuildBountyLootCargo:
             result = await svc.build_bounty_loadout(db, bounty_id=7)
             assert result is not None
             assert result.loot_cargo is None, f"expected None for blob={blob!r}"
+            assert result.cargo == [], f"expected empty cargo for blob={blob!r}"
+            assert result.cargo_total_count == 0
 
     async def test_item_type_defaults_empty_when_absent(self):
-        """A cargo blob missing item_type still surfaces with item_type=''."""
+        """A cargo blob missing item_type still renders with item_type=''."""
         cargo = {"item_name": "Ore Core", "quantity": 8}
         bounty = self._make_bounty(criminal_ship=self._ship_with_cargo(cargo))
         svc = _make_svc(bounty=bounty, criminal=None)
@@ -1206,7 +1220,9 @@ class TestBuildBountyLootCargo:
 
         result = await svc.build_bounty_loadout(db, bounty_id=7)
 
-        assert result.loot_cargo is not None
-        assert result.loot_cargo.item_name == "Ore Core"
-        assert result.loot_cargo.item_type == ""
-        assert result.loot_cargo.quantity == 8
+        assert result.loot_cargo is None
+        assert len(result.cargo) == 1
+        assert result.cargo[0].item_name == "Ore Core"
+        assert result.cargo[0].item_type == ""
+        assert result.cargo[0].quantity == 8
+        assert result.cargo_total_count == 8

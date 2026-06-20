@@ -1491,6 +1491,7 @@ class TestLoadoutResponseServicePlayerPath:
             name="Wraith",
             armour=95,
             cargo=20,
+            value=2000,
             emoji="<:wraith:1>",
             icon="https://cdn/wraith.png",
             handling=60,
@@ -1548,8 +1549,8 @@ class TestLoadoutResponseServicePlayerPath:
         assert result.ship_stats.hp == 135
         # DPS = 12.0 (only weapon)
         assert result.ship_stats.dps == 12.0
-        # Total value = 1000 (pulse) + 500 + 300 = 1800
-        assert result.ship_stats.total_value == 1800
+        # Total value = 2000 (base hull) + 1000 (pulse) + 500 + 300 = 3800
+        assert result.ship_stats.total_value == 3800
         assert result.ship_stats.max_primaries == 2
         assert result.ship_stats.max_modules == 4
 
@@ -1607,6 +1608,7 @@ class TestLoadoutResponseServicePlayerPath:
             name="Wraith",
             armour=100,
             cargo=10,
+            value=2000,
             emoji=None,
             icon=None,
             handling=50,

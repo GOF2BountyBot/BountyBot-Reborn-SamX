@@ -195,7 +195,9 @@ class LoadoutResponseService:
         effective_cargo = round(base_cargo * compressor_multiplier) if base_cargo else base_cargo
 
         total_value = (
-            sum(w.value or 0 for w in weapon_items)
+            # Base hull value — the ship itself. Excludes cargo/inventory (only equipped gear).
+            (ship.value if ship else 0)
+            + sum(w.value or 0 for w in weapon_items)
             + sum(t.value or 0 for t in turret_items)
             # Secondaries are consumable rounds — a stack's worth is value × remaining
             # rounds (rounds=None means no ammo-sidecar entry; count the weapon once).
@@ -532,7 +534,9 @@ class LoadoutResponseService:
         effective_cargo = round(base_cargo * compressor_multiplier) if base_cargo else base_cargo
 
         total_value = (
-            sum(w.value or 0 for w in weapon_items)
+            # Base hull value — the ship itself. Excludes cargo/inventory (only equipped gear).
+            (ship.value if ship else 0)
+            + sum(w.value or 0 for w in weapon_items)
             + sum(t.value or 0 for t in turret_items)
             + sum(m.value or 0 for m in module_items)
         )

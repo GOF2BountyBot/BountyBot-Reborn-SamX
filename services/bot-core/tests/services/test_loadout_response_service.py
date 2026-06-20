@@ -140,6 +140,7 @@ def _ship():
         name="Wraith",
         armour=95,
         cargo=20,
+        value=2000,
         emoji="<:wraith:1>",
         icon="https://cdn/wraith.png",
         handling=60,
@@ -155,6 +156,7 @@ def _interceptor_ship(**overrides):
         name="Interceptor",
         armour=95,
         cargo=45,
+        value=2500,
         handling=70,
         icon=None,
         max_primaries=1,
@@ -229,8 +231,8 @@ class TestBuildPlayerLoadout:
         assert result.ship_stats.hp == 135
         # DPS = 12.0 (Pulse Laser only)
         assert result.ship_stats.dps == 12.0
-        # Total value = 1000 (weapon) + 500 (D'iol)
-        assert result.ship_stats.total_value == 1500
+        # Total value = 2000 (base hull) + 1000 (weapon) + 500 (D'iol)
+        assert result.ship_stats.total_value == 3500
         assert len(result.weapons) == 1
         assert result.weapons[0].name == "Pulse Laser"
         assert len(result.modules) == 1
@@ -326,8 +328,8 @@ class TestBuildPlayerLoadout:
         # Second secondary: S'koon Missile with 3 rounds
         assert result.secondaries[1].name == "S'koon Missile"
         assert result.secondaries[1].rounds == 3
-        # Total value counts secondaries per round: 800×5 + 800×3 (no other equipment)
-        assert result.ship_stats.total_value == 6400
+        # Total value = 2000 (base hull) + secondaries per round: 800×5 + 800×3
+        assert result.ship_stats.total_value == 8400
 
     async def test_secondary_total_value_edge_rounds(self):
         """Secondary value edges: 0 rounds contributes nothing; no ammo entry counts once."""
@@ -353,8 +355,8 @@ class TestBuildPlayerLoadout:
         result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
 
         assert result is not None
-        # Edo Torpedo: 800 × 0 rounds = 0; S'koon Missile: no ammo entry → counted once = 800
-        assert result.ship_stats.total_value == 800
+        # 2000 (base hull) + Edo Torpedo 800×0 rounds = 0 + S'koon Missile (no ammo entry → once) 800
+        assert result.ship_stats.total_value == 2800
 
     async def test_player_no_secondaries_returns_empty_list(self):
         """build_player_loadout returns secondaries=[] when ship has none equipped (CI-28)."""

@@ -1382,8 +1382,8 @@ class TestRefreshShop:
         assert response.status_code == 422
 
     def test_refresh_shop_force_tech_level_out_of_range_returns_422(self, client):
-        """Returns 422 when force_tech_level is outside 1-9."""
-        payload = {"guild_id": 67890, "tier": "Bronze", "force_tech_level": 10}
+        """Returns 422 when force_tech_level is outside 1-10."""
+        payload = {"guild_id": 67890, "tier": "Bronze", "force_tech_level": 11}
 
         response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
 

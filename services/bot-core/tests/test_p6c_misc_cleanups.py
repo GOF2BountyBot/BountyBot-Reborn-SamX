@@ -257,7 +257,7 @@ class TestP6T9cShopDedup:
         draw_sequence = ["Laser Cannon", "Plasma Rifle", "Ion Blaster"]
         call_idx = 0
 
-        async def _next_item(db, item_type, tech_level):
+        async def _next_item(db, item_type, tech_level, **kwargs):
             nonlocal call_idx
             name = draw_sequence[call_idx % len(draw_sequence)]
             call_idx += 1
@@ -303,7 +303,7 @@ class TestP6T9cShopDedup:
         draw_sequence = ["Alpha", "Beta", "Alpha"]
         call_idx = 0
 
-        async def _next_item(db, item_type, tech_level):
+        async def _next_item(db, item_type, tech_level, **kwargs):
             nonlocal call_idx
             name = draw_sequence[call_idx]
             call_idx += 1

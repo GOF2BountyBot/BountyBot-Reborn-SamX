@@ -552,8 +552,8 @@ class TestAdminRefreshShopRequestSchema:
         assert req.force_tech_level == 1
 
     def test_force_tech_level_max_valid(self):
-        req = RefreshShopRequest(guild_id=1, tier="Gold", force_tech_level=9)
-        assert req.force_tech_level == 9
+        req = RefreshShopRequest(guild_id=1, tier="Gold", force_tech_level=10)
+        assert req.force_tech_level == 10
 
     def test_force_tech_level_zero_raises(self):
         with pytest.raises(ValidationError):
@@ -561,7 +561,7 @@ class TestAdminRefreshShopRequestSchema:
 
     def test_force_tech_level_exceeds_max_raises(self):
         with pytest.raises(ValidationError):
-            RefreshShopRequest(guild_id=1, tier="Gold", force_tech_level=10)
+            RefreshShopRequest(guild_id=1, tier="Gold", force_tech_level=11)
 
 
 class TestAdminUpdateShopConfigRequestSchema:
@@ -1810,9 +1810,9 @@ class TestShopsRefreshShopRequestSchema:
 
     def test_force_tech_level_bounds(self):
         req_min = ShopsRefreshShopRequest(guild_id=1, tier="Bronze", force_tech_level=1)
-        req_max = ShopsRefreshShopRequest(guild_id=1, tier="Bronze", force_tech_level=9)
+        req_max = ShopsRefreshShopRequest(guild_id=1, tier="Bronze", force_tech_level=10)
         assert req_min.force_tech_level == 1
-        assert req_max.force_tech_level == 9
+        assert req_max.force_tech_level == 10
 
     def test_force_tech_level_below_min_raises(self):
         with pytest.raises(ValidationError):
@@ -1820,7 +1820,7 @@ class TestShopsRefreshShopRequestSchema:
 
     def test_force_tech_level_above_max_raises(self):
         with pytest.raises(ValidationError):
-            ShopsRefreshShopRequest(guild_id=1, tier="Bronze", force_tech_level=10)
+            ShopsRefreshShopRequest(guild_id=1, tier="Bronze", force_tech_level=11)
 
 
 # ===========================================================================

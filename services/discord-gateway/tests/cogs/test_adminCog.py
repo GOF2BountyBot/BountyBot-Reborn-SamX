@@ -3503,12 +3503,15 @@ class TestAdminRefreshShop:
         mock_admin_cog.http_client.post.assert_not_called()
 
     def test_refresh_shop_invalid_tech_level_sends_error(self, mock_admin_cog):
-        """admin_refresh_shop rejects tech level out of 1-9 range."""
+        """admin_refresh_shop rejects tech level out of the 1-10 range.
+
+        (TL 10 is valid since the TL10-acceptance fix; 11 is the out-of-range case.)
+        """
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
         mock_admin_cog.http_client.post = AsyncMock()
 
-        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", 10))
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", 11))
 
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]

@@ -36,6 +36,7 @@ from services.game_maths import (
     reward_per_sys_check,
     ship_tech_level_for_value,
 )
+from services.inventory_service import InventoryService
 from services.loot_service import LootService
 from services.pathfinding_service import PathfindingService
 from services.system_graph_service import SystemGraphService
@@ -420,6 +421,40 @@ class CheckResult(enum.Enum):
 
 
 @dataclass
+class LootOutcome:
+    """Internal per-bounty loot result of a PvC combat-win (LOOT_JOURNAL §5.9, T5).
+
+    Produced by the win-branch loot write and stashed on :attr:`CheckResponse.loot`
+    so T6 can attach it to the API response and T8 can render the embed line.  T5
+    only makes this available internally — it does NOT add the response-schema
+    field nor render any embed.
+
+    ``outcome`` is one of the five §5.9 states:
+
+    * ``looted``     — full haul taken (``qty_looted == qty_total``).
+    * ``partial``    — cargo filled mid-haul; ``qty_looted < qty_total`` (§5.4 clamp).
+    * ``failed``     — beam equipped + room, but the tractor RNG missed (§5.3).
+    * ``cargo_full`` — 0 free cargo at win; roll skipped entirely (M-1).
+    * ``none``       — no tractor beam equipped (or nothing to loot); T6 omits the
+                       Loot field entirely.
+
+    ``tractor_emoji`` / ``tractor_name`` identify the equipped beam (for the §5.9
+    ``<beam-emoji> Loot`` render); both are ``None`` for ``outcome == "none"``.
+    ``cargo_current`` / ``cargo_max`` back the ``cargo_full`` "(NN/XX)" message.
+    """
+
+    outcome: str
+    item_name: str | None = None
+    item_type: str | None = None
+    qty_looted: int = 0
+    qty_total: int = 0
+    tractor_name: str | None = None
+    tractor_emoji: str | None = None
+    cargo_current: int | None = None
+    cargo_max: int | None = None
+
+
+@dataclass
 class CheckResponse:  # pylint: disable=too-many-instance-attributes
     """Per-bounty outcome of a single :meth:`BountyService.check_bounty` invocation.
 
@@ -455,6 +490,9 @@ class CheckResponse:  # pylint: disable=too-many-instance-attributes
     recently_spotted: bool = False
     # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
     cooldown_until: int | None = None
+    # PvC loot result (T5): populated on a player COMBAT WIN only (§5.2/§5.9).
+    # None on any non-win outcome. T6 reads this to build the response loot payload.
+    loot: "LootOutcome | None" = None
 
 
 @dataclass
@@ -517,6 +555,11 @@ class BountyService:
         self.pathfinding_service = PathfindingService(self.graph_service)
         self.combat_service = CombatService()
         self.loot_service = LootService()
+        # T5: the win-branch loot write goes through the shared inventory service
+        # (concrete-type validation + FOR UPDATE re-lock) and reads cargo load via
+        # its repo.  Constructed here so the loot path needs no ad-hoc wiring.
+        self.inventory_service = InventoryService()
+        self.inventory_repo = self.inventory_service.inventory_repo
 
     # ------------------------------------------------------------------
     # Criminal Selection
@@ -1207,6 +1250,15 @@ class BountyService:
         player.lifetime_credits += bonus_credits
         if not player.classic_mode:
             player.xp += bonus_xp
+        # COMMIT THE BONUS NOW (mirrors distribute_rewards' own commit).  The Bronze
+        # call site invokes _apply_loot_on_win immediately after this returns; the
+        # loot routine's first get_by_id_for_update would otherwise AUTOFLUSH these
+        # pending credit/XP deltas into its transaction, and a loot-write failure's
+        # rollback would silently undo the 2x combat bonus + XP (§7.6 / §5.5 C-3b).
+        # Committing here guarantees the loot txn has nothing of ours left pending,
+        # so its rollback can only ever undo the loot write itself.
+        await db.flush()
+        await db.commit()
         flogger.info(f"Awarded {bonus_credits:,} combat bonus (+{bonus_xp} XP) to player {player_id}")
 
     # ------------------------------------------------------------------
@@ -1376,6 +1428,193 @@ class BountyService:
         """
         if not self.loot_service.is_loaded:
             await self.loot_service.preload_static_data(db)
+
+    async def _player_free_cargo(self, db: AsyncSession, player_locked) -> tuple[int, int, int]:
+        """Compute ``(free, current_load, effective_cap)`` for the loot clamp (§5.4/M-1).
+
+        MUST be called with *player_locked* already held under a ``FOR UPDATE``
+        lock (the loot write re-locks the same row, so this read + the subsequent
+        write are race-safe vs concurrent buy/sell — LOOT_JOURNAL §5.5 C-3(b)).
+
+        Effective cap = active ``ship.cargo`` × Π(CompressorModule ``cargoMultiplier``),
+        matching ``loadout_response_service`` (§7.1).  Current load = per-unit
+        ``sum(PlayerInventory.quantity)`` (cargo only; equipped gear excluded, §7.4).
+        No active ship ⇒ cap 0 (the no-ship branch never reaches loot anyway).
+        """
+        from persist.models.module import Module
+        from persist.models.player_ship import PlayerShip
+        from persist.models.ship import Ship
+        from sqlalchemy import select as _select
+
+        # Current per-unit cargo load under the held lock.
+        inv_items = await self.inventory_repo.get_player_items(db, player_locked.id)
+        current_load = sum(int(getattr(i, "quantity", 0) or 0) for i in inv_items)
+
+        active_ship_id = getattr(player_locked, "active_ship_id", None)
+        if not active_ship_id:
+            return (0 - current_load, current_load, 0)
+
+        player_ship = await db.get(PlayerShip, active_ship_id)
+        if player_ship is None:
+            return (0 - current_load, current_load, 0)
+
+        ship_row = (await db.execute(_select(Ship).where(Ship.name == player_ship.ship_name))).scalars().first()
+        base_cargo = int(getattr(ship_row, "cargo", 0) or 0) if ship_row else 0
+
+        # Compressor multiplier from equipped modules (only CompressorModule raises cap, §7.1).
+        compressor_multiplier = 1.0
+        for m_name in getattr(player_ship, "modules", None) or []:
+            mod = (await db.execute(_select(Module).where(Module.name == m_name))).scalars().first()
+            if mod is None or getattr(mod, "type", None) != "CompressorModule":
+                continue
+            extra = mod.extra_atts if isinstance(getattr(mod, "extra_atts", None), dict) else {}
+            raw_mult = extra.get("cargoMultiplier", extra.get("cargo_multiplier"))
+            if raw_mult is not None:
+                with contextlib.suppress(TypeError, ValueError):
+                    compressor_multiplier *= float(raw_mult)
+
+        effective_cap = round(base_cargo * compressor_multiplier) if base_cargo else base_cargo
+        return (effective_cap - current_load, current_load, effective_cap)
+
+    async def _apply_loot_on_win(
+        self,
+        db: AsyncSession,
+        *,
+        player,
+        player_id: int,
+        bounty: Bounty,
+        player_loadout: ShipLoadout,
+        cfg=None,
+    ) -> LootOutcome:
+        """Write PvC loot on a player COMBAT WIN — its OWN player-locked transaction (T5).
+
+        Called ONLY from the player-combat-WIN branches of
+        :meth:`_process_single_bounty_check` (Bronze ``combat_player_won``; Silver+
+        ``fight_results is not None and winner_side == 1``).  Reads the criminal's
+        already-rolled cargo (``bounty.criminal_ship['cargo']``, persisted at spawn
+        by T4 — NOT re-rolled), gates on the equipped tractor beam (§5.3/M-5) and
+        free cargo (M-1), rolls success (§5.3), clamps to free space (§5.4), and
+        writes via ``add_item_to_inventory(commit=False)`` + its OWN ``db.commit()``.
+
+        FAILURE-ISOLATED & NON-ATOMIC (user-confirmed, §7.6): the reward/XP write
+        already committed inside ``distribute_rewards`` before this runs, so a loot
+        failure here (any exception) is caught, rolled back (loot txn only), logged,
+        and surfaced as a benign outcome — it NEVER rolls back the bounty rewards
+        nor fails the ``/check``.  No ``audit_service`` (player action, §7.7).
+
+        Returns a :class:`LootOutcome` for T6 (stashed on the CheckResponse).
+        """
+        try:
+            cargo = (bounty.criminal_ship or {}).get("cargo")
+            if not isinstance(cargo, dict):
+                return LootOutcome(outcome="none")
+            item_type = cargo.get("item_type")
+            item_name = cargo.get("item_name")
+            qty_total = cargo.get("quantity")
+            if not item_type or not item_name or not isinstance(qty_total, int) or qty_total < 1:
+                # Absent/None/malformed cargo → no loot, no error (§5.2).
+                return LootOutcome(outcome="none")
+
+            # Tractor gate (§5.3/M-5): resolve chance from the in-scope loadout's
+            # equipped-module names.  No/unknown beam ⇒ chance 0 ⇒ outcome "none".
+            await self._ensure_loot_cache_loaded(db)
+            module_names = [m.name for m in (player_loadout.modules or [])]
+            chance = self.loot_service.loot_chance(module_names, guild_config=cfg)
+            if chance <= 0:
+                return LootOutcome(outcome="none")
+
+            beam_name = self.loot_service.equipped_tractor_name(module_names)
+            beam_emoji = await self._resolve_tractor_emoji(db, beam_name) if beam_name else None
+
+            # M-1 free-cargo gate — read under the player FOR UPDATE lock (race-safe
+            # vs concurrent buy/sell).  add_item_to_inventory re-locks this same row
+            # (intra-txn no-op), so the clamp read and the write share one lock.
+            player_locked = await self.player_repo.get_by_id_for_update(db, player_id)
+            if player_locked is None:
+                flogger.warning(f"Loot: player {player_id} vanished under lock (bounty {bounty.id}); skipping loot")
+                return LootOutcome(outcome="none")
+            free_cargo, current_load, effective_cap = await self._player_free_cargo(db, player_locked)
+            if free_cargo < 1:
+                flogger.info(
+                    f"Loot: player {player_id} cargo full ({current_load}/{effective_cap}) "
+                    f"on bounty {bounty.id} win — skipping roll (M-1)"
+                )
+                return LootOutcome(
+                    outcome="cargo_full",
+                    item_name=item_name,
+                    item_type=item_type,
+                    qty_total=qty_total,
+                    tractor_name=beam_name,
+                    tractor_emoji=beam_emoji,
+                    cargo_current=current_load,
+                    cargo_max=effective_cap,
+                )
+
+            # Tractor success roll (§5.3) — rng matches the spawn convention.
+            rng = random.Random()
+            if not self.loot_service.roll_loot_success(chance, rng):
+                flogger.info(
+                    f"Loot: player {player_id} tractor MISS ({chance}% via {beam_name!r}) "
+                    f"on bounty {bounty.id} ({qty_total}x {item_name})"
+                )
+                return LootOutcome(
+                    outcome="failed",
+                    item_name=item_name,
+                    item_type=item_type,
+                    qty_total=qty_total,
+                    tractor_name=beam_name,
+                    tractor_emoji=beam_emoji,
+                )
+
+            # §5.4 clamp: take what fits; the rest is "lost in space".  The clamp
+            # read above and this write are under the SAME player lock.
+            taken = min(qty_total, free_cargo)
+            await self.inventory_service.add_item_to_inventory(db, player_id, item_type, item_name, taken, commit=False)
+            await db.commit()  # OWN commit — isolates loot from the (already-committed) rewards.
+
+            outcome = "partial" if taken < qty_total else "looted"
+            flogger.info(
+                f"Loot: player {player_id} tractored {taken}/{qty_total}x {item_name} ({item_type}) "
+                f"from bounty {bounty.id} via {beam_name!r} ({chance}%) — outcome={outcome}"
+            )
+            return LootOutcome(
+                outcome=outcome,
+                item_name=item_name,
+                item_type=item_type,
+                qty_looted=taken,
+                qty_total=qty_total,
+                tractor_name=beam_name,
+                tractor_emoji=beam_emoji,
+                cargo_current=current_load,
+                cargo_max=effective_cap,
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # FAILURE ISOLATION (§7.6): roll back ONLY the loot txn; rewards/XP were
+            # already committed by distribute_rewards and must survive.  Never re-raise
+            # — a loot failure must not fail the /check.
+            with contextlib.suppress(Exception):
+                await db.rollback()
+            flogger.error(
+                f"Loot write failed for player {player_id} on bounty {bounty.id}: {exc} "
+                "(rewards/XP preserved; /check unaffected)",
+                exc_info=True,
+            )
+            return LootOutcome(outcome="none")
+
+    async def _resolve_tractor_emoji(self, db: AsyncSession, beam_name: str) -> str | None:
+        """Best-effort lookup of an equipped tractor beam's custom Discord emoji (T6/§5.9).
+
+        Cheap, isolated read — any failure returns ``None`` (the loot still lands;
+        only the emoji render is affected).
+        """
+        try:
+            item = await self.item_repo.get_by_name(db, beam_name, item_type="module")
+            if item is None:
+                item = await self.item_repo.get_by_name(db, beam_name)
+            return getattr(item, "emoji", None) if item else None
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.debug(f"Could not resolve tractor emoji for {beam_name!r}: {exc}")
+            return None
 
     async def spawn_bounty(
         self,
@@ -1833,6 +2072,7 @@ class BountyService:
 
                 bonus_won = False
                 total_reward = winner_reward
+                loot_outcome = None
                 if not _no_ship:
                     _pvc_dr = resolve_constant(cfg, "pvc_damage_reduction", GameConstants.PVC_DAMAGE_REDUCTION)
                     fight_results = await self.combat_service.fight_ships(
@@ -1856,6 +2096,19 @@ class BountyService:
                         bonus_won = True
                         total_reward = winner_reward * 2
                         await self._award_combat_bonus(db, player_id, winner_reward)
+                        # T5 LOOT HOOK (Bronze) — fires ONLY on the bonus-fight WIN,
+                        # never on the bare auto-capture and never on a loss/draw/
+                        # no-ship (this block is inside `if not _no_ship:` and gated
+                        # on combat_player_won).  Own player-locked, failure-isolated
+                        # write — see _apply_loot_on_win (§5.2/§7.6).
+                        loot_outcome = await self._apply_loot_on_win(
+                            db,
+                            player=player,
+                            player_id=player_id,
+                            bounty=bounty,
+                            player_loadout=player_loadout,
+                            cfg=cfg,
+                        )
 
                 bonus_msg = " (2x combat bonus!)" if bonus_won else ""
                 return (
@@ -1874,6 +2127,7 @@ class BountyService:
                         reward_per_sys=getattr(bounty, "reward_per_sys", None),
                         route_length=len(list(getattr(bounty, "route", None) or [])),
                         payout_breakdown=payout_breakdown,
+                        loot=loot_outcome,
                     ),
                     (bounty, True),
                 )
@@ -1907,6 +2161,23 @@ class BountyService:
                 await self.distribute_rewards(db, bounty, rewards)
                 payout_breakdown = await self._build_payout_breakdown(db, rewards)
                 winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
+                # T5 LOOT HOOK (Silver+) — fires ONLY on a real combat KILL:
+                # `fight_results is not None and winner_side == 1`.  The
+                # `fight_results is not None` guard EXCLUDES the no-ship shortcut
+                # (`duel_won=True, fight_results=None`) — a non-kill capture grants
+                # NO loot (§5.2 defensive branch).  Stalemate/loss never reach here
+                # (winner_side None/2 → duel_won False).  Own player-locked,
+                # failure-isolated write (§5.2/§7.6).
+                loot_outcome = None
+                if fight_results is not None and fight_results.winner_side == 1:
+                    loot_outcome = await self._apply_loot_on_win(
+                        db,
+                        player=player,
+                        player_id=player_id,
+                        bounty=bounty,
+                        player_loadout=player_loadout,
+                        cfg=cfg,
+                    )
                 return (
                     CheckResponse(
                         result=CheckResult.CORRECT,
@@ -1921,6 +2192,7 @@ class BountyService:
                         reward_per_sys=getattr(bounty, "reward_per_sys", None),
                         route_length=len(list(getattr(bounty, "route", None) or [])),
                         payout_breakdown=payout_breakdown,
+                        loot=loot_outcome,
                     ),
                     (bounty, True),
                 )

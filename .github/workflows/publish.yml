@@ -503,7 +503,7 @@ jobs:
 
       - name: Build & push (sha-tagged only)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: services/bot-core/Dockerfile
@@ -564,7 +564,7 @@ jobs:
 
       - name: Build & push (sha-tagged only)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: services/discord-gateway/Dockerfile
@@ -622,7 +622,7 @@ jobs:
 
       - name: Build & push (sha-tagged only)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: services/blender-service/Dockerfile.cpu
@@ -683,7 +683,7 @@ jobs:
 
       - name: Build & push (sha-tagged only)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: services/blender-service/Dockerfile.gpu

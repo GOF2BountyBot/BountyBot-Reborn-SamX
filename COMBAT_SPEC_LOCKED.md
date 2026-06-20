@@ -903,6 +903,47 @@ All 19 loot tunables are listed in Appendix A (the `LOOT_*` block). Each is a `G
 
 ---
 
+## 16. Shop module spawn (bucketed draw)
+
+Tier shops auto-refresh their stock on a timer (`shop_refresh_executor` → `ShopService.refresh_shop`). The **module** category of that draw is rebalanced to fix the long-standing complaint that **good armour / shields almost never spawn in shops**: top-tier defensive gear was unreachable, and uniform-within-TL sampling drowned the useful combat modules under filler/junk. This section is the canonical, locked spec of the shipped rebalance; it follows the configuration policy of §0.1 (the one new numeric is a `GameConstants` default with `BOUNTYBOT_<NAME>` env + per-guild override). It is shop-spawn balance only — it changes **what** modules a refresh draws, never how shops are read, priced, purchased, or sold (those are unchanged; commodities remain unstockable per §15.1).
+
+> **Code map (shipped):** the TL roll + per-refresh probability resolution in `services/bot-core/src/services/shop_service.py` (`refresh_shop`); the bucketed module draw + step-down in the same file (`_get_random_item_by_tech_level`, the `item_type == "module"` branch); the actual-TL row write via `_get_item_tech_level`; the bucket membership frozensets + the `SHOP_COMBAT_MODULE_PROB` default in `game_constants.py` (with a disjoint + covers-all-21-module-types `assert` drift guard). The one tunable ships its per-guild column in **migration `0023_shop_combat_module_prob`** and is exposed in the admin config override API (`api/routers/config.py`, `config_schema.py`).
+
+### 16.1 Tech-level ceiling raised 9 → 10
+
+`MAX_TECH_LEVEL` is **10**. `refresh_shop` rolls the batch tech level as `random.randint(MIN_TECH_LEVEL, MAX_TECH_LEVEL)` (= `[1, 10]`) and `force_tech_level` (the `/admin_refresh_shop` override) accepts `1..10`. Previously the shop ceiling was capped at 9, so TL10 gear — the **best armour and shields** (`T'yol`, `Particle Shield`, `Fluxed Matter Shield`) — could **never** appear in any shop, even though platinum-division criminals already field it. The downward TL band that fans each item below the batch TL (§16.3) is unchanged.
+
+### 16.2 Module buckets — junk removed, combat vs filler split
+
+The 21 module types in the catalog are partitioned into **three disjoint buckets** (constants in `game_constants.py`; an `assert` enforces disjoint + covers-all-21 on import). Membership is sourced conceptually from the criminal loadout classification (`bounty_service` priority order) with two shop-specific overrides: **TractorBeam is promoted into COMBAT** (it gates PvC loot — §15.3 — so it is first-class shop stock), and **JUNK is excluded from the shop pool entirely**.
+
+| Bucket | In shop? | Module types |
+|--------|----------|--------------|
+| **JUNK** (`SHOP_JUNK_MODULE_TYPES`) | **No** — removed from the pool | `TransfusionBeamModule`, `ShieldInjectorModule`, `TimeExtenderModule`, `JumpDriveModule` |
+| **FILLER** (`SHOP_FILLER_MODULE_TYPES`) | Yes — drawn with prob `1 − SHOP_COMBAT_MODULE_PROB` | `GammaShieldModule`, `SpectralFilterModule`, `RepairBeamModule`, `SignatureModule`, `MiningDrillModule`, `CompressorModule`, `CabinModule` |
+| **COMBAT** (`SHOP_COMBAT_MODULE_TYPES`) | Yes — drawn with prob `SHOP_COMBAT_MODULE_PROB` | `ScannerModule`, `ArmourModule`, `ShieldModule`, `CloakModule`, `BoosterModule`, `EmergencySystemModule`, `RepairBotModule`, `PrimaryWeaponModModule`, `ThrusterModule`, `TractorBeamModule` |
+
+### 16.3 Two-stage bucketed draw with empty-bucket step-down
+
+Each module slot in a refresh is filled in two stages (replacing the old "uniform random over every module at the band TL"):
+
+1. **Pick a bucket.** With probability `SHOP_COMBAT_MODULE_PROB` (default **0.75**) the slot draws from **COMBAT**, otherwise (prob `1 − 0.75` = 0.25) from **FILLER**. JUNK is already excluded from the pool. The probability is resolved **once per refresh** from the guild config (`resolve_constant(config, "shop_combat_module_prob", …)`) and threaded into every module draw of that refresh.
+2. **Uniform within the bucket at the band TL.** Pick uniformly at random among the chosen bucket's modules whose `tech_level` equals the per-item band TL (the band TL comes from `_select_item_tech_level` — §16.4).
+
+**Empty-bucket step-down.** If the chosen bucket has **no** module at the band TL, the draw steps **down one TL at a time** (`band_TL, band_TL−1, … , 1`) until it finds a non-empty (bucket, TL) pair, and returns a uniform pick from the first one found. In the current catalog only **COMBAT @ TL9 is empty**, so a COMBAT roll banded to TL9 steps down to TL8. If no TL in the bucket has any module (cannot happen in the shipped catalog), the draw returns `None` and the slot is skipped.
+
+**Row-TL correctness.** The persisted `guild_shops.tech_level` and `price` reflect the **actual drawn item's** TL after any step-down — **not** the band TL. `refresh_shop` resolves the module row's TL via `_get_item_tech_level` (warm static cache, no DB round-trip), so a module that stepped down from TL9 to TL8 is stored and listed as T8 at its real T8 price. (Pre-rebalance, modules were stored at the band TL, which could mislabel and mis-price a stepped-down draw.)
+
+### 16.4 Unchanged: the downward TL band
+
+The per-item downward fan (`_select_item_tech_level`, weights **0.7 / 0.2 / 0.1** over band TL `T / T−1 / T−2`, floored at 1) is **unchanged** by this rebalance and applies to all categories, not just modules. The bucketed draw operates *at* whatever band TL this kernel produces; the step-down in §16.3 is a separate, downward-only correction that fires only when the chosen bucket happens to be empty at that band TL.
+
+### 16.5 Configuration
+
+`SHOP_COMBAT_MODULE_PROB` is the single tunable introduced here — listed in Appendix A. It is a `GameConstants` float (default **0.75**) with a `BOUNTYBOT_SHOP_COMBAT_MODULE_PROB` env override and a per-guild `guild_configs.shop_combat_module_prob` column added by **migration `0023_shop_combat_module_prob`** (additive, nullable; `NULL` ⇒ the `GameConstants` default). It is exposed for live tuning via the admin config override API (PUT/GET/reset, `[0.0, 1.0]`-validated). The bucket-membership frozensets are **structural game data, not tunables** — they are not per-guild-overridable and are guarded by the import-time disjoint+coverage assertion. The TL ceiling (§16.1) is governed by the existing `MAX_TECH_LEVEL` constant.
+
+---
+
 ## Appendix A — Configuration knobs (locked defaults)
 
 All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per §0.1).
@@ -956,6 +997,7 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 | `LOOT_BAND2_QTY_MIN` / `LOOT_BAND2_QTY_MODE` / `LOOT_BAND2_QTY_MAX` | **4 / 8 / 12** | §15.5 (Band-2 triangular, mean 8) |
 | `LOOT_BAND3_QTY_MIN` / `LOOT_BAND3_QTY_MODE` / `LOOT_BAND3_QTY_MAX` | **10 / 16 / 22** | §15.5 (Band-3 triangular, mean 16) |
 | `LOOT_COMMODITY_SELL_FRACTION` | **1.0** | §15.8 (commodity sink payout = `Item.value` × qty × this) |
+| `SHOP_COMBAT_MODULE_PROB` | **0.75** | §16.3 (shop module draw: P(combat bucket); filler = 1 − this) |
 
 > `LOOT_DROP_CHANCE` is intentionally **not** in this table — it is a **fixed** 100 % constant (no env, no per-guild column, no migration), per §15.4 / §15.9.
 

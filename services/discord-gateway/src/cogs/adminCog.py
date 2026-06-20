@@ -661,7 +661,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     @app_commands.command(name="admin_refresh_shop", description="[ADMIN] Force refresh a shop")
     @app_commands.describe(
         tier="Shop tier to refresh (omit to refresh ALL tiers)",
-        force_tech_level="Force all items to specific tech level (1-9)",
+        force_tech_level="Force all items to specific tech level (1-10)",
     )
     @app_commands.autocomplete(tier=tier_autocomplete)
     async def admin_refresh_shop(

@@ -2811,3 +2811,136 @@ class TestModuleBucketDraw:
         result = await service._get_random_item_by_tech_level(mock_db, "module", 5, combat_module_prob=1.0)
 
         assert result is None
+
+
+# ===========================================================================
+# Tests: QA additions — per-guild override path + cold-cache TL fallback
+# ===========================================================================
+
+
+class TestPerGuildCombatProbOverride:
+    """Verify that a per-guild shop_combat_module_prob override is honoured
+    end-to-end through refresh_shop -> _get_random_item_by_tech_level.
+
+    This test exercises the resolve_constant path without short-circuiting the
+    module-draw code via a pre-mocked _get_random_item_by_tech_level.
+    """
+
+    @pytest.mark.asyncio
+    async def test_per_guild_override_100pct_only_combat_drawn(self, service, mock_db, mock_config_repo):
+        """When guild config sets shop_combat_module_prob=1.0, every draw uses combat bucket."""
+        from services.game_constants import GameConstants
+
+        combat_type = next(iter(GameConstants.SHOP_COMBAT_MODULE_TYPES))
+        filler_type = next(iter(GameConstants.SHOP_FILLER_MODULE_TYPES))
+        combat_module = _make_module("CombatItem", combat_type, 5)
+        filler_module = _make_module("FillerItem", filler_type, 5)
+        service._static_cache = {
+            "ship": [],
+            "weapon": [],
+            "secondary": [],
+            "turret": [],
+            "module": [combat_module, filler_module],
+        }
+
+        # Guild config with explicit shop_combat_module_prob override = 1.0
+        config = MagicMock()
+        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
+        config.get_count_range = MagicMock(
+            side_effect=lambda k: {"min": 0, "max": 0} if k != "module" else {"min": 5, "max": 5}
+        )
+        config.get_quantity_range = MagicMock(return_value={"min": 1, "max": 1})
+        config.shop_combat_module_prob = 1.0  # explicit per-guild float override
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        shop_items = []
+
+        async def _fake_create_or_update(db, item_data):
+            shop_items.append(item_data.get("item_name"))
+            return _make_shop_item(item_name=item_data["item_name"])
+
+        service.shop_repo = MagicMock()
+        service.shop_repo.clear_shop_tier = AsyncMock()
+        service.shop_repo.create_or_update = _fake_create_or_update
+        service._get_item_base_price = AsyncMock(return_value=100)
+        service._get_item_tech_level = AsyncMock(return_value=5)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=5)
+
+        # With prob=1.0 every module draw must land in the combat bucket (CombatItem, not FillerItem).
+        assert "FillerItem" not in shop_items, (
+            "Per-guild override shop_combat_module_prob=1.0 should exclude FillerItem"
+        )
+        assert "CombatItem" in shop_items, "CombatItem must be drawn when combat_prob=1.0"
+
+    @pytest.mark.asyncio
+    async def test_null_column_falls_back_to_default_75pct(self, service, mock_db, mock_config_repo):
+        """NULL shop_combat_module_prob column falls back to 0.75 default."""
+        from services.game_constants import GameConstants, resolve_constant
+
+        config = MagicMock()
+        config.shop_combat_module_prob = None  # NULL -> resolve_constant must fall back to 0.75
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        resolved_prob = resolve_constant(config, "shop_combat_module_prob", GameConstants.SHOP_COMBAT_MODULE_PROB)
+        assert resolved_prob == 0.75, f"NULL column must resolve to 0.75 default, got {resolved_prob!r}"
+
+
+class TestGetItemTechLevelColdCachePath:
+    """Verify the cold-cache slow path in _get_item_tech_level works correctly."""
+
+    @pytest.mark.asyncio
+    async def test_cold_cache_reads_from_repo(self, service, mock_db, mock_module_repo):
+        """With no static cache, _get_item_tech_level falls back to repo lookup."""
+        service._static_cache = None  # force cold path
+        module_obj = MagicMock()
+        module_obj.tech_level = 6
+        mock_module_repo.get_by_name = AsyncMock(return_value=module_obj)
+
+        tl = await service._get_item_tech_level(mock_db, "module", "SomeModule", base_price=0)
+
+        assert tl == 6
+        mock_module_repo.get_by_name.assert_awaited_once_with(mock_db, "SomeModule")
+
+    @pytest.mark.asyncio
+    async def test_cold_cache_missing_item_falls_back_to_tl1(self, service, mock_db, mock_module_repo):
+        """Cold path with missing item falls back to TL=1."""
+        service._static_cache = None
+        mock_module_repo.get_by_name = AsyncMock(return_value=None)
+
+        tl = await service._get_item_tech_level(mock_db, "module", "Ghost", base_price=0)
+
+        assert tl == 1
+
+    @pytest.mark.asyncio
+    async def test_warm_cache_tech_level_zero_is_returned_not_skipped(self, service, mock_db):
+        """Warm-cache fast path: tech_level=0 must be returned (not fall through to TL=1 default).
+
+        Regression for the old ``if tech_level:`` truthiness bug where 0 was falsy
+        and silently caused a fallback to 1.  The fix is ``if tech_level is not None:``.
+        """
+        cached_module = MagicMock()
+        cached_module.name = "TL0Module"
+        cached_module.tech_level = 0  # zero is falsy but valid
+        service._static_cache = {"module": [cached_module], "weapon": [], "turret": [], "ship": [], "secondary": []}
+
+        tl = await service._get_item_tech_level(mock_db, "module", "TL0Module", base_price=0)
+
+        # Must return 0, not fall through to 1
+        assert tl == 0
+
+    @pytest.mark.asyncio
+    async def test_cold_cache_tech_level_zero_is_returned_not_skipped(self, service, mock_db, mock_module_repo):
+        """Cold-cache slow path: tech_level=0 must be returned (not fall through to TL=1 default).
+
+        Regression for the same truthiness bug on the slow path.
+        """
+        service._static_cache = None
+        module_obj = MagicMock()
+        module_obj.tech_level = 0  # zero is falsy but valid
+        mock_module_repo.get_by_name = AsyncMock(return_value=module_obj)
+
+        tl = await service._get_item_tech_level(mock_db, "module", "TL0Module", base_price=0)
+
+        # Must return 0, not fall through to 1
+        assert tl == 0

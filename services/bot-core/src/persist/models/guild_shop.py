@@ -22,7 +22,7 @@ class GuildShop(Base):
         BigInteger, ForeignKey(f"{TableNames.GuildConfigs.value}.guild_id"), nullable=False
     )
     tier: Mapped[str] = mapped_column(String(20), nullable=False)  # Bronze, Silver, Gold, Platinum
-    tech_level: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-9 (randomly selected on refresh)
+    tech_level: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-10 (randomly selected on refresh)
     item_type: Mapped[str] = mapped_column(String(50), nullable=False)  # 'ship', 'weapon', 'module', 'turret'
     item_name: Mapped[str] = mapped_column(String(100), nullable=False)  # References static item data
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

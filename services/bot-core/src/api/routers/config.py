@@ -97,6 +97,8 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "loot_band3_qty_max",
     "loot_band3_qty_mode",
     "loot_commodity_sell_fraction",
+    # Shop module-draw combat/filler split (NULL == GameConstants.SHOP_COMBAT_MODULE_PROB)
+    "shop_combat_module_prob",
 )
 
 

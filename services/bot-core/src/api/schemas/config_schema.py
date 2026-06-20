@@ -85,6 +85,9 @@ class GameConstantsOverridesMixin(BaseModel):
     loot_band3_qty_mode: int | None = Field(None, ge=0)
     loot_commodity_sell_fraction: float | None = Field(None, ge=0.0)
 
+    # Shop module-draw combat/filler split (NULL == GameConstants.SHOP_COMBAT_MODULE_PROB)
+    shop_combat_module_prob: float | None = Field(None, ge=0.0, le=1.0)
+
     @field_validator("division_max_tl", mode="before")
     @classmethod
     def validate_division_max_tl(cls, v: Any) -> Any:

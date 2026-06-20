@@ -1039,7 +1039,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             for cached in self._static_cache[cache_key]:
                 if cached.name == item_name:
                     tech_level = getattr(cached, "tech_level", None)
-                    if tech_level:
+                    if tech_level is not None:
                         return tech_level
                     break
 
@@ -1053,7 +1053,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         if repo is not None:
             item = await repo.get_by_name(db, item_name)
             tech_level = getattr(item, "tech_level", None) if item is not None else None
-            if tech_level:
+            if tech_level is not None:
                 return tech_level
         flogger.warning(f"Could not resolve tech level for {item_name!r} ({item_type}); defaulting to 1")
         return 1

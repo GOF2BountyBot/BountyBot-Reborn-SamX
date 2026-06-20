@@ -98,6 +98,8 @@ def make_mock_config(**overrides):
         loot_band3_qty_max=None,
         loot_band3_qty_mode=None,
         loot_commodity_sell_fraction=None,
+        # Shop module-draw combat/filler split
+        shop_combat_module_prob=None,
     )
     defaults.update(overrides)
     return defaults
@@ -169,6 +171,8 @@ _OVERRIDE_FIELD_NAMES = [
     "loot_band3_qty_max",
     "loot_band3_qty_mode",
     "loot_commodity_sell_fraction",
+    # Shop module-draw combat/filler split
+    "shop_combat_module_prob",
 ]
 
 
@@ -572,5 +576,121 @@ class TestResetGameConstants:
         # The third positional arg is the fields list — should have all live entries
         fields_arg = call_args.args[2] if len(call_args.args) > 2 else call_args.kwargs.get("fields")
         assert fields_arg is not None
-        # T10: bounty_pvc_armour_buff_factor and duel_variance_percent retired → 26 remaining
+        # T10: bounty_pvc_armour_buff_factor and duel_variance_percent retired → count matches list above
         assert len(fields_arg) == len(_OVERRIDE_FIELD_NAMES)
+
+
+# ===========================================================================
+# 9. shop_combat_module_prob — per-guild override settable via API
+# ===========================================================================
+
+
+class TestShopCombatModuleProb:
+    """shop_combat_module_prob is exposed in the game-constants override API."""
+
+    @patch("api.routers.config.get_db_session")
+    def test_put_valid_value_returns_200(self, mock_get_db, client, mock_config_service):
+        """PUT /config/guild/{guild_id} with shop_combat_module_prob=0.9 succeeds (not 422)."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.create_or_update_config = AsyncMock(
+            return_value=make_mock_config(shop_combat_module_prob=0.9)
+        )
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={"guild_id": 67890, "shop_combat_module_prob": 0.9},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["shop_combat_module_prob"] == pytest.approx(0.9)
+
+    @patch("api.routers.config.get_db_session")
+    def test_put_out_of_range_above_one_returns_422(self, mock_get_db, client):
+        """shop_combat_module_prob=1.5 is out of [0.0, 1.0] and must be rejected with 422."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={"guild_id": 67890, "shop_combat_module_prob": 1.5},
+        )
+
+        assert response.status_code == 422
+
+    @patch("api.routers.config.get_db_session")
+    def test_put_out_of_range_below_zero_returns_422(self, mock_get_db, client):
+        """shop_combat_module_prob=-0.1 is below 0.0 and must be rejected with 422."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={"guild_id": 67890, "shop_combat_module_prob": -0.1},
+        )
+
+        assert response.status_code == 422
+
+    @patch("api.routers.config.get_db_session")
+    def test_field_present_in_game_constants_get(self, mock_get_db, client, mock_config_service):
+        """GET /config/guild/{guild_id}/game-constants includes shop_combat_module_prob."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.get("/api/v1/config/guild/67890/game-constants")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "shop_combat_module_prob" in data
+
+    @patch("api.routers.config.get_db_session")
+    def test_non_null_value_returned_in_get(self, mock_get_db, client, mock_config_service):
+        """GET returns a non-null shop_combat_module_prob when it has been set per-guild."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.get_guild_config = AsyncMock(return_value=make_mock_config(shop_combat_module_prob=0.6))
+
+        response = client.get("/api/v1/config/guild/67890/game-constants")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["shop_combat_module_prob"] == pytest.approx(0.6)
+
+    @patch("api.routers.config.get_db_session")
+    def test_reset_shop_combat_module_prob_returns_200(self, mock_get_db, client, mock_config_service):
+        """POST /game-constants/reset with shop_combat_module_prob in fields list is valid (200)."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.post(
+            "/api/v1/config/guild/67890/game-constants/reset",
+            json={"fields": ["shop_combat_module_prob"]},
+        )
+
+        assert response.status_code == 200
+        mock_config_service.reset_game_constants.assert_awaited_once()
+
+    @patch("api.routers.config.get_db_session")
+    def test_boundary_zero_is_accepted(self, mock_get_db, client, mock_config_service):
+        """shop_combat_module_prob=0.0 (always pick filler) is a valid probability and accepted."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.create_or_update_config = AsyncMock(
+            return_value=make_mock_config(shop_combat_module_prob=0.0)
+        )
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={"guild_id": 67890, "shop_combat_module_prob": 0.0},
+        )
+
+        assert response.status_code == 200
+
+    @patch("api.routers.config.get_db_session")
+    def test_boundary_one_is_accepted(self, mock_get_db, client, mock_config_service):
+        """shop_combat_module_prob=1.0 (always pick combat) is a valid probability and accepted."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.create_or_update_config = AsyncMock(
+            return_value=make_mock_config(shop_combat_module_prob=1.0)
+        )
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={"guild_id": 67890, "shop_combat_module_prob": 1.0},
+        )
+
+        assert response.status_code == 200

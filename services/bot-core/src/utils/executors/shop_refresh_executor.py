@@ -54,7 +54,7 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
         Division tier (Bronze / Silver / Gold).  When omitted all three
         tiers are refreshed for the given guild.
     force_tech_level : int or None, optional
-        Override the randomly selected tech level (1-9).
+        Override the randomly selected tech level (1-10).
 
     Returns
     -------

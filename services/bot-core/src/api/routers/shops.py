@@ -17,6 +17,7 @@ from persist.models.secondary_weapon import SecondaryWeapon
 from persist.models.ship import Ship
 from persist.models.turret_weapon import TurretWeapon
 from services.exceptions import GuildNotConfiguredError, InvalidItemTypeError
+from services.game_constants import GameConstants
 from services.shop_service import ShopService
 from shared import bblogger
 from sqlalchemy import select
@@ -352,8 +353,11 @@ async def get_items_by_tech_level(
     flogger.debug(f"Getting tech level {tech_level} items from {tier} shop in guild {guild_id}")
 
     try:
-        if tech_level < 1 or tech_level > 9:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tech level must be between 1 and 9")
+        if tech_level < GameConstants.MIN_TECH_LEVEL or tech_level > GameConstants.MAX_TECH_LEVEL:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Tech level must be between {GameConstants.MIN_TECH_LEVEL} and {GameConstants.MAX_TECH_LEVEL}",
+            )
 
         async with get_db_session() as db:
             items = await shop_service.shop_repo.get_items_by_tech_level(db, guild_id, tier, tech_level)

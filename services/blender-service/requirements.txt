@@ -5,6 +5,7 @@ hypercorn[uvloop]
 python-dotenv
 Pillow>=10.0.0
 idna>=3.15.0  # CVE-2026-45409: bypass of CVE-2024-3651 fix; in /opt/venv transitive dep chain
+pydantic-settings>=2.14.2  # GHSA-4xgf-cpjx-pc3j: symlink traversal outside secrets_dir; transitive via fastapi[standard]
 numpy
 orjson>=3.10,<4
 pytest

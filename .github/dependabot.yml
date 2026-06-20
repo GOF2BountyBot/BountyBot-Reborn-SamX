@@ -1,0 +1,45 @@
+# Dependabot — automated dependency update PRs.
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates
+#
+# Behaviour notes:
+#   * Dependabot opens PRs (not issues) to bump versions; it also opens
+#     security-update PRs automatically for any open Dependabot alert.
+#   * PRs target the `dev` integration branch to match our dev -> main flow.
+#   * minor + patch updates are grouped into ONE PR per service (low-noise);
+#     MAJOR updates each get their own PR so they can be reviewed/tested alone.
+version: 2
+updates:
+  # ---- Python services (one requirements.txt per service) ----
+  - package-ecosystem: "pip"
+    directories:
+      - "/services/bot-core"
+      - "/services/discord-gateway"
+      - "/services/blender-service"
+    schedule:
+      interval: "daily"
+    target-branch: "dev"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      # Bundle the safe stuff; isolate majors for individual review.
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---- GitHub Actions used by the CI workflows ----
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "dev"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"

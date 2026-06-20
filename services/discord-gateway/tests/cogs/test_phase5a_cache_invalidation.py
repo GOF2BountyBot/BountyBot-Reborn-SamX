@@ -173,6 +173,19 @@ def mock_ships_cog(mock_bot):
 
 
 @pytest.fixture
+def mock_bounty_cog(mock_bot):
+    sys.modules["shared"] = _mock_shared
+    sys.modules["shared.bblogger"] = _mock_bblogger
+    _evict_discord_modules()
+    from cogs.bountyCog import BountyCog
+
+    cog = BountyCog(mock_bot)
+    cog.http_client = MagicMock()
+    cog.http_client.aclose = AsyncMock()
+    return cog
+
+
+@pytest.fixture
 def mock_duel_cog(mock_bot):
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
@@ -487,6 +500,71 @@ class TestShopCogCacheInvalidation:
 
         # Success embed was sent
         interaction.followup.send.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# bountyCog tests — /check capture-loot inventory invalidation
+# ---------------------------------------------------------------------------
+
+
+class TestBountyCogLootCacheInvalidation:
+    """`/check` must invalidate the player's inventory cache when capture loot
+    is written server-side, so /sell shows the new items immediately."""
+
+    _PLAYER_ID = 4242
+
+    def _run_check(self, cog, interaction, outcomes, *, result="correct"):
+        """Drive cog.check with a mocked player-id + check response, embeds stubbed."""
+        check_resp = _make_response({"result": result, "message": "", "outcomes": outcomes})
+        cog.http_client.post = AsyncMock(return_value=check_resp)
+        with (
+            patch.object(cog, "_get_player_id", new=AsyncMock(return_value=self._PLAYER_ID)),
+            patch.object(cog, "_build_check_embed", return_value=MagicMock()),
+            patch.object(cog, "_build_multi_check_embed", return_value=MagicMock()),
+            patch("utils.autocomplete_state.invalidate_inventory") as mock_inv_inv,
+        ):
+            asyncio.run(cog.check.callback(cog, interaction, "Sol"))
+        return mock_inv_inv
+
+    def test_check_looted_invalidates_inventory(self, mock_bounty_cog):
+        """A 'looted' outcome invalidates the checking player's inventory cache."""
+        interaction = _create_mock_interaction()
+        outcomes = [{"result": "correct", "loot": {"outcome": "looted", "qty_looted": 3, "item_name": "Chemicals"}}]
+        mock_inv_inv = self._run_check(mock_bounty_cog, interaction, outcomes)
+        mock_inv_inv.assert_called_once_with(interaction.guild_id, self._PLAYER_ID)
+
+    def test_check_partial_invalidates_inventory(self, mock_bounty_cog):
+        """A 'partial' (cargo-full mid-fill) outcome also wrote items → invalidate."""
+        interaction = _create_mock_interaction()
+        outcomes = [
+            {"result": "correct", "loot": {"outcome": "partial", "qty_looted": 2, "qty_total": 9, "item_name": "Food"}}
+        ]
+        mock_inv_inv = self._run_check(mock_bounty_cog, interaction, outcomes)
+        mock_inv_inv.assert_called_once_with(interaction.guild_id, self._PLAYER_ID)
+
+    def test_check_no_loot_does_not_invalidate(self, mock_bounty_cog):
+        """A capture with no loot (null loot) must NOT invalidate the cache."""
+        interaction = _create_mock_interaction()
+        outcomes = [{"result": "correct", "loot": None}]
+        mock_inv_inv = self._run_check(mock_bounty_cog, interaction, outcomes)
+        mock_inv_inv.assert_not_called()
+
+    def test_check_failed_loot_does_not_invalidate(self, mock_bounty_cog):
+        """A 'failed'/'cargo_full' loot outcome wrote nothing → no invalidation."""
+        interaction = _create_mock_interaction()
+        outcomes = [{"result": "correct", "loot": {"outcome": "failed"}}]
+        mock_inv_inv = self._run_check(mock_bounty_cog, interaction, outcomes)
+        mock_inv_inv.assert_not_called()
+
+    def test_check_multi_outcome_invalidates_once_when_any_looted(self, mock_bounty_cog):
+        """Multi-bounty check: one looted among several → exactly one invalidation."""
+        interaction = _create_mock_interaction()
+        outcomes = [
+            {"result": "incorrect", "loot": None},
+            {"result": "correct", "loot": {"outcome": "looted", "qty_looted": 1, "item_name": "Nanotech"}},
+        ]
+        mock_inv_inv = self._run_check(mock_bounty_cog, interaction, outcomes)
+        mock_inv_inv.assert_called_once_with(interaction.guild_id, self._PLAYER_ID)
 
 
 # ---------------------------------------------------------------------------

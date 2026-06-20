@@ -358,7 +358,9 @@ def invalidate_inventory(guild_id: int, player_id: int) -> None:
     """Drop the cached inventory entry for a player.
 
     Call after any command that changes the player's inventory
-    (``/buy``, ``/sell``, ``/equip``, ``/unequip``, ``/give``).
+    (``/buy``, ``/sell``, ``/equip``, ``/unequip``, ``/give``) — including
+    server-side mutations surfaced in a command response, e.g. ``/check``
+    capture loot written by bot-core's ``_apply_loot_on_win``.
     """
     _require_initialized()
     assert inventory_cache is not None

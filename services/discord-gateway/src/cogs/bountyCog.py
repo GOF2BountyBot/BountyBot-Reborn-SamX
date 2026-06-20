@@ -343,6 +343,21 @@ class BountyCog(commands.Cog):
                 outcome_data["winner_name"] = interaction.user.display_name or str(interaction.user)
                 embed = self._build_check_embed(outcome_data)
                 await interaction.followup.send(embed=embed)
+
+            # Capture loot is written to the player's inventory server-side
+            # (bot-core _apply_loot_on_win) during this /check, so the gateway's
+            # inventory autocomplete cache is now stale. Invalidate it when any
+            # outcome actually tractored items (looted/partial) so /sell shows the
+            # new loot immediately, instead of waiting for the 5-min round-robin
+            # warmer or the next inventory-mutating command. (failed/cargo_full
+            # add nothing, so they need no invalidation.)
+            _loot_sources = outcomes if outcomes else [data]
+            if any((o.get("loot") or {}).get("outcome") in ("looted", "partial") for o in _loot_sources):
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player_id)
+                flogger.debug(
+                    f"/check loot invalidated inventory cache: guild={interaction.guild_id} player_id={player_id}"
+                )
+
             flogger.info(
                 f"/check success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" system={system} result={result} result_count={len(outcomes)}"

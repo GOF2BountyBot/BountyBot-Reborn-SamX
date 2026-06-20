@@ -78,13 +78,13 @@ Each schema module is named `<router_name>_schema.py` and mirrors its correspond
 |---|---|---|
 | `about_schema.py` | — | `ItemResponse` (base) + `ModuleResponse`, `WeaponResponse`, `PrimaryWeaponResponse`, `SecondaryWeaponResponse`, `TurretWeaponResponse`, `ShipResponse`, `CriminalResponse`, `SystemResponse`, `CommodityResponse` |
 | `admin_schema.py` | `InitializeGuildRequest`, `UpdatePlayerCreditsRequest`, `UpdatePlayerXPRequest`, `AddInventoryItemRequest`, `RemoveInventoryItemRequest`, `RefreshShopRequest`, `UpdateShopConfigRequest`, `AdminGiveItemRequest`, `AdminRemoveItemRequest`, `AdminGiveShipRequest`, `AdminRemoveShipRequest`, `TransferShipRequest` | `GuildInitializationResponse`, `SystemHealthResponse` |
-| `bounty_schema.py` | `BountyCreateRequest`, `BountyCheckRequest`, `CombatBonusRequest` | `BountyResponse`, `BountyPublicResponse`, `BountyCheckOutcome`, `BountyCheckResponse`, `CombatBonusResponse`, `ClearBountiesResponse`, `AdminSpawnResponse` |
+| `bounty_schema.py` | `BountyCreateRequest`, `BountyCheckRequest`, `CombatBonusRequest` | `BountyResponse`, `BountyPublicResponse`, `BountyCheckOutcome`, `BountyCheckResponse`, `CombatBonusResponse`, `ClearBountiesResponse`, `AdminSpawnResponse`. **PvC loot (T6):** `BountyCheckOutcome` (+ the legacy `BountyCheckResponse` single-bounty mirror) carries a nullable `loot` payload `{item_name, qty_looted, qty_total, outcome, tractor_emoji, ...}`, `outcome ∈ {looted, partial, failed, cargo_full}` (the `LootResult.outcome` `Literal`; the no-loot/no-beam case is sent as a null `loot` field — internal `none` never reaches the wire), and over-cap fields (`cargo_current`/`cargo_max`) backing the T7 `OVER_CAP` rejection. The bounty read payloads expose the criminal's `loot_cargo` for the pre-fight advertise line (T4b). |
 | `combat_log_schema.py` | — | `CombatLogListItem`, `KeyEvent`, `CombatantSummary`, `CombatLogDetail` |
 | `config_schema.py` | `UpdateConfigRequest`, `UpdateShopConfigRequest`, `UpdateXPThresholdsRequest`, `UpdateBountyConfigRequest`, `ResetGameConstantsRequest` | `GameConstantsOverridesMixin` (shared base), `GuildConfigResponse`, `ConfigValidationResponse`, `BountyConfigResponse`, `BountyConfigStatusResponse` |
 | `discord_message_schema.py` | `DiscordMessageRequest` | `DiscordMessageResponse`, `EmbedPayloadDict` |
 | `duel_schema.py` | `DuelRequestCreate` | `DuelRequestResponse`, `DuelResultResponse` |
 | `health_schema.py` | — | `HealthResponse`, `SimpleHealthResponse` |
-| `inventory_schema.py` | `AddItemRequest`, `RemoveItemRequest`, `TransferItemRequest` | `InventoryItemResponse`, `InventorySummaryResponse`, `ItemTransactionResponse` |
+| `inventory_schema.py` | `AddItemRequest`, `RemoveItemRequest`, `TransferItemRequest` | `InventoryItemResponse`, `InventorySummaryResponse`, `ItemTransactionResponse`. **PvC loot (T1):** `TransferItemRequest.item_type` `Literal` includes `"commodity"` so `/give` of a commodity does not 422. (Note: `AddItemRequest`/`RemoveItemRequest` + the admin give/remove schemas still omit `"commodity"` — see CODE BUG note below; no live loot-path impact since loot writes bypass HTTP.) |
 | `loadout_schema.py` | — | `LoadoutResponse` + parts: `EffectItem`, `LoadoutWeaponItem`, `LoadoutModuleItem`, `CargoItem`, `ShipStats` |
 | `players_schema.py` | `CreatePlayerRequest`, `UpdateCreditsRequest`, `UpdateXPRequest`, `UpdateTierRequest`, `TransferCreditsRequest` | `PlayerResponse`, `PlayerStatisticsResponse`, `TransferCreditsResponse`, `PrestigeResponse`, `PromotionStatusResponse`, `PromoteResponse`, `DemoteResponse`, `TierChangeCooldownResponse` |
 | `scheduler_schema.py` | `OneTimeJob`, `RecurringJob`, `UpdateJob` | `JobInfo` |
@@ -164,4 +164,5 @@ class PrestigeResponse(BaseModel):
 
 ---
 
-*Last updated: 2026-06-11*
+*Last updated: 2026-06-20 (PvC loot: `loot` payload on `BountyCheckOutcome`,
+`commodity` in `TransferItemRequest.item_type`).*

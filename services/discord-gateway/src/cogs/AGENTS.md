@@ -63,7 +63,8 @@ There is no `_resolve_sell_item_type` helper method on the cog — type resoluti
 ### /inventory summary display (DEF-A42-001 fix, 2026-04-22)
 
 Post-A.36, `GET /api/v1/inventory/player/{id}/summary` returns **concrete type keys**
-(`primary_weapon`, `secondary_weapon`, `turret_weapon`, `module`, `ship`, `total_items`).
+(`primary_weapon`, `secondary_weapon`, `turret_weapon`, `module`, `ship`, plus
+`commodity` since PvC loot, and `total_items`).
 Generic alias keys (`weapon`, `turret`) no longer appear in the response.
 
 `inventoryCog.py` (around line 395) aggregates concrete types into 4 display buckets:
@@ -77,7 +78,9 @@ Generic alias keys (`weapon`, `turret`) no longer appear in the response.
 
 Use `.get(key, 0)` everywhere when reading summary keys — defensive against stale
 or partial API responses. Do NOT read `summary["weapon"]` or `summary["turret"]`
-— these keys no longer exist in the response.
+— these keys no longer exist in the response. **Commodities** (PvC loot) are
+counted in `total_items` but currently have **no dedicated display bucket** in this
+summary line — they appear as cargo entries in the full `/inventory` list.
 
 ### Surface gating principle
 
@@ -88,6 +91,10 @@ Both must be updated together when new item types are enabled.
 
 As of CI-5/CI-16, `secondary_weapon` is included; the current value is
 `frozenset({"primary_weapon", "turret_weapon", "module", "secondary_weapon"})`.
+
+Note: `commodity` (PvC loot) is in bot-core's `CURRENTLY_ENABLED_TYPES` but is
+**NOT** equippable (pure cargo), so it is correctly **absent** from
+`_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES` — do not add it there.
 
 ### Canonical env var for bot-core URL
 
@@ -491,6 +498,9 @@ except httpx.HTTPStatusError as e:
 - `bounty_autocomplete` reads from the per-cog `_bounty_cache` via `peek()` — no HTTP per keystroke; star systems come from `_systems_cache`
 - `/check` handles result values `correct` / `incorrect` / `already_checked` / `on_cooldown`, plus per-bounty `outcomes` (multi-bounty consolidated embed when 2+, B.12)
 - Cooldown is enforced by bot-core (returns HTTP 429); `/check` handles `resp.status_code == 429` before `raise_for_status()`
+- **PvC loot result (T8):** on a combat-win, `_format_loot_line` renders the per-outcome line from the response `loot` payload, and `_loot_field_name` builds a `<beam-emoji> Loot` field (the equipped tractor's custom emoji) added to the capture / multi-check embeds. Outcome strings: `looted` → `"Tractored Nx <item>."`, `partial` → `"Tractored G of T <item> — cargo full."`, `failed` → `"Tractor beam failed — nothing looted."`, `cargo_full` → `"Cargo hold full (NN/XX) — No room for loot."`, `none` → field omitted entirely. No loot line on loss/stalemate/defeat embeds.
+- **PvC over-cap lockout (T7):** an over-cap player's `/check` is rejected by bot-core (the `OVER_CAP` outcome / 409); the cog renders the ephemeral `"Cargo Overloaded — NN/XX. Unable to leave station."`
+- **Criminal loot advertise (T4b):** `/criminal-loadout` (and the bounty spawn announcement) render a **"Loot aboard"** field (`Nx <item>`) from the bounty's `loot_cargo` via `_shared/loadout_embed._format_loot_cargo_field` — silently absent for legacy bounties with no rolled cargo.
 
 ### combatLogCog.py
 - `/combat-log` autocomplete lists only the invoking user's fights (per-cog `_combatlog_cache`, key `(guild_id, user_id)`)
@@ -509,6 +519,7 @@ except httpx.HTTPStatusError as e:
 - `pending_duel_autocomplete` reads from the per-cog `_pending_duel_cache` via `peek()` (player_id resolved from `autocomplete_state.player_cache`)
 - `/duel-accept` resolves combat immediately and returns winner/loser + credit transfer details
 - `/duel-cancel` lets the challenger withdraw an outgoing challenge (`_outgoing_duel_cache` autocomplete)
+- **PvC over-cap lockout (T7):** both the duel challenge and `/duel-accept` paths surface a bot-core over-cap 409; `_over_cap_message` parses the structured `{error: "over_cap", current_load, effective_cap}` detail and replies ephemerally with `"Cargo Overloaded — NN/XX. Unable to leave station."` (each party is gated as it "leaves station"). No PvC loot in duels.
 
 ### healthCog.py
 - Both `/ping` and `/health` are admin-only — `/ping` via `@is_admin()`, `/health` via a runtime `_check_is_admin` call after deferring
@@ -518,7 +529,7 @@ except httpx.HTTPStatusError as e:
 - `/inventory` with `user=<other user>` requires admin permission (runtime check via `_check_is_admin`)
 - `/inventory` passes `include_ships=true` to the inventory + summary endpoints so inactive ships are listed and counted
 - `/equip` and `/unequip` resolve the player's **active ship** first, then modify its loadout; `WeaponSwapView`/`UniqueModuleSwapView` handle full-slot and unique-module conflicts
-- `/give` transfers credits, an item, or an (inactive) ship to another player
+- `/give` transfers credits, an item, or an (inactive) ship to another player. The **item path now takes a `quantity` arg** (`app_commands.Range[int, 1] = 1`; was hard-coded to 1) — PvC loot T9. Commodities are giveable (the backend `TransferItemRequest.item_type` `Literal` includes `"commodity"`).
 
 ### playerCog.py
 - `/profile` uses `POST /api/v1/players/` upsert to create the player if they don't exist; `/register` is a full alias (see above)
@@ -609,4 +620,6 @@ class TestMyCog:
 
 ---
 
-*Last updated: 2026-06-11*
+*Last updated: 2026-06-20 (PvC loot: /check loot-result + over-cap lockout
+rendering, /criminal-loadout "Loot aboard" advertise, /give quantity arg,
+commodity in the inventory summary).*

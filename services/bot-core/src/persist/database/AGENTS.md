@@ -10,7 +10,7 @@ On 2026-04-22 the then-existing revisions 0002–0007 were **collapsed into
 0001_initial_schema.py**. Revision 0001 creates all tables from current ORM
 metadata via `Base.metadata.sorted_tables` (skipping tables that already
 exist). New revisions have been added since — see "Current Migration Chain"
-below; the chain head is now `0021` (…0018 → 0019 → 0020 → 0021).
+below; the chain head is now `0022` (…0018 → 0019 → 0020 → 0021 → 0022).
 
 **IMPORTANT**: Revision 0001 assumes a fresh database (no previous
 `alembic_version` row). If upgrading a pre-flattening deployment without a DB
@@ -23,7 +23,7 @@ UPDATE alembic_version SET version_num = '0001';
 
 ## Current Migration Chain
 
-`revisions/versions/` as of 2026-06-18 (each entry's `down_revision` points to
+`revisions/versions/` as of 2026-06-20 (each entry's `down_revision` points to
 the one above it):
 
 | Revision | File | Change |
@@ -49,7 +49,8 @@ the one above it):
 | `0018` | `0018_drop_manual_turret_mode.py` | Drop `player_ships.manual_turret_mode` (turret switching is now range-driven; idempotent) |
 | `0019` | `0019_add_notification_preferences.py` | `players.bounty_notifications_enabled` + `shop_notifications_enabled` (D-019) |
 | `0020` | `0020_criminal_loadout_balance_knobs.py` | `guild_configs` criminal loadout-balance overrides (`long_range_threshold_m`, `criminal_long_range_pct`, `primary_tl_band_weights`, `criminal_{cloak,booster,emergency,weaponmod}_chance_by_division`) — Threads 3/4 (down_revision `0019`; idempotent add/drop loop) |
-| `0021` | `0021_criminal_exclude_emp_weapons.py` | `guild_configs.criminal_exclude_emp_weapons` (Boolean toggle) — Thread 6 (down_revision `0020`; idempotent) — **head** |
+| `0021` | `0021_criminal_exclude_emp_weapons.py` | `guild_configs.criminal_exclude_emp_weapons` (Boolean toggle) — Thread 6 (down_revision `0020`; idempotent) |
+| `0022` | `0022_loot_config_knobs.py` | `guild_configs` +19 nullable PvC-loot knob columns (`loot_chance_tractor_t1..t4`, `loot_chance_no_tractor`, `loot_band{1,2,3}_select_pct`, `loot_band1_tl_window`, `loot_band{1,2,3}_qty_{min,mode,max}`, `loot_commodity_sell_fraction`) — PvC loot T2 (down_revision `0021`; idempotent inspector-guarded add/drop loop) — **head** |
 
 ---
 

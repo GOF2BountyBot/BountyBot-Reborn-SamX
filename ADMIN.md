@@ -324,12 +324,12 @@ When generating shop stock, the probability distribution for item tech level rel
 
 ## Per-Guild Game Constant Overrides
 
-34 global `GameConstants` values can be overridden per-guild via the API (`_OVERRIDE_FIELDS` in bot-core's config router); 33 of them are settable through the `/admin_config_constants` slash command. The remaining 1 is **API-only** — it is absent from the gateway's `_GAME_CONSTANT_FIELDS` slash list: `demotion_credit_penalty_pct`. When set to `NULL` (the default), the global constant applies. When set to a value, only this guild uses that value.
+53 global `GameConstants` values can be overridden per-guild via the API (`_OVERRIDE_FIELDS` in bot-core's config router); 52 of them are settable through the `/admin_config_constants` slash command. The remaining 1 is **API-only** — it is absent from the gateway's `_GAME_CONSTANT_FIELDS` slash list: `demotion_credit_penalty_pct`. When set to `NULL` (the default), the global constant applies. When set to a value, only this guild uses that value. (The count rose by 19 with the PvC-loot knobs, migration 0022 — see the loot block in the table below.)
 
 ### Viewing Overrides
 
 ```
-# List the 33 slash-settable constants with current values (NULL shown as *default*)
+# List the 52 slash-settable constants with current values (NULL shown as *default*)
 /admin_config_constants
 
 # See only constants that have been explicitly set for this guild
@@ -405,6 +405,26 @@ For the full selection mechanics, see `services/bot-core/src/services/AGENTS.md`
 | `criminal_emergency_chance_by_division` | dict | `{"bronze":0,"silver":25,"gold":50,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips an Emergency System module, by division. Same key/range rules. |
 | `criminal_weaponmod_chance_by_division` | dict | `{"bronze":0,"silver":25,"gold":50,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips a Weapon Mod module, by division. Same key/range rules. |
 | `criminal_exclude_emp_weapons` | bool | `true` | Thread 6 — when on, excludes primarily-EMP weapons (`emp_damage > real_damage`) from criminal primary + secondary selection. Strict bool (`0`/`1`/`"true"` are rejected). Intended to auto-disable once EMP mechanics ship. |
+
+### PvC Loot (per-guild)
+
+These 19 scalar knobs tune the PvC looting system (loot pulled from a defeated criminal on a bounty win). Each is a per-guild override of the `GameConstants.LOOT_*` default added by **migration 0022** (`NULL` ⇒ global default), slash-settable via `/admin_config_constants` (`int_value` for the int knobs, `float_value` for `loot_commodity_sell_fraction`). The canonical spec is `COMBAT_SPEC_LOCKED.md §15`. **`LOOT_DROP_CHANCE` is a fixed 100% constant — it is NOT a per-guild override and has no row.**
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `loot_chance_tractor_t1` | int | `20` | % loot-roll chance with AB-1 "Retractor" (TL4) equipped |
+| `loot_chance_tractor_t2` | int | `40` | % with AB-2 "Glue Gun" (TL5) |
+| `loot_chance_tractor_t3` | int | `60` | % with AB-3 "Kingfisher" (TL7) |
+| `loot_chance_tractor_t4` | int | `80` | % with AB-4 "Octopus" (TL8) |
+| `loot_chance_no_tractor` | int | `0` | % with no tractor beam equipped |
+| `loot_band1_select_pct` | int | `10` | % the drop is a Band-1 item (Weapons + Modules) |
+| `loot_band2_select_pct` | int | `20` | % the drop is a Band-2 item (`ore_core`, `rare`) |
+| `loot_band3_select_pct` | int | `70` | % the drop is a Band-3 item (bulk commodities) |
+| `loot_band1_tl_window` | int | `1` | Band-1 item must be within ±this of the criminal's tech level |
+| `loot_band1_qty_min` / `_mode` / `_max` | int | `1` / `1` / `3` | Band-1 triangular quantity (→ 50/33/17) |
+| `loot_band2_qty_min` / `_mode` / `_max` | int | `4` / `8` / `12` | Band-2 triangular quantity (mean 8) |
+| `loot_band3_qty_min` / `_mode` / `_max` | int | `10` / `16` / `22` | Band-3 triangular quantity (mean 16) |
+| `loot_commodity_sell_fraction` | float | `1.0` | commodity sink payout = `Item.value` × qty × this |
 
 ---
 
@@ -709,4 +729,5 @@ This resets config to defaults (cancelling the guild's scheduled jobs first) and
 
 ---
 
-*Last updated: 2026-06-11 (full code reconciliation: permission model, new commands — cooldown reset / duel / combat-log / scheduler / dev, shop secondary-weapon config + quantity scaling, retired constants)*
+*Last updated: 2026-06-20 (PvC loot: +19 loot knobs / migration 0022, override
+count 34→53; new "PvC Loot (per-guild)" reference table). Prior: 2026-06-11 (full code reconciliation: permission model, new commands — cooldown reset / duel / combat-log / scheduler / dev, shop secondary-weapon config + quantity scaling, retired constants)*

@@ -1,6 +1,6 @@
 # AGENTS.md - services
 
-Business logic layer for bot-core. 27 modules live here: 19 service classes, the tick-combat engine and its support modules (`combat_resolver.py`, `combat_models.py`, `combat_balance.py`), pure-function/constants modules (`game_maths.py`, `game_constants.py`), and helpers (`_item_type_normalizer.py`, `_transaction_guards.py`, `exceptions.py`). (B.48: division_service.py was removed alongside the level/division progression system.)
+Business logic layer for bot-core. ~31 modules live here: service classes, the tick-combat engine and its support modules (`combat_resolver.py`, `combat_models.py`, `combat_balance.py`), the PvC-loot modules (`loot_service.py` + pure `loot_engine.py` + `cargo_utils.py`), pure-function/constants modules (`game_maths.py`, `game_constants.py`), and helpers (`_item_type_normalizer.py`, `_transaction_guards.py`, `exceptions.py`). (B.48: division_service.py was removed alongside the level/division progression system.)
 
 ---
 
@@ -380,8 +380,11 @@ KEEPS real-damage hybrids (e.g. Dephase EMP, where 120 real > 100 emp).
 ## Item-Type Vocabulary & Normalizer Contract (A.36 fix, 2026-04-22)
 
 **Storage invariant**: `player_inventories.item_type` and `guild_shops.item_type` always store
-**concrete types** only: `ship`, `primary_weapon`, `secondary_weapon`, `turret_weapon`, `module`.
-Generic aliases (`weapon`, `turret`) are NEVER persisted.
+**concrete types** only: `ship`, `primary_weapon`, `secondary_weapon`, `turret_weapon`, `module`,
+`commodity`. Generic aliases (`weapon`, `turret`) are NEVER persisted. **`commodity` is a
+first-class concrete type** (PvC loot, T1) — it is valid in `player_inventories` but NEVER in
+`guild_shops`: commodities are pure cargo, never shop-stocked (see "Commodity is a first-class
+type" below).
 
 **Normalizer module**: `_item_type_normalizer.py` provides:
 ```python
@@ -396,6 +399,23 @@ secondary-weapon exposure. To enable secondary weapons: add `"secondary_weapon"`
 
 **Write-site rule**: all calls to `inventory_repo.add_item()` MUST use concrete types.
 Use `equipment_service.item_discriminator_to_concrete_type(item.type)` to resolve from STI discriminator.
+
+#### Commodity is a first-class type (PvC loot, T1)
+
+`commodity` is the **6th concrete inventory type**. It is a member of all three economy
+frozensets in `game_constants.py` — `CATALOG_ITEM_TYPES`, `PLAYABLE_ITEM_TYPES`,
+`CURRENTLY_ENABLED_TYPES` — and is **concrete** (no `GENERIC_TO_CONCRETE_EXPANSION` alias entry).
+Existence validation scans `CommodityRepository` (`inventory_service._validate_item_exists`);
+pricing reads the base `Item.value` column (`shop_service._get_item_base_price` + its
+`_price_cache`). `TransferItemRequest.item_type` (`inventory_schema.py`) includes `"commodity"`
+so `/give` of a commodity does not 422.
+
+> **DO NOT add `commodity` to `_CONCRETE_TO_CONFIG_KEY`** (`shop_service.py`). That separate map —
+> NOT the three frozensets — is what gates shop stocking / purchasability. Commodities are pure
+> cargo: **never buyable, never written to a `GuildShop`.** Selling a commodity is a face-value
+> **sink** (`sell_item` commodity branch: destroy + credit, `Item.value × qty ×
+> LOOT_COMMODITY_SELL_FRACTION`), never a shop restock. Commodities are never equipped, so the
+> equip/unequip/swap/ammo machinery never applies to them.
 
 ### /sell — Server-side type and tier resolution (A.42/A.42b/A.42c, 2026-04-22)
 
@@ -501,7 +521,8 @@ await AuditService.log_action(
 Core bounty system business logic:
 - `spawn_bounty(db, guild_id, division, tech_level=None, expiry_minutes=None)` — full spawn orchestration: select criminal (excluding active ones), determine tech level, generate A* route (up to 3 attempts), pick the answer system, generate criminal loadout, calculate reward
 - `select_criminal` / `find_item_tl` / `generate_loadout(db, tech_level, division="bronze", cfg=None)` — spawn building blocks. `generate_loadout` takes a **`division`** arg (threaded in from `spawn_bounty` and `combat_preflight_service._synthesize_criminals`) because criminal primary + module selection is division-aware (per-division equip odds, nearest-TL tie-breaks). Internals: primaries via `_select_primaries` (long-range floor + ±1 TL-band pick), modules via `_select_modules` (fixed priority walk + two-gate per-division %), both EMP-filtered. See the **"Criminal loadout-generation algorithm"** canonical section below for the full rules. Turrets still loop `range(ship.max_turrets)`; everything is capped against the same static `ship` row players use.
-- `check_bounty(...)` — records a system check; returns proximity hints via `CheckResult` / `CheckResponse` / `MultiCheckResponse`
+- `check_bounty(...)` — records a system check; returns proximity hints via `CheckResult` / `CheckResponse` / `MultiCheckResponse`. **T7 over-cap lockout** is the FIRST eval (plain read of `sum(player_inventories.quantity)` vs effective cap via `cargo_utils.is_over_cap`); an over-cap player is rejected before resolution with the `OVER_CAP` outcome (gateway renders `"Cargo Overloaded — NN/XX. Unable to leave station."`).
+- **PvC loot (T4/T5).** `spawn_bounty` rolls the criminal's single loot item via `LootService.roll_loot` (anchored on `Bounty.tech_level`) and persists it in `Bounty.criminal_ship["cargo"]` = `{item_type, item_name, quantity}` — no migration. `_apply_loot_on_win` writes loot **only on a player combat WIN** (`fight_results.winner_side == 1`; Bronze hooks the `combat_player_won` bonus-fight branch, Silver+ gates on `fight_results is not None and winner_side == 1`) — never on capture/loss/stalemate/no-ship/PvP. It reads the persisted cargo (no re-roll), resolves the equipped tractor → chance map, gates on `free_cargo >= 1`, rolls, clamps to free space (§5.4), and writes via its **own player-locked transaction** (`add_item_to_inventory(commit=False)` + commit) — NOT composed into `distribute_rewards` and NOT atomic with rewards. Logs via `bblogger`; **no `audit_service` call** (player action). Returns a `LootOutcome` (outcome ∈ `looted/partial/failed/cargo_full/none`) surfaced on the check response (`loot` payload).
 - `calc_rewards` / `distribute_rewards` — winner + consolation payouts (`RewardInfo`)
 - `expire_bounty(db, bounty_id)` — marks bounty as expired
 - `escape_bounty` / `respawn_bounty(db, bounty_id)` — escape computes `respawn_time`; respawn regenerates route/answer for the same criminal and resets status to `active`
@@ -510,7 +531,7 @@ Core bounty system business logic:
 
 **Scheduler-cleanup pattern** (A.11): orphaned jobs are located by payload content (`args[1]["job_type"]` ∈ {`bounty_expire`, `bounty_respawn`} AND `args[1]["bounty_id"]` in cleared set) rather than by deterministic job IDs, because bounty job IDs are random UUIDs. 404 responses on DELETE are treated as already-fired and NOT logged.
 
-Uses: `CriminalRepository`, `BountyRepository`, `ConfigRepository`, `ItemRepository`, `PlayerRepository`, `SecondaryWeaponRepository`, `PathfindingService`, `SystemGraphService`, `CombatService`, `game_maths`
+Uses: `CriminalRepository`, `BountyRepository`, `ConfigRepository`, `ItemRepository`, `PlayerRepository`, `SecondaryWeaponRepository`, `PathfindingService`, `SystemGraphService`, `CombatService`, `LootService`, `game_maths`, `cargo_utils`, `loot_engine`
 
 ---
 
@@ -610,7 +631,8 @@ and `player_service.prestige_player` for the canonical promotion/prestige flow.
 
 Duel challenge lifecycle:
 - `create_challenge(...)` — validates both players exist and that **available** balances (see pending-stakes invariant above) cover the stakes; creates `DuelRequest`
-- `accept_duel(db, duel_id)` — re-validates under `FOR UPDATE` locks (`get_by_id_for_update`); builds loadouts via `LoadoutBuilder` and resolves via `CombatService`; transfers credits; updates win/loss stats; runs `cancel_underfunded_duels` for the loser
+- `create_challenge(...)` / `accept_duel(db, duel_id)` — both enforce the **T7 over-cap lockout** as the FIRST eval (the challenger when creating, the accepter when accepting — each is "leaving station"): if `is_over_cap(load, cap)` (from `cargo_utils`) they raise `OverCapError` (rendered by the gateway as `"Cargo Overloaded — NN/XX. Unable to leave station."`). Only the combat entries are gated — equip/unequip/buy are NOT.
+- `accept_duel(db, duel_id)` — re-validates under `FOR UPDATE` locks (`get_by_id_for_update`); builds loadouts via `LoadoutBuilder` and resolves via `CombatService`; transfers credits; updates win/loss stats; runs `cancel_underfunded_duels` for the loser. **No PvC loot** — looting is bounty-only.
 - `reject_duel(db, duel_id)` — marks as rejected
 - `cancel_duel(...)` / `cancel_all_pending_duels(db, guild_id)` — challenger-side / admin cancellation
 - `cancel_underfunded_duels(db, player_id, commit=False)` — the auto-cancel contract hook (see top of this doc)
@@ -651,7 +673,8 @@ Key constant groups:
 - `BOUNTY_DELAY_RANDOM_MIN/MAX` — bounty spawn frequency
 - `MAX_BOUNTIES_PER_DIVISION` — bounty cap (temperature-adjusted)
 - `SHOP_DEFAULT_*_NUM` — shop stock counts per category
-- `CURRENTLY_ENABLED_TYPES` — surface-gating frozenset (currently all 5 concrete types)
+- `CATALOG_ITEM_TYPES` / `PLAYABLE_ITEM_TYPES` / `CURRENTLY_ENABLED_TYPES` — the three economy frozensets; each now includes **all 6 concrete types** (`commodity` added for PvC loot, T1). `CURRENTLY_ENABLED_TYPES` is the surface-gating lever for secondary-weapon exposure.
+- **Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / COMBAT_SPEC_LOCKED §15, T2; per-guild overridable via `GuildConfig` + migration 0022)** — 19 scalar knobs: `LOOT_CHANCE_TRACTOR_T1..T4` (20/40/60/80) + `LOOT_CHANCE_NO_TRACTOR` (0); `LOOT_BAND{1,2,3}_SELECT_PCT` (10/20/70); `LOOT_BAND1_TL_WINDOW` (1); `LOOT_BAND{1,2,3}_QTY_{MIN,MODE,MAX}` (Band1 1/1/3, Band2 4/8/12, Band3 10/16/22); `LOOT_COMMODITY_SELL_FRACTION` (1.0). Each has a `BOUNTYBOT_<NAME>` env override (`_track_int`/`_track_float` in `load()`). **`LOOT_DROP_CHANCE` is a FIXED 100% constant — no env, no `GuildConfig` column, no override.**
 - `*_RETENTION_*` — db_retention windows (`BOUNTY_RETENTION_HOURS`, `DUEL_RETENTION_HOURS`, `AUDIT_RETENTION_DAYS`, `COMBAT_LOG_RETENTION_HOURS`)
 - **Criminal loadout-balance knobs (Threads 1/3/4/6, 2026-06-18; per-guild overridable via `GuildConfig` + `resolve_constant`)** — `SHOP_HEAVY_SECONDARY_SUBTYPES` (now includes `cluster-missile`), `LONG_RANGE_THRESHOLD_M` (2600), `CRIMINAL_LONG_RANGE_PCT` (0.50), `PRIMARY_TL_BAND_WEIGHTS` (`{center:70, minus1:20, plus1:10}`), the four per-division equip-% dicts `CRIMINAL_{CLOAK,BOOSTER,EMERGENCY,WEAPONMOD}_CHANCE_BY_DIVISION`, and the toggle `CRIMINAL_EXCLUDE_EMP_WEAPONS` (default True). See the "Criminal loadout-generation algorithm" section above. `CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE` (20) is **dead** (no consumer) — flagged for cleanup.
 - B.48: `DIVISION_NAMES`, `DIVISION_BOUNDARIES`, and `XP_LEVEL_BOUNDARIES` were
@@ -675,11 +698,12 @@ B.48: `calculate_user_level` and `calculate_xp_for_level` were deleted.
 Player inventory (cargo) management:
 - `get_player_inventory(db, player_id, item_type=None, include_ships=False)` — full inventory list; `item_type` accepts concrete types or generic aliases (normalizer-expanded). `include_ships=True` additionally lists the player's INACTIVE ships as cargo entries (ships live in `player_ships`, not `player_inventories`; the active ship is "equipped" and excluded) — default False so equip/sell consumers are unchanged
 - `get_inventory_summary(db, player_id, include_ships=False)` — per-type counts; `include_ships` adds the inactive-ship count to the `ship` bucket
-- `add_item_to_inventory` / `remove_item_from_inventory` — cargo-only mutations
+- `add_item_to_inventory` / `remove_item_from_inventory` — cargo-only mutations. `add_item_to_inventory(..., commit=False)` re-locks the player `FOR UPDATE` and is the txn-composable path the PvC loot write uses (see `bounty_service`).
+- `_validate_item_exists` — now scans `CommodityRepository` too, so commodity writes resolve (PvC loot, T1)
 - `transfer_item_between_players(...)` — cargo-only remove+add pair across two players (see "Unequip-before-sell" caveat above)
 - `search_inventory`, `validate_item_compatibility`, `get_player_item_count`, `consolidate_inventory`
 
-Uses: `InventoryRepository`, `PlayerRepository`, `PlayerShipRepository`, `ShipRepository`, `PrimaryWeaponRepository`, `SecondaryWeaponRepository`, `TurretWeaponRepository`, `ModuleRepository`
+Uses: `InventoryRepository`, `PlayerRepository`, `PlayerShipRepository`, `ShipRepository`, `PrimaryWeaponRepository`, `SecondaryWeaponRepository`, `TurretWeaponRepository`, `ModuleRepository`, `CommodityRepository`
 
 ---
 
@@ -727,7 +751,7 @@ Multi-tier shop system (`VALID_TIERS = Bronze/Silver/Gold/Platinum`):
 - `get_shop_items(db, guild_id, tier, ...)` — read side
 - `purchase_item(...)` — validates tier eligibility + credits; cargo-only `add_item`; runs the duel auto-cancel hook
 - `purchase_ship(...)` — buys + activates a ship via the `activate_ship` choke-point; runs the duel auto-cancel hook
-- `sell_item(db, player_id, item_name, quantity=1)` — cargo-only; type/tier resolved server-side (A.42, see below)
+- `sell_item(db, player_id, item_name, quantity=1)` — cargo-only; type/tier resolved server-side (A.42, see below). **Commodity branch (PvC loot):** commodities sell as a face-value **sink** (`Item.value × qty × LOOT_COMMODITY_SELL_FRACTION`, destroy + credit, the returned txn dict carries `"sunk": True`) — they are NEVER added to a `GuildShop`. Weapons/Modules still restock the player's current-tier shop via `_add_item_to_shop`.
 - `sell_ship(...)` — evacuates the loadout to cargo first (`evacuate_ship_loadout_to_inventory`)
 - `preload_static_data(db)` / `clear_static_cache()` — in-memory static-catalog cache for bulk refreshes
 
@@ -752,6 +776,26 @@ Guild activity temperature (all static methods; per-division values live in `Gui
 - `raise_temperature(current_temp, amount=None)` — bumps temperature on player activity
 - `decay_temperature(current_temp, guild_config=None)` / `decay_temperature_n_hours(...)` — multiplies by 2/3, floors at 1.0; called hourly by `temperature_decay_executor`
 - `calculate_spawn_delay(temperature, route_length, guild_config=None)` — spawn-pacing input for the orchestrator
+
+---
+
+### loot_engine.py — Pure Functions (PvC loot)
+
+Stateless, RNG-injectable selection math for the PvC loot system (no DB, no class):
+- discrete-**triangular** quantity sampler over `(min, mode, max)` — Band1 `(1,1,3)` → 50/33/17, Band2 `(4,8,12)`, Band3 `(10,16,22)`
+- weighted **band-select** (Band1/2/3 = 10/20/70)
+- **within-band item pick** — uniform over the eligible commodity pool (Bands 2/3), or uniform over Band-1 Weapons/Modules within ±`LOOT_BAND1_TL_WINDOW` of the criminal TL (with a nearest-TL fallback)
+- **tractor → chance** resolution (static TL map {4,5,7,8} → 20/40/60/80; none → 0) and the success roll
+
+Used by `LootService` (cache-backed) and `BountyService` (spawn roll + win-branch write).
+
+### loot_service.py — `LootService` (PvC loot)
+
+Owns the **startup static cache** (rebuilt only on a seed reload, mirroring `shop_service.preload_static_data`): the Band-1 base pool (lootable Weapons+Modules with `tech_level` + concrete type, minus the 3 excluded module types), the Band-2/3 commodity pools, each lootable commodity's `Item.value`, and the tractor-beam → chance map. Exposes `roll_loot(...)` (spawn-side item+qty roll), the tractor resolution helpers (`equipped_tractor_name`, chance lookup), and the success roll — all consumed off the latency-sensitive kill path so no per-kill query is issued.
+
+### cargo_utils.py — Pure Functions (PvC loot)
+
+Canonical cargo-load helpers so the T5 loot clamp and the T7 over-cap gate share ONE definition: `compute_free_cargo(current_load, effective_cap)` and `is_over_cap(current_load, effective_cap)` (strict `load > cap`). Cargo load = `sum(player_inventories.quantity)` (ship cargo only; equipped gear excluded).
 
 ---
 
@@ -797,6 +841,7 @@ Runtime transaction-discipline decorator (AC-6, B.34): raises at call time when 
 
 - `GuildNotConfiguredError(Exception)` — no `guild_configs` row (carries `guild_id`)
 - `InvalidItemTypeError(ValueError)` — unknown/disabled item type (subclasses `ValueError` so existing handlers still catch it)
+- `OverCapError` — T7 over-cap lockout; raised by the duel-challenge / duel-accept / `/check` entries when a player's cargo load exceeds cap. Carries `current_load` / `effective_cap`; its message is `"Cargo Overloaded — NN/XX. Unable to leave station."` (rendered ephemeral by the gateway).
 
 ---
 

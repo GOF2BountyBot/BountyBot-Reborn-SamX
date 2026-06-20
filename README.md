@@ -50,10 +50,10 @@ Discord users interact with `discord-gateway` via slash commands. The gateway ca
 
 The bot implements the following game systems:
 
-- **Bounty hunting** — Bounties spawn on NPC criminals across star systems. Players check systems, track criminals, and claim bounties for credits. The number of simultaneously active bounties is capped per tier via the per-guild `bounty_max_per_tier` config.
+- **Bounty hunting** — Bounties spawn on NPC criminals across star systems. Players check systems, track criminals, and claim bounties for credits. The number of simultaneously active bounties is capped per tier via the per-guild `bounty_max_per_tier` config. Winning a bounty fight also yields **loot** pulled from the criminal: every criminal carries one cargo item (advertised pre-fight), and a player who wins the combat with an equipped **tractor beam** pulls it (chance scales 20–80% by beam tier; no beam = no loot), subject to free cargo space. Loot is tunable via 19 per-guild knobs.
 - **Ship management** — Players own ships, set an active ship, equip modules and weapons, assign custom nicknames, and browse ship catalogues.
 - **PvP duels** — Players challenge each other to credit-stake duels. Combat is resolved server-side by a tick-based combat engine with per-guild tunables; after-action reports are persisted and reviewable via `/combat-log`.
-- **Economy** — Guild-specific shops stock items at tiered prices. Players buy and sell from rotating inventory refreshed on a schedule.
+- **Economy** — Guild-specific shops stock items at tiered prices. Players buy and sell from rotating inventory refreshed on a schedule. **Commodities** are a first-class cargo type (acquired as loot): they are never shop-stocked and sell as a face-value sink. A finite per-ship cargo cap is enforced — an over-cap player is locked out of leaving station (no `/check`, no duels) until back under cap.
 - **Ship skinning** — 3D ship previews are rendered with custom texture compositing via Blender. Textures can be converted to game-native AEI format (ETC1 for Android, DXT5 for PC).
 - **Star system navigation** — A\* pathfinding over the connected star system graph, exposed via `/make-route`.
 - **Progression** — Division and tier system (Bronze → Silver → Gold → Platinum) with XP and prestige mechanics.

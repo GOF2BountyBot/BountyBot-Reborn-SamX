@@ -181,13 +181,13 @@ The bot auto-discovers cogs via `setup_hook()` — any `*.py` file in `src/cogs/
 |------|-------|----------------|-------|
 | `aboutCog.py` | `AboutCog` | `/about`, `/list_category`, `/make-route` | Preloads all game object data on startup; autocomplete from cache |
 | `adminCog.py` | `AdminCog` | `/admin_check`, `/admin_setup`, `/admin_player`, `/admin_refresh_shop`, `/admin_guild_stats`, `/admin_config`, `/admin_uninstall`, `/admin_config_shop`, `/admin_config_validate`, `/admin_clear_bounties`, `/admin_config_bounty`, `/admin_config_xp`, `/admin_spawn_bounty`, `/admin_cooldown_reset`, `/admin_give_item`, `/admin_remove_item`, `/admin_give_ship`, `/admin_remove_ship`, `/admin_config_constants`, `/admin_config_constants_view`, `/admin_config_constants_reset`, `/admin_duel`, `/render_config`, `/render_cache_clear` | Uses `@is_admin()` decorator; calls bot-core AND blender-service |
-| `bountyCog.py` | `BountyCog` | `/check`, `/bounties`, `/route`, `/criminal-loadout` | Star systems + active bounties served from `AutocompleteCache`s (push + periodic refresh) |
+| `bountyCog.py` | `BountyCog` | `/check`, `/bounties`, `/route`, `/criminal-loadout` | Star systems + active bounties served from `AutocompleteCache`s (push + periodic refresh). PvC loot: `/check` renders the `<beam-emoji> Loot` result on a combat win + the ephemeral over-cap lockout; `/criminal-loadout` shows the "Loot aboard" advertise line |
 | `combatLogCog.py` | `CombatLogCog` | `/combat-log`, `/admin_combat_log` | `/combat-log` has optional `public: bool = False` (embed posted publicly when true; errors always ephemeral); `/admin_combat_log` is admin-gated and always ephemeral |
 | `devCog.py` | `DevCog` | `/load_data`, `/reload_autocomplete`, `/force_reload_caches` | Super-admin only (`DEVELOPERS` env var via `_check_is_super_admin`); also prefix commands `snooze`/`wake`/`botstatus` |
-| `duelCog.py` | `DuelCog` | `/duel-challenge`, `/duel-accept`, `/duel-reject`, `/duel-cancel` | Pending/outgoing duel autocomplete from per-cog caches |
+| `duelCog.py` | `DuelCog` | `/duel-challenge`, `/duel-accept`, `/duel-reject`, `/duel-cancel` | Pending/outgoing duel autocomplete from per-cog caches. PvC over-cap lockout: challenge + accept render the ephemeral `"Cargo Overloaded — NN/XX. Unable to leave station."` on a bot-core 409 |
 | `healthCog.py` | `HealthCog` | `/ping`, `/health` | Admin-only (`/ping` via `@is_admin()`, `/health` via runtime `_check_is_admin`); `/health` calls bot-core health endpoint |
 | `helpCog.py` | `HelpCog` | `/help`, `/admin_help` | Help command listing for users and admins |
-| `inventoryCog.py` | `InventoryCog` | `/inventory`, `/search`, `/item`, `/equip`, `/unequip`, `/give` | Equip/unequip modifies active ship loadout; `/inventory` passes `include_ships=true` so inactive ships show as inventory entries |
+| `inventoryCog.py` | `InventoryCog` | `/inventory`, `/search`, `/item`, `/equip`, `/unequip`, `/give` | Equip/unequip modifies active ship loadout; `/inventory` passes `include_ships=true` so inactive ships show as inventory entries. `/give` (item path) takes a `quantity` arg (PvC loot T9); commodities are giveable |
 | `playerCog.py` | `PlayerCog` | `/profile`, `/register`, `/leaderboard`, `/prestige`, `/promote`, `/demote`, `/loadout`, `/notifications`, `/unregister` | `/register` is a full alias of `/profile`; `/prestige` requires Platinum tier + `ConfirmView` confirmation |
 | `schedulerCog.py` | `SchedulerCog` | `/scheduler_list`, `/scheduler_view`, `/scheduler_update`, `/scheduler_delete` | Admin-only scheduler job management |
 | `setupCog.py` | `SetupCog` | *(no slash commands)* | Listener: `on_guild_join` → welcome embed pointing admins at `/admin_setup`; `on_guild_remove` → cleanup. Channel/role creation lives in `utils/guild_setup.py`, invoked by `/admin_setup` |
@@ -588,4 +588,5 @@ except Exception:
 
 ---
 
-*Last updated: 2026-06-11*
+*Last updated: 2026-06-20 (PvC loot: /check loot-result + over-cap lockout,
+/criminal-loadout advertise, /give quantity).*

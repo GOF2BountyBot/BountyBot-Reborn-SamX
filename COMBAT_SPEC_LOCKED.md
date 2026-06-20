@@ -419,7 +419,7 @@ The resolver loads these but applies no combat effect:
 | TimeExtenderModule (Rhoda Vortex) | Non-combat |
 | Compressor | Non-combat |
 | MiningDrill | Non-combat |
-| TractorBeam | Non-combat |
+| TractorBeam | Non-combat in the resolver — but **gameplay-active in PvC looting** (gates loot-pull on a bounty kill; see §15) |
 | Cabin | Non-combat |
 | Signature | Non-combat |
 | SpectralFilter | Non-combat |
@@ -506,7 +506,7 @@ This section maps every module class the combat spec mentions in §7 to its SQLA
 | ShieldInjector (Phoenix SIS) | `ShieldInjectorModule` | Yes (Phase-2 deferred) | §7.10 |
 | TransfusionBeam | `TransfusionBeamModule` | Yes (Phase-2 deferred) | §7.10 |
 
-Modules not referenced by combat (Cabin, Compressor, JumpDrive, MiningDrill, Signature, SpectralFilter, TimeExtender, TractorBeam) live entirely in the loadout-builder's domain and are out of scope for this document.
+Modules not referenced by the combat resolver (Cabin, Compressor, JumpDrive, MiningDrill, Signature, SpectralFilter, TimeExtender, TractorBeam) live entirely in the loadout-builder's domain and are out of scope for the **combat-resolver** part of this document. **`TractorBeam` is not inert overall** — it is the loot-pull gate for the PvC looting system (§15); it carries no combat effect, but a bounty kill reads the winner's equipped `TractorBeamModule` to roll loot.
 
 ### Built-in cloak supersession (the one special case)
 The Scimitar and Specter ships carry an implicit U'tool cloak as a built-in (off-slot — does not consume a regular module slot). Combat treatment:
@@ -523,7 +523,7 @@ The combat resolver consumes a baked `ShipLoadout` from the loadout builder and 
 
 ## 11. Phase-1 scope summary
 
-**In scope:** primary, secondary (rocket / missile / cluster-missile / nuke / shock-blast), turret (auto + manual); shields, armour, repair-bot, thrusters, cloaks, boosters, scanners, EmergencySystem, PrimaryWeaponMod; tick-based simulation, distance, HP layers, regen, HP-threshold activations, EmergencySystem invuln.
+**In scope:** primary, secondary (rocket / missile / cluster-missile / nuke / shock-blast), turret (auto + manual); shields, armour, repair-bot, thrusters, cloaks, boosters, scanners, EmergencySystem, PrimaryWeaponMod; tick-based simulation, distance, HP layers, regen, HP-threshold activations, EmergencySystem invuln. **PvC looting** (loot-pull on a bounty kill, gated by an equipped TractorBeam) ships alongside Phase-1 combat — see §15.
 
 **Inert** (loaded for fidelity, no combat effect): see §7.9.
 
@@ -792,6 +792,117 @@ Phase-1 combat-spec corrections to seed-data structure must be reflected in user
 
 ---
 
+## 15. PvC Looting (loot-pull)
+
+Winning a bounty fight (player-vs-criminal) yields **loot** pulled from the defeated criminal. Looting is **PvC-only** — there is no loot in a PvP duel. The pull is gated and scaled by the winner's equipped **TractorBeam** module. This section is the canonical, locked spec of the shipped system; it follows the configuration policy of §0.1 (every numeric is a `GameConstants` default with `BOUNTYBOT_<NAME>` env + per-guild override). It graduated from the `LOOT_JOURNAL.md` design journal, which is now superseded.
+
+> **Code map (shipped):** pure selection math in `services/bot-core/src/services/loot_engine.py`; the startup static cache + tractor resolution in `loot_service.py` (`LootService`); the cargo-load/cap helpers in `cargo_utils.py`; the spawn roll and the kill-time loot write in `bounty_service.py`; the over-cap gate in `bounty_service.py` (`/check`) and `duel_service.py` (challenge + accept); the gateway result UX in `discord-gateway` `bountyCog.py` and the pre-fight advertise line in `_shared/loadout_embed.py`. The 19 tunables live in `game_constants.py`; their per-guild columns ship in **migration `0022_loot_config_knobs`**.
+
+### 15.1 Commodity is a first-class inventory type
+
+`commodity` is now a **6th concrete inventory type**, alongside `ship`, `primary_weapon`, `secondary_weapon`, `turret_weapon`, `module`. It is a member of all three economy frozensets in `game_constants.py` — `CATALOG_ITEM_TYPES`, `PLAYABLE_ITEM_TYPES`, `CURRENTLY_ENABLED_TYPES` — so it is browsable, ownable, and writable to `player_inventories` (`item_type = "commodity"`). It is **concrete**, so it has no `GENERIC_TO_CONCRETE_EXPANSION` alias entry.
+
+Commodities are **pure cargo**: never equipped (no slot / loadout), so the entire equip / unequip / swap / secondary-ammo machinery never applies. They stack by quantity and always count toward the cargo load (§15.6).
+
+**Commodities are never stocked in a shop.** `commodity` is deliberately **absent** from `_CONCRETE_TO_CONFIG_KEY` (`shop_service.py`), the map that gates shop stocking / purchasability — so a commodity is **not buyable** and is **never written to a `GuildShop`**. The shop-refresh algorithm continues to exclude commodities. Existence validation now scans `CommodityRepository` (`inventory_service._validate_item_exists`); pricing reads the base `Item.value` column.
+
+### 15.2 Loot trigger — a player COMBAT WIN only (kill, not capture)
+
+Loot fires **only on a proper combat victory** — the player must *win* the fight against the criminal (`fight_results.winner_side == 1`). It does **not** fire on a loss, a stalemate / draw, a bare capture, a no-ship resolution, or any PvP duel.
+
+- **Stalemate** (mutual death or time-cap) sets `winner_side = None` (not `0`), so the strict `== 1` test cleanly excludes it; a criminal win is `winner_side == 2`. No loot on either.
+- **Bronze** bounties auto-capture (no combat required) and then run an **automatic** post-capture bonus fight. The capture is **not** a kill — loot fires only if the player **wins that automatic fight** (`combat_player_won`), never on the bare auto-capture.
+- **Silver+** capture requires winning the mandatory fight, so kill = capture; loot fires on that same win.
+- **No-ship branch** (defensive — unreachable in normal play, since a player can never sell their active ship and criminals always have a ship): a Silver+ no-ship resolution sets `duel_won = True` with `fight_results = None`. Loot gates on `fight_results is not None and winner_side == 1`, so the `None` case grants no loot (and no tractor ⇒ 0% anyway).
+- The standalone `POST /api/v1/bounties/combat-bonus` endpoint is orphaned (no caller); loot hooks **only** the inline combat-win branch of `_process_single_bounty_check`.
+
+The loot write is its **own player-locked transaction**, never composed into `distribute_rewards`: it re-acquires the player `FOR UPDATE` (via `add_item_to_inventory(commit=False)` + an explicit commit) and reads free cargo under that re-lock (race-safe vs concurrent buy/sell). Reward credits/XP and loot are **independent outcomes** — a loot-write failure must never roll back the bounty reward. Loot is a **player** action: it logs via `bblogger` with player / bounty / item IDs and does **not** call `audit_service`.
+
+### 15.3 Loot chance — gated by the equipped TractorBeam
+
+Looting requires an equipped `TractorBeamModule`. Only four beams exist, resolved to a chance via a **static map** (keyed by the beam's tech level; lock time is **not** used by the loot mechanic):
+
+| Tractor | Tech level | Loot chance | Knob |
+|---------|-----------:|------------:|------|
+| AB-1 "Retractor"  | 4 | 20 % | `LOOT_CHANCE_TRACTOR_T1` |
+| AB-2 "Glue Gun"   | 5 | 40 % | `LOOT_CHANCE_TRACTOR_T2` |
+| AB-3 "Kingfisher" | 7 | 60 % | `LOOT_CHANCE_TRACTOR_T3` |
+| AB-4 "Octopus"    | 8 | 80 % | `LOOT_CHANCE_TRACTOR_T4` |
+| (none equipped)   | — |  0 % | `LOOT_CHANCE_NO_TRACTOR` |
+
+TractorBeams are unique-equip (0 or 1 ever equipped), so there is no multi-beam tie-break. There is exactly **one** loot roll per kill (the criminal carries exactly one cargo item — §15.4): pass ⇒ the item is looted (subject to the §15.6 cargo clamp); fail ⇒ nothing.
+
+### 15.4 Criminal cargo — rolled at spawn, advertised pre-fight
+
+**Every** criminal spawns carrying **exactly one** loot item (100 % drop guarantee — `LOOT_DROP_CHANCE` is a fixed constant, not a tunable). The item is rolled **at spawn** (`spawn_bounty`) and persisted in the existing `Bounty.criminal_ship` JSONB under a `cargo` key — `{item_type, item_name, quantity}`. Lifecycle = the bounty row; no separate table or migration. The win-branch loot write reads this persisted cargo rather than re-rolling. There is **no criminal-side cargo clamp** (the smallest criminal ship's hold exceeds the default Band-3 max, and no criminal-side cargo enforcement exists — the player-side §15.6 clamp is the only real gate).
+
+The carried cargo is **advertised before the fight** — the bounty spawn announcement embed and the `/criminal-loadout` embed both render a **"Loot aboard"** field showing `Nx <Item>`, so players see what is lootable before engaging. This is informational only; the actual pull still gates on the §15.3 roll and §15.6 cargo space at the win.
+
+### 15.5 Item & quantity selection
+
+A criminal's single loot item is chosen in three steps (pure functions in `loot_engine.py`; pools preloaded by `LootService` at startup and rebuilt only on a seed reload):
+
+**Step 1 — choose the band** (weighted; sum 100 %):
+
+| Band | Members | Select chance | Knob |
+|------|---------|--------------:|------|
+| Band 1 | all Weapons + all Modules (equipment) | 10 % | `LOOT_BAND1_SELECT_PCT` |
+| Band 2 | commodities `ore_core`, `rare` | 20 % | `LOOT_BAND2_SELECT_PCT` |
+| Band 3 | commodities `booze`, `technical`, `ore`, `standard`, `waste` | 70 % | `LOOT_BAND3_SELECT_PCT` |
+
+The loot domain excludes the moot commodity subcategories `plasma` and `mission`, and excludes the modules `JumpDriveModule`, `TimeExtenderModule`, `ShieldInjectorModule`.
+
+**Step 2 — pick the item within the band:**
+- **Bands 2 & 3** — uniform RNG over the eligible commodity **item pool** (not subcategory-then-item), so a subcategory with more rows is proportionally likelier (an intentional skew that mirrors the real game). No tech-level weighting.
+- **Band 1** — restrict to Weapons / Modules whose tech level is within **±`LOOT_BAND1_TL_WINDOW`** (default ±1) of the criminal's TL (the criminal TL anchor is `Bounty.tech_level`, clamped to `[MIN_TECH_LEVEL, MAX_TECH_LEVEL]` = `[1,10]`), then pick uniform random. A trivial nearest-TL fallback (rank by `|item_TL − criminal_TL|` over the cached Band-1 pool) keeps the function total if the window is ever empty.
+
+**Step 3 — roll quantity** from the chosen band's distribution. All three bands use **one discrete-triangular `(min, mode, max)` sampler**:
+
+| Band | `(min, mode, max)` | Shape | Mean | Knobs |
+|------|--------------------|-------|-----:|-------|
+| Band 1 | (1, 1, 3) | descending ramp → 50 / 33 / 17 | ≈ 1.67 | `LOOT_BAND1_QTY_{MIN,MODE,MAX}` |
+| Band 2 | (4, 8, 12) | symmetric | 8 | `LOOT_BAND2_QTY_{MIN,MODE,MAX}` |
+| Band 3 | (10, 16, 22) | symmetric | 16 | `LOOT_BAND3_QTY_{MIN,MODE,MAX}` |
+
+Bands are value-inverse (cheaper class ⇒ bigger stack) so total loot value stays in a sane range.
+
+### 15.6 Cargo cap — free-cargo gate, per-unit clamp, over-cap lockout
+
+Cargo load is counted **per-unit**: `sum(player_inventories.quantity)` (ship cargo only; equipped gear excluded). Effective cap = base `ship.cargo` × any equipped `CompressorModule` multiplier. `cargo_utils.py` provides the canonical `compute_free_cargo` / `is_over_cap` helpers so the loot clamp and the over-cap gate share one definition.
+
+**Free-cargo gate (before rolling).** If the player has 0 free cargo at the win, looting is skipped entirely (`cargo_full` outcome) — no feel-bad "passed the roll, got nothing."
+
+**Per-unit clamp.** A looted stack is clamped to free space: if the player has room for 6 units and the criminal carried `16x booze`, the player loots 6; the other 10 are lost forever (no re-loot). For a qty-1 item this is simply loot-it-if-there's-room.
+
+**Over-cap lockout.** A player whose load **exceeds** cap is blocked from "leaving station": the over-cap check is the **first** thing evaluated in `/duel` challenge, `/duel` accept (both parties are gated), and `/check`, rejecting with an ephemeral **`"Cargo Overloaded — NN/XX. Unable to leave station."`** (NN = current load, XX = cap). Loot can never push a player over cap (the clamp fills only *to* cap); over-cap is reached by unequipping (esp. a Compressor, which lowers max capacity) or by buying past cap (purchase is intentionally **not** cap-gated). `equip` / `unequip` / `buy` are **not** gated — only the three combat entries — so the escapes (sell, equip-Compressor) stay available while over-cap.
+
+### 15.7 Loot result UX
+
+Loot resolves during `/check` on a combat win, so its result renders in the **same** capture/check embed (never a separate message), as a `<beam-emoji> Loot` field (the emoji is the equipped beam's own custom Discord emoji). bot-core returns a `loot` payload on the check response — `{item_name, qty_looted, qty_total, outcome, tractor_emoji, ...}` with `outcome ∈ {looted, partial, failed, cargo_full}` (the wire `LootResult.outcome` `Literal` in `bounty_schema.py` — the no-loot/no-beam case is sent as a null `loot` field, so `none` is an internal-only outcome that never appears on the wire) — and the gateway renders the line. The displayed quantity is always shown (even `1x`):
+
+| `outcome` | Line |
+|-----------|------|
+| `looted` | `Tractored 16x Booze.` |
+| `partial` | `Tractored 6 of 16 Booze — cargo full.` |
+| `failed` | `Tractor beam failed — nothing looted.` |
+| `cargo_full` | `Cargo hold full (NN/XX) — No room for loot.` |
+| *no beam / nothing looted* | *(null `loot` field on the wire — internal `none`; the Loot field is omitted entirely — no nag on a no-beam kill)* |
+
+No loot line appears on a loss / stalemate / defeat embed. The over-cap lockout is a separate ephemeral **pre-gate** message, not part of the result embed.
+
+### 15.8 Looted item disposal
+
+Looted Weapons / Modules keep their class and may be equipped, sold, or given. Disposal uses the existing commands:
+- **Sell.** A **commodity** sells as a **pure sink**: payout = `Item.value × quantity × LOOT_COMMODITY_SELL_FRACTION` (default 100 %), the item is destroyed and **no shop is touched**. A **Weapon / Module** sells to the player's current-tier `GuildShop` as before (the item enters store stock). This divergence is the one net-new branch in `sell_item`.
+- **Give.** `/give` now carries a `quantity` argument (was hard-coded to 1); commodity gives are enabled by the `"commodity"` member added to the `TransferItemRequest.item_type` `Literal`. Item transfers are cargo-only by construction (never touch equipped slots).
+- **Equip caveat.** A looted secondary-weapon stack, on equip, moves the *whole* stack into the `secondary_ammo` sidecar (existing behaviour) — `2x` of a secondary becomes 2 ammo rounds, not 2 spare launchers.
+
+### 15.9 Configuration
+
+All 19 loot tunables are listed in Appendix A (the `LOOT_*` block). Each is a `GameConstants` scalar with a `BOUNTYBOT_<NAME>` env override and a per-guild `guild_configs` column added by **migration `0022_loot_config_knobs`** (additive, nullable, inspector-guarded; `NULL` ⇒ the `GameConstants` default). They are exposed for live tuning via `/admin_config_constants`. `LOOT_DROP_CHANCE` is the lone exception — a **fixed** 100 % constant with no env, no column, and no override (the tractor roll is the sole loot-frequency lever).
+
+---
+
 ## Appendix A — Configuration knobs (locked defaults)
 
 All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per §0.1).
@@ -832,6 +943,21 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 | `COMBAT_LAYER_REEMIT_FRACTION` | **0.25** | §12 (CI-21 — `layer_depleted` re-emit latch clears when the layer recovers ≥ this fraction of max) |
 | `CRIMINAL_SECONDARY_ROUNDS` | **{nuke: 1, missile: 5, rocket: 5, cluster-missile: 3, shock-blast: 2}** | §6.2 CI-17 (criminal per-subtype round grants) |
 | `CRIMINAL_SECONDARY_MIN_DAMAGE` | **1** | §6.2 CI-17 (criminal gear-roll exclusion: damage ≤ this is skipped) |
+| `LOOT_CHANCE_TRACTOR_T1` | **20** | §15.3 (AB-1 "Retractor", TL4 — loot-roll %) |
+| `LOOT_CHANCE_TRACTOR_T2` | **40** | §15.3 (AB-2 "Glue Gun", TL5) |
+| `LOOT_CHANCE_TRACTOR_T3` | **60** | §15.3 (AB-3 "Kingfisher", TL7) |
+| `LOOT_CHANCE_TRACTOR_T4` | **80** | §15.3 (AB-4 "Octopus", TL8) |
+| `LOOT_CHANCE_NO_TRACTOR` | **0** | §15.3 (no tractor equipped) |
+| `LOOT_BAND1_SELECT_PCT` | **10** | §15.5 (band-select % — Weapons+Modules) |
+| `LOOT_BAND2_SELECT_PCT` | **20** | §15.5 (band-select % — ore_core, rare) |
+| `LOOT_BAND3_SELECT_PCT` | **70** | §15.5 (band-select % — bulk commodities) |
+| `LOOT_BAND1_TL_WINDOW` | **1** | §15.5 (Band-1 ±TL window vs criminal TL) |
+| `LOOT_BAND1_QTY_MIN` / `LOOT_BAND1_QTY_MODE` / `LOOT_BAND1_QTY_MAX` | **1 / 1 / 3** | §15.5 (Band-1 triangular → 50/33/17) |
+| `LOOT_BAND2_QTY_MIN` / `LOOT_BAND2_QTY_MODE` / `LOOT_BAND2_QTY_MAX` | **4 / 8 / 12** | §15.5 (Band-2 triangular, mean 8) |
+| `LOOT_BAND3_QTY_MIN` / `LOOT_BAND3_QTY_MODE` / `LOOT_BAND3_QTY_MAX` | **10 / 16 / 22** | §15.5 (Band-3 triangular, mean 16) |
+| `LOOT_COMMODITY_SELL_FRACTION` | **1.0** | §15.8 (commodity sink payout = `Item.value` × qty × this) |
+
+> `LOOT_DROP_CHANCE` is intentionally **not** in this table — it is a **fixed** 100 % constant (no env, no per-guild column, no migration), per §15.4 / §15.9.
 
 > Names with `BOUNTYBOT_` prefix are listed verbatim where the existing convention uses the prefix in the env name; others use the unprefixed `GameConstants` name (the runtime env override is `BOUNTYBOT_<NAME>` in all cases).
 

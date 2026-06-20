@@ -31,12 +31,12 @@ This means:
 |---|---|---|---|
 | `about.py` | `/about` | about | Browse game data: category list, objects per category, object lookup by name/alias/ID, ship render-info for blender-service |
 | `admin.py` | `/admin` | admin | Admin operations: guild initialize/reset/uninstall/cleanup, player credits/XP/reset, inventory add, give/remove item & ship, shop refresh/config, system health, guild stats; authorized via `ADMIN_USER_IDS` env var; mutations recorded via `AuditService.log_action()` |
-| `bounties.py` | `/bounties` | bounties | Bounty lifecycle: check system, combat-bonus, list active, route, spawn, loadout, map render, clear guild bounties, admin-spawn |
+| `bounties.py` | `/bounties` | bounties | Bounty lifecycle: check system, combat-bonus, list active, route, spawn, loadout, map render, clear guild bounties, admin-spawn. PvC loot: the check response carries the `loot` result payload + over-cap (`OVER_CAP`) rejection; bounty reads expose the criminal `loot_cargo`. (`/bounties/combat-bonus` is orphaned — loot hooks only the inline check path.) |
 | `combat_log.py` | `/combat-log` | combat-log | Read API for the `/combat-log` Discord command: list recent fights for a player (autocomplete feed), full battle detail (404 unless `user_id` is one of the combatants) |
-| `config.py` | `/config` | config | Guild configuration: read/update, shop config, reset, admin role, starting credits, XP thresholds, validation, defaults, bounty config, per-guild game-constants overrides + reset |
+| `config.py` | `/config` | config | Guild configuration: read/update, shop config, reset, admin role, starting credits, XP thresholds, validation, defaults, bounty config, per-guild game-constants overrides + reset (`_OVERRIDE_FIELDS` = 53 fields, incl. the 19 PvC-loot knobs) |
 | `data.py` | `/data` | data | POST `/{category}` triggers an upsert of seed JSON from `import_data/<category>/`; GET `/categories` lists valid categories |
 | `discord_message.py` | `/discord-message` | discord-message | Persistent Discord message references: CRUD + lookups by composite key, guild, channel, type, reference |
-| `duels.py` | `/duels` | duels | Duel challenge lifecycle: outgoing, pending, challenge, accept, reject, cancel, pending-all, admin-cancel-all, admin-cancel |
+| `duels.py` | `/duels` | duels | Duel challenge lifecycle: outgoing, pending, challenge, accept, reject, cancel, pending-all, admin-cancel-all, admin-cancel. Challenge + accept surface the T7 over-cap lockout as a structured 409 (`error: "over_cap"`, `current_load`/`effective_cap`) via `OverCapError`. |
 | `health.py` | `/health` | health | Health checks: comprehensive (``""``), `/simple`, `/readiness`, `/liveness`, `/database` |
 | `inventory.py` | `/inventory` | inventory | Player inventory: list (`include_ships` query param), summary (`include_ships`), add, remove, transfer, search, item count, equip-compatibility validate, consolidate |
 | `players.py` | `/players` | players | Player management: create-or-get, read, list by guild, credits, XP, prestige, statistics, promotion-status, combat-preflight, promote, demote, loadout, cooldown reset, transfer credits |
@@ -212,4 +212,5 @@ If the router lives in a subpackage (like `announcements/`), the package's `__in
 
 ---
 
-*Last updated: 2026-06-11*
+*Last updated: 2026-06-20 (PvC loot: check `loot` payload + over-cap on
+bounties/duels; config `_OVERRIDE_FIELDS` now 53 with the loot knobs).*

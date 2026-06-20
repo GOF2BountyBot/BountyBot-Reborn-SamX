@@ -495,6 +495,78 @@ class TestDuelAcceptCommand:
 
 
 # ---------------------------------------------------------------------------
+# T7 over-cap lockout — gateway renders the exact ephemeral string for both
+# duel flows when bot-core returns the structured 409 over_cap rejection.
+# ---------------------------------------------------------------------------
+
+
+def _over_cap_409(current_load: int, effective_cap: int):
+    """An httpx 409 HTTPStatusError carrying the structured over_cap detail."""
+    import httpx
+
+    error_response = MagicMock()
+    error_response.status_code = 409
+    error_response.json.return_value = {
+        "detail": {
+            "error": "over_cap",
+            "message": f"Cargo Overloaded — {current_load}/{effective_cap}. Unable to leave station.",
+            "current_load": current_load,
+            "effective_cap": effective_cap,
+        }
+    }
+    return httpx.HTTPStatusError("409 Conflict", request=MagicMock(), response=error_response)
+
+
+class TestDuelOverCapLockout:
+    """The 409 over_cap rejection → exact ephemeral 'Cargo Overloaded — NN/XX.' string."""
+
+    def test_challenge_over_cap_renders_exact_ephemeral(self, mock_duel_cog, make_mock_response):
+        interaction = _create_mock_interaction(user_id=100)
+        target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
+        challenger_player_resp = make_mock_response({"id": 1})
+        target_player_resp = make_mock_response({"id": 2})
+        mock_duel_cog.http_client.post = AsyncMock(
+            side_effect=[challenger_player_resp, target_player_resp, _over_cap_409(26, 25)]
+        )
+
+        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+
+        interaction.followup.send.assert_awaited_once()
+        args, kwargs = interaction.followup.send.call_args
+        assert args[0] == "Cargo Overloaded — 26/25. Unable to leave station."
+        assert kwargs.get("ephemeral", False)
+
+    def test_accept_over_cap_renders_exact_ephemeral(self, mock_duel_cog, make_mock_response):
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, _over_cap_409(30, 25)])
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        args, kwargs = interaction.followup.send.call_args
+        assert args[0] == "Cargo Overloaded — 30/25. Unable to leave station."
+        assert kwargs.get("ephemeral", False)
+
+    def test_challenge_non_over_cap_proceeds_normally(self, mock_duel_cog, make_mock_response):
+        """A normal (non-over-cap) response still builds the challenge embed (no regression)."""
+        interaction = _create_mock_interaction(user_id=100)
+        target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
+        target.mention = "<@200>"
+        challenger_player_resp = make_mock_response({"id": 1})
+        target_player_resp = make_mock_response({"id": 2})
+        duel_resp = make_mock_response(_make_mock_duel(duel_id=7, challenger_id=1, target_id=2))
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, duel_resp])
+
+        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        assert not call_kwargs.get("ephemeral", False)
+
+
+# ---------------------------------------------------------------------------
 # _build_accept_embed — winner/loser player-name display (B.63)
 # ---------------------------------------------------------------------------
 

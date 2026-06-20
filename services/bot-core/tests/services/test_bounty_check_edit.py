@@ -193,6 +193,11 @@ def service() -> BountyService:
     # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids (batched).
     # Default to empty list; individual tests that need payout content can override.
     svc.player_repo.get_by_ids = AsyncMock(return_value=[])
+    # T7 (over-cap lockout): check_bounty's first step reads cargo load via
+    # inventory_repo. Default to an empty cargo (zero load → under cap → gate is a
+    # no-op). Over-cap behaviour is covered by tests/integration/test_t7_over_cap_lockout.py.
+    svc.inventory_repo = MagicMock()
+    svc.inventory_repo.get_player_items = AsyncMock(return_value=[])
     return svc
 
 

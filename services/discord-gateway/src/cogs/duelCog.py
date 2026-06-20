@@ -37,6 +37,28 @@ def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
         return False
 
 
+def _over_cap_message(exc: httpx.HTTPStatusError) -> str | None:
+    """Return the T7 over-cap ephemeral string for a 409 over-cap rejection.
+
+    bot-core returns HTTP 409 with a structured ``detail`` object
+    ``{error: "over_cap", current_load, effective_cap, ...}`` when a player is
+    over their cargo cap and tries to leave station (LOOT_JOURNAL §5.5). Returns
+    the exact ``"Cargo Overloaded — NN/XX. Unable to leave station."`` string, or
+    ``None`` if this is not an over-cap rejection.
+    """
+    if exc.response.status_code != 409:
+        return None
+    try:
+        detail = exc.response.json().get("detail", {})
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+    if not isinstance(detail, dict) or detail.get("error") != "over_cap":
+        return None
+    nn = detail.get("current_load")
+    xx = detail.get("effective_cap")
+    return f"Cargo Overloaded — {nn}/{xx}. Unable to leave station."
+
+
 class DuelCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -361,7 +383,10 @@ class DuelCog(commands.Cog):
                 )
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 400:
+            over_cap_msg = _over_cap_message(e)
+            if over_cap_msg is not None:
+                await interaction.followup.send(over_cap_msg, ephemeral=True)
+            elif e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", str(e))
                 except Exception:  # pylint: disable=broad-exception-caught
@@ -485,7 +510,10 @@ class DuelCog(commands.Cog):
                 )
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
+            over_cap_msg = _over_cap_message(e)
+            if over_cap_msg is not None:
+                await interaction.followup.send(over_cap_msg, ephemeral=True)
+            elif e.response.status_code == 404:
                 await interaction.followup.send("❌ Duel not found.", ephemeral=True)
             elif e.response.status_code == 403:
                 await interaction.followup.send("❌ You can only accept duels that were issued to you.", ephemeral=True)

@@ -15,11 +15,31 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from persist.database.manager import get_db_session
 from services.audit_service import AuditService
 from services.duel_service import DuelService
+from services.exceptions import OverCapError
 from shared import bblogger
 
 from api.schemas.duel_schema import DuelRequestCreate, DuelRequestResponse
 
 flogger = bblogger.get_logger("duel-router")
+
+
+def _over_cap_http(exc: OverCapError) -> HTTPException:
+    """Build the structured 409 over-cap rejection (T7 / LOOT_JOURNAL §5.5).
+
+    Returns HTTP 409 with a JSON detail object the gateway can detect on
+    ``error == "over_cap"`` and that carries ``current_load`` / ``effective_cap``
+    so the cog can render "Cargo Overloaded — NN/XX. Unable to leave station."
+    """
+    return HTTPException(
+        status_code=409,
+        detail={
+            "error": "over_cap",
+            "message": str(exc),
+            "current_load": exc.current_load,
+            "effective_cap": exc.effective_cap,
+        },
+    )
+
 
 _GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
 _GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
@@ -235,6 +255,12 @@ async def create_challenge(
                 target_id=request.target_id,
             )
             return result
+        except OverCapError as exc:
+            flogger.info(
+                f"Duel challenge over-cap lockout: challenger={request.challenger_id} "
+                f"target={request.target_id} load={exc.current_load} cap={exc.effective_cap}"
+            )
+            raise _over_cap_http(exc) from exc
         except ValueError as exc:
             flogger.error(
                 f"Duel challenge failed: challenger={request.challenger_id} target={request.target_id}: {exc}"
@@ -284,6 +310,12 @@ async def accept_duel(
         flogger.debug(f"User {user_id} is accepting duel {duel_id} (authorization check passed)")
         try:
             result = await service.accept_duel(db, duel_id)  # noqa: TRANSACTION_DISCIPLINE - see CombatLogService
+        except OverCapError as exc:
+            flogger.info(
+                f"Duel accept over-cap lockout: duel_id={duel_id} user_id={user_id} "
+                f"load={exc.current_load} cap={exc.effective_cap}"
+            )
+            raise _over_cap_http(exc) from exc
         except ValueError as exc:
             msg = str(exc)
             flogger.error(f"Duel accept failed: duel_id={duel_id} user_id={user_id}: {msg}")

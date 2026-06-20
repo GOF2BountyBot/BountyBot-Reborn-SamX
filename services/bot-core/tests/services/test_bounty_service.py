@@ -247,6 +247,14 @@ def service() -> BountyService:
     svc.loot_service.preload_static_data = AsyncMock()
     svc.loot_service.roll_loot = MagicMock(return_value=None)
 
+    # T7 (over-cap lockout): check_bounty now reads cargo load via inventory_repo
+    # as its FIRST step. Default to an empty cargo (zero load → under cap → the
+    # gate is a no-op) so the existing check tests exercise their own paths.
+    # Dedicated over-cap behaviour is covered by
+    # tests/integration/test_t7_over_cap_lockout.py.
+    svc.inventory_repo = MagicMock()
+    svc.inventory_repo.get_player_items = AsyncMock(return_value=[])
+
     return svc
 
 

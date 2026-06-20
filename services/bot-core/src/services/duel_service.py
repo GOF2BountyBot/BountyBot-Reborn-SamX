@@ -14,11 +14,14 @@ from datetime import UTC, datetime, timedelta
 from persist.models.duel_request import DuelRequest
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.duel_repository import DuelRepository
+from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.user_repository import UserRepository
 from shared import bblogger
 
+from services.cargo_utils import compute_free_cargo, is_over_cap
 from services.combat_service import CombatService
+from services.exceptions import OverCapError
 from services.game_constants import GameConstants, resolve_constant
 from services.loadout_builder import LoadoutBuilder
 
@@ -33,7 +36,27 @@ class DuelService:
         self.player_repo = PlayerRepository()
         self.user_repo = UserRepository()
         self.config_repo = ConfigRepository()
+        self.inventory_repo = InventoryRepository()
         self.combat_service = CombatService()
+
+    # ------------------------------------------------------------------
+    # Over-cap lockout (T7 / LOOT_JOURNAL §5.5 C-3a)
+    # ------------------------------------------------------------------
+
+    async def _assert_under_cap(self, db, player) -> None:
+        """Raise :class:`OverCapError` if ``player`` is over their cargo cap.
+
+        The over-cap lockout: a player who is "leaving station" for a duel must
+        be at-or-under their cargo cap. Over-cap is STRICTLY ``load > cap`` (being
+        exactly AT cap is allowed). Plain read — a stale borderline read
+        self-corrects next command (§5.5 C-3b). Equip/unequip/buy are NOT gated.
+        """
+        _free, load, cap = await compute_free_cargo(db, self.inventory_repo, player)
+        if is_over_cap(load, cap):
+            flogger.info(
+                f"Duel over-cap lockout: player_id={getattr(player, 'id', None)} cargo_load={load} cargo_cap={cap}"
+            )
+            raise OverCapError(current_load=load, effective_cap=cap, player_id=getattr(player, "id", None))
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -139,6 +162,13 @@ class DuelService:
         if target is None:
             flogger.error(f"Target not found: player_id={target_id}")
             raise ValueError(f"Target player with ID {target_id} not found.")
+
+        # T7 over-cap lockout (LOOT_JOURNAL §5.5 C-3a): the CHALLENGER is "leaving
+        # station" at challenge time, so gate them FIRST — before the credit /
+        # duplicate-duel checks and before any duel row is created. The target is
+        # gated separately at accept-time (they choose to leave then). Raises
+        # OverCapError on a strict over-cap (load > cap); equip/unequip/buy not gated.
+        await self._assert_under_cap(db, challenger)
 
         # Validate available credits (balance minus total pending stakes in both roles).
         # This prevents the double-spend exploit where a player issues multiple challenges
@@ -283,6 +313,14 @@ class DuelService:
 
         challenger = locked[duel.challenger_id]
         target = locked[duel.target_id]
+
+        # T7 over-cap lockout (LOOT_JOURNAL §5.5 C-3a): the ACCEPTER (the target,
+        # enforced by the router's target-only authorization) is "leaving station"
+        # at accept time — gate them FIRST, before the credit re-validation and
+        # before combat resolves. Raises OverCapError on a strict over-cap
+        # (load > cap); the duel stays pending and no combat runs. The challenger
+        # was already gated at challenge time. Equip/unequip/buy are NOT gated.
+        await self._assert_under_cap(db, target)
 
         # Re-validate available credits at accept-time, excluding this duel from the
         # pending sum (it's being resolved, not additional exposure).

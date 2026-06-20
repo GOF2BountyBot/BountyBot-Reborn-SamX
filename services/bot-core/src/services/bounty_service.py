@@ -28,6 +28,7 @@ from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepo
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.cargo_utils import compute_free_cargo, is_over_cap
 from services.combat_models import DEFERRED_SECONDARY_SUBTYPES, ShipLoadout
 from services.combat_service import CombatService
 from services.game_constants import GameConstants, resolve_constant
@@ -418,6 +419,10 @@ class CheckResult(enum.Enum):
     INCORRECT = "incorrect"
     CORRECT = "correct"
     ON_COOLDOWN = "on_cooldown"
+    # T7: over cargo cap — checking player is locked out before ANY bounty is
+    # resolved (LOOT_JOURNAL §5.5 C-3a). Carries cargo_current / cargo_max so the
+    # gateway can render "Cargo Overloaded — NN/XX. Unable to leave station."
+    OVER_CAP = "over_cap"
 
 
 @dataclass
@@ -490,6 +495,10 @@ class CheckResponse:  # pylint: disable=too-many-instance-attributes
     recently_spotted: bool = False
     # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
     cooldown_until: int | None = None
+    # T7 over-cap lockout: current per-unit cargo load (NN) and effective cap (XX),
+    # populated ONLY on an OVER_CAP result so the gateway can render NN/XX.
+    cargo_current: int | None = None
+    cargo_max: int | None = None
     # PvC loot result (T5): populated on a player COMBAT WIN only (§5.2/§5.9).
     # None on any non-win outcome. T6 reads this to build the response loot payload.
     loot: "LootOutcome | None" = None
@@ -1440,41 +1449,11 @@ class BountyService:
         matching ``loadout_response_service`` (§7.1).  Current load = per-unit
         ``sum(PlayerInventory.quantity)`` (cargo only; equipped gear excluded, §7.4).
         No active ship ⇒ cap 0 (the no-ship branch never reaches loot anyway).
+
+        Delegates to the shared :func:`services.cargo_utils.compute_free_cargo`
+        so the T5 loot clamp and the T7 over-cap gate share one definition.
         """
-        from persist.models.module import Module
-        from persist.models.player_ship import PlayerShip
-        from persist.models.ship import Ship
-        from sqlalchemy import select as _select
-
-        # Current per-unit cargo load under the held lock.
-        inv_items = await self.inventory_repo.get_player_items(db, player_locked.id)
-        current_load = sum(int(getattr(i, "quantity", 0) or 0) for i in inv_items)
-
-        active_ship_id = getattr(player_locked, "active_ship_id", None)
-        if not active_ship_id:
-            return (0 - current_load, current_load, 0)
-
-        player_ship = await db.get(PlayerShip, active_ship_id)
-        if player_ship is None:
-            return (0 - current_load, current_load, 0)
-
-        ship_row = (await db.execute(_select(Ship).where(Ship.name == player_ship.ship_name))).scalars().first()
-        base_cargo = int(getattr(ship_row, "cargo", 0) or 0) if ship_row else 0
-
-        # Compressor multiplier from equipped modules (only CompressorModule raises cap, §7.1).
-        compressor_multiplier = 1.0
-        for m_name in getattr(player_ship, "modules", None) or []:
-            mod = (await db.execute(_select(Module).where(Module.name == m_name))).scalars().first()
-            if mod is None or getattr(mod, "type", None) != "CompressorModule":
-                continue
-            extra = mod.extra_atts if isinstance(getattr(mod, "extra_atts", None), dict) else {}
-            raw_mult = extra.get("cargoMultiplier", extra.get("cargo_multiplier"))
-            if raw_mult is not None:
-                with contextlib.suppress(TypeError, ValueError):
-                    compressor_multiplier *= float(raw_mult)
-
-        effective_cap = round(base_cargo * compressor_multiplier) if base_cargo else base_cargo
-        return (effective_cap - current_load, current_load, effective_cap)
+        return await compute_free_cargo(db, self.inventory_repo, player_locked)
 
     async def _apply_loot_on_win(
         self,
@@ -1825,6 +1804,29 @@ class BountyService:
         if player is None:
             return MultiCheckResponse(
                 outcomes=[CheckResponse(result=CheckResult.NOT_FOUND, message="Player not found")],
+            )
+
+        # T7: Over-cap lockout — the FIRST thing evaluated, before the cooldown
+        # check or ANY bounty resolution (LOOT_JOURNAL §5.5 C-3a). /check resolves
+        # kills + grants loot, so blocking before resolution prevents resolving
+        # an over-cap player into a worse state. Plain read (no lock): a stale
+        # borderline read self-corrects on the next command (§5.5 C-3b). Escapes
+        # (sell / equip-Compressor) stay available — only the 3 combat entries gate.
+        _free, _load, _cap = await compute_free_cargo(db, self.inventory_repo, player)
+        if is_over_cap(_load, _cap):
+            flogger.info(
+                f"/check over-cap lockout: player_id={player_id} guild_id={guild_id} "
+                f"cargo_load={_load} cargo_cap={_cap}"
+            )
+            return MultiCheckResponse(
+                outcomes=[
+                    CheckResponse(
+                        result=CheckResult.OVER_CAP,
+                        message=f"Cargo Overloaded — {_load}/{_cap}. Unable to leave station.",
+                        cargo_current=_load,
+                        cargo_max=_cap,
+                    )
+                ],
             )
 
         # Step 2: Check cooldown

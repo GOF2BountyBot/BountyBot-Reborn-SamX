@@ -188,6 +188,8 @@ def _outcome_to_schema(outcome) -> BountyCheckOutcome:
         recently_spotted=outcome.recently_spotted,
         proximity_hint=outcome.proximity_hint,
         distance_to_answer=outcome.distance_to_answer,
+        cargo_current=outcome.cargo_current,
+        cargo_max=outcome.cargo_max,
         loot=_loot_to_schema(outcome.loot),
     )
 
@@ -220,6 +222,9 @@ def _build_check_response(multi) -> BountyCheckResponse:
         recently_spotted=first.recently_spotted if first else False,
         # cooldown_until is only populated on the ON_COOLDOWN outcome.
         cooldown_until=(multi.outcomes[0].cooldown_until if multi.outcomes else None),
+        # T7: legacy single-bounty mirror of outcomes[0] cargo NN/XX (OVER_CAP only).
+        cargo_current=first.cargo_current if first else None,
+        cargo_max=first.cargo_max if first else None,
         # T6: legacy single-bounty mirror of outcomes[0].loot (None if first has none).
         loot=first.loot if first else None,
     )

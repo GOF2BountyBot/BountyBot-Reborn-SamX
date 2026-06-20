@@ -230,6 +230,11 @@ class BountyCheckOutcome(BaseModel):
     # Per-outcome proximity hint (mainly for INCORRECT outcomes)
     proximity_hint: bool = False
     distance_to_answer: int | None = None
+    # T7 over-cap lockout: current cargo load (NN) and effective cap (XX), present
+    # only on an OVER_CAP outcome so the gateway can render
+    # "Cargo Overloaded — NN/XX. Unable to leave station."
+    cargo_current: int | None = None
+    cargo_max: int | None = None
     # PvC loot result (T6): present only on a player COMBAT WIN with a renderable
     # loot outcome (§5.9). None when there is no loot to render (no beam / nothing
     # looted) — the gateway then omits the Loot field entirely (§5.9 omission rule).
@@ -264,6 +269,10 @@ class BountyCheckResponse(BaseModel):
     recently_spotted: bool = False
     # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
     cooldown_until: int | None = None
+    # T7 over-cap lockout: legacy single-bounty mirror of outcomes[0] cargo NN/XX,
+    # populated only on an OVER_CAP result.
+    cargo_current: int | None = None
+    cargo_max: int | None = None
     # PvC loot result (T6): legacy single-bounty mirror of outcomes[0].loot, per the
     # existing combat-field mirror convention. None when the first outcome has no loot.
     loot: LootResult | None = None

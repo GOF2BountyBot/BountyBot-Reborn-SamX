@@ -2994,6 +2994,69 @@ class TestCheckCommandCooldownAndRecentlySpotted:
 
 
 # ===========================================================================
+# T7 — over-cap lockout: /check renders the exact ephemeral string when
+# bot-core returns the OVER_CAP outcome (LOOT_JOURNAL §5.5 / OQ-4).
+# ===========================================================================
+
+
+class TestCheckOverCapLockout:
+    """result == 'over_cap' → exact 'Cargo Overloaded — NN/XX.' ephemeral, no embed."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_player_id(self, mock_bounty_cog):
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+    @pytest.fixture(autouse=True)
+    def _populate_systems(self, mock_bounty_cog):
+        mock_bounty_cog._systems_cache.set("all", ["Sol", "Alpha"])
+
+    def _make_over_cap_response(self, current_load: int, effective_cap: int) -> dict:
+        msg = f"Cargo Overloaded — {current_load}/{effective_cap}. Unable to leave station."
+        return {
+            "result": "over_cap",
+            "message": msg,
+            "cargo_current": current_load,
+            "cargo_max": effective_cap,
+            "outcomes": [
+                {
+                    "result": "over_cap",
+                    "message": msg,
+                    "cargo_current": current_load,
+                    "cargo_max": effective_cap,
+                }
+            ],
+            "result_count": 1,
+        }
+
+    def test_over_cap_renders_exact_ephemeral_no_embed(self, mock_bounty_cog, make_mock_response):
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(self._make_over_cap_response(32, 25))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        interaction.followup.send.assert_awaited_once()
+        args, kwargs = interaction.followup.send.call_args
+        assert args[0] == "Cargo Overloaded — 32/25. Unable to leave station."
+        assert kwargs.get("ephemeral", False)
+        # No embed — the lockout is a plain ephemeral pre-gate, not a result embed.
+        assert "embed" not in kwargs
+
+    def test_non_over_cap_response_proceeds_to_embed(self, mock_bounty_cog, make_mock_response):
+        """A normal CORRECT response still renders an embed (no over-cap regression)."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(_make_check_response("correct", bounty_id=1, message="Captured!", division="bronze"))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+
+        interaction.followup.send.assert_awaited_once()
+        kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in kwargs
+        assert not kwargs.get("ephemeral", False)
+
+
+# ===========================================================================
 # B.12 — Multi-bounty consolidated /check reply tests
 # ===========================================================================
 #

@@ -297,6 +297,20 @@ class BountyCog(commands.Cog):
             message = data.get("message", "")
             outcomes = data.get("outcomes") or []
 
+            # T7 over-cap lockout (LOOT_JOURNAL §5.5): bot-core gates the checking
+            # player BEFORE resolving any bounty and returns a single OVER_CAP
+            # outcome carrying cargo NN/XX. Render the exact ephemeral string; no
+            # embed, no resolution happened server-side.
+            if result == "over_cap":
+                first = outcomes[0] if outcomes else data
+                nn = first.get("cargo_current", data.get("cargo_current"))
+                xx = first.get("cargo_max", data.get("cargo_max"))
+                await interaction.followup.send(
+                    f"Cargo Overloaded — {nn}/{xx}. Unable to leave station.",
+                    ephemeral=True,
+                )
+                return
+
             # Handle on_cooldown as ephemeral message (not an embed)
             # On_cooldown is always a single-outcome top-level result.
             if result == "on_cooldown":

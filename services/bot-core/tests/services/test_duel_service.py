@@ -74,6 +74,11 @@ def make_player(
     p.duel_credits_won = duel_credits_won
     p.duel_credits_lost = duel_credits_lost
     p.active_ship = active_ship
+    # T7: pin active_ship_id to None so the over-cap gate's compute_free_cargo
+    # takes the no-active-ship early return (cap 0, load 0 → under cap) instead of
+    # walking the ship/module DB path against an auto-MagicMock. Dedicated over-cap
+    # behaviour is covered by tests/integration/test_t7_over_cap_lockout.py.
+    p.active_ship_id = None
     return p
 
 
@@ -126,6 +131,13 @@ def make_service(*, duel_repo=None, player_repo=None, user_repo=None, combat_ser
     config_repo = AsyncMock()
     config_repo.get_by_guild_id = AsyncMock(return_value=None)
     svc.config_repo = config_repo
+    # T7: the over-cap lockout gate reads cargo load via inventory_repo. Default to
+    # an empty cargo (zero load → under cap → gate is a no-op) so these challenge/
+    # accept unit tests exercise their own validation paths. Dedicated over-cap
+    # behaviour is covered by tests/integration/test_t7_over_cap_lockout.py.
+    inventory_repo = AsyncMock()
+    inventory_repo.get_player_items = AsyncMock(return_value=[])
+    svc.inventory_repo = inventory_repo
     return svc
 
 

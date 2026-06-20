@@ -525,8 +525,8 @@ class TestRefreshShop:
         assert response.status_code == 422
 
     def test_refresh_shop_force_tech_level_out_of_range_returns_422(self, client, mock_shop_service):
-        """Returns 422 when force_tech_level is outside 1-9."""
-        payload = {"guild_id": 67890, "tier": "Bronze", "force_tech_level": 10}
+        """Returns 422 when force_tech_level is outside 1-10."""
+        payload = {"guild_id": 67890, "tier": "Bronze", "force_tech_level": 11}
 
         response = client.post("/api/v1/shops/refresh", json=payload)
 
@@ -676,16 +676,16 @@ class TestGetItemsByTechLevel:
             response = client.get("/api/v1/shops/guild/67890/tier/Bronze/tech-level/0")
 
         assert response.status_code == 400
-        assert "Tech level must be between 1 and 9" in response.json()["detail"]
+        assert "Tech level must be between 1 and 10" in response.json()["detail"]
 
-    def test_get_items_by_tech_level_ten_returns_400(self, client, mock_shop_service):
-        """Returns 400 when tech_level is 10 (above maximum)."""
+    def test_get_items_by_tech_level_eleven_returns_400(self, client, mock_shop_service):
+        """Returns 400 when tech_level is 11 (above new maximum of 10)."""
         with patch("api.routers.shops.get_db_session") as mock_get_db:
             _configure_db_mock(mock_get_db)
-            response = client.get("/api/v1/shops/guild/67890/tier/Bronze/tech-level/10")
+            response = client.get("/api/v1/shops/guild/67890/tier/Bronze/tech-level/11")
 
         assert response.status_code == 400
-        assert "Tech level must be between 1 and 9" in response.json()["detail"]
+        assert "Tech level must be between 1 and 10" in response.json()["detail"]
 
     @patch("api.routers.shops.get_db_session")
     def test_get_items_by_tech_level_server_error_returns_500(self, mock_get_db, client, mock_shop_service):

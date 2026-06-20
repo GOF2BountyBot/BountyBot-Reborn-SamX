@@ -625,14 +625,14 @@ class TestRefreshShop:
     @pytest.mark.asyncio
     async def test_raises_for_tech_level_zero(self, service, mock_db):
         """ValueError raised when forced tech level is 0."""
-        with pytest.raises(ValueError, match="Tech level must be between 1 and 9"):
+        with pytest.raises(ValueError, match="Tech level must be between 1 and 10"):
             await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=0)
 
     @pytest.mark.asyncio
-    async def test_raises_for_tech_level_ten(self, service, mock_db):
-        """ValueError raised when forced tech level is 10."""
-        with pytest.raises(ValueError, match="Tech level must be between 1 and 9"):
-            await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=10)
+    async def test_raises_for_tech_level_eleven(self, service, mock_db):
+        """ValueError raised when forced tech level is 11 (above new ceiling of 10)."""
+        with pytest.raises(ValueError, match="Tech level must be between 1 and 10"):
+            await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=11)
 
     @pytest.mark.asyncio
     async def test_returns_refresh_details(self, service, mock_db, mock_config_repo, mock_shop_repo):
@@ -665,9 +665,14 @@ class TestRefreshShop:
 
         # Unique name per type — refresh dedupes drawn names, so a constant
         # name would produce a single row for whichever type iterates first.
-        service._get_random_item_by_tech_level = AsyncMock(side_effect=lambda db, item_type, tl: f"{item_type}-item")
+        service._get_random_item_by_tech_level = AsyncMock(
+            side_effect=lambda db, item_type, tl, **kwargs: f"{item_type}-item"
+        )
         service._get_item_base_price = AsyncMock(return_value=300)
         service._select_item_tech_level = MagicMock(return_value=3)  # drawn two below batch
+        # For modules, row TL is resolved via _get_item_tech_level (catalog TL after step-down).
+        # Mock it to return 3 so the assertion below works for all non-ship types.
+        service._get_item_tech_level = AsyncMock(return_value=3)
         mock_shop_repo.create_or_update = AsyncMock(return_value=_make_shop_item())
 
         result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=5)
@@ -747,7 +752,7 @@ class TestRefreshShop:
         real_item_names = ["Micro Gun MK I", "128MJ Railgun"]
         call_count = 0
 
-        async def _fake_get_random(db, item_type, tech_level):
+        async def _fake_get_random(db, item_type, tech_level, **kwargs):
             nonlocal call_count
             name = real_item_names[call_count % len(real_item_names)]
             call_count += 1
@@ -1012,11 +1017,13 @@ class TestGetRandomItemByTechLevel:
 
     @pytest.mark.asyncio
     async def test_returns_module_name_from_repo(self, service, mock_db, mock_module_repo):
-        """Returns the name of a module fetched from the module_repo."""
+        """Returns the name of a non-junk module fetched from the module_repo (combat bucket)."""
         module = _make_db_item("Shield Generator", tech_level=2)
+        module.type = "ShieldModule"  # combat bucket — always drawable
         mock_module_repo.list_all = AsyncMock(return_value=[module])
 
-        result = await service._get_random_item_by_tech_level(mock_db, "module", 2)
+        # Force combat bucket by passing prob=1.0
+        result = await service._get_random_item_by_tech_level(mock_db, "module", 2, combat_module_prob=1.0)
 
         assert result == "Shield Generator"
 
@@ -1831,7 +1838,7 @@ class TestShopExcludesDeferredSecondarySubtypes:
 
         # Override _get_random_item_by_tech_level to return the canonical secondary for
         # the secondary_weapon type and None for everything else (keeps test focused)
-        async def _fake_get_random(db, item_type, tech_level):
+        async def _fake_get_random(db, item_type, tech_level, **kwargs):
             if item_type == "secondary_weapon":
                 return "Jet Rocket"
             return None
@@ -1952,7 +1959,7 @@ class TestCI11SecondaryWeaponOwnRange:
         # secondary draws never use the weapon namespace.
         _call_counters: dict[str, int] = {}
 
-        async def _fake_get_random(db, item_type, tech_level):
+        async def _fake_get_random(db, item_type, tech_level, **kwargs):
             _call_counters[item_type] = _call_counters.get(item_type, 0) + 1
             return f"Fake_{item_type}_{_call_counters[item_type]}"
 
@@ -2012,7 +2019,7 @@ class TestCI11SecondaryWeaponOwnRange:
         # secondary draws never bleed into the weapon namespace.
         _call_counters2: dict[str, int] = {}
 
-        async def _fake_get_random(db, item_type, tech_level):
+        async def _fake_get_random(db, item_type, tech_level, **kwargs):
             _call_counters2[item_type] = _call_counters2.get(item_type, 0) + 1
             return f"Fake_{item_type}_{_call_counters2[item_type]}"
 
@@ -2132,7 +2139,7 @@ class TestSecondaryQuantityScalers:
 
         mock_shop_repo.create_or_update = _fake_create_or_update
 
-        async def _fake_get_random(db, item_type, tech_level):
+        async def _fake_get_random(db, item_type, tech_level, **kwargs):
             return weapon.name if item_type == "secondary_weapon" else None
 
         service._get_random_item_by_tech_level = _fake_get_random
@@ -2212,7 +2219,7 @@ class TestSecondaryQuantityScalers:
 
         mock_shop_repo.create_or_update = _fake_create_or_update
 
-        async def _fake_get_random(db, item_type, tech_level):
+        async def _fake_get_random(db, item_type, tech_level, **kwargs):
             return "Micro Gun MK I" if item_type == "primary_weapon" else None
 
         service._get_random_item_by_tech_level = _fake_get_random
@@ -2592,7 +2599,7 @@ class TestRefreshExcludesCommodities:
 
         seen_types: list[str] = []
 
-        async def _fake_get_random(db, item_type, tl):
+        async def _fake_get_random(db, item_type, tl, **kwargs):
             seen_types.append(item_type)
             return f"{item_type}-item"
 
@@ -2607,3 +2614,182 @@ class TestRefreshExcludesCommodities:
         # ...and no generated shop row is a commodity.
         generated_types = {call.args[1]["item_type"] for call in mock_shop_repo.create_or_update.call_args_list}
         assert "commodity" not in generated_types
+
+
+# ===========================================================================
+# Tests: Module bucket draw (PART 5 coverage)
+# ===========================================================================
+
+
+def _make_module(name: str, module_type: str, tech_level: int) -> MagicMock:
+    """Create a mock Module with .type, .tech_level, and .name set."""
+    m = MagicMock()
+    m.name = name
+    m.type = module_type
+    m.tech_level = tech_level
+    return m
+
+
+class TestModuleBucketDraw:
+    """Tests for the new module-draw logic in _get_random_item_by_tech_level.
+
+    Uses the _static_cache injection pattern so no DB calls are made.
+    """
+
+    @pytest.mark.asyncio
+    async def test_junk_never_drawn(self, service, mock_db):
+        """JUNK module types are never returned regardless of bucket selection."""
+        from services.game_constants import GameConstants
+
+        # Build a pool with one junk module + one combat module at the same TL.
+        junk_type = next(iter(GameConstants.SHOP_JUNK_MODULE_TYPES))
+        combat_type = next(iter(GameConstants.SHOP_COMBAT_MODULE_TYPES))
+        junk_module = _make_module("Junk1", junk_type, 5)
+        combat_module = _make_module("Combat1", combat_type, 5)
+        service._static_cache = {"module": [junk_module, combat_module]}
+
+        results: set[str] = set()
+        for prob in (0.0, 1.0):
+            for _ in range(50):
+                result = await service._get_random_item_by_tech_level(mock_db, "module", 5, combat_module_prob=prob)
+                if result is not None:
+                    results.add(result)
+
+        assert "Junk1" not in results, f"Junk module appeared in results: {results}"
+
+    @pytest.mark.asyncio
+    async def test_combat_filler_split_75_25(self, service, mock_db):
+        """At prob=0.75 the combat bucket is drawn ~75% of the time (N=2000 draws)."""
+        import random
+
+        from services.game_constants import GameConstants
+
+        combat_type = next(iter(GameConstants.SHOP_COMBAT_MODULE_TYPES))
+        filler_type = next(iter(GameConstants.SHOP_FILLER_MODULE_TYPES))
+        combat_module = _make_module("CombatItem", combat_type, 5)
+        filler_module = _make_module("FillerItem", filler_type, 5)
+        service._static_cache = {"module": [combat_module, filler_module]}
+
+        random.seed(42)
+        results = []
+        for _ in range(2000):
+            result = await service._get_random_item_by_tech_level(mock_db, "module", 5, combat_module_prob=0.75)
+            results.append(result)
+
+        combat_count = results.count("CombatItem")
+        combat_fraction = combat_count / len(results)
+        assert 0.70 <= combat_fraction <= 0.80, (
+            f"Expected combat fraction ~0.75, got {combat_fraction:.3f} ({combat_count}/2000)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_step_down_when_combat_empty_at_requested_tl(self, service, mock_db):
+        """When combat bucket has no items at TL9, steps down to find TL8 item."""
+        from services.game_constants import GameConstants
+
+        combat_type = next(iter(GameConstants.SHOP_COMBAT_MODULE_TYPES))
+        # Only a TL8 combat module in pool — no TL9 combat module
+        tl8_combat = _make_module("Armour8", combat_type, 8)
+        service._static_cache = {"module": [tl8_combat]}
+
+        result = await service._get_random_item_by_tech_level(mock_db, "module", 9, combat_module_prob=1.0)
+
+        assert result == "Armour8", f"Expected TL8 step-down, got {result!r}"
+
+    @pytest.mark.asyncio
+    async def test_row_tech_level_reflects_step_down(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_module_repo
+    ):
+        """refresh_shop stores TL8 (actual catalog TL) not TL9 (band TL) for a stepped-down module."""
+        from services.game_constants import GameConstants
+
+        config = _make_config()
+        config.shop_combat_module_prob = 1.0  # force combat bucket always
+        mock_config_repo.get_by_guild_id.return_value = config
+
+        combat_type = next(iter(GameConstants.SHOP_COMBAT_MODULE_TYPES))
+        tl8_combat = _make_module("StepDownArmour", combat_type, 8)
+        # Provide all cache keys so the ship/weapon/turret/secondary paths don't KeyError
+        service._static_cache = {
+            "ship": [],
+            "weapon": [],
+            "secondary": [],
+            "turret": [],
+            "module": [tl8_combat],
+        }
+
+        # _get_item_base_price: return a value for pricing
+        service._get_item_base_price = AsyncMock(return_value=1000)
+        # _get_item_tech_level: mock so it returns 8 (the actual catalog TL)
+        service._get_item_tech_level = AsyncMock(return_value=8)
+        mock_shop_repo.create_or_update = AsyncMock(return_value=_make_shop_item())
+        mock_shop_repo.clear_shop_tier = AsyncMock()
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=9)
+
+        # Find the module upsert call
+        module_calls = [
+            call for call in mock_shop_repo.create_or_update.call_args_list if call.args[1].get("item_type") == "module"
+        ]
+        assert module_calls, "No module upsert calls made"
+        row_tl = module_calls[0].args[1]["tech_level"]
+        assert row_tl == 8, f"Expected row tech_level=8 (step-down), got {row_tl}"
+
+    @pytest.mark.asyncio
+    async def test_ceiling_tl10_accepted(self, service, mock_db, mock_config_repo, mock_shop_repo):
+        """refresh_shop with force_tech_level=10 succeeds (ceiling raised)."""
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+        service._get_random_item_by_tech_level = AsyncMock(return_value=None)
+        service._get_item_base_price = AsyncMock(return_value=0)
+        mock_shop_repo.clear_shop_tier = AsyncMock()
+        mock_shop_repo.create_or_update = AsyncMock(return_value=_make_shop_item())
+
+        # Should NOT raise
+        result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=10)
+        assert result["tech_level"] == 10
+
+    @pytest.mark.asyncio
+    async def test_ceiling_tl11_rejected(self, service, mock_db):
+        """refresh_shop with force_tech_level=11 raises ValueError."""
+        with pytest.raises(ValueError, match="Tech level must be between 1 and 10"):
+            await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=11)
+
+    @pytest.mark.asyncio
+    async def test_ceiling_tl0_rejected(self, service, mock_db):
+        """refresh_shop with force_tech_level=0 raises ValueError."""
+        with pytest.raises(ValueError, match="Tech level must be between 1 and 10"):
+            await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=0)
+
+    @pytest.mark.asyncio
+    async def test_tl10_armor_reachable_with_combat_prob_one(self, service, mock_db):
+        """A TL10 ArmourModule is returned when combat_module_prob=1.0 and TL10 is requested."""
+        tl10_armour = _make_module("TL10Armour", "ArmourModule", 10)
+        service._static_cache = {"module": [tl10_armour]}
+
+        result = await service._get_random_item_by_tech_level(mock_db, "module", 10, combat_module_prob=1.0)
+
+        assert result == "TL10Armour"
+
+    @pytest.mark.asyncio
+    async def test_tl1_draw_does_not_crash(self, service, mock_db):
+        """A TL1 module draw succeeds without error when filler has TL1 items."""
+        filler_type = next(iter(GameConstants.SHOP_FILLER_MODULE_TYPES))
+        tl1_filler = _make_module("TL1Filler", filler_type, 1)
+        service._static_cache = {"module": [tl1_filler]}
+
+        result = await service._get_random_item_by_tech_level(mock_db, "module", 1, combat_module_prob=0.0)
+
+        assert result == "TL1Filler"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_gracefully_when_bucket_empty(self, service, mock_db):
+        """Returns None gracefully when the chosen bucket has no items at any TL."""
+        # Only filler in pool, but combat bucket requested
+        filler_type = next(iter(GameConstants.SHOP_FILLER_MODULE_TYPES))
+        filler_only = _make_module("FillerOnly", filler_type, 5)
+        service._static_cache = {"module": [filler_only]}
+
+        result = await service._get_random_item_by_tech_level(mock_db, "module", 5, combat_module_prob=1.0)
+
+        assert result is None

@@ -1009,15 +1009,41 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 return item.value
         return 0
 
+    # Concrete item_type -> internal _static_cache key (see preload_static_data).
+    # Ships are excluded: they carry no tech_level column (derived from value).
+    _ITEM_TYPE_TO_CACHE_KEY: dict[str, str] = {
+        "primary_weapon": "weapon",
+        "secondary_weapon": "secondary",
+        "turret_weapon": "turret",
+        "module": "module",
+    }
+
     async def _get_item_tech_level(self, db: AsyncSession, item_type: str, item_name: str, base_price: int) -> int:
         """Resolve the item's actual tech level for shop-row display.
 
         Ships have no tech_level column — theirs is derived from credit value
         (same rule as bounty ship selection). Other types read the catalog
         row's tech_level. Falls back to 1 when the item can't be found.
+
+        Uses the in-memory static cache when warm (populated by
+        :meth:`preload_static_data`) — these tables are immutable, so a bulk
+        refresh resolves the actual TL from memory rather than re-querying the
+        DB once per drawn item. Falls back to a direct repo lookup when cold.
         """
         if item_type == "ship":
             return ship_tech_level_for_value(base_price)
+
+        # Fast path: resolve from the warm static cache (no DB round-trip).
+        cache_key = self._ITEM_TYPE_TO_CACHE_KEY.get(item_type)
+        if self._static_cache is not None and cache_key is not None:
+            for cached in self._static_cache[cache_key]:
+                if cached.name == item_name:
+                    tech_level = getattr(cached, "tech_level", None)
+                    if tech_level:
+                        return tech_level
+                    break
+
+        # Slow path: direct repo lookup (cold cache / non-bulk callers).
         repo = {
             "primary_weapon": self.primary_weapon_repo,
             "secondary_weapon": self.secondary_weapon_repo,

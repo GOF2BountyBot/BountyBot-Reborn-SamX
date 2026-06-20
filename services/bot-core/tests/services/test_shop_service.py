@@ -2736,6 +2736,24 @@ class TestModuleBucketDraw:
         assert row_tl == 8, f"Expected row tech_level=8 (step-down), got {row_tl}"
 
     @pytest.mark.asyncio
+    async def test_item_tech_level_resolves_from_cache_without_db(self, service, mock_db, mock_module_repo):
+        """_get_item_tech_level reads a module's actual TL from the warm static
+        cache and does NOT hit module_repo.get_by_name (no per-draw DB round-trip
+        during a bulk refresh)."""
+        from services.game_constants import GameConstants
+
+        combat_type = next(iter(GameConstants.SHOP_COMBAT_MODULE_TYPES))
+        cached_module = _make_module("Armour8", combat_type, 8)
+        service._static_cache = {"module": [cached_module]}
+        # Make a DB lookup loud: if the fast-path is bypassed the test fails.
+        mock_module_repo.get_by_name = AsyncMock(side_effect=AssertionError("DB hit despite warm cache"))
+
+        tl = await service._get_item_tech_level(mock_db, "module", "Armour8", base_price=0)
+
+        assert tl == 8, f"Expected cached TL 8, got {tl}"
+        mock_module_repo.get_by_name.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_ceiling_tl10_accepted(self, service, mock_db, mock_config_repo, mock_shop_repo):
         """refresh_shop with force_tech_level=10 succeeds (ceiling raised)."""
         config = _make_config()

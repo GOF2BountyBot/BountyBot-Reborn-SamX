@@ -704,8 +704,12 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             if tier not in self.VALID_TIERS:
                 raise ValueError(f"Invalid tier: {tier}")
 
-            if force_tech_level is not None and (force_tech_level < 1 or force_tech_level > 9):
-                raise ValueError("Tech level must be between 1 and 9")
+            if force_tech_level is not None and (
+                force_tech_level < GameConstants.MIN_TECH_LEVEL or force_tech_level > GameConstants.MAX_TECH_LEVEL
+            ):
+                raise ValueError(
+                    f"Tech level must be between {GameConstants.MIN_TECH_LEVEL} and {GameConstants.MAX_TECH_LEVEL}"
+                )
 
             # Get guild configuration — fail if guild hasn't been set up
             config = await self.config_repo.get_by_guild_id(db, guild_id)
@@ -718,7 +722,16 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             await self.shop_repo.clear_shop_tier(db, guild_id, tier)
 
             # Determine tech level
-            shop_tech_level = force_tech_level if force_tech_level else random.randint(1, 9)
+            shop_tech_level = (
+                force_tech_level
+                if force_tech_level
+                else random.randint(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL)
+            )
+
+            # Resolve per-guild combat/filler module-draw probability once for the whole refresh.
+            combat_module_prob = resolve_constant(
+                config, "shop_combat_module_prob", GameConstants.SHOP_COMBAT_MODULE_PROB
+            )
 
             # Generate new shop inventory.
             # Use concrete item types derived from CURRENTLY_ENABLED_TYPES to avoid
@@ -747,7 +760,9 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     item_quantity = random.randint(quantity_range["min"], quantity_range["max"])
 
                     # Get random item of the selected tech level
-                    item_name = await self._get_random_item_by_tech_level(db, item_type, item_tech_level)
+                    item_name = await self._get_random_item_by_tech_level(
+                        db, item_type, item_tech_level, combat_module_prob=combat_module_prob
+                    )
                     if not item_name:
                         continue  # Skip if no items available at this tech level
 
@@ -775,8 +790,12 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     # shop listing) — NOT the batch shop_tech_level: draws may land
                     # at TL-1/TL-2, and ships are drawn by spawn-rate weight with a
                     # value-derived TL. The batch TL lives in refresh_details below.
+                    # Modules use _get_item_tech_level so the row reflects the actual
+                    # catalog TL after step-down (may be < item_tech_level).
                     if concrete_type == "ship":
                         row_tech_level = ship_tech_level_for_value(base_price)
+                    elif concrete_type == "module":
+                        row_tech_level = await self._get_item_tech_level(db, "module", item_name, base_price)
                     else:
                         row_tech_level = item_tech_level
 
@@ -860,7 +879,13 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             return max(1, shop_tech_level - 1)
         return max(1, shop_tech_level - 2)
 
-    async def _get_random_item_by_tech_level(self, db: AsyncSession, item_type: str, tech_level: int) -> str | None:
+    async def _get_random_item_by_tech_level(
+        self,
+        db: AsyncSession,
+        item_type: str,
+        tech_level: int,
+        combat_module_prob: float | None = None,
+    ) -> str | None:
         """Get a random item name by (concrete) type and tech level.
 
         Accepts both concrete types (``"primary_weapon"``, ``"turret_weapon"``)
@@ -869,6 +894,10 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
         Uses the in-memory static cache if available (populated by
         :meth:`preload_static_data`), otherwise falls back to direct DB queries.
+
+        For ``item_type == "module"``, ``combat_module_prob`` controls the
+        combat-vs-filler bucket split (defaults to
+        ``GameConstants.SHOP_COMBAT_MODULE_PROB`` when ``None``).
         """
         if item_type == "ship":
             all_ships = (
@@ -890,11 +919,24 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             return random.choice(items).name if items else None
 
         if item_type == "module":
+            if combat_module_prob is None:
+                combat_module_prob = GameConstants.SHOP_COMBAT_MODULE_PROB
             all_modules = (
                 self._static_cache["module"] if self._static_cache is not None else await self.module_repo.list_all(db)
             )
-            items = [m for m in all_modules if m.tech_level == tech_level]
-            return random.choice(items).name if items else None
+            # Exclude JUNK modules — they are never stocked in the shop.
+            pool = [m for m in all_modules if getattr(m, "type", "") not in GameConstants.SHOP_JUNK_MODULE_TYPES]
+            # Choose bucket by probability; step down from requested TL until candidates found.
+            bucket = (
+                GameConstants.SHOP_COMBAT_MODULE_TYPES
+                if random.random() < combat_module_prob
+                else GameConstants.SHOP_FILLER_MODULE_TYPES
+            )
+            for tl in range(tech_level, 0, -1):
+                candidates = [m for m in pool if getattr(m, "type", "") in bucket and m.tech_level == tl]
+                if candidates:
+                    return random.choice(candidates).name
+            return None
 
         if item_type == "secondary_weapon":
             all_secondary = (

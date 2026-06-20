@@ -686,8 +686,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     f"❌ Invalid tier. Valid tiers: {', '.join(self._valid_tiers)}", ephemeral=True
                 )
                 return
-            if force_tech_level and (force_tech_level < 1 or force_tech_level > 9):
-                await interaction.followup.send("❌ Tech level must be between 1 and 9.", ephemeral=True)
+            if force_tech_level is not None and not (1 <= force_tech_level <= 10):
+                await interaction.followup.send("❌ Tech level must be between 1 and 10.", ephemeral=True)
                 return
 
             tiers_to_refresh = [tier] if tier is not None else list(self._valid_tiers)

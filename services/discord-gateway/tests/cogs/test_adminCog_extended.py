@@ -392,14 +392,31 @@ class TestAdminRefreshShop:
         assert "❌" in call_args
 
     def test_admin_refresh_shop_invalid_tech_level_high(self, mock_admin_cog):
-        """admin_refresh_shop should reject tech level > 9."""
+        """admin_refresh_shop should reject tech level > 10."""
         interaction = _create_mock_interaction()
 
-        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Platinum", 10))
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Platinum", 11))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
         assert "❌" in call_args
+
+    def test_admin_refresh_shop_tech_level_10_accepted(self, mock_admin_cog):
+        """admin_refresh_shop should ACCEPT tech level 10 (TL ceiling raised 9 -> 10)."""
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user(is_admin=True)
+
+        refresh_resp = MagicMock()
+        refresh_resp.status_code = 200
+        refresh_resp.json.return_value = {"message": "Shop refreshed with tech level 10"}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=refresh_resp)
+
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Platinum", 10))
+
+        # Validation passed → proceeded to the refresh call (not rejected).
+        mock_admin_cog.http_client.post.assert_called()
+        # Success path sends an embed (keyword arg), never the rejection message.
+        assert "Tech level must be between" not in str(interaction.followup.send.call_args)
 
     def test_admin_refresh_shop_api_error(self, mock_admin_cog):
         """admin_refresh_shop should handle API errors."""

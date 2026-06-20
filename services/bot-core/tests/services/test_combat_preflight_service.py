@@ -1017,8 +1017,6 @@ class TestP2T7WinRateParity:
         winner_side, is_stalemate = results[0]
         assert is_stalemate is False
         assert winner_side == 1  # player (side 1) wins
-        # New predicate: True
-        assert (is_stalemate or winner_side == 1) is True
 
     def test_run_fight_batch_criminal_win_side2(self):
         """Asymmetric loadout (criminal vastly stronger): winner_side==2, not stalemate."""

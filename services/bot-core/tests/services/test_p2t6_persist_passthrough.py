@@ -262,8 +262,9 @@ class TestNoAsdictOnHotPath:
     @pytest.mark.asyncio
     async def test_asdict_not_called_when_timeline_is_dicts(self):
         """Spy on dataclasses.asdict — must not be called when combat_log is list[dict]."""
-        import services.combat_log_service as cls_module
         from services.combat_log_service import CombatLogService
+
+        from services import combat_log_service as cls_module
 
         svc = CombatLogService()
         meta = CombatMeta(guild_id=1)

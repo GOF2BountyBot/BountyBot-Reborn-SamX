@@ -275,7 +275,7 @@ def _loadout_service(secondaries: list, ship) -> BountyService:
 @pytest.mark.asyncio
 async def test_generate_loadout_secondary_toggle_on_excludes_emp_rockets(monkeypatch):
     """Toggle ON (cfg None) → EMP Rockets never equipped; real-damage kept."""
-    import services.bounty_service as bs
+    from services import bounty_service as bs
 
     ship = _ship(max_secondaries=3)
     svc, db = _loadout_service(_secondary_pool(), ship)
@@ -298,7 +298,7 @@ async def test_generate_loadout_secondary_toggle_on_excludes_emp_rockets(monkeyp
 @pytest.mark.asyncio
 async def test_generate_loadout_secondary_toggle_off_allows_emp_rockets(monkeypatch):
     """Toggle OFF → EMP Rockets are eligible again (appear across seeds)."""
-    import services.bounty_service as bs
+    from services import bounty_service as bs
 
     ship = _ship(max_secondaries=3)
     svc, db = _loadout_service(_secondary_pool(), ship)
@@ -324,7 +324,7 @@ async def test_generate_loadout_secondary_toggle_off_allows_emp_rockets(monkeypa
 @pytest.mark.asyncio
 async def test_generate_loadout_secondary_keeps_dephase_emp(monkeypatch):
     """Dephase EMP (real 120 >= emp 100) must remain eligible with toggle ON."""
-    import services.bounty_service as bs
+    from services import bounty_service as bs
 
     # Pool of only Dephase EMP so it MUST be picked if eligible.
     pool = [_secondary("Dephase EMP", 8, damage=120, subtype="missile", emp=100)]

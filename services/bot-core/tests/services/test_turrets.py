@@ -338,8 +338,9 @@ def test_auto_turret_cloak_override_compounds():
     # Build a combat where pilot_turret_acc is already CLOAK_SET_VALUE (pre-computed by T4).
     # We verify the math holds via _init_combatant — the acc calculation happens in the resolver.
     # We use a wrapper to patch the compute_pilot_accuracy to return cloak values:
-    import services.combat_resolver as cr_module
     from services.combat_balance import compute_pilot_accuracy
+
+    from services import combat_resolver as cr_module
 
     original_compute = compute_pilot_accuracy
 

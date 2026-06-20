@@ -250,8 +250,9 @@ async def _patch_combat_and_loadout(svc, fight_results, has_ship=True):
     ``_process_single_bounty_check``, so it must be patched at its source module
     (``services.loadout_builder``) — not as a ``bounty_service`` attribute.
     """
-    import services.bounty_service as bs
     import services.loadout_builder as lb
+
+    from services import bounty_service as bs
 
     svc.combat_service = MagicMock()
     svc.combat_service.fight_ships = AsyncMock(return_value=fight_results)

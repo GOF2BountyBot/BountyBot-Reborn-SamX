@@ -197,6 +197,14 @@ class GuildConfig(Base):
     loot_commodity_sell_fraction: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
     # ------------------------------------------------------------------
+    # Shop module-draw per-guild overrides
+    # NULL == "use GameConstants default". resolve_constant() handles fallback.
+    # ------------------------------------------------------------------
+
+    # Shop module-draw combat/filler split (NULL == GameConstants.SHOP_COMBAT_MODULE_PROB)
+    shop_combat_module_prob: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    # ------------------------------------------------------------------
     # Combat System — Phase-1 per-guild overrides (Appendix A constants)
     # NULL == "use GameConstants default". resolve_constant() handles fallback.
     # ------------------------------------------------------------------

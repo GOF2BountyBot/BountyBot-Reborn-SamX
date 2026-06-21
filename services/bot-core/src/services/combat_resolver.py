@@ -2354,20 +2354,24 @@ def _extract_key_events(
     # (tick, sub_order, row) — sub_order makes intra-tick order causal
     staged: list[tuple[int, int, dict]] = []
 
-    def _emit(tick: int, k: int, event_type: str, detail: str, actor: str | None = None) -> None:
-        staged.append(
-            (
-                tick,
-                k,
-                {
-                    "tick": tick,
-                    "time_s": _ticks_to_seconds(tick, tick_ms),
-                    "actor": actor,
-                    "event_type": event_type,
-                    "detail": detail,
-                },
-            )
-        )
+    def _emit(
+        tick: int,
+        k: int,
+        event_type: str,
+        detail: str,
+        actor: str | None = None,
+        _collapse_key: tuple | None = None,
+    ) -> None:
+        row: dict = {
+            "tick": tick,
+            "time_s": _ticks_to_seconds(tick, tick_ms),
+            "actor": actor,
+            "event_type": event_type,
+            "detail": detail,
+        }
+        if _collapse_key is not None:
+            row["_collapse_key"] = _collapse_key
+        staged.append((tick, k, row))
 
     # ---- Engagement (k=0) ----
     fs = next((e for e in timeline if e.get("type") == "fight_start"), None)
@@ -2423,10 +2427,21 @@ def _extract_key_events(
             if acquire:
                 lbl = _label_for_side(f["side"]) or "?"
                 phrase = "enters range" if prev_tick is None else "re-enters range"
-                _emit(t, 1, "Weapon in range", f"{lbl}'s {w} {phrase} — {_hitstr(f['data'])}", actor=lbl)
+                _emit(
+                    t,
+                    1,
+                    "Weapon in range",
+                    f"{lbl}'s {w} {phrase} — {_hitstr(f['data'])}",
+                    actor=lbl,
+                    _collapse_key=("Weapon in range", lbl, w, None),
+                )
             prev_tick = t
 
     # ---- Per-fire beats: nuke + shock-blast (k=1) ----
+    # Collect nuke fires grouped by (actor_label, weapon) for Rule-2 significance filtering.
+    # Each entry: {"tick": int, "lbl": str, "w": str, "opp": int, "self": int}
+    _nuke_fires: dict[tuple[str, str], list[dict]] = {}
+    _shock_fires: list[dict] = []
     for ev in timeline:
         if ev.get("type") != "weapon_fire":
             continue
@@ -2436,16 +2451,99 @@ def _extract_key_events(
         lbl = _actor_label(ev.get("actor"), d)
         w = d.get("weapon", "?")
         if sub == "nuke":
-            _emit(
-                tick,
-                1,
-                "Nuke detonation",
-                f"{lbl} fired {w} — detonated (opp: {d.get('opponent_damage', 0)}, self: {d.get('self_damage', 0)})",
-                actor=lbl,
+            _nuke_fires.setdefault((lbl, w), []).append(
+                {
+                    "tick": tick,
+                    "lbl": lbl,
+                    "w": w,
+                    "opp": int(d.get("opponent_damage", 0) or 0),
+                    "self": int(d.get("self_damage", 0) or 0),
+                }
             )
         elif sub == "shock-blast":
             to = shock_reset.get((tick, str(d.get("side"))), GameConstants.STARTING_DISTANCE_M)
-            _emit(tick, 1, "Shock blast", f"{lbl} fired {w} — distance reset to {int(to)}m", actor=lbl)
+            _shock_fires.append({"tick": tick, "lbl": lbl, "w": w, "to": to})
+
+    _nuke_min_count = GameConstants.RECAP_NUKE_SUMMARY_MIN_COUNT
+    _nuke_sig_frac = GameConstants.RECAP_NUKE_SIGNIFICANCE_FRACTION
+
+    for (lbl, w), fires in _nuke_fires.items():
+        if len(fires) < _nuke_min_count:
+            # Below threshold — emit every detonation individually (no change from legacy behavior).
+            for f in fires:
+                _emit(
+                    f["tick"],
+                    1,
+                    "Nuke detonation",
+                    f"{lbl} fired {w} — detonated (opp: {f['opp']}, self: {f['self']})",
+                    actor=lbl,
+                )
+        else:
+            # Rule 2: keep high-impact lines individually; fold the rest into one summary.
+            best_opp = max(f["opp"] for f in fires)
+            sig_threshold = best_opp * _nuke_sig_frac
+            significant: list[dict] = []
+            trivial: list[dict] = []
+            for f in fires:
+                if f["opp"] > 0 and f["opp"] >= sig_threshold:
+                    significant.append(f)
+                else:
+                    trivial.append(f)
+            for f in significant:
+                _emit(
+                    f["tick"],
+                    1,
+                    "Nuke detonation",
+                    f"{lbl} fired {w} — detonated (opp: {f['opp']}, self: {f['self']})",
+                    actor=lbl,
+                )
+            if trivial:
+                # Use the earliest trivial tick so the summary sorts into the chronological flow.
+                summary_tick = trivial[0]["tick"]
+                n = len(trivial)
+                _emit(
+                    summary_tick,
+                    1,
+                    "Nuke detonation",
+                    f"{lbl} fired {w} ×{n} (best: {best_opp} dmg)",
+                    actor=lbl,
+                )
+
+    # Shock-blast: count-based treatment if ≥ RECAP_NUKE_SUMMARY_MIN_COUNT fires per (actor, weapon).
+    _shock_by_key: dict[tuple[str, str], list[dict]] = {}
+    for sf in _shock_fires:
+        _shock_by_key.setdefault((sf["lbl"], sf["w"]), []).append(sf)
+
+    for (lbl, w), slist in _shock_by_key.items():
+        if len(slist) < _nuke_min_count:
+            for sf in slist:
+                _emit(
+                    sf["tick"],
+                    1,
+                    "Shock blast",
+                    f"{lbl} fired {sf['w']} — distance reset to {int(sf['to'])}m",
+                    actor=lbl,
+                )
+        else:
+            # Summarise: keep first individual (shows the reset distance for context), fold the rest.
+            first = slist[0]
+            _emit(
+                first["tick"],
+                1,
+                "Shock blast",
+                f"{lbl} fired {first['w']} — distance reset to {int(first['to'])}m",
+                actor=lbl,
+            )
+            rest = slist[1:]
+            if rest:
+                rest_tick = rest[0]["tick"]
+                _emit(
+                    rest_tick,
+                    1,
+                    "Shock blast",
+                    f"{lbl} fired {w} ×{len(rest)} (additional resets)",
+                    actor=lbl,
+                )
 
     # ---- Resolve kill (for same-tick collapse + outcome attribution) ----
     fe = next((e for e in timeline if e.get("type") == "fight_end"), None)
@@ -2478,7 +2576,14 @@ def _extract_key_events(
             tgt = _label_for_side(d.get("side")) or ev.get("actor") or "?"
             by = attrib.get((tick, side)) if side else None
             tag = f" (by {by})" if by else ""
-            _emit(tick, 2, "Layer depleted", f"{tgt}: {_LAYER_LABELS.get(layer, layer)}{tag}", actor=ev.get("actor"))
+            _emit(
+                tick,
+                2,
+                "Layer depleted",
+                f"{tgt}: {_LAYER_LABELS.get(layer, layer)}{tag}",
+                actor=ev.get("actor"),
+                _collapse_key=("Layer depleted", side, layer, None),
+            )
         elif typ == "damage" and side and start_total.get(side):
             hp = d.get("hp_after", {})
             total = hp.get("hull", 0) + hp.get("armour", 0) + hp.get("shield", 0)
@@ -2511,7 +2616,14 @@ def _extract_key_events(
                 _why = f" (at {d.get('trigger_hp_pct')}% HP)"
             else:
                 _why = ""
-            _emit(tick, 3, "Module activated", f"{lbl} activated {module_name}{_why}", actor=ev.get("actor"))
+            _emit(
+                tick,
+                3,
+                "Module activated",
+                f"{lbl} activated {module_name}{_why}",
+                actor=ev.get("actor"),
+                _collapse_key=("Module activated", lbl, module_name, None),
+            )
         elif typ == "secondary_depleted":
             lbl = _actor_label(ev.get("actor"), d)
             _emit(tick, 4, "Ammo depleted", f"{lbl} out of {d.get('weapon', '?')}", actor=ev.get("actor"))
@@ -2546,4 +2658,84 @@ def _extract_key_events(
             _emit(ftick, 9, "Outcome", f"{winner} wins ({dur_s:.1f}s)")
 
     staged.sort(key=lambda x: (x[0], x[1]))
-    return [row for _, _, row in staged]
+
+    # ---- Rule 1: Global per-key aggregation of CYCLIC event types ----
+    # Narrative events (Engagement, Nuke detonation, Shock blast, HP milestone, Ammo depleted,
+    # Outcome) carry no _collapse_key and are never folded — they pass through unchanged.
+    # Cyclic types (Weapon in range, Layer depleted, Module activated) are bucketed globally by
+    # _collapse_key regardless of position in the timeline.  Each key's total occurrence count N
+    # determines treatment:
+    #   N < RECAP_COLLAPSE_MIN_RUN  → pass through each row individually (no fold)
+    #   N ≥ RECAP_COLLAPSE_MIN_RUN  → emit exactly ONE aggregate row, anchored at the FIRST
+    #                                   occurrence's (tick, k) so chronological sort is preserved.
+    # The aggregate row gets count=N and a detail that names the combatant + weapon/module,
+    # uses "re-enters range" phrasing for Weapon-in-range, drops the per-occurrence hit/miss
+    # outcome suffix, and appends " ×N (first_s–last_s)".
+    _CYCLIC_TYPES: frozenset[str] = frozenset({"Weapon in range", "Layer depleted", "Module activated"})
+    _collapse_min = GameConstants.RECAP_COLLAPSE_MIN_RUN
+
+    # Pass 1: bucket cyclic rows by _collapse_key; preserve insertion order for keys.
+    # key_rows maps collapse_key → list of (tick, k, row) in timeline order (already sorted).
+    key_rows: dict[tuple, list[tuple[int, int, dict]]] = {}
+    key_first_order: list[tuple] = []  # first-seen key order for determinism
+
+    for tick_val, k_val, row in staged:
+        ck = row.get("_collapse_key")
+        if ck is not None and row.get("event_type") in _CYCLIC_TYPES:
+            if ck not in key_rows:
+                key_rows[ck] = []
+                key_first_order.append(ck)
+            key_rows[ck].append((tick_val, k_val, row))
+
+    # Pass 2: decide fate of each cyclic key.
+    # collapsed_cyclic maps (tick, k) of first occurrence → the single aggregate output row.
+    # expanded_cyclic maps (tick, k) → individual output row (for N < threshold).
+    # Keys with N ≥ threshold: anchor at first occurrence's (tick, k).
+    collapsed_output: list[tuple[int, int, dict]] = []  # (tick, k, output_row) for re-sort
+
+    emitted_keys: set[tuple] = set()
+
+    for ck in key_first_order:
+        entries = key_rows[ck]
+        n = len(entries)
+        first_tick, first_k, first_row = entries[0]
+        last_tick = entries[-1][0]
+        if n >= _collapse_min:
+            # Build aggregate detail: name combatant + weapon/module, drop hit/miss suffix,
+            # use "re-enters range" for WiR, append ×N (first_s–last_s).
+            base_detail = first_row["detail"]
+            et = first_row["event_type"]
+            if et == "Weapon in range":
+                # Drop "— hit" / "— miss" suffix.
+                if " — " in base_detail:
+                    base_detail = base_detail.rsplit(" — ", 1)[0]
+                # Normalise to "re-enters range" so aggregate always reads as cyclic re-entry.
+                base_detail = base_detail.replace(" enters range", " re-enters range")
+            first_s = _ticks_to_seconds(first_tick, tick_ms)
+            last_s = _ticks_to_seconds(last_tick, tick_ms)
+            agg_detail = f"{base_detail} ×{n} ({first_s:.1f}s–{last_s:.1f}s)"
+            out_row = dict(first_row)
+            out_row["detail"] = agg_detail
+            out_row["count"] = n
+            out_row.pop("_collapse_key", None)
+            collapsed_output.append((first_tick, first_k, out_row))
+        else:
+            # N < threshold: pass through each row individually.
+            for t_val, k_sub, r in entries:
+                out_row = dict(r)
+                out_row.pop("_collapse_key", None)
+                collapsed_output.append((t_val, k_sub, out_row))
+        emitted_keys.add(ck)
+
+    # Pass 3: collect narrative (non-cyclic) rows in their original positions.
+    for tick_val, k_val, row in staged:
+        ck = row.get("_collapse_key")
+        if ck is None or row.get("event_type") not in _CYCLIC_TYPES:
+            out_row = dict(row)
+            out_row.pop("_collapse_key", None)
+            collapsed_output.append((tick_val, k_val, out_row))
+
+    # Re-sort by (tick, k) so aggregate rows anchored at first-occurrence tick land correctly.
+    collapsed_output.sort(key=lambda x: (x[0], x[1]))
+
+    return [row for _, _, row in collapsed_output]

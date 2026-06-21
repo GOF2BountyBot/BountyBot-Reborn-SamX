@@ -419,11 +419,40 @@ class CombatLogCog(commands.Cog):
 
         key_events: list[dict] = data.get("key_events", [])
         if key_events:
+            # Priority tiers for budget-limited rendering (Rule 4).
+            # Lower tier number = higher priority (rendered first / protected from budget cuts).
+            _PRIORITY: dict[str, int] = {
+                "Outcome": 0,
+                "Engagement": 1,
+                "HP milestone (50%)": 2,
+                "HP milestone (25%)": 2,
+                "Layer depleted": 3,
+                "Nuke detonation": 4,
+                "Shock blast": 4,
+                "Module activated": 5,
+                "Weapon in range": 6,
+                "Ammo depleted": 6,
+            }
+            _DEFAULT_PRIORITY = 3  # unknown event_types treated as mid-tier
+
+            # Sort by (priority_tier, tick) so Outcome is always first in the priority queue.
+            # Build (priority, tick, original_index, ev) tuples, then sort.
+            prioritised = sorted(
+                enumerate(key_events),
+                key=lambda x: (_PRIORITY.get(x[1].get("event_type", ""), _DEFAULT_PRIORITY), x[1].get("tick", 0)),
+            )
+
+            # Build all lines in priority order.
             # Build all lines first, then pack greedily into <=1024-char field chunks.
+            # Count field carries ×N multiplier from the extractor; render it if not already in detail.
             lines: list[str] = []
-            for ev in key_events:
+            for _orig_idx, ev in prioritised:
                 time_s = ev.get("time_s", 0.0)
                 detail = ev.get("detail", "")
+                count = ev.get("count", 1) or 1
+                # Belt-and-suspenders: if count>1 and "×" not already in detail, append suffix.
+                if count > 1 and " ×" not in detail:
+                    detail = f"{detail} ×{count}"
                 if len(detail) > _DETAIL_MAX:
                     detail = detail[: _DETAIL_MAX - 1] + "…"
                 lines.append(f"`{time_s:6.1f}s` {detail}")

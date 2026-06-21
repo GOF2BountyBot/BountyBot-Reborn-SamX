@@ -321,7 +321,16 @@ class TestTelemetryAndRendering:
         assert ma.get("cloak", 0) >= len(cloak_chain)
 
     def test_key_events_render_chain_markers(self):
-        """_extract_key_events renders distinct 'why' text for the chained markers."""
+        """_extract_key_events captures chain-marker module activations in the output.
+
+        Per-module collapse keys: booster(N=1) and cloak(N=2) each fall below RECAP_COLLAPSE_MIN_RUN
+        (default 3), so all three activations appear as SEPARATE individual lines — the chain-marker
+        detail text is fully preserved and not hidden inside a collapsed aggregate.
+
+        This is the correct behaviour: the emergency_system chain is a major tactical beat and each
+        distinct module activation (booster via emergency_activate, cloak via emergency_end, cloak
+        via trigger_hp_pct) must be visible and legible in the output.
+        """
         timeline = [
             {
                 "tick": 100,
@@ -346,10 +355,31 @@ class TestTelemetryAndRendering:
             },
         ]
         ke = _extract_key_events(timeline, tick_ms=TICK_MS)
-        details = " | ".join(e["detail"] for e in ke)
-        assert "activated booster (emergency system activated)" in details
-        assert "activated cloak (emergency system ended)" in details
-        assert "activated cloak (at 66% HP)" in details
+        mod_events = [e for e in ke if e["event_type"] == "Module activated"]
+        # booster(N=1) + cloak(N=2) — each below collapse threshold → 3 individual lines.
+        assert len(mod_events) == 3, (
+            f"booster(N=1) and cloak(N=2) are below collapse threshold; expected 3 individual lines, "
+            f"got {len(mod_events)}: {[e['detail'] for e in mod_events]}"
+        )
+        # Booster chain marker (emergency system activated) must appear as its own line.
+        booster_lines = [e for e in mod_events if "booster" in e["detail"]]
+        assert len(booster_lines) == 1, f"Expected 1 booster line; got {booster_lines}"
+        assert "emergency system activated" in booster_lines[0]["detail"], (
+            f"Booster chain-marker must name 'emergency system activated'; got: {booster_lines[0]['detail']!r}"
+        )
+        # Cloak chain marker (emergency system ended) must appear as its own line.
+        cloak_lines = [e for e in mod_events if "cloak" in e["detail"]]
+        assert len(cloak_lines) == 2, f"Expected 2 cloak lines; got {cloak_lines}"
+        es_end_lines = [e for e in cloak_lines if "emergency system ended" in e["detail"]]
+        assert len(es_end_lines) == 1, (
+            f"Cloak chain-marker (emergency system ended) must appear as its own line; "
+            f"cloak lines: {[e['detail'] for e in cloak_lines]}"
+        )
+        hp_pct_lines = [e for e in cloak_lines if "at 66% HP" in e["detail"]]
+        assert len(hp_pct_lines) == 1, (
+            f"Cloak HP-threshold line must appear as its own line; "
+            f"cloak lines: {[e['detail'] for e in cloak_lines]}"
+        )
 
 
 # ---------------------------------------------------------------------------

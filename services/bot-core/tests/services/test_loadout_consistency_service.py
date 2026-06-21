@@ -788,8 +788,7 @@ class TestSwapOne:
         # equip_one also calls get_by_name for game-data validation
         svc.item_repo.get_by_name = AsyncMock(return_value=exoclad_item)
 
-        # After unequip, D'iol is in cargo (quantity=1)
-        diiol_inv = _make_inv_item("D'iol", "module", quantity=1)
+        # After unequip, D'iol is in cargo (quantity=1); exoclad is what equip_one checks ownership for
         exoclad_inv = _make_inv_item("E2 Exoclad", "module", quantity=1)
         svc.inventory_repo.get_player_item = AsyncMock(
             side_effect=[
@@ -891,4 +890,99 @@ class TestSwapOne:
 
         # Neither write should have been called
         svc.player_ship_repo.remove_equipment.assert_not_called()
+        svc.player_ship_repo.add_equipment.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_swap_one_same_item_for_itself_is_net_zero(self, svc, mock_db):
+        """Swapping an item for itself must succeed and produce net-zero change.
+
+        QA adversarial edge case: old_item_name == new_item_name.  After the swap
+        the item should be back in the same slot and cargo count should be unchanged.
+        Verifies: unequip (remove_equipment + add_item) + equip (remove_item +
+        add_equipment) are both called exactly once — net effect is zero change.
+        """
+        initial_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=["D'iol"])
+        after_unequip_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=[])
+        after_unequip_ship.secondary_ammo = {}
+        # After equip: D'iol is back in slot
+        after_equip_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=["D'iol"])
+        after_equip_ship.secondary_ammo = {}
+
+        static = _make_static_ship(max_modules=2)
+
+        svc.player_ship_repo.get_by_id = AsyncMock(
+            side_effect=[
+                initial_ship,  # unequip_one: ownership check
+                after_unequip_ship,  # unequip_one: re-fetch after remove_equipment
+                after_unequip_ship,  # equip_one: ownership check (after unequip)
+                after_equip_ship,  # equip_one: re-fetch after add_equipment
+            ]
+        )
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+
+        diiol_item = _make_base_item("D'iol", "ArmourModule")
+        # unequip resolves type once; equip also calls get_by_name_any_type for module limit
+        svc.item_repo.get_by_name_any_type = AsyncMock(side_effect=[diiol_item, diiol_item])
+        svc.item_repo.get_by_name = AsyncMock(return_value=diiol_item)
+
+        # After unequip D'iol is in cargo (qty=1); equip_one reads this
+        diiol_inv = _make_inv_item("D'iol", "module", quantity=1)
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=diiol_inv)
+
+        result = await svc.swap_one(
+            mock_db,
+            player_id=42,
+            ship_id=1,
+            old_item_name="D'iol",
+            new_item_name="D'iol",
+            equipment_type="modules",
+        )
+
+        assert result["success"] is True
+        # Both legs executed: unequip (remove + add_to_cargo) + equip (remove_from_cargo + add)
+        svc.player_ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "modules", "D'iol", commit=False)
+        svc.player_ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "modules", "D'iol", commit=False)
+        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "module", "D'iol", quantity=1, commit=False)
+        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "module", "D'iol", quantity=1, commit=False)
+
+    @pytest.mark.asyncio
+    async def test_swap_one_raises_if_new_item_not_in_game_data(self, svc, mock_db):
+        """QA edge case: new item doesn't exist in game data at all.
+
+        Expects: ValueError from equip_one propagates out of swap_one, rolling back
+        the unequip leg.  Verifies only unequip writes happened, not equip writes.
+        """
+        initial_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=["D'iol"])
+        after_unequip_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=[])
+        after_unequip_ship.secondary_ammo = {}
+
+        static = _make_static_ship(max_modules=2)
+
+        svc.player_ship_repo.get_by_id = AsyncMock(
+            side_effect=[
+                initial_ship,  # unequip_one: ownership check
+                after_unequip_ship,  # unequip_one: re-fetch
+                after_unequip_ship,  # equip_one: ownership check
+            ]
+        )
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+
+        diiol_item = _make_base_item("D'iol", "ArmourModule")
+        # equip_one: get_by_name_any_type auto-detects category; get_by_name returns None (not in data)
+        svc.item_repo.get_by_name_any_type = AsyncMock(side_effect=[diiol_item, diiol_item])
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)  # not in game data
+
+        # get_player_item is not called before get_by_name fails
+        with pytest.raises(ValueError, match="not found in game data"):
+            await svc.swap_one(
+                mock_db,
+                player_id=42,
+                ship_id=1,
+                old_item_name="D'iol",
+                new_item_name="Ghost Module",
+                equipment_type="modules",
+            )
+
+        # Unequip write DID happen (leg 1), equip write did NOT
+        svc.player_ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "modules", "D'iol", commit=False)
         svc.player_ship_repo.add_equipment.assert_not_called()

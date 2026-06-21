@@ -376,6 +376,7 @@ def test_writes_flush_only_set_is_non_empty():
     expected_choke_methods = {
         "equip_one",
         "unequip_one",
+        "swap_one",
         "transfer_loadout_to_new_ship",
         "evacuate_ship_loadout_to_inventory",
         "reconcile_active_ship_slots",
@@ -383,7 +384,7 @@ def test_writes_flush_only_set_is_non_empty():
     }
     found_choke = {m for (_c, m) in writes if m in expected_choke_methods}
     assert found_choke == expected_choke_methods, (
-        f"Expected all 6 LoadoutConsistencyService public methods in "
+        f"Expected all 7 LoadoutConsistencyService public methods in "
         f"WRITES_FLUSH_ONLY; missing: {expected_choke_methods - found_choke}"
     )
 

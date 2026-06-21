@@ -112,7 +112,10 @@ class TestDriftFight:
         assert result.winner_name is None
         assert result.loser_name is None
         assert result.metadata["metadata"]["total_ticks"] == GameConstants.MAX_FIGHT_TICKS
-        assert elapsed < 1.0, f"Drift fight took {elapsed:.3f}s (budget: 1s)"
+        # Perf budget scales with the tick cap (resolver work is O(ticks)); the original
+        # 1s budget was calibrated for the legacy 18000-tick cap.
+        budget_s = 1.0 * (GameConstants.MAX_FIGHT_TICKS / 18000)
+        assert elapsed < budget_s, f"Drift fight took {elapsed:.3f}s (budget: {budget_s:.1f}s)"
 
     def test_event_bookends(self):
         """combat_log starts with fight_start and ends with fight_end."""

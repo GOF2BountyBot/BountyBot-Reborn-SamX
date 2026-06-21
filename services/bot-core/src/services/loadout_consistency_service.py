@@ -35,6 +35,7 @@ Consumer call-site map (verified at HEAD, 2026-04-30)
 | equip_one                          | EquipmentService.equip_item           | api/routers/ships.py:423 (db.begin())   |
 | equip_one (×3, starter)            | PlayerService._create_starter_loadout | api/routers/players.py:65 (B.34 fix)    |
 | unequip_one                        | EquipmentService.unequip_item         | api/routers/ships.py:476 (db.begin())   |
+| swap_one                           | ships.swap_item                       | api/routers/ships.py (db.begin())       |
 | transfer_loadout_to_new_ship       | ShopService.purchase_ship             | api/routers/shops.py:152 (db.begin())   |
 | evacuate_ship_loadout_to_inventory | ShopService.sell_ship                 | api/routers/shops.py:217 (db.begin())   |
 | evacuate_ship_loadout_to_inventory | admin remove_ship                     | api/routers/admin.py:1036 (db.begin())  |
@@ -555,6 +556,91 @@ class LoadoutConsistencyService:
             "ship": ship,
             "message": f"Successfully unequipped '{item_name}' from ship {ship_id}",
             "equipment_type": equipment_type,
+        }
+
+    @requires_transaction
+    async def swap_one(
+        self,
+        db: AsyncSession,
+        *,
+        player_id: int,
+        ship_id: int,
+        old_item_name: str,
+        new_item_name: str,
+        equipment_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomic swap: unequip ``old_item_name`` then equip ``new_item_name`` in one transaction.
+
+        BUG B fix: the gateway previously performed two separate HTTP calls — POST
+        /unequip then POST /equip — in two independent transactions.  If the equip
+        leg failed, the unequip was already committed and the player permanently lost
+        the old item.  This method runs both operations in the *caller's* transaction
+        (invariant I3) so a failure on either leg rolls back the entire swap.
+
+        On failure the old item remains equipped and the new item remains in cargo.
+
+        Args:
+            player_id:      Owning player's DB ID.
+            ship_id:        The ``PlayerShip`` to mutate.
+            old_item_name:  The currently-equipped item to unequip.
+            new_item_name:  The cargo item to equip in its place.
+            equipment_type: Slot category (e.g. ``"modules"``).  When ``None``
+                            both legs auto-detect from the item name (same rules as
+                            ``unequip_one`` / ``equip_one``).
+
+        Returns:
+            ``{success: True, ship: PlayerShip, message: str, equipment_type: str}``
+
+        Raises:
+            ValueError: if either item is not found / not owned / not equippable,
+                        or if the equip leg would violate any slot/limit constraint.
+            RuntimeError: invoked outside an active transaction (AC-6 guard).
+        """
+        flogger.info(
+            "Player %d: atomic swap on ship %d — unequip=%r equip=%r type=%r",
+            player_id,
+            ship_id,
+            old_item_name,
+            new_item_name,
+            equipment_type,
+        )
+
+        # Leg 1: unequip the old item (adds it back to cargo).
+        # _lock_player is called inside unequip_one; re-acquiring within the same
+        # transaction is a documented no-op (PostgreSQL re-holds the same row lock).
+        unequip_result = await self.unequip_one(
+            db,
+            player_id=player_id,
+            ship_id=ship_id,
+            item_name=old_item_name,
+            equipment_type=equipment_type,
+        )
+        resolved_type: str = unequip_result.get("equipment_type") or equipment_type
+
+        # Leg 2: equip the new item (removes it from cargo, puts it in slot).
+        # equip_one validates inventory ownership, slot caps, and MODULE_EQUIP_LIMITS.
+        # On failure the exception propagates to the caller who owns the transaction,
+        # rolling back both the unequip (leg 1) and the partial equip attempt.
+        equip_result = await self.equip_one(
+            db,
+            player_id=player_id,
+            ship_id=ship_id,
+            item_name=new_item_name,
+            equipment_type=resolved_type,
+        )
+
+        flogger.info(
+            "Player %d: swap complete on ship %d — old=%r new=%r",
+            player_id,
+            ship_id,
+            old_item_name,
+            new_item_name,
+        )
+        return {
+            "success": True,
+            "ship": equip_result["ship"],
+            "message": f"Swapped '{old_item_name}' for '{new_item_name}' on ship {ship_id}",
+            "equipment_type": equip_result.get("equipment_type") or resolved_type,
         }
 
     @requires_transaction

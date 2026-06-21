@@ -111,29 +111,21 @@ class WeaponSwapView(discord.ui.View):
         await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
-            # Unequip old item
-            await self.http_client.post(
-                f"{api_base}/ships/{self.ship_id}/unequip",
+            # BUG B fix: use the atomic /swap endpoint instead of two independent calls.
+            # If the equip leg fails, the entire transaction is rolled back so the
+            # player keeps their original loadout (old item remains equipped).
+            swap_resp = await self.http_client.post(
+                f"{api_base}/ships/{self.ship_id}/swap",
                 json={
                     "player_id": self.player_id,
                     "equipment_type": self.equipment_type,
-                    "item_name": old_item_name,
+                    "old_item_name": old_item_name,
+                    "new_item_name": self.new_item_name,
                 },
                 timeout=10,
             )
-
-            # Equip new item
-            equip_resp = await self.http_client.post(
-                f"{api_base}/ships/{self.ship_id}/equip",
-                json={
-                    "player_id": self.player_id,
-                    "equipment_type": self.equipment_type,
-                    "item_name": self.new_item_name,
-                },
-                timeout=10,
-            )
-            equip_resp.raise_for_status()
-            ship_data = equip_resp.json()
+            swap_resp.raise_for_status()
+            ship_data = swap_resp.json()
 
             embed = discord.Embed(
                 title="🔄 Items Swapped",
@@ -210,29 +202,21 @@ class UniqueModuleSwapView(discord.ui.View):
         await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
-            # Unequip old module
-            await self.http_client.post(
-                f"{api_base}/ships/{self.ship_id}/unequip",
+            # BUG B fix: use the atomic /swap endpoint instead of two independent calls.
+            # If the equip leg fails, the entire transaction is rolled back so the
+            # player keeps their original loadout (old module remains equipped).
+            swap_resp = await self.http_client.post(
+                f"{api_base}/ships/{self.ship_id}/swap",
                 json={
                     "player_id": self.player_id,
                     "equipment_type": self.equipment_type,
-                    "item_name": self.old_item_name,
+                    "old_item_name": self.old_item_name,
+                    "new_item_name": self.new_item_name,
                 },
                 timeout=10,
             )
-
-            # Equip new module
-            equip_resp = await self.http_client.post(
-                f"{api_base}/ships/{self.ship_id}/equip",
-                json={
-                    "player_id": self.player_id,
-                    "equipment_type": self.equipment_type,
-                    "item_name": self.new_item_name,
-                },
-                timeout=10,
-            )
-            equip_resp.raise_for_status()
-            ship_data = equip_resp.json()
+            swap_resp.raise_for_status()
+            ship_data = swap_resp.json()
 
             embed = discord.Embed(
                 title="🔄 Module Swapped",

@@ -20,6 +20,7 @@ from api.schemas.ships_schema import (
     EquipItemRequest,
     ShipLoadoutSummaryResponse,
     ShipResponse,
+    SwapItemRequest,
     TransferShipRequest,
     TransferShipResponse,
     UnequipItemRequest,
@@ -546,6 +547,68 @@ async def unequip_item(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to unequip item",
+        ) from e
+
+
+@router.post("/{ship_id}/swap", response_model=ShipResponse)
+async def swap_item(
+    ship_id: int,
+    request: SwapItemRequest,
+    loadout_svc=Depends(get_loadout_consistency_service),
+):
+    """Atomic swap: unequip one item and equip another in a single transaction.
+
+    BUG B fix: eliminates the data-loss window that existed when the gateway
+    made two independent HTTP calls (POST /unequip then POST /equip).  If the
+    equip leg fails, the entire transaction is rolled back so the player's
+    original loadout is preserved intact.
+
+    Request body::
+
+        {
+            "player_id": <int>,
+            "old_item_name": "<currently equipped item>",
+            "new_item_name": "<cargo item to equip>",
+            "equipment_type": "<weapons|modules|turrets|secondary_weapons>"  // optional
+        }
+    """
+    flogger.info(
+        f"swap: player_id={request.player_id}, ship_id={ship_id}, "
+        f"old={request.old_item_name!r}, new={request.new_item_name!r}, type={request.equipment_type!r}"
+    )
+
+    try:
+        async with get_db_session() as db, db.begin():
+            result = await loadout_svc.swap_one(
+                db,
+                player_id=request.player_id,
+                ship_id=ship_id,
+                old_item_name=request.old_item_name,
+                new_item_name=request.new_item_name,
+                equipment_type=request.equipment_type,
+            )
+            ship = result["ship"]
+            return ShipResponse(
+                id=ship.id,
+                player_id=ship.player_id,
+                ship_name=ship.ship_name,
+                nickname=ship.nickname,
+                is_active=ship.is_active,
+                weapons=ship.weapons,
+                modules=ship.modules,
+                turrets=ship.turrets,
+                secondary_weapons=ship.secondary_weapons,
+                secondary_ammo=ship.secondary_ammo,
+                created_at=ship.created_at.isoformat(),
+            )
+
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        flogger.error(f"Error swapping item: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to swap item",
         ) from e
 
 

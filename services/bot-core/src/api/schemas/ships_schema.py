@@ -90,6 +90,17 @@ class EquipCheckResponse(BaseModel):
     conflicting_item: dict | None = None
 
 
+class SwapItemRequest(BaseModel):
+    """Request body for the atomic POST /ships/{id}/swap endpoint (BUG B fix)."""
+
+    player_id: int
+    old_item_name: str
+    new_item_name: str
+    # Slot category (weapons | modules | turrets | secondary_weapons).
+    # When omitted, both legs auto-detect the slot from item names.
+    equipment_type: str | None = Field(default=None, pattern="^(weapons|modules|turrets|secondary_weapons)$")
+
+
 class TransferShipRequest(BaseModel):
     from_player_id: int = Field(ge=1)
     to_player_id: int = Field(ge=1)

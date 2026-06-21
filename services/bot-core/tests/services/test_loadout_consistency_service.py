@@ -718,3 +718,177 @@ class TestAntiDuplicationExploitClosure:
         assert result_b["items_returned"] == []
         # Total mint count after both calls is still 1.
         assert svc.inventory_repo.add_item.await_count == 1
+
+
+# ===========================================================================
+# BUG B fix — swap_one: atomic swap in a single transaction
+# ===========================================================================
+
+
+class TestSwapOne:
+    """Unit tests for LoadoutConsistencyService.swap_one (BUG B fix).
+
+    A successful swap runs unequip_one then equip_one inside the caller's
+    single transaction.  If the equip leg raises, the whole transaction rolls
+    back — the old item remains equipped and the new item remains in cargo.
+
+    Each test uses at most 2 mocks (mock_db + svc from the shared fixtures).
+    """
+
+    def _make_swap_ship(
+        self,
+        ship_id: int = 1,
+        player_id: int = 42,
+        modules: list[str] | None = None,
+    ) -> MagicMock:
+        """Build a minimal ship mock for swap tests."""
+        ship = _make_player_ship(ship_id=ship_id, player_id=player_id, modules=modules)
+        # secondary_ammo not used in module swaps, set to empty dict
+        ship.secondary_ammo = {}
+        return ship
+
+    @pytest.mark.asyncio
+    async def test_swap_one_success_swaps_module(self, svc, mock_db):
+        """Successful swap: unequip old module, equip new module; ship reflects new loadout.
+
+        BUG B (c): happy-path atomic swap — old item gone, new item in slot.
+        """
+        # Ship has D'iol (ArmourModule) in modules slot; E2 Exoclad is in cargo.
+        initial_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=["D'iol"])
+        # After unequip: D'iol removed from modules slot
+        after_unequip_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=[])
+        after_unequip_ship.secondary_ammo = {}
+        # After equip: E2 Exoclad appears in modules slot
+        after_equip_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=["E2 Exoclad"])
+        after_equip_ship.secondary_ammo = {}
+
+        static = _make_static_ship(max_modules=2)
+
+        # get_by_id is called multiple times across unequip_one and equip_one.
+        # Order: lock (player_repo), ship fetch for unequip, re-fetch, lock, ship fetch for equip, re-fetch.
+        svc.player_ship_repo.get_by_id = AsyncMock(
+            side_effect=[
+                initial_ship,  # unequip_one: ownership check
+                after_unequip_ship,  # unequip_one: re-fetch after remove_equipment
+                after_unequip_ship,  # equip_one: ownership check (after unequip)
+                after_equip_ship,  # equip_one: re-fetch after add_equipment
+            ]
+        )
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+
+        # item_repo: unequip_one resolves type for D'iol; equip_one resolves E2 Exoclad
+        diiol_item = _make_base_item("D'iol", "ArmourModule")
+        exoclad_item = _make_base_item("E2 Exoclad", "ArmourModule")
+        svc.item_repo.get_by_name_any_type = AsyncMock(
+            side_effect=[
+                diiol_item,  # unequip_one: resolve D'iol type
+                exoclad_item,  # equip_one: resolve E2 Exoclad for MODULE_EQUIP_LIMITS check
+            ]
+        )
+        # equip_one also calls get_by_name for game-data validation
+        svc.item_repo.get_by_name = AsyncMock(return_value=exoclad_item)
+
+        # After unequip, D'iol is in cargo (quantity=1)
+        diiol_inv = _make_inv_item("D'iol", "module", quantity=1)
+        exoclad_inv = _make_inv_item("E2 Exoclad", "module", quantity=1)
+        svc.inventory_repo.get_player_item = AsyncMock(
+            side_effect=[
+                exoclad_inv,  # equip_one: ownership check for E2 Exoclad
+            ]
+        )
+
+        result = await svc.swap_one(
+            mock_db,
+            player_id=42,
+            ship_id=1,
+            old_item_name="D'iol",
+            new_item_name="E2 Exoclad",
+            equipment_type="modules",
+        )
+
+        assert result["success"] is True
+        assert result["equipment_type"] == "modules"
+        # Unequip: D'iol removed from slot, added to cargo
+        svc.player_ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "modules", "D'iol", commit=False)
+        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "module", "D'iol", quantity=1, commit=False)
+        # Equip: E2 Exoclad removed from cargo, added to slot
+        svc.player_ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "modules", "E2 Exoclad", commit=False)
+        svc.inventory_repo.remove_item.assert_called_once_with(
+            mock_db, 42, "module", "E2 Exoclad", quantity=1, commit=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_swap_one_rollback_when_equip_fails(self, svc, mock_db):
+        """BUG B (b): when the equip leg fails, the ValueError propagates to the caller.
+
+        The caller owns the transaction (``async with db.begin()`` in the router);
+        the propagating exception causes the transaction to roll back, restoring
+        the original loadout.  This test verifies that swap_one raises (not swallows)
+        the error and that the unequip write happened before the failure.
+        """
+        # Ship has D'iol in modules slot; we try to swap in "Ghost Item" (not in cargo)
+        initial_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=["D'iol"])
+        after_unequip_ship = self._make_swap_ship(ship_id=1, player_id=42, modules=[])
+        after_unequip_ship.secondary_ammo = {}
+
+        static = _make_static_ship(max_modules=2)
+
+        svc.player_ship_repo.get_by_id = AsyncMock(
+            side_effect=[
+                initial_ship,  # unequip_one ownership check
+                after_unequip_ship,  # unequip_one re-fetch
+                after_unequip_ship,  # equip_one ownership check
+            ]
+        )
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+
+        diiol_item = _make_base_item("D'iol", "ArmourModule")
+        ghost_item = _make_base_item("Ghost Item", "ArmourModule")
+        svc.item_repo.get_by_name_any_type = AsyncMock(side_effect=[diiol_item, ghost_item])
+        svc.item_repo.get_by_name = AsyncMock(return_value=ghost_item)
+
+        # Ghost Item is NOT in cargo → equip_one raises ValueError
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=None)
+
+        with pytest.raises(ValueError, match="not found in your inventory"):
+            await svc.swap_one(
+                mock_db,
+                player_id=42,
+                ship_id=1,
+                old_item_name="D'iol",
+                new_item_name="Ghost Item",
+                equipment_type="modules",
+            )
+
+        # Unequip write DID happen (it ran first), but in real usage the caller's
+        # transaction rolls it back.  Here we just verify it was attempted.
+        svc.player_ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "modules", "D'iol", commit=False)
+        # Equip write must NOT have happened (failed at inventory check)
+        svc.player_ship_repo.add_equipment.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_swap_one_raises_if_old_item_not_equipped(self, svc, mock_db):
+        """Swap raises ValueError if the old item is not actually equipped.
+
+        BUG B: unequip_one should fail immediately, preventing any cargo mutation.
+        """
+        # Ship has no modules equipped
+        ship = self._make_swap_ship(ship_id=1, player_id=42, modules=[])
+        svc.player_ship_repo.get_by_id = AsyncMock(return_value=ship)
+
+        diiol_item = _make_base_item("D'iol", "ArmourModule")
+        svc.item_repo.get_by_name_any_type = AsyncMock(return_value=diiol_item)
+
+        with pytest.raises(ValueError, match="not equipped"):
+            await svc.swap_one(
+                mock_db,
+                player_id=42,
+                ship_id=1,
+                old_item_name="D'iol",
+                new_item_name="E2 Exoclad",
+                equipment_type="modules",
+            )
+
+        # Neither write should have been called
+        svc.player_ship_repo.remove_equipment.assert_not_called()
+        svc.player_ship_repo.add_equipment.assert_not_called()

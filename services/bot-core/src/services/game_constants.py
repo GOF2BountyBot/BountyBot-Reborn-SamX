@@ -486,12 +486,12 @@ class GameConstants:
     SCANNER_TIER_C_BONUS_PP: int = 10
 
     # Repair bots (§3 / §7.6)
-    KETAR_I_REPAIR_PCT_PER_SEC: float = 0.025
-    KETAR_II_REPAIR_PCT_PER_SEC: float = 0.050
+    KETAR_I_REPAIR_PCT_PER_SEC: float = 0.02
+    KETAR_II_REPAIR_PCT_PER_SEC: float = 0.04
 
     # Tick / timing (§1)
     TICK_MS: int = 10
-    MAX_FIGHT_TICKS: int = 18000
+    MAX_FIGHT_TICKS: int = 60000
 
     # Distance model (§2)
     STARTING_DISTANCE_M: int = 5000
@@ -525,6 +525,26 @@ class GameConstants:
     # CI-21: layer_depleted re-emit fraction (latch clears when layer recovers ≥ this fraction of max).
     # Override via: BOUNTYBOT_COMBAT_LAYER_REEMIT_FRACTION=0.25
     COMBAT_LAYER_REEMIT_FRACTION: float = 0.25
+
+    # ------------------------------------------------------------------
+    # Combat log recap denoising knobs (Phase 1 + 2)
+    # ------------------------------------------------------------------
+
+    # Minimum total occurrences of a same-key CYCLIC event (globally across the whole
+    # timeline) before all occurrences are collapsed into a single aggregate row.
+    # Keys with fewer total occurrences than this threshold pass through unchanged.
+    # Override via: BOUNTYBOT_RECAP_COLLAPSE_MIN_RUN=3
+    RECAP_COLLAPSE_MIN_RUN: int = 3
+
+    # Minimum number of times a nuke/shock weapon must fire before the low-impact
+    # detonations are grouped into a summary line.
+    # Override via: BOUNTYBOT_RECAP_NUKE_SUMMARY_MIN_COUNT=3
+    RECAP_NUKE_SUMMARY_MIN_COUNT: int = 3
+
+    # A nuke detonation is "significant" (kept as its own line) if its opponent damage
+    # is ≥ this fraction of the weapon's best opponent-damage in the fight.
+    # Override via: BOUNTYBOT_RECAP_NUKE_SIGNIFICANCE_FRACTION=0.25
+    RECAP_NUKE_SIGNIFICANCE_FRACTION: float = 0.25
 
     # ------------------------------------------------------------------
     # Environment variable overrides (operational constants only)
@@ -658,10 +678,10 @@ class GameConstants:
         cls.ACCURACY_CLAMP_MAX = _track_float("ACCURACY_CLAMP_MAX", 0.99)
         cls.SCANNER_TIER_B_BONUS_PP = _track_int("SCANNER_TIER_B_BONUS_PP", 5)
         cls.SCANNER_TIER_C_BONUS_PP = _track_int("SCANNER_TIER_C_BONUS_PP", 10)
-        cls.KETAR_I_REPAIR_PCT_PER_SEC = _track_float("KETAR_I_REPAIR_PCT_PER_SEC", 0.025)
-        cls.KETAR_II_REPAIR_PCT_PER_SEC = _track_float("KETAR_II_REPAIR_PCT_PER_SEC", 0.050)
+        cls.KETAR_I_REPAIR_PCT_PER_SEC = _track_float("KETAR_I_REPAIR_PCT_PER_SEC", 0.02)
+        cls.KETAR_II_REPAIR_PCT_PER_SEC = _track_float("KETAR_II_REPAIR_PCT_PER_SEC", 0.04)
         cls.TICK_MS = _track_int("TICK_MS", 10)
-        cls.MAX_FIGHT_TICKS = _track_int("MAX_FIGHT_TICKS", 18000)
+        cls.MAX_FIGHT_TICKS = _track_int("MAX_FIGHT_TICKS", 60000)
         cls.STARTING_DISTANCE_M = _track_int("STARTING_DISTANCE_M", 5000)
         cls.BASE_SHIP_SPEED_MPS = _track_int("BASE_SHIP_SPEED_MPS", 150)
         cls.MIN_DISTANCE_M = _track_int("MIN_DISTANCE_M", 300)
@@ -680,6 +700,11 @@ class GameConstants:
         cls.PVC_DAMAGE_REDUCTION = _track_float("PVC_DAMAGE_REDUCTION", 0.33)
         cls.COMBAT_LOG_RETENTION_HOURS = _track_int("COMBAT_LOG_RETENTION_HOURS", 72)
         cls.COMBAT_LAYER_REEMIT_FRACTION = _track_float("COMBAT_LAYER_REEMIT_FRACTION", 0.25)
+
+        # Combat log recap denoising knobs (Phase 1 + 2)
+        cls.RECAP_COLLAPSE_MIN_RUN = _track_int("RECAP_COLLAPSE_MIN_RUN", 3)
+        cls.RECAP_NUKE_SUMMARY_MIN_COUNT = _track_int("RECAP_NUKE_SUMMARY_MIN_COUNT", 3)
+        cls.RECAP_NUKE_SIGNIFICANCE_FRACTION = _track_float("RECAP_NUKE_SIGNIFICANCE_FRACTION", 0.25)
 
         if _overrides:
             _flogger.info(f"GameConstants env overrides detected: {', '.join(_overrides)}")

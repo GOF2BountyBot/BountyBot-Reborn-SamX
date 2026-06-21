@@ -17,7 +17,7 @@
   "wiki": "https://galaxyonfire.fandom.com/wiki/Ketar_Repair_Bot_II",
   "extra_atts": {
     "HPps": 15,
-    "repair_pct_per_sec": 0.05,
+    "repair_pct_per_sec": 0.04,
     "dlc": "Valkyrie",
     "mechanics_text": "Upgraded repair bot — faster repair rate than Ketar Repair Bot. Valkyrie DLC."
   }

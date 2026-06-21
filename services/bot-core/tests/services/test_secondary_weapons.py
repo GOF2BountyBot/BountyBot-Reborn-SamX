@@ -302,7 +302,7 @@ class TestMissile:
 
 
 class TestClusterMissile:
-    def test_accuracy_snapshot_semantics(self):
+    def test_accuracy_snapshot_semantics(self, monkeypatch):
         """Fire-time snapshot: all N sub-munitions roll against the snapshot accuracy. Test 8.
 
         The hits_mask is computed ONCE at fire time (Phase 3) using the pilot_primary_acc
@@ -325,6 +325,10 @@ class TestClusterMissile:
         l1 = _loadout(secondary_weapons=[patala], modules=[scanner], name="Attacker")
         l2 = _loadout(base_armour=1000, name="Target")
 
+        # Pin the legacy 18000-tick cap: the _SequencedRNG below (Part 2) is sized for it;
+        # the longer 60000 default would exhaust the sequence. Assertions are tick-0 only,
+        # so fight length is irrelevant.
+        monkeypatch.setattr(GameConstants, "MAX_FIGHT_TICKS", 18000)
         # --- Part 1: verify weapon_fire event records Tier B snapshot accuracy ---
         rng_a = random.Random(42)
         result_a = TickResolver().resolve(l1, l2, rng=rng_a)
@@ -361,8 +365,12 @@ class TestClusterMissile:
             f"Got {ev_proof.data['hits']}. If 0 hits, snapshot was rocket curve (0.05) not pilot_primary_acc."
         )
 
-    def test_sub_munition_independence(self):
+    def test_sub_munition_independence(self, monkeypatch):
         """Alternating hits: seeded RNG forces alternating hit/miss. Test 9."""
+        # The _SequencedRNG below pads 500 fallback rolls sized for the legacy 18000-tick
+        # cap; pin it so the longer default (60000) can't exhaust the sequence. Assertions
+        # only inspect tick-0 events, so fight length is irrelevant here.
+        monkeypatch.setattr(GameConstants, "MAX_FIGHT_TICKS", 18000)
         patala = _secondary(
             subtype="cluster-missile", range_m=5000.0, damage=90.0, speed_ms=3000, burst_count=5, name="Patala"
         )

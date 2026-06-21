@@ -372,13 +372,13 @@ class TestRepairBotRegen:
         assert state.repair_bot_rate_per_sec == GameConstants.KETAR_II_REPAIR_PCT_PER_SEC
 
     def test_ketar1_heals_hull_200_ticks(self):
-        """Ketar I: per-tick delta = 200 * 0.025 * 0.01 = 0.05 → 20 ticks per +1 HP.
-        10 HP deficit heals in 200 ticks."""
+        """Ketar I: per-tick delta = 200 * 0.02 * 0.01 = 0.04 → 25 ticks per +1 HP.
+        10 HP deficit heals in 250 ticks."""
         state = _make_state(max_hull=100, max_armour=100, repair_rate=GameConstants.KETAR_I_REPAIR_PCT_PER_SEC)
         state.current_hull = 90  # 10 HP deficit
 
         events: list[CombatEvent] = []
-        for tick in range(200):
+        for tick in range(250):
             _tick_repair_bot_regen(state, tick, events)
 
         assert state.current_hull == 100
@@ -391,8 +391,8 @@ class TestRepairBotRegen:
         state.current_armour = 99  # 1 HP armour deficit
 
         events: list[CombatEvent] = []
-        # Run enough ticks to heal 1 HP (20 ticks at Ketar I rate)
-        for tick in range(20):
+        # Run enough ticks to heal 1 HP (25 ticks at Ketar I rate)
+        for tick in range(25):
             _tick_repair_bot_regen(state, tick, events)
 
         # hull healed first
@@ -404,12 +404,12 @@ class TestRepairBotRegen:
             assert events.index(hull_regen[0]) < events.index(armour_regen[0])
 
     def test_ketar2_heals_faster(self):
-        """Ketar II (5%/s) heals same 10 HP deficit in 100 ticks."""
+        """Ketar II (4%/s) heals same 10 HP deficit in 125 ticks."""
         state = _make_state(max_hull=100, max_armour=100, repair_rate=GameConstants.KETAR_II_REPAIR_PCT_PER_SEC)
         state.current_hull = 90
 
         events: list[CombatEvent] = []
-        for tick in range(100):
+        for tick in range(125):
             _tick_repair_bot_regen(state, tick, events)
 
         assert state.current_hull == 100

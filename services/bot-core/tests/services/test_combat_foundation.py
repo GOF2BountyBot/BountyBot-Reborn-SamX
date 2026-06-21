@@ -58,7 +58,7 @@ class TestConstantDefaults:
 
     def test_tick_and_timing(self):
         assert GameConstants.TICK_MS == 10
-        assert GameConstants.MAX_FIGHT_TICKS == 18000
+        assert GameConstants.MAX_FIGHT_TICKS == 60000
 
     def test_distance_model(self):
         assert GameConstants.STARTING_DISTANCE_M == 5000
@@ -81,8 +81,8 @@ class TestConstantDefaults:
         assert GameConstants.SCANNER_TIER_C_BONUS_PP == 10
 
     def test_repair_bot_rates(self):
-        assert pytest.approx(0.025) == GameConstants.KETAR_I_REPAIR_PCT_PER_SEC
-        assert pytest.approx(0.050) == GameConstants.KETAR_II_REPAIR_PCT_PER_SEC
+        assert pytest.approx(0.02) == GameConstants.KETAR_I_REPAIR_PCT_PER_SEC
+        assert pytest.approx(0.04) == GameConstants.KETAR_II_REPAIR_PCT_PER_SEC
 
     def test_hp_threshold_lists(self):
         assert GameConstants.CLOAK_HP_THRESHOLDS_PCT == [66, 33]

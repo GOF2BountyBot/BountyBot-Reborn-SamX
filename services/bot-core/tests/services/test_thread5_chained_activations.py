@@ -377,8 +377,7 @@ class TestTelemetryAndRendering:
         )
         hp_pct_lines = [e for e in cloak_lines if "at 66% HP" in e["detail"]]
         assert len(hp_pct_lines) == 1, (
-            f"Cloak HP-threshold line must appear as its own line; "
-            f"cloak lines: {[e['detail'] for e in cloak_lines]}"
+            f"Cloak HP-threshold line must appear as its own line; cloak lines: {[e['detail'] for e in cloak_lines]}"
         )
 
 

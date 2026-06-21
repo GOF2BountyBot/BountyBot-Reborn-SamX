@@ -886,9 +886,7 @@ class TestGlobalPerKeyAggregation:
             f"Collapsed line must have count={n}; got count={collapsed.get('count', 1)}"
         )
         # The ×N marker must be in the detail.
-        assert f"×{n}" in collapsed["detail"], (
-            f"Detail must contain ×{n}; got: {collapsed['detail']!r}"
-        )
+        assert f"×{n}" in collapsed["detail"], f"Detail must contain ×{n}; got: {collapsed['detail']!r}"
         # Combatant name must appear in the collapsed detail.
         assert "bluefyre" in collapsed["detail"], (
             f"Collapsed line must name the combatant; got: {collapsed['detail']!r}"
@@ -910,8 +908,7 @@ class TestGlobalPerKeyAggregation:
         raccoon_wir = [e for e in result if e["event_type"] == "Weapon in range" and "Raccoon" in e["detail"]]
         # Global aggregation: exactly 1 collapsed row with count=N.
         assert len(raccoon_wir) == 1, (
-            f"Global aggregation must fold {n} interleaved Raccoon WiR events to 1 line; "
-            f"got {len(raccoon_wir)} lines."
+            f"Global aggregation must fold {n} interleaved Raccoon WiR events to 1 line; got {len(raccoon_wir)} lines."
         )
         assert raccoon_wir[0].get("count", 1) == n, (
             f"Collapsed row must have count={n}; got count={raccoon_wir[0].get('count', 1)}"
@@ -996,9 +993,7 @@ class TestGlobalPerKeyAggregation:
         wir = [e for e in result if e["event_type"] == "Weapon in range" and "LaserX" in e["detail"]]
         assert len(wir) == 1, f"5 same-key WiR must collapse to 1; got {len(wir)}"
         detail = wir[0]["detail"]
-        assert "bluefyre" in detail, (
-            f"Collapsed line must include combatant name 'bluefyre'; got: {detail!r}"
-        )
+        assert "bluefyre" in detail, f"Collapsed line must include combatant name 'bluefyre'; got: {detail!r}"
 
     def test_combatant_name_in_collapsed_module_detail(self):
         """A collapsed Module activated line must contain the combatant name."""
@@ -1013,9 +1008,7 @@ class TestGlobalPerKeyAggregation:
         mods = [e for e in result if e["event_type"] == "Module activated"]
         assert len(mods) == 1, f"3 same-key module activations must collapse to 1; got {len(mods)}"
         detail = mods[0]["detail"]
-        assert "bluefyre" in detail, (
-            f"Collapsed module line must include combatant name 'bluefyre'; got: {detail!r}"
-        )
+        assert "bluefyre" in detail, f"Collapsed module line must include combatant name 'bluefyre'; got: {detail!r}"
 
     def test_two_distinct_weapons_produce_two_collapsed_rows(self):
         """Two weapons each with ≥3 global occurrences stay in separate collapsed rows."""
@@ -1171,9 +1164,7 @@ class TestCountFieldLegacyCompat:
         ]
         result = _extract_key_events(timeline)
         for ev in result:
-            assert "count" not in ev or ev.get("count", 1) >= 1, (
-                f"count must be ≥1 or absent; got: {ev}"
-            )
+            assert "count" not in ev or ev.get("count", 1) >= 1, f"count must be ≥1 or absent; got: {ev}"
 
     def test_non_collapsed_rows_have_no_count_or_count_1(self):
         """Non-collapsed rows must not have count>1 (either absent or 1)."""
@@ -1234,9 +1225,7 @@ class TestR241RealDataGolden:
         d = _load_fixture(241)
         result = _extract_key_events(d["timeline"], 10, d["combatants"])
         outcome = next(e for e in result if e["event_type"] == "Outcome")
-        assert "bluefyre wins" in outcome["detail"], (
-            f"Outcome must say 'bluefyre wins'; got: {outcome['detail']!r}"
-        )
+        assert "bluefyre wins" in outcome["detail"], f"Outcome must say 'bluefyre wins'; got: {outcome['detail']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1344,8 +1333,7 @@ class TestR285RealDataGolden:
                 violations[ck] = {"rows": row_count, "total_count": total_count}
 
         assert not violations, (
-            f"Collapse keys with total count ≥3 must produce exactly 1 output row; "
-            f"violations: {violations}"
+            f"Collapse keys with total count ≥3 must produce exactly 1 output row; violations: {violations}"
         )
 
     def test_r285_all_narrative_lines_present(self):
@@ -1375,9 +1363,7 @@ class TestR285RealDataGolden:
         d = _load_fixture(285)
         result = _extract_key_events(d["timeline"], 10, d["combatants"])
         raccoon_wir = [e for e in result if e["event_type"] == "Weapon in range" and "Raccoon" in e["detail"]]
-        assert len(raccoon_wir) == 1, (
-            f"Raccoon WiR must collapse to 1 line; got {len(raccoon_wir)}: {raccoon_wir}"
-        )
+        assert len(raccoon_wir) == 1, f"Raccoon WiR must collapse to 1 line; got {len(raccoon_wir)}: {raccoon_wir}"
         detail = raccoon_wir[0]["detail"]
         assert "bluefyre" in detail, f"Collapsed Raccoon line must name 'bluefyre'; got: {detail!r}"
         assert "×11" in detail, f"Collapsed Raccoon line must show ×11; got: {detail!r}"
@@ -1395,8 +1381,7 @@ class TestR285RealDataGolden:
         raccoon_wir = [e for e in result if e["event_type"] == "Weapon in range" and "Raccoon" in e["detail"]]
         assert len(raccoon_wir) == 1
         assert raccoon_wir[0]["tick"] == 367, (
-            f"Collapsed Raccoon line must be anchored at tick 367 (first occurrence); "
-            f"got tick={raccoon_wir[0]['tick']}"
+            f"Collapsed Raccoon line must be anchored at tick 367 (first occurrence); got tick={raccoon_wir[0]['tick']}"
         )
 
     def test_r285_stalemate_outcome_present(self):
@@ -1405,9 +1390,7 @@ class TestR285RealDataGolden:
         result = _extract_key_events(d["timeline"], 10, d["combatants"])
         outcome = next((e for e in result if e["event_type"] == "Outcome"), None)
         assert outcome is not None, "Outcome must be present"
-        assert "Stalemate" in outcome["detail"], (
-            f"Battle 285 outcome must be a Stalemate; got: {outcome['detail']!r}"
-        )
+        assert "Stalemate" in outcome["detail"], f"Battle 285 outcome must be a Stalemate; got: {outcome['detail']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1439,9 +1422,7 @@ class TestR219RealDataGolden:
         """
         d = _load_fixture(219)
         result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        assert len(result) < 30, (
-            f"Battle 219 global collapse must reduce to <30 lines; got {len(result)}."
-        )
+        assert len(result) < 30, f"Battle 219 global collapse must reduce to <30 lines; got {len(result)}."
 
     def test_r219_exact_line_count(self):
         """Battle 219 must produce exactly {_EXPECTED_TOTAL} lines under global aggregation.
@@ -1478,8 +1459,7 @@ class TestR219RealDataGolden:
                 violations[ck] = {"rows": row_count, "total_count": total_count}
 
         assert not violations, (
-            f"Collapse keys with total count ≥3 must produce exactly 1 output row; "
-            f"violations: {violations}"
+            f"Collapse keys with total count ≥3 must produce exactly 1 output row; violations: {violations}"
         )
 
     def test_r219_all_narrative_lines_present(self):

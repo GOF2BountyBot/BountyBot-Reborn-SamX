@@ -1181,3 +1181,106 @@ class TestEquipmentServiceDbExceptionHandling:
         svc.ship_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
         with pytest.raises(ValueError, match="could not be retrieved"):
             await svc.unequip_item(mock_db, player_id=42, ship_id=1, item_name="Pulse Laser")
+
+
+# ===========================================================================
+# BUG A fix — equip_check ordering: unique_conflict before slot_full for modules
+# ===========================================================================
+
+
+class TestEquipCheckUniqueConflictPrecedesSlotFull:
+    """BUG A regression tests.
+
+    When ALL module slots are full AND a same-class module is already equipped,
+    equip_check must return ``"unique_conflict"`` (not ``"slot_full"``) so the
+    cog shows the targeted UniqueModuleSwapView rather than the generic
+    WeaponSwapView.  A player offered the generic swap would free the WRONG slot,
+    leaving the unique-class conflict unsatisfied and causing the subsequent
+    equip to fail.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unique_conflict_wins_when_slots_full_and_same_class_equipped(self, mock_db, svc):
+        """equip_check returns unique_conflict even when all module slots are full.
+
+        Setup: ship has max_modules=2, both slots occupied — one by an ArmourModule.
+        Equipping a second ArmourModule must return "unique_conflict", NOT "slot_full".
+        """
+        # All 2 module slots filled; one is an ArmourModule (D'iol)
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=["D'iol", "Scanner Mk1"])
+        static_ship = _make_static_ship(name="Sidewinder", max_primaries=2, max_modules=2)
+        new_armour = _make_base_item("E2 Exoclad", "ArmourModule")
+        existing_armour = _make_base_item("D'iol", "ArmourModule")
+        scanner_item = _make_base_item("Scanner Mk1", "ScannerModule")
+        inv_item = _make_inventory_item("E2 Exoclad", "module")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.inventory_repo.get_player_item.return_value = inv_item
+
+        # Calls to get_by_name_any_type:
+        # 1. Initial lookup of "E2 Exoclad" (returns new_armour)
+        # 2. _find_conflicting_module scans equipped modules: "D'iol" → existing_armour (conflict found)
+        # Scanner Mk1 would be call 3 but we should stop after finding D'iol
+        svc.item_repo.get_by_name_any_type.side_effect = [
+            new_armour,  # initial item lookup
+            existing_armour,  # conflict scan: D'iol is ArmourModule → match
+            scanner_item,  # never reached; guards against extra calls too
+        ]
+
+        result = await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="E2 Exoclad")
+
+        # Must be unique_conflict, not slot_full
+        assert result["status"] == "unique_conflict", (
+            f"Expected unique_conflict (slots full + same-class equipped), got {result['status']!r}"
+        )
+        assert result["module_class"] == "ArmourModule"
+        assert result["conflicting_item"]["name"] == "D'iol"
+        assert result["max_equipped"] == 1
+
+    @pytest.mark.asyncio
+    async def test_slot_full_still_returned_when_no_unique_conflict(self, mock_db, svc):
+        """When modules are full but no same-class conflict exists, slot_full is still returned."""
+        # All 2 module slots filled with different classes (no ArmourModule)
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=["Scanner Mk1", "Cabin Basic"])
+        static_ship = _make_static_ship(name="Sidewinder", max_primaries=2, max_modules=2)
+        new_armour = _make_base_item("D'iol", "ArmourModule")
+        scanner_item = _make_base_item("Scanner Mk1", "ScannerModule")
+        cabin_item = _make_base_item("Cabin Basic", "CabinModule")
+        inv_item = _make_inventory_item("D'iol", "module")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.inventory_repo.get_player_item.return_value = inv_item
+
+        # Calls: initial lookup + conflict scan of both equipped modules (no match)
+        svc.item_repo.get_by_name_any_type.side_effect = [
+            new_armour,  # initial lookup of D'iol → ArmourModule
+            scanner_item,  # conflict scan: Scanner Mk1 → ScannerModule (no match)
+            cabin_item,  # conflict scan: Cabin Basic → CabinModule (no match)
+        ]
+
+        result = await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="D'iol")
+
+        # No same-class conflict → slots are full → slot_full
+        assert result["status"] == "slot_full"
+        assert result["max_slots"] == 2
+        assert len(result["equipped_items"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_weapon_slot_full_unaffected_by_module_reorder(self, mock_db, svc):
+        """Weapon slot_full is still returned correctly (non-module path unchanged)."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=["Gun A", "Gun B"])
+        static_ship = _make_static_ship(name="Sidewinder", max_primaries=2)
+        base_item = _make_base_item("Gun C", "PrimaryWeapon")
+        inv_item = _make_inventory_item("Gun C", "primary_weapon")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.inventory_repo.get_player_item.return_value = inv_item
+
+        result = await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Gun C")
+
+        assert result["status"] == "slot_full"
+        assert result["equipment_type"] == "weapons"

@@ -274,7 +274,35 @@ class EquipmentService:
         if not inv_item:
             raise ValueError(f"Item '{item_name}' (type={inventory_type}) not found in your inventory")
 
-        # 4. Check slot availability
+        # 4. For modules: check MODULE_EQUIP_LIMITS unique-conflict BEFORE slot availability.
+        #
+        # BUG A fix: when all module slots are full AND a same-class module is already
+        # equipped, the unique-conflict check must win so the gateway cog shows the
+        # targeted UniqueModuleSwapView instead of the generic WeaponSwapView.
+        # Without this ordering a player would be asked to free ANY slot (possibly a
+        # scanner), the unique-class conflict would remain, and the subsequent equip
+        # would fail.  Non-module categories (weapons/turrets) are unaffected.
+        if equipment_category == "modules":
+            module_class = item_type_str  # e.g. "ArmourModule"
+            limit = GameConstants.MODULE_EQUIP_LIMITS.get(module_class)
+            if limit is not None and limit >= 0:
+                # Check for an already-equipped module of the same class.
+                conflicting = await self._find_conflicting_module(db, ship, module_class)
+                if conflicting is not None and limit <= 1:
+                    flogger.debug(
+                        f"equip_check: unique_conflict for module_class={module_class} "
+                        f"on ship {ship_id}, conflicting={conflicting!r}"
+                    )
+                    return {
+                        "status": "unique_conflict",
+                        "equipment_type": equipment_category,
+                        "item_type": item_type_str,
+                        "module_class": module_class,
+                        "max_equipped": limit,
+                        "conflicting_item": {"name": conflicting, "emoji": ""},
+                    }
+
+        # 5. Check slot availability
         slot_field = _SLOT_MAP[equipment_category]
         ship_data = await self.ship_data_repo.get_by_name(db, ship.ship_name)
         if not ship_data:
@@ -297,27 +325,6 @@ class EquipmentService:
                 "max_slots": max_slots,
                 "equipped_items": equipped_items_info,
             }
-
-        # 5. Module-specific: check MODULE_EQUIP_LIMITS
-        if equipment_category == "modules":
-            module_class = item_type_str  # e.g. "ArmourModule"
-            limit = GameConstants.MODULE_EQUIP_LIMITS.get(module_class)
-            if limit is not None and limit >= 0:
-                # Count how many of this module class are already equipped
-                conflicting = await self._find_conflicting_module(db, ship, module_class)
-                if conflicting is not None and limit <= 1:
-                    flogger.debug(
-                        f"equip_check: unique_conflict for module_class={module_class} "
-                        f"on ship {ship_id}, conflicting={conflicting!r}"
-                    )
-                    return {
-                        "status": "unique_conflict",
-                        "equipment_type": equipment_category,
-                        "item_type": item_type_str,
-                        "module_class": module_class,
-                        "max_equipped": limit,
-                        "conflicting_item": {"name": conflicting, "emoji": ""},
-                    }
 
         # 6. All checks passed
         flogger.debug(f"equip_check: ok for item={item_name!r} on ship {ship_id}")

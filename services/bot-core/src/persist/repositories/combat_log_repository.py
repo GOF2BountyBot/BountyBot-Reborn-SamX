@@ -66,28 +66,30 @@ class CombatLogRepository(IRepository[CombatLog]):
         """Fetch only the sub-paths needed for get_detail, skipping the multi-MB timeline.
 
         P4-T7b: JSONB sub-path select — selects data->'summary', data->'metadata',
-        data->'key_events' server-side (via SQLAlchemy column index accessors on the
-        _JSONB column) so the timeline sub-key is never shipped or loaded into Python.
+        data->'key_events', data->'recurring' server-side (via SQLAlchemy column index
+        accessors on the _JSONB column) so the timeline sub-key is never shipped or
+        loaded into Python.
 
         On PostgreSQL (prod/JSONB) the emitted SQL is:
-            SELECT ..., data -> 'summary', data -> 'metadata', data -> 'key_events' ...
+            SELECT ..., data -> 'summary', data -> 'metadata', data -> 'key_events',
+                        data -> 'recurring' ...
         On SQLite (unit-test suite/JSON) the emitted SQL is:
             SELECT ..., JSON_QUOTE(JSON_EXTRACT(data, '$."summary"')), ...
 
         Both dialects deserialize the JSON sub-values automatically: the returned
-        Row fields ``summary``, ``metadata``, and ``key_events`` are already Python
-        dicts/lists (not raw JSON strings).
+        Row fields ``summary``, ``metadata``, ``key_events``, and ``recurring`` are
+        already Python dicts/lists (not raw JSON strings).
 
         Returns:
             A SQLAlchemy Row namedtuple with fields:
               id, guild_id, context, combatant1_name, combatant2_name,
               combatant1_user_id, combatant2_user_id, winner_name, is_stalemate,
-              created_at, summary, metadata, key_events
+              created_at, summary, metadata, key_events, recurring
             or None if no row with that id exists.
 
-        Note: key_events is None when the stored data blob has no "key_events" key
-        (legacy row written before P4-T7a). Callers must handle this case by falling
-        back to get_by_id() + _extract_key_events (see CombatLogService.get_detail).
+        Note: key_events/recurring are None when the stored data blob lacks those keys
+        (legacy row). Callers must handle this by falling back to
+        _rebuild_recap_from_timeline() (see CombatLogService.get_detail).
         """
         try:
             stmt = select(
@@ -104,6 +106,7 @@ class CombatLogRepository(IRepository[CombatLog]):
                 CombatLog.data["summary"].label("summary"),
                 CombatLog.data["metadata"].label("metadata"),
                 CombatLog.data["key_events"].label("key_events"),
+                CombatLog.data["recurring"].label("recurring"),
             ).where(CombatLog.id == obj_id)
             result = await db.execute(stmt)
             return result.one_or_none()

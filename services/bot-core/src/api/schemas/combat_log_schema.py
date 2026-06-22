@@ -92,3 +92,7 @@ class CombatLogDetail(BaseModel):
 
     # Key events highlight list (server-side condensed from data.timeline)
     key_events: list[KeyEvent]
+
+    # Recurring patterns (v3 redesign): one string bullet per pattern with ≥3 occurrences.
+    # Empty list for legacy rows or fights with no recurring cyclic events.
+    recurring: list[str] = []

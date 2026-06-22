@@ -394,122 +394,119 @@ class CombatLogCog(commands.Cog):
             summary_value = summary_value[:1023] + "…"
         embed.add_field(name="📊 Summary", value=summary_value, inline=False)
 
-        # --- Key Events section ---
+        # --- Key Events + Recurring sections ---
         # Discord hard limit: 1024 chars per embed field value, 25 fields / 6000 chars
-        # per embed.  Rather than truncate, we pack lines into the first "🎯 Key Events"
-        # field and spill the remainder into additional HEADERLESS continuation fields
-        # (Discord requires a non-empty field name, so we use a zero-width space).
-        # Only a final overall-budget guard drops events.  DESIGN_COMBAT_LOG_RECAP §6.
+        # per embed.  Pack lines into the first "🎯 Key Events" field and spill the
+        # remainder into additional HEADERLESS continuation fields (zero-width space name).
+        # Priority tiers gate BUDGET DROPPING only — never display order.
+        # key_events are already in chronological order from the server; rendered as-is.
         _FIELD_LIMIT = 1024
-        # Cosmetic per-line bound only — Discord's hard limits are enforced below by the
-        # 1024-char field packing + the 6000-char aggregate budget, NOT by this clamp.
-        # 80 was too aggressive: it chopped legitimate lines mid-word (the stalemate Outcome
-        # why-line ~132 chars, and Engagement lines with long player/ship names ~86 chars).
-        # 200 matches the gateway's _DETAIL_MAX_CHARS convention (http_error_handler) and
-        # preserves every real-world line while still bounding pathological 255-char names.
-        _DETAIL_MAX = 200  # max chars per detail string to bound each line
-        _ZWSP = "\u200b"  # zero-width space → renders as a headerless continuation field
-        _MAX_EVENT_FIELDS = 6  # safety cap on continuation fields (well under Discord's 25)
-        # Discord rejects any embed whose AGGREGATE size (title + every field name + value +
-        # footer + author) exceeds 6000 chars with a 400 (50035). The per-field (1024) and
-        # field-count (_MAX_EVENT_FIELDS) guards above are not sufficient on their own: summary
-        # (≤1024) + 6×1024 event chunks ≈ 7200 > 6000. Track len(embed) as we add event fields and
-        # stop before crossing this budget, leaving headroom for the omission trailer + footer.
+        _DETAIL_MAX = 200  # max chars per detail string (cosmetic, not hard-limit)
+        _ZWSP = "\u200b"  # zero-width space → headerless continuation field
+        _MAX_EVENT_FIELDS = 6  # safety cap on continuation fields
+        # 6000-char aggregate budget guard (Discord rejects embeds > 6000 chars total).
         _EMBED_BUDGET = 5800
 
+        # Priority tiers: used ONLY for deciding which events to drop when over budget.
+        # Lower tier = higher priority = protected from drops.  Display order is always
+        # chronological (as received from the server — never re-sorted here).
+        _PRIORITY: dict[str, int] = {
+            "Outcome": 0,
+            "Engagement": 1,
+            "HP milestone (50%)": 2,
+            "HP milestone (25%)": 2,
+            "Layer depleted": 3,
+            "Nuke detonation": 4,
+            "Shock blast": 4,
+            "Module activated": 5,
+            "Weapon in range": 6,
+            "Ammo depleted": 6,
+        }
+        _DEFAULT_PRIORITY = 3
+
         key_events: list[dict] = data.get("key_events", [])
+        recurring: list[str] = data.get("recurring", [])
+
         if key_events:
-            # Priority tiers for budget-limited rendering (Rule 4).
-            # Lower tier number = higher priority (rendered first / protected from budget cuts).
-            _PRIORITY: dict[str, int] = {
-                "Outcome": 0,
-                "Engagement": 1,
-                "HP milestone (50%)": 2,
-                "HP milestone (25%)": 2,
-                "Layer depleted": 3,
-                "Nuke detonation": 4,
-                "Shock blast": 4,
-                "Module activated": 5,
-                "Weapon in range": 6,
-                "Ammo depleted": 6,
-            }
-            _DEFAULT_PRIORITY = 3  # unknown event_types treated as mid-tier
-
-            # Sort by (priority_tier, tick) so Outcome is always first in the priority queue.
-            # Build (priority, tick, original_index, ev) tuples, then sort.
-            prioritised = sorted(
-                enumerate(key_events),
-                key=lambda x: (_PRIORITY.get(x[1].get("event_type", ""), _DEFAULT_PRIORITY), x[1].get("tick", 0)),
-            )
-
-            # Build all lines in priority order.
-            # Build all lines first, then pack greedily into <=1024-char field chunks.
-            # Count field carries ×N multiplier from the extractor; render it if not already in detail.
-            lines: list[str] = []
-            for _orig_idx, ev in prioritised:
+            # Build lines in CHRONOLOGICAL order (key_events already sorted by time_s).
+            # Priority stored per-event for budget-drop decisions only.
+            lines_with_pri: list[tuple[int, str]] = []
+            for ev in key_events:
                 time_s = ev.get("time_s", 0.0)
                 detail = ev.get("detail", "")
-                count = ev.get("count", 1) or 1
-                # Belt-and-suspenders: if count>1 and "×" not already in detail, append suffix.
-                if count > 1 and " ×" not in detail:
-                    detail = f"{detail} ×{count}"
                 if len(detail) > _DETAIL_MAX:
                     detail = detail[: _DETAIL_MAX - 1] + "…"
-                lines.append(f"`{time_s:6.1f}s` {detail}")
+                pri = _PRIORITY.get(ev.get("event_type", ""), _DEFAULT_PRIORITY)
+                lines_with_pri.append((pri, f"`{time_s:6.1f}s` {detail}"))
 
-            chunks: list[str] = []
-            cur: list[str] = []
-            cur_len = 0
-            for line in lines:
-                add = len(line) + (1 if cur else 0)
-                if cur and cur_len + add > _FIELD_LIMIT:
-                    chunks.append("\n".join(cur))
-                    cur, cur_len = [], 0
-                    add = len(line)
-                cur.append(line)
-                cur_len += add
-            if cur:
-                chunks.append("\n".join(cur))
+            def _pack_lines(lns: list[str]) -> list[str]:
+                """Pack lines into <=1024-char field chunks."""
+                cks: list[str] = []
+                cur: list[str] = []
+                cur_len = 0
+                for line in lns:
+                    add = len(line) + (1 if cur else 0)
+                    if cur and cur_len + add > _FIELD_LIMIT:
+                        cks.append("\n".join(cur))
+                        cur, cur_len = [], 0
+                        add = len(line)
+                    cur.append(line)
+                    cur_len += add
+                if cur:
+                    cks.append("\n".join(cur))
+                return cks
 
-            # Respect the continuation-field cap; if exceeded, note the dropped remainder.
-            dropped = 0
-            if len(chunks) > _MAX_EVENT_FIELDS:
-                shown = sum(c.count("\n") + 1 for c in chunks[:_MAX_EVENT_FIELDS])
-                dropped = len(lines) - shown
-                chunks = chunks[:_MAX_EVENT_FIELDS]
-
-            # Set the footer up front so it is counted in len(embed) by the aggregate-budget guard.
+            # Set footer early so len(embed) is accurate during budget estimation.
             embed.set_footer(text=f"Battle ID #{battle_id} | Requested by {user.display_name}")
 
-            # Add event fields one at a time, honouring Discord's 6000-char aggregate limit.
-            # If a chunk would push the embed over budget, stop and roll its (and any remaining
-            # chunks') line count into `dropped`, so the omission is surfaced honestly.
+            # Greedy budget drop: if over limit, repeatedly drop the lowest-priority event
+            # (highest _PRIORITY value, then latest index as tiebreak) until we fit.
+            # Final output preserves original chronological order for kept events.
+            kept_indices = list(range(len(lines_with_pri)))
+            while True:
+                kept_lines = [lines_with_pri[i][1] for i in kept_indices]
+                chunks = _pack_lines(kept_lines)
+                over_fields = len(chunks) > _MAX_EVENT_FIELDS
+                est_size = (
+                    len(embed) + sum(len(c) for c in chunks) + len("🎯 Key Events") + (len(chunks) - 1) * len(_ZWSP)
+                )
+                if not over_fields and est_size <= _EMBED_BUDGET:
+                    break
+                if not kept_indices:
+                    break
+                drop_idx = max(kept_indices, key=lambda i: (lines_with_pri[i][0], i))
+                kept_indices.remove(drop_idx)
+
+            dropped_count = len(lines_with_pri) - len(kept_indices)
+            kept_lines = [lines_with_pri[i][1] for i in kept_indices]
+            chunks = _pack_lines(kept_lines)
+
             shown_chunks: list[str] = []
             for i, chunk in enumerate(chunks):
                 value = chunk[:_FIELD_LIMIT]
                 name = "🎯 Key Events" if i == 0 else _ZWSP
-                # +len(name)+len(value) is the field's contribution to len(embed).
                 if shown_chunks and len(embed) + len(name) + len(value) > _EMBED_BUDGET:
-                    dropped += sum(c.count("\n") + 1 for c in chunks[i:])
+                    dropped_count += sum(c.count("\n") + 1 for c in chunks[i:])
                     break
                 embed.add_field(name=name, value=value, inline=False)
                 shown_chunks.append(chunk)
 
-            # Surface any omission (field-cap and/or budget) as a trailer on the last shown field.
-            if dropped and shown_chunks:
-                trailer = f"\n…(+{dropped} more event{'s' if dropped != 1 else ''} omitted)"
+            # Surface any omission as a trailer on the last shown field.
+            if dropped_count and shown_chunks:
+                trailer = f"\n…(+{dropped_count} more event{'s' if dropped_count != 1 else ''} omitted)"
                 idx = len(shown_chunks) - 1
                 name = "🎯 Key Events" if idx == 0 else _ZWSP
-                # Make room for the trailer BEFORE appending so the final slice can never cut it
-                # back off: the field still never exceeds _FIELD_LIMIT, but the omission notice is
-                # guaranteed to survive even when the shown chunk already packs to exactly 1024.
                 value = shown_chunks[idx][: _FIELD_LIMIT - len(trailer)] + trailer
-                embed.set_field_at(
-                    idx,
-                    name=name,
-                    value=value,
-                    inline=False,
-                )
+                embed.set_field_at(idx, name=name, value=value, inline=False)
+
+            # --- Recurring section (appended after Key Events if space allows) ---
+            if recurring:
+                rec_text = "\n".join(recurring)
+                if len(rec_text) > _FIELD_LIMIT:
+                    rec_text = rec_text[: _FIELD_LIMIT - 3] + "…"
+                if len(embed) + len("🔁 Recurring") + len(rec_text) <= _EMBED_BUDGET:
+                    embed.add_field(name="🔁 Recurring", value=rec_text, inline=False)
+
             return embed
 
         embed.add_field(name="🎯 Key Events", value="*(no secondary weapons or modules used)*", inline=False)

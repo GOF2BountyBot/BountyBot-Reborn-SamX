@@ -26,6 +26,7 @@ from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.combat_models import CombatMeta, FightResults
+from services.combat_recap import build_recap_sections, extract_wslot
 from services.combat_resolver import (
     _TICK_MS,
     _extract_key_events,
@@ -139,17 +140,25 @@ class CombatLogService:
             for ev in raw_timeline
         ]
 
-        # Compute key_events at write time and store in the data blob.
-        # Uses the same _extract_key_events from combat_resolver (the resolver leaf
-        # imported above) so the stored value is byte-identical to what the
-        # fallback read path produces on the same timeline — X2 parity by
-        # construction (same function, same inputs).
+        # Compute recap sections at write time and store in the data blob.
+        # build_recap_sections() calls _extract_key_events internally and applies the
+        # new presentation logic (chronological key events + recurring bullets).
+        # X2 parity: stored sections are produced by the same pipeline as the read path.
         _tick_ms_write: int = int(metadata.get("metadata", {}).get("tick_ms", _TICK_MS))
         _combatants_map_write: dict = combatants_summary
-        _key_events_write: list[dict] = _extract_key_events(
+        _raw_rows_write: list[dict] = _extract_key_events(
             serialised_timeline,
             tick_ms=_tick_ms_write,
             combatants_map=_combatants_map_write,
+        )
+        for _i, _r in enumerate(_raw_rows_write):
+            _r["_idx"] = _i
+        _wslot_write: dict[str, str] = extract_wslot(serialised_timeline)
+        _recap_write: dict[str, list] = build_recap_sections(
+            _raw_rows_write,
+            combatants_map=_combatants_map_write,
+            tick_ms=_tick_ms_write,
+            wslot=_wslot_write,
         )
 
         # Build the data blob (§12 "data column — internal schema")
@@ -160,9 +169,11 @@ class CombatLogService:
             "metadata": metadata.get("metadata", {}),
             # P4-T7a: precomputed key_events stored at write time.
             # Eliminates the full-timeline scan on every read.
-            # Legacy rows (no "key_events" key) fall back to _extract_key_events
-            # in get_detail(); 72h retention means they self-heal within 3 days.
-            "key_events": _key_events_write,
+            # Legacy rows (no "key_events" key) fall back to re-extract in get_detail().
+            "key_events": _recap_write["key_events"],
+            # v3: recurring section stored alongside key_events.
+            # Legacy rows (no "recurring" key) fall back to _rebuild_recap_from_timeline().
+            "recurring": _recap_write["recurring"],
         }
 
         row = CombatLog(
@@ -299,13 +310,14 @@ class CombatLogService:
         """Return full combat detail for one battle.
 
         P4-T7b fast path: uses get_subpath_for_detail() to select only
-        data->'summary', data->'metadata', data->'key_events' server-side so
-        the multi-MB timeline sub-key is never shipped or loaded into Python.
+        data->'summary', data->'metadata', data->'key_events', data->'recurring'
+        server-side so the multi-MB timeline sub-key is never shipped.
 
         Legacy-row fallback: when the stored row has no "key_events" key (written
-        before P4-T7a), the sub-path select returns key_events=None. In that case
-        get_detail falls back to a full get_by_id() load and runs _extract_key_events
-        on the timeline — exactly the T7a read path — so legacy rows remain correct.
+        before P4-T7a) or no "recurring" key (written before v3), the sub-path
+        select returns those fields as None. In that case get_detail falls back to
+        _get_detail_legacy_fallback() which loads the full row and re-runs the recap
+        pipeline from the stored timeline.
 
         Raises:
             KeyError: if the battle does not exist OR the user is not a combatant
@@ -315,7 +327,7 @@ class CombatLogService:
             id, guild_id, context, combatant1_name, combatant2_name,
             combatant1_user_id, combatant2_user_id, winner_name, is_stalemate,
             created_at, outcome, combatant1, combatant2, duration_ticks,
-            duration_s, pvc_damage_reduction, key_events
+            duration_s, pvc_damage_reduction, key_events, recurring
         """
         # P4-T7b: fast-path — sub-path select (timeline never shipped)
         sub = await self._repo.get_subpath_for_detail(db, battle_id)
@@ -328,9 +340,11 @@ class CombatLogService:
         if user_id not in (sub.combatant1_user_id, sub.combatant2_user_id):
             raise KeyError(f"combat_log id={battle_id} not found or user_id={user_id} not a combatant")
 
-        # sub.key_events is None ↔ legacy row (no "key_events" in stored data blob).
-        # Fall back to full row load so _extract_key_events can scan the timeline.
-        if sub.key_events is None:
+        # sub.key_events or sub.recurring is None ↔ legacy row (old schema).
+        # Fall back to full row load + recap rebuild from timeline.
+        # hasattr guard: legacy namedtuples from old subpath query lack "recurring" attribute.
+        _sub_recurring = getattr(sub, "recurring", None)
+        if sub.key_events is None or _sub_recurring is None:
             return await self._get_detail_legacy_fallback(db, battle_id, user_id, sub)
 
         # Fast path: all required sub-paths are present; timeline is never loaded.
@@ -350,6 +364,7 @@ class CombatLogService:
         c1 = self._parse_combatant(combatants_map.get("1", {}))
         c2 = self._parse_combatant(combatants_map.get("2", {}))
         key_events: list[dict] = sub.key_events
+        recurring: list[str] = _sub_recurring
 
         flogger.info(f"get_detail: battle_id={battle_id} user_id={user_id} outcome={outcome!r} path=fast")
         return {
@@ -370,6 +385,7 @@ class CombatLogService:
             "duration_s": _ticks_to_seconds(duration_ticks, tick_ms),
             "pvc_damage_reduction": pvc_dr,
             "key_events": key_events,
+            "recurring": recurring,
         }
 
     async def _get_detail_legacy_fallback(
@@ -379,11 +395,13 @@ class CombatLogService:
         user_id: int,
         sub: object,
     ) -> dict:
-        """Legacy fallback for get_detail when the stored row has no key_events.
+        """Legacy fallback for get_detail when the stored row lacks recap sections.
 
-        P4-T7b: called only when sub.key_events is None (row written before P4-T7a).
-        Loads the full row (including timeline) and runs _extract_key_events — the
-        same path T7a's read used. 72h retention means legacy rows self-heal in 3 days.
+        Called when sub.key_events is None (written before P4-T7a) OR sub.recurring
+        is None (written before v3 recap redesign). Loads the full row (including
+        timeline) and re-runs the full recap pipeline so the output is identical to
+        what a freshly-written row would produce. 72h retention means legacy rows
+        self-heal in 3 days without any backfill.
         """
         row = await self._repo.get_by_id(db, battle_id)
         if row is None:
@@ -403,7 +421,15 @@ class CombatLogService:
 
         c1 = self._parse_combatant(combatants_map.get("1", {}))
         c2 = self._parse_combatant(combatants_map.get("2", {}))
-        key_events: list[dict] = self._extract_key_events(timeline, tick_ms, combatants_map=combatants_map)
+
+        # Re-run the full recap pipeline from the stored timeline.
+        raw_rows = _extract_key_events(timeline, tick_ms=tick_ms, combatants_map=combatants_map)
+        for _i, _r in enumerate(raw_rows):
+            _r["_idx"] = _i
+        wslot = extract_wslot(timeline)
+        recap = build_recap_sections(raw_rows, combatants_map=combatants_map, tick_ms=tick_ms, wslot=wslot)
+        key_events: list[dict] = recap["key_events"]
+        recurring: list[str] = recap["recurring"]
 
         flogger.info(f"get_detail: battle_id={battle_id} user_id={user_id} outcome={outcome!r} path=legacy")
         return {
@@ -424,6 +450,7 @@ class CombatLogService:
             "duration_s": _ticks_to_seconds(duration_ticks, tick_ms),
             "pvc_damage_reduction": pvc_dr,
             "key_events": key_events,
+            "recurring": recurring,
         }
 
     # ------------------------------------------------------------------ #

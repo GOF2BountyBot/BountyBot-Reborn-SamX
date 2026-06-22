@@ -309,7 +309,7 @@ async def accept_duel(
         flogger.info(f"Duel accept request: duel_id={duel_id} user_id={user_id}")
         flogger.debug(f"User {user_id} is accepting duel {duel_id} (authorization check passed)")
         try:
-            result = await service.accept_duel(db, duel_id)  # TRANSACTION_DISCIPLINE: see CombatLogService
+            result = await service.accept_duel(db, duel_id)  # noqa: TRANSACTION_DISCIPLINE - see CombatLogService
         except OverCapError as exc:
             flogger.info(
                 f"Duel accept over-cap lockout: duel_id={duel_id} user_id={user_id} "

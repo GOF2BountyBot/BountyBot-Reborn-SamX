@@ -457,7 +457,7 @@ async def combat_preflight(player_id: int, target_tier: str, num_sims: int = 20)
             player = await PlayerService().player_repo.get_by_id(db, player_id)
             if not player:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {player_id} not found")
-            # TRANSACTION_DISCIPLINE: preflight uses log_result=False; no DB writes
+            # noqa: TRANSACTION_DISCIPLINE - preflight uses log_result=False; no DB writes
             result = await CombatPreflightService().estimate(
                 db,
                 player_id=player_id,

@@ -215,7 +215,12 @@ class TestEmittedSQL:
     """
 
     def test_sqlite_dialect_uses_json_extract_not_full_data_column(self):
-        """SQLite: compiled statement uses JSON_EXTRACT sub-paths, NOT `combat_log.data`."""
+        """SQLite: compiled statement uses JSON_EXTRACT sub-paths for ALL FOUR sub-paths.
+
+        The real get_subpath_for_detail selects data['summary'], data['metadata'],
+        data['key_events'], AND data['recurring'] — NOT the bare `data` column.
+        Reverting to a full-column select MUST fail this assertion.
+        """
         stmt = select(
             CombatLog.id,
             CombatLog.guild_id,
@@ -230,6 +235,7 @@ class TestEmittedSQL:
             CombatLog.data["summary"].label("summary"),
             CombatLog.data["metadata"].label("metadata"),
             CombatLog.data["key_events"].label("key_events"),
+            CombatLog.data["recurring"].label("recurring"),
         ).where(CombatLog.id == 1)
 
         compiled = str(stmt.compile(dialect=sqlite.dialect()))
@@ -240,9 +246,6 @@ class TestEmittedSQL:
         # Must NOT select the full data column as a standalone SELECT column.
         # In the sub-path SQL, `combat_log.data` appears ONLY as an argument to
         # JSON_EXTRACT(combat_log.data, ...) — never as an isolated SELECT item.
-        # A full-column select would produce `..., combat_log.data AS data ...` or
-        # `..., combat_log.data \n`.  We verify no JSON_EXTRACT-free occurrence exists
-        # by counting: every `combat_log.data` must be preceded by `JSON_EXTRACT(`.
         import re
 
         # Find all `combat_log.data` occurrences and verify each is inside JSON_EXTRACT
@@ -256,8 +259,19 @@ class TestEmittedSQL:
                 f"Full SQL: {compiled}"
             )
 
+        # All four sub-path keys must appear in the compiled SQL.
+        for subpath in ("summary", "metadata", "key_events", "recurring"):
+            assert subpath in compiled, (
+                f"Sub-path '{subpath}' missing from SQLite SQL — "
+                f"get_subpath_for_detail must select all four sub-paths.\nSQL: {compiled}"
+            )
+
     def test_postgresql_dialect_uses_arrow_operator_not_full_data_column(self):
-        """PG: compiled statement uses -> sub-path operator, NOT `combat_log.data` alone."""
+        """PG: compiled statement uses -> sub-path operator for ALL FOUR sub-paths.
+
+        The real get_subpath_for_detail selects data['summary'], data['metadata'],
+        data['key_events'], AND data['recurring'] — NOT the bare `data` column.
+        """
         stmt = select(
             CombatLog.id,
             CombatLog.guild_id,
@@ -272,16 +286,19 @@ class TestEmittedSQL:
             CombatLog.data["summary"].label("summary"),
             CombatLog.data["metadata"].label("metadata"),
             CombatLog.data["key_events"].label("key_events"),
+            CombatLog.data["recurring"].label("recurring"),
         ).where(CombatLog.id == 1)
 
         compiled = str(stmt.compile(dialect=postgresql.dialect()))
 
         # PG JSONB sub-path operator
         assert " -> " in compiled, f"Expected -> operator in PG SQL, got:\n{compiled}"
-        # Must have the three sub-path keys
-        assert "summary" in compiled
-        assert "metadata" in compiled
-        assert "key_events" in compiled
+        # Must have all four sub-path keys
+        for subpath in ("summary", "metadata", "key_events", "recurring"):
+            assert subpath in compiled, (
+                f"Sub-path '{subpath}' missing from PG SQL — "
+                f"get_subpath_for_detail must select all four sub-paths.\nSQL: {compiled}"
+            )
 
         import re
 
@@ -315,7 +332,11 @@ class TestTimelineNotMaterialized:
     """
 
     async def test_subpath_row_has_no_timeline_attribute(self, repo, db_session):
-        """The Row namedtuple returned by get_subpath_for_detail has no 'timeline' field."""
+        """The Row namedtuple returned by get_subpath_for_detail has no 'timeline' field.
+
+        All FOUR data sub-paths (summary, metadata, key_events, recurring) must be
+        present; the full `data` column and `timeline` must NOT be present.
+        """
         log = _insert_new_row(repo, db_session)
         saved = await repo.add(db_session, log)
 
@@ -324,13 +345,21 @@ class TestTimelineNotMaterialized:
         assert sub is not None
         # The Row should NOT have a timeline field
         assert not hasattr(sub, "timeline"), f"timeline was materialized in sub-path Row: {sub._fields}"
-        # But it SHOULD have the three sub-paths
+        # But it SHOULD have all four sub-paths (including recurring, which is the v3 field)
         assert hasattr(sub, "summary")
         assert hasattr(sub, "metadata")
         assert hasattr(sub, "key_events")
+        assert hasattr(sub, "recurring"), (
+            f"'recurring' sub-path missing from Row._fields={sub._fields!r}; "
+            "get_subpath_for_detail must select data['recurring']"
+        )
 
     async def test_subpath_row_fields_match_expected_columns(self, repo, db_session):
-        """Row._fields must contain exactly the sub-path fields and no 'data' column."""
+        """Row._fields must contain exactly the four sub-path fields and no 'data' column.
+
+        The real get_subpath_for_detail selects data['summary'], data['metadata'],
+        data['key_events'], AND data['recurring'] — all four must appear in Row._fields.
+        """
         log = _insert_new_row(repo, db_session)
         saved = await repo.add(db_session, log)
 
@@ -338,10 +367,14 @@ class TestTimelineNotMaterialized:
 
         assert sub is not None
         fields = set(sub._fields)
-        # Sub-path fields present
+        # All four sub-path fields must be present
         assert "summary" in fields
         assert "metadata" in fields
         assert "key_events" in fields
+        assert "recurring" in fields, (
+            f"'recurring' sub-path missing from Row._fields={fields}; "
+            "get_subpath_for_detail must select data['recurring']"
+        )
         # Full data column absent
         assert "data" not in fields, f"Full 'data' column found in sub-path Row fields: {fields}"
         # Timeline absent
@@ -800,6 +833,260 @@ class TestLegacyFallback:
         # Fast path returned successfully without calling get_by_id
         assert detail is not None
         assert detail["key_events"] == [], f"Expected key_events=[] on fast path, got {detail['key_events']!r}"
+
+
+# ===========================================================================
+# 5b. CRITICAL: True fast-path coverage (key_events + recurring both stored)
+#     The _insert_new_row() helper only stores key_events, NOT recurring.
+#     That means every TestFastPathOutputIdentity test actually takes the
+#     LEGACY path (recurring is None → fallback triggered).  This section
+#     tests the REAL fast path by inserting rows that have BOTH fields.
+# ===========================================================================
+
+
+def _insert_v3_row(
+    repo: CombatLogRepository,
+    db_session: AsyncSession,
+    *,
+    key_events: list | None = None,
+    recurring: list | None = None,
+) -> CombatLog:
+    """Build a v3-format row with BOTH key_events and recurring stored."""
+    from services.combat_recap import build_recap_sections, extract_wslot
+    from services.combat_resolver import _extract_key_events as _kev
+
+    if key_events is None or recurring is None:
+        raw = _kev(list(_TIMELINE_EVENTS), tick_ms=10, combatants_map=_BASE_SUMMARY["combatants"])
+        for _i, _r in enumerate(raw):
+            _r["_idx"] = _i
+        wslot = extract_wslot(list(_TIMELINE_EVENTS))
+        recap = build_recap_sections(raw, combatants_map=_BASE_SUMMARY["combatants"], tick_ms=10, wslot=wslot)
+        key_events = recap["key_events"]
+        recurring = recap["recurring"]
+
+    data: dict[str, Any] = {
+        "schema_version": 1,
+        "summary": _BASE_SUMMARY,
+        "timeline": list(_TIMELINE_EVENTS),
+        "metadata": _BASE_METADATA,
+        "key_events": key_events,
+        "recurring": recurring,
+    }
+    return CombatLog(
+        guild_id=699744305274945650,
+        context="duel",
+        combatant1_name="Alice",
+        combatant2_name="Bob",
+        combatant1_user_id=100,
+        combatant2_user_id=200,
+        winner_name="Alice",
+        is_stalemate=False,
+        data=data,
+        created_at=datetime(2026, 6, 7, 12, 0, 0, tzinfo=UTC),
+    )
+
+
+class TestRealFastPath:
+    """Tests that actually exercise the fast path (key_events + recurring both present).
+
+    The existing TestFastPathOutputIdentity tests are misnamed — they insert rows
+    with only key_events stored (no recurring), so the trigger condition
+    ``sub.key_events is None or _sub_recurring is None`` fires and they take the
+    LEGACY path, not the fast path.  This class fixes that by using _insert_v3_row.
+    """
+
+    async def test_v3_row_takes_fast_path_not_legacy(self, repo, db_session):
+        """A v3 row (key_events + recurring both stored) must NOT call get_by_id.
+
+        Wire get_by_id to AssertionError — any invocation proves the legacy path was taken.
+        """
+        log = _insert_v3_row(repo, db_session)
+        saved = await repo.add(db_session, log)
+
+        svc = CombatLogService()
+        svc._repo = repo
+
+        async def get_by_id_must_not_be_called(db: Any, obj_id: int) -> Any:
+            raise AssertionError(
+                f"get_by_id called for v3 row id={obj_id} — "
+                "a row with BOTH key_events AND recurring should take the fast path, "
+                "not the legacy fallback.  Check the trigger condition in get_detail()."
+            )
+
+        svc._repo.get_by_id = get_by_id_must_not_be_called  # type: ignore[method-assign]
+
+        detail = await svc.get_detail(db_session, battle_id=saved.id, user_id=100)
+        assert detail is not None
+        assert isinstance(detail["key_events"], list)
+        assert isinstance(detail["recurring"], list)
+
+    async def test_v3_row_key_events_are_stored_values(self, repo, db_session):
+        """Fast path: key_events returned must be exactly the stored values (no re-extraction)."""
+        sentinel_key_events = [
+            {"tick": 0, "time_s": 0.0, "event_type": "Engagement", "detail": "SENTINEL_KE", "actor": None}
+        ]
+        sentinel_recurring = ["• SENTINEL_REC ×3 -> 1.0s, 2.0s, 3.0s"]
+
+        log = _insert_v3_row(repo, db_session, key_events=sentinel_key_events, recurring=sentinel_recurring)
+        saved = await repo.add(db_session, log)
+
+        svc = CombatLogService()
+        svc._repo = repo
+
+        detail = await svc.get_detail(db_session, battle_id=saved.id, user_id=100)
+
+        assert detail["key_events"] == sentinel_key_events, (
+            f"Fast path must return stored key_events verbatim; got: {detail['key_events']}"
+        )
+        assert detail["recurring"] == sentinel_recurring, (
+            f"Fast path must return stored recurring verbatim; got: {detail['recurring']}"
+        )
+
+    async def test_v3_row_subpath_has_recurring_attribute(self, repo, db_session):
+        """Verify get_subpath_for_detail returns a Row with both key_events AND recurring."""
+        log = _insert_v3_row(repo, db_session)
+        saved = await repo.add(db_session, log)
+
+        sub = await repo.get_subpath_for_detail(db_session, saved.id)
+        assert sub is not None
+        assert hasattr(sub, "key_events"), "Sub-path Row must have key_events attribute"
+        assert hasattr(sub, "recurring"), "Sub-path Row must have recurring attribute"
+        assert sub.key_events is not None, "key_events must not be None for v3 row"
+        assert sub.recurring is not None, "recurring must not be None for v3 row"
+
+
+class TestLegacyFallbackForOldCollapsedFormat:
+    """Legacy rows with OLD COLLAPSED key_events (count > 1, aggregate rows) and NO recurring
+    must trigger the fallback and return NEW format (chronological, no aggregates, with recurring).
+
+    This simulates battles 296 and 285 in production: they have key_events stored in the
+    pre-v3 collapsed format (rows with 'count' field and '×N (Xs–Ys)' aggregates) but
+    no 'recurring' key.  The trigger condition ``_sub_recurring is None`` must fire
+    and the legacy fallback must re-run the pipeline from the timeline.
+    """
+
+    async def test_old_collapsed_row_triggers_legacy_fallback(self, repo, db_session):
+        """Row with old-format key_events (has 'count' field) but no recurring → legacy fallback."""
+        # Simulate an old collapsed-format key_events row (pre-v3 schema)
+        old_collapsed_ke = [
+            {"tick": 0, "time_s": 0.0, "event_type": "Engagement", "detail": "Alice vs Bob — 3000m", "actor": None},
+            # OLD COLLAPSED FORMAT: count > 1, aggregate detail string
+            {
+                "tick": 0,
+                "time_s": 0.0,
+                "event_type": "Layer depleted",
+                "detail": "Bob: Armour depleted ×3 (0.0s–30.0s)",
+                "actor": "Bob",
+                "count": 3,  # old format marker
+            },
+            {"tick": 3000, "time_s": 30.0, "event_type": "Outcome", "detail": "Alice wins (30.0s)", "actor": None},
+        ]
+
+        data: dict[str, Any] = {
+            "schema_version": 1,
+            "summary": _BASE_SUMMARY,
+            "timeline": list(_TIMELINE_EVENTS),
+            "metadata": _BASE_METADATA,
+            "key_events": old_collapsed_ke,  # Old format, NOT None
+            # NO "recurring" key — simulates a pre-v3 row like battles 296/285
+        }
+
+        log = CombatLog(
+            guild_id=699744305274945650,
+            context="duel",
+            combatant1_name="Alice",
+            combatant2_name="Bob",
+            combatant1_user_id=100,
+            combatant2_user_id=200,
+            winner_name="Alice",
+            is_stalemate=False,
+            data=data,
+            created_at=datetime(2026, 6, 7, 12, 0, 0, tzinfo=UTC),
+        )
+        saved = await repo.add(db_session, log)
+
+        svc = CombatLogService()
+        svc._repo = repo
+
+        # Track calls to get_by_id to verify legacy path is taken
+        original = repo.get_by_id
+        get_by_id_calls: list[int] = []
+
+        async def tracking_get_by_id(db: Any, obj_id: int) -> Any:
+            get_by_id_calls.append(obj_id)
+            return await original(db, obj_id)
+
+        svc._repo.get_by_id = tracking_get_by_id  # type: ignore[method-assign]
+
+        detail = await svc.get_detail(db_session, battle_id=saved.id, user_id=100)
+
+        # Must have taken the legacy path (get_by_id called)
+        assert saved.id in get_by_id_calls, (
+            f"Old collapsed-format row (has key_events but no recurring) "
+            f"must trigger legacy fallback and call get_by_id. Calls: {get_by_id_calls}"
+        )
+
+        # Output must be new format: no 'count' field in any key event
+        for ke in detail["key_events"]:
+            assert "count" not in ke or ke.get("count", 1) == 1, (
+                f"Legacy fallback must re-extract in new format; found old 'count' field: {ke}"
+            )
+
+        # New format: recurring is a list (may be empty but must be present)
+        assert "recurring" in detail, "Legacy fallback must produce 'recurring' key in output"
+        assert isinstance(detail["recurring"], list), "recurring must be a list"
+
+    async def test_old_collapsed_row_output_uses_new_format_not_stored(self, repo, db_session):
+        """Old-format stored key_events must NOT be returned verbatim; new pipeline must run."""
+        old_collapsed_ke = [
+            {"tick": 0, "time_s": 0.0, "event_type": "Engagement", "detail": "Alice vs Bob — 3000m", "actor": None},
+            {
+                "tick": 0,
+                "time_s": 0.0,
+                "event_type": "Layer depleted",
+                "detail": "Bob: Armour depleted ×3 (0.0s–30.0s)",  # old aggregate detail
+                "actor": "Bob",
+                "count": 3,  # old format marker — must NOT appear in output
+            },
+            {"tick": 3000, "time_s": 30.0, "event_type": "Outcome", "detail": "Alice wins (30.0s)", "actor": None},
+        ]
+        data: dict[str, Any] = {
+            "schema_version": 1,
+            "summary": _BASE_SUMMARY,
+            "timeline": list(_TIMELINE_EVENTS),
+            "metadata": _BASE_METADATA,
+            "key_events": old_collapsed_ke,
+            # NO recurring
+        }
+        log = CombatLog(
+            guild_id=699744305274945650,
+            context="duel",
+            combatant1_name="Alice",
+            combatant2_name="Bob",
+            combatant1_user_id=100,
+            combatant2_user_id=200,
+            winner_name="Alice",
+            is_stalemate=False,
+            data=data,
+            created_at=datetime(2026, 6, 7, 12, 0, 0, tzinfo=UTC),
+        )
+        saved = await repo.add(db_session, log)
+
+        svc = CombatLogService()
+        svc._repo = repo
+
+        detail = await svc.get_detail(db_session, battle_id=saved.id, user_id=100)
+
+        # The old aggregate row had detail "×3 (0.0s–30.0s)"; new format must NOT return that string
+        detail_strings = [ke["detail"] for ke in detail["key_events"]]
+        for ds in detail_strings:
+            assert "×3" not in ds and "0.0s–30.0s" not in ds, (
+                f"Old collapsed aggregate detail returned verbatim — fallback did not re-extract: {ds!r}"
+            )
+
+        # New format: the layer_depleted event must have its actual per-occurrence detail
+        layer_events = [ke for ke in detail["key_events"] if ke["event_type"] == "Layer depleted"]
+        assert len(layer_events) >= 1, "Expected at least one Layer depleted event from re-extraction"
 
 
 # ===========================================================================

@@ -896,8 +896,7 @@ class TestRecurringSection:
         """
         # 8 bullets × ~209 chars each = 1679 chars total (exceeds 1024 → multiple fields)
         bullets = [
-            "• Alice: shield depleted ×10 -> "
-            + ", ".join([f"{j * 5.0:.1f}s (by Laser)" for j in range(1, 11)])
+            "• Alice: shield depleted ×10 -> " + ", ".join([f"{j * 5.0:.1f}s (by Laser)" for j in range(1, 11)])
             for _ in range(8)
         ]
         detail = _make_detail()
@@ -907,7 +906,7 @@ class TestRecurringSection:
 
         embed = cog._build_detail_embed(detail, user)
 
-        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "​"]
+        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "\u200b"]
         assert len(rec_fields) >= 1, "At least one Recurring field must be present"
         for f in rec_fields:
             assert len(f.value) <= 1024, (
@@ -926,8 +925,7 @@ class TestRecurringSection:
         """
         # 8 bullets × ~209 chars each = ~1679 chars total — must span more than one field.
         bullets = [
-            "• Alice: shield depleted ×10 -> "
-            + ", ".join([f"{j * 5.0:.1f}s (by Laser)" for j in range(1, 11)])
+            "• Alice: shield depleted ×10 -> " + ", ".join([f"{j * 5.0:.1f}s (by Laser)" for j in range(1, 11)])
             for _ in range(8)
         ]
         full_text = "\n".join(bullets)
@@ -941,8 +939,8 @@ class TestRecurringSection:
         embed = cog._build_detail_embed(detail, user)
 
         # Collect all Recurring-related fields (header + continuations).
-        # ZWSP (​) is the continuation field name; the header field contains "Recurring".
-        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "​"]
+        # ZWSP (\u200b) is the continuation field name; the header field contains "Recurring".
+        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "\u200b"]
         assert len(rec_fields) >= 1, "At least one Recurring field must be present"
 
         # Non-silent: all bullet content is either rendered in full OR explicitly omitted.
@@ -999,7 +997,7 @@ class TestRecurringSection:
         embed = cog._build_detail_embed(detail, user)
 
         # Collect ALL Recurring fields (header + any continuation fields).
-        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "​"]
+        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "\u200b"]
         # Must have at least one Recurring field.
         assert len(rec_fields) >= 1, "At least one Recurring field must be present"
 
@@ -1061,7 +1059,8 @@ class TestRecurringSection:
         ]
         # 30 Recurring bullets × ~100 chars each = 3000 chars → needs ~3 fields.
         many_rec = [
-            f"• Alice recurring pattern number {i:02d} -> {i*1.0:.1f}s, {i*2.0:.1f}s, {i*3.0:.1f}s" for i in range(30)
+            f"• Alice recurring pattern number {i:02d} -> {i * 1.0:.1f}s, {i * 2.0:.1f}s, {i * 3.0:.1f}s"
+            for i in range(30)
         ]
 
         detail = _make_detail()
@@ -1085,7 +1084,7 @@ class TestRecurringSection:
         assert len(ke_fields) >= 1, "Key Events section must be present"
 
         # Recurring section: collect all recurring fields.
-        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "​"]
+        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "\u200b"]
         all_text = "\n".join(f.value for f in rec_fields)
 
         # If not all bullets fit, the omission trailer must appear.

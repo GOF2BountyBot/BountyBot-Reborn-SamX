@@ -478,9 +478,7 @@ class TestLayerRebreaksNotFill:
         s = _build(rows)
         # key_events should still contain only the first break + non-cyclic events
         ke_layers = [r for r in s["key_events"] if r["event_type"] == "Layer depleted"]
-        assert len(ke_layers) == 1, (
-            f"Layer re-breaks must NOT fill gaps; key_events has {len(ke_layers)} layer events"
-        )
+        assert len(ke_layers) == 1, f"Layer re-breaks must NOT fill gaps; key_events has {len(ke_layers)} layer events"
 
 
 # ---------------------------------------------------------------------------
@@ -493,11 +491,7 @@ class TestRecurringAllTimestamps:
 
     def test_all_timestamps_in_recurring(self):
         ticks = [5, 20, 35, 50, 65]
-        rows = (
-            [_engagement()]
-            + [_layer(t, "Bob", "shield") for t in ticks]
-            + [_outcome(100)]
-        )
+        rows = [_engagement()] + [_layer(t, "Bob", "shield") for t in ticks] + [_outcome(100)]
         s = _build(rows)
         rec = [b for b in s["recurring"] if "shield" in b.lower()]
         assert len(rec) == 1

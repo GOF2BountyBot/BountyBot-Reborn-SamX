@@ -860,8 +860,7 @@ class TestRawPerOccurrenceRows:
         # v3: extractor returns all raw rows, not a collapsed single row.
         # 1 "enters range" + 4 "re-enters" = 5 WiR rows total.
         assert len(raccoon_wir) == n, (
-            f"_extract_key_events must return {n} raw Raccoon WiR rows (no collapse); "
-            f"got {len(raccoon_wir)} rows."
+            f"_extract_key_events must return {n} raw Raccoon WiR rows (no collapse); got {len(raccoon_wir)} rows."
         )
         # None should have count > 1 (collapse markers gone).
         for ev in raccoon_wir:
@@ -901,9 +900,7 @@ class TestRawPerOccurrenceRows:
         result = _extract_key_events(timeline, combatants_map=combatants_map)
         spark_wir = [e for e in result if e["event_type"] == "Weapon in range" and "Spark" in e["detail"]]
         # 1 "enters range" + 1 "re-enters" = 2 rows
-        assert len(spark_wir) == 2, (
-            f"N=2 same-key WiR must yield 2 raw rows from _extract_key_events; got: {spark_wir}"
-        )
+        assert len(spark_wir) == 2, f"N=2 same-key WiR must yield 2 raw rows from _extract_key_events; got: {spark_wir}"
         for ev in spark_wir:
             assert ev.get("count", 1) == 1, f"Raw rows must have count=1; got: {ev}"
 
@@ -943,9 +940,7 @@ class TestRawPerOccurrenceRows:
         result = _extract_key_events(timeline, combatants_map=combatants_map)
         alice_mods = [e for e in result if e["event_type"] == "Module activated" and e.get("actor") == "Alice"]
         # v3: extractor returns all 3 raw rows.
-        assert len(alice_mods) == 3, (
-            f"_extract_key_events must return all 3 raw booster rows; got {len(alice_mods)}."
-        )
+        assert len(alice_mods) == 3, f"_extract_key_events must return all 3 raw booster rows; got {len(alice_mods)}."
         for ev in alice_mods:
             assert ev.get("count", 1) == 1, f"Raw rows must have count=1; got: {ev}"
 
@@ -1305,8 +1300,7 @@ class TestR219RealDataGolden:
         sections = build_recap_sections(rows, d["combatants"], tick_ms=10, wslot=wslot)
         recurring = sections["recurring"]
         assert len(recurring) >= 8, (
-            f"Battle 219 must produce ≥8 recurring bullets (10 groups with N≥3); "
-            f"got {len(recurring)}: {recurring}"
+            f"Battle 219 must produce ≥8 recurring bullets (10 groups with N≥3); got {len(recurring)}: {recurring}"
         )
         # Both Raccoon re-enters must appear
         raccoon_bullets = [b for b in recurring if "Raccoon" in b and "re-enters" in b]

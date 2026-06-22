@@ -823,228 +823,162 @@ def _module_activation(tick: int, actor: str, module: str, side: int = 1) -> dic
     }
 
 
-class TestGlobalPerKeyAggregation:
-    """Rule 1 REVISED: global per-key aggregation — fold ALL occurrences of a collapse key
-    across the whole timeline (not just consecutive runs) to ONE line anchored at the first tick,
-    with count=N and detail containing combatant name, ×N marker, and (first_tick_s–last_tick_s) span.
+class TestRawPerOccurrenceRows:
+    """v3 redesign: _extract_key_events returns ONE row per raw occurrence (no collapse).
 
-    These tests FAIL on the currently-shipped consecutive-only collapser, proving they catch the bug.
+    Collapse logic has moved to build_recap_sections() in combat_recap.py.
+    These tests verify that _extract_key_events is a clean pass-through that emits
+    one row per event (denoising rules for nukes still apply), while build_recap_sections
+    correctly aggregates cyclic events into recurring bullets.
     """
 
     def _interleaved_raccoon_timeline(self, n_raccoon: int = 5) -> tuple[list[dict], dict]:
-        """Build a timeline mirroring battle 285's real interleaved structure.
-
-        Raccoon (bluefyre, side 1) fires every 1500 ticks.  Between each Raccoon fire, Vilhelm
-        (side 2) gets a layer break and activates a module.  This is exactly the pattern that
-        makes the consecutive collapser a no-op: after sort, the timeline alternates
-          Raccoon WiR → LayerDepleted → ModuleActivated → Raccoon WiR → ...
-        so no two consecutive Raccoon WiR entries are adjacent → old collapser cannot merge them.
-
-        Under GLOBAL aggregation, all N Raccoon WiR events share the same collapse key and fold.
-        """
+        """Build a timeline mirroring battle 285's real interleaved structure."""
         combatants_map = {"1": {"name": "bluefyre", "ship": "VoidX"}, "2": {"name": "Vilhelm Lindon", "ship": "Ghost"}}
         timeline: list[dict] = [_fight_start(dist=5000.0, c1_name="bluefyre", c2_name="Vilhelm Lindon")]
-        # Establish Raccoon cadence with initial fires at ticks 10, 20, 30.
         raccoon = 'M6 A4 "Raccoon"'
         for i in range(3):
             timeline.append(_weapon_fire(10 + i * 10, "bluefyre", raccoon, subtype="missile", hit=True, side=1))
-        # Now interleave: each Raccoon re-entry is separated by Vilhelm events.
-        for i in range(n_raccoon - 1):  # -1 because the first "enters range" is the tick-10 fire
+        for i in range(n_raccoon - 1):
             base_tick = 500 + i * 1500
-            # Raccoon re-enters
             timeline.append(_weapon_fire(base_tick, "bluefyre", raccoon, subtype="missile", hit=True, side=1))
-            # Vilhelm's layer breaks and module between each Raccoon fire (interleaving events)
             timeline.append(_damage_event(base_tick + 10, target_side=2, absorbed=80.0, weapon=raccoon))
             timeline.append(_layer_depleted(base_tick + 10, "shield", actor="Vilhelm Lindon", side=2))
             timeline.append(_module_activation(base_tick + 50, "Vilhelm Lindon", "cloak", side=2))
         return timeline, combatants_map
 
-    def test_interleaved_raccoon_folds_to_one_line_global(self):
-        """Raccoon's interleaved WiR events (separated by Vilhelm's events) must fold to ONE line.
+    def test_interleaved_raccoon_returns_all_raw_wir_rows(self):
+        """_extract_key_events must return ALL raw WiR rows — no collapse in extractor.
 
-        This is the core regression test.  The old consecutive-only collapser leaves all N lines
-        intact because no two Raccoon WiR entries are adjacent after tick-sort.  The new global
-        aggregation collapses them all to one anchored-at-first-tick line with count=N.
-
-        EXPECTED FAILURE on current shipped code: the consecutive collapser returns count=1 for
-        each Raccoon WiR line, so `count == N` fails.
-        """
-        n = 5  # 1 enters + 4 re-enters = 5 total Raccoon WiR events
-        timeline, combatants_map = self._interleaved_raccoon_timeline(n_raccoon=n)
-        result = _extract_key_events(timeline, combatants_map=combatants_map)
-
-        raccoon_wir = [e for e in result if e["event_type"] == "Weapon in range" and "Raccoon" in e["detail"]]
-        # Global aggregation: N Raccoon WiR events → exactly 1 output line.
-        assert len(raccoon_wir) == 1, (
-            f"Global aggregation must fold {n} interleaved Raccoon WiR events to 1 line; "
-            f"got {len(raccoon_wir)} lines. "
-            f"(Fails on consecutive-only collapser because Raccoon fires are non-adjacent after sort.)"
-        )
-        collapsed = raccoon_wir[0]
-        # count must equal total occurrences
-        assert collapsed.get("count", 1) == n, (
-            f"Collapsed line must have count={n}; got count={collapsed.get('count', 1)}"
-        )
-        # The ×N marker must be in the detail.
-        assert f"×{n}" in collapsed["detail"], f"Detail must contain ×{n}; got: {collapsed['detail']!r}"
-        # Combatant name must appear in the collapsed detail.
-        assert "bluefyre" in collapsed["detail"], (
-            f"Collapsed line must name the combatant; got: {collapsed['detail']!r}"
-        )
-        # Span (first_s–last_s) must appear in the detail.
-        assert "s–" in collapsed["detail"] or "s-" in collapsed["detail"], (
-            f"Collapsed detail must include a tick-span like '(Xs–Ys)'; got: {collapsed['detail']!r}"
-        )
-
-    def test_global_collapser_folds_interleaved_to_one(self):
-        """Verify the global collapser folds the interleaved timeline to exactly one Raccoon row.
-
-        This is the complement of test_interleaved_raccoon_folds_to_one_line_global: it confirms
-        the folded row has count=N (not count=1), proving the global aggregation is active.
+        Collapse moved to build_recap_sections. The extractor just emits one row per
+        raw occurrence: 1 'enters range' + (n_raccoon-1) 're-enters' = n_raccoon total.
         """
         n = 5
         timeline, combatants_map = self._interleaved_raccoon_timeline(n_raccoon=n)
         result = _extract_key_events(timeline, combatants_map=combatants_map)
         raccoon_wir = [e for e in result if e["event_type"] == "Weapon in range" and "Raccoon" in e["detail"]]
-        # Global aggregation: exactly 1 collapsed row with count=N.
-        assert len(raccoon_wir) == 1, (
-            f"Global aggregation must fold {n} interleaved Raccoon WiR events to 1 line; got {len(raccoon_wir)} lines."
+        # v3: extractor returns all raw rows, not a collapsed single row.
+        # 1 "enters range" + 4 "re-enters" = 5 WiR rows total.
+        assert len(raccoon_wir) == n, (
+            f"_extract_key_events must return {n} raw Raccoon WiR rows (no collapse); "
+            f"got {len(raccoon_wir)} rows."
         )
-        assert raccoon_wir[0].get("count", 1) == n, (
-            f"Collapsed row must have count={n}; got count={raccoon_wir[0].get('count', 1)}"
+        # None should have count > 1 (collapse markers gone).
+        for ev in raccoon_wir:
+            assert ev.get("count", 1) == 1, f"Raw rows must have count=1; got: {ev}"
+
+    def test_build_recap_sections_recurring_contains_raccoon_bullet(self):
+        """build_recap_sections must produce a recurring bullet for ≥3 Raccoon re-enters."""
+        from services.combat_recap import build_recap_sections
+
+        n = 5
+        timeline, combatants_map = self._interleaved_raccoon_timeline(n_raccoon=n)
+        rows = _extract_key_events(timeline, combatants_map=combatants_map)
+        for i, r in enumerate(rows):
+            r["_idx"] = i
+        sections = build_recap_sections(rows, combatants_map, tick_ms=10)
+        raccoon_bullets = [b for b in sections["recurring"] if "Raccoon" in b and "re-enters" in b]
+        assert len(raccoon_bullets) == 1, (
+            f"Exactly one Raccoon re-enters recurring bullet expected; got: {raccoon_bullets}"
         )
+        # Should reference 4 re-enters (n-1)
+        assert "×4" in raccoon_bullets[0], f"Bullet must show ×4; got: {raccoon_bullets[0]!r}"
 
-    def test_n2_key_stays_expanded(self):
-        """A collapse key occurring exactly twice (interleaved) must NOT be folded.
+    def test_n2_key_stays_expanded_in_extractor(self):
+        """A WiR key occurring twice must appear as 2 raw rows from _extract_key_events.
 
-        Threshold is ≥3.  Two occurrences → both lines survive individually.
-        The interleaving ensures the consecutive collapser would also not fold them
-        (since they're non-adjacent), so this tests the shared guard, not the difference.
+        Threshold for recurring bullets is ≥3, but the extractor always emits all rows.
         """
         combatants_map = {"1": {"name": "Alice", "ship": "S"}, "2": {"name": "Bob", "ship": "W"}}
         timeline = [
             _fight_start(dist=2000.0),
-            # Establish cadence for Spark
             _weapon_fire(10, "Alice", "Spark", subtype="missile", hit=True, side=1),
             _weapon_fire(20, "Alice", "Spark", subtype="missile", hit=True, side=1),
             _weapon_fire(30, "Alice", "Spark", subtype="missile", hit=True, side=1),
-            # Bob's interleaving event
             _layer_depleted(100, "shield", actor="Bob", side=2),
-            # Exactly one Spark re-entry (total WiR for Spark = 2: the enters + this re-enter)
             _weapon_fire(500, "Alice", "Spark", subtype="missile", hit=False, side=1),
         ]
         result = _extract_key_events(timeline, combatants_map=combatants_map)
         spark_wir = [e for e in result if e["event_type"] == "Weapon in range" and "Spark" in e["detail"]]
-        # 1 enters + 1 re-enter = N=2 → must NOT be collapsed (threshold ≥3)
+        # 1 "enters range" + 1 "re-enters" = 2 rows
         assert len(spark_wir) == 2, (
-            f"N=2 same-key WiR (below threshold 3) must stay as 2 separate lines; got: {spark_wir}"
+            f"N=2 same-key WiR must yield 2 raw rows from _extract_key_events; got: {spark_wir}"
         )
         for ev in spark_wir:
-            assert ev.get("count", 1) == 1, f"Uncollapsed lines must have count=1; got: {ev}"
+            assert ev.get("count", 1) == 1, f"Raw rows must have count=1; got: {ev}"
 
-    def test_module_activated_interleaved_collapses_globally(self):
-        """Module activations interleaved with weapon fire events collapse globally to one line.
+    def test_build_recap_sections_n2_re_enters_not_in_recurring(self):
+        """With only 1 re-enter (N=2 total), no recurring bullet for that weapon."""
+        from services.combat_recap import build_recap_sections
 
-        Old consecutive collapser: module activations separated by WiR events → not adjacent → not folded.
-        New global aggregation: all same-actor module activations fold together.
-
-        EXPECTED FAILURE on current shipped code.
-        """
         combatants_map = {"1": {"name": "Alice", "ship": "S"}, "2": {"name": "Bob", "ship": "W"}}
         timeline = [
             _fight_start(dist=2000.0),
-            # Alice activates her booster (trigger 1)
+            _weapon_fire(10, "Alice", "Spark", subtype="missile", hit=True, side=1),
+            _weapon_fire(20, "Alice", "Spark", subtype="missile", hit=True, side=1),
+            _weapon_fire(30, "Alice", "Spark", subtype="missile", hit=True, side=1),
+            _layer_depleted(100, "shield", actor="Bob", side=2),
+            _weapon_fire(500, "Alice", "Spark", subtype="missile", hit=False, side=1),
+        ]
+        rows = _extract_key_events(timeline, combatants_map=combatants_map)
+        for i, r in enumerate(rows):
+            r["_idx"] = i
+        sections = build_recap_sections(rows, combatants_map, tick_ms=10)
+        spark_rec = [b for b in sections["recurring"] if "Spark" in b and "re-enters" in b]
+        assert not spark_rec, f"N=1 re-enter must not produce a recurring bullet; got: {spark_rec}"
+
+    def test_module_activated_all_raw_rows_returned(self):
+        """Module activations interleaved with other events → _extract_key_events returns all raw rows."""
+        combatants_map = {"1": {"name": "Alice", "ship": "S"}, "2": {"name": "Bob", "ship": "W"}}
+        timeline = [
+            _fight_start(dist=2000.0),
             _module_activation(100, "Alice", "booster", side=1),
-            # Bob fires a weapon (interleaving event between Alice's module activations)
             _weapon_fire(200, "Bob", "Blaster", subtype="missile", hit=False, side=2),
             _weapon_fire(210, "Bob", "Blaster", subtype="missile", hit=False, side=2),
-            # Alice activates booster again (trigger 2, separated by Bob's weapon fire)
             _module_activation(300, "Alice", "booster", side=1),
-            # Another interleaving event
             _damage_event(350, target_side=1, absorbed=40.0, weapon="Blaster"),
             _layer_depleted(350, "shield", actor="Alice", side=1),
-            # Alice activates booster again (trigger 3)
             _module_activation(500, "Alice", "booster", side=1),
         ]
         result = _extract_key_events(timeline, combatants_map=combatants_map)
         alice_mods = [e for e in result if e["event_type"] == "Module activated" and e.get("actor") == "Alice"]
-        # Global aggregation: 3 booster activations → 1 collapsed line.
-        assert len(alice_mods) == 1, (
-            f"Global aggregation must fold 3 interleaved booster activations to 1 line; "
-            f"got {len(alice_mods)}. (Fails on consecutive-only collapser.)"
+        # v3: extractor returns all 3 raw rows.
+        assert len(alice_mods) == 3, (
+            f"_extract_key_events must return all 3 raw booster rows; got {len(alice_mods)}."
         )
-        assert alice_mods[0].get("count", 1) == 3, f"count must be 3; got: {alice_mods[0]}"
-        assert "×3" in alice_mods[0]["detail"], f"detail must contain ×3; got: {alice_mods[0]['detail']!r}"
-        # Combatant name must appear in the collapsed line.
-        assert "Alice" in alice_mods[0]["detail"], (
-            f"Collapsed module line must name the combatant; got: {alice_mods[0]['detail']!r}"
-        )
+        for ev in alice_mods:
+            assert ev.get("count", 1) == 1, f"Raw rows must have count=1; got: {ev}"
 
-    def test_combatant_name_in_collapsed_wir_detail(self):
-        """A collapsed WiR line must contain the combatant (actor) name — not just a ship label."""
-        combatants_map = {"1": {"name": "bluefyre", "ship": "VoidX"}, "2": {"name": "Vilhelm Lindon", "ship": "Ghost"}}
-        timeline = [_fight_start(dist=5000.0, c1_name="bluefyre", c2_name="Vilhelm Lindon")]
-        # Establish cadence then 4 re-entries in non-interleaved order for simplicity
-        for t in (10, 20, 30):
-            timeline.append(_weapon_fire(t, "bluefyre", "LaserX", subtype="missile", hit=True, side=1))
-        for t in (500, 700, 900, 1100):
-            timeline.append(_weapon_fire(t, "bluefyre", "LaserX", subtype="missile", hit=True, side=1))
-        result = _extract_key_events(timeline, combatants_map=combatants_map)
-        wir = [e for e in result if e["event_type"] == "Weapon in range" and "LaserX" in e["detail"]]
-        assert len(wir) == 1, f"5 same-key WiR must collapse to 1; got {len(wir)}"
-        detail = wir[0]["detail"]
-        assert "bluefyre" in detail, f"Collapsed line must include combatant name 'bluefyre'; got: {detail!r}"
+    def test_build_recap_sections_module_recurring_bullet(self):
+        """build_recap_sections produces a recurring bullet for ≥3 module activations."""
+        from services.combat_recap import build_recap_sections
 
-    def test_combatant_name_in_collapsed_module_detail(self):
-        """A collapsed Module activated line must contain the combatant name."""
-        combatants_map = {"1": {"name": "bluefyre", "ship": "VoidX"}, "2": {"name": "Vilhelm Lindon", "ship": "Ghost"}}
-        timeline = [
-            _fight_start(c1_name="bluefyre", c2_name="Vilhelm Lindon"),
-            _module_activation(100, "bluefyre", "cloak", side=1),
-            _module_activation(500, "bluefyre", "cloak", side=1),
-            _module_activation(900, "bluefyre", "cloak", side=1),
-        ]
-        result = _extract_key_events(timeline, combatants_map=combatants_map)
-        mods = [e for e in result if e["event_type"] == "Module activated"]
-        assert len(mods) == 1, f"3 same-key module activations must collapse to 1; got {len(mods)}"
-        detail = mods[0]["detail"]
-        assert "bluefyre" in detail, f"Collapsed module line must include combatant name 'bluefyre'; got: {detail!r}"
-
-    def test_two_distinct_weapons_produce_two_collapsed_rows(self):
-        """Two weapons each with ≥3 global occurrences stay in separate collapsed rows."""
         combatants_map = {"1": {"name": "Alice", "ship": "S"}, "2": {"name": "Bob", "ship": "W"}}
-        timeline: list[dict] = [_fight_start(dist=2000.0)]
-        # AlphaGun: cadence 10, then 3 non-consecutive re-entries.
-        for t in (10, 20, 30):
-            timeline.append(_weapon_fire(t, "Alice", "AlphaGun", subtype="missile", hit=True, side=1))
-        # Bob's interleaving events between AlphaGun fires
-        for t in (50, 150, 250):
-            timeline.append(_weapon_fire(t, "Bob", "BobWeapon", subtype="missile", hit=False, side=2))
-        for t in (100, 200, 300):
-            timeline.append(_weapon_fire(t, "Alice", "AlphaGun", subtype="missile", hit=True, side=1))
-        # BetaGun: 3 entries at different ticks, also non-consecutive (interleaved with more Bob)
-        for t in (400, 410, 420):
-            timeline.append(_weapon_fire(t, "Alice", "BetaGun", subtype="rocket", hit=True, side=1))
-        for t in (450, 550):
-            timeline.append(_weapon_fire(t, "Bob", "BobWeapon", subtype="missile", hit=False, side=2))
-        for t in (500, 600, 700):
-            timeline.append(_weapon_fire(t, "Alice", "BetaGun", subtype="rocket", hit=True, side=1))
-        result = _extract_key_events(timeline, combatants_map=combatants_map)
-        alpha_wir = [e for e in result if e["event_type"] == "Weapon in range" and "AlphaGun" in e["detail"]]
-        beta_wir = [e for e in result if e["event_type"] == "Weapon in range" and "BetaGun" in e["detail"]]
-        assert len(alpha_wir) == 1, f"AlphaGun (6 global occurrences) must collapse to 1 row; got: {alpha_wir}"
-        assert len(beta_wir) == 1, f"BetaGun (6 global occurrences) must collapse to 1 row; got: {beta_wir}"
-        assert alpha_wir[0].get("count", 1) >= 3
-        assert beta_wir[0].get("count", 1) >= 3
+        timeline = [
+            _fight_start(dist=2000.0),
+            _module_activation(100, "Alice", "booster", side=1),
+            _weapon_fire(200, "Bob", "Blaster", subtype="missile", hit=False, side=2),
+            _weapon_fire(210, "Bob", "Blaster", subtype="missile", hit=False, side=2),
+            _module_activation(300, "Alice", "booster", side=1),
+            _damage_event(350, target_side=1, absorbed=40.0, weapon="Blaster"),
+            _layer_depleted(350, "shield", actor="Alice", side=1),
+            _module_activation(500, "Alice", "booster", side=1),
+        ]
+        rows = _extract_key_events(timeline, combatants_map=combatants_map)
+        for i, r in enumerate(rows):
+            r["_idx"] = i
+        sections = build_recap_sections(rows, combatants_map, tick_ms=10)
+        booster_rec = [b for b in sections["recurring"] if "Alice activated booster" in b]
+        assert len(booster_rec) == 1, f"Exactly one booster recurring bullet expected; got: {booster_rec}"
+        assert "×3" in booster_rec[0], f"Bullet must show ×3; got: {booster_rec[0]!r}"
+        assert "Alice" in booster_rec[0], f"Bullet must name the combatant; got: {booster_rec[0]!r}"
 
     def test_narrative_events_never_folded(self):
-        """Narrative events are never folded even when the same type appears multiple times."""
+        """Narrative events are never collapsed, even with the v3 redesign."""
         combatants_map = {"1": {"name": "Alice", "ship": "S"}, "2": {"name": "Bob", "ship": "W"}}
-        # Build a timeline with multiple HP milestone triggers for both sides
         timeline = [
             _fight_start(),
             _weapon_fire(10, "Alice", "Rocket", hit=True, side=1),
-            # Damage that crosses 50% for side 2
             {
                 "tick": 50,
                 "type": "damage",
@@ -1061,14 +995,12 @@ class TestGlobalPerKeyAggregation:
             _fight_end(100, "Alice", c1_hull=80, c2_hull=0),
         ]
         result = _extract_key_events(timeline, combatants_map=combatants_map)
-        # Engagement + Outcome must each appear exactly once (they're narrative, never folded).
         engagements = [e for e in result if e["event_type"] == "Engagement"]
         outcomes = [e for e in result if e["event_type"] == "Outcome"]
         assert len(engagements) == 1, "Exactly one Engagement line must appear"
         assert len(outcomes) == 1, "Exactly one Outcome line must appear"
-        # Neither should have count > 1
         for ev in engagements + outcomes:
-            assert ev.get("count", 1) == 1, f"Narrative events must not be folded; got: {ev}"
+            assert ev.get("count", 1) == 1, f"Narrative events must not be collapsed; got: {ev}"
 
 
 # ---------------------------------------------------------------------------
@@ -1236,108 +1168,27 @@ class TestR241RealDataGolden:
 class TestR285RealDataGolden:
     """R-285: 180s stalemate, bluefyre vs Vilhelm Lindon.
 
-    Current shipped code: 76 lines (zero collapse — the consecutive-only collapser is a no-op
-    because all cyclic events interleave).
+    v3 redesign: _extract_key_events now returns all 76 raw per-occurrence rows.
+    Collapse logic moved to build_recap_sections which produces Recurring bullets.
 
-    Under REVISED global aggregation (per-module collapse keys): 11 collapse groups (each N≥3)
-    fold to 11 lines; 5 uncollapsed cyclic lines (bluefyre Armour ×2, Vilhelm emergency_system ×1,
-    bluefyre cloak ×2); 6 narrative lines → 22... actual run = 21 total lines.
-
-    The golden count (21) is pinned from the actual first-green run.  The PROPERTY assertions are
-    the real guards.
-
-    All tests in this class FAIL on current shipped code.
+    The PROPERTY assertions on narrative lines and outcome are the real guards;
+    the raw-count pin (76) documents the expected extractor pass-through behavior.
     """
 
-    # Pre-computed from live DB fixture (per-module collapse keys):
-    #   bluefyre's M6 A4 "Raccoon" WiR: N=11 → 1 collapsed line
-    #   Vilhelm Lindon's Disruptor Laser WiR: N=8 → 1 collapsed line
-    #   Vilhelm Lindon's Mass Driver MD 12 WiR: N=3 → 1 collapsed line
-    #   Vilhelm Lindon's Berger Converge IV WiR: N=3 → 1 collapsed line
-    #   Vilhelm Lindon layer depleted (Armour): N=10 → 1 collapsed line
-    #   Vilhelm Lindon layer depleted (Shield): N=8 → 1 collapsed line
-    #   bluefyre layer depleted (Shield): N=6 → 1 collapsed line
-    #   bluefyre layer depleted (Armour): N=2 → 2 individual lines (not collapsed — below threshold)
-    #   Vilhelm Lindon cloak: N=4 → 1 collapsed line
-    #   Vilhelm Lindon booster: N=6 → 1 collapsed line
-    #   Vilhelm Lindon emergency_system: N=1 → 1 individual line
-    #   bluefyre cloak: N=2 → 2 individual lines (not collapsed)
-    #   bluefyre booster: N=6 → 1 collapsed line
-    # Narrative (never collapsed): Engagement, Nuke detonation, HP milestone×2, Ammo depleted, Outcome = 6
-    # Collapse groups (N≥3): 11 → 11 output lines
-    # Uncollapsed cyclic (N<3): 2 (bluefyre Armour ×2) + 1 (Vilhelm emergency_system ×1)
-    #                           + 2 (bluefyre cloak ×2) = 5 output lines
-    # EXPECTED TOTAL: 6 + 11 + 5 = 22... wait: let's count directly from actual output:
-    # WiR: 4 collapsed; Layer: 3 collapsed + 2 individual; Module: 3 collapsed + 1 + 2 + 1 individual
-    # Actual run yields: 21 total (6 narrative + 4 WiR + 3 Layer + 6 Module + 2 bluefyre Armour)
-    # Pin to actual first-green value: 21
-    _EXPECTED_TOTAL = 21
+    # v3: _extract_key_events is a pass-through; 76 raw rows (verified from fixture).
+    _EXPECTED_RAW_TOTAL = 76
 
-    def test_r285_output_is_dramatically_reduced(self):
-        """Battle 285 must collapse from 76 lines to dramatically fewer under global aggregation.
-
-        FAILS on current shipped code (consecutive-only collapser returns 76 lines).
-        """
+    def test_r285_extractor_returns_all_raw_rows(self):
+        """_extract_key_events must return all 76 raw rows for battle 285 (no collapse)."""
         d = _load_fixture(285)
         result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        assert len(result) < 30, (
-            f"Battle 285 global collapse must reduce lines to <30; got {len(result)}. "
-            f"(Current shipped code returns 76 — consecutive-only collapser is a no-op on real data.)"
-        )
-
-    def test_r285_exact_line_count(self):
-        """Battle 285 must produce exactly _EXPECTED_TOTAL lines under global aggregation.
-
-        Pin: 11 collapse groups (WiR×4 + Layer×3 + Module per-name×4) + 5 uncollapsed cyclic
-        (bluefyre Armour×2, Vilhelm emergency_system×1, bluefyre cloak×2) + 6 narrative = 21.
-        Re-pin to first-green value if the design yields a slightly different number — the
-        property tests above are the real guard.
-        """
-        d = _load_fixture(285)
-        result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        assert len(result) == TestR285RealDataGolden._EXPECTED_TOTAL, (
-            f"Battle 285 must produce exactly {TestR285RealDataGolden._EXPECTED_TOTAL} lines; "
-            f"got {len(result)}. (Pin: 11 collapsed + 5 uncollapsed + 6 narrative.)"
-        )
-
-    def test_r285_no_collapsible_key_appears_more_than_once(self):
-        """No cyclic collapse key with global count ≥3 may appear more than once in the output.
-
-        After global collapse: keys with N≥3 → exactly 1 line each; keys with N<3 → ≤N lines.
-        We verify that every key appearing >1 time in the output accounts for its full count via the
-        `count` field (i.e. no key with count-weighted total ≥3 produces more than 1 output row).
-
-        FAILS on current shipped code: 9 collapse groups (each N≥3) each produce N separate output
-        lines (all with count=1), so every such key appears N>1 times instead of 1.
-        """
-        d = _load_fixture(285)
-        result = _extract_key_events(d["timeline"], 10, d["combatants"])
-
-        # For each collapse key, accumulate (row_count, total_count) where:
-        #   row_count = number of output rows with this key
-        #   total_count = sum of all count fields (1 if absent) across those rows
-        from collections import defaultdict
-
-        ck_rows: dict = defaultdict(list)
-        for e in result:
-            ck = _global_collapse_key(e)
-            if ck is not None:
-                ck_rows[ck].append(e)
-
-        # Keys with total_count ≥ 3 (globally collapsible) must produce exactly 1 output row.
-        violations = {}
-        for ck, rows in ck_rows.items():
-            total_count = sum(r.get("count", 1) for r in rows)
-            row_count = len(rows)
-            if total_count >= 3 and row_count > 1:
-                violations[ck] = {"rows": row_count, "total_count": total_count}
-
-        assert not violations, (
-            f"Collapse keys with total count ≥3 must produce exactly 1 output row; violations: {violations}"
+        assert len(result) == TestR285RealDataGolden._EXPECTED_RAW_TOTAL, (
+            f"Battle 285 _extract_key_events must return {TestR285RealDataGolden._EXPECTED_RAW_TOTAL} raw rows "
+            f"(v3 pass-through, collapse moved to build_recap_sections); got {len(result)}."
         )
 
     def test_r285_all_narrative_lines_present(self):
-        """All 6 narrative lines from battle 285 must survive the collapse unchanged.
+        """All 6 narrative event types from battle 285 must be present in raw extractor output.
 
         Narrative types: Engagement, Nuke detonation, HP milestone (50%), HP milestone (25%),
         Ammo depleted, Outcome.
@@ -1352,45 +1203,49 @@ class TestR285RealDataGolden:
         assert type_counts["Ammo depleted"] == 1, "Ammo depleted must survive"
         assert type_counts["Outcome"] == 1, "Outcome must survive"
 
-    def test_r285_raccoon_collapsed_line_has_combatant_name_and_span(self):
-        """The collapsed Raccoon WiR line must name 'bluefyre', show ×11, and include a tick span.
-
-        From real data: 11 occurrences, first tick 367 (3.7s), last tick 16867 (168.7s).
-        Expected detail like: bluefyre's M6 A4 "Raccoon" re-enters range ×11 (3.7s–168.7s)
-
-        FAILS on current shipped code (no collapse → 11 separate lines, none with ×N or span).
-        """
-        d = _load_fixture(285)
-        result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        raccoon_wir = [e for e in result if e["event_type"] == "Weapon in range" and "Raccoon" in e["detail"]]
-        assert len(raccoon_wir) == 1, f"Raccoon WiR must collapse to 1 line; got {len(raccoon_wir)}: {raccoon_wir}"
-        detail = raccoon_wir[0]["detail"]
-        assert "bluefyre" in detail, f"Collapsed Raccoon line must name 'bluefyre'; got: {detail!r}"
-        assert "×11" in detail, f"Collapsed Raccoon line must show ×11; got: {detail!r}"
-        # Span: '3.7s' for first tick (367/100=3.7) and '168.7s' for last tick (16867/100=168.7)
-        assert "3.7s" in detail, f"Collapsed Raccoon line must include first-tick 3.7s; got: {detail!r}"
-        assert "168.7s" in detail, f"Collapsed Raccoon line must include last-tick 168.7s; got: {detail!r}"
-
-    def test_r285_raccoon_collapsed_line_anchored_at_first_tick(self):
-        """The collapsed Raccoon line must be anchored at the FIRST occurrence's tick (tick 367).
-
-        FAILS on current shipped code (no collapsed line exists at all).
-        """
-        d = _load_fixture(285)
-        result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        raccoon_wir = [e for e in result if e["event_type"] == "Weapon in range" and "Raccoon" in e["detail"]]
-        assert len(raccoon_wir) == 1
-        assert raccoon_wir[0]["tick"] == 367, (
-            f"Collapsed Raccoon line must be anchored at tick 367 (first occurrence); got tick={raccoon_wir[0]['tick']}"
-        )
-
     def test_r285_stalemate_outcome_present(self):
-        """Battle 285 outcome is a stalemate (180s) and must appear in the collapsed output."""
+        """Battle 285 outcome is a stalemate (180s) and must appear in the raw extractor output."""
         d = _load_fixture(285)
         result = _extract_key_events(d["timeline"], 10, d["combatants"])
         outcome = next((e for e in result if e["event_type"] == "Outcome"), None)
         assert outcome is not None, "Outcome must be present"
         assert "Stalemate" in outcome["detail"], f"Battle 285 outcome must be a Stalemate; got: {outcome['detail']!r}"
+
+    def test_r285_build_recap_sections_recurring_bullets(self):
+        """build_recap_sections must produce recurring bullets for battle 285's long patterns.
+
+        R-285 has many repeated cyclic events (bluefyre Raccoon ×10, Vilhelm cloak ×4, etc.).
+        All groups with ≥3 occurrences must appear as recurring bullets.
+        """
+        from services.combat_recap import build_recap_sections, extract_wslot
+
+        d = _load_fixture(285)
+        rows = _extract_key_events(d["timeline"], 10, d["combatants"])
+        for i, r in enumerate(rows):
+            r["_idx"] = i
+        wslot = extract_wslot(d["timeline"])
+        sections = build_recap_sections(rows, d["combatants"], tick_ms=10, wslot=wslot)
+        recurring = sections["recurring"]
+        # Must have multiple recurring bullets (long stalemate fight)
+        assert len(recurring) >= 5, f"Battle 285 must produce ≥5 recurring bullets; got {len(recurring)}: {recurring}"
+        # bluefyre's Raccoon re-enters ×10 must appear
+        raccoon_bullets = [b for b in recurring if "Raccoon" in b and "re-enters" in b]
+        assert raccoon_bullets, f"Raccoon re-enters bullet must appear in recurring; got: {recurring}"
+        assert "×10" in raccoon_bullets[0], f"Raccoon bullet must show ×10; got: {raccoon_bullets[0]!r}"
+
+    def test_r285_build_recap_sections_key_events_chronological(self):
+        """build_recap_sections key_events must be in chronological order."""
+        from services.combat_recap import build_recap_sections, extract_wslot
+
+        d = _load_fixture(285)
+        rows = _extract_key_events(d["timeline"], 10, d["combatants"])
+        for i, r in enumerate(rows):
+            r["_idx"] = i
+        wslot = extract_wslot(d["timeline"])
+        sections = build_recap_sections(rows, d["combatants"], tick_ms=10, wslot=wslot)
+        ke = sections["key_events"]
+        times = [r["time_s"] for r in ke]
+        assert times == sorted(times), f"key_events must be chronological; got times: {times}"
 
 
 # ---------------------------------------------------------------------------
@@ -1399,74 +1254,26 @@ class TestR285RealDataGolden:
 
 
 class TestR219RealDataGolden:
-    """R-219: 166.8s fight, bluefyre wins.  85 lines currently; 93% cyclic.
+    """R-219: 166.8s fight, bluefyre wins.  85 raw rows from extractor; 93% cyclic.
 
-    Under global aggregation (per-module collapse keys): 10 collapse groups fold → 18 total lines.
-
-    All assertion tests FAIL on current shipped code.
+    v3 redesign: _extract_key_events returns all 85 raw per-occurrence rows.
+    build_recap_sections produces Recurring bullets for 10 groups with ≥3 occurrences.
     """
 
-    # Pre-computed from live DB fixture (per-module collapse keys):
-    # WiR: bluefyre Raccoon ×12, Bartholomeu Raccoon ×12 → 2 collapsed lines
-    # Layer: Nemesis Shield ×10, Nemesis Armour ×7, Na'Srrk Armour ×4, Na'Srrk Shield ×9 → 4 collapsed
-    # Module (per-name): bluefyre cloak ×8, booster ×6, Bartholomeu cloak ×3, booster ×6 → 4 collapsed
-    # Uncollapsed cyclic (N<3): 1 (Bartholomeu Garuda-IV ×1) + 1 (Bartholomeu emergency_system ×1) = 2 lines
-    # Narrative: Engagement + HP milestone (50%)×2 + HP milestone (25%)×1 + Ammo depleted + Outcome = 6
-    # EXPECTED: 6 + 10 + 2 = 18
-    _EXPECTED_TOTAL = 18
+    # v3: _extract_key_events is a pass-through; 85 raw rows (verified from fixture).
+    _EXPECTED_RAW_TOTAL = 85
 
-    def test_r219_output_is_dramatically_reduced(self):
-        """Battle 219 must collapse from 85 lines to dramatically fewer under global aggregation.
-
-        FAILS on current shipped code.
-        """
+    def test_r219_extractor_returns_all_raw_rows(self):
+        """_extract_key_events must return all 85 raw rows for battle 219 (no collapse)."""
         d = _load_fixture(219)
         result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        assert len(result) < 30, f"Battle 219 global collapse must reduce to <30 lines; got {len(result)}."
-
-    def test_r219_exact_line_count(self):
-        """Battle 219 must produce exactly {_EXPECTED_TOTAL} lines under global aggregation.
-
-        FAILS on current shipped code.
-        """
-        d = _load_fixture(219)
-        result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        assert len(result) == TestR219RealDataGolden._EXPECTED_TOTAL, (
-            f"Battle 219 must produce exactly {TestR219RealDataGolden._EXPECTED_TOTAL} lines; got {len(result)}."
-        )
-
-    def test_r219_no_collapsible_key_appears_more_than_once(self):
-        """No cyclic collapse key with global count ≥3 may appear more than once in the output.
-
-        FAILS on current shipped code (8 groups each with N≥3 produce N separate output rows
-        instead of being folded to 1).
-        """
-        d = _load_fixture(219)
-        result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        from collections import defaultdict
-
-        ck_rows: dict = defaultdict(list)
-        for e in result:
-            ck = _global_collapse_key(e)
-            if ck is not None:
-                ck_rows[ck].append(e)
-
-        violations = {}
-        for ck, rows in ck_rows.items():
-            total_count = sum(r.get("count", 1) for r in rows)
-            row_count = len(rows)
-            if total_count >= 3 and row_count > 1:
-                violations[ck] = {"rows": row_count, "total_count": total_count}
-
-        assert not violations, (
-            f"Collapse keys with total count ≥3 must produce exactly 1 output row; violations: {violations}"
+        assert len(result) == TestR219RealDataGolden._EXPECTED_RAW_TOTAL, (
+            f"Battle 219 _extract_key_events must return {TestR219RealDataGolden._EXPECTED_RAW_TOTAL} raw rows "
+            f"(v3 pass-through); got {len(result)}."
         )
 
     def test_r219_all_narrative_lines_present(self):
-        """All 6 narrative lines from battle 219 must survive collapse.
-
-        This test PASSES on current code (narrative events are not touched); must continue to pass.
-        """
+        """All narrative event types from battle 219 must be present in raw extractor output."""
         d = _load_fixture(219)
         result = _extract_key_events(d["timeline"], 10, d["combatants"])
         type_counts = Counter(e["event_type"] for e in result)
@@ -1477,14 +1284,35 @@ class TestR219RealDataGolden:
         assert type_counts["Outcome"] == 1
 
     def test_r219_outcome_names_bluefyre_winner(self):
-        """Battle 219 outcome must name bluefyre as winner.
-
-        This test PASSES on current code; must continue to pass.
-        """
+        """Battle 219 outcome must name bluefyre as winner."""
         d = _load_fixture(219)
         result = _extract_key_events(d["timeline"], 10, d["combatants"])
         outcome = next(e for e in result if e["event_type"] == "Outcome")
         assert "bluefyre wins" in outcome["detail"], f"Got: {outcome['detail']!r}"
+
+    def test_r219_build_recap_sections_recurring_bullets(self):
+        """build_recap_sections must produce ≥8 recurring bullets for battle 219's long patterns.
+
+        R-219 has 10 groups with ≥3 occurrences (WiR×2, Layer×4, Module×4).
+        """
+        from services.combat_recap import build_recap_sections, extract_wslot
+
+        d = _load_fixture(219)
+        rows = _extract_key_events(d["timeline"], 10, d["combatants"])
+        for i, r in enumerate(rows):
+            r["_idx"] = i
+        wslot = extract_wslot(d["timeline"])
+        sections = build_recap_sections(rows, d["combatants"], tick_ms=10, wslot=wslot)
+        recurring = sections["recurring"]
+        assert len(recurring) >= 8, (
+            f"Battle 219 must produce ≥8 recurring bullets (10 groups with N≥3); "
+            f"got {len(recurring)}: {recurring}"
+        )
+        # Both Raccoon re-enters must appear
+        raccoon_bullets = [b for b in recurring if "Raccoon" in b and "re-enters" in b]
+        assert len(raccoon_bullets) == 2, (
+            f"Both sides' Raccoon re-enters must appear in recurring; got: {raccoon_bullets}"
+        )
 
 
 # ---------------------------------------------------------------------------

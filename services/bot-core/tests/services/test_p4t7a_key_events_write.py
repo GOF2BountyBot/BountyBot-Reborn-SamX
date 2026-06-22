@@ -834,7 +834,7 @@ class TestWriteIdempotence:
 
     @pytest.mark.asyncio
     async def test_no_extra_fields_in_data_blob(self):
-        """data_blob has exactly the 5 expected top-level keys."""
+        """data_blob has exactly the 6 expected top-level keys (v3 adds 'recurring')."""
         timeline = _make_minimal_timeline()
         fr = _make_fight_results(timeline)
 
@@ -851,7 +851,8 @@ class TestWriteIdempotence:
             await svc.persist(CombatMeta(guild_id=1), fr, "duel", session=AsyncMock())
 
         assert captured_row is not None
-        expected_keys = {"schema_version", "summary", "timeline", "metadata", "key_events"}
+        # v3 recap redesign adds "recurring" alongside "key_events".
+        expected_keys = {"schema_version", "summary", "timeline", "metadata", "key_events", "recurring"}
         actual_keys = set(captured_row.data.keys())
         assert actual_keys == expected_keys, (
             f"data_blob has unexpected keys. expected={expected_keys} actual={actual_keys}"

@@ -757,14 +757,16 @@ class TestLegacyFallback:
           - detail['key_events'] == []
           - get_by_id was never called
         """
-        # Insert a row with key_events=[] explicitly stored (valid P4-T7a output
-        # for a fight with no extractable key events)
+        # Insert a row with key_events=[] explicitly stored (valid v3-recap output
+        # for a fight with no extractable key events). Also includes recurring=[] which
+        # v3 always writes. Both must be present for the fast path to be taken.
         data_with_empty_key_events: dict[str, Any] = {
             "schema_version": 1,
             "summary": _BASE_SUMMARY,
             "timeline": list(_TIMELINE_EVENTS),
             "metadata": _BASE_METADATA,
             "key_events": [],  # empty list — not None; must NOT trigger fallback
+            "recurring": [],  # v3: always stored alongside key_events
         }
         log = CombatLog(
             guild_id=699744305274945650,

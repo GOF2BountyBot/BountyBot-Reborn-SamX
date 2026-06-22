@@ -45,7 +45,6 @@ class KeyEvent(BaseModel):
     actor: str | None
     event_type: str  # human-readable label
     detail: str  # free-form description
-    count: int = 1  # collapsed run length; >1 means this row represents N consecutive identical events
 
 
 class CombatantSummary(BaseModel):

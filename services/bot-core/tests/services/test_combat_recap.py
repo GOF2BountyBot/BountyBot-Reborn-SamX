@@ -536,7 +536,6 @@ class TestGapFillPriority:
         s = _build(rows, wslot={"Rocket": "primary"})
         # Both are fill candidates; module re-activation has higher priority (1 < 3).
         # The gap-fill should insert module activation before the re-enter candidate.
-        ke_types = [r["event_type"] for r in s["key_events"]]
         mod_in_ke = [r for r in s["key_events"] if r["event_type"] == "Module activated"]
         # At least the mandatory first activation should be in key_events.
         assert len(mod_in_ke) >= 1

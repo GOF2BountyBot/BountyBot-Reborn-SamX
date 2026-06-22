@@ -977,14 +977,14 @@ class TestRecurringSection:
         # Representative Battle 285 Recurring bullets — each ~150-210 chars,
         # 8 together total ~1460 chars (reliably > 1024, reliably fits in 2 fields).
         bullets = [
-            "• Vilhelm Lindon: shield depleted ×8 -> 3.7s, 35.8s, 63.7s, 79.8s, 93.7s, 108.7s, 138.7s, 168.7s  (all M6 A4 Raccoon primary weapon)",
-            "• Vilhelm Lindon: armour depleted ×10 -> 3.7s, 40.1s, 42.3s, 48.7s, 79.8s, 93.7s, 109.8s, 138.7s, 154.8s, 169.8s  (all M6 A4 Raccoon)",
-            "• Vilhelm Lindon activated cloak module ×4 -> 3.7s, 48.7s, 93.7s, 138.7s  (all at or below 66% HP threshold)",
-            "• Vilhelm Lindon activated booster module ×6 -> 3.7s (80%), 39.1s (80%), 65.8s (40%), 93.7s (80%), 123.7s (80%), 154.8s (60%)",
-            "• bluefyre: shield depleted ×6 -> 17.3s (AMR Extinctor), 35.2s (Disruptor Laser), 82.0s (Disruptor Laser), 112.0s, 143.5s, 170.0s",
-            "• bluefyre activated booster module ×6 -> 17.3s, 51.2s, 81.0s, 111.8s, 141.9s, 169.8s  (all at or below 80% HP threshold)",
-            "• bluefyre M6 A4 Raccoon primary weapon re-enters range ×10 -> 33.7s, 48.7s, 63.7s, 78.7s, 93.7s, 108.7s, 123.7s, 138.7s, 153.7s, 168.7s",
-            "• Vilhelm Lindon Disruptor Laser secondary weapon re-enters range ×7 -> 49.0s, 64.0s, 79.0s, 109.0s, 139.0s, 154.0s, 169.0s (all secondary)",
+            "• Vilhelm Lindon: shield depleted ×8 -> 3.7s, 35.8s, 63.7s, 79.8s, 93.7s, 108.7s, 138.7s, 168.7s  (all M6 A4 Raccoon primary weapon)",  # noqa: E501
+            "• Vilhelm Lindon: armour depleted ×10 -> 3.7s, 40.1s, 42.3s, 48.7s, 79.8s, 93.7s, 109.8s, 138.7s, 154.8s, 169.8s  (all M6 A4 Raccoon)",  # noqa: E501
+            "• Vilhelm Lindon activated cloak module ×4 -> 3.7s, 48.7s, 93.7s, 138.7s  (all at or below 66% HP threshold)",  # noqa: E501
+            "• Vilhelm Lindon activated booster module ×6 -> 3.7s (80%), 39.1s (80%), 65.8s (40%), 93.7s (80%), 123.7s (80%), 154.8s (60%)",  # noqa: E501
+            "• bluefyre: shield depleted ×6 -> 17.3s (AMR Extinctor), 35.2s (Disruptor Laser), 82.0s (Disruptor Laser), 112.0s, 143.5s, 170.0s",  # noqa: E501
+            "• bluefyre activated booster module ×6 -> 17.3s, 51.2s, 81.0s, 111.8s, 141.9s, 169.8s  (all at or below 80% HP threshold)",  # noqa: E501
+            "• bluefyre M6 A4 Raccoon primary weapon re-enters range ×10 -> 33.7s, 48.7s, 63.7s, 78.7s, 93.7s, 108.7s, 123.7s, 138.7s, 153.7s, 168.7s",  # noqa: E501
+            "• Vilhelm Lindon Disruptor Laser secondary weapon re-enters range ×7 -> 49.0s, 64.0s, 79.0s, 109.0s, 139.0s, 154.0s, 169.0s (all secondary)",  # noqa: E501
         ]
         full_text = "\n".join(bullets)
         # These 8 bullets total ~1028 chars — confirmed > 1024 so multi-field packing is needed.
@@ -1060,7 +1060,9 @@ class TestRecurringSection:
             for i in range(22)
         ]
         # 30 Recurring bullets × ~100 chars each = 3000 chars → needs ~3 fields.
-        many_rec = [f"• Alice recurring pattern number {i:02d} -> {i*1.0:.1f}s, {i*2.0:.1f}s, {i*3.0:.1f}s" for i in range(30)]
+        many_rec = [
+            f"• Alice recurring pattern number {i:02d} -> {i*1.0:.1f}s, {i*2.0:.1f}s, {i*3.0:.1f}s" for i in range(30)
+        ]
 
         detail = _make_detail()
         detail["key_events"] = short_ke

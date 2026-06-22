@@ -248,7 +248,8 @@ async def check_bounty(
     )
     try:
         async with get_db_session() as db:
-            multi = await service.check_bounty(db, request.player_id, request.system_name, guild_id)  # noqa: TRANSACTION_DISCIPLINE — fight_ships owns its commit via CombatLogService.persist
+            # TRANSACTION_DISCIPLINE: fight_ships owns its commit via CombatLogService.persist
+            multi = await service.check_bounty(db, request.player_id, request.system_name, guild_id)
         flogger.info(
             f"Bounty check result: player_id={request.player_id}"
             f" system={request.system_name!r} result_count={len(multi.outcomes)}"
@@ -329,7 +330,8 @@ async def combat_bonus(
 
             # Run combat via TickResolver (T10: async, persists combat_log, increments Player stats)
             combat_svc = CombatService()
-            fight_results = await combat_svc.fight_ships(  # noqa: TRANSACTION_DISCIPLINE — fight_ships owns its commit via CombatLogService.persist
+            # TRANSACTION_DISCIPLINE: fight_ships owns its commit via CombatLogService.persist
+            fight_results = await combat_svc.fight_ships(
                 player_loadout,
                 criminal_loadout,
                 context="bounty_bonus",

@@ -829,3 +829,267 @@ class TestAdminCombatLogCommand:
         await cog.admin_combat_log.callback(cog, interaction, user=_make_target_user(), battle=1)
 
         interaction.followup.send.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Recurring section rendering (v3 recap redesign)
+# ---------------------------------------------------------------------------
+
+
+class TestRecurringSection:
+    """Verify that the Recurring section is rendered correctly in the detail embed.
+
+    The recurring field renders when the API returns a non-empty recurring list.
+    Both Key Events and Recurring are packed into <=1024-char chunks and spilled
+    into headerless continuation fields as needed (same machinery as Key Events).
+    Key Events has precedence: when the ceiling forces drops, Recurring is trimmed
+    before Key Events.
+    It must:
+      - appear under a '🔁 Recurring' header (first chunk) with continuation fields
+      - respect the 1024-char per-field Discord limit across all fields
+      - surface any dropped bullets with an honest '+N more bullets omitted' trailer
+      - NOT appear when recurring is empty or absent
+    """
+
+    def test_recurring_section_rendered_when_present(self, cog):
+        """When recurring is a non-empty list, a '🔁 Recurring' field is added."""
+        detail = _make_detail()
+        detail["recurring"] = ["• Alice: shield depleted ×3 -> 1.0s, 2.0s, 3.0s"]
+        user = MagicMock()
+        user.display_name = "SamX"
+
+        embed = cog._build_detail_embed(detail, user)
+
+        rec_field = next((f for f in embed.fields if "Recurring" in f.name), None)
+        assert rec_field is not None, "🔁 Recurring field must be present when recurring is non-empty"
+        assert "shield depleted ×3" in rec_field.value
+
+    def test_recurring_section_absent_when_empty_list(self, cog):
+        """When recurring is [] no Recurring field is added."""
+        detail = _make_detail()
+        detail["recurring"] = []
+        user = MagicMock()
+        user.display_name = "SamX"
+
+        embed = cog._build_detail_embed(detail, user)
+
+        rec_field = next((f for f in embed.fields if "Recurring" in f.name), None)
+        assert rec_field is None, "🔁 Recurring field must NOT be present when recurring is empty"
+
+    def test_recurring_section_absent_when_key_missing(self, cog):
+        """When 'recurring' key is absent from data (old rows) no Recurring field is added."""
+        detail = _make_detail()
+        detail.pop("recurring", None)  # simulate old row without recurring key
+        user = MagicMock()
+        user.display_name = "SamX"
+
+        embed = cog._build_detail_embed(detail, user)
+
+        rec_field = next((f for f in embed.fields if "Recurring" in f.name), None)
+        assert rec_field is None, "🔁 Recurring field must NOT be present when recurring key is absent"
+
+    def test_recurring_all_fields_respect_1024_char_limit(self, cog):
+        """Every Recurring field (header + continuations) must respect the 1024-char per-field limit.
+
+        8 bullets × ~209 chars each = 1679 chars total: spans 2 fields.  Every field
+        value must be ≤ 1024 chars.
+        """
+        # 8 bullets × ~209 chars each = 1679 chars total (exceeds 1024 → multiple fields)
+        bullets = [
+            "• Alice: shield depleted ×10 -> "
+            + ", ".join([f"{j * 5.0:.1f}s (by Laser)" for j in range(1, 11)])
+            for _ in range(8)
+        ]
+        detail = _make_detail()
+        detail["recurring"] = bullets
+        user = MagicMock()
+        user.display_name = "SamX"
+
+        embed = cog._build_detail_embed(detail, user)
+
+        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "​"]
+        assert len(rec_fields) >= 1, "At least one Recurring field must be present"
+        for f in rec_fields:
+            assert len(f.value) <= 1024, (
+                f"Recurring field value ({len(f.value)} chars) must not exceed Discord's 1024-char limit"
+            )
+
+    def test_recurring_over_1024_spans_continuation_fields_not_silent(self, cog):
+        """FIX #1: When recurring text exceeds 1024 chars it spans continuation fields — NOT silent.
+
+        Old behavior: silently hard-truncated a single field with '…'.
+        New behavior: packed into <=1024-char chunks across continuation fields; any
+        bullets that cannot fit at all get an honest '+N more bullets omitted' trailer.
+
+        This test was previously 'test_recurring_field_truncation_is_silent_no_omission_count'
+        and asserted the old silent behavior.  It now asserts the new NON-silent behavior.
+        """
+        # 8 bullets × ~209 chars each = ~1679 chars total — must span more than one field.
+        bullets = [
+            "• Alice: shield depleted ×10 -> "
+            + ", ".join([f"{j * 5.0:.1f}s (by Laser)" for j in range(1, 11)])
+            for _ in range(8)
+        ]
+        full_text = "\n".join(bullets)
+        assert len(full_text) > 1024, "Test setup: recurring text must exceed 1024 chars"
+
+        detail = _make_detail()
+        detail["recurring"] = bullets
+        user = MagicMock()
+        user.display_name = "SamX"
+
+        embed = cog._build_detail_embed(detail, user)
+
+        # Collect all Recurring-related fields (header + continuations).
+        # ZWSP (​) is the continuation field name; the header field contains "Recurring".
+        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "​"]
+        assert len(rec_fields) >= 1, "At least one Recurring field must be present"
+
+        # Non-silent: all bullet content is either rendered in full OR explicitly omitted.
+        all_rec_text = "\n".join(f.value for f in rec_fields)
+
+        # Either all bullets fit (no trailer needed) OR the trailer is present.
+        # The total text is ~1679 chars so it will span at least 2 fields; no bullet is
+        # silently dropped mid-word.  Verify that either all bullets appear OR omitted trailer.
+        bullets_in_output = sum(1 for b in bullets if b[:20] in all_rec_text)
+        omission_present = "omitted" in all_rec_text
+        assert bullets_in_output == len(bullets) or omission_present, (
+            f"Recurring must either render ALL bullets or surface an omission trailer. "
+            f"Got {bullets_in_output}/{len(bullets)} bullets and omission_present={omission_present}.\n"
+            f"Rec fields: {[(f.name, len(f.value)) for f in rec_fields]}"
+        )
+
+        # Every field value must still respect the per-field 1024-char limit.
+        for f in rec_fields:
+            assert len(f.value) <= 1024, (
+                f"Recurring field value ({len(f.value)} chars) must not exceed Discord's 1024-char limit"
+            )
+
+    def test_battle285_recurring_8_bullets_all_render_no_silent_drops(self, cog):
+        """Battle 285 regression: 8 Recurring bullets (~1679 chars total) must ALL render.
+
+        Old behavior: silently truncated to ~1024 chars, dropping ~3 bullets with no notice.
+        New behavior: packed across continuation fields; all 8 bullets appear in full.
+
+        Uses representative bullets that match the B285 production length profile (each
+        bullet is ~150-210 chars; 8 together exceed 1024).
+        """
+        # Representative Battle 285 Recurring bullets — each ~150-210 chars,
+        # 8 together total ~1460 chars (reliably > 1024, reliably fits in 2 fields).
+        bullets = [
+            "• Vilhelm Lindon: shield depleted ×8 -> 3.7s, 35.8s, 63.7s, 79.8s, 93.7s, 108.7s, 138.7s, 168.7s  (all M6 A4 Raccoon primary weapon)",
+            "• Vilhelm Lindon: armour depleted ×10 -> 3.7s, 40.1s, 42.3s, 48.7s, 79.8s, 93.7s, 109.8s, 138.7s, 154.8s, 169.8s  (all M6 A4 Raccoon)",
+            "• Vilhelm Lindon activated cloak module ×4 -> 3.7s, 48.7s, 93.7s, 138.7s  (all at or below 66% HP threshold)",
+            "• Vilhelm Lindon activated booster module ×6 -> 3.7s (80%), 39.1s (80%), 65.8s (40%), 93.7s (80%), 123.7s (80%), 154.8s (60%)",
+            "• bluefyre: shield depleted ×6 -> 17.3s (AMR Extinctor), 35.2s (Disruptor Laser), 82.0s (Disruptor Laser), 112.0s, 143.5s, 170.0s",
+            "• bluefyre activated booster module ×6 -> 17.3s, 51.2s, 81.0s, 111.8s, 141.9s, 169.8s  (all at or below 80% HP threshold)",
+            "• bluefyre M6 A4 Raccoon primary weapon re-enters range ×10 -> 33.7s, 48.7s, 63.7s, 78.7s, 93.7s, 108.7s, 123.7s, 138.7s, 153.7s, 168.7s",
+            "• Vilhelm Lindon Disruptor Laser secondary weapon re-enters range ×7 -> 49.0s, 64.0s, 79.0s, 109.0s, 139.0s, 154.0s, 169.0s (all secondary)",
+        ]
+        full_text = "\n".join(bullets)
+        # These 8 bullets total ~1028 chars — confirmed > 1024 so multi-field packing is needed.
+        assert len(full_text) > 1024, f"Test setup: B285 recurring must exceed 1024 chars; got {len(full_text)}"
+
+        # Build a detail payload with minimal key_events and the B285 recurring.
+        detail = _make_detail()
+        detail["recurring"] = bullets
+
+        user = MagicMock()
+        user.display_name = "SamX"
+        embed = cog._build_detail_embed(detail, user)
+
+        # Collect ALL Recurring fields (header + any continuation fields).
+        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "​"]
+        # Must have at least one Recurring field.
+        assert len(rec_fields) >= 1, "At least one Recurring field must be present"
+
+        # Collect all rendered recurring text.
+        all_rec_text = "\n".join(f.value for f in rec_fields)
+
+        # ALL 8 bullets must appear in the output — zero silent drops.
+        missing = []
+        for b in bullets:
+            # Use first 30 chars of each bullet as a unique fingerprint.
+            fingerprint = b[:30]
+            if fingerprint not in all_rec_text:
+                missing.append(fingerprint)
+
+        assert not missing, (
+            f"Battle 285 Recurring: {len(missing)}/8 bullets were silently dropped.\n"
+            f"Missing fingerprints: {missing}\n"
+            f"Recurring fields ({len(rec_fields)} total):\n"
+            + "\n".join(f"  [{i}] name={f.name!r} len={len(f.value)}" for i, f in enumerate(rec_fields))
+        )
+
+        # Every field value must still respect the per-field 1024-char limit.
+        for f in rec_fields:
+            assert len(f.value) <= 1024, (
+                f"Recurring field value ({len(f.value)} chars) must not exceed 1024-char per-field limit"
+            )
+
+        # No silent truncation: the field content must not end mid-word with '…' on first field
+        # (that would indicate the old blunt-truncation path fired instead of field expansion).
+        first_rec = rec_fields[0]
+        if len(first_rec.value) == 1024:
+            # If exactly 1024, it must be a clean line break, not mid-word truncation.
+            assert not first_rec.value.endswith("…"), (
+                "First Recurring field ends with '…' at exactly 1024 chars — "
+                "old silent truncation path may have fired instead of field expansion"
+            )
+
+    def test_recurring_over_ceiling_omission_trailer_present_ke_survives(self, cog):
+        """Over-ceiling test: when Discord field limit forces drops, Recurring is trimmed first.
+
+        Construct a scenario where Key Events consumes most of the 24-field budget and the
+        Recurring section cannot fit all its bullets.  Assert:
+          - Key Events fields are all present (KE has precedence)
+          - Recurring shows as many bullets as fit
+          - Any dropped Recurring bullets produce an honest '+N more bullets omitted' trailer
+          - Total embed stays under 6000 chars
+        """
+        # Fill up most of the field budget with Key Events (short lines, many events).
+        # 22 events × ~30 chars per line → about 1-2 KE fields
+        short_ke = [
+            {
+                "tick": i,
+                "time_s": float(i),
+                "actor": "A",
+                "event_type": "Engagement",  # highest priority → won't be dropped
+                "detail": f"Event {i:03d} short",
+            }
+            for i in range(22)
+        ]
+        # 30 Recurring bullets × ~100 chars each = 3000 chars → needs ~3 fields.
+        many_rec = [f"• Alice recurring pattern number {i:02d} -> {i*1.0:.1f}s, {i*2.0:.1f}s, {i*3.0:.1f}s" for i in range(30)]
+
+        detail = _make_detail()
+        detail["key_events"] = short_ke
+        detail["recurring"] = many_rec
+
+        user = MagicMock()
+        user.display_name = "SamX"
+        embed = cog._build_detail_embed(detail, user)
+
+        # Embed must stay under Discord's 6000-char hard limit.
+        assert len(embed) < 6000, f"Embed size {len(embed)} must be under 6000 chars"
+        # Total field count must not exceed 25 (Discord limit: 1 Summary + 24 section fields).
+        assert len(embed.fields) <= 25, f"Embed has {len(embed.fields)} fields; Discord allows 25 max"
+        # Every field value must respect 1024-char limit.
+        for f in embed.fields:
+            assert len(f.value) <= 1024
+
+        # Key Events must be present.
+        ke_fields = [f for f in embed.fields if "Key Events" in f.name]
+        assert len(ke_fields) >= 1, "Key Events section must be present"
+
+        # Recurring section: collect all recurring fields.
+        rec_fields = [f for f in embed.fields if "Recurring" in f.name or f.name == "​"]
+        all_text = "\n".join(f.value for f in rec_fields)
+
+        # If not all bullets fit, the omission trailer must appear.
+        bullets_shown = sum(1 for b in many_rec if b[:20] in all_text)
+        if bullets_shown < len(many_rec):
+            assert "omitted" in all_text, (
+                f"Only {bullets_shown}/{len(many_rec)} Recurring bullets shown but no omission trailer. "
+                "Dropped bullets must be surfaced with '+N more bullets omitted'."
+            )

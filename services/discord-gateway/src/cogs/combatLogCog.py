@@ -372,7 +372,7 @@ class CombatLogCog(commands.Cog):
             _stats_line(c1),
         ]
         if pvc_dr > 0:
-            summary_lines.append(f"🛡️ PvC damage reduction: {round(pvc_dr * 100)}%")
+            summary_lines.append(f"\U0001f6e1️ PvC damage reduction: {round(pvc_dr * 100)}%")
         summary_lines += [
             "",
             f"**{c2.get('name', '?')}** ({c2.get('ship', '?')})",
@@ -392,22 +392,25 @@ class CombatLogCog(commands.Cog):
         summary_value = "\n".join(summary_lines)
         if len(summary_value) > 1024:
             summary_value = summary_value[:1023] + "…"
-        embed.add_field(name="📊 Summary", value=summary_value, inline=False)
+        embed.add_field(name="\U0001f4ca Summary", value=summary_value, inline=False)
 
         # --- Key Events + Recurring sections ---
-        # Discord hard limit: 1024 chars per embed field value, 25 fields / 6000 chars
-        # per embed.  Pack lines into the first "🎯 Key Events" field and spill the
-        # remainder into additional HEADERLESS continuation fields (zero-width space name).
-        # Priority tiers gate BUDGET DROPPING only — never display order.
+        # Discord hard limits: 1024 chars per field value; 25 fields per embed; 6000 chars total.
+        # Both Key Events and Recurring are packed into <=1024-char chunks and spilled into
+        # headerless continuation fields (zero-width space name) as needed.  They share ONE
+        # field-count budget and ONE aggregate-char budget.  Key Events has precedence: when the
+        # ceiling forces drops, Recurring content is dropped before Key Events content.
+        # Priority tiers gate Key Events BUDGET DROPPING only — never display order.
         # key_events are already in chronological order from the server; rendered as-is.
         _FIELD_LIMIT = 1024
         _DETAIL_MAX = 200  # max chars per detail string (cosmetic, not hard-limit)
         _ZWSP = "\u200b"  # zero-width space → headerless continuation field
-        _MAX_EVENT_FIELDS = 6  # safety cap on continuation fields
+        # Discord allows 25 fields; 1 is consumed by Summary → 24 available for both sections.
+        _MAX_TOTAL_SECTION_FIELDS = 24
         # 6000-char aggregate budget guard (Discord rejects embeds > 6000 chars total).
         _EMBED_BUDGET = 5800
 
-        # Priority tiers: used ONLY for deciding which events to drop when over budget.
+        # Priority tiers: used ONLY for deciding which Key Events to drop when over budget.
         # Lower tier = higher priority = protected from drops.  Display order is always
         # chronological (as received from the server — never re-sorted here).
         _PRIORITY: dict[str, int] = {
@@ -424,8 +427,31 @@ class CombatLogCog(commands.Cog):
         }
         _DEFAULT_PRIORITY = 3
 
+        _KE_HEADER = "\U0001f3af Key Events"
+        _REC_HEADER = "\U0001f501 Recurring"
+
         key_events: list[dict] = data.get("key_events", [])
         recurring: list[str] = data.get("recurring", [])
+
+        def _pack_lines(lns: list[str]) -> list[str]:
+            """Pack lines into <=1024-char field chunks."""
+            cks: list[str] = []
+            cur: list[str] = []
+            cur_len = 0
+            for line in lns:
+                add = len(line) + (1 if cur else 0)
+                if cur and cur_len + add > _FIELD_LIMIT:
+                    cks.append("\n".join(cur))
+                    cur, cur_len = [], 0
+                    add = len(line)
+                cur.append(line)
+                cur_len += add
+            if cur:
+                cks.append("\n".join(cur))
+            return cks
+
+        # Set footer early so len(embed) is accurate during budget estimation.
+        embed.set_footer(text=f"Battle ID #{battle_id} | Requested by {user.display_name}")
 
         if key_events:
             # Build lines in CHRONOLOGICAL order (key_events already sorted by time_s).
@@ -439,37 +465,29 @@ class CombatLogCog(commands.Cog):
                 pri = _PRIORITY.get(ev.get("event_type", ""), _DEFAULT_PRIORITY)
                 lines_with_pri.append((pri, f"`{time_s:6.1f}s` {detail}"))
 
-            def _pack_lines(lns: list[str]) -> list[str]:
-                """Pack lines into <=1024-char field chunks."""
-                cks: list[str] = []
-                cur: list[str] = []
-                cur_len = 0
-                for line in lns:
-                    add = len(line) + (1 if cur else 0)
-                    if cur and cur_len + add > _FIELD_LIMIT:
-                        cks.append("\n".join(cur))
-                        cur, cur_len = [], 0
-                        add = len(line)
-                    cur.append(line)
-                    cur_len += add
-                if cur:
-                    cks.append("\n".join(cur))
-                return cks
+            # Pack recurring lines to estimate how many fields they need (for shared budget).
+            rec_lines: list[str] = list(recurring) if recurring else []
+            rec_chunks_est: list[str] = _pack_lines(rec_lines) if rec_lines else []
 
-            # Set footer early so len(embed) is accurate during budget estimation.
-            embed.set_footer(text=f"Battle ID #{battle_id} | Requested by {user.display_name}")
+            def _est_total_size(ke_chunks: list[str], rc_chunks: list[str]) -> int:
+                """Estimate total embed char cost for both sections together."""
+                ke_char = sum(len(c) for c in ke_chunks)
+                ke_hdr = len(_KE_HEADER) + (len(ke_chunks) - 1) * len(_ZWSP) if ke_chunks else 0
+                rc_char = sum(len(c) for c in rc_chunks)
+                rc_hdr = len(_REC_HEADER) + (len(rc_chunks) - 1) * len(_ZWSP) if rc_chunks else 0
+                return len(embed) + ke_char + ke_hdr + rc_char + rc_hdr
 
-            # Greedy budget drop: if over limit, repeatedly drop the lowest-priority event
+            # Greedy budget drop: if over limit, repeatedly drop the lowest-priority Key Event
             # (highest _PRIORITY value, then latest index as tiebreak) until we fit.
-            # Final output preserves original chronological order for kept events.
+            # Recurring lines are kept in full during this phase (KE is reduced first).
+            # If after exhausting all KE drops we still exceed limits, Recurring is trimmed
+            # during the emit phase below.
             kept_indices = list(range(len(lines_with_pri)))
             while True:
                 kept_lines = [lines_with_pri[i][1] for i in kept_indices]
-                chunks = _pack_lines(kept_lines)
-                over_fields = len(chunks) > _MAX_EVENT_FIELDS
-                est_size = (
-                    len(embed) + sum(len(c) for c in chunks) + len("🎯 Key Events") + (len(chunks) - 1) * len(_ZWSP)
-                )
+                ke_chunks_est = _pack_lines(kept_lines)
+                over_fields = (len(ke_chunks_est) + len(rec_chunks_est)) > _MAX_TOTAL_SECTION_FIELDS
+                est_size = _est_total_size(ke_chunks_est, rec_chunks_est)
                 if not over_fields and est_size <= _EMBED_BUDGET:
                     break
                 if not kept_indices:
@@ -477,40 +495,81 @@ class CombatLogCog(commands.Cog):
                 drop_idx = max(kept_indices, key=lambda i: (lines_with_pri[i][0], i))
                 kept_indices.remove(drop_idx)
 
-            dropped_count = len(lines_with_pri) - len(kept_indices)
+            dropped_ke_count = len(lines_with_pri) - len(kept_indices)
             kept_lines = [lines_with_pri[i][1] for i in kept_indices]
-            chunks = _pack_lines(kept_lines)
+            ke_chunks = _pack_lines(kept_lines)
 
-            shown_chunks: list[str] = []
-            for i, chunk in enumerate(chunks):
+            # --- Emit Key Events fields ---
+            ke_field_start_idx = len(embed.fields)  # embed field index where KE section starts
+            shown_ke_chunks: list[str] = []
+            for i, chunk in enumerate(ke_chunks):
+                name = _KE_HEADER if i == 0 else _ZWSP
                 value = chunk[:_FIELD_LIMIT]
-                name = "🎯 Key Events" if i == 0 else _ZWSP
-                if shown_chunks and len(embed) + len(name) + len(value) > _EMBED_BUDGET:
-                    dropped_count += sum(c.count("\n") + 1 for c in chunks[i:])
+                if shown_ke_chunks and len(embed) + len(name) + len(value) > _EMBED_BUDGET:
+                    dropped_ke_count += sum(c.count("\n") + 1 for c in ke_chunks[i:])
                     break
                 embed.add_field(name=name, value=value, inline=False)
-                shown_chunks.append(chunk)
+                shown_ke_chunks.append(chunk)
 
-            # Surface any omission as a trailer on the last shown field.
-            if dropped_count and shown_chunks:
-                trailer = f"\n…(+{dropped_count} more event{'s' if dropped_count != 1 else ''} omitted)"
-                idx = len(shown_chunks) - 1
-                name = "🎯 Key Events" if idx == 0 else _ZWSP
-                value = shown_chunks[idx][: _FIELD_LIMIT - len(trailer)] + trailer
-                embed.set_field_at(idx, name=name, value=value, inline=False)
+            # Surface Key Events omission as a trailer on the last shown KE field.
+            if dropped_ke_count and shown_ke_chunks:
+                ke_trailer = f"\n…(+{dropped_ke_count} more event{'s' if dropped_ke_count != 1 else ''} omitted)"
+                last_ke_embed_idx = ke_field_start_idx + len(shown_ke_chunks) - 1
+                last_ke_name = _KE_HEADER if len(shown_ke_chunks) == 1 else _ZWSP
+                last_ke_value = shown_ke_chunks[-1][: _FIELD_LIMIT - len(ke_trailer)] + ke_trailer
+                embed.set_field_at(last_ke_embed_idx, name=last_ke_name, value=last_ke_value, inline=False)
 
-            # --- Recurring section (appended after Key Events if space allows) ---
-            if recurring:
-                rec_text = "\n".join(recurring)
-                if len(rec_text) > _FIELD_LIMIT:
-                    rec_text = rec_text[: _FIELD_LIMIT - 3] + "…"
-                if len(embed) + len("🔁 Recurring") + len(rec_text) <= _EMBED_BUDGET:
-                    embed.add_field(name="🔁 Recurring", value=rec_text, inline=False)
+            # --- Recurring section ---
+            # Uses the same chunk-packing and headerless-continuation machinery as Key Events.
+            # Remaining field and char budget after Key Events section.
+            if rec_lines:
+                fields_used_by_ke = len(shown_ke_chunks)
+                rec_budget_fields = _MAX_TOTAL_SECTION_FIELDS - fields_used_by_ke
+                rec_chunks = _pack_lines(rec_lines)
+                dropped_rec_count = 0
+
+                rec_field_start_idx = ke_field_start_idx + len(shown_ke_chunks)
+                shown_rec_chunks: list[str] = []
+                for i, chunk in enumerate(rec_chunks):
+                    if len(shown_rec_chunks) >= rec_budget_fields:
+                        # No more field slots for Recurring.
+                        dropped_rec_count += chunk.count("\n") + 1
+                        continue
+                    name = _REC_HEADER if i == 0 else _ZWSP
+                    value = chunk[:_FIELD_LIMIT]
+                    if len(embed) + len(name) + len(value) > _EMBED_BUDGET:
+                        dropped_rec_count += chunk.count("\n") + 1
+                        continue
+                    embed.add_field(name=name, value=value, inline=False)
+                    shown_rec_chunks.append(chunk)
+
+                # Surface Recurring omission as a trailer on the last shown Recurring field.
+                if dropped_rec_count and shown_rec_chunks:
+                    rec_trailer = (
+                        f"\n…(+{dropped_rec_count} more bullet{'s' if dropped_rec_count != 1 else ''} omitted)"
+                    )
+                    last_rec_embed_idx = rec_field_start_idx + len(shown_rec_chunks) - 1
+                    last_rec_name = _REC_HEADER if len(shown_rec_chunks) == 1 else _ZWSP
+                    last_rec_value = shown_rec_chunks[-1][: _FIELD_LIMIT - len(rec_trailer)] + rec_trailer
+                    embed.set_field_at(last_rec_embed_idx, name=last_rec_name, value=last_rec_value, inline=False)
 
             return embed
 
-        embed.add_field(name="🎯 Key Events", value="*(no secondary weapons or modules used)*", inline=False)
-        embed.set_footer(text=f"Battle ID #{battle_id} | Requested by {user.display_name}")
+        # No key events: still render Recurring if present, then a placeholder KE field.
+        embed.add_field(name=_KE_HEADER, value="*(no secondary weapons or modules used)*", inline=False)
+        if recurring:
+            rec_chunks_no_ke = _pack_lines(list(recurring))
+            fields_used_no_ke = 1  # the placeholder KE field above
+            rec_budget_no_ke = _MAX_TOTAL_SECTION_FIELDS - fields_used_no_ke
+            for i, chunk in enumerate(rec_chunks_no_ke):
+                if i >= rec_budget_no_ke:
+                    break
+                name = _REC_HEADER if i == 0 else _ZWSP
+                value = chunk[:_FIELD_LIMIT]
+                if len(embed) + len(name) + len(value) > _EMBED_BUDGET:
+                    break
+                embed.add_field(name=name, value=value, inline=False)
+
         return embed
 
     @combat_log.error

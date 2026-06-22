@@ -536,6 +536,11 @@ class GameConstants:
     # Override via: BOUNTYBOT_RECAP_COLLAPSE_MIN_RUN=3
     RECAP_COLLAPSE_MIN_RUN: int = 3
 
+    # Maximum silence gap (seconds) between consecutive Key Events before a cyclic
+    # fill event is inserted to avoid long blank stretches in the recap.
+    # Override via: BOUNTYBOT_RECAP_GAP_FILL_S=20.0
+    RECAP_GAP_FILL_S: float = 20.0
+
     # Minimum number of times a nuke/shock weapon must fire before the low-impact
     # detonations are grouped into a summary line.
     # Override via: BOUNTYBOT_RECAP_NUKE_SUMMARY_MIN_COUNT=3
@@ -701,8 +706,9 @@ class GameConstants:
         cls.COMBAT_LOG_RETENTION_HOURS = _track_int("COMBAT_LOG_RETENTION_HOURS", 72)
         cls.COMBAT_LAYER_REEMIT_FRACTION = _track_float("COMBAT_LAYER_REEMIT_FRACTION", 0.25)
 
-        # Combat log recap denoising knobs (Phase 1 + 2)
+        # Combat log recap denoising knobs (Phase 1 + 2 + 3)
         cls.RECAP_COLLAPSE_MIN_RUN = _track_int("RECAP_COLLAPSE_MIN_RUN", 3)
+        cls.RECAP_GAP_FILL_S = _track_float("RECAP_GAP_FILL_S", 20.0)
         cls.RECAP_NUKE_SUMMARY_MIN_COUNT = _track_int("RECAP_NUKE_SUMMARY_MIN_COUNT", 3)
         cls.RECAP_NUKE_SIGNIFICANCE_FRACTION = _track_float("RECAP_NUKE_SIGNIFICANCE_FRACTION", 0.25)
 

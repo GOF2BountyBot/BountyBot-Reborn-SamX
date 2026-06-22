@@ -2597,7 +2597,9 @@ def _extract_key_events(
                 lbl = _label_for_side(d.get("side")) or side
                 by = attrib.get((tick, side))
                 tag = f" (by {by})" if by else ""
-                _emit(tick, 2, f"HP milestone ({milestone}%)", f"{lbl} dropped to ≤{milestone}% HP{tag}")
+                # k=3 so HP milestones sort AFTER Layer depleted (k=2) on the same tick.
+                # This preserves the approved recap ordering: layer breaks before HP milestones.
+                _emit(tick, 3, f"HP milestone ({milestone}%)", f"{lbl} dropped to ≤{milestone}% HP{tag}")
         elif typ == "module_activation":
             lbl = _actor_label(ev.get("actor"), d)
             module_name = d.get("module", d.get("name", "module"))
@@ -2659,83 +2661,9 @@ def _extract_key_events(
 
     staged.sort(key=lambda x: (x[0], x[1]))
 
-    # ---- Rule 1: Global per-key aggregation of CYCLIC event types ----
-    # Narrative events (Engagement, Nuke detonation, Shock blast, HP milestone, Ammo depleted,
-    # Outcome) carry no _collapse_key and are never folded — they pass through unchanged.
-    # Cyclic types (Weapon in range, Layer depleted, Module activated) are bucketed globally by
-    # _collapse_key regardless of position in the timeline.  Each key's total occurrence count N
-    # determines treatment:
-    #   N < RECAP_COLLAPSE_MIN_RUN  → pass through each row individually (no fold)
-    #   N ≥ RECAP_COLLAPSE_MIN_RUN  → emit exactly ONE aggregate row, anchored at the FIRST
-    #                                   occurrence's (tick, k) so chronological sort is preserved.
-    # The aggregate row gets count=N and a detail that names the combatant + weapon/module,
-    # uses "re-enters range" phrasing for Weapon-in-range, drops the per-occurrence hit/miss
-    # outcome suffix, and appends " ×N (first_s–last_s)".
-    _CYCLIC_TYPES: frozenset[str] = frozenset({"Weapon in range", "Layer depleted", "Module activated"})
-    _collapse_min = GameConstants.RECAP_COLLAPSE_MIN_RUN
-
-    # Pass 1: bucket cyclic rows by _collapse_key; preserve insertion order for keys.
-    # key_rows maps collapse_key → list of (tick, k, row) in timeline order (already sorted).
-    key_rows: dict[tuple, list[tuple[int, int, dict]]] = {}
-    key_first_order: list[tuple] = []  # first-seen key order for determinism
-
-    for tick_val, k_val, row in staged:
-        ck = row.get("_collapse_key")
-        if ck is not None and row.get("event_type") in _CYCLIC_TYPES:
-            if ck not in key_rows:
-                key_rows[ck] = []
-                key_first_order.append(ck)
-            key_rows[ck].append((tick_val, k_val, row))
-
-    # Pass 2: decide fate of each cyclic key.
-    # collapsed_cyclic maps (tick, k) of first occurrence → the single aggregate output row.
-    # expanded_cyclic maps (tick, k) → individual output row (for N < threshold).
-    # Keys with N ≥ threshold: anchor at first occurrence's (tick, k).
-    collapsed_output: list[tuple[int, int, dict]] = []  # (tick, k, output_row) for re-sort
-
-    emitted_keys: set[tuple] = set()
-
-    for ck in key_first_order:
-        entries = key_rows[ck]
-        n = len(entries)
-        first_tick, first_k, first_row = entries[0]
-        last_tick = entries[-1][0]
-        if n >= _collapse_min:
-            # Build aggregate detail: name combatant + weapon/module, drop hit/miss suffix,
-            # use "re-enters range" for WiR, append ×N (first_s–last_s).
-            base_detail = first_row["detail"]
-            et = first_row["event_type"]
-            if et == "Weapon in range":
-                # Drop "— hit" / "— miss" suffix.
-                if " — " in base_detail:
-                    base_detail = base_detail.rsplit(" — ", 1)[0]
-                # Normalise to "re-enters range" so aggregate always reads as cyclic re-entry.
-                base_detail = base_detail.replace(" enters range", " re-enters range")
-            first_s = _ticks_to_seconds(first_tick, tick_ms)
-            last_s = _ticks_to_seconds(last_tick, tick_ms)
-            agg_detail = f"{base_detail} ×{n} ({first_s:.1f}s–{last_s:.1f}s)"
-            out_row = dict(first_row)
-            out_row["detail"] = agg_detail
-            out_row["count"] = n
-            out_row.pop("_collapse_key", None)
-            collapsed_output.append((first_tick, first_k, out_row))
-        else:
-            # N < threshold: pass through each row individually.
-            for t_val, k_sub, r in entries:
-                out_row = dict(r)
-                out_row.pop("_collapse_key", None)
-                collapsed_output.append((t_val, k_sub, out_row))
-        emitted_keys.add(ck)
-
-    # Pass 3: collect narrative (non-cyclic) rows in their original positions.
-    for tick_val, k_val, row in staged:
-        ck = row.get("_collapse_key")
-        if ck is None or row.get("event_type") not in _CYCLIC_TYPES:
-            out_row = dict(row)
-            out_row.pop("_collapse_key", None)
-            collapsed_output.append((tick_val, k_val, out_row))
-
-    # Re-sort by (tick, k) so aggregate rows anchored at first-occurrence tick land correctly.
-    collapsed_output.sort(key=lambda x: (x[0], x[1]))
-
-    return [row for _, _, row in collapsed_output]
+    # Pass all rows through in (tick, k) order, stripping internal _collapse_key.
+    # The old Rule-1 global-aggregation fold has been removed: build_recap_sections()
+    # in combat_recap.py now owns the presentation logic (chronological Key Events +
+    # Recurring bullets with per-occurrence qualifiers).  _extract_key_events returns
+    # one raw row per occurrence so that the recap builder has full information.
+    return [{k: v for k, v in row.items() if k != "_collapse_key"} for _, _, row in staged]

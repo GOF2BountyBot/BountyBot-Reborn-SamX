@@ -2,7 +2,7 @@
 
 Adds ONE nullable JSONB per-guild override column for the per-division bounty
 prize-pool scaler. NULL means "use GameConstants.BOUNTY_DIVISION_REWARD_MULT
-default ({bronze:1.0, silver:2.4, gold:1.0, platinum:1.0})". Resolved via
+default ({bronze:1.0, silver:2.0, gold:1.0, platinum:1.0})". Resolved via
 resolve_constant() in the service layer and applied to the whole prize pool in
 BountyService.spawn_bounty before the winner-reserve split.
 

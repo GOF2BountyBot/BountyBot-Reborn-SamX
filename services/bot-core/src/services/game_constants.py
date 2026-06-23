@@ -101,13 +101,14 @@ class GameConstants:
     # the winner reserve and the consolation pool scale together. Defaults to
     # 1.0 (no change) for every division except silver. Real-spawn data showed
     # silver paid ≈ bronze (median ~6k vs ~5.8k) despite a much harder, mandatory
-    # fight — a dead rung. 2.4 lifts silver onto the geometric tier ladder
-    # (≈2.47× per step: bronze→silver→gold→platinum). Tune per-guild via the
-    # bounty_division_reward_mult JSONB column; resolve_constant() handles the
-    # fallback. Mirrors the DIVISION_MAX_TL dict-knob pattern.
+    # fight — a dead rung. The geometric-ideal midpoint of bronze→gold is ~2.4×;
+    # 2.0 is a deliberately more conservative default (silver ≈ 2.05× bronze,
+    # ~12k median) that removes the dead rung without fully closing to the ladder.
+    # Tune per-guild via the bounty_division_reward_mult JSONB column;
+    # resolve_constant() handles the fallback. Mirrors the DIVISION_MAX_TL pattern.
     BOUNTY_DIVISION_REWARD_MULT: dict[str, float] = {
         "bronze": 1.0,
-        "silver": 2.4,
+        "silver": 2.0,
         "gold": 1.0,
         "platinum": 1.0,
     }

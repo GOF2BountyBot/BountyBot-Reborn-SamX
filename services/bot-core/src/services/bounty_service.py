@@ -1753,8 +1753,8 @@ class BountyService:
         # Apply the per-division prize-pool scaler (balance knob) to the whole
         # pool BEFORE the winner-reserve split, so the winner reserve and the
         # consolation pool scale together. Defaults to 1.0 for every division
-        # except silver (2.4), which lifts silver off the bronze floor onto the
-        # geometric tier ladder. Per-guild override: bounty_division_reward_mult.
+        # except silver (2.0), which lifts silver off the bronze floor so the
+        # tier is a real step up. Per-guild override: bounty_division_reward_mult.
         _division_reward_mult = resolve_constant(
             cfg, "bounty_division_reward_mult", GameConstants.BOUNTY_DIVISION_REWARD_MULT
         )

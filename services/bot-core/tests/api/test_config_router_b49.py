@@ -488,14 +488,14 @@ class TestBountyDivisionRewardMultValidation:
 
     @patch("api.routers.config.get_db_session")
     def test_accepts_valid_dict(self, mock_get_db, client, mock_config_service):
-        """A correctly formed 4-key dict with the default silver=2.4 is accepted."""
+        """A correctly formed 4-key dict with the default silver=2.0 is accepted."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
             "/api/v1/config/guild/67890",
             json={
                 "guild_id": 67890,
-                "bounty_division_reward_mult": {"bronze": 1.0, "silver": 2.4, "gold": 1.0, "platinum": 1.0},
+                "bounty_division_reward_mult": {"bronze": 1.0, "silver": 2.0, "gold": 1.0, "platinum": 1.0},
             },
         )
 

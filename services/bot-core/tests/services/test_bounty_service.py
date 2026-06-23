@@ -1186,7 +1186,7 @@ async def _spawn_and_capture_reward(spawn_service, mock_db, *, division, tech_le
 
 @pytest.mark.asyncio
 async def test_spawn_bounty_silver_pool_scaler_applied(spawn_service, mock_db):
-    """Silver prize pool is the unscaled pool × the 2.4 default silver scaler."""
+    """Silver prize pool is the unscaled pool × the 2.0 default silver scaler."""
     from services.game_constants import GameConstants
     from services.game_maths import reward_per_sys_check
 

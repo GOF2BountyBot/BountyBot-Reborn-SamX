@@ -91,10 +91,10 @@ _NEW_LOOT_FIELDS = (
     "loot_commodity_sell_fraction",
 )
 
-# Full slash-settable surface after the change (52 fields; demotion_credit_penalty_pct
-# stays API-only). 25 prior + 8 criminal-loadout + 19 loot = 52.
+# Full slash-settable surface after the change (53 fields; demotion_credit_penalty_pct
+# stays API-only). 25 prior + 8 criminal-loadout + 19 loot + 1 bounty_division_reward_mult = 53.
 # Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
-_EXPECTED_SLASH_FIELD_COUNT = 52
+_EXPECTED_SLASH_FIELD_COUNT = 53
 
 
 def _evict_discord_modules():

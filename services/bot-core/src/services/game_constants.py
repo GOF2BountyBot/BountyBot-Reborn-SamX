@@ -95,6 +95,24 @@ class GameConstants:
     BOUNTY_WINNER_RESERVE_FACTOR: float = 0.25
 
     # ------------------------------------------------------------------
+    # Bounty Prize-Pool Scaler (per division)
+    # Multiplies the full bounty prize pool (the legacy per-sys seed × route
+    # length) by a per-division factor BEFORE the winner-reserve split, so both
+    # the winner reserve and the consolation pool scale together. Defaults to
+    # 1.0 (no change) for every division except silver. Real-spawn data showed
+    # silver paid ≈ bronze (median ~6k vs ~5.8k) despite a much harder, mandatory
+    # fight — a dead rung. 2.4 lifts silver onto the geometric tier ladder
+    # (≈2.47× per step: bronze→silver→gold→platinum). Tune per-guild via the
+    # bounty_division_reward_mult JSONB column; resolve_constant() handles the
+    # fallback. Mirrors the DIVISION_MAX_TL dict-knob pattern.
+    BOUNTY_DIVISION_REWARD_MULT: dict[str, float] = {
+        "bronze": 1.0,
+        "silver": 2.4,
+        "gold": 1.0,
+        "platinum": 1.0,
+    }
+
+    # ------------------------------------------------------------------
     # Ship Price Thresholds (10 entries; index 0 == TL1)
     # ------------------------------------------------------------------
 

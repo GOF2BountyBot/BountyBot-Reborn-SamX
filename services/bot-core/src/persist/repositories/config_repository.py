@@ -465,6 +465,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "criminal_max_gear_upgrade": config.criminal_max_gear_upgrade,
                 "bounty_reward_to_xp_gain_mult": config.bounty_reward_to_xp_gain_mult,
                 "bounty_winner_reserve_factor": config.bounty_winner_reserve_factor,
+                "bounty_division_reward_mult": config.bounty_division_reward_mult,
                 # bounty_pvc_armour_buff_factor retired T10
                 # duel_variance_percent retired T10
                 "duel_cloak_chance": config.duel_cloak_chance,

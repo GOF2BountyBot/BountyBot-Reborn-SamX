@@ -1750,6 +1750,16 @@ class BountyService:
         _legacy_rps = reward_per_sys_check(tech_level, loadout["total_value"])
         total_reward = _legacy_rps * len(route)
 
+        # Apply the per-division prize-pool scaler (balance knob) to the whole
+        # pool BEFORE the winner-reserve split, so the winner reserve and the
+        # consolation pool scale together. Defaults to 1.0 for every division
+        # except silver (2.4), which lifts silver off the bronze floor onto the
+        # geometric tier ladder. Per-guild override: bounty_division_reward_mult.
+        _division_reward_mult = resolve_constant(
+            cfg, "bounty_division_reward_mult", GameConstants.BOUNTY_DIVISION_REWARD_MULT
+        )
+        total_reward = int(total_reward * _division_reward_mult.get(division, 1.0))
+
         _winner_reserve_factor = resolve_constant(
             cfg, "bounty_winner_reserve_factor", GameConstants.BOUNTY_WINNER_RESERVE_FACTOR
         )

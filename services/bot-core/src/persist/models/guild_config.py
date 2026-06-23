@@ -100,6 +100,8 @@ class GuildConfig(Base):
     criminal_max_gear_upgrade: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_reward_to_xp_gain_mult: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     bounty_winner_reserve_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # Per-division prize-pool scaler. NULL == "use GameConstants.BOUNTY_DIVISION_REWARD_MULT".
+    bounty_division_reward_mult: Mapped[dict[str, float] | None] = mapped_column(_JSONB, nullable=True, default=None)
     # bounty_pvc_armour_buff_factor — retired T10 (replaced by pvc_damage_reduction §3)
     # duel_variance_percent — retired T10 (SimpleTTKResolver removed)
     duel_cloak_chance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

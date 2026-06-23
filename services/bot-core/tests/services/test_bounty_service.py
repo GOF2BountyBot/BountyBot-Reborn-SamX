@@ -1155,6 +1155,122 @@ async def test_spawn_bounty_reward_calculation(spawn_service, mock_db):
     )
 
 
+# ---------------------------------------------------------------------------
+# Per-division prize-pool scaler (BOUNTY_DIVISION_REWARD_MULT)
+# ---------------------------------------------------------------------------
+
+
+async def _spawn_and_capture_reward(spawn_service, mock_db, *, division, tech_level, route, cfg=None):
+    """Spawn one bounty with a pinned route/tech_level and return the stored reward."""
+    criminal = _make_criminal("Viper", "terran")
+    spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
+    spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+    spawn_service.config_repo.get_by_guild_id = AsyncMock(return_value=cfg)
+    # Pin the route so the only variable across divisions is the pool scaler.
+    spawn_service.pathfinding_service.make_route = MagicMock(return_value=list(route))
+
+    captured_bounties = []
+
+    async def capture_create(db, bounty):
+        captured_bounties.append(bounty)
+        return SimpleNamespace(id=99, **{k: getattr(bounty, k) for k in vars(bounty) if not k.startswith("_")})
+
+    spawn_service.bounty_repo.create = capture_create
+
+    with patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)):
+        await spawn_service.spawn_bounty(mock_db, guild_id=1, division=division, tech_level=tech_level)
+
+    assert len(captured_bounties) == 1
+    return captured_bounties[0].reward
+
+
+@pytest.mark.asyncio
+async def test_spawn_bounty_silver_pool_scaler_applied(spawn_service, mock_db):
+    """Silver prize pool is the unscaled pool × the 2.4 default silver scaler."""
+    from services.game_constants import GameConstants
+    from services.game_maths import reward_per_sys_check
+
+    route = ["A", "B", "C", "D", "E"]
+    unscaled = reward_per_sys_check(3, SAMPLE_LOADOUT["total_value"]) * len(route)
+    expected = int(unscaled * GameConstants.BOUNTY_DIVISION_REWARD_MULT["silver"])
+
+    reward = await _spawn_and_capture_reward(spawn_service, mock_db, division="silver", tech_level=3, route=route)
+    assert reward == expected, f"silver reward={reward} != expected {expected} (unscaled={unscaled})"
+
+
+@pytest.mark.asyncio
+async def test_spawn_bounty_gold_pool_scaler_is_noop(spawn_service, mock_db):
+    """Gold's default scaler is 1.0 — the stored pool equals the unscaled pool."""
+    from services.game_maths import reward_per_sys_check
+
+    route = ["A", "B", "C", "D", "E"]
+    expected = reward_per_sys_check(6, SAMPLE_LOADOUT["total_value"]) * len(route)
+
+    reward = await _spawn_and_capture_reward(spawn_service, mock_db, division="gold", tech_level=6, route=route)
+    assert reward == expected, f"gold reward={reward} != unscaled {expected}"
+
+
+@pytest.mark.asyncio
+async def test_spawn_bounty_pool_scaler_per_guild_override(spawn_service, mock_db):
+    """A per-guild bounty_division_reward_mult overrides the GameConstants default."""
+    from services.game_maths import reward_per_sys_check
+
+    route = ["A", "B", "C", "D", "E"]
+    # Full 4-key dict — matches what the config API validator actually accepts.
+    cfg = SimpleNamespace(bounty_division_reward_mult={"bronze": 1.0, "silver": 5.0, "gold": 1.0, "platinum": 1.0})
+    unscaled = reward_per_sys_check(3, SAMPLE_LOADOUT["total_value"]) * len(route)
+    expected = int(unscaled * 5.0)
+
+    reward = await _spawn_and_capture_reward(
+        spawn_service, mock_db, division="silver", tech_level=3, route=route, cfg=cfg
+    )
+    assert reward == expected, f"silver reward={reward} != override-expected {expected}"
+
+
+@pytest.mark.asyncio
+async def test_spawn_bounty_pool_scaler_zero_zeroes_pool_without_crashing(spawn_service, mock_db):
+    """A 0.0 scaler zeroes the pool (and reward_per_sys) without dividing-by-zero or crashing."""
+    route = ["A", "B", "C", "D", "E"]
+    cfg = SimpleNamespace(bounty_division_reward_mult={"bronze": 1.0, "silver": 0.0, "gold": 1.0, "platinum": 1.0})
+
+    criminal = _make_criminal("Viper", "terran")
+    spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
+    spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+    spawn_service.config_repo.get_by_guild_id = AsyncMock(return_value=cfg)
+    spawn_service.pathfinding_service.make_route = MagicMock(return_value=list(route))
+
+    captured_bounties = []
+
+    async def capture_create(db, bounty):
+        captured_bounties.append(bounty)
+        return SimpleNamespace(id=99, **{k: getattr(bounty, k) for k in vars(bounty) if not k.startswith("_")})
+
+    spawn_service.bounty_repo.create = capture_create
+
+    with patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)):
+        await spawn_service.spawn_bounty(mock_db, guild_id=1, division="silver", tech_level=3)
+
+    assert len(captured_bounties) == 1
+    b = captured_bounties[0]
+    assert b.reward == 0
+    assert b.reward_per_sys == 0
+
+
+@pytest.mark.asyncio
+async def test_spawn_bounty_pool_scaler_unknown_division_defaults_to_one(spawn_service, mock_db):
+    """A division absent from the scaler dict falls back to 1.0 (no scaling, no crash)."""
+    from services.game_maths import reward_per_sys_check
+
+    route = ["A", "B", "C", "D", "E"]
+    cfg = SimpleNamespace(bounty_division_reward_mult={"silver": 2.4})  # no "gold" key
+    expected = reward_per_sys_check(6, SAMPLE_LOADOUT["total_value"]) * len(route)
+
+    reward = await _spawn_and_capture_reward(
+        spawn_service, mock_db, division="gold", tech_level=6, route=route, cfg=cfg
+    )
+    assert reward == expected, f"gold reward={reward} != unscaled {expected}"
+
+
 @pytest.mark.asyncio
 async def test_spawn_bounty_end_time_calculation(spawn_service, mock_db):
     """end_time must be issue_time + timedelta(minutes=480) when no expiry_minutes given."""

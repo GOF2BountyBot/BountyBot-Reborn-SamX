@@ -122,6 +122,7 @@ _OVERRIDE_FIELD_NAMES = [
     "criminal_max_gear_upgrade",
     "bounty_reward_to_xp_gain_mult",
     "bounty_winner_reserve_factor",
+    "bounty_division_reward_mult",
     # bounty_pvc_armour_buff_factor retired T10
     # duel_variance_percent retired T10
     "duel_cloak_chance",
@@ -413,6 +414,88 @@ class TestDivisionMaxTlValidation:
             json={
                 "guild_id": 67890,
                 "division_max_tl": {"bronze": 3, "silver": 6, "gold": 9, "platinum": 10},
+            },
+        )
+
+        assert response.status_code == 200
+
+
+class TestBountyDivisionRewardMultValidation:
+    """bounty_division_reward_mult must have exactly {bronze, silver, gold, platinum}, non-negative."""
+
+    @patch("api.routers.config.get_db_session")
+    def test_rejects_partial_dict_missing_keys(self, mock_get_db, client):
+        """A partial dict (only 'silver') is rejected with 422 — the API requires all 4 keys."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={"guild_id": 67890, "bounty_division_reward_mult": {"silver": 2.4}},
+        )
+
+        assert response.status_code == 422
+
+    @patch("api.routers.config.get_db_session")
+    def test_rejects_extra_keys(self, mock_get_db, client):
+        """Keys beyond the required 4 are rejected."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={
+                "guild_id": 67890,
+                "bounty_division_reward_mult": {
+                    "bronze": 1.0,
+                    "silver": 2.4,
+                    "gold": 1.0,
+                    "platinum": 1.0,
+                    "diamond": 3.0,
+                },
+            },
+        )
+
+        assert response.status_code == 422
+
+    @patch("api.routers.config.get_db_session")
+    def test_rejects_negative_value(self, mock_get_db, client):
+        """A negative multiplier is rejected."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={
+                "guild_id": 67890,
+                "bounty_division_reward_mult": {"bronze": 1.0, "silver": -2.4, "gold": 1.0, "platinum": 1.0},
+            },
+        )
+
+        assert response.status_code == 422
+
+    @patch("api.routers.config.get_db_session")
+    def test_rejects_bool_value(self, mock_get_db, client):
+        """A bool value (True) is rejected — must be a number, not a bool."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={
+                "guild_id": 67890,
+                "bounty_division_reward_mult": {"bronze": 1.0, "silver": True, "gold": 1.0, "platinum": 1.0},
+            },
+        )
+
+        assert response.status_code == 422
+
+    @patch("api.routers.config.get_db_session")
+    def test_accepts_valid_dict(self, mock_get_db, client, mock_config_service):
+        """A correctly formed 4-key dict with the default silver=2.4 is accepted."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.put(
+            "/api/v1/config/guild/67890",
+            json={
+                "guild_id": 67890,
+                "bounty_division_reward_mult": {"bronze": 1.0, "silver": 2.4, "gold": 1.0, "platinum": 1.0},
             },
         )
 

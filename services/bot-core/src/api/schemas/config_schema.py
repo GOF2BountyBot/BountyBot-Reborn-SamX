@@ -17,6 +17,8 @@ class GameConstantsOverridesMixin(BaseModel):
     criminal_max_gear_upgrade: int | None = Field(None, ge=0, le=10)
     bounty_reward_to_xp_gain_mult: float | None = Field(None, ge=0.0)
     bounty_winner_reserve_factor: float | None = Field(None, ge=0.0, le=1.0)
+    # Per-division prize-pool scaler. NULL == GameConstants.BOUNTY_DIVISION_REWARD_MULT.
+    bounty_division_reward_mult: dict[str, float] | None = None
     # bounty_pvc_armour_buff_factor retired T10 (replaced by pvc_damage_reduction §3)
     # duel_variance_percent retired T10 (SimpleTTKResolver removed)
     duel_cloak_chance: int | None = Field(None, ge=0, le=100)
@@ -105,6 +107,22 @@ class GameConstantsOverridesMixin(BaseModel):
         for key, val in v.items():
             if not isinstance(val, int) or not 1 <= val <= 10:
                 raise ValueError(f"division_max_tl[{key!r}] must be an integer between 1 and 10")
+        return v
+
+    @field_validator("bounty_division_reward_mult", mode="before")
+    @classmethod
+    def validate_bounty_division_reward_mult(cls, v: Any) -> Any:
+        """Per-division pool scaler: keys exactly {bronze,silver,gold,platinum}, non-negative floats."""
+        if v is None:
+            return v
+        if not isinstance(v, dict):
+            raise ValueError("bounty_division_reward_mult must be a dict")
+        required_keys = {"bronze", "silver", "gold", "platinum"}
+        if set(v.keys()) != required_keys:
+            raise ValueError(f"bounty_division_reward_mult must have exactly keys: {required_keys}")
+        for key, val in v.items():
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or val < 0:
+                raise ValueError(f"bounty_division_reward_mult[{key!r}] must be a non-negative number")
         return v
 
     @field_validator(

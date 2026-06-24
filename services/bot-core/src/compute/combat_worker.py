@@ -36,7 +36,7 @@ so it can be submitted to ``concurrent.futures.ProcessPoolExecutor``.
 # ---------------------------------------------------------------------------
 
 from services.combat_models import FightResults
-from services.combat_resolver import TickResolver, _extract_key_events
+from services.combat_resolver import TickResolver, _extract_key_events, deplete_side1_loadout
 
 # ---------------------------------------------------------------------------
 # P2-T1: run_fight — pure, picklable worker function
@@ -186,6 +186,7 @@ def run_fight_batch(
     *,
     pvc_damage_reduction: float,
     compact: bool = True,
+    carry_side1_resources: bool = False,
 ) -> list[tuple]:
     """Execute a batch of combat simulations in a single worker process.
 
@@ -207,14 +208,49 @@ def run_fight_batch(
     compact:
         Forwarded to ``run_fight``.  ``True`` (default) → each result is a
         ``(winner_side, is_stalemate)`` 2-tuple.  ``False`` → full dict.
+    carry_side1_resources:
+        When ``True`` (preflight Monte-Carlo), run the matchups SEQUENTIALLY and
+        thread the side-1 (player) loadout's consumable state forward: secondary
+        ammo and the one-use EmergencySystem deplete across fights instead of
+        refilling every sim (HP/shields/armour still reset each fight).  Each
+        fight is resolved with the full summary internally (to read what was
+        consumed) but the per-matchup result is still projected to the compact
+        ``(winner_side, is_stalemate)`` tuple — this mode therefore implies
+        compact results and is only meaningful with ``compact=True``.  The
+        rolling loadout is seeded from ``matchups[0]``'s ``loadout1``; per-matchup
+        ``loadout1`` entries after the first are ignored (the preflight builds all
+        matchups from the same player loadout).  Default ``False`` ⇒ behaviour is
+        byte-identical to the original per-matchup loop.
 
     Returns
     -------
     list[tuple[int | None, bool]]
-        One ``(winner_side, is_stalemate)`` per matchup when ``compact=True``.
+        One ``(winner_side, is_stalemate)`` per matchup when ``compact=True`` (or
+        ``carry_side1_resources=True``).
         One full-result ``dict`` per matchup when ``compact=False``.
     """
     results = []
+
+    if carry_side1_resources:
+        # Sequential carry mode: thread a depleting side-1 (player) loadout through
+        # the run. Resolve each fight with compact=False to read the summary, apply
+        # cross-fight depletion, and project the result to the compact tuple.
+        current_l1 = matchups[0][0] if matchups else None
+        for _l1, loadout2, seed, combatant1_label, combatant2_label in matchups:
+            full = run_fight(
+                current_l1,
+                loadout2,
+                pvc_damage_reduction=pvc_damage_reduction,
+                seed=seed,
+                combatant1_label=combatant1_label,
+                combatant2_label=combatant2_label,
+                compact=False,
+            )
+            results.append((full["winner_side"], full["is_stalemate"]))
+            # Deplete the player's carried consumables for the next fight.
+            current_l1 = deplete_side1_loadout(current_l1, full["summary"])
+        return results
+
     for loadout1, loadout2, seed, combatant1_label, combatant2_label in matchups:
         result = run_fight(
             loadout1,

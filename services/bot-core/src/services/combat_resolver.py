@@ -16,7 +16,7 @@ this module.
 import itertools
 import math
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from shared import bblogger
 
@@ -166,6 +166,59 @@ _UTOOL_BUILTIN_NAME = "U'tool"
 # U'tool virtual stats when used as built-in (§10 / §7.2 wiki values)
 _UTOOL_EFFECT_DURATION_MS = 10_000
 _UTOOL_LOADING_SPEED_MS = 2_000
+
+
+def deplete_side1_loadout(loadout: ShipLoadout, summary: dict) -> ShipLoadout:
+    """Return a NEW ShipLoadout with the player's (side-1) consumables depleted
+    according to one fight's summary block.
+
+    Pure, DB-free mirror of ``CombatService._consume_secondary_ammo`` and
+    ``_consume_emergency_system``, operating on the frozen :class:`ShipLoadout`
+    dataclass (via :func:`dataclasses.replace`) instead of the player's DB ship
+    row.  Used by the preflight Monte-Carlo (``run_fight_batch`` carry mode) to
+    thread resource state across the sequential 20-sim run, so secondary ammo and
+    the one-use EmergencySystem deplete across fights instead of refilling every
+    sim.  HP/shields/armour are intentionally NOT carried (they reset per fight).
+
+    Reads ONLY the side-1 summary block — the player is always combatant1/slot
+    ``"1"`` in a preflight fight; side-2 (criminal) usage is ignored.  When the
+    summary records no relevant consumption the returned loadout is equal in
+    effect to the input (a fresh object regardless, never mutating the frozen
+    input).
+
+    Secondary weapons: a weapon with ``ammo is None`` is infinite (untouched).  A
+    finite-ammo weapon's ammo is decremented by its rounds fired this fight
+    (clamped at 0) and DROPPED from ``secondary_weapons`` when it reaches 0 —
+    mirroring the DB auto-unequip.
+
+    EmergencySystem: if the ES fired this fight (``module_activations``
+    ``"emergency_system"`` >= 1), exactly ONE ``EmergencySystemModule`` is removed
+    from ``modules`` (ES fires at most once per fight, §7.7).
+    """
+    cb_block = summary.get("combatants", {}).get("1", {})
+
+    # --- Secondary ammo depletion (mirror _consume_secondary_ammo) ---
+    rounds_fired: dict[str, int] = cb_block.get("secondary_rounds_by_weapon", {}) or {}
+    new_secondaries: list[WeaponStats] = []
+    for sw in loadout.secondary_weapons:
+        if sw.ammo is None:
+            new_secondaries.append(sw)  # infinite ammo — never depletes
+            continue
+        new_ammo = max(0, sw.ammo - rounds_fired.get(sw.name, 0))
+        if new_ammo <= 0:
+            continue  # depleted — auto-unequip (drop from the sim loadout)
+        new_secondaries.append(replace(sw, ammo=new_ammo))
+
+    # --- EmergencySystem consumption (mirror _consume_emergency_system) ---
+    es_activations: int = cb_block.get("module_activations", {}).get("emergency_system", 0)
+    new_modules: list[ModuleStats] = list(loadout.modules)
+    if es_activations >= 1:
+        for idx, mod in enumerate(new_modules):
+            if mod.module_type == _EMERGENCY_SYSTEM_MODULE_TYPE:
+                new_modules.pop(idx)  # consume exactly one (ES fires at most once/fight)
+                break
+
+    return replace(loadout, secondary_weapons=new_secondaries, modules=new_modules)
 
 
 @dataclass(slots=True)

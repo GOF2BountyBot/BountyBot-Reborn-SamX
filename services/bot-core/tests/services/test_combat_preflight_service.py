@@ -723,6 +723,28 @@ class TestP2T7OneDispatch:
         assert called_fn is run_fight_batch
 
     @pytest.mark.asyncio
+    async def test_offload_forwards_carry_side1_resources_flag(self):
+        """estimate() opts into cross-fight depletion via carry_side1_resources=True."""
+        from services.combat_models import ShipLoadout
+
+        svc = _make_service()
+        player_loadout = ShipLoadout(ship_name="Player", base_armour=200)
+        synthetics = [_make_synthetic_criminal() for _ in range(4)]
+
+        offload_mock = AsyncMock(return_value=_all_player_wins(4))
+        with (
+            patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=synthetics)),
+            patch(
+                "services.combat_preflight_service.LoadoutBuilder.from_player",
+                new=AsyncMock(return_value=player_loadout),
+            ),
+            patch("services.combat_preflight_service.offload_cpu", new=offload_mock),
+        ):
+            await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver", num_sims=4)
+
+        assert offload_mock.call_args.kwargs.get("carry_side1_resources") is True
+
+    @pytest.mark.asyncio
     async def test_matchup_list_length_equals_num_sims(self):
         """The matchups list passed to run_fight_batch has exactly num_sims entries."""
         from services.combat_models import ShipLoadout

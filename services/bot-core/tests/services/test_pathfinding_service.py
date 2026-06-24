@@ -768,3 +768,63 @@ class TestB78WahNorrIsolation:
         assert result[-1] == "Ni'Mrrod"
         assert len(result) == 2, f"K'Ontrr → Ni'Mrrod should be 1 hop, got {len(result)}: {result}"
         _assert_route_valid(result, graph)
+
+
+# ===========================================================================
+# TestMakeRouteBlocked — the `blocked` set parameter (waypoint route support)
+# ===========================================================================
+
+
+class TestMakeRouteBlocked:
+    """make_route(..., blocked=...) must never enter a blocked system, while
+    always permitting the route's own endpoints.
+
+    On the 6-cycle main graph (A-B-C-F-E-D-A) A→F has two equally short
+    corridors: A-B-C-F and A-D-E-F. Blocking one corridor forces the other.
+    """
+
+    def test_blocked_forces_alternate_corridor(self, svc, graph_svc) -> None:
+        # Block the B-C corridor: the only A→F route left is A-D-E-F.
+        result = svc.make_route("A", "F", blocked=frozenset({"B"}))
+        assert isinstance(result, list)
+        assert "B" not in result
+        assert result == ["A", "D", "E", "F"]
+        _assert_route_valid(result, graph_svc)
+
+    def test_blocked_node_never_appears_in_route(self, svc, graph_svc) -> None:
+        # A→C is normally A-B-C; blocking B forces the long way round the cycle.
+        result = svc.make_route("A", "C", blocked=frozenset({"B"}))
+        assert isinstance(result, list)
+        assert "B" not in result
+        assert result[0] == "A" and result[-1] == "C"
+        assert result == ["A", "D", "E", "F", "C"]
+        _assert_route_valid(result, graph_svc)
+
+    def test_blocking_all_corridors_yields_no_route(self, svc) -> None:
+        # A's only neighbours are B and D; blocking both strands A.
+        result = svc.make_route("A", "F", blocked=frozenset({"B", "D"}))
+        assert result is PathfindingError.NO_ROUTE_FOUND
+
+    def test_endpoints_are_stripped_from_blocked(self, svc, graph_svc) -> None:
+        # Passing the endpoints themselves in `blocked` must not break routing —
+        # they are always permitted (a caller may pass an accumulated visited set).
+        result = svc.make_route("A", "C", blocked=frozenset({"A", "C"}))
+        assert isinstance(result, list)
+        assert result == ["A", "B", "C"]
+        _assert_route_valid(result, graph_svc)
+
+    def test_blocked_end_still_reachable(self, svc) -> None:
+        # Even if `end` is in blocked, the endpoint exception lets the route finish.
+        result = svc.make_route("A", "B", blocked=frozenset({"B"}))
+        assert isinstance(result, list)
+        assert result == ["A", "B"]
+
+    def test_empty_blocked_matches_unblocked(self, svc) -> None:
+        plain = svc.make_route("A", "F")
+        blocked = svc.make_route("A", "F", blocked=frozenset())
+        assert plain == blocked
+
+    def test_blocked_is_not_mutated(self, svc) -> None:
+        blk = frozenset({"B"})
+        svc.make_route("A", "F", blocked=blk)
+        assert blk == frozenset({"B"})

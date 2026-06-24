@@ -853,6 +853,12 @@ def spawn_service(spawn_service_minimal) -> BountyService:
     )
     spawn_service_minimal.pathfinding_service = MagicMock()
     spawn_service_minimal.pathfinding_service.make_route = MagicMock(return_value=SAMPLE_ROUTE)
+    # No jump-gate neighbours by default → the waypoint cascade finds no eligible
+    # waypoints and cleanly falls back to standard A→C routing without issuing any
+    # extra make_route calls. Keeps these spawn tests deterministic regardless of
+    # the per-spawn waypoint roll; waypoint behaviour is covered by dedicated tests
+    # that attach a real graph (see TestWaypointRouteGeneration).
+    spawn_service_minimal.graph_service.get_neighbours = MagicMock(return_value=[])
     return spawn_service_minimal
 
 
@@ -6652,3 +6658,157 @@ async def test_generate_loadout_no_turret_slots_skips_turret_selection(service, 
         result = await service.generate_loadout(mock_db, tech_level=2)
 
     assert result["turrets"] == []
+
+
+# ===========================================================================
+# TestWaypointRouteGeneration — the waypoint cascade (single/dual waypoints)
+# ===========================================================================
+
+
+def _graph_service_from(adjacency: dict[str, list[str]]):
+    """Build a real SystemGraphService from a name → neighbours adjacency map.
+
+    Coordinates are unique per system (A* keys its open/closed sets on
+    coordinates, so duplicates would corrupt the search).
+    """
+    from services.system_graph_service import SystemGraphService, SystemNode
+
+    svc = SystemGraphService.__new__(SystemGraphService)
+    svc._graph = {}
+    svc._loaded = True
+    for i, (name, nbrs) in enumerate(adjacency.items()):
+        svc._graph[name] = SystemNode(name=name, coordinates=(i, i * 2), neighbours=list(nbrs), faction="", security=1)
+    return svc
+
+
+# 3×3 grid — every node has degree ≥ 2, so single and dual waypoints are feasible.
+_GRID = {
+    "A": ["B", "D"],
+    "B": ["A", "C", "E"],
+    "C": ["B", "F"],
+    "D": ["A", "E", "G"],
+    "E": ["B", "D", "F", "H"],
+    "F": ["C", "E", "I"],
+    "G": ["D", "H"],
+    "H": ["G", "E", "I"],
+    "I": ["F", "H"],
+}
+# A straight line — only the interior node B has degree 2.
+_LINE = {"A": ["B"], "B": ["A", "C"], "C": ["B", "D"], "D": ["C", "E"], "E": ["D"]}
+
+
+def _wp_service(service, adjacency):
+    from services.pathfinding_service import PathfindingService
+
+    gsvc = _graph_service_from(adjacency)
+    service.graph_service = gsvc
+    service.pathfinding_service = PathfindingService(gsvc)
+    return service
+
+
+def _assert_simple_valid_route(svc, route, gates):
+    assert route is not None
+    assert len(set(route)) == len(route), f"route repeats a system: {route}"
+    assert route[0] in gates and route[-1] in gates
+    for i in range(len(route) - 1):
+        assert route[i + 1] in svc.graph_service.get_neighbours(route[i]), f"invalid hop in {route}"
+
+
+class TestWaypointRouteGeneration:
+    """Cascade rolling, the degree rubric, and the simple-path invariant."""
+
+    def test_roll_cascade_dual_then_single_then_standard(self, service):
+        svc = _wp_service(service, _GRID)
+        # Defaults: dual=0.10, single=0.33.
+        with patch("random.random", side_effect=[0.05]):  # < dual
+            assert svc._roll_waypoint_count(None) == 2
+        with patch("random.random", side_effect=[0.50, 0.20]):  # ≥dual, <single
+            assert svc._roll_waypoint_count(None) == 1
+        with patch("random.random", side_effect=[0.50, 0.90]):  # ≥dual, ≥single
+            assert svc._roll_waypoint_count(None) == 0
+
+    def test_roll_cascade_respects_guild_override(self, service):
+        svc = _wp_service(service, _GRID)
+        always_dual = SimpleNamespace(bounty_dual_waypoint_prob=1.0, bounty_single_waypoint_prob=0.0)
+        never_any = SimpleNamespace(bounty_dual_waypoint_prob=0.0, bounty_single_waypoint_prob=0.0)
+        assert all(svc._roll_waypoint_count(always_dual) == 2 for _ in range(20))
+        assert all(svc._roll_waypoint_count(never_any) == 0 for _ in range(20))
+
+    def test_eligible_waypoints_degree_and_exclusion(self, service):
+        svc = _wp_service(service, _LINE)
+        gates = svc.graph_service.get_systems_with_jump_gates()
+        # Only B/C/D have degree ≥ 2 on the line; endpoints A/E are degree 1.
+        eligible = svc._eligible_waypoints(gates, frozenset(), set(), min_degree=2)
+        assert set(eligible) == {"B", "C", "D"}
+        # Excluded systems are never returned.
+        eligible2 = svc._eligible_waypoints(gates, frozenset(), {"C"}, min_degree=2)
+        assert "C" not in eligible2
+
+    def test_single_waypoint_routes_are_simple(self, service):
+        import random
+
+        random.seed(20260624)
+        svc = _wp_service(service, _GRID)
+        gates = svc.graph_service.get_systems_with_jump_gates()
+        with patch.object(svc, "_roll_waypoint_count", return_value=1):
+            for _ in range(300):
+                route = svc._generate_waypoint_route(gates, min_systems=3)
+                _assert_simple_valid_route(svc, route, gates)
+                assert len(route) >= 3
+
+    def test_dual_waypoint_routes_are_simple(self, service):
+        import random
+
+        random.seed(7)
+        svc = _wp_service(service, _GRID)
+        gates = svc.graph_service.get_systems_with_jump_gates()
+        with patch.object(svc, "_roll_waypoint_count", return_value=2):
+            for _ in range(300):
+                route = svc._generate_waypoint_route(gates, min_systems=3)
+                _assert_simple_valid_route(svc, route, gates)
+
+    def test_build_anchor_route_rejects_reused_anchor(self, service):
+        # On the line A-B-C-D-E, leg A→E consumes C; asking to then visit C must
+        # be rejected (the correctness guard that keeps the route simple).
+        svc = _wp_service(service, _LINE)
+        assert svc._build_anchor_route(["A", "E", "C"], min_degree=2) is None
+
+    def test_falls_back_to_standard_when_waypoints_infeasible(self, service):
+        # Line graph cannot supply 2 distinct degree-≥2 waypoints for most pairs;
+        # force dual and verify it still returns a valid standard route (no crash).
+        import random
+
+        random.seed(1)
+        svc = _wp_service(service, _LINE)
+        gates = svc.graph_service.get_systems_with_jump_gates()
+        with patch.object(svc, "_roll_waypoint_count", return_value=2):
+            route = svc._generate_waypoint_route(gates, min_systems=3)
+        _assert_simple_valid_route(svc, route, gates)
+
+    def test_zero_waypoint_delegates_to_generate_route(self, service):
+        svc = _wp_service(service, _GRID)
+        gates = svc.graph_service.get_systems_with_jump_gates()
+        with (
+            patch.object(svc, "_roll_waypoint_count", return_value=0),
+            patch.object(svc, "_generate_route", wraps=svc._generate_route) as spy,
+        ):
+            route = svc._generate_waypoint_route(gates, min_systems=3)
+        spy.assert_called_once()
+        _assert_simple_valid_route(svc, route, gates)
+
+    def test_attempts_and_min_degree_overrides_flow_through(self, service):
+        # Per-guild bounty_waypoint_attempts / bounty_waypoint_min_degree overrides
+        # must reach _build_waypoint_route (positional args 2 and 3).
+        svc = _wp_service(service, _GRID)
+        gates = svc.graph_service.get_systems_with_jump_gates()
+        cfg = SimpleNamespace(
+            bounty_dual_waypoint_prob=0.0,
+            bounty_single_waypoint_prob=1.0,  # force a single-waypoint roll
+            bounty_waypoint_attempts=5,
+            bounty_waypoint_min_degree=3,
+        )
+        with patch.object(svc, "_build_waypoint_route", wraps=svc._build_waypoint_route) as spy:
+            svc._generate_waypoint_route(gates, min_systems=3, cfg=cfg)
+        spy.assert_called_once()
+        assert spy.call_args.args[2] == 5  # attempts override
+        assert spy.call_args.args[3] == 3  # min_degree override

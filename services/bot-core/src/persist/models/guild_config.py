@@ -112,6 +112,11 @@ class GuildConfig(Base):
     # NULL == "use GameConstants.MIN_ROUTE_SYSTEMS (3)" / ".RECENTLY_SPOTTED_MAX_WINDOW (3)"
     min_route_systems: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     recently_spotted_max_window: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Waypoint route generation. NULL == "use the matching GameConstants default".
+    bounty_single_waypoint_prob: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    bounty_dual_waypoint_prob: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    bounty_waypoint_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    bounty_waypoint_min_degree: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_delay_random_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_delay_random_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_spawn_jitter: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

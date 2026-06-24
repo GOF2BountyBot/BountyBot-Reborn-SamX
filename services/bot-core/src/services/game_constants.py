@@ -148,6 +148,18 @@ class GameConstants:
     # Rolling B per-bounty (and never revealing it) stops players from
     # triangulating the exact answer the way the old fixed 1–2 window allowed.
     RECENTLY_SPOTTED_MAX_WINDOW: int = 3
+    # Waypoint routes: a bounty route may be lengthened by routing through 1 or 2
+    # random intermediate "waypoint" systems (A→B→C / A→B→C→D), each leg an
+    # independent A* hop with earlier-leg systems blocked so the whole route stays
+    # simple (no repeats). Rolled per spawn as a cascade: dual first, else single,
+    # else the standard A→C. A waypoint must keep ≥ BOUNTY_WAYPOINT_MIN_DEGREE
+    # available neighbours after earlier legs are removed. If no simple waypoint
+    # route can be built within BOUNTY_WAYPOINT_ATTEMPTS, generation falls back to
+    # a standard A→C route so a spawn never fails on routing.
+    BOUNTY_SINGLE_WAYPOINT_PROB: float = 0.33  # P(1 waypoint), rolled only if dual failed
+    BOUNTY_DUAL_WAYPOINT_PROB: float = 0.10  # P(2 waypoints), rolled first
+    BOUNTY_WAYPOINT_ATTEMPTS: int = 20  # endpoint/waypoint re-rolls before fallback to A→C
+    BOUNTY_WAYPOINT_MIN_DEGREE: int = 2  # min available neighbours a waypoint must retain
 
     # ------------------------------------------------------------------
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & Thread 4)
@@ -603,6 +615,10 @@ class GameConstants:
         cls.MAX_ROUTE_LENGTH = _track_int("MAX_ROUTE_LENGTH", 50)
         cls.MIN_ROUTE_SYSTEMS = _track_int("MIN_ROUTE_SYSTEMS", 3)
         cls.RECENTLY_SPOTTED_MAX_WINDOW = _track_int("RECENTLY_SPOTTED_MAX_WINDOW", 3)
+        cls.BOUNTY_SINGLE_WAYPOINT_PROB = _track_float("BOUNTY_SINGLE_WAYPOINT_PROB", 0.33)
+        cls.BOUNTY_DUAL_WAYPOINT_PROB = _track_float("BOUNTY_DUAL_WAYPOINT_PROB", 0.10)
+        cls.BOUNTY_WAYPOINT_ATTEMPTS = _track_int("BOUNTY_WAYPOINT_ATTEMPTS", 20)
+        cls.BOUNTY_WAYPOINT_MIN_DEGREE = _track_int("BOUNTY_WAYPOINT_MIN_DEGREE", 2)
         cls.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE = _track_int("CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE", 20)
         cls.CRIMINAL_MAX_GEAR_UPGRADE = _track_int("CRIMINAL_MAX_GEAR_UPGRADE", 1)
         cls.SHIP_VALUE_REWARD_PERCENTAGE = _track_float("SHIP_VALUE_REWARD_PERCENTAGE", 0.01)

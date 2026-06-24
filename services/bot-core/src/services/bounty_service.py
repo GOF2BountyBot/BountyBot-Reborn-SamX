@@ -11,6 +11,7 @@ Handles business logic for bounty generation including:
 
 import contextlib
 import enum
+import itertools
 import math
 import random
 from dataclasses import dataclass, field
@@ -1633,6 +1634,141 @@ class BountyService:
         return best
 
     @staticmethod
+    def _roll_waypoint_count(cfg) -> int:
+        """Roll how many intermediate waypoints a route should have (0, 1 or 2).
+
+        Cascade: roll the dual-waypoint chance first; if it passes the route gets
+        2 waypoints. Otherwise roll the single-waypoint chance; if it passes the
+        route gets 1. Otherwise the route is a standard A→C (0 waypoints). The
+        single roll is therefore *conditional* on the dual roll having failed, so
+        the realised marginals are P(dual)=d, P(single)=(1-d)·s, P(standard) the
+        remainder. Both probabilities are per-guild overridable.
+        """
+        dual_p = resolve_constant(cfg, "bounty_dual_waypoint_prob", GameConstants.BOUNTY_DUAL_WAYPOINT_PROB)
+        single_p = resolve_constant(cfg, "bounty_single_waypoint_prob", GameConstants.BOUNTY_SINGLE_WAYPOINT_PROB)
+        if random.random() < dual_p:
+            return 2
+        if random.random() < single_p:
+            return 1
+        return 0
+
+    def _available_degree(self, system: str, blocked: frozenset[str]) -> int:
+        """Number of ``system``'s neighbours not already consumed by an earlier leg."""
+        return sum(1 for n in self.graph_service.get_neighbours(system) if n not in blocked)
+
+    def _eligible_waypoints(
+        self,
+        jump_gate_systems: list[str],
+        blocked: frozenset[str],
+        exclude: set[str],
+        min_degree: int,
+    ) -> list[str]:
+        """Systems usable as a waypoint right now.
+
+        A candidate must not already be an endpoint/consumed system and must
+        retain at least ``min_degree`` available neighbours after the systems in
+        ``blocked`` are removed — this is the "≥2 valid neighbours even after
+        earlier-route removal" rubric that gives a waypoint a distinct inbound and
+        outbound corridor.
+        """
+        out: list[str] = []
+        for name in jump_gate_systems:
+            if name in exclude or name in blocked:
+                continue
+            if self._available_degree(name, blocked) >= min_degree:
+                out.append(name)
+        return out
+
+    def _build_anchor_route(self, anchors: list[str], min_degree: int) -> list[str] | None:
+        """Build a simple route visiting ``anchors`` in order, or None if a leg fails.
+
+        Each leg is an independent A* hop with every previously-used system blocked
+        (except the leg's own start), so the concatenated route never repeats a
+        system. The next anchor must not already be consumed (building a leg *to* a
+        used system would revisit it), and every interior waypoint must still
+        satisfy the degree rubric against the post-removal graph.
+        """
+        route: list[str] = [anchors[0]]
+        used: set[str] = {anchors[0]}
+        for i in range(len(anchors) - 1):
+            cur, nxt = route[-1], anchors[i + 1]
+            # The next anchor must be fresh — otherwise the leg to it revisits it.
+            if nxt in used:
+                return None
+            # Interior waypoints (not the final endpoint) must keep their degree.
+            if i + 1 < len(anchors) - 1 and self._available_degree(nxt, frozenset(used - {nxt})) < min_degree:
+                return None
+            leg = self.pathfinding_service.make_route(cur, nxt, blocked=frozenset(used - {cur}))
+            if not isinstance(leg, list):
+                return None
+            route.extend(leg[1:])
+            used.update(leg)
+        return route
+
+    def _build_waypoint_route(
+        self,
+        jump_gate_systems: list[str],
+        num_waypoints: int,
+        attempts: int,
+        min_degree: int,
+    ) -> list[str] | None:
+        """Try to build a simple route with exactly ``num_waypoints`` waypoints.
+
+        Each attempt rolls fresh endpoints and a fresh waypoint set, then tries
+        every interior ordering ("midpoint swap") before re-rolling. Returns None
+        if no simple route could be built within ``attempts`` — the caller then
+        falls back to a standard A→C route.
+        """
+        for _ in range(max(1, attempts)):
+            start = random.choice(jump_gate_systems)
+            end = random.choice(jump_gate_systems)
+            while end == start:
+                end = random.choice(jump_gate_systems)
+
+            pool = self._eligible_waypoints(jump_gate_systems, frozenset(), {start, end}, min_degree)
+            if len(pool) < num_waypoints:
+                continue
+            waypoints = random.sample(pool, num_waypoints)
+
+            orders = list(itertools.permutations(waypoints))
+            random.shuffle(orders)
+            for order in orders:
+                route = self._build_anchor_route([start, *order, end], min_degree)
+                if route is not None:
+                    return route
+        return None
+
+    def _generate_waypoint_route(
+        self,
+        jump_gate_systems: list[str],
+        min_systems: int,
+        cfg=None,
+    ) -> list[str] | None:
+        """Generate a bounty route, optionally lengthened with 1–2 waypoints.
+
+        Rolls the waypoint cascade (:meth:`_roll_waypoint_count`); a 0-waypoint
+        roll, or any failure to build a simple waypoint route within the attempt
+        budget, yields a standard A→C route via :meth:`_generate_route` — so a
+        spawn never fails on routing. The returned route is always a simple path,
+        keeping every downstream consumer (distance hints, reward-per-system,
+        ``checked`` map) correct.
+        """
+        num_waypoints = self._roll_waypoint_count(cfg)
+        if num_waypoints == 0:
+            return self._generate_route(jump_gate_systems, min_systems)
+
+        attempts = resolve_constant(cfg, "bounty_waypoint_attempts", GameConstants.BOUNTY_WAYPOINT_ATTEMPTS)
+        min_degree = resolve_constant(cfg, "bounty_waypoint_min_degree", GameConstants.BOUNTY_WAYPOINT_MIN_DEGREE)
+        route = self._build_waypoint_route(jump_gate_systems, num_waypoints, attempts, min_degree)
+        if route is not None:
+            return route
+
+        flogger.debug(
+            f"Could not build a {num_waypoints}-waypoint route within {attempts} attempts; falling back to standard A→C"
+        )
+        return self._generate_route(jump_gate_systems, min_systems)
+
+    @staticmethod
     def _roll_spotted_window(cfg) -> int:
         """Roll the per-bounty 'recently spotted' look-ahead width B in [0, max].
 
@@ -1695,7 +1831,7 @@ class BountyService:
             max_tl = _division_max_tl.get(division, 10)
             tech_level = min(tech_level, max_tl)
 
-        # Step 3: Generate route (≥ min_route_systems, via _generate_route)
+        # Step 3: Generate route (≥ min_route_systems, optionally with waypoints)
         await self.graph_service.load_graph(db)
 
         jump_gate_systems = self.graph_service.get_systems_with_jump_gates()
@@ -1704,7 +1840,7 @@ class BountyService:
             return None
 
         min_systems = resolve_constant(cfg, "min_route_systems", GameConstants.MIN_ROUTE_SYSTEMS)
-        route = self._generate_route(jump_gate_systems, min_systems)
+        route = self._generate_waypoint_route(jump_gate_systems, min_systems, cfg)
 
         if route is None:
             flogger.warning(f"Failed to generate route for guild={guild_id}")
@@ -2952,7 +3088,7 @@ class BountyService:
             return None
 
         min_systems = resolve_constant(cfg, "min_route_systems", GameConstants.MIN_ROUTE_SYSTEMS)
-        route = self._generate_route(jump_gate_systems, min_systems)
+        route = self._generate_waypoint_route(jump_gate_systems, min_systems, cfg)
 
         if route is None:
             flogger.warning(f"Failed to generate respawn route for bounty {bounty_id}")

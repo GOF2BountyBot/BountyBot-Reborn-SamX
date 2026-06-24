@@ -16,6 +16,14 @@ Design notes
   pool). This guarantees ``num_sims`` distinct, independently-rolled opponents
   at the correct division tier. The NO_DATA fallback is reserved only for
   genuine synthesis failures.
+- The sims run SEQUENTIALLY and carry the player's consumable state forward
+  (``run_fight_batch(carry_side1_resources=True)``): secondary-weapon ammo and
+  the one-use EmergencySystem deplete across the run, so the win rate measures
+  *sustained* performance over a 20-hunt sequence rather than 20 independent
+  fresh-resource fights. HP/shields/armour still reset each fight (between-hunt
+  healing) and criminals are still freshly rolled per fight, so the only carried
+  state is secondary ammo + EmergencySystem consumption. The verdict thresholds
+  below are unchanged; they now describe a sustained run.
 
 Verdict thresholds (per /promote design spec):
 - GREEN:  player_win_rate >= 0.75
@@ -196,11 +204,15 @@ class CombatPreflightService:
         # ONE dispatch: all num_sims fights run inside a single worker process.
         # compact=True → each result is (winner_side, is_stalemate).
         # player = combatant1 = side 1; criminal = combatant2 = side 2.
+        # carry_side1_resources=True → the fights run sequentially and the player's
+        # secondary ammo + one-use EmergencySystem deplete across the run, so the
+        # win rate reflects sustained readiness rather than 20 fresh-resource fights.
         sim_results: list[tuple] = await offload_cpu(
             run_fight_batch,
             matchups,
             pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION,
             compact=True,
+            carry_side1_resources=True,
         )
 
         player_wins = 0

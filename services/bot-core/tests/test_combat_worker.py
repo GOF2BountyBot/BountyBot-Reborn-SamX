@@ -40,9 +40,11 @@ if str(_SRC_DIR) not in sys.path:
 # Shared test loadout helpers (in-process, after src/ on path)
 # ---------------------------------------------------------------------------
 
-from compute.combat_worker import run_fight
-from services.combat_models import ShipLoadout, WeaponStats
-from services.combat_resolver import TickResolver, _extract_key_events
+from unittest.mock import patch
+
+from compute.combat_worker import run_fight, run_fight_batch
+from services.combat_models import ModuleStats, ShipLoadout, WeaponStats
+from services.combat_resolver import _EMERGENCY_SYSTEM_MODULE_TYPE, TickResolver, _extract_key_events
 
 _FIXED_SEED = 42
 
@@ -570,3 +572,151 @@ class TestForkserverImportHygiene:
             + "\n\nFull added-module list:\n"
             + "\n".join(f"  {m}" for m in added)
         )
+
+
+# ---------------------------------------------------------------------------
+# 6. CARRY MODE — run_fight_batch threads side-1 resource depletion (preflight)
+# ---------------------------------------------------------------------------
+
+
+def _ammo_secondary(name: str, ammo: int) -> WeaponStats:
+    return WeaponStats(
+        name=name,
+        dps=1.0,
+        damage_per_shot=50.0,
+        loading_speed_ms=100,
+        range_m=4000.0,
+        subtype="rocket",
+        ammo=ammo,
+    )
+
+
+def _es_module(name: str = "EmergencySys") -> ModuleStats:
+    return ModuleStats(name=name, module_type=_EMERGENCY_SYSTEM_MODULE_TYPE)
+
+
+class TestRunFightBatchCarryResources:
+    """carry_side1_resources threads the player's depleting loadout across the run."""
+
+    def test_carry_off_is_default_and_unchanged(self):
+        """Default behaviour equals an explicit carry_side1_resources=False (same seeds)."""
+        l1 = _gun_loadout("P", base_armour=300)
+        l2 = _gun_loadout("C", base_armour=200)
+        matchups = [(l1, l2, seed, "", "") for seed in range(5)]
+
+        default_results = run_fight_batch(matchups, pvc_damage_reduction=0.0, compact=True)
+        explicit_off = run_fight_batch(matchups, pvc_damage_reduction=0.0, compact=True, carry_side1_resources=False)
+        assert default_results == explicit_off
+
+    def test_carry_returns_compact_tuples(self):
+        """Carry mode returns one (winner_side, is_stalemate) 2-tuple per matchup."""
+        l1 = _gun_loadout("P", base_armour=300)
+        l2 = _gun_loadout("C", base_armour=1)
+        matchups = [(l1, l2, 7, "", "") for _ in range(3)]
+
+        results = run_fight_batch(matchups, pvc_damage_reduction=0.0, compact=True, carry_side1_resources=True)
+        assert len(results) == 3
+        for ws, sm in results:
+            assert ws in (1, 2, None)
+            assert isinstance(sm, bool)
+
+    def test_carry_threads_secondary_depletion(self):
+        """Each fight sees the ammo left after prior fights' consumption."""
+        seen_ammo: list[int | None] = []
+
+        def _fake_run_fight(l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+            sw = next((w for w in l1.secondary_weapons if w.name == "Rocket"), None)
+            seen_ammo.append(sw.ammo if sw else None)
+            return {
+                "winner_side": 1,
+                "is_stalemate": False,
+                "summary": {"combatants": {"1": {"secondary_rounds_by_weapon": {"Rocket": 2}}}},
+            }
+
+        player = ShipLoadout(ship_name="P", base_armour=200, secondary_weapons=[_ammo_secondary("Rocket", 5)])
+        crim = ShipLoadout(ship_name="C", base_armour=100)
+        matchups = [(player, crim, None, "", "") for _ in range(3)]
+
+        with patch("compute.combat_worker.run_fight", new=_fake_run_fight):
+            results = run_fight_batch(matchups, pvc_damage_reduction=0.33, compact=True, carry_side1_resources=True)
+
+        # Fight 1 starts at 5; each fight consumes 2 → 5, 3, 1.
+        assert seen_ammo == [5, 3, 1]
+        assert results == [(1, False)] * 3
+
+    def test_carry_drops_depleted_secondary(self):
+        """Once ammo hits 0 the weapon is gone for subsequent fights."""
+        sw_present: list[bool] = []
+
+        def _fake_run_fight(l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+            sw_present.append(any(w.name == "Rocket" for w in l1.secondary_weapons))
+            return {
+                "winner_side": 1,
+                "is_stalemate": False,
+                "summary": {"combatants": {"1": {"secondary_rounds_by_weapon": {"Rocket": 2}}}},
+            }
+
+        player = ShipLoadout(ship_name="P", base_armour=200, secondary_weapons=[_ammo_secondary("Rocket", 2)])
+        crim = ShipLoadout(ship_name="C", base_armour=100)
+        matchups = [(player, crim, None, "", "") for _ in range(3)]
+
+        with patch("compute.combat_worker.run_fight", new=_fake_run_fight):
+            run_fight_batch(matchups, pvc_damage_reduction=0.33, compact=True, carry_side1_resources=True)
+
+        # Present in fight 1, depleted (dropped) for fights 2 and 3.
+        assert sw_present == [True, False, False]
+
+    def test_carry_consumes_emergency_system_across_fights(self):
+        """An ES that activates in fight 1 is gone for later fights."""
+        es_present: list[bool] = []
+
+        def _fake_run_fight(l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+            es_present.append(any(m.module_type == _EMERGENCY_SYSTEM_MODULE_TYPE for m in l1.modules))
+            # Report an ES activation every fight; once removed there is nothing to remove.
+            return {
+                "winner_side": 1,
+                "is_stalemate": False,
+                "summary": {"combatants": {"1": {"module_activations": {"emergency_system": 1}}}},
+            }
+
+        player = ShipLoadout(ship_name="P", base_armour=200, modules=[_es_module()])
+        crim = ShipLoadout(ship_name="C", base_armour=100)
+        matchups = [(player, crim, None, "", "") for _ in range(3)]
+
+        with patch("compute.combat_worker.run_fight", new=_fake_run_fight):
+            run_fight_batch(matchups, pvc_damage_reduction=0.33, compact=True, carry_side1_resources=True)
+
+        assert es_present == [True, False, False]
+
+    def test_carry_does_not_mutate_input_loadout(self):
+        """The original side-1 loadout object is never mutated (frozen-safe threading)."""
+
+        def _fake_run_fight(l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+            return {
+                "winner_side": 1,
+                "is_stalemate": False,
+                "summary": {
+                    "combatants": {
+                        "1": {
+                            "secondary_rounds_by_weapon": {"Rocket": 2},
+                            "module_activations": {"emergency_system": 1},
+                        }
+                    }
+                },
+            }
+
+        player = ShipLoadout(
+            ship_name="P",
+            base_armour=200,
+            secondary_weapons=[_ammo_secondary("Rocket", 5)],
+            modules=[_es_module()],
+        )
+        crim = ShipLoadout(ship_name="C", base_armour=100)
+        matchups = [(player, crim, None, "", "") for _ in range(3)]
+
+        with patch("compute.combat_worker.run_fight", new=_fake_run_fight):
+            run_fight_batch(matchups, pvc_damage_reduction=0.33, compact=True, carry_side1_resources=True)
+
+        # Original object unchanged: ammo still 5, ES still equipped.
+        assert player.secondary_weapons[0].ammo == 5
+        assert len(player.modules) == 1

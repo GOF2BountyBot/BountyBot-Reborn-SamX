@@ -66,7 +66,12 @@ class PathfindingService:
         """
         return 0.0
 
-    def make_route(self, start: str, end: str) -> list[str] | PathfindingError:
+    def make_route(
+        self,
+        start: str,
+        end: str,
+        blocked: frozenset[str] = frozenset(),
+    ) -> list[str] | PathfindingError:
         """Find shortest path from start to end system.
 
         Uses zero-heuristic A* (Dijkstra) with uniform hop costs.
@@ -74,12 +79,19 @@ class PathfindingService:
         Args:
             start: Name of starting system.
             end: Name of destination system.
+            blocked: System names the route may not pass through. Enforced inside
+                neighbour expansion (the search never enters a blocked node), so a
+                returned route is guaranteed to avoid them. The route's own
+                endpoints are always permitted — ``start``/``end`` are stripped
+                from ``blocked`` so a caller can pass an accumulated visited-set
+                that happens to include them. Used by the waypoint route builder
+                to keep multi-leg routes simple (no repeated systems).
 
         Returns:
             Ordered list of system name strings (start → ... → end),
             or a PathfindingError enum value if no path could be found.
         """
-        flogger.debug(f"Route request: {start} → {end}")
+        flogger.debug(f"Route request: {start} → {end} (blocked={len(blocked)})")
 
         # Trivial case
         if start == end:
@@ -92,6 +104,10 @@ class PathfindingService:
         if start_node is None or end_node is None:
             flogger.error(f"Route not found: system not in graph (start={start!r}, end={end!r})")
             return PathfindingError.NO_ROUTE_FOUND
+
+        # A leg's own endpoints are never blocked, even if a caller passes an
+        # accumulated visited-set that includes them.
+        blocked = blocked - {start, end}
 
         # --- A* search ---
         # Open set: min-heap ordered by f value (heapq).
@@ -136,6 +152,10 @@ class PathfindingService:
 
             # Expand neighbours.
             for neighbour_name in self.graph.get_neighbours(q.system_name):
+                # Skip blocked systems — the search never enters them, so the
+                # reconstructed route is guaranteed not to contain them.
+                if neighbour_name in blocked:
+                    continue
                 neighbour_sys = self.graph.get_system(neighbour_name)
                 if neighbour_sys is None:
                     continue

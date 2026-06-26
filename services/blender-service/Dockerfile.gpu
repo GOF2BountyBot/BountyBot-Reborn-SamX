@@ -84,6 +84,13 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         # vim and sudo for debugging — comment out once stable
         # vim \
         # sudo \
+    # CVE-2026-8376 (heap buffer overflow in Perl_study_chunk / regex compile) and
+    # CVE-2026-42496 (Archive::Tar path traversal via crafted symlinks). perl through
+    # 5.38.2-3.2ubuntu0.2 is affected; fixed in 5.38.2-3.2ubuntu0.3 (noble-security).
+    # perl is kept resident in this image by git (liberror-perl). Upgrade it explicitly
+    # so the fix lands deterministically regardless of base-image apt snapshot / layer
+    # caching — same pattern as the libnghttp2-14 pin in the bot-core/gateway images.
+    && apt-get install -y --only-upgrade perl perl-base perl-modules-5.38 \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

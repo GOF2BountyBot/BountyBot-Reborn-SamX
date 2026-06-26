@@ -24,9 +24,13 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         # vim \
         # sudo \
     # CVE-2026-27135: libnghttp2-14 DoS via malformed HTTP/2 frames after session
-    # termination. Fixed in 1.64.0-1.1+deb13u1 (trixie security). Upgrade the
-    # package explicitly so the fix is pulled regardless of base-image snapshot date.
-    && apt-get install -y --only-upgrade libnghttp2-14 \
+    # termination. Fixed in 1.64.0-1.1+deb13u1 (trixie security).
+    # CVE-2026-7598 / CVE-2026-55200 (+ SSH_MSG_EXT_INFO and SFTP-response DoS):
+    # libssh2-1t64 integer overflow in userauth_password and out-of-bounds write in
+    # the transport layer. Fixed in 1.11.1-1+deb13u1 (trixie security). libssh2 is
+    # resident only as a transitive dep of git/libcurl. Upgrade both explicitly so
+    # the fixes are pulled regardless of base-image snapshot date.
+    && apt-get install -y --only-upgrade libnghttp2-14 libssh2-1t64 \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

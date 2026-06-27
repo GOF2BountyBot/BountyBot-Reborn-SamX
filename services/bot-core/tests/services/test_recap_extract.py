@@ -1090,9 +1090,7 @@ class TestNukeSignificanceFilter:
         """
         timeline = [_fight_start()]
         for i, opp in enumerate([210, 164, 49]):
-            timeline.append(
-                _nuke_fire(tick=10 + i * 20, actor="Alice", weapon="AMR Oppressor", opp=opp, self_dmg=22)
-            )
+            timeline.append(_nuke_fire(tick=10 + i * 20, actor="Alice", weapon="AMR Oppressor", opp=opp, self_dmg=22))
         sections = _nuke_recap(timeline)
         nuke_ke = [e for e in sections["key_events"] if e["event_type"] == "Nuke detonation"]
         details = [e["detail"] for e in nuke_ke]

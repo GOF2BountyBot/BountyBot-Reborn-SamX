@@ -643,8 +643,7 @@ class SkinsCog(commands.Cog):
                     if width and height and width != height:
                         sq_view = SquareCheckView(timeout=60)
                         await interaction.followup.send(
-                            f"Region {region_idx} image is **{width}x{height}** (not square). "
-                            "Choose how to handle it:",
+                            f"Region {region_idx} image is **{width}x{height}** (not square). Choose how to handle it:",
                             view=sq_view,
                             ephemeral=True,
                         )

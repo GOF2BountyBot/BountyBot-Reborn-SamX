@@ -1240,9 +1240,11 @@ class TestCollectPerRegionChoices:
 
         RegionOptionView.wait = mock_wait
 
-        # Mock bot.wait_for to return a message with an attachment
+        # Mock bot.wait_for to return a message with a SQUARE attachment (no square prompt)
         mock_attachment = MagicMock()
         mock_attachment.read = AsyncMock(return_value=uploaded_bytes)
+        mock_attachment.width = 2048
+        mock_attachment.height = 2048
 
         mock_message = MagicMock()
         mock_message.attachments = [mock_attachment]
@@ -1256,6 +1258,47 @@ class TestCollectPerRegionChoices:
         assert result is not None
         assert result[1]["action"] == "upload"
         assert result[1]["bytes"] == uploaded_bytes
+        assert result[1]["square_mode"] == "none"  # square upload → no squaring
+
+    def test_per_region_upload_non_square_prompts_and_stretches(self, mock_skins_cog):
+        """A non-square region upload is prompted (SquareCheckView) and the choice is recorded."""
+        render_info = {"mask_paths": ["/path/mask1.jpg"], "compatible_skins": {}}
+        interaction = MagicMock()
+        interaction.user.id = 999
+        interaction.followup.send = AsyncMock()
+
+        from cogs.skinsCog import RegionOptionView, SquareCheckView
+
+        original_region_wait = RegionOptionView.wait
+        original_square_wait = SquareCheckView.wait
+
+        async def mock_region_wait(self):
+            self.selected_value = "upload"
+
+        async def mock_square_wait(self):
+            self.result = "stretch"  # user picks stretch
+
+        RegionOptionView.wait = mock_region_wait
+        SquareCheckView.wait = mock_square_wait
+
+        mock_attachment = MagicMock()
+        mock_attachment.read = AsyncMock(return_value=b"nonsquare_bytes")
+        mock_attachment.width = 594
+        mock_attachment.height = 279
+
+        mock_message = MagicMock()
+        mock_message.attachments = [mock_attachment]
+        mock_skins_cog.bot.wait_for = AsyncMock(return_value=mock_message)
+
+        try:
+            result = asyncio.run(mock_skins_cog._collect_per_region_choices(interaction, render_info, None, None, {}))
+        finally:
+            RegionOptionView.wait = original_region_wait
+            SquareCheckView.wait = original_square_wait
+
+        assert result is not None
+        assert result[1]["action"] == "upload"
+        assert result[1]["square_mode"] == "stretch"
 
     def test_per_region_upload_timeout_skips(self, mock_skins_cog):
         """_collect_per_region_choices should skip region on upload timeout."""

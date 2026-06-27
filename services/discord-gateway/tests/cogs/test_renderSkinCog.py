@@ -168,6 +168,38 @@ class TestPngIsSquare:
 
 
 # ---------------------------------------------------------------------------
+# Multi-region square-mode forwarding
+# ---------------------------------------------------------------------------
+
+
+class TestMultiregionSquareModes:
+    """_composite_textures_multiregion forwards per-region square modes to blender."""
+
+    def test_sends_region_square_modes_parallel_to_indices(self, mock_cog):
+        interaction = _make_interaction()
+        resp = MagicMock()
+        resp.content = b"COMPOSITE_PNG"
+        resp.raise_for_status = MagicMock()
+        mock_cog.blender_client = MagicMock()
+        mock_cog.blender_client.post = AsyncMock(return_value=resp)
+
+        region_choices = {
+            1: {"action": "skin", "bytes": _png_header(594, 279), "square_mode": "stretch"},
+            2: {"action": "upload", "bytes": _png_header(512, 512), "square_mode": "crop"},
+        }
+        out = asyncio.run(
+            mock_cog._composite_textures_multiregion(
+                interaction, "Skinnable Ship", "/ships/test", "/diffuse.png", region_choices
+            )
+        )
+        assert out == b"COMPOSITE_PNG"
+        _args, kwargs = mock_cog.blender_client.post.call_args
+        data = kwargs["data"]
+        assert data["region_indices"] == "1,2"
+        assert data["region_square_modes"] == "stretch,crop"
+
+
+# ---------------------------------------------------------------------------
 # SquareCheckView tests
 # ---------------------------------------------------------------------------
 

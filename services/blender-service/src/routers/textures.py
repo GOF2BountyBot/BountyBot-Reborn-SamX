@@ -79,6 +79,14 @@ async def composite_textures(
             "'stretch' (resize to square)."
         ),
     ),
+    region_square_modes: str = Form(
+        default="",
+        description=(
+            "Optional comma-separated square modes ('none'/'crop'/'stretch'), one per "
+            "region texture, in the same order as region_indices. Each is applied to its "
+            "region overlay before compositing. Empty → all regions default to 'none'."
+        ),
+    ),
 ) -> StreamingResponse:
     """
     Composite ship textures and return a PNG image.
@@ -174,6 +182,27 @@ async def composite_textures(
             detail=(f"Invalid square_mode {square_mode!r}. Accepted values: {list(_valid_square_modes)}"),
         )
 
+    # --- Parse / validate region_square_modes (parallel to region_indices) ---
+    if region_square_modes.strip():
+        parsed_region_modes = [m.strip() for m in region_square_modes.split(",") if m.strip()]
+        if len(parsed_region_modes) != len(parsed_region_indices):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Mismatch: {len(parsed_region_modes)} region_square_modes "
+                    f"but {len(parsed_region_indices)} region index/indices."
+                ),
+            )
+        for m in parsed_region_modes:
+            if m not in _valid_square_modes:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid region square mode {m!r}. Accepted values: {list(_valid_square_modes)}",
+                )
+    else:
+        # Backward-compatible default: no per-region squaring.
+        parsed_region_modes = ["none"] * len(parsed_region_indices)
+
     # --- Load base_texture (from upload or disk path) ---
     base_img: Image.Image
     if base_texture is not None:
@@ -224,12 +253,18 @@ async def composite_textures(
 
     # --- Load region texture uploads ---
     region_tex_map: dict[int, Image.Image] = {}
-    for idx, (upload, mask_idx) in enumerate(zip(region_textures, parsed_region_indices, strict=True)):
+    for idx, (upload, mask_idx, mode) in enumerate(
+        zip(region_textures, parsed_region_indices, parsed_region_modes, strict=True)
+    ):
         try:
             data = await upload.read()
             img = Image.open(BytesIO(data))
+            if mode == "crop":
+                img = crop_to_square(img)
+            elif mode == "stretch":
+                img = stretch_to_square(img)
             region_tex_map[mask_idx] = img
-            flogger.debug(f"Loaded region texture {idx}: mask_idx={mask_idx}, size={img.size}")
+            flogger.debug(f"Loaded region texture {idx}: mask_idx={mask_idx}, size={img.size}, square_mode={mode!r}")
         except Exception as exc:
             flogger.error(f"Failed to read region_texture[{idx}] (mask_idx={mask_idx}): {exc}")
             raise HTTPException(

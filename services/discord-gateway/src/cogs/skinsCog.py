@@ -633,8 +633,34 @@ class SkinsCog(commands.Cog):
                         check=make_check(interaction.user.id),
                         timeout=120,
                     )
-                    uploaded_bytes = await msg.attachments[0].read()
-                    region_choices[region_idx] = {"action": "upload", "bytes": uploaded_bytes}
+                    attachment = msg.attachments[0]
+                    uploaded_bytes = await attachment.read()
+                    # Mirror the single-texture upload path: a non-square upload is
+                    # prompted for crop/stretch so it maps cleanly onto the region.
+                    region_square_mode = "none"
+                    width = getattr(attachment, "width", None)
+                    height = getattr(attachment, "height", None)
+                    if width and height and width != height:
+                        sq_view = SquareCheckView(timeout=60)
+                        await interaction.followup.send(
+                            f"Region {region_idx} image is **{width}x{height}** (not square). "
+                            "Choose how to handle it:",
+                            view=sq_view,
+                            ephemeral=True,
+                        )
+                        await sq_view.wait()
+                        if sq_view.result is None:
+                            await interaction.followup.send(
+                                f"❌ Region {region_idx} cancelled — keeping default look.", ephemeral=True
+                            )
+                            region_choices[region_idx] = {"action": "skip"}
+                            continue
+                        region_square_mode = sq_view.result
+                    region_choices[region_idx] = {
+                        "action": "upload",
+                        "bytes": uploaded_bytes,
+                        "square_mode": region_square_mode,
+                    }
                     await interaction.followup.send(f"✅ Region {region_idx} → custom upload", ephemeral=True)
                 except TimeoutError:
                     flogger.debug(f"Region {region_idx} upload timed out — skipping")
@@ -658,7 +684,14 @@ class SkinsCog(commands.Cog):
                         continue
                     skin_cache[chosen_skin] = downloaded
 
-                region_choices[region_idx] = {"action": "skin", "bytes": skin_cache[chosen_skin]}
+                # Pre-selected skins mirror the named-skin path: default non-square
+                # images to a stretch so they fill the region (no user prompt).
+                chosen_bytes = skin_cache[chosen_skin]
+                region_choices[region_idx] = {
+                    "action": "skin",
+                    "bytes": chosen_bytes,
+                    "square_mode": "none" if _png_is_square(chosen_bytes) else "stretch",
+                }
                 await interaction.followup.send(f"✅ Region {region_idx} → {chosen_skin}", ephemeral=True)
 
         return region_choices if region_choices else None
@@ -688,6 +721,7 @@ class SkinsCog(commands.Cog):
 
         files: list[tuple] = []
         active_regions: list[int] = []
+        region_square_modes: list[str] = []
 
         for region_idx, choice in sorted(region_choices.items()):
             action = choice.get("action")
@@ -696,8 +730,11 @@ class SkinsCog(commands.Cog):
                 if tex_bytes:
                     files.append(("region_textures", (f"region_{region_idx}.png", tex_bytes, "image/png")))
                     active_regions.append(region_idx)
+                    region_square_modes.append(choice.get("square_mode", "none"))
 
         data["region_indices"] = ",".join(str(i) for i in active_regions)
+        # Parallel to region_indices: how to square each region overlay (crop/stretch/none).
+        data["region_square_modes"] = ",".join(region_square_modes)
 
         try:
             resp = await self.blender_client.post(

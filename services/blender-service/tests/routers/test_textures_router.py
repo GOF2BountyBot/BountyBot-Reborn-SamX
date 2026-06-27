@@ -535,6 +535,59 @@ def test_composite_with_region_texture_and_mask(client: TestClient, ship_dir: Pa
     assert response.headers["content-type"] == "image/png"
 
 
+def test_composite_region_square_mode_stretch_applied(client: TestClient, ship_dir: Path) -> None:
+    """A non-square region texture is squared (per region_square_modes) before compositing."""
+    buf = BytesIO()
+    Image.new("L", (4, 4), 128).save(buf, format="PNG")
+    (ship_dir / "mask1.png").write_bytes(buf.getvalue())
+
+    captured: dict = {}
+
+    def fake_composite(**kwargs):
+        captured.update(kwargs)
+        return Image.new("RGB", (4, 4), (10, 10, 10))
+
+    nonsquare_region = _png_bytes(size=(8, 4))  # 8x4 → stretch_to_square → 8x8
+    with patch("routers.textures._service.composite_textures", side_effect=fake_composite):
+        response = client.post(
+            "/api/v1/textures/composite",
+            data={"ship_path": str(ship_dir), "region_indices": "1", "region_square_modes": "stretch"},
+            files=[
+                _base_texture_upload(),
+                ("region_textures", ("region1.png", nonsquare_region, "image/png")),
+            ],
+        )
+    assert response.status_code == 200
+    region_img = captured["region_textures"][1]
+    assert region_img.size[0] == region_img.size[1], f"region texture must be squared; got {region_img.size}"
+
+
+def test_composite_region_square_modes_length_mismatch_returns_422(client: TestClient, ship_dir: Path) -> None:
+    """region_square_modes count must match region_indices count."""
+    response = client.post(
+        "/api/v1/textures/composite",
+        data={"ship_path": str(ship_dir), "region_indices": "1", "region_square_modes": "stretch,none"},
+        files=[
+            _base_texture_upload(),
+            ("region_textures", ("region1.png", _png_bytes(), "image/png")),
+        ],
+    )
+    assert response.status_code == 422
+
+
+def test_composite_region_square_modes_invalid_value_returns_422(client: TestClient, ship_dir: Path) -> None:
+    """An unknown per-region square mode is rejected."""
+    response = client.post(
+        "/api/v1/textures/composite",
+        data={"ship_path": str(ship_dir), "region_indices": "1", "region_square_modes": "warp"},
+        files=[
+            _base_texture_upload(),
+            ("region_textures", ("region1.png", _png_bytes(), "image/png")),
+        ],
+    )
+    assert response.status_code == 422
+
+
 def test_composite_with_disabled_region(client: TestClient, ship_dir: Path) -> None:
     """composite with a disabled region should succeed."""
     # Write mask file

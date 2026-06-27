@@ -128,6 +128,45 @@ def _make_interaction(user_id: int = 111):
     return interaction
 
 
+def _png_header(width: int, height: int) -> bytes:
+    """Minimal PNG signature + IHDR chunk carrying the given dimensions."""
+    return b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0d" + b"IHDR" + width.to_bytes(4, "big") + height.to_bytes(4, "big")
+
+
+# ---------------------------------------------------------------------------
+# _png_is_square — PNG dimension probe (no Pillow)
+# ---------------------------------------------------------------------------
+
+
+class TestPngIsSquare:
+    """The named-skin path uses this to decide square_mode without Pillow."""
+
+    def test_square_png_is_square(self, mock_cog):  # mock_cog ensures the module is imported
+        import cogs.skinsCog as sc
+
+        assert sc._png_is_square(_png_header(512, 512)) is True
+        assert sc._png_is_square(_png_header(1, 1)) is True
+
+    def test_non_square_png_is_not_square(self, mock_cog):
+        import cogs.skinsCog as sc
+
+        # wraith-lilac dimensions and the transpose — both must read as non-square.
+        assert sc._png_is_square(_png_header(594, 279)) is False
+        assert sc._png_is_square(_png_header(279, 594)) is False
+
+    def test_zero_width_is_not_square(self, mock_cog):
+        import cogs.skinsCog as sc
+
+        assert sc._png_is_square(_png_header(0, 0)) is False
+
+    def test_non_png_or_truncated_is_not_square(self, mock_cog):
+        import cogs.skinsCog as sc
+
+        assert sc._png_is_square(b"\xff\xd8\xff\xe0JFIF-not-a-png-but-long-enough-bytes") is False
+        assert sc._png_is_square(b"too short") is False
+        assert sc._png_is_square(b"") is False
+
+
 # ---------------------------------------------------------------------------
 # SquareCheckView tests
 # ---------------------------------------------------------------------------

@@ -19,6 +19,21 @@ api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 BLENDER_API_BASE_URL = os.getenv("BLENDER_API_BASE_URL", "http://blender-service:8001/api/v1")
 
 
+def _png_is_square(data: bytes) -> bool:
+    """True iff ``data`` is a PNG whose pixel dimensions are square (width == height).
+
+    Reads the IHDR header directly — the gateway has no Pillow (dimensions are
+    normally taken from Discord attachment metadata, which a downloaded skin lacks).
+    Returns False for non-PNG or unparseable data so callers default such images to
+    a stretch, which is a safe no-op when the image happens to already be square.
+    """
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return False
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
+    return width > 0 and width == height
+
+
 # ---------------------------------------------------------------------------
 # UI Views
 # ---------------------------------------------------------------------------
@@ -780,6 +795,12 @@ class SkinsCog(commands.Cog):
             skin_bytes = await self._download_skin_image(interaction, ship, skin, render_info)
             if skin_bytes is None:
                 return  # error already sent
+            # Mirror the uploaded-image path for a pre-selected skin: apply the same
+            # square normalisation, defaulting non-square skins to a stretch. There is
+            # no user prompt here because the image is pre-chosen. Without this a
+            # non-square skin (e.g. wraith-lilac at 594x279) was sent square_mode="none"
+            # and never filled the square UV space, rendering an incomplete skin.
+            square_mode = "none" if _png_is_square(skin_bytes) else "stretch"
 
         # 2b. Resolve region mode for multi-region ships
         skin_name_for_region = skin if skin != "Default" else None

@@ -25,6 +25,20 @@ from services.game_constants import GameConstants
 # Cyclic event types that can appear in Key Events and/or Recurring.
 _LM_TYPES: frozenset[str] = frozenset({"Layer depleted", "Module activated"})
 
+# 'Nuke detonation' rows carry their per-shot damage inline in the detail string.
+_NUKE_RE = re.compile(r"^(?P<who>.+?) fired (?P<wpn>.+?) — detonated \(opp: (?P<opp>-?\d+), self: -?\d+\)$")
+
+
+def _nuke_parse(detail: str) -> tuple | None:
+    """Parse a 'Nuke detonation' detail into ((who, weapon), opp_damage).
+
+    Returns None for any line that is not a standard per-shot detonation.
+    """
+    m = _NUKE_RE.match(detail)
+    if m is None:
+        return None
+    return ((m.group("who"), m.group("wpn")), int(m.group("opp")))
+
 
 # ---------------------------------------------------------------------------
 # Key-extraction helpers (mirror the prototype exactly)
@@ -165,6 +179,37 @@ def build_recap_sections(
             else:
                 g["enter"] = r
 
+    # ---- Group Nuke detonations by (who, weapon) and split significant vs trivial ----
+    # A weapon firing >= RECAP_NUKE_SUMMARY_MIN_COUNT nukes gets a significance pass:
+    # detonations >= RECAP_NUKE_SIGNIFICANCE_FRACTION of that weapon's best stay as
+    # individual Key Events; a run of >= collapse_min low-impact ones folds into one
+    # Recurring bullet.  Fewer than collapse_min trivial fires stay individual (a 1–2
+    # shot "summary" would save no space and could mislabel a shot with another's dmg).
+    nuke_min: int = GameConstants.RECAP_NUKE_SUMMARY_MIN_COUNT
+    nuke_frac: float = GameConstants.RECAP_NUKE_SIGNIFICANCE_FRACTION
+    nuke_opp: dict[int, int] = {}  # id(row) -> opponent damage
+    nuke_groups: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        if r["event_type"] == "Nuke detonation":
+            parsed = _nuke_parse(r["detail"])
+            if parsed is None:
+                continue
+            key, opp = parsed
+            nuke_opp[id(r)] = opp
+            nuke_groups.setdefault(key, []).append(r)
+
+    nuke_recurring_groups: dict[tuple[str, str], list[dict]] = {}
+    nuke_folded: set[int] = set()  # row ids folded into Recurring (excluded from Key Events)
+    for key, grp in nuke_groups.items():
+        if len(grp) < nuke_min:
+            continue  # whole group stays individual
+        best_opp = max(nuke_opp[id(r)] for r in grp)
+        threshold = best_opp * nuke_frac
+        trivial = [r for r in grp if not (nuke_opp[id(r)] > 0 and nuke_opp[id(r)] >= threshold)]
+        if len(trivial) >= collapse_min:
+            nuke_recurring_groups[key] = trivial
+            nuke_folded.update(id(r) for r in trivial)
+
     # ---- Classify rows into mandatory vs fill candidates ----
     mandatory: list[dict] = []
     cands: list[tuple[int, str, dict]] = []
@@ -193,8 +238,13 @@ def build_recap_sections(
             else:
                 # Re-activations = preferred filler (priority 1)
                 cands.append((1, lk, r))
+        elif et == "Nuke detonation":
+            # Significant (or sub-threshold-group) detonations stay individual;
+            # trivial fires folded into a Recurring bullet are dropped from Key Events.
+            if id(r) not in nuke_folded:
+                mandatory.append(r)
         else:
-            mandatory.append(r)  # non-cyclic: Engagement, milestones, nuke, ammo, outcome
+            mandatory.append(r)  # non-cyclic: Engagement, milestones, ammo, outcome
 
     # Add weapon range events
     for (who, wpn), g in wgroups.items():
@@ -218,6 +268,9 @@ def build_recap_sections(
         if len(g["re"]) >= collapse_min:
             entries.append((g["re"][0]["tick"], g["re"][0]["_idx"], "wpn", (who, wpn), g["re"]))
 
+    for key, occ in nuke_recurring_groups.items():
+        entries.append((occ[0]["tick"], occ[0]["_idx"], "nuke", key, occ))
+
     entries.sort(key=lambda e: (e[0], e[1]))
 
     recurring: list[str] = []
@@ -231,6 +284,10 @@ def build_recap_sections(
             ]
             suffix = f"  (all {next(iter(distinct))})" if len(distinct) == 1 else ""
             recurring.append(f"• {_lm_label(key)} ×{len(occ)} -> " + ", ".join(parts) + suffix)
+        elif kind == "nuke":
+            who, wpn = key
+            parts = [f"{r['time_s']:.1f}s" for r in occ]
+            recurring.append(f"• {who}'s {wpn} low-impact detonations ×{len(occ)} -> " + ", ".join(parts))
         else:
             who, wpn = key
             parts = [f"{r['time_s']:.1f}s" for r in occ]

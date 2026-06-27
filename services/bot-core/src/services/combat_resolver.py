@@ -2491,8 +2491,9 @@ def _extract_key_events(
             prev_tick = t
 
     # ---- Per-fire beats: nuke + shock-blast (k=1) ----
-    # Collect nuke fires grouped by (actor_label, weapon) for Rule-2 significance filtering.
-    # Each entry: {"tick": int, "lbl": str, "w": str, "opp": int, "self": int}
+    # Collect nuke fires grouped by (actor_label, weapon).  One Key-Event row is
+    # emitted per detonation; significance folding happens downstream in
+    # build_recap_sections().  Each entry: {"tick", "lbl", "w", "opp", "self"}.
     _nuke_fires: dict[tuple[str, str], list[dict]] = {}
     _shock_fires: list[dict] = []
     for ev in timeline:
@@ -2517,58 +2518,29 @@ def _extract_key_events(
             to = shock_reset.get((tick, str(d.get("side"))), GameConstants.STARTING_DISTANCE_M)
             _shock_fires.append({"tick": tick, "lbl": lbl, "w": w, "to": to})
 
-    _nuke_min_count = GameConstants.RECAP_NUKE_SUMMARY_MIN_COUNT
-    _nuke_sig_frac = GameConstants.RECAP_NUKE_SIGNIFICANCE_FRACTION
-
+    # Emit one raw row per nuke detonation (v3 contract: the extractor never
+    # collapses).  Significance filtering — keeping high-impact detonations as
+    # individual Key Events while folding a run of low-impact ones into a single
+    # Recurring bullet — is owned by build_recap_sections() in combat_recap.py,
+    # which has the full per-occurrence set and the presentation context.
     for (lbl, w), fires in _nuke_fires.items():
-        if len(fires) < _nuke_min_count:
-            # Below threshold — emit every detonation individually (no change from legacy behavior).
-            for f in fires:
-                _emit(
-                    f["tick"],
-                    1,
-                    "Nuke detonation",
-                    f"{lbl} fired {w} — detonated (opp: {f['opp']}, self: {f['self']})",
-                    actor=lbl,
-                )
-        else:
-            # Rule 2: keep high-impact lines individually; fold the rest into one summary.
-            best_opp = max(f["opp"] for f in fires)
-            sig_threshold = best_opp * _nuke_sig_frac
-            significant: list[dict] = []
-            trivial: list[dict] = []
-            for f in fires:
-                if f["opp"] > 0 and f["opp"] >= sig_threshold:
-                    significant.append(f)
-                else:
-                    trivial.append(f)
-            for f in significant:
-                _emit(
-                    f["tick"],
-                    1,
-                    "Nuke detonation",
-                    f"{lbl} fired {w} — detonated (opp: {f['opp']}, self: {f['self']})",
-                    actor=lbl,
-                )
-            if trivial:
-                # Use the earliest trivial tick so the summary sorts into the chronological flow.
-                summary_tick = trivial[0]["tick"]
-                n = len(trivial)
-                _emit(
-                    summary_tick,
-                    1,
-                    "Nuke detonation",
-                    f"{lbl} fired {w} ×{n} (best: {best_opp} dmg)",
-                    actor=lbl,
-                )
+        for f in fires:
+            _emit(
+                f["tick"],
+                1,
+                "Nuke detonation",
+                f"{lbl} fired {w} — detonated (opp: {f['opp']}, self: {f['self']})",
+                actor=lbl,
+            )
 
     # Shock-blast: count-based treatment if ≥ RECAP_NUKE_SUMMARY_MIN_COUNT fires per (actor, weapon).
+    _shock_min_count = GameConstants.RECAP_NUKE_SUMMARY_MIN_COUNT
     _shock_by_key: dict[tuple[str, str], list[dict]] = {}
     for sf in _shock_fires:
         _shock_by_key.setdefault((sf["lbl"], sf["w"]), []).append(sf)
 
     for (lbl, w), slist in _shock_by_key.items():
-        if len(slist) < _nuke_min_count:
+        if len(slist) < _shock_min_count:
             for sf in slist:
                 _emit(
                     sf["tick"],

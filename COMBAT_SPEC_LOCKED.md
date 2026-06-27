@@ -689,6 +689,21 @@ The battle-log command exists: gateway `/combat-log battle:<pick>` (`combatLogCo
 
 **Visibility:** `/combat-log` accepts an optional `public` flag (default `false`) — when `true`, the same embed is posted publicly instead of ephemerally; errors stay ephemeral regardless (`combatLogCog.py`). The admin variant `/admin_combat_log` (fetch any player's battle) is always ephemeral and has no `public` option.
 
+### Recap presentation — Key Events + Recurring (v3)
+
+The `/combat-log` recap is **presentation-only** — it never affects simulation, damage, or stored stats. It is computed by `build_recap_sections` (`services/combat_recap.py`) at persist time from the raw per-occurrence rows of `_extract_key_events` (`combat_resolver.py`), and stored as two `data` fields: **`key_events`** (chronological highlight rows) and **`recurring`** (one bullet per repeated pattern). Legacy rows missing either field re-extract from the stored timeline on read. Contract: `_extract_key_events` emits **one raw row per occurrence and never collapses** — all folding/significance logic lives in `build_recap_sections`.
+
+**Cyclic-noise folding.** Repeated low-signal events — a weapon re-entering range, a module re-activating, a layer re-breaking — keep their **first** occurrence in Key Events; once a `(actor, pattern)` group reaches **`RECAP_COLLAPSE_MIN_RUN`** (default **3**) occurrences, the repeats fold into a single Recurring bullet (`• … ×N -> t1, t2, …`).
+
+**Nuke detonations.** Every detonation is emitted as one raw `Nuke detonation` row carrying its `opp`/`self` damage. `build_recap_sections` then splits per `(actor, weapon)`:
+
+- If the weapon fired **fewer than `RECAP_NUKE_SUMMARY_MIN_COUNT`** (default **3**) nukes → **all** detonations stay individual in Key Events (no significance pass).
+- Otherwise compute `best = max(opponent_damage)` for that weapon. Detonations with `opponent_damage ≥ RECAP_NUKE_SIGNIFICANCE_FRACTION × best` (default **0.25**, and `> 0`) are **significant** and stay as individual Key Events. The remaining **trivial** detonations fold into one Recurring bullet `• {who}'s {weapon} low-impact detonations ×N -> …` **only when there are `≥ RECAP_COLLAPSE_MIN_RUN` of them**; a run shorter than that stays individual.
+
+The "fewer than `RECAP_COLLAPSE_MIN_RUN` trivial → stay individual" rule is deliberate: collapsing one or two detonations saves no space, and a `×1`/`×2` summary line labelled with the weapon's **global** best damage would mislabel a weak shot with an unrelated, already-shown detonation's number (the R-583 defect). Trivial detonations route to **Recurring**, never to a mid-battle summary line in Key Events.
+
+All four knobs are `GameConstants` config (env overrides `BOUNTYBOT_RECAP_COLLAPSE_MIN_RUN`, `BOUNTYBOT_RECAP_NUKE_SUMMARY_MIN_COUNT`, `BOUNTYBOT_RECAP_NUKE_SIGNIFICANCE_FRACTION`, `BOUNTYBOT_RECAP_GAP_FILL_S`) per §0.1.
+
 ### Public API: `CombatService.fight_ships(...)`
 
 ```python

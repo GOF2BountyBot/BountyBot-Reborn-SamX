@@ -828,7 +828,7 @@ class TestRawPerOccurrenceRows:
 
     Collapse logic has moved to build_recap_sections() in combat_recap.py.
     These tests verify that _extract_key_events is a clean pass-through that emits
-    one row per event (denoising rules for nukes still apply), while build_recap_sections
+    one row per event (including one row per nuke detonation), while build_recap_sections
     correctly aggregates cyclic events into recurring bullets.
     """
 
@@ -1020,58 +1020,89 @@ def _nuke_fire(tick: int, actor: str, weapon: str, opp: int, self_dmg: int = 0, 
     }
 
 
+def _nuke_recap(timeline: list[dict], combatants_map: dict | None = None) -> dict:
+    """Run the full v3 recap pipeline (extract → build_recap_sections)."""
+    from services.combat_recap import build_recap_sections, extract_wslot
+
+    cmap = combatants_map or {"1": {"name": "Alice", "ship": "S"}, "2": {"name": "Bob", "ship": "W"}}
+    rows = _extract_key_events(timeline, 10, cmap)
+    for i, r in enumerate(rows):
+        r["_idx"] = i
+    return build_recap_sections(rows, cmap, tick_ms=10, wslot=extract_wslot(timeline))
+
+
 class TestNukeSignificanceFilter:
-    """Rule 2: R-198 canary — 9 fires, opp damages [0,0,0,97,30,0,2,0,0].
-    opp:97 (best) and opp:30 (≥ 0.25×97=24.25) must remain individual;
-    the remaining 7 (0,0,0,0,2,0,0 — 2 < 24.25) fold into one summary.
+    """v3: the significance split + trivial-run fold live in build_recap_sections.
+
+    For a weapon firing ≥ RECAP_NUKE_SUMMARY_MIN_COUNT nukes, detonations ≥ 0.25×best
+    stay individual in Key Events; a run of ≥ collapse_min low-impact ones folds into a
+    single Recurring 'low-impact detonations ×N' bullet (never a mid-battle summary).
     """
 
     def test_r198_high_impact_lines_survive_individually(self):
-        """opp:97 and opp:30 must each appear as individual Nuke detonation lines."""
+        """opp:97 and opp:30 must each remain individual Nuke detonation Key Events."""
         timeline = [_fight_start()]
         opps = [0, 0, 0, 97, 30, 0, 2, 0, 0]
         for i, opp in enumerate(opps):
             timeline.append(_nuke_fire(tick=10 + i * 20, actor="Alice", weapon="Liberator", opp=opp))
-        result = _extract_key_events(timeline)
-        nuke_ev = [e for e in result if e["event_type"] == "Nuke detonation"]
-        # Must have at least 3: opp:97, opp:30, and 1 summary.
-        assert len(nuke_ev) >= 3, f"Expected ≥3 nuke lines (2 individual + 1 summary); got: {nuke_ev}"
-        details = [e["detail"] for e in nuke_ev]
-        # opp:97 line must be individual (detail contains "opp: 97")
-        assert any("opp: 97" in d for d in details), f"opp:97 line must survive individually; got: {details}"
-        # opp:30 line must be individual (detail contains "opp: 30")
-        assert any("opp: 30" in d for d in details), f"opp:30 line must survive individually; got: {details}"
+        sections = _nuke_recap(timeline)
+        details = [e["detail"] for e in sections["key_events"] if e["event_type"] == "Nuke detonation"]
+        assert any("opp: 97" in d for d in details), f"opp:97 must survive individually; got: {details}"
+        assert any("opp: 30" in d for d in details), f"opp:30 must survive individually; got: {details}"
 
-    def test_r198_trivial_zero_fires_fold_to_summary(self):
-        """The low/zero-impact detonations must fold into exactly ONE summary line."""
+    def test_r198_trivial_fires_fold_to_recurring(self):
+        """The 7 low/zero-impact detonations fold into ONE Recurring bullet, not Key Events."""
         timeline = [_fight_start()]
         opps = [0, 0, 0, 97, 30, 0, 2, 0, 0]
         for i, opp in enumerate(opps):
             timeline.append(_nuke_fire(tick=10 + i * 20, actor="Alice", weapon="Liberator", opp=opp))
-        result = _extract_key_events(timeline)
-        nuke_ev = [e for e in result if e["event_type"] == "Nuke detonation"]
-        # Individual lines: opp:97 and opp:30 → 2; summary line → 1; total = 3
-        assert len(nuke_ev) == 3, (
-            f"Expected exactly 3 nuke lines (opp:97, opp:30, +1 summary); got {len(nuke_ev)}: {nuke_ev}"
+        sections = _nuke_recap(timeline)
+        nuke_ke = [e for e in sections["key_events"] if e["event_type"] == "Nuke detonation"]
+        # Only the 2 significant detonations remain in Key Events — no mid-battle summary line.
+        assert len(nuke_ke) == 2, f"Only opp:97 & opp:30 stay in Key Events; got: {[e['detail'] for e in nuke_ke]}"
+        assert not any("best:" in e["detail"] for e in nuke_ke), f"No '×N (best:)' summary line; got: {nuke_ke}"
+        # Exactly one Liberator low-impact Recurring bullet citing the 7 trivial fires.
+        bullets = [b for b in sections["recurring"] if "Liberator" in b and "low-impact detonations" in b]
+        assert len(bullets) == 1, f"Expected one low-impact Recurring bullet; got: {sections['recurring']}"
+        assert "×7" in bullets[0], f"Bullet must show ×7 trivial fires; got: {bullets[0]!r}"
+
+    def test_below_threshold_nukes_all_individual(self):
+        """Fewer than RECAP_NUKE_SUMMARY_MIN_COUNT fires → all individual, no Recurring bullet."""
+        timeline = [
+            _fight_start(),
+            _nuke_fire(tick=10, actor="Alice", weapon="SmallNuke", opp=50),
+            _nuke_fire(tick=30, actor="Alice", weapon="SmallNuke", opp=20),
+        ]
+        sections = _nuke_recap(timeline)
+        nuke_ke = [e for e in sections["key_events"] if e["event_type"] == "Nuke detonation"]
+        assert len(nuke_ke) == 2, f"Below threshold → both individual; got: {nuke_ke}"
+        assert not any("low-impact detonations" in b for b in sections["recurring"]), (
+            f"Sub-threshold weapon must not fold; got: {sections['recurring']}"
         )
-        # The summary line contains "×N" and "best:"
-        summary_lines = [e["detail"] for e in nuke_ev if "best:" in e["detail"]]
-        assert len(summary_lines) == 1, f"Must have exactly one summary line; got: {summary_lines}"
-        assert "×7" in summary_lines[0], f"Summary must show ×7 (7 trivial); got: {summary_lines[0]!r}"
-        assert "97" in summary_lines[0], f"Summary must cite best=97; got: {summary_lines[0]!r}"
 
-    def test_below_threshold_nukes_not_grouped(self):
-        """If a weapon fires fewer than RECAP_NUKE_SUMMARY_MIN_COUNT times, all lines are individual."""
+    def test_single_trivial_fire_not_collapsed(self):
+        """R-583: ≥3 fires but only ONE trivial → it stays an individual Key Event.
+
+        opps [210, 164, 49]: best=210, threshold=0.25×210=52.5. 210 & 164 are significant;
+        49 is the lone trivial. A run of <collapse_min trivial fires must NOT fold —
+        collapsing one shot saves no space and a '×1 (best: 210)' line would mislabel the
+        49-dmg shot with an unrelated, already-shown detonation's damage.
+        """
         timeline = [_fight_start()]
-        # 2 nuke fires — below the threshold of 3
-        timeline.append(_nuke_fire(tick=10, actor="Alice", weapon="SmallNuke", opp=50))
-        timeline.append(_nuke_fire(tick=30, actor="Alice", weapon="SmallNuke", opp=20))
-        result = _extract_key_events(timeline)
-        nuke_ev = [e for e in result if e["event_type"] == "Nuke detonation"]
-        assert len(nuke_ev) == 2, f"Below threshold → all individual; got: {nuke_ev}"
-        # Neither line should be a summary
-        for ev in nuke_ev:
-            assert "best:" not in ev["detail"], f"No summary for sub-threshold weapon; got: {ev['detail']!r}"
+        for i, opp in enumerate([210, 164, 49]):
+            timeline.append(
+                _nuke_fire(tick=10 + i * 20, actor="Alice", weapon="AMR Oppressor", opp=opp, self_dmg=22)
+            )
+        sections = _nuke_recap(timeline)
+        nuke_ke = [e for e in sections["key_events"] if e["event_type"] == "Nuke detonation"]
+        details = [e["detail"] for e in nuke_ke]
+        # All three detonations individual, including the 49-dmg trivial one with its real damage.
+        assert len(nuke_ke) == 3, f"Expected 3 individual detonations; got: {details}"
+        assert any("opp: 49" in d for d in details), f"49-dmg shot must show its own damage; got: {details}"
+        assert not any("best:" in d or "×1" in d for d in details), f"No summary line; got: {details}"
+        assert not any("low-impact detonations" in b for b in sections["recurring"]), (
+            f"Single trivial fire must not fold to Recurring; got: {sections['recurring']}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1315,44 +1346,42 @@ class TestR219RealDataGolden:
 
 
 class TestR198NukeCanaryRealData:
-    """R-198: 83s fight, bluefyre fires Liberator (nuke) 9 times.
-    Nuke significance filter (Rule 2): opp:97 and opp:30 survive as individual lines;
-    the remaining 7 fold to a summary.  Total nuke lines = 3.
-
-    These tests use the real fixture to guard Rule 2 in a real-data context.
-    They PASS on current code (Rule 2 already works) and must continue to pass after the fix.
+    """R-198: 83s fight, bluefyre fires Liberator (nuke) 8 times.
+    v3 significance split: opp:97 and opp:30 stay as individual Key Events; the
+    remaining 6 low-impact fires fold into one Recurring 'low-impact detonations ×6'
+    bullet.  Guards the split end-to-end against real data via build_recap_sections.
     """
 
-    def test_r198_exactly_three_nuke_lines(self):
-        """Battle 198 must produce exactly 3 Nuke detonation lines (opp:97, opp:30, ×7 summary)."""
+    def test_r198_two_significant_nuke_lines_in_key_events(self):
+        """Battle 198 Key Events must hold exactly the 2 significant detonations (opp:97, opp:30)."""
         d = _load_fixture(198)
-        result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        nuke_ev = [e for e in result if e["event_type"] == "Nuke detonation"]
-        assert len(nuke_ev) == 3, (
-            f"Battle 198: expected 3 nuke lines (opp:97 + opp:30 + ×7 summary); "
-            f"got {len(nuke_ev)}: {[e['detail'] for e in nuke_ev]}"
+        sections = _nuke_recap(d["timeline"], d["combatants"])
+        nuke_ke = [e for e in sections["key_events"] if e["event_type"] == "Nuke detonation"]
+        assert len(nuke_ke) == 2, (
+            f"Battle 198: expected 2 individual nuke Key Events (opp:97 + opp:30); "
+            f"got {len(nuke_ke)}: {[e['detail'] for e in nuke_ke]}"
         )
+        assert not any("best:" in e["detail"] for e in nuke_ke), f"No mid-battle summary line; got: {nuke_ke}"
 
     def test_r198_opp97_and_opp30_survive_individually(self):
-        """opp:97 and opp:30 detonations must each appear as individual lines in real battle 198."""
+        """opp:97 and opp:30 detonations must each appear as individual Key Events in real battle 198."""
         d = _load_fixture(198)
-        result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        details = [e["detail"] for e in result if e["event_type"] == "Nuke detonation"]
-        assert any("opp: 97" in d for d in details), f"opp:97 must survive individually; got: {details}"
-        assert any("opp: 30" in d for d in details), f"opp:30 must survive individually; got: {details}"
+        sections = _nuke_recap(d["timeline"], d["combatants"])
+        details = [e["detail"] for e in sections["key_events"] if e["event_type"] == "Nuke detonation"]
+        assert any("opp: 97" in x for x in details), f"opp:97 must survive individually; got: {details}"
+        assert any("opp: 30" in x for x in details), f"opp:30 must survive individually; got: {details}"
 
-    def test_r198_low_impact_nukes_fold_to_summary(self):
-        """The 6 low/zero-impact Liberator fires must fold to one ×6 summary line.
+    def test_r198_low_impact_nukes_fold_to_recurring(self):
+        """The 6 low/zero-impact Liberator fires must fold to one ×6 Recurring bullet.
 
-        Real data: 8 total fires.  opp:97 and opp:30 → 2 individual lines.
-        Remaining 6 (opp 0,0,0,0,2,0) → fold to ×6 summary.
+        Real data: 8 total fires.  opp:97 and opp:30 → 2 individual Key Events.
+        Remaining 6 (opp 0,0,0,0,2,0) → one 'low-impact detonations ×6' Recurring bullet.
         """
         d = _load_fixture(198)
-        result = _extract_key_events(d["timeline"], 10, d["combatants"])
-        details = [e["detail"] for e in result if e["event_type"] == "Nuke detonation"]
-        summary_lines = [d for d in details if "best:" in d]
-        assert len(summary_lines) == 1, f"Exactly one nuke summary line expected; got: {summary_lines}"
-        assert "×6" in summary_lines[0], f"Summary must show ×6 (6 trivial fires); got: {summary_lines[0]!r}"
+        sections = _nuke_recap(d["timeline"], d["combatants"])
+        bullets = [b for b in sections["recurring"] if "Liberator" in b and "low-impact detonations" in b]
+        assert len(bullets) == 1, f"Exactly one low-impact Recurring bullet expected; got: {sections['recurring']}"
+        assert "×6" in bullets[0], f"Bullet must show ×6 (6 trivial fires); got: {bullets[0]!r}"
 
     def test_r198_outcome_names_bluefyre_winner(self):
         """Battle 198 outcome must name bluefyre as winner (Oluchi Erland destroyed)."""

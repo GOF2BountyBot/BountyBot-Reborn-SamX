@@ -1,4 +1,4 @@
-fastapi[standard]==0.138.1
+fastapi[standard]==0.138.2
 fastapi-health==0.4.0
 uvicorn[standard]==0.49.0
 hypercorn[uvloop]==0.18.0

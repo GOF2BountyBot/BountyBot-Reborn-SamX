@@ -5,8 +5,9 @@ their effective cap?" — used by both the T5 loot clamp (``BountyService``) and
 T7 over-cap lockout gate (``BountyService`` ``/check`` + ``DuelService`` duel
 challenge/accept).
 
-``effective_cap = active ship.cargo × Π(CompressorModule cargoMultiplier)``
-(matches ``loadout_response_service``, §7.1).  ``current_load`` is the per-unit
+``effective_cap = active ship.cargo × (1 + Σ(CompressorModule cargoMultiplier - 1))``
+— compressors stack additively, not multiplicatively (issue #36) — (matches
+``loadout_response_service``, §7.1).  ``current_load`` is the per-unit
 ``sum(PlayerInventory.quantity)`` (cargo only; equipped gear excluded, §7.4).  No
 active ship ⇒ cap ``0``.
 """
@@ -53,8 +54,9 @@ async def compute_free_cargo(db: AsyncSession, inventory_repo, player) -> tuple[
     ship_row = (await db.execute(select(Ship).where(Ship.name == player_ship.ship_name))).scalars().first()
     base_cargo = int(getattr(ship_row, "cargo", 0) or 0) if ship_row else 0
 
-    # Compressor multiplier from equipped modules (only CompressorModule raises cap, §7.1).
-    compressor_multiplier = 1.0
+    # Compressor bonus from equipped modules — stacks additively, not
+    # multiplicatively (only CompressorModule raises cap, §7.1; issue #36).
+    compressor_bonus = 0.0
     for m_name in getattr(player_ship, "modules", None) or []:
         mod = (await db.execute(select(Module).where(Module.name == m_name))).scalars().first()
         if mod is None or getattr(mod, "type", None) != "CompressorModule":
@@ -63,9 +65,9 @@ async def compute_free_cargo(db: AsyncSession, inventory_repo, player) -> tuple[
         raw_mult = extra.get("cargoMultiplier", extra.get("cargo_multiplier"))
         if raw_mult is not None:
             with contextlib.suppress(TypeError, ValueError):
-                compressor_multiplier *= float(raw_mult)
+                compressor_bonus += float(raw_mult) - 1.0
 
-    effective_cap = round(base_cargo * compressor_multiplier) if base_cargo else base_cargo
+    effective_cap = round(base_cargo * (1.0 + compressor_bonus)) if base_cargo else base_cargo
     return (effective_cap - current_load, current_load, effective_cap)
 
 

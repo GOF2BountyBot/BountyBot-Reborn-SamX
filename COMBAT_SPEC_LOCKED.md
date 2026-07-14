@@ -883,7 +883,7 @@ Bands are value-inverse (cheaper class ⇒ bigger stack) so total loot value sta
 
 ### 15.6 Cargo cap — free-cargo gate, per-unit clamp, over-cap lockout
 
-Cargo load is counted **per-unit**: `sum(player_inventories.quantity)` (ship cargo only; equipped gear excluded). Effective cap = base `ship.cargo` × any equipped `CompressorModule` multiplier. `cargo_utils.py` provides the canonical `compute_free_cargo` / `is_over_cap` helpers so the loot clamp and the over-cap gate share one definition.
+Cargo load is counted **per-unit**: `sum(player_inventories.quantity)` (ship cargo only; equipped gear excluded). Effective cap = base `ship.cargo` × (1 + the sum of each equipped `CompressorModule`'s bonus fraction) — compressors **stack additively**, matching the game wiki (e.g. a +25% and a +100% compressor together give +125%, not +150%). `cargo_utils.py` provides the canonical `compute_free_cargo` / `is_over_cap` helpers so the loot clamp and the over-cap gate share one definition.
 
 **Free-cargo gate (before rolling).** If the player has 0 free cargo at the win, looting is skipped entirely (`cargo_full` outcome) — no feel-bad "passed the roll, got nothing."
 

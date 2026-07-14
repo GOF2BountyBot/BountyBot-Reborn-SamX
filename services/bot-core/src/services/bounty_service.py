@@ -1447,8 +1447,10 @@ class BountyService:
         lock (the loot write re-locks the same row, so this read + the subsequent
         write are race-safe vs concurrent buy/sell — LOOT_JOURNAL §5.5 C-3(b)).
 
-        Effective cap = active ``ship.cargo`` × Π(CompressorModule ``cargoMultiplier``),
-        matching ``loadout_response_service`` (§7.1).  Current load = per-unit
+        Effective cap = active ``ship.cargo`` × (1 + Σ(CompressorModule
+        ``cargoMultiplier`` - 1)) — compressors stack additively, not
+        multiplicatively (issue #36), matching ``loadout_response_service``
+        (§7.1).  Current load = per-unit
         ``sum(PlayerInventory.quantity)`` (cargo only; equipped gear excluded, §7.4).
         No active ship ⇒ cap 0 (the no-ship branch never reaches loot anyway).
 

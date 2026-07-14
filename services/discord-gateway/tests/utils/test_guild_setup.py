@@ -585,6 +585,48 @@ class TestEnsureBountyBotInfrastructure:
         assert bh_ow.view_channel is False, "bot-images @Bounty Hunter must have view_channel=False"
 
     # ------------------------------------------------------------------
+    # Test 10b: fresh setup — read-only board/shop channels deny app commands
+    # (issue #47 — regression guard for the actual create_text_channel() calls,
+    # not just the overwrite-factory functions in isolation)
+    # ------------------------------------------------------------------
+
+    def test_fresh_setup_read_only_channels_deny_app_commands(self):
+        """A brand-new guild running /admin_setup for the first time must have
+        use_application_commands=False wired into the actual create_text_channel()
+        overwrites for all 5 read-only channels (bronze/silver/gold/platinum/shop) —
+        not just correct in the _read_only_overwrites() factory in isolation."""
+        guild = _make_guild()
+        new_role = _make_role(role_id=555)
+        tier_roles = _make_tier_role_side_effects(base_id=556)
+        guild.create_role = AsyncMock(side_effect=[new_role, *tier_roles])
+
+        new_cat = _make_category(cat_id=111)
+        guild.create_category.return_value = new_cat
+
+        channels = _make_8_channel_side_effects()
+        guild.create_text_channel = AsyncMock(side_effect=channels)
+
+        from utils.guild_setup import ensure_bountybot_infrastructure
+
+        asyncio.run(ensure_bountybot_infrastructure(guild))
+
+        channel_calls = guild.create_text_channel.call_args_list
+        assert len(channel_calls) == 8
+
+        # bronze/silver/gold/platinum/shop are indices 0-4 in _CHANNEL_NAMES.
+        read_only_names = _CHANNEL_NAMES[:5]
+        for idx, name in enumerate(read_only_names):
+            call_args = channel_calls[idx]
+            assert call_args.args[0] == name, f"unexpected channel at index {idx}: {call_args.args[0]!r}"
+            overwrites = call_args.kwargs.get("overwrites", {})
+            assert new_role in overwrites, f"#{name}: @Bounty Hunter must be in overwrites"
+            bh_ow = overwrites[new_role]
+            assert bh_ow.use_application_commands is False, (
+                f"#{name}: @Bounty Hunter use_application_commands must be False on a fresh create_text_channel call"
+            )
+            assert bh_ow.view_channel is True, f"#{name}: @Bounty Hunter must still be able to view the channel"
+
+    # ------------------------------------------------------------------
     # Test 11: #bounty-hunting channel allows players full interactive access
     # ------------------------------------------------------------------
 

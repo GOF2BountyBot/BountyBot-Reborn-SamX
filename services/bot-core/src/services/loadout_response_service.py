@@ -98,6 +98,7 @@ class LoadoutResponseService:
     def __init__(self) -> None:
         # Lazy imports so the service remains testable without triggering ORM setup.
         from persist.repositories.bounty_repository import BountyRepository
+        from persist.repositories.commodity_repository import CommodityRepository
         from persist.repositories.criminal_repository import CriminalRepository
         from persist.repositories.inventory_repository import InventoryRepository
         from persist.repositories.item_repository import ItemRepository
@@ -108,6 +109,7 @@ class LoadoutResponseService:
         self.bounty_repo = BountyRepository()
         self.criminal_repo = CriminalRepository()
         self.item_repo = ItemRepository()
+        self.commodity_repo = CommodityRepository()
         self.inventory_repo = InventoryRepository()
         self.user_repo = UserRepository()
 
@@ -400,6 +402,10 @@ class LoadoutResponseService:
         for inv in inventory_items:
             emoji = None
             game_item = await self.item_repo.get_by_name(db, inv.item_name)
+            if game_item is None:
+                # ItemRepository only covers ships/weapons/modules; commodities
+                # live in their own table, so fall back to CommodityRepository.
+                game_item = await self.commodity_repo.get_by_name(db, inv.item_name)
             if game_item:
                 emoji = game_item.emoji
             cargo.append(

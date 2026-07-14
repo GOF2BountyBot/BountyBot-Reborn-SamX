@@ -296,6 +296,35 @@ class TestBuildPlayerLoadout:
         assert result.cargo == []
         assert result.cargo_total_count == 0
 
+    async def test_cargo_commodity_falls_back_to_commodity_repo_for_emoji(self):
+        """Commodities aren't in ItemRepository's type map (issue #34): _build_cargo_items
+        must fall back to CommodityRepository so cargo commodities get their emoji instead
+        of the '•' placeholder."""
+        player = _player()
+        user = _user()
+        player_ship = _player_ship()
+        ship = _ship()
+        inventory = [SimpleNamespace(item_name="Booze", item_type="commodity", quantity=16)]
+
+        svc = _make_svc(player=player, user=user, inventory=inventory)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+        svc.commodity_repo = MagicMock()
+        svc.commodity_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(emoji="<:booze:1>"))
+        db = _make_db_session(
+            player_ship=player_ship,
+            ship=ship,
+            module_factory=lambda n: None,
+        )
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=True)
+
+        assert result is not None
+        assert len(result.cargo) == 1
+        assert result.cargo[0].item_name == "Booze"
+        assert result.cargo[0].emoji == "<:booze:1>"
+        svc.commodity_repo.get_by_name.assert_awaited_once_with(db, "Booze")
+
     async def test_player_secondaries_populated_with_rounds(self):
         """build_player_loadout surfaces secondary_weapons with ammo rounds (CI-28)."""
         player = _player()

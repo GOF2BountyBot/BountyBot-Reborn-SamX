@@ -34,7 +34,11 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
     # the transport layer. Fixed in 1.11.1-1+deb13u1 (trixie security). libssh2 is
     # resident only as a transitive dep of git/libcurl. Upgrade both explicitly so
     # the fixes are pulled regardless of base-image snapshot date.
-    && apt-get install -y --only-upgrade libnghttp2-14 libssh2-1t64 \
+    # CVE-2026-34743: liblzma5 DoS via buffer overflow in index decoding.
+    # Fixed in 5.8.1-1+deb13u1 (trixie security). liblzma5 is a transitive dep
+    # (git, dpkg, python's lzma module); upgrade explicitly so the fix is
+    # pulled regardless of base-image snapshot date.
+    && apt-get install -y --only-upgrade libnghttp2-14 libssh2-1t64 liblzma5 \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

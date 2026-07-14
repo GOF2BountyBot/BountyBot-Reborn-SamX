@@ -802,6 +802,33 @@ class TestEnsureBountyBotInfrastructure:
         assert bh_ow.read_message_history is True, "read-only: read_message_history must be True"
         assert bh_ow.use_application_commands is False, "read-only: use_application_commands must be False"
 
+    def test_read_only_overwrites_hard_denies_everything_except_view_and_history(self):
+        """_read_only_overwrites: EVERY known discord.py permission is denied for
+        both @everyone and @Bounty Hunter EXCEPT view_channel and
+        read_message_history (issue #47 follow-up). A channel that only denies
+        send_messages/use_application_commands is not actually read-only —
+        anything else the guild's base role permissions happen to grant
+        (reactions, thread creation/posting, etc.) leaks through unless every
+        permission is explicitly denied per-channel."""
+        from utils.guild_setup import _ALL_PERMISSION_NAMES, _read_only_overwrites
+
+        guild = _make_guild()
+        role = _make_role(role_id=555)
+
+        ow = _read_only_overwrites(guild, role)
+        everyone_ow = ow[guild.default_role]
+        bh_ow = ow[role]
+
+        # @everyone: every permission denied, no exceptions (channel is fully hidden).
+        for name in _ALL_PERMISSION_NAMES:
+            assert getattr(everyone_ow, name) is False, f"@everyone: {name} must be False"
+
+        # Bounty Hunter: every permission denied EXCEPT view_channel/read_message_history.
+        allowed = {"view_channel", "read_message_history"}
+        for name in _ALL_PERMISSION_NAMES:
+            expected = name in allowed
+            assert getattr(bh_ow, name) is expected, f"Bounty Hunter: {name} must be {expected}"
+
     def test_hunting_overwrites_bounty_hunter_permissions(self):
         """
         _hunting_overwrites: @Bounty Hunter must have

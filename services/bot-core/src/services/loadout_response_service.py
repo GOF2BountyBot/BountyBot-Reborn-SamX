@@ -349,7 +349,7 @@ class LoadoutResponseService:
         items: list[LoadoutModuleItem] = []
         armor_bonus = 0
         shield_hp = 0
-        compressor_multiplier = 1.0
+        compressor_bonus = 0.0
         for name in names:
             mod_result = await db.execute(select(Module).where(Module.name == name))
             mod = mod_result.scalars().first()
@@ -375,7 +375,9 @@ class LoadoutResponseService:
                     raw_mult = extra.get("cargoMultiplier", extra.get("cargo_multiplier"))
                     if raw_mult is not None:
                         with contextlib.suppress(TypeError, ValueError):
-                            compressor_multiplier *= float(raw_mult)
+                            # Compressors stack additively (issue #36): a +25% and a
+                            # +100% compressor together give +125%, not +150% (1.25×2.0).
+                            compressor_bonus += float(raw_mult) - 1.0
 
             effects = LoadoutEffectService.format_module_effects(mod_type, extra)
             combat_tier = LoadoutEffectService.get_module_combat_tier(mod_type)
@@ -391,7 +393,7 @@ class LoadoutResponseService:
                     combat_tier=combat_tier,
                 )
             )
-        return items, armor_bonus, shield_hp, compressor_multiplier
+        return items, armor_bonus, shield_hp, 1.0 + compressor_bonus
 
     async def _build_cargo_items(self, db: AsyncSession, player_id: int) -> tuple[list[CargoItem], int]:
         inventory_items = await self.inventory_repo.get_player_items(db, player_id)
@@ -480,7 +482,7 @@ class LoadoutResponseService:
         ]
 
         module_items: list[LoadoutModuleItem] = []
-        compressor_multiplier = 1.0
+        compressor_bonus = 0.0
         for m in modules_raw:
             mod_type = m.get("type")
             extra = m.get("extra_atts") if isinstance(m.get("extra_atts"), dict) else {}
@@ -488,7 +490,9 @@ class LoadoutResponseService:
                 raw_mult = extra.get("cargoMultiplier", extra.get("cargo_multiplier"))
                 if raw_mult is not None:
                     with contextlib.suppress(TypeError, ValueError):
-                        compressor_multiplier *= float(raw_mult)
+                        # Compressors stack additively (issue #36) — see
+                        # _build_player_module_items above for the same fix.
+                        compressor_bonus += float(raw_mult) - 1.0
             effects = LoadoutEffectService.format_module_effects(mod_type, extra)
             combat_tier = LoadoutEffectService.get_module_combat_tier(mod_type)
             module_items.append(
@@ -529,9 +533,9 @@ class LoadoutResponseService:
         if base_armour is None and ship is not None:
             base_armour = ship.armour
 
-        # Effective cargo capacity — ship.cargo × CompressorModule multipliers
+        # Effective cargo capacity — ship.cargo × (1 + sum of CompressorModule bonuses)
         base_cargo = ship.cargo if ship else 0
-        effective_cargo = round(base_cargo * compressor_multiplier) if base_cargo else base_cargo
+        effective_cargo = round(base_cargo * (1.0 + compressor_bonus)) if base_cargo else base_cargo
 
         total_value = (
             # Base hull value — the ship itself. Excludes cargo/inventory (only equipped gear).

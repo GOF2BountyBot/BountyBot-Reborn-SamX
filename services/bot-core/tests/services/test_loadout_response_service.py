@@ -190,6 +190,17 @@ def _compressor_module():
     )
 
 
+def _compressor_module_rhoda():
+    return SimpleNamespace(
+        name="Rhoda Blackhole",
+        emoji="<:rhoda:1>",
+        type="CompressorModule",
+        value=900,
+        tech_level=3,
+        extra_atts={"cargoMultiplier": 2.0},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Player path tests
 # ---------------------------------------------------------------------------
@@ -414,6 +425,39 @@ class TestBuildPlayerLoadout:
         assert result.modules[0].type == "CompressorModule"
         assert result.modules[0].combat_tier == "utility"
 
+    async def test_two_compressor_modules_stack_additively(self):
+        """CompressorModule bonuses stack additively, not multiplicatively (issue #36):
+        a +25% and a +100% compressor together give +125%, not +150% (1.25 × 2.0)."""
+        player = _player()
+        user = _user()
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=["AutoPacker 2", "Rhoda Blackhole"],
+            turrets=[],
+        )
+        ship = _ship()  # base cargo=20
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+
+        def _module_factory(n):
+            if n == "AutoPacker 2":
+                return _compressor_module()
+            if n == "Rhoda Blackhole":
+                return _compressor_module_rhoda()
+            return None
+
+        db = _make_db_session(player_ship=ps, ship=ship, module_factory=_module_factory)
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        # Additive: 20 × (1 + 0.25 + 1.00) = 20 × 2.25 = 45 (not 20 × 1.25 × 2.0 = 50)
+        assert result.ship_stats.cargo == 45
+
 
 # ---------------------------------------------------------------------------
 # Bounty path tests
@@ -622,6 +666,40 @@ class TestBuildBountyLoadout:
 
         # 20 × 1.5 = 30
         assert result.ship_stats.cargo == 30
+
+    async def test_criminal_two_compressor_modules_stack_additively(self):
+        """Criminal-ship CompressorModules stack additively, not multiplicatively (issue #36)."""
+        criminal_ship = {
+            "ship_name": "Interceptor",
+            "ship_armour": 95,
+            "total_hp": 200,
+            "weapons": [],
+            "turrets": [],
+            "modules": [
+                {
+                    "name": "AutoPacker 2",
+                    "type": "CompressorModule",
+                    "extra_atts": {"cargoMultiplier": 1.5},
+                    "value": 300,
+                },
+                {
+                    "name": "Rhoda Blackhole",
+                    "type": "CompressorModule",
+                    "extra_atts": {"cargoMultiplier": 2.0},
+                    "value": 900,
+                },
+            ],
+        }
+        bounty = self._make_bounty(criminal_ship=criminal_ship)
+        ship = _interceptor_ship(cargo=20)
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=5)
+
+        # Additive: 20 × (1 + 0.5 + 1.0) = 20 × 2.5 = 50 (not 20 × 1.5 × 2.0 = 60)
+        assert result.ship_stats.cargo == 50
 
 
 # ---------------------------------------------------------------------------

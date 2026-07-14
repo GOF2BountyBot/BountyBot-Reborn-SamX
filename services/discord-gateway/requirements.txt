@@ -5,7 +5,7 @@ idna==3.18  # CVE-2026-45409: bypass of CVE-2024-3651 fix; transitive dep of htt
 aiohttp[speedups]==3.14.1
 fastapi==0.139.0
 python-multipart==0.0.32  # required by FastAPI for UploadFile / multipart form parsing (used by /channels/{id}/upload-batch)
-uvicorn[standard]==0.50.2
+uvicorn[standard]==0.51.0
 rapidfuzz==3.14.5
 apscheduler==3.11.3
 orjson==3.11.9
@@ -18,7 +18,7 @@ pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-mock==3.15.1
 faker==40.28.1
-coverage==7.15.0
+coverage==7.15.1
 respx==0.23.1
 pytest-timeout==2.4.0
 pytest-xdist==3.8.0

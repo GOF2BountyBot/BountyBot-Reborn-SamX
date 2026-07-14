@@ -3,7 +3,7 @@ fastapi-health==0.4.0
 fastapi-sqlalchemy==0.2.1
 #fastapi-healthcheck
 #fastapi-healthcheck-sqlalchemy
-uvicorn[standard]==0.50.2
+uvicorn[standard]==0.51.0
 hypercorn[uvloop]==0.18.0
 aiohttp[speedups]==3.14.1
 SQLAlchemy[asyncio]==2.0.51

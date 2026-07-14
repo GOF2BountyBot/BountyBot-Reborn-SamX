@@ -1281,9 +1281,10 @@ class InventoryCog(commands.Cog):
                     return
                 transfer_resp.raise_for_status()
 
+                qty_prefix = f"{quantity}x " if quantity > 1 else ""
                 embed = discord.Embed(
                     title="📦 Item Given",
-                    description=f"You gave **{item_name}** to {target.mention}.",
+                    description=f"You gave **{qty_prefix}{item_name}** to {target.mention}.",
                     color=discord.Color.green(),
                 )
                 embed.add_field(name="Item Type", value=item_type.replace("_", " ").title(), inline=True)

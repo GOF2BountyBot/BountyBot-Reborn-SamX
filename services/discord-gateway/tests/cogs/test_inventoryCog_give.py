@@ -402,6 +402,35 @@ class TestGiveItemQuantity:
         assert payload["item_type"] == "commodity"
         assert payload["item_name"] == "Booze"
         interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "7x Booze" in embed.description
+
+    def test_give_item_singular_quantity_omits_count_prefix(self, inventory_cog):
+        """/give item with quantity=1 (or omitted) reads naturally, no '1x' prefix (issue #40)."""
+        interaction = _create_mock_interaction(user_id=111111111)
+        target = _create_mock_member(user_id=222222222)
+
+        source_player_resp = _player_resp(player_id=10)
+        target_player_resp = _player_resp(player_id=20)
+        transfer_resp = _make_http_resp(200, {"from_player_id": 10, "to_player_id": 20, "item_name": "Pulse Laser"})
+
+        post_mock = AsyncMock(side_effect=[source_player_resp, target_player_resp, transfer_resp])
+        inventory_cog.http_client.post = post_mock
+
+        asyncio.run(
+            inventory_cog.give.callback(
+                inventory_cog,
+                interaction,
+                target=target,
+                give_type="item",
+                amount=None,
+                item="Pulse Laser::weapon",
+                ship=None,
+            )
+        )
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert embed.description == "You gave **Pulse Laser** to <@222222222>."
 
     def test_give_item_default_quantity_is_one(self, inventory_cog):
         """Backward-compatible: omitting quantity sends `quantity: 1`."""

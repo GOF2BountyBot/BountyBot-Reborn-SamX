@@ -101,9 +101,22 @@ RUN ln -sf /usr/bin/python3.13 /usr/bin/python3 && \
 # Install Blender from the official tarball.
 # We do NOT use apt (Ubuntu 24.04 ships only 4.0.2 which lacks sm_120/Blackwell support)
 # and NOT snap (requires systemd, unavailable in Docker).
+#
+# blender-cache/ (see .gitignore) lets an operator pre-place the matching
+# tarball to build on a network where download.blender.org 403s (observed:
+# Cloudflare bot-challenge blocking some IPs entirely, independent of which
+# Blender version is requested) — the RUN step below uses it if present,
+# otherwise falls back to the normal network download.
+COPY services/blender-service/blender-cache/ /tmp/blender-cache/
 RUN BLENDER_MAJOR_MINOR=$(echo "$BLENDER_VERSION" | cut -d. -f1,2) && \
     TARBALL="blender-${BLENDER_VERSION}-linux-x64.tar.xz" && \
-    wget -q "https://download.blender.org/release/Blender${BLENDER_MAJOR_MINOR}/${TARBALL}" -O "/tmp/${TARBALL}" && \
+    if [ -f "/tmp/blender-cache/${TARBALL}" ]; then \
+        echo "Using locally-cached ${TARBALL}" && \
+        cp "/tmp/blender-cache/${TARBALL}" "/tmp/${TARBALL}"; \
+    else \
+        wget -q "https://download.blender.org/release/Blender${BLENDER_MAJOR_MINOR}/${TARBALL}" -O "/tmp/${TARBALL}"; \
+    fi && \
+    rm -rf /tmp/blender-cache && \
     mkdir -p /opt/blender && \
     tar -xf "/tmp/${TARBALL}" --strip-components=1 -C /opt/blender && \
     ln -s /opt/blender/blender /usr/local/bin/blender && \

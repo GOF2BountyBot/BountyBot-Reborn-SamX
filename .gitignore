@@ -6,6 +6,12 @@ __pycache__/
 # Local CodeQL CLI install + databases (used for security triage, not committed)
 .codeql/
 
+# Locally pre-downloaded Blender tarball cache — an operator can drop the
+# matching blender-${BLENDER_VERSION}-linux-x64.tar.xz here to build on a
+# network where download.blender.org is unreachable (e.g. Cloudflare bot
+# challenges on some IPs); see services/blender-service/Dockerfile*.
+services/blender-service/blender-cache/*.tar.xz
+
 # C extensions
 *.so
 

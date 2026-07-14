@@ -28,23 +28,71 @@ _TIER_ROLE_NAMES = {
 
 # ── Overwrite factories ────────────────────────────────────────────────────────
 
+# Discord.py exposes a few permission names as aliases for the same underlying
+# bit (e.g. "view_channel"/"read_messages", "manage_emojis"/"manage_expressions"/
+# "manage_emojis_and_stickers"). Dedupe by bit value — keeping one canonical
+# name per bit — so a hard-deny built from every known permission never passes
+# two different names asserting different values for the same bit. Plain
+# alphabetical tie-breaking would pick the deprecated "read_messages" over
+# "view_channel" (r < v), which matters here because _read_only_overwrites()
+# overrides "view_channel" by name — an unpreferred alias would silently
+# become a second, order-dependent dict key for the same bit instead of being
+# overridden. _PREFERRED_PERMISSION_NAMES pins the modern name per alias group.
+_PREFERRED_PERMISSION_NAMES = frozenset(
+    {
+        "view_channel",
+        "manage_roles",
+        "use_external_emojis",
+        "use_external_stickers",
+        "manage_emojis_and_stickers",
+        "create_polls",
+    }
+)
+
+
+def _all_permission_names() -> list[str]:
+    canonical_by_bit: dict[int, str] = {}
+    for name, bit in discord.Permissions.VALID_FLAGS.items():
+        if bit not in canonical_by_bit or name in _PREFERRED_PERMISSION_NAMES:
+            canonical_by_bit[bit] = name
+    return sorted(canonical_by_bit.values())
+
+
+_ALL_PERMISSION_NAMES = _all_permission_names()
+
 
 def _read_only_overwrites(
     guild: discord.Guild,
     bounty_hunter_role: discord.Role | None,
 ) -> dict:
     """
-    Channel overwrite for read-only bounty-board / shop channels.
+    Hard-deny channel overwrite for read-only bounty-board / shop channels.
 
-    @everyone:     view=DENY, send=DENY
-    Bounty Hunter: view=ALLOW, send=DENY, read_history=ALLOW, use_app_cmds=DENY
+    Every known permission is explicitly denied for BOTH @everyone and Bounty
+    Hunter EXCEPT view_channel and read_message_history — members may see the
+    channel and read its history (and receive the bot's @-mentions there,
+    which isn't permission-gated) but cannot take ANY action in it. A channel
+    that only denies send_messages is not read-only: several other
+    permissions (use_application_commands, thread creation/posting, reactions,
+    etc.) default to whatever the guild's BASE role permissions grant unless
+    explicitly denied per-channel — that gap is exactly how issue #47
+    happened (regular members could run slash commands directly in the shop
+    and bounty-board channels).
+
+    @everyone:     view_channel=DENY (fully hidden), everything else DENY
+    Bounty Hunter: view_channel=ALLOW, read_message_history=ALLOW, everything else DENY
     Bot:           view=ALLOW, send=ALLOW, manage_messages=ALLOW
     """
+    deny_all = dict.fromkeys(_ALL_PERMISSION_NAMES, False)
+
+    everyone_kwargs = dict(deny_all)  # view_channel stays False: fully hidden
+
+    bounty_hunter_kwargs = dict(deny_all)
+    bounty_hunter_kwargs["view_channel"] = True
+    bounty_hunter_kwargs["read_message_history"] = True
+
     ow: dict = {
-        guild.default_role: discord.PermissionOverwrite(
-            view_channel=False,
-            send_messages=False,
-        ),
+        guild.default_role: discord.PermissionOverwrite(**everyone_kwargs),
         guild.me: discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
@@ -52,12 +100,7 @@ def _read_only_overwrites(
         ),
     }
     if bounty_hunter_role is not None:
-        ow[bounty_hunter_role] = discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=False,
-            read_message_history=True,
-            use_application_commands=False,
-        )
+        ow[bounty_hunter_role] = discord.PermissionOverwrite(**bounty_hunter_kwargs)
     return ow
 
 

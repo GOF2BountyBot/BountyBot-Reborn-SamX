@@ -82,8 +82,19 @@ def _read_only_overwrites(
     @everyone:     view_channel=DENY (fully hidden), everything else DENY
     Bounty Hunter: view_channel=ALLOW, read_message_history=ALLOW, everything else DENY
     Bot:           view=ALLOW, send=ALLOW, manage_messages=ALLOW
+
+    Only denies permissions the bot itself currently holds in this guild
+    (via guild.me.guild_permissions). Discord rejects a channel overwrite
+    that touches ANY permission bit the acting bot/user doesn't hold at the
+    guild level — even to deny it — as an anti-privilege-escalation rule.
+    A bot invited with a curated permission set (no ban_members,
+    administrator, manage_guild, etc.) got a 403 "Missing Permissions" and
+    silently failed to create these channels at all when this tried to
+    touch every known permission unconditionally.
     """
-    deny_all = dict.fromkeys(_ALL_PERMISSION_NAMES, False)
+    bot_perms = guild.me.guild_permissions
+    controllable = [name for name in _ALL_PERMISSION_NAMES if getattr(bot_perms, name, False)]
+    deny_all = dict.fromkeys(controllable, False)
 
     everyone_kwargs = dict(deny_all)  # view_channel stays False: fully hidden
 

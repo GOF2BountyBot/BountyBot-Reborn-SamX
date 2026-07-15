@@ -97,8 +97,19 @@ def _make_guild(
     error_category=False,
     forbidden_role=False,
     error_role=False,
+    bot_permissions=None,
 ):
-    """Build a minimal mock discord.Guild."""
+    """Build a minimal mock discord.Guild.
+
+    bot_permissions: a real discord.Permissions object for guild.me.guild_permissions
+    (defaults to Permissions.all() — every existing test that doesn't care about
+    permission-filtering sees an unrestricted bot, matching pre-issue-47-follow-up
+    behavior). Pass a curated value to test _read_only_overwrites' filtering to
+    only permissions the bot actually holds (issue #47 follow-up: Discord 403s a
+    channel overwrite that touches ANY permission bit the bot doesn't hold, even
+    to deny it — a bare MagicMock here would never catch that, since getattr on a
+    MagicMock is always truthy regardless of attribute name).
+    """
     import discord
 
     guild = MagicMock(spec=discord.Guild)
@@ -108,6 +119,7 @@ def _make_guild(
     guild.default_role = MagicMock()
     me = MagicMock()
     me.id = 999
+    me.guild_permissions = bot_permissions if bot_permissions is not None else discord.Permissions.all()
     guild.me = me
 
     guild.categories = categories or []
@@ -828,6 +840,60 @@ class TestEnsureBountyBotInfrastructure:
         for name in _ALL_PERMISSION_NAMES:
             expected = name in allowed
             assert getattr(bh_ow, name) is expected, f"Bounty Hunter: {name} must be {expected}"
+
+    def test_read_only_overwrites_only_touches_permissions_bot_holds(self):
+        """_read_only_overwrites must NOT set allow/deny for any permission the
+        bot doesn't itself hold in the guild (issue #47 follow-up regression).
+
+        Discord rejects (403 Missing Permissions) a channel-creation or
+        permission-overwrite request that touches ANY bit the acting bot/user
+        doesn't hold at the guild level — even to deny it. A bot invited with a
+        curated permission set (no administrator/ban_members/manage_guild/etc.)
+        got exactly this 403 and silently failed to create the shop/bounty-board
+        channels at all, while /bounty-hunting, /bounty-discussions, /bot-images
+        (different overwrite factories, never touching those bits) succeeded —
+        reproduced here with a guild.me.guild_permissions that lacks them."""
+        import discord
+        from utils.guild_setup import _read_only_overwrites
+
+        curated = discord.Permissions.none()
+        curated.update(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_channels=True,
+            manage_roles=True,
+            manage_messages=True,
+            attach_files=True,
+            embed_links=True,
+            add_reactions=True,
+            use_application_commands=True,
+            create_public_threads=True,
+            create_private_threads=True,
+            send_messages_in_threads=True,
+        )
+        guild = _make_guild(bot_permissions=curated)
+        role = _make_role(role_id=555)
+
+        ow = _read_only_overwrites(guild, role)
+        everyone_ow = ow[guild.default_role]
+        bh_ow = ow[role]
+
+        # Permissions the bot does NOT hold must be left untouched (None = inherit),
+        # never explicitly set to False — that's what triggers the 403.
+        for name in ("administrator", "ban_members", "kick_members", "manage_guild", "view_audit_log"):
+            assert getattr(everyone_ow, name) is None, f"@everyone: {name} must be untouched (bot doesn't hold it)"
+            assert getattr(bh_ow, name) is None, f"Bounty Hunter: {name} must be untouched (bot doesn't hold it)"
+
+        # Permissions the bot DOES hold are still correctly hard-denied.
+        for name in ("manage_channels", "manage_roles", "add_reactions", "use_application_commands"):
+            assert getattr(everyone_ow, name) is False, f"@everyone: {name} must still be denied"
+        for name in ("send_messages", "add_reactions", "use_application_commands", "create_public_threads"):
+            assert getattr(bh_ow, name) is False, f"Bounty Hunter: {name} must still be denied"
+
+        # view_channel/read_message_history stay ALLOW for Bounty Hunter regardless.
+        assert bh_ow.view_channel is True
+        assert bh_ow.read_message_history is True
 
     def test_hunting_overwrites_bounty_hunter_permissions(self):
         """

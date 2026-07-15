@@ -94,6 +94,20 @@ def _read_only_overwrites(
     """
     bot_perms = guild.me.guild_permissions
     controllable = [name for name in _ALL_PERMISSION_NAMES if getattr(bot_perms, name, False)]
+    # Discord forbids setting the manage_roles ("Manage Permissions") bit in a
+    # channel overwrite unless the acting bot/user has Administrator — this is
+    # the one permission the overwrite system guards even harder than the
+    # general "you can only touch bits you hold" rule, because a per-channel
+    # manage_roles grant is itself a privilege-escalation vector. A bot invited
+    # with a curated permission set holds manage_roles at the guild level (it's
+    # what lets it create channels WITH overwrites at all) but NOT administrator,
+    # so leaving manage_roles in the deny set produced a 403 "Missing
+    # Permissions" on exactly the 5 read-only channels (shop + 4 boards) while
+    # the 3 channels whose factories never touch manage_roles succeeded. Denying
+    # it buys nothing for a read-only channel anyway — regular members don't
+    # hold it here to begin with — so drop it unless we're actually admin.
+    if not bot_perms.administrator:
+        controllable = [name for name in controllable if name != "manage_roles"]
     deny_all = dict.fromkeys(controllable, False)
 
     everyone_kwargs = dict(deny_all)  # view_channel stays False: fully hidden

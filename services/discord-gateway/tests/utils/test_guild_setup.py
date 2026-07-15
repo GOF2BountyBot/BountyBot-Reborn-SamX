@@ -886,14 +886,41 @@ class TestEnsureBountyBotInfrastructure:
             assert getattr(bh_ow, name) is None, f"Bounty Hunter: {name} must be untouched (bot doesn't hold it)"
 
         # Permissions the bot DOES hold are still correctly hard-denied.
-        for name in ("manage_channels", "manage_roles", "add_reactions", "use_application_commands"):
+        for name in ("manage_channels", "add_reactions", "use_application_commands"):
             assert getattr(everyone_ow, name) is False, f"@everyone: {name} must still be denied"
         for name in ("send_messages", "add_reactions", "use_application_commands", "create_public_threads"):
             assert getattr(bh_ow, name) is False, f"Bounty Hunter: {name} must still be denied"
 
+        # manage_roles is the ONE exception: Discord forbids setting the
+        # manage_roles ("Manage Permissions") bit in a channel overwrite unless
+        # the actor has Administrator, even though the bot holds manage_roles at
+        # the guild level (it's what lets the bot create channels WITH overwrites
+        # at all). Including it in the deny set is what STILL 403'd the 5
+        # read-only channels after the first fix. Since this bot is not admin,
+        # manage_roles must be left untouched, not denied.
+        assert everyone_ow.manage_roles is None, "@everyone: manage_roles must be untouched (bot is not admin)"
+        assert bh_ow.manage_roles is None, "Bounty Hunter: manage_roles must be untouched (bot is not admin)"
+
         # view_channel/read_message_history stay ALLOW for Bounty Hunter regardless.
         assert bh_ow.view_channel is True
         assert bh_ow.read_message_history is True
+
+    def test_read_only_overwrites_admin_bot_still_denies_manage_roles(self):
+        """When the bot DOES have Administrator, denying manage_roles in a channel
+        overwrite is permitted by Discord, so it stays in the hard-deny set. This
+        pins the other branch of the manage_roles carve-out — the exclusion is
+        gated on `not bot_perms.administrator`, not applied unconditionally."""
+        import discord
+        from utils.guild_setup import _read_only_overwrites
+
+        admin_perms = discord.Permissions.all()  # includes administrator
+        assert admin_perms.administrator is True
+        guild = _make_guild(bot_permissions=admin_perms)
+        role = _make_role(role_id=555)
+
+        ow = _read_only_overwrites(guild, role)
+        assert ow[guild.default_role].manage_roles is False, "admin bot: manage_roles is still denied for @everyone"
+        assert ow[role].manage_roles is False, "admin bot: manage_roles is still denied for Bounty Hunter"
 
     def test_hunting_overwrites_bounty_hunter_permissions(self):
         """

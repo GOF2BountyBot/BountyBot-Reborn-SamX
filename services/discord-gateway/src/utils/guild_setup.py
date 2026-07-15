@@ -82,8 +82,9 @@ def _read_only_overwrites(
     @everyone:     view_channel=DENY (fully hidden), everything else DENY
     Bounty Hunter: view_channel=ALLOW, read_message_history=ALLOW, everything else DENY
     Bot:           view=ALLOW, send=ALLOW, manage_messages=ALLOW,
-                   embed_links=ALLOW, attach_files=ALLOW,
-                   use_external_emojis=ALLOW, use_external_stickers=ALLOW
+                   read_message_history=ALLOW, embed_links=ALLOW,
+                   attach_files=ALLOW, use_external_emojis=ALLOW,
+                   use_external_stickers=ALLOW
 
     The bot MUST be re-granted its posting permissions here: the @everyone
     hard-deny denies them too, and a channel overwrite is NOT inherited by the
@@ -92,7 +93,11 @@ def _read_only_overwrites(
     part (HTTP 200, no error): without embed_links the embed vanishes, without
     use_external_emojis custom emojis from the bot's emoji guild render as raw
     :name: text, without attach_files/use_external_stickers uploaded images and
-    stickers disappear. These channels (bounty boards + shop) are exactly the
+    stickers disappear. read_message_history is likewise required — the bounty
+    capture/expire edit flow (edit_bounty_announcement) calls
+    channel.fetch_message() to preserve the route-map image, which HARD-FAILS
+    with 403 Missing Access (not a silent strip) when the bot can't read the
+    channel's history. These channels (bounty boards + shop) are exactly the
     ones rich announcements target, so this is where the drop was visible —
     bounty/shop announcements posted only their @-mention text_content while the
     embed and its emoji/imagery went missing.
@@ -138,6 +143,7 @@ def _read_only_overwrites(
     bot_kwargs: dict = {"view_channel": True, "send_messages": True}
     for extra in (
         "manage_messages",
+        "read_message_history",  # fetch_message() in the capture/expire edit flow
         "embed_links",           # the embed itself
         "attach_files",          # uploaded images
         "use_external_emojis",   # custom emojis from the bot's emoji guild

@@ -81,7 +81,21 @@ def _read_only_overwrites(
 
     @everyone:     view_channel=DENY (fully hidden), everything else DENY
     Bounty Hunter: view_channel=ALLOW, read_message_history=ALLOW, everything else DENY
-    Bot:           view=ALLOW, send=ALLOW, manage_messages=ALLOW
+    Bot:           view=ALLOW, send=ALLOW, manage_messages=ALLOW,
+                   embed_links=ALLOW, attach_files=ALLOW,
+                   use_external_emojis=ALLOW, use_external_stickers=ALLOW
+
+    The bot MUST be re-granted its posting permissions here: the @everyone
+    hard-deny denies them too, and a channel overwrite is NOT inherited by the
+    bot's own member overwrite unless explicitly re-granted. Discord accepts a
+    message the bot lacks permission to enrich but SILENTLY STRIPS the offending
+    part (HTTP 200, no error): without embed_links the embed vanishes, without
+    use_external_emojis custom emojis from the bot's emoji guild render as raw
+    :name: text, without attach_files/use_external_stickers uploaded images and
+    stickers disappear. These channels (bounty boards + shop) are exactly the
+    ones rich announcements target, so this is where the drop was visible —
+    bounty/shop announcements posted only their @-mention text_content while the
+    embed and its emoji/imagery went missing.
 
     Only denies permissions the bot itself currently holds in this guild
     (via guild.me.guild_permissions). Discord rejects a channel overwrite
@@ -116,13 +130,25 @@ def _read_only_overwrites(
     bounty_hunter_kwargs["view_channel"] = True
     bounty_hunter_kwargs["read_message_history"] = True
 
+    # Re-grant the bot its posting permissions. view/send are the essential
+    # baseline; the rest let Discord render the whole announcement instead of
+    # silently stripping parts of it. Only grant bits the bot actually holds at
+    # the guild level — granting one it lacks would 403 the channel creation
+    # under the same anti-escalation rule as the manage_roles carve-out above.
+    bot_kwargs: dict = {"view_channel": True, "send_messages": True}
+    for extra in (
+        "manage_messages",
+        "embed_links",           # the embed itself
+        "attach_files",          # uploaded images
+        "use_external_emojis",   # custom emojis from the bot's emoji guild
+        "use_external_stickers",  # external stickers
+    ):
+        if getattr(bot_perms, extra, False):
+            bot_kwargs[extra] = True
+
     ow: dict = {
         guild.default_role: discord.PermissionOverwrite(**everyone_kwargs),
-        guild.me: discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            manage_messages=True,
-        ),
+        guild.me: discord.PermissionOverwrite(**bot_kwargs),
     }
     if bounty_hunter_role is not None:
         ow[bounty_hunter_role] = discord.PermissionOverwrite(**bounty_hunter_kwargs)

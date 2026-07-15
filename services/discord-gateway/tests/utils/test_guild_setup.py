@@ -922,6 +922,64 @@ class TestEnsureBountyBotInfrastructure:
         assert ow[guild.default_role].manage_roles is False, "admin bot: manage_roles is still denied for @everyone"
         assert ow[role].manage_roles is False, "admin bot: manage_roles is still denied for Bounty Hunter"
 
+    def test_read_only_overwrites_bot_can_post_rich_announcements(self):
+        """The bot's own overwrite in a read-only channel must ALLOW the
+        permissions needed to render a full announcement, or Discord silently
+        strips the offending part (HTTP 200, no error): without embed_links the
+        embed vanishes, without use_external_emojis custom emojis render as raw
+        :name: text, etc. This is why bounty/shop announcements posted only their
+        @-mention text_content and lost the embed. Only bits the bot actually
+        holds at the guild level may be granted (granting one it lacks 403s the
+        create), so this asserts against a curated set that holds all of them."""
+        import discord
+        from utils.guild_setup import _read_only_overwrites
+
+        curated = discord.Permissions.none()
+        curated.update(
+            view_channel=True,
+            send_messages=True,
+            manage_messages=True,
+            embed_links=True,
+            attach_files=True,
+            use_external_emojis=True,
+            use_external_stickers=True,
+        )
+        guild = _make_guild(bot_permissions=curated)
+        role = _make_role(role_id=555)
+
+        bot_ow = _read_only_overwrites(guild, role)[guild.me]
+        for perm in (
+            "view_channel",
+            "send_messages",
+            "manage_messages",
+            "embed_links",
+            "attach_files",
+            "use_external_emojis",
+            "use_external_stickers",
+        ):
+            assert getattr(bot_ow, perm) is True, f"bot must be granted {perm} in read-only channel"
+
+    def test_read_only_overwrites_bot_grant_skips_unheld_extras(self):
+        """The bot's extra posting grants must be filtered to permissions it
+        actually holds — granting a bit the bot lacks at guild level would 403
+        the channel creation (same anti-escalation rule as the manage_roles
+        carve-out). A bot without use_external_emojis/stickers/attach_files must
+        still get its channel; those bits are simply left unset (inherit)."""
+        import discord
+        from utils.guild_setup import _read_only_overwrites
+
+        curated = discord.Permissions.none()
+        curated.update(view_channel=True, send_messages=True, embed_links=True)  # no extras
+        guild = _make_guild(bot_permissions=curated)
+        role = _make_role(role_id=555)
+
+        bot_ow = _read_only_overwrites(guild, role)[guild.me]
+        assert bot_ow.view_channel is True
+        assert bot_ow.send_messages is True
+        assert bot_ow.embed_links is True  # held → granted
+        for unheld in ("use_external_emojis", "use_external_stickers", "attach_files", "manage_messages"):
+            assert getattr(bot_ow, unheld) is None, f"{unheld} not held → must be left unset, not force-granted"
+
     def test_hunting_overwrites_bounty_hunter_permissions(self):
         """
         _hunting_overwrites: @Bounty Hunter must have

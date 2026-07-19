@@ -721,12 +721,14 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # Clear existing shop items for this tier
             await self.shop_repo.clear_shop_tier(db, guild_id, tier)
 
-            # Determine tech level
-            shop_tech_level = (
-                force_tech_level
-                if force_tech_level
-                else random.randint(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL)
-            )
+            # Determine tech level. Tier shops bias toward a sensible band:
+            # Bronze = lower TLs, Silver = mid, Gold = higher, Platinum = highest.
+            # Explicit force_tech_level still overrides the band.
+            if force_tech_level is not None:
+                shop_tech_level = force_tech_level
+            else:
+                min_tl, max_tl = self._get_shop_tech_level_band(tier)
+                shop_tech_level = random.randint(min_tl, max_tl)
 
             # Resolve per-guild combat/filler module-draw probability once for the whole refresh.
             combat_module_prob = resolve_constant(
@@ -865,6 +867,16 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         player_level = tier_levels.get(player_tier, 1)
         shop_level = tier_levels.get(shop_tier, 1)
         return player_level == shop_level
+
+    def _get_shop_tech_level_band(self, tier: str) -> tuple[int, int]:
+        """Return the preferred tech-level band for a given shop tier."""
+        tier_bands = {
+            "Bronze": (GameConstants.MIN_TECH_LEVEL, 3),
+            "Silver": (3, 5),
+            "Gold": (5, 7),
+            "Platinum": (7, GameConstants.MAX_TECH_LEVEL),
+        }
+        return tier_bands.get(tier, (GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL))
 
     def _select_item_tech_level(self, shop_tech_level: int, probabilities: dict[str, float]) -> int:
         """Select item tech level based on shop tech level and probability distribution."""

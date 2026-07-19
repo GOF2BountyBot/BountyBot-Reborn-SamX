@@ -654,6 +654,21 @@ class TestRefreshShop:
         assert "refresh_time" in result
 
     @pytest.mark.asyncio
+    async def test_bronze_refresh_prefers_lower_tech_level_band(self, service, mock_db, mock_config_repo, mock_shop_repo):
+        """Bronze refreshes should bias toward the lower tech-level band."""
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+        service._get_random_item_by_tech_level = AsyncMock(return_value=None)
+        service._get_item_base_price = AsyncMock(return_value=100)
+        mock_shop_repo.clear_shop_tier = AsyncMock()
+        mock_shop_repo.create_or_update = AsyncMock(return_value=_make_shop_item())
+
+        with patch("services.shop_service.random.randint", side_effect=lambda a, b: b):
+            result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze")
+
+        assert result["tech_level"] == 3
+
+    @pytest.mark.asyncio
     async def test_ship_selection_respects_requested_tech_level(self, service, mock_db):
         """Ship selection should ignore ships whose price-derived TL does not match the requested shop TL."""
         ship = _make_ship_static(name="HighTechShip", value=1_000_000)

@@ -654,6 +654,16 @@ class TestRefreshShop:
         assert "refresh_time" in result
 
     @pytest.mark.asyncio
+    async def test_ship_selection_respects_requested_tech_level(self, service, mock_db):
+        """Ship selection should ignore ships whose price-derived TL does not match the requested shop TL."""
+        ship = _make_ship_static(name="HighTechShip", value=1_000_000)
+        service._static_cache = {"ship": [ship], "weapon": [], "secondary": [], "turret": [], "module": []}
+
+        result = await service._get_random_item_by_tech_level(mock_db, "ship", 1)
+
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_rows_carry_item_tech_level_not_batch(self, service, mock_db, mock_config_repo, mock_shop_repo):
         """Shop rows store the ITEM's drawn tech level; the batch TL stays in refresh_details only.
 

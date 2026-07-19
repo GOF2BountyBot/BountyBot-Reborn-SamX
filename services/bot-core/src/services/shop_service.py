@@ -905,8 +905,26 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             )
             if not all_ships:
                 return None
-            weights = [(s.shop_spawn_rate if s.shop_spawn_rate is not None else 1.0) for s in all_ships]
-            chosen = random.choices(all_ships, weights=weights, k=1)[0]
+
+            eligible_ships = []
+            for ship in all_ships:
+                value = getattr(ship, "value", None)
+                ship_tl = ship_tech_level_for_value(value if value is not None else 0)
+                if ship_tl == tech_level:
+                    eligible_ships.append(ship)
+
+            if not eligible_ships:
+                return None
+
+            weights = []
+            for ship in eligible_ships:
+                spawn_rate = getattr(ship, "shop_spawn_rate", None)
+                if isinstance(spawn_rate, (int, float)):
+                    weights.append(spawn_rate)
+                else:
+                    weights.append(1.0)
+
+            chosen = random.choices(eligible_ships, weights=weights, k=1)[0]
             return chosen.name
 
         if item_type in ("weapon", "primary_weapon"):

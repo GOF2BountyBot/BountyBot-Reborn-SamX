@@ -55,6 +55,14 @@ _GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
 _GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
 _GATEWAY_BASE_URL = f"http://{_GATEWAY_HOST}:{_GATEWAY_PORT}/api/v1"
 
+# Timeout (seconds) for gateway calls that POST a Discord message (announce +
+# cap-payout notice). These depend on Discord's own response latency: the POST
+# can hang after Discord has already created the message. A 10s ceiling was too
+# tight — a slow-but-successful announce tripped it, and the resulting rollback
+# orphaned the post (bounty 11754). Configurable so it can be tuned without a
+# redeploy; defaults to a more forgiving 30s.
+_ANNOUNCE_TIMEOUT = float(os.getenv("BOUNTY_ANNOUNCE_TIMEOUT", "30"))
+
 
 def _is_guild_fully_configured(config) -> bool:
     """Return True only if the guild config has all required channel and role IDs set.
@@ -993,7 +1001,7 @@ async def _announce_bounty(
             resp = await client.post(
                 f"{_GATEWAY_BASE_URL}/announcements/bounty/channel/{target_channel_id}",
                 json=announcement,
-                timeout=10,
+                timeout=_ANNOUNCE_TIMEOUT,
             )
         resp.raise_for_status()
         resp_data = resp.json()
@@ -1359,7 +1367,7 @@ async def _announce_payout_embed(parent_job_id: str, guild_id: int, tier: str, c
             resp = await client.post(
                 f"{_GATEWAY_BASE_URL}/channels/{channel_id}/messages",
                 json={"embeds": [embed_dict]},
-                timeout=10,
+                timeout=_ANNOUNCE_TIMEOUT,
             )
         resp.raise_for_status()
         flogger.debug(

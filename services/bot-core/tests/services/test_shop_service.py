@@ -656,7 +656,7 @@ class TestRefreshShop:
     @pytest.mark.asyncio
     async def test_bronze_refresh_prefers_lower_tech_level_band(
         self, service, mock_db, mock_config_repo, mock_shop_repo
-        ):
+    ):
         """Bronze refreshes should bias toward the lower tech-level band."""
         config = _make_config()
         mock_config_repo.get_by_guild_id.return_value = config

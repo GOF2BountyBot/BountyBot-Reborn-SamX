@@ -1020,12 +1020,13 @@ class TestCheckAndRefreshShop:
 # ===========================================================================
 
 
-def _make_db_item(name: str, tech_level: int = 3, shop_spawn_rate: float | None = None) -> MagicMock:
+def _make_db_item(name: str, tech_level: int = 3, shop_spawn_rate: float | None = None, value: int | None = None) -> MagicMock:
     """Create a mock DB item with name and optional tech_level / shop_spawn_rate."""
     item = MagicMock()
     item.name = name
     item.tech_level = tech_level
     item.shop_spawn_rate = shop_spawn_rate
+    item.value = value
     return item
 
 
@@ -1067,7 +1068,7 @@ class TestGetRandomItemByTechLevel:
     @pytest.mark.asyncio
     async def test_returns_ship_name_weighted_by_spawn_rate(self, service, mock_db, mock_ship_repo):
         """Returns a ship name; ships are selected by shop_spawn_rate weight."""
-        ship = _make_db_item("Viper", shop_spawn_rate=2.5)
+        ship = _make_db_item("Viper", shop_spawn_rate=2.5, value=0)  # value that yields TL 1
         mock_ship_repo.list_all = AsyncMock(return_value=[ship])
 
         result = await service._get_random_item_by_tech_level(mock_db, "ship", 1)

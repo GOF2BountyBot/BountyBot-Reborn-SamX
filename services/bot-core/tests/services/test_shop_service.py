@@ -1020,7 +1020,9 @@ class TestCheckAndRefreshShop:
 # ===========================================================================
 
 
-def _make_db_item(name: str, tech_level: int = 3, shop_spawn_rate: float | None = None, value: int | None = None) -> MagicMock:
+def _make_db_item(
+    name: str, tech_level: int = 3, shop_spawn_rate: float | None = None, value: int | None = None
+) -> MagicMock:
     """Create a mock DB item with name and optional tech_level / shop_spawn_rate."""
     item = MagicMock()
     item.name = name

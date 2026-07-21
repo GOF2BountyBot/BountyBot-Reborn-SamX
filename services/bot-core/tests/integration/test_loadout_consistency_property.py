@@ -96,7 +96,11 @@ _src_dir = _os.path.normpath(_os.path.join(_os.path.dirname(__file__), "..", "..
 # next import finds src/services/ instead.
 if "services" in sys.modules:
     _svc_init = getattr(sys.modules["services"], "__file__", None) or ""
-    if "bot-core/src" not in _svc_init:
+    # Only purge when `services` did NOT resolve to *our* src/ tree. The check must
+    # use the computed src path — a hardcoded "bot-core/src" substring misfires in
+    # deployed layouts where src lives at /app/src, making this purge run on every
+    # collection and re-execute already-imported modules (duplicate class objects).
+    if _os.path.normpath(_src_dir) not in _os.path.normpath(_svc_init):
         # Cached as namespace package — clear it and all sub-modules.
         for _k in list(sys.modules):
             if _k == "services" or _k.startswith("services."):

@@ -370,6 +370,66 @@ async def delete_channel_message(request: Request, channel_id: int, message_id: 
         await handle_discord_exception("delete channel message", exc)
 
 
+@router.delete(
+    "/channels/{channel_id}/orphaned-announcement",
+    response_model=DeleteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Delete Orphaned Bounty Announcement",
+    description=(
+        "Scan a channel's recent history and delete the bot's own bounty announcement whose embed "
+        "image carries the given route-map marker. Used to reap an announcement that Discord created "
+        "but whose spawn was rolled back after an ambiguous announce timeout (no message_id returned)."
+    ),
+)
+async def delete_orphaned_announcement(
+    request: Request,
+    channel_id: int,
+    route_map_marker: str = Query(
+        ..., description="Route-map image filename identifying the orphan, e.g. route_map_11754.png"
+    ),
+    limit: int = Query(30, le=100, description="How many recent messages to scan"),
+) -> DeleteResponse:
+    """Find and delete the bot's own bounty announcement whose embed image matches *route_map_marker*."""
+    flogger.info(f"delete_orphaned_announcement called for channel_id={channel_id} marker={route_map_marker!r}")
+    try:
+        bot = await resolve_bot(request)
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
+
+        if not hasattr(channel, "history"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Channel {channel_id} cannot contain messages"
+            )
+
+        bot_user_id = getattr(bot.user, "id", None)
+        deleted = 0
+        async for message in channel.history(limit=limit):
+            # Only ever delete the bot's own posts.
+            if bot_user_id is not None and getattr(message.author, "id", None) != bot_user_id:
+                continue
+            matched = False
+            for embed in getattr(message, "embeds", []) or []:
+                image_url = getattr(getattr(embed, "image", None), "url", None) or ""
+                if route_map_marker in image_url:
+                    matched = True
+                    break
+            if matched:
+                await message.delete()
+                deleted += 1
+                flogger.info(
+                    f"delete_orphaned_announcement deleted message {message.id} in channel {channel_id} "
+                    f"(marker={route_map_marker!r})"
+                )
+
+        msg = f"Deleted {deleted} orphaned announcement(s) in channel {channel_id} matching {route_map_marker!r}"
+        flogger.info(msg)
+        return DeleteResponse(status="deleted", deleted=deleted > 0, message=msg)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.error(f"Unexpected error in delete_orphaned_announcement: {exc}")
+        await handle_discord_exception("delete orphaned announcement", exc)
+
+
 @router.get(
     "/channels/{channel_id}/permissions",
     response_model=PermissionOverwriteListResponse,

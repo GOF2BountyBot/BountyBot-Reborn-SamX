@@ -663,6 +663,15 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
     # Session A is now closed; DB connection returned to pool (P6-T7).
 
     # ------------------------------------------------------------------
+    # 8b. Upload the route map BEFORE announcing (not inside the announce
+    # POST). The multi-step render+upload is where the slow file I/O lives;
+    # doing it here keeps the announce a fast pure message-send and gives us
+    # the image URL up-front, so the rollback can find and delete an orphaned
+    # post by its route_map_<id>.png marker if the announce times out.
+    # ------------------------------------------------------------------
+    route_map_url = await _upload_route_map(job_id, spawned_bounty, getattr(config, "image_channel_id", None))
+
+    # ------------------------------------------------------------------
     # 9. Announce to Discord. Fix B: now CRITICAL. The announce helper
     # returns a structured result so the executor can perform a
     # compensating rollback (delete post, delete bounty row, cancel
@@ -682,6 +691,7 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
             spawned_bounty,
             config,
             db=None,
+            pre_resolved_route_map_url=route_map_url,
             pre_built_announcement=_pre_announcement,
         )
     except Exception as ann_err:  # pylint: disable=broad-exception-caught
@@ -713,6 +723,7 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
             expiry_job_id=expiry_job_id,
             discord_message_id=announce_result.get("discord_message_id"),
             channel_id=announce_result.get("channel_id"),
+            route_map_url=route_map_url,
         )
         return {
             "success": False,
@@ -823,6 +834,56 @@ async def _schedule_expiry_job(parent_job_id: str, bounty) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Helper: render + upload a bounty route map (hoisted out of _announce_bounty)
+# ---------------------------------------------------------------------------
+
+
+async def _upload_route_map(parent_job_id: str, bounty, image_channel_id: int | None) -> str | None:
+    """Render and upload the bounty's route map, returning its Discord CDN URL (or None).
+
+    Hoisted out of :func:`_announce_bounty` so the executor can run this slower,
+    multi-step upload (render fetch + file upload) BEFORE the announce POST
+    rather than inside it. That keeps the announce a fast, pure message-send —
+    far less likely to hit the announce timeout — and hands the caller the image
+    URL up-front so a rollback can correlate an orphaned post by its
+    ``route_map_<id>.png`` marker. Non-fatal: returns None on any failure and the
+    announcement simply proceeds without an image.
+
+    The upload POST is allowed 2x the announce timeout because it can carry a
+    sizeable PNG (and, on the batch path, several).
+    """
+    if image_channel_id is None:
+        return None
+    try:
+        async with httpx.AsyncClient() as client:
+            map_resp = await client.get(
+                f"{_SELF_BASE_URL}/bounties/{bounty.id}/map",
+                timeout=_ANNOUNCE_TIMEOUT,
+            )
+            map_resp.raise_for_status()
+            png_bytes = map_resp.content
+
+            upload_resp = await client.post(
+                f"{_GATEWAY_BASE_URL}/channels/{image_channel_id}/upload",
+                content=png_bytes,
+                headers={"X-Filename": f"route_map_{bounty.id}.png", "Content-Type": "image/png"},
+                timeout=2 * _ANNOUNCE_TIMEOUT,
+            )
+            upload_resp.raise_for_status()
+            route_map_url = upload_resp.json().get("data", {}).get("attachment_url")
+            flogger.debug(
+                f"BountySpawnJob[{parent_job_id}] uploaded route map for bounty id={bounty.id}: {route_map_url}"
+            )
+            return route_map_url
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"BountySpawnJob[{parent_job_id}] route map upload failed for bounty id={bounty.id}: "
+            f"{type(e).__name__}: {e} — continuing without image"
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Helper: announce bounty to discord-gateway (per-division routing, SEG-07)
 # ---------------------------------------------------------------------------
 
@@ -907,41 +968,17 @@ async def _announce_bounty(
     bounty_hunter_role_id: int | None = _get_division_role_id(config, bounty.division)
 
     # ------------------------------------------------------------------
-    # Step 1: Upload route map (optional, non-fatal)
-    # If pre_resolved_route_map_url is supplied, the caller has already
-    # uploaded the map (e.g. via the batch-upload endpoint) and we skip
-    # the per-bounty single upload entirely.
+    # Step 1: Upload route map (optional, non-fatal).
+    # If pre_resolved_route_map_url is supplied, the caller (executor path)
+    # has already uploaded the map BEFORE calling announce — skip the inline
+    # upload entirely so the announce POST stays a fast pure message-send.
+    # The inline upload is retained only for the router/live-db path
+    # (pre_built_announcement is None).
     # ------------------------------------------------------------------
     route_map_url: str | None = pre_resolved_route_map_url
 
-    if route_map_url is None and image_channel_id is not None:
-        try:
-            async with httpx.AsyncClient() as client:
-                map_resp = await client.get(
-                    f"{_SELF_BASE_URL}/bounties/{bounty.id}/map",
-                    timeout=15,
-                )
-                map_resp.raise_for_status()
-                png_bytes = map_resp.content
-
-                upload_resp = await client.post(
-                    f"{_GATEWAY_BASE_URL}/channels/{image_channel_id}/upload",
-                    content=png_bytes,
-                    headers={"X-Filename": f"route_map_{bounty.id}.png", "Content-Type": "image/png"},
-                    timeout=60,
-                )
-                upload_resp.raise_for_status()
-                upload_data = upload_resp.json()
-                route_map_url = upload_data.get("data", {}).get("attachment_url")
-                flogger.debug(
-                    f"BountySpawnJob[{parent_job_id}] uploaded route map for bounty id={bounty.id}: {route_map_url}"
-                )
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.warning(
-                f"BountySpawnJob[{parent_job_id}] route map upload failed for bounty id={bounty.id}: "
-                f"{type(e).__name__}: {e} — continuing without image"
-            )
-            route_map_url = None
+    if route_map_url is None and pre_built_announcement is None:
+        route_map_url = await _upload_route_map(parent_job_id, bounty, image_channel_id)
 
     if pre_built_announcement is not None:
         # P6-T7 executor path: announcement was built inside the session block
@@ -1113,6 +1150,7 @@ async def _compensate_failed_spawn(
     expiry_job_id: str | None,
     discord_message_id: int | None,
     channel_id: int | None,
+    route_map_url: str | None = None,
 ) -> dict:
     """Compensating rollback after Fix B's early commit.
 
@@ -1141,6 +1179,10 @@ async def _compensate_failed_spawn(
             will be DELETEd via the gateway.
         channel_id: Channel that the post lives in. Required alongside
             discord_message_id to issue the gateway DELETE.
+        route_map_url: CDN URL of the uploaded route map, if any. When the
+            announce timed out (no discord_message_id) but an image was
+            posted, this lets the rollback ask the gateway to find and delete
+            the orphaned announcement by its ``route_map_<id>.png`` marker.
 
     Returns:
         Dict summarising which steps succeeded / failed (used by tests
@@ -1176,6 +1218,37 @@ async def _compensate_failed_spawn(
             flogger.error(
                 f"BountySpawnRollback[{parent_job_id}] failed to delete Discord post "
                 f"channel={channel_id} msg_id={discord_message_id}: {type(e).__name__}: {e}"
+            )
+
+    # Step 1b: Ambiguous-timeout orphan cleanup. If the announce timed out we
+    # never learned the post's message_id, yet Discord may have created it
+    # anyway (slow-but-successful POST). Ask the gateway to find and delete the
+    # orphan by its route-map marker — the only per-bounty identifier that
+    # survives in the posted embed. Only attempted when an image was actually
+    # uploaded (route_map_url set); otherwise there is no marker to match and the
+    # :30 failsafe cleanup remains the backstop.
+    if discord_message_id is None and channel_id is not None and route_map_url:
+        marker = f"route_map_{bounty_id}.png"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.delete(
+                    f"{_GATEWAY_BASE_URL}/channels/{channel_id}/orphaned-announcement",
+                    params={"route_map_marker": marker},
+                    timeout=_ANNOUNCE_TIMEOUT,
+                )
+            if resp.status_code in (200, 204, 404):
+                result["post_deleted"] = bool(resp.json().get("deleted")) if resp.status_code == 200 else False
+                flogger.info(
+                    f"BountySpawnRollback[{parent_job_id}] orphan cleanup for bounty id={bounty_id} "
+                    f"channel={channel_id} marker={marker} status={resp.status_code} "
+                    f"deleted={result['post_deleted']}"
+                )
+            else:
+                resp.raise_for_status()
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(
+                f"BountySpawnRollback[{parent_job_id}] orphan cleanup failed for bounty id={bounty_id} "
+                f"channel={channel_id} marker={marker}: {type(e).__name__}: {e}"
             )
 
     # Step 2: Cancel scheduled expiry job (if any). Independent try/except.

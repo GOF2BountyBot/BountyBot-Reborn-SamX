@@ -1069,9 +1069,10 @@ class TestMissingRendererGuard:
 # ===========================================================================
 # Test 5 – SPAWN-ANNOUNCE PATH
 #
-# Confirm that bounty_spawn_executor._announce_bounty fetches the map via
-# HTTP self-call to GET /bounties/{id}/map (as established in P3-T4).
-# This means it goes THROUGH get_bounty_map which now uses render_route_offloaded.
+# Confirm that the spawn-announce path fetches the map via HTTP self-call to
+# GET /bounties/{id}/map (as established in P3-T4). The fetch+upload lives in
+# _upload_route_map (hoisted out of _announce_bounty), which goes THROUGH
+# get_bounty_map — now using render_route_offloaded.
 # The test reads the source code to verify the HTTP self-call is present.
 # ===========================================================================
 
@@ -1080,31 +1081,35 @@ class TestSpawnAnnouncePath:
     """Spawn-announce path fetches the map via HTTP self-call through get_bounty_map."""
 
     def test_announce_bounty_fetches_map_via_http_self_call(self):
-        """_announce_bounty uses HTTP GET /bounties/{id}/map — NOT the renderer directly.
+        """The route-map upload uses HTTP GET /bounties/{id}/map — NOT the renderer directly.
 
-        Reads the executor source to verify the self-call pattern is present.
-        A direct renderer call would bypass the offload seam entirely.
+        The map fetch+upload was hoisted out of _announce_bounty into
+        _upload_route_map (so the announce POST stays a fast, pure message-send).
+        The offload seam — fetching the map via the HTTP self-call rather than a
+        direct renderer call — must be preserved in that helper, and neither the
+        helper nor the announce path may call the renderer directly.
         """
         import inspect
 
-        from utils.executors.bounty_spawn_executor import _announce_bounty
+        from utils.executors.bounty_spawn_executor import _announce_bounty, _upload_route_map
 
-        source = inspect.getsource(_announce_bounty)
+        upload_source = inspect.getsource(_upload_route_map)
 
         # Must contain an HTTP GET to the bounty map endpoint, not a direct render call.
-        assert "/bounties/" in source and "/map" in source, (
-            "_announce_bounty must fetch the map via HTTP GET /bounties/{id}/map. "
+        assert "/bounties/" in upload_source and "/map" in upload_source, (
+            "_upload_route_map must fetch the map via HTTP GET /bounties/{id}/map. "
             "The spawn-announce path goes through get_bounty_map, which now uses "
             "render_route_offloaded. A direct renderer call would bypass the offload seam."
         )
 
-        # Must NOT call render_route_for_bounty or render_route_offloaded directly.
-        assert "render_route_for_bounty" not in source, (
-            "_announce_bounty must not call render_route_for_bounty directly. "
+        # Neither the upload helper nor the announce path may call the renderer directly.
+        combined = upload_source + inspect.getsource(_announce_bounty)
+        assert "render_route_for_bounty" not in combined, (
+            "route-map upload must not call render_route_for_bounty directly. "
             "It must fetch the map via the HTTP endpoint (which handles offloading)."
         )
-        assert "render_route_offloaded" not in source, (
-            "_announce_bounty must not call render_route_offloaded directly. "
+        assert "render_route_offloaded" not in combined, (
+            "route-map upload must not call render_route_offloaded directly. "
             "It must fetch the map via the HTTP endpoint."
         )
 

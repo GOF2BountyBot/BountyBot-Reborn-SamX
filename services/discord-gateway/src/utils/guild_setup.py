@@ -144,9 +144,9 @@ def _read_only_overwrites(
     for extra in (
         "manage_messages",
         "read_message_history",  # fetch_message() in the capture/expire edit flow
-        "embed_links",           # the embed itself
-        "attach_files",          # uploaded images
-        "use_external_emojis",   # custom emojis from the bot's emoji guild
+        "embed_links",  # the embed itself
+        "attach_files",  # uploaded images
+        "use_external_emojis",  # custom emojis from the bot's emoji guild
         "use_external_stickers",  # external stickers
     ):
         if getattr(bot_perms, extra, False):

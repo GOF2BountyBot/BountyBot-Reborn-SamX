@@ -38,6 +38,7 @@ import pytest
 from persist.models.admin_audit_log import AdminAuditLog
 from persist.models.base import Base
 from persist.models.bounty import Bounty
+from persist.models.combat_log import CombatLog
 from persist.models.duel_request import DuelRequest
 from persist.models.guild_config import GuildConfig
 from persist.models.guild_shop import GuildShop
@@ -58,6 +59,7 @@ _SQLITE_TABLES = [
     Bounty.__table__,
     DuelRequest.__table__,
     AdminAuditLog.__table__,
+    CombatLog.__table__,  # SQLite-safe (JSON-only); lets the db-retention combat_log pass run for real
 ]
 
 

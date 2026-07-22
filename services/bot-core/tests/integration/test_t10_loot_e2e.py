@@ -67,8 +67,8 @@ from persist.models.player import Player
 from persist.models.player_inventory import PlayerInventory
 from persist.models.player_ship import PlayerShip
 from persist.models.user import User
-from services.bounty_service import BountyService
-from services.combat_models import ModuleStats, ShipLoadout
+from services.bounty_service import BountyService, CheckResult
+from services.combat_models import FightResults, FightStats, ModuleStats, ShipLoadout
 from services.game_constants import GameConstants
 from services.inventory_service import InventoryService
 from services.shop_service import ShopService
@@ -126,6 +126,7 @@ async def _cleanup(factory) -> None:
             text(f"DELETE FROM player_ships WHERE player_id IN (SELECT id FROM players WHERE guild_id = {_TEST_GUILD})")
         )
         await db.execute(text(f"DELETE FROM players WHERE guild_id = {_TEST_GUILD}"))
+        await db.execute(text(f"DELETE FROM bounty WHERE guild_id = {_TEST_GUILD}"))
         await db.execute(text(f"DELETE FROM users WHERE id IN ({_USER_A}, {_USER_B})"))
 
 
@@ -717,5 +718,173 @@ class TestPreFightVisibility:
                     "turret_weapon",
                     "module",
                 )
+            finally:
+                await _cleanup(factory)
+
+
+# ===========================================================================
+# 10. REAL WIN-BRANCH TRIGGER → REAL LIVE LOOT WRITE (closes the suite-level gap)
+#     Every other test in this file (and t5 TestApplyLootOnWin) calls
+#     ``_apply_loot_on_win`` DIRECTLY, so the production win-branch seam that
+#     DECIDES to fire it — ``_process_single_bounty_check`` (Bronze bonus-win at
+#     bounty_service.py:2293 / Silver+ ``fight_results is not None and
+#     winner_side == 1`` at :2361) — was only ever green-lit by t5's fully-mocked
+#     AsyncMock spy.  These tests drive the REAL trigger against the seeded live
+#     Postgres, seeding a real Player + PlayerShip + Bounty and mocking ONLY the
+#     two determinism knobs this whole file already declares allowed:
+#     ``combat_service.fight_ships`` (forced winner) and ``roll_loot_success``
+#     (tractor RNG).  Real calc/distribute rewards, real LoadoutBuilder.from_player,
+#     real ``_apply_loot_on_win`` write + commit — end to end.  A defect in the seam
+#     (wrong player_loadout/bounty passed, hook under the wrong guard, autoflush
+#     ordering vs distribute_rewards) is now caught here.  This also closes the
+#     t5 TestWinBranchTrigger spy-only gap for the WIN branches.
+# ===========================================================================
+
+
+def _win_fight_results(winner_side: int) -> FightResults:
+    """A REAL FightResults (not a bare stub) so the production ``_serialize_fight_results``
+    runs unmocked on the response path."""
+    won = winner_side == 1
+    return FightResults(
+        winner_name=_SHIP_NAME if won else "Viper",
+        loser_name="Viper" if won else _SHIP_NAME,
+        is_stalemate=False,
+        ship1_stats=FightStats(ship_name=_SHIP_NAME, raw_hp=100, raw_dps=12.0, varied_hp=100, varied_dps=12.0, ttk=8.0),
+        ship2_stats=FightStats(ship_name="Viper", raw_hp=90, raw_dps=9.0, varied_hp=90, varied_dps=9.0, ttk=10.0),
+        winner_side=winner_side,
+        combat_log_id=None,
+        metadata={},
+    )
+
+
+async def _seed_bounty(factory, *, division: str, cargo: dict, answer: str = "SOL") -> int:
+    """Seed a real active Bounty row carrying ``cargo`` whose answer is ``answer``."""
+    from persist.models.bounty import Bounty
+
+    async with factory() as db, db.begin():
+        bounty = Bounty(
+            guild_id=_TEST_GUILD,
+            division=division,
+            criminal_name="Viper",
+            criminal_faction="terran",
+            route=[answer],
+            answer=answer,
+            reward=1_000,
+            reward_per_sys=100,
+            checked={},
+            tech_level=1,
+            criminal_ship={"ship_name": _SHIP_NAME, "cargo": cargo},
+            status="active",
+        )
+        db.add(bounty)
+        await db.flush()
+        return bounty.id
+
+
+class TestWinBranchTriggerLive:
+    """Drive the REAL win-branch trigger → REAL loot write against live Postgres."""
+
+    async def _run_check(self, factory, svc, *, pid: int, bounty_id: int, division: str):
+        from datetime import UTC, datetime
+
+        from persist.models.bounty import Bounty
+
+        async with factory() as db:
+            player = await db.get(Player, pid)
+            bounty = await db.get(Bounty, bounty_id)
+            return await svc._process_single_bounty_check(
+                db,
+                player=player,
+                player_id=pid,
+                bounty=bounty,
+                system_name="SOL",
+                division=division,
+                now=datetime.now(UTC),
+                cfg=None,
+            )
+
+    async def test_silver_win_fires_real_loot_write(self) -> None:
+        """Silver+ real combat KILL → real trigger fires real ``_apply_loot_on_win``
+        → the looted commodity lands in ``player_inventories`` (all live)."""
+        async with _pg() as factory:
+            await _cleanup(factory)
+            try:
+                cargo = {"item_type": "commodity", "item_name": _COMMODITY, "quantity": 5}
+                pid = await _seed_player(factory, equip=[_OCTOPUS], cargo_load=0)
+                bid = await _seed_bounty(factory, division="silver", cargo=cargo)
+                svc = await _fresh_service(factory)
+                credits_before = await _credits(factory, pid)
+
+                # Mock ONLY the two determinism knobs (combat winner + tractor RNG).
+                svc.combat_service = MagicMock()
+                svc.combat_service.fight_ships = AsyncMock(return_value=_win_fight_results(1))
+                svc.loot_service.roll_loot_success = MagicMock(return_value=True)
+
+                outcome, announce = await self._run_check(factory, svc, pid=pid, bounty_id=bid, division="silver")
+
+                # Trigger reached the win branch and fired loot for real.
+                assert outcome.result == CheckResult.CORRECT
+                assert outcome.combat_won is True
+                assert outcome.loot is not None and outcome.loot.outcome == "looted"
+                assert outcome.loot.qty_looted == 5
+                # The REAL live loot write landed the commodity in inventory.
+                assert await _inv_qty(factory, pid, _COMMODITY) == 5
+                # Real reward distribution committed (winner reserve credited).
+                assert await _credits(factory, pid) > credits_before
+                # Bounty resolved by the real distribute_rewards path.
+                assert announce is not None and announce[1] is True
+            finally:
+                await _cleanup(factory)
+
+    async def test_bronze_bonus_win_fires_real_loot_write(self) -> None:
+        """Bronze bonus-fight WIN → real trigger fires real loot write AND the 2x
+        combat bonus, both committed live (the :2287 ``_award_combat_bonus`` +
+        :2293 loot-hook seam)."""
+        async with _pg() as factory:
+            await _cleanup(factory)
+            try:
+                cargo = {"item_type": "commodity", "item_name": _COMMODITY, "quantity": 4}
+                pid = await _seed_player(factory, equip=[_OCTOPUS], cargo_load=0)
+                bid = await _seed_bounty(factory, division="bronze", cargo=cargo)
+                svc = await _fresh_service(factory)
+                credits_before = await _credits(factory, pid)
+
+                svc.combat_service = MagicMock()
+                svc.combat_service.fight_ships = AsyncMock(return_value=_win_fight_results(1))
+                svc.loot_service.roll_loot_success = MagicMock(return_value=True)
+
+                outcome, _ = await self._run_check(factory, svc, pid=pid, bounty_id=bid, division="bronze")
+
+                assert outcome.result == CheckResult.CORRECT
+                assert outcome.bonus_won is True  # the bonus fight was won
+                assert outcome.loot is not None and outcome.loot.outcome == "looted"
+                assert await _inv_qty(factory, pid, _COMMODITY) == 4  # real live write
+                # Bronze base reward + 2x combat bonus both committed.
+                assert await _credits(factory, pid) > credits_before
+            finally:
+                await _cleanup(factory)
+
+    async def test_silver_loss_fires_no_loot_write(self) -> None:
+        """Silver+ combat LOSS → the real trigger EXCLUDES the loot write: no
+        ``player_inventories`` row, ``loot`` is None (live trigger-exclusion,
+        replacing the t5 spy for the loss case)."""
+        async with _pg() as factory:
+            await _cleanup(factory)
+            try:
+                cargo = {"item_type": "commodity", "item_name": _COMMODITY, "quantity": 5}
+                pid = await _seed_player(factory, equip=[_OCTOPUS], cargo_load=0)
+                bid = await _seed_bounty(factory, division="silver", cargo=cargo)
+                svc = await _fresh_service(factory)
+                svc.combat_service = MagicMock()
+                svc.combat_service.fight_ships = AsyncMock(return_value=_win_fight_results(2))  # criminal wins
+                svc.loot_service.roll_loot_success = MagicMock(return_value=True)  # would-write if reached
+
+                outcome, _ = await self._run_check(factory, svc, pid=pid, bounty_id=bid, division="silver")
+
+                assert outcome.combat_won is False
+                assert outcome.loot is None
+                # Nothing written — the win-branch seam was correctly not entered.
+                assert await _inv_qty(factory, pid, _COMMODITY) == 0
+                svc.loot_service.roll_loot_success.assert_not_called()
             finally:
                 await _cleanup(factory)

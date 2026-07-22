@@ -25,7 +25,16 @@ Two layers (see AGENTS.md §SQLite Compatibility):
   ``roll_loot`` so the asserted item is a genuine catalog row and the Band-1
   ±1 TL window holds.
 
-Mock budget: ≤2 mocks per test, real objects preferred.
+Mock budget: the real-Postgres (``pg_env``) tests use 0-1 mocks with real objects
+preferred.  The SQLite persistence/lazy-ensure tests are the deliberate exception:
+each drives ``spawn_bounty`` whose criminal-select / route / loadout-gen deps live
+in ARRAY-column tables SQLite cannot host, so ``_spawn_service`` stubs those four
+repo/graph boundaries (criminal_repo / config_repo / graph_service /
+pathfinding_service) and each test additionally injects ``generate_loadout`` +
+``roll_loot`` (~6 boundary stubs total).  These are all process/data-source
+boundaries — not entity fakes — and every injected value is a REAL object
+(a real ``LootRoll``, a real loadout blob); the loot ROLL itself is the value
+under test.  The real ``roll_loot`` domain is exercised unmocked in the pg_env half.
 """
 
 from __future__ import annotations

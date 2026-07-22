@@ -90,12 +90,13 @@ for _key in list(sys.modules):
 
 # ---------------------------------------------------------------------------
 
-from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 from persist.models.base import Base
 from persist.models.bounty import Bounty
+from persist.models.combat_log import CombatLog
+from persist.models.duel_request import DuelRequest
 from persist.models.guild_config import GuildConfig
 from persist.models.guild_shop import GuildShop
 from persist.models.player import Player
@@ -114,6 +115,8 @@ _SQLITE_TABLES = [
     PlayerInventory.__table__,
     PlayerShip.__table__,
     Bounty.__table__,  # SQLite-safe (JSON-only, no ARRAY columns); needed by promote_player→scrub_orphaned_checks
+    DuelRequest.__table__,  # SQLite-safe (scalar columns only); real DuelService accept/reject cross-session
+    CombatLog.__table__,  # SQLite-safe; real DuelService.accept_duel → fight_ships persists a combat log (T10)
 ]
 
 
@@ -242,6 +245,59 @@ async def _seed_guild_shop(
     await db.commit()
     await db.refresh(s)
     return s
+
+
+async def _seed_bounty(
+    db: AsyncSession,
+    guild_id: int,
+    *,
+    answer: str = "SOL",
+    checked: dict | None = None,
+    reward: int = 1000,
+    reward_per_sys: int = 100,
+    status: str = "active",
+    division: str = "bronze",
+) -> Bounty:
+    b = Bounty(
+        guild_id=guild_id,
+        division=division,
+        criminal_name="Viper",
+        criminal_faction="terran",
+        route=[answer],
+        answer=answer,
+        reward=reward,
+        reward_per_sys=reward_per_sys,
+        checked=checked if checked is not None else {},
+        tech_level=1,
+        criminal_ship=None,
+        status=status,
+    )
+    db.add(b)
+    await db.commit()
+    await db.refresh(b)
+    return b
+
+
+async def _seed_duel(
+    db: AsyncSession,
+    guild_id: int,
+    challenger_id: int,
+    target_id: int,
+    *,
+    stakes: int = 500,
+    status: str = "pending",
+) -> DuelRequest:
+    d = DuelRequest(
+        guild_id=guild_id,
+        challenger_id=challenger_id,
+        target_id=target_id,
+        stakes=stakes,
+        status=status,
+    )
+    db.add(d)
+    await db.commit()
+    await db.refresh(d)
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -1022,31 +1078,55 @@ class TestOp03UnequipItem:
 
 
 class TestOp12SpawnBounty:
-    """Approximation: bounty table is not in SQLite integration schema (it's
-    not in _SQLITE_TABLES). We test the cross-session persistence of a
-    GuildConfig update + ensure GuildShop modifications can be done in a
-    single wrapped transaction (bounty spawn ultimately commits via the
-    same get_session() machinery)."""
+    """Spawn persistence via the REAL bounty repository create path.
 
-    async def test_guild_config_next_spawn_check_at_persists_cross_session(self):
+    The full ``BountyService.spawn_bounty`` orchestration (criminal select →
+    A* route → loadout gen → loot roll) reads the ARRAY-column Ship/Item/graph
+    catalogs that SQLite cannot host, so it is covered by the real-Postgres t4/t10
+    suites.  Here we exercise the actual persistence step spawn performs — a real
+    ``BountyRepository.create`` of a real ``Bounty`` ORM — and assert the row is
+    visible, active, and field-correct in a fresh session (the cross-session
+    contract this file exists to prove)."""
+
+    async def test_spawned_bounty_row_persists_cross_session(self):
         engine, factory = await _fresh_sqlite_factory()
 
         async with factory() as db:
             await _seed_guild_config(db, guild_id=22000)
 
-        # Operation: update next_spawn_check_at (single attribute write via repo)
-        from persist.repositories.config_repository import ConfigRepository
+        # Operation: the real repo create that spawn_bounty step 9 uses.
+        from persist.repositories.bounty_repository import BountyRepository
 
-        repo = ConfigRepository()
+        repo = BountyRepository()
         async with factory() as db, db.begin():
-            cfg = await repo.get_by_guild_id(db, 22000)
-            cfg.next_spawn_check_at = datetime.now(UTC)
+            bounty = Bounty(
+                guild_id=22000,
+                division="bronze",
+                criminal_name="Viper",
+                criminal_faction="terran",
+                route=["SOL", "ALPHA", "BETA"],
+                answer="ALPHA",
+                reward=1500,
+                reward_per_sys=100,
+                checked={"SOL": -1, "ALPHA": -1, "BETA": -1},
+                tech_level=1,
+                criminal_ship={
+                    "ship_name": "Betty",
+                    "cargo": {"item_type": "commodity", "item_name": "Iron", "quantity": 3},
+                },
+                status="active",
+            )
+            await repo.create(db, bounty, commit=False)
 
-        # Cross-session verify
+        # Cross-session verify the spawned bounty persisted with its fields.
         async with factory() as fresh_db:
-            res = await fresh_db.execute(select(GuildConfig).where(GuildConfig.guild_id == 22000))
-            cfg = res.scalars().first()
-            assert cfg.next_spawn_check_at is not None, "next_spawn_check_at should persist"
+            res = await fresh_db.execute(select(Bounty).where(Bounty.guild_id == 22000))
+            b = res.scalars().first()
+            assert b is not None, "spawned bounty row should persist"
+            assert b.status == "active"
+            assert b.answer == "ALPHA"
+            assert b.route == ["SOL", "ALPHA", "BETA"]
+            assert b.criminal_ship["cargo"]["item_name"] == "Iron"
 
         await engine.dispose()
 
@@ -1057,11 +1137,14 @@ class TestOp12SpawnBounty:
 
 
 class TestOp13ResolveBounty:
-    """Bounty resolution approximation: winner credits + xp + bounty_wins
-    counter all updated in a single transaction, all visible after session
-    close. The bounty table itself isn't in the SQLite integration schema."""
+    """Bounty resolution via the REAL ``BountyService.calc_rewards`` +
+    ``distribute_rewards`` — the exact write path ``check_bounty`` uses on a
+    capture.  Seeds a real active Bounty whose ``checked`` map names the winner,
+    resolves it through the real service, and asserts the winner's credits/xp/
+    bounty_wins AND the bounty status='completed'/win_user_id all persist in a
+    fresh session (replacing the previous hand-rolled credit math)."""
 
-    async def test_winner_credits_xp_stats_persist_atomically_cross_session(self):
+    async def test_winner_rewards_persist_atomically_cross_session(self):
         engine, factory = await _fresh_sqlite_factory()
 
         async with factory() as db:
@@ -1069,28 +1152,32 @@ class TestOp13ResolveBounty:
             await _seed_guild_config(db, guild_id=23000)
             player = await _seed_player(db, user_id=user.id, guild_id=23000, credits=100, tier="Bronze", xp=0)
             player_id = player.id
+            user_id = user.id
+            # Seed the bounty as already found by this player (checked[answer] = player_id).
+            bounty = await _seed_bounty(
+                db, guild_id=23000, answer="SOL", checked={"SOL": player_id}, reward=500, reward_per_sys=100
+            )
+            bounty_id = bounty.id
 
-        # Operation: simulate the bounty-win update in a single transaction
-        from persist.repositories.player_repository import PlayerRepository
+        # Operation: the REAL resolution path.
+        from services.bounty_service import BountyService
 
-        player_repo = PlayerRepository()
-
-        async with factory() as db, db.begin():
-            await player_repo.update_credits(db, player_id, new_credits=600, commit=False)
-            await player_repo.update_xp(db, player_id, xp=200, commit=False)
-            # Increment bounty_wins via direct ORM mutation
-            from sqlalchemy import select as _select
-
-            res = await db.execute(_select(Player).where(Player.id == player_id))
-            p = res.scalars().first()
-            p.bounty_wins = p.bounty_wins + 1
+        svc = BountyService()
+        async with factory() as db:
+            b = await db.get(Bounty, bounty_id)
+            rewards = await svc.calc_rewards(db, b)
+            await svc.distribute_rewards(db, b, rewards)
 
         async with factory() as fresh_db:
-            res = await fresh_db.execute(select(Player).where(Player.id == player_id))
-            p = res.scalars().first()
-            assert p.credits == 600, "Credits update should persist"
-            assert p.xp == 200, "XP update should persist"
+            p = (await fresh_db.execute(select(Player).where(Player.id == player_id))).scalars().first()
+            # Winner reserve + remaining consolation = full reward (single checker).
+            assert p.credits == 100 + 500, "winner credits should persist (full reward on single checker)"
+            assert p.xp > 0, "winner xp should persist"
             assert p.bounty_wins == 1, "bounty_wins increment should persist"
+
+            b = (await fresh_db.execute(select(Bounty).where(Bounty.id == bounty_id))).scalars().first()
+            assert b.status == "completed", "bounty status should persist as completed"
+            assert b.win_user_id == user_id, "win_user_id should be the winner's Discord snowflake (User.id)"
 
         await engine.dispose()
 
@@ -1101,27 +1188,29 @@ class TestOp13ResolveBounty:
 
 
 class TestOp14ExpireBounty:
-    """Expire bounty: single-row status update persists. Approximated
-    via a direct GuildConfig field update (bounty table not in SQLite)."""
+    """Expire bounty via the REAL ``BountyService.expire_bounty``: an active
+    bounty's status flips to 'expired' and persists cross-session (replacing the
+    GuildConfig-field stand-in with the actual expiry op)."""
 
-    async def test_status_update_persists_cross_session(self):
+    async def test_expire_status_persists_cross_session(self):
         engine, factory = await _fresh_sqlite_factory()
 
         async with factory() as db:
             await _seed_guild_config(db, guild_id=24000, starting_credits=500)
+            bounty = await _seed_bounty(db, guild_id=24000, status="active")
+            bounty_id = bounty.id
 
-        # Single-attribute mutation in a wrapped transaction
-        from persist.repositories.config_repository import ConfigRepository
+        # Operation: the REAL expiry op.
+        from services.bounty_service import BountyService
 
-        repo = ConfigRepository()
-        async with factory() as db, db.begin():
-            cfg = await repo.get_by_guild_id(db, 24000)
-            cfg.bounty_max_per_tier = {"bronze": 10}  # single attribute as a stand-in for status update
+        svc = BountyService()
+        async with factory() as db:
+            updated = await svc.expire_bounty(db, bounty_id)
+            assert updated is not None and updated.status == "expired"
 
         async with factory() as fresh_db:
-            res = await fresh_db.execute(select(GuildConfig).where(GuildConfig.guild_id == 24000))
-            cfg = res.scalars().first()
-            assert cfg.bounty_max_per_tier == {"bronze": 10}
+            b = (await fresh_db.execute(select(Bounty).where(Bounty.id == bounty_id))).scalars().first()
+            assert b.status == "expired", "expired status should persist cross-session"
 
         await engine.dispose()
 
@@ -1132,53 +1221,71 @@ class TestOp14ExpireBounty:
 
 
 class TestOp15DuelAccept:
-    """Duel accept (winner path) approximation: both players' duel stats
-    update + credits transfer atomically. Duel_requests table not in
-    SQLite schema."""
+    """Duel accept (winner path) via the REAL ``DuelService.accept_duel``.
 
-    async def test_duel_winner_loser_stats_persist_atomically_cross_session(self):
+    Seeds a real pending DuelRequest + two players, then resolves it through the
+    real service — real credit-transfer, real duel-stat mutation, real combat.
+    Combat is forced DECISIVE (challenger gets a live weapon loadout, target an
+    unarmed one → target has 0 DPS and cannot win) so a REAL stakes transfer
+    actually occurs and can be asserted cross-session (the old version hand-rolled
+    the credit math; the sibling duel-integration accept test's stalemate hid any
+    transfer).  Only ``LoadoutBuilder.from_player`` is mocked (R1-legit: it reads
+    the ARRAY-column ship/weapon catalogs)."""
+
+    async def test_accept_transfers_stakes_and_stats_persist_cross_session(self):
+        from unittest.mock import AsyncMock, patch
+
+        from services.combat_models import ShipLoadout, WeaponStats
+        from services.duel_service import DuelService
+
         engine, factory = await _fresh_sqlite_factory()
 
         async with factory() as db:
             ua = await _seed_user(db, user_id=25001)
             ub = await _seed_user(db, user_id=25002)
             await _seed_guild_config(db, guild_id=25000)
-            winner = await _seed_player(db, user_id=ua.id, guild_id=25000, credits=100)
-            loser = await _seed_player(db, user_id=ub.id, guild_id=25000, credits=200)
-            winner_id = winner.id
-            loser_id = loser.id
+            challenger = await _seed_player(db, user_id=ua.id, guild_id=25000, credits=5000)
+            target = await _seed_player(db, user_id=ub.id, guild_id=25000, credits=5000)
+            challenger_id = challenger.id
+            target_id = target.id
+            duel = await _seed_duel(db, guild_id=25000, challenger_id=challenger_id, target_id=target_id, stakes=1000)
+            duel_id = duel.id
 
-        from persist.repositories.player_repository import PlayerRepository
+        # Decisive loadouts: challenger has a one-shot weapon (TickResolver reads
+        # damage_per_shot/loading_speed_ms/range_m, NOT the legacy `dps`), target
+        # is unarmed → target deals 0 damage and cannot win, so the challenger
+        # kills on the first shot (winner_side==1, no stalemate).
+        challenger_loadout = ShipLoadout(
+            ship_name="Betty",
+            base_armour=1000,
+            weapons=[
+                WeaponStats(name="SuperGun", dps=0.0, damage_per_shot=99999, loading_speed_ms=100, range_m=999999.0)
+            ],
+        )
+        target_loadout = ShipLoadout(ship_name="Raptor", base_armour=10, weapons=[])
 
-        player_repo = PlayerRepository()
-
-        async with factory() as db, db.begin():
-            # Winner: +50 credits, win count +1
-            await player_repo.update_credits(db, winner_id, 150, commit=False)
-            res = await db.execute(select(Player).where(Player.id == winner_id))
-            wp = res.scalars().first()
-            wp.duel_wins = wp.duel_wins + 1
-            wp.duel_credits_won = wp.duel_credits_won + 50
-
-            # Loser: -50 credits, loss count +1
-            await player_repo.update_credits(db, loser_id, 150, commit=False)
-            res = await db.execute(select(Player).where(Player.id == loser_id))
-            lp = res.scalars().first()
-            lp.duel_losses = lp.duel_losses + 1
-            lp.duel_credits_lost = lp.duel_credits_lost + 50
+        svc = DuelService()
+        async with factory() as db:
+            with patch(
+                "services.loadout_builder.LoadoutBuilder.from_player",
+                new=AsyncMock(side_effect=[challenger_loadout, target_loadout]),
+            ):
+                result = await svc.accept_duel(db, duel_id=duel_id)
+        # Sanity: a decisive challenger win with the real stakes transferred.
+        assert result["credits_transferred"] == 1000
+        assert result["fight_results"].winner_side == 1
 
         async with factory() as fresh_db:
-            res = await fresh_db.execute(select(Player).where(Player.id == winner_id))
-            wp = res.scalars().first()
-            assert wp.credits == 150
-            assert wp.duel_wins == 1
-            assert wp.duel_credits_won == 50
-
-            res = await fresh_db.execute(select(Player).where(Player.id == loser_id))
-            lp = res.scalars().first()
-            assert lp.credits == 150
-            assert lp.duel_losses == 1
-            assert lp.duel_credits_lost == 50
+            wp = (await fresh_db.execute(select(Player).where(Player.id == challenger_id))).scalars().first()
+            lp = (await fresh_db.execute(select(Player).where(Player.id == target_id))).scalars().first()
+            # Real transfer persisted: challenger +stakes, target -stakes.
+            assert wp.credits == 6000 and lp.credits == 4000
+            assert wp.duel_wins == 1 and wp.duel_credits_won == 1000
+            assert lp.duel_losses == 1 and lp.duel_credits_lost == 1000
+            # Credit conservation across the pair.
+            assert wp.credits + lp.credits == 10000
+            d = await fresh_db.get(DuelRequest, duel_id)
+            assert d.status == "completed", "duel status should persist as completed"
 
         await engine.dispose()
 
@@ -1189,10 +1296,13 @@ class TestOp15DuelAccept:
 
 
 class TestOp16DuelDecline:
-    """Duel decline: status update persists, credits unchanged. Approximated
-    by ensuring credit balances unchanged after a no-op transaction."""
+    """Duel decline via the REAL ``DuelService.reject_duel``: the pending duel's
+    status flips to 'rejected' and NO credits move — both asserted cross-session
+    (replacing the previous empty no-op transaction)."""
 
-    async def test_no_credit_transfer_on_decline_cross_session(self):
+    async def test_reject_sets_status_and_moves_no_credits_cross_session(self):
+        from services.duel_service import DuelService
+
         engine, factory = await _fresh_sqlite_factory()
 
         async with factory() as db:
@@ -1203,18 +1313,25 @@ class TestOp16DuelDecline:
             target = await _seed_player(db, user_id=ub.id, guild_id=26000, credits=400)
             challenger_id = challenger.id
             target_id = target.id
+            duel = await _seed_duel(db, guild_id=26000, challenger_id=challenger_id, target_id=target_id, stakes=100)
+            duel_id = duel.id
 
-        # Decline operation: only status update (no credit movement). With duel_requests
-        # not in SQLite schema, we verify the no-op semantics by running an empty
-        # wrapped transaction.
-        async with factory() as db, db.begin():
-            pass
+        # Operation: the REAL decline op.
+        svc = DuelService()
+        async with factory() as db:
+            updated = await svc.reject_duel(db, duel_id=duel_id)
+            assert updated.status == "rejected"
 
         async with factory() as fresh_db:
-            res = await fresh_db.execute(select(Player).where(Player.id == challenger_id))
-            assert res.scalars().first().credits == 300, "Challenger credits should be unchanged on decline"
-            res = await fresh_db.execute(select(Player).where(Player.id == target_id))
-            assert res.scalars().first().credits == 400, "Target credits should be unchanged on decline"
+            d = await fresh_db.get(DuelRequest, duel_id)
+            assert d.status == "rejected", "rejected status should persist cross-session"
+            # Credits unchanged — decline never transfers.
+            assert (
+                await fresh_db.execute(select(Player).where(Player.id == challenger_id))
+            ).scalars().first().credits == 300
+            assert (
+                await fresh_db.execute(select(Player).where(Player.id == target_id))
+            ).scalars().first().credits == 400
 
         await engine.dispose()
 

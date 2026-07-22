@@ -23,6 +23,7 @@ from unittest.mock import MagicMock
 
 from persist.models.admin_audit_log import AdminAuditLog
 from persist.models.bounty import Bounty
+from persist.models.combat_log import CombatLog
 from persist.models.duel_request import DuelRequest
 from persist.repositories.admin_audit_log_repository import AdminAuditLogRepository
 from persist.repositories.bounty_repository import BountyRepository
@@ -96,6 +97,23 @@ def _make_audit(
         resource_id="1",
         details=None,
         status="success",
+    )
+
+
+def _make_combat_log(*, created_at: datetime | None = None) -> CombatLog:
+    """Build a minimal CombatLog ORM row for the SQLite retention test."""
+    now = datetime.now(UTC)
+    return CombatLog(
+        guild_id=1,
+        context="duel",
+        combatant1_name="A",
+        combatant2_name="B",
+        combatant1_user_id=100,
+        combatant2_user_id=200,
+        winner_name="A",
+        is_stalemate=False,
+        data={"schema_version": 1},
+        created_at=created_at if created_at is not None else now,
     )
 
 
@@ -225,6 +243,10 @@ async def test_executor_deletes_across_all_three_tables(db_session, async_engine
     # 1 deletable audit, 1 keeper
     db_session.add(_make_audit(timestamp=now - timedelta(days=45)))
     db_session.add(_make_audit(timestamp=now - timedelta(days=5)))
+    # 1 deletable combat log (very old), 1 keeper (recent) — combat_log is now a
+    # real SQLite table (integration conftest), so the 4th pass runs for real.
+    db_session.add(_make_combat_log(created_at=now - timedelta(days=3650)))
+    db_session.add(_make_combat_log(created_at=now - timedelta(days=1)))
     await db_session.commit()
 
     # Bridge patch: the executor calls db_manager.get_session(); substitute
@@ -239,25 +261,20 @@ async def test_executor_deletes_across_all_three_tables(db_session, async_engine
     fake_db_manager = MagicMock()
     fake_db_manager.get_session = _fake_get_session
 
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
     from utils.executors.db_retention_executor import execute_db_retention_job
 
-    # T10: combat_log table not in SQLite test DB; mock the 4th pass (2nd mock used here)
-    with (
-        patch("persist.database.manager.db_manager", fake_db_manager),
-        patch(
-            "persist.repositories.combat_log_repository.CombatLogRepository.delete_older_than",
-            new=AsyncMock(return_value=0),
-        ),
-    ):
+    # 1 mock: db_manager.get_session bridge. All four passes (bounty/duel/audit/
+    # combat_log) run for real against the SQLite session.
+    with patch("persist.database.manager.db_manager", fake_db_manager):
         result = await execute_db_retention_job("test-job", {"job_type": "db_retention"})
 
     assert result["status"] == "success"
     assert result["bounties_deleted"] == 2
     assert result["duels_deleted"] == 1
     assert result["audit_logs_deleted"] == 1
-    assert result["combat_logs_deleted"] == 0  # T10: mocked out, table not in SQLite test DB
+    assert result["combat_logs_deleted"] == 1  # real 4th pass deleted the 3650-day-old row
     assert result["errors"] == []
 
     # Verify via a FRESH session per the cross-session-reload rule
@@ -265,10 +282,12 @@ async def test_executor_deletes_across_all_three_tables(db_session, async_engine
         bounties = (await fresh.execute(select(Bounty))).scalars().all()
         duels = (await fresh.execute(select(DuelRequest))).scalars().all()
         audits = (await fresh.execute(select(AdminAuditLog))).scalars().all()
+        combat_logs = (await fresh.execute(select(CombatLog))).scalars().all()
 
     assert len(bounties) == 1 and bounties[0].status == "active"
     assert len(duels) == 1 and duels[0].status == "pending"
     assert len(audits) == 1
+    assert len(combat_logs) == 1  # only the recent combat log survives
 
 
 async def test_executor_returns_success_when_one_pass_fails(db_session, async_engine):
@@ -303,18 +322,16 @@ async def test_executor_returns_success_when_one_pass_fails(db_session, async_en
             side_effect=RuntimeError("bounty pass kaboom"),
         ),
     ):
-        # T10: also need to mock combat_log pass (table not in SQLite test DB) — but
-        # we're already at 2 mocks per test. The combat_log pass will fail with an
-        # OperationalError (no such table); the executor handles it gracefully (non-fatal).
-        # Accept 2 errors (bounty + combat_log) rather than exactly 1.
+        # combat_log is now a real SQLite table, so ONLY the intentionally-broken
+        # bounty pass errors — the other three passes (duel/audit/combat_log) run
+        # for real. Exactly one error is expected.
         result = await execute_db_retention_job("test-job", {})
 
     assert result["status"] == "success"
     assert result["bounties_deleted"] == 0
     assert result["duels_deleted"] == 1
     assert result["audit_logs_deleted"] == 1
-    # T10: bounty pass error + combat_log pass error (no table in SQLite test DB) = 2 errors
-    assert len(result["errors"]) in (1, 2)
+    assert len(result["errors"]) == 1  # only the forced bounty-pass failure
     assert any("bounty pass" in e for e in result["errors"])
 
 

@@ -157,8 +157,10 @@ class TestSchedulerList:
 
         interaction.response.defer.assert_awaited_once()
         interaction.followup.send.assert_awaited_once()
-        # Verify guild_id query param was passed
+        # Verify URL + guild_id query param were passed (R-gw-cogs-2: also lock the URL,
+        # not just the params — a wrong endpoint with the right params previously passed).
         call_kwargs = cog.http_client.get.call_args
+        assert call_kwargs.args[0].endswith("/jobs")
         params = call_kwargs.kwargs.get("params", {}) or (call_kwargs.args[1] if len(call_kwargs.args) > 1 else {})
         assert params.get("guild_id") == interaction.guild_id
 
@@ -489,6 +491,11 @@ class TestSchedulerView:
 
         interaction.response.defer.assert_awaited_once()
         interaction.followup.send.assert_awaited_once()
+        # R-gw-cogs-2: lock the URL+method contract — the accept-anything mock
+        # would otherwise pass even if scheduler_view hit the wrong job endpoint.
+        cog.http_client.get.assert_awaited_once()
+        call_args = cog.http_client.get.call_args
+        assert call_args.args[0].endswith("/jobs/bounty_spawn_default")
 
     def test_scheduler_view_404_sends_not_found_message(self, cog):
         """404 from API sends '❌ Job not found' message."""
@@ -549,6 +556,10 @@ class TestSchedulerDelete:
 
         interaction.response.defer.assert_awaited_once()
         interaction.followup.send.assert_awaited_once()
+        # R-gw-cogs-2: lock the URL+method contract for the DELETE call.
+        cog.http_client.delete.assert_awaited_once()
+        call_args = cog.http_client.delete.call_args
+        assert call_args.args[0].endswith("/jobs/some-job-id")
 
     def test_scheduler_delete_404_sends_not_found(self, cog):
         """404 sends not-found message."""
@@ -589,6 +600,13 @@ class TestSchedulerUpdate:
 
         interaction.response.defer.assert_awaited_once()
         interaction.followup.send.assert_awaited_once()
+        # R-gw-cogs-2: lock the URL+method+payload contract for the PUT call —
+        # previously only awaited-ness was checked, so a wrong job_id in the URL
+        # or a malformed payload shape would pass silently.
+        cog.http_client.put.assert_awaited_once()
+        call_args = cog.http_client.put.call_args
+        assert call_args.args[0].endswith("/jobs/some-job-id")
+        assert call_args.kwargs.get("json") == {"payload": {"job_type": "bounty_spawn"}}
 
     def test_scheduler_update_invalid_json_sends_error(self, cog):
         """B.28 fix: Invalid JSON is validated BEFORE defer — uses send_message not followup.send."""

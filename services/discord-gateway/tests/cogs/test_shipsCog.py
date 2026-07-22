@@ -344,6 +344,26 @@ class TestGetPlayerIdHelper:
         result = asyncio.run(mock_ships_cog._get_player_id(111111111, 987654321))
         assert result is None
 
+    def test_get_player_id_calls_correct_url_and_method(self, mock_ships_cog, request):
+        """_get_player_id is the single point every ships command depends on for player
+        resolution — lock its URL+method contract with respx: POST /api/v1/players/."""
+        import httpx
+        import respx
+
+        cog = mock_ships_cog
+        real_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        cog.http_client = real_client
+        request.addfinalizer(lambda: asyncio.run(real_client.aclose()))
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            route = mock_router.post("http://bot-core:8000/api/v1/players/").mock(
+                return_value=httpx.Response(200, json={"id": 7})
+            )
+            result = asyncio.run(cog._get_player_id(111111111, 987654321))
+
+        assert result == 7
+        assert route.calls.last.request.method == "POST"
+
 
 # ---------------------------------------------------------------------------
 # ships command
@@ -524,6 +544,47 @@ class TestShipsCommand:
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
         asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+
+
+class TestShipsCommandRespx:
+    """respx-backed URL+method contract test for /ships happy path.
+
+    TestShipsCommand above uses AsyncMock(http_client.get/post) which accepts
+    ANY url/method — no test anywhere asserted the /ships GET contract. Locks:
+
+      POST /api/v1/players/                     (player upsert)
+      GET  /api/v1/ships/player/{player_id}    (ships list)
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_ships_calls_correct_urls(self, mock_ships_cog, request):
+        """/ships must POST /players/ then GET /ships/player/{player_id}."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_ships_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{self._BOT_API}/ships/player/1").mock(
+                return_value=httpx.Response(200, json=[_make_ship(1, "Eagle", is_active=True)])
+            )
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
 
@@ -842,6 +903,51 @@ class TestShipCommand:
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
 
         asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
+
+        interaction.followup.send.assert_awaited_once()
+
+
+class TestShipCommandRespx:
+    """respx-backed URL+method contract test for /ship happy path.
+
+    TestShipCommand above uses AsyncMock(http_client.get/post) which accepts
+    ANY url/method — no test anywhere asserted the /ship GET contract. Locks:
+
+      GET  /api/v1/ships/{ship_id}             (ship detail)
+      POST /api/v1/players/                    (ownership check player lookup)
+      GET  /api/v1/ships/{ship_id}/loadout     (detailed loadout)
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_ship_calls_correct_urls(self, mock_ships_cog, request):
+        """/ship must GET /ships/{id}, POST /players/, GET /ships/{id}/loadout."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_ships_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{self._BOT_API}/ships/1").mock(
+                return_value=httpx.Response(200, json=_make_ship(1, "Eagle", is_active=True))
+            )
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{self._BOT_API}/ships/1/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout())
+            )
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
 
@@ -1233,6 +1339,58 @@ class TestNicknameCommand:
         call_args = interaction.followup.send.call_args
         assert "error occurred" in call_args[0][0].lower()
         assert call_args[1].get("ephemeral", False)
+
+
+class TestNicknameCommandRespx:
+    """respx-backed URL+method contract test for /nickname happy path.
+
+    TestNicknameCommand above uses AsyncMock(http_client.get/post/put) which
+    accepts ANY url/method — no test anywhere asserted the /nickname contract.
+    Locks:
+
+      GET  /api/v1/ships/{ship_id}              (ownership check)
+      POST /api/v1/players/                     (player lookup for ownership check)
+      PUT  /api/v1/ships/{ship_id}/nickname     (nickname update) — payload: {"nickname": ...}
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_nickname_calls_correct_urls_and_payload(self, mock_ships_cog, request):
+        """/nickname must GET /ships/{id}, POST /players/, PUT /ships/{id}/nickname with payload."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_ships_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{self._BOT_API}/ships/1").mock(
+                return_value=httpx.Response(200, json=_make_ship(1, "Eagle"))
+            )
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            nick_route = mock_router.put(f"{self._BOT_API}/ships/1/nickname").mock(
+                return_value=httpx.Response(200, json=_make_ship(1, "Eagle", nickname="StarHunter"))
+            )
+            asyncio.run(
+                mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="StarHunter")
+            )
+
+        import json as _json
+
+        body = _json.loads(nick_route.calls.last.request.content)
+        assert body == {"nickname": "StarHunter"}
+        interaction.followup.send.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

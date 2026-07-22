@@ -114,6 +114,22 @@ class TestTestCogCommands:
         # The callback should be an async function
         assert inspect.iscoroutinefunction(mock_test_cog.test_command.callback)
 
+    @pytest.mark.asyncio
+    async def test_command_invocation_sends_expected_message(self, mock_test_cog):
+        """test_command should actually send its response text via ctx.send.
+
+        R-gw-cogs-2: the existence/hasattr/iscoroutinefunction checks above would
+        all pass even if the command body were deleted (e.g. replaced with
+        `pass`). This exercises the real callback and asserts its observable
+        effect, so a no-op regression would be caught.
+        """
+        ctx = AsyncMock()
+        ctx.send = AsyncMock()
+
+        await mock_test_cog.test_command.callback(mock_test_cog, ctx)
+
+        ctx.send.assert_awaited_once_with("Test command from TestCog")
+
 
 class TestTestCogSetup:
     """Tests for testCog setup function."""

@@ -45,6 +45,7 @@ from services.combat_models import (
     ShipLoadout,
     WeaponStats,
 )
+from persist.models.player_ship import PlayerShip
 from services.combat_resolver import TickResolver
 from services.game_constants import GameConstants
 from services.loadout_consistency_service import LoadoutConsistencyService
@@ -349,10 +350,9 @@ class TestConsumeSecondaryAmmo:
         )
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"Rocket1": 5}
-        mock_ship.secondary_weapons = ["Rocket1"]
+        mock_ship = PlayerShip(
+            id=1, player_id=100, ship_name="Betty", secondary_ammo={"Rocket1": 5}, secondary_weapons=["Rocket1"]
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -424,10 +424,13 @@ class TestConsumeSecondaryAmmo:
         )
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"Nuke1": 3}
-        mock_ship.secondary_weapons = ["Nuke1", "OtherGun"]
+        mock_ship = PlayerShip(
+            id=1,
+            player_id=100,
+            ship_name="Betty",
+            secondary_ammo={"Nuke1": 3},
+            secondary_weapons=["Nuke1", "OtherGun"],
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -514,18 +517,19 @@ def _make_player_ship(
     turrets: list[str] | None = None,
     secondary_ammo: dict | None = None,
     is_active: bool = False,
-) -> MagicMock:
-    ship = MagicMock()
-    ship.id = ship_id
-    ship.player_id = player_id
-    ship.ship_name = ship_name
-    ship.is_active = is_active
-    ship.weapons = list(weapons) if weapons is not None else []
-    ship.modules = list(modules) if modules is not None else []
-    ship.turrets = list(turrets) if turrets is not None else []
-    ship.secondary_weapons = list(secondary_weapons) if secondary_weapons is not None else []
-    ship.secondary_ammo = dict(secondary_ammo) if secondary_ammo is not None else {}
-    return ship
+) -> PlayerShip:
+    """Build a real PlayerShip with real Python list/dict slot attrs."""
+    return PlayerShip(
+        id=ship_id,
+        player_id=player_id,
+        ship_name=ship_name,
+        is_active=is_active,
+        weapons=list(weapons) if weapons is not None else [],
+        modules=list(modules) if modules is not None else [],
+        turrets=list(turrets) if turrets is not None else [],
+        secondary_weapons=list(secondary_weapons) if secondary_weapons is not None else [],
+        secondary_ammo=dict(secondary_ammo) if secondary_ammo is not None else {},
+    )
 
 
 def _make_static_ship(

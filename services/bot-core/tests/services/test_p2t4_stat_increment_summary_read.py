@@ -612,8 +612,7 @@ class TestNoTimelineWalk:
 
         # Must read 3 from summary (1 cloak + 2 booster), NOT 7 from timeline scan.
         assert p1.total_module_activations == 3, (
-            f"Must read module_activations=3 from summary, not 7 from timeline scan. "
-            f"Got {p1.total_module_activations}"
+            f"Must read module_activations=3 from summary, not 7 from timeline scan. Got {p1.total_module_activations}"
         )
 
     @pytest.mark.asyncio

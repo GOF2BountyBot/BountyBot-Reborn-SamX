@@ -7,13 +7,15 @@ Verifies that ``guild_config`` overrides are respected for:
   ``bounty_delay_random_max`` and ``min_guild_activity`` when set.
 - ``decay_temperature_n_hours``: propagates guild_config through each tick.
 
-All tests use MagicMock for guild_config with specific attributes (max 2 mocks).
+All tests use a real GuildConfig instance for guild_config, setting only the
+override columns each test exercises; every other column keeps its real
+nullable default (None), so the service's global-fallback path is genuinely hit.
 """
 
 import random
-from unittest.mock import MagicMock
 
 import pytest
+from persist.models.guild_config import GuildConfig
 from services.temperature_service import TemperatureService
 
 # ---------------------------------------------------------------------------
@@ -40,7 +42,7 @@ def test_decay_temperature_floor_uses_global_min_when_config_is_none():
 
 def test_decay_temperature_uses_per_guild_decay_rate():
     """When guild_config has guild_activity_decay_rate set, it overrides the global."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.guild_activity_decay_rate = 0.5  # slower decay than global 2/3
     cfg.min_guild_activity = None  # use global min
 
@@ -51,7 +53,7 @@ def test_decay_temperature_uses_per_guild_decay_rate():
 
 def test_decay_temperature_per_guild_rate_of_one_no_change():
     """A decay rate of 1.0 means no decay."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.guild_activity_decay_rate = 1.0
     cfg.min_guild_activity = None
 
@@ -61,7 +63,7 @@ def test_decay_temperature_per_guild_rate_of_one_no_change():
 
 def test_decay_temperature_per_guild_rate_differs_from_global():
     """Verify override produces a different result than the global default would."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.guild_activity_decay_rate = 0.9  # slower than global 2/3
     cfg.min_guild_activity = None
 
@@ -78,7 +80,7 @@ def test_decay_temperature_per_guild_rate_differs_from_global():
 
 def test_decay_temperature_clamps_to_per_guild_min_activity():
     """When guild_config has min_guild_activity set, it's used as the floor."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.guild_activity_decay_rate = None  # use global rate
     cfg.min_guild_activity = 2.0  # higher floor than global 1.0
 
@@ -89,7 +91,7 @@ def test_decay_temperature_clamps_to_per_guild_min_activity():
 
 def test_decay_temperature_floor_higher_than_global_is_respected():
     """A per-guild floor of 3.0 prevents decay below 3.0."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.guild_activity_decay_rate = None  # use global rate
     cfg.min_guild_activity = 3.0
 
@@ -112,7 +114,7 @@ def test_calculate_spawn_delay_uses_global_defaults_when_config_is_none():
 
 def test_calculate_spawn_delay_uses_per_guild_delay_min_max():
     """When guild_config has bounty_delay_random_min/max, they replace the global range."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.bounty_delay_random_min = 1
     cfg.bounty_delay_random_max = 2
     cfg.min_guild_activity = None  # use global min
@@ -126,7 +128,7 @@ def test_calculate_spawn_delay_uses_per_guild_delay_min_max():
 
 def test_calculate_spawn_delay_per_guild_min_max_differ_from_global():
     """Override delay range produces values outside the global [5,7] range."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.bounty_delay_random_min = 20
     cfg.bounty_delay_random_max = 30
     cfg.min_guild_activity = None
@@ -144,7 +146,7 @@ def test_calculate_spawn_delay_per_guild_min_max_differ_from_global():
 
 def test_decay_n_hours_propagates_guild_config():
     """guild_config is applied at every decay tick, not just the first."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.guild_activity_decay_rate = 0.5
     cfg.min_guild_activity = None
 
@@ -161,7 +163,7 @@ def test_decay_n_hours_propagates_guild_config():
 
 def test_decay_n_hours_with_higher_floor_never_drops_below():
     """Per-guild floor prevents multi-hour decay from going below the configured min."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.guild_activity_decay_rate = None
     cfg.min_guild_activity = 4.0
 

@@ -45,6 +45,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.combat_log import CombatLog
 from services.combat_log_service import CombatLogService
 from services.combat_models import (
     CombatMeta,
@@ -325,82 +326,82 @@ def _make_fight_results(
     )
 
 
-def _make_row_no_key_events(timeline: list[dict]) -> MagicMock:
-    """Build a MagicMock CombatLog row WITHOUT stored key_events (legacy row)."""
-    row = MagicMock()
-    row.id = 42
-    row.guild_id = 699744305274945650
-    row.context = "duel"
-    row.combatant1_name = "SamX"
-    row.combatant2_name = "H'Soc"
-    row.combatant1_user_id = 111
-    row.combatant2_user_id = 222
-    row.winner_name = "SamX"
-    row.is_stalemate = False
+def _make_row_no_key_events(timeline: list[dict]) -> CombatLog:
+    """Build a real CombatLog row WITHOUT stored key_events (legacy row)."""
     from datetime import UTC, datetime
 
-    row.created_at = datetime.now(UTC)
-    row.data = {
-        "schema_version": 1,
-        "summary": {
-            "outcome": "win",
-            "reason": "hp_depleted",
-            "duration_ticks": 3488,
-            "winner": "SamX",
-            "combatants": _COMBATANTS_MAP,
+    return CombatLog(
+        id=42,
+        guild_id=699744305274945650,
+        context="duel",
+        combatant1_name="SamX",
+        combatant2_name="H'Soc",
+        combatant1_user_id=111,
+        combatant2_user_id=222,
+        winner_name="SamX",
+        is_stalemate=False,
+        created_at=datetime.now(UTC),
+        data={
+            "schema_version": 1,
+            "summary": {
+                "outcome": "win",
+                "reason": "hp_depleted",
+                "duration_ticks": 3488,
+                "winner": "SamX",
+                "combatants": _COMBATANTS_MAP,
+            },
+            "timeline": timeline,
+            "metadata": {
+                "tick_ms": 10,
+                "total_ticks": 3488,
+                "resolver": "tick_v1",
+                "pvc_damage_reduction": 0.0,
+            },
+            # NOTE: no "key_events" key — simulates a legacy row
         },
-        "timeline": timeline,
-        "metadata": {
-            "tick_ms": 10,
-            "total_ticks": 3488,
-            "resolver": "tick_v1",
-            "pvc_damage_reduction": 0.0,
-        },
-        # NOTE: no "key_events" key — simulates a legacy row
-    }
-    return row
+    )
 
 
-def _make_row_with_key_events(timeline: list[dict]) -> MagicMock:
-    """Build a MagicMock CombatLog row WITH pre-stored key_events (new-style row)."""
+def _make_row_with_key_events(timeline: list[dict]) -> CombatLog:
+    """Build a real CombatLog row WITH pre-stored key_events (new-style row)."""
+    from datetime import UTC, datetime
+
     combatants_map = _COMBATANTS_MAP
     stored_key_events = _extract_key_events(timeline, tick_ms=10, combatants_map=combatants_map)
 
-    row = MagicMock()
-    row.id = 43
-    row.guild_id = 699744305274945650
-    row.context = "duel"
-    row.combatant1_name = "SamX"
-    row.combatant2_name = "H'Soc"
-    row.combatant1_user_id = 111
-    row.combatant2_user_id = 222
-    row.winner_name = "SamX"
-    row.is_stalemate = False
-    from datetime import UTC, datetime
-
-    row.created_at = datetime.now(UTC)
-    row.data = {
-        "schema_version": 1,
-        "summary": {
-            "outcome": "win",
-            "reason": "hp_depleted",
-            "duration_ticks": 3488,
-            "winner": "SamX",
-            "combatants": combatants_map,
+    return CombatLog(
+        id=43,
+        guild_id=699744305274945650,
+        context="duel",
+        combatant1_name="SamX",
+        combatant2_name="H'Soc",
+        combatant1_user_id=111,
+        combatant2_user_id=222,
+        winner_name="SamX",
+        is_stalemate=False,
+        created_at=datetime.now(UTC),
+        data={
+            "schema_version": 1,
+            "summary": {
+                "outcome": "win",
+                "reason": "hp_depleted",
+                "duration_ticks": 3488,
+                "winner": "SamX",
+                "combatants": combatants_map,
+            },
+            "timeline": timeline,
+            "metadata": {
+                "tick_ms": 10,
+                "total_ticks": 3488,
+                "resolver": "tick_v1",
+                "pvc_damage_reduction": 0.0,
+            },
+            "key_events": stored_key_events,
         },
-        "timeline": timeline,
-        "metadata": {
-            "tick_ms": 10,
-            "total_ticks": 3488,
-            "resolver": "tick_v1",
-            "pvc_damage_reduction": 0.0,
-        },
-        "key_events": stored_key_events,
-    }
-    return row
+    )
 
 
-def _make_sub_row(row: MagicMock, *, key_events: list | None) -> MagicMock:
+def _make_sub_row(row: CombatLog, *, key_events: list | None) -> MagicMock:
     """Build a sub-path Row mock as returned by get_subpath_for_detail.
 
     P4-T7b: get_detail now calls get_subpath_for_detail() first.  Tests that

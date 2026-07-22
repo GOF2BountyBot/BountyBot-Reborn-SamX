@@ -1790,8 +1790,7 @@ class TestBountiesNoTimestampsInBadLocations:
         text where they appear as raw code, confusing users.
         """
         embed = self._get_bounties_embed(mock_bounty_cog, make_mock_response)
-        if embed is None:
-            return  # embed not sent — skip
+        assert embed is not None, "expected /bounties to send an embed; a missing embed must fail, not skip"
 
         footer = embed.footer
         footer_text = ""
@@ -1809,8 +1808,7 @@ class TestBountiesNoTimestampsInBadLocations:
     def test_bounties_no_timestamps_in_author(self, mock_bounty_cog, make_mock_response):
         """The /bounties embed author field must not contain a Discord timestamp (<t:...) pattern."""
         embed = self._get_bounties_embed(mock_bounty_cog, make_mock_response)
-        if embed is None:
-            return
+        assert embed is not None, "expected /bounties to send an embed; a missing embed must fail, not skip"
 
         author = embed.author
         author_text = ""
@@ -3925,14 +3923,16 @@ class TestBountyCogSetup:
     """Tests for the setup function."""
 
     def test_setup_function(self, mock_bot):
-        """setup function should add BountyCog to bot."""
-        from cogs.bountyCog import setup
+        """setup function should add a real BountyCog instance to bot."""
+        from cogs.bountyCog import BountyCog, setup
 
         mock_bot.add_cog = AsyncMock()
 
         asyncio.run(setup(mock_bot))
 
         mock_bot.add_cog.assert_awaited_once()
+        added_cog = mock_bot.add_cog.call_args[0][0]
+        assert isinstance(added_cog, BountyCog), f"expected a BountyCog instance, got {type(added_cog)}"
 
 
 # ===========================================================================
@@ -5063,11 +5063,6 @@ class TestBuildMultiCheckEmbedPayoutBreakdown:
 
     def test_check_multi_capture_embed_shows_payout_breakdown_per_bounty(self, mock_bounty_cog, make_mock_response):
         """/check multi-capture response with payout_breakdown shows per-bounty payout fields."""
-
-        @pytest.fixture(autouse=True)
-        def _patch_player_id(self, mock_bounty_cog):
-            mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
-
         mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
         mock_bounty_cog._systems_cache.set("all", ["Magnetar"])
         interaction = _create_mock_interaction()

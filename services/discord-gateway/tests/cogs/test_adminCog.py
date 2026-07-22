@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 import types
@@ -4160,9 +4161,14 @@ class TestRenderConfig:
         with patch.dict("os.environ", env):
             asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "set", "max_res_x", 1920))
 
+        # Contract: the PUT body actually carries the requested setting=value (previously
+        # unasserted — a wrong URL or dropped/garbled body would have shipped green).
+        put_call = mock_admin_cog.http_client.put.call_args
+        assert put_call.args[0] == "http://blender-service:8001/api/v1/config/render"
+        assert put_call.kwargs["json"] == {"max_res_x": 1920}
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]
-        assert "✅" in msg or "max_res_x" in msg
+        assert msg == "✅ Updated `max_res_x` = `1920`"
 
     def test_render_config_set_missing_params_sends_usage(self, mock_admin_cog):
         """render_config set without setting or value sends usage message.
@@ -4230,9 +4236,12 @@ class TestRenderConfig:
         with patch.dict("os.environ", env):
             asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "reset", None, None))
 
+        # Contract: POST hits the reset endpoint (previously unasserted).
+        post_call = mock_admin_cog.http_client.post.call_args
+        assert post_call.args[0] == "http://blender-service:8001/api/v1/config/render/reset"
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]
-        assert "✅" in msg or "reset" in msg.lower()
+        assert msg == "✅ Render config reset to defaults."
 
     def test_render_config_not_admin(self, mock_admin_cog):
         """render_config rejects non-admin user."""
@@ -5657,6 +5666,239 @@ class TestAdminGiveItemRespx:
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
         assert "Given" in embed.title or "✅" in embed.title
+
+
+class TestAdminGiveShipRespx:
+    """respx URL-contract test: admin_give_ship POSTs /admin/give-ship with the expected payload.
+
+    Closes a MAJOR gap: TestAdminGiveShip (above) only exercised an accept-anything
+    MagicMock responder with no route/payload assertion for this destructive command.
+    """
+
+    def test_give_ship_posts_correct_url_and_payload(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user(user_id=111111111)
+
+        give_resp = {"player_id": 10, "ship_id": 42, "message": "Ship given."}
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            route = mock_router.post(f"{_BOT_CORE_URL}/admin/give-ship").mock(
+                return_value=httpx.Response(200, json=give_resp)
+            )
+            asyncio.run(mock_admin_cog.admin_give_ship.callback(mock_admin_cog, interaction, user, "Sidewinder"))
+
+        sent_request = route.calls.last.request
+        assert sent_request.url.params.get("admin_user_id") == str(interaction.user.id)
+        assert json.loads(sent_request.content) == {
+            "guild_id": 987654321,
+            "user_id": user.id,
+            "ship_name": "Sidewinder",
+        }
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Given" in embed.title or "✅" in embed.title
+
+
+class TestAdminRemoveShipRespx:
+    """respx URL-contract test: admin_remove_ship POSTs /admin/remove-ship with the expected payload."""
+
+    def test_remove_ship_posts_correct_url_and_payload(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user(user_id=111111111)
+
+        remove_resp = {"player_id": 10, "message": "Ship removed.", "items_returned_to_inventory": []}
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            route = mock_router.post(f"{_BOT_CORE_URL}/admin/remove-ship").mock(
+                return_value=httpx.Response(200, json=remove_resp)
+            )
+            asyncio.run(mock_admin_cog.admin_remove_ship.callback(mock_admin_cog, interaction, user, "Sidewinder"))
+
+        sent_request = route.calls.last.request
+        assert sent_request.url.params.get("admin_user_id") == str(interaction.user.id)
+        assert json.loads(sent_request.content) == {
+            "guild_id": 987654321,
+            "user_id": user.id,
+            "ship_name": "Sidewinder",
+        }
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Removed" in embed.title or "✅" in embed.title
+
+
+class TestAdminRemoveItemRespx:
+    """respx URL-contract test: admin_remove_item POSTs /admin/remove-item with the expected payload."""
+
+    def test_remove_item_posts_correct_url_and_payload(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user(user_id=111111111)
+
+        remove_resp = {"player_id": 10, "item_type": "primary_weapon", "new_quantity": 0, "message": "Item removed."}
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            route = mock_router.post(f"{_BOT_CORE_URL}/admin/remove-item").mock(
+                return_value=httpx.Response(200, json=remove_resp)
+            )
+            asyncio.run(mock_admin_cog.admin_remove_item.callback(mock_admin_cog, interaction, user, "Pulse Laser", 1))
+
+        sent_request = route.calls.last.request
+        assert sent_request.url.params.get("admin_user_id") == str(interaction.user.id)
+        assert json.loads(sent_request.content) == {
+            "guild_id": 987654321,
+            "user_id": user.id,
+            "item_name": "Pulse Laser",
+            "quantity": 1,
+        }
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Removed" in embed.title or "✅" in embed.title
+
+
+class TestAdminPlayerSetCreditsRespx:
+    """respx URL-contract test: admin_player set_credits POSTs get-or-create then PUTs the update.
+
+    Closes a MAJOR gap: the accept-anything responder used elsewhere in this file for
+    admin_player never asserted the get-or-create POST /players/ or the mutating
+    PUT /admin/players/credits route/payload — a wrong URL or dropped field would ship green.
+    """
+
+    def test_set_credits_posts_correct_urls_and_payload(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user(user_id=111111111)
+
+        player_resp = {
+            "id": 10,
+            "credits": 500,
+            "xp": 100,
+            "tier": "Bronze",
+            "lifetime_credits": 500,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00",
+        }
+        update_resp = {"old_credits": 500, "new_credits": 750}
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            player_route = mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=player_resp)
+            )
+            credits_route = mock_router.put(f"{_BOT_CORE_URL}/admin/players/credits").mock(
+                return_value=httpx.Response(200, json=update_resp)
+            )
+            asyncio.run(
+                mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_credits", 750, None)
+            )
+
+        assert player_route.called
+        sent_player_json = json.loads(player_route.calls.last.request.content)
+        assert sent_player_json["discord_id"] == user.id
+        assert sent_player_json["guild_id"] == 987654321
+
+        assert credits_route.called
+        credits_request = credits_route.calls.last.request
+        assert credits_request.url.params.get("user_id") == str(interaction.user.id)
+        assert credits_request.url.params.get("guild_id") == "987654321"
+        assert json.loads(credits_request.content) == {
+            "player_id": 10,
+            "credits": 750,
+            "update_lifetime": False,
+        }
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert embed.title == "✅ Credits Updated"
+
+
+class TestAdminUninstallRespx:
+    """respx URL-contract test: admin_uninstall DELETEs /admin/guilds/{id}/uninstall.
+
+    Closes a MAJOR gap: the confirm-flow test elsewhere in this file only asserts
+    `delete.assert_called_once()` on an accept-anything responder — the destructive
+    DELETE URL/body was never checked at the transport level.
+    """
+
+    def test_uninstall_deletes_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        # Keep the default (truthy, admin-passing) interaction.user mock — only pin its id
+        # for the params assertion below. Using _create_mock_user() here would override
+        # guild_permissions.administrator to False (its default) and incorrectly block
+        # this test at the admin gate before ever reaching the DELETE call.
+        interaction.user.id = 555555555
+        mock_admin_cog.bot.get_guild = MagicMock(return_value=None)
+
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=None)
+
+        uninstall_resp = {
+            "message": "Bot uninstalled.",
+            "removed_counts": {"players": 3},
+            "warning": "Gone.",
+        }
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            patch("cogs.adminCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_BOT_CORE_URL}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json={"guild_id": 987654321})
+            )
+            delete_route = mock_router.delete(f"{_BOT_CORE_URL}/admin/guilds/987654321/uninstall").mock(
+                return_value=httpx.Response(200, json=uninstall_resp)
+            )
+            asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
+
+        assert delete_route.called
+        assert delete_route.calls.last.request.url.params.get("user_id") == "555555555"
+        last_call_kwargs = interaction.followup.send.call_args_list[-1][1]
+        embed = last_call_kwargs["embed"]
+        assert embed.title == "✅ Bot Uninstalled"
 
 
 class TestAdminDuelCancelAllRespx:

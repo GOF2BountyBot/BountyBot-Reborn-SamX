@@ -19,7 +19,9 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import respx
 
 # -------------------------------------------------------------------------
 # Bootstrap: mock shared.bblogger before any cog imports
@@ -67,9 +69,9 @@ def _make_mock_interaction(is_admin_user: bool = True) -> MagicMock:
     interaction.user.id = 111222333
     interaction.guild_id = 999888777
 
-    # Guild permissions
-    interaction.user.guild_permissions = MagicMock()
-    interaction.user.guild_permissions.administrator = is_admin_user
+    # Guild permissions — real discord.Permissions (constructible without a live client)
+    # rather than a MagicMock stand-in with a single attribute hand-set.
+    interaction.user.guild_permissions = discord.Permissions(administrator=is_admin_user)
 
     # Response helpers — B.25 Fix B: commands now use defer + followup
     interaction.response = MagicMock()
@@ -91,6 +93,9 @@ def _make_mock_http_response(data: dict, status_code: int = 200) -> MagicMock:
     resp.json = MagicMock(return_value=data)
     resp.raise_for_status = MagicMock()
     return resp
+
+
+_API_BASE = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 
 
 # -------------------------------------------------------------------------
@@ -444,19 +449,25 @@ async def test_render_cache_clear(admin_cog) -> None:
 
 @pytest.mark.asyncio
 async def test_render_config_blocks_non_admin(admin_cog) -> None:
-    """B.25 Fix A: render_config must defer first, then reject non-admin via followup."""
+    """B.25 Fix A: render_config must defer first, then reject non-admin via followup.
+
+    Migrated to respx: pins the real ``GET {api_base}/config/guild/{id}`` route that
+    ``_check_is_admin`` hits, rather than blanket-patching ``httpx.AsyncClient.__aenter__``
+    (which intercepts ANY outbound call regardless of URL/method).
+    """
     interaction = _make_mock_interaction(is_admin_user=False)
     # Ensure no Bot Admin role
     interaction.user.roles = []
 
-    with pytest.MonkeyPatch.context() as mp:
+    with (
+        pytest.MonkeyPatch.context() as mp,
+        respx.mock(assert_all_called=True) as mock_router,
+    ):
         mp.setenv("DEVELOPERS", "")
-        mock_http_resp = _make_mock_http_response({"admin_role_id": None})
-        with __import__("unittest.mock", fromlist=["patch"]).patch(
-            "httpx.AsyncClient.__aenter__",
-            return_value=MagicMock(get=AsyncMock(return_value=mock_http_resp)),
-        ):
-            await admin_cog.render_config.callback(admin_cog, interaction, action="view")
+        mock_router.get(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
+            return_value=httpx.Response(200, json={"admin_role_id": None})
+        )
+        await admin_cog.render_config.callback(admin_cog, interaction, action="view")
 
     # Defer must have been called before the admin check
     interaction.response.defer.assert_awaited_once()
@@ -468,18 +479,22 @@ async def test_render_config_blocks_non_admin(admin_cog) -> None:
 
 @pytest.mark.asyncio
 async def test_render_cache_clear_blocks_non_admin(admin_cog) -> None:
-    """B.25 Fix A: render_cache_clear must defer first, then reject non-admin via followup."""
+    """B.25 Fix A: render_cache_clear must defer first, then reject non-admin via followup.
+
+    Migrated to respx (see test_render_config_blocks_non_admin for rationale).
+    """
     interaction = _make_mock_interaction(is_admin_user=False)
     interaction.user.roles = []
 
-    with pytest.MonkeyPatch.context() as mp:
+    with (
+        pytest.MonkeyPatch.context() as mp,
+        respx.mock(assert_all_called=True) as mock_router,
+    ):
         mp.setenv("DEVELOPERS", "")
-        mock_http_resp = _make_mock_http_response({"admin_role_id": None})
-        with __import__("unittest.mock", fromlist=["patch"]).patch(
-            "httpx.AsyncClient.__aenter__",
-            return_value=MagicMock(get=AsyncMock(return_value=mock_http_resp)),
-        ):
-            await admin_cog.render_cache_clear.callback(admin_cog, interaction)
+        mock_router.get(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
+            return_value=httpx.Response(200, json={"admin_role_id": None})
+        )
+        await admin_cog.render_cache_clear.callback(admin_cog, interaction)
 
     # Defer must have been called before the admin check
     interaction.response.defer.assert_awaited_once()
@@ -562,24 +577,28 @@ async def test_render_cache_clear_defer_before_http(admin_cog) -> None:
 
 @pytest.mark.asyncio
 async def test_render_config_requires_admin(admin_cog) -> None:
-    """render_config predicate (_check_is_admin) should return False for non-admin users."""
+    """render_config predicate (_check_is_admin) should return False for non-admin users.
+
+    Migrated to respx: pins the real GET route+method instead of blanket-patching
+    ``httpx.AsyncClient.__aenter__`` for any outbound call.
+    """
     from cogs.adminCog import _check_is_admin
 
     # Non-admin user: not in DEVELOPERS, no Administrator permission.
     interaction = _make_mock_interaction(is_admin_user=False)
     interaction.user.roles = []
 
-    with pytest.MonkeyPatch.context() as mp:
+    with (
+        pytest.MonkeyPatch.context() as mp,
+        respx.mock(assert_all_called=True) as mock_router,
+    ):
         mp.setenv("DEVELOPERS", "")
-        # Mock the HTTP call to /config/guild to return no admin role
-        mock_http_resp = _make_mock_http_response({"admin_role_id": None})
-
-        # We only need 1 mock: the HTTP GET for guild config
-        with __import__("unittest.mock", fromlist=["patch"]).patch(
-            "httpx.AsyncClient.__aenter__",
-            return_value=MagicMock(get=AsyncMock(return_value=mock_http_resp)),
-        ):
-            result = await _check_is_admin(interaction)
+        # Mock the HTTP call to /config/guild to return no admin role — the single
+        # process/network boundary mock this test needs.
+        mock_router.get(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
+            return_value=httpx.Response(200, json={"admin_role_id": None})
+        )
+        result = await _check_is_admin(interaction)
 
     assert result is False
 

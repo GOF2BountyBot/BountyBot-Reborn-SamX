@@ -20,6 +20,7 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -145,11 +146,17 @@ def _make_detail(
 
 
 def _make_mock_response(json_data, status_code: int = 200):
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = json_data
-    resp.status_code = status_code
-    return resp
+    """Build a **real** ``httpx.Response`` (not a bare MagicMock).
+
+    Because it's real: ``.json()`` deserializes the encoded body, and
+    ``.raise_for_status()`` genuinely raises ``httpx.HTTPStatusError`` for any
+    4xx/5xx status — matching the real client the cog exercises in production.
+    Previously this returned a MagicMock whose ``raise_for_status`` was an
+    unconditional no-op, so a ``status_code=500`` fixture silently took the
+    success path unless a test manually stapled on a (wrongly-typed) side effect.
+    """
+    request = httpx.Request("GET", "http://bot-core.test/api/v1/combat-log")
+    return httpx.Response(status_code, json=json_data, request=request)
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +231,15 @@ class TestBattleAutocomplete:
         assert choices == []
 
     async def test_autocomplete_returns_empty_on_non_200(self, cog):
-        cog.http_client.get = AsyncMock(return_value=_make_mock_response({}, status_code=500))
+        """A genuine 500 must raise via raise_for_status() inside _fetch_combat_log, which
+        battle_autocomplete's `except Exception` degrades to []. Previously the response
+        factory's raise_for_status was an unconditional no-op, so this test passed because
+        iterating an EMPTY dict body produced [] — the status_code was never consulted and a
+        500 that returned a non-empty body would have passed straight through undetected.
+        The list-shaped body below proves the empty result is genuinely caused by the 500,
+        not by an incidentally-empty payload.
+        """
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response([_make_list_item(row_id=1)], status_code=500))
         interaction = _create_interaction()
 
         choices = await cog.battle_autocomplete(interaction, current="")
@@ -314,6 +329,11 @@ class TestCombatLogCommand:
 
         await cog.combat_log.callback(cog, interaction, battle=1)
 
+        # Contract: hits GET /combat-log/{battle} scoped to the invoking user.
+        get_call = cog.http_client.get.call_args
+        assert get_call.args[0].endswith("/combat-log/1")
+        assert get_call.kwargs.get("params", {}).get("user_id") == interaction.user.id
+
         interaction.followup.send.assert_called_once()
         call_kwargs = interaction.followup.send.call_args
         # Should have sent an embed
@@ -364,14 +384,22 @@ class TestCombatLogCommand:
         assert "not found" in text.lower() or "not a combatant" in text.lower()
 
     async def test_api_error_sends_warning(self, cog):
-        resp = _make_mock_response({}, status_code=500)
-        resp.raise_for_status = MagicMock(side_effect=Exception("server error"))
+        """A real 500 must raise httpx.HTTPStatusError (via raise_for_status) and be caught
+        by the dedicated `except httpx.HTTPStatusError` branch (combatLogCog.py:235) — not a
+        bare Exception, which would divert to the generic fallback branch and never actually
+        exercise the HTTPStatusError handler this test claims to cover.
+        """
+        resp = _make_mock_response({"detail": "server error"}, status_code=500)
         cog.http_client.get = AsyncMock(return_value=resp)
         interaction = _create_interaction()
 
         await cog.combat_log.callback(cog, interaction, battle=1)
 
         interaction.followup.send.assert_called_once()
+        args = interaction.followup.send.call_args
+        text = args.args[0] if args.args else args.kwargs.get("content", "")
+        assert "error occurred" in text.lower()
+        assert args.kwargs.get("ephemeral") is True
 
     async def test_embed_shows_outcome_won(self, cog):
         cog.http_client.get = AsyncMock(return_value=_make_mock_response(_make_detail(outcome="won")))
@@ -821,14 +849,20 @@ class TestAdminCombatLogCommand:
         assert "not a combatant" in text.lower() or "not found" in text.lower()
 
     async def test_api_error_sends_warning(self, cog):
-        resp = _make_mock_response({}, status_code=500)
-        resp.raise_for_status = MagicMock(side_effect=Exception("server error"))
+        """A real 500 must raise httpx.HTTPStatusError and be caught by the dedicated
+        `except httpx.HTTPStatusError` branch (combatLogCog.py:306), not a bare Exception.
+        """
+        resp = _make_mock_response({"detail": "server error"}, status_code=500)
         cog.http_client.get = AsyncMock(return_value=resp)
         interaction = _create_interaction()
 
         await cog.admin_combat_log.callback(cog, interaction, user=_make_target_user(), battle=1)
 
         interaction.followup.send.assert_called_once()
+        args = interaction.followup.send.call_args
+        text = args.args[0] if args.args else args.kwargs.get("content", "")
+        assert "error occurred" in text.lower()
+        assert args.kwargs.get("ephemeral") is True
 
 
 # ---------------------------------------------------------------------------

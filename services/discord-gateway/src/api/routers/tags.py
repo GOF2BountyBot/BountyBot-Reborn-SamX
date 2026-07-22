@@ -125,7 +125,7 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
                 emoji_value = normalize_emoji(tag.emoji)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 raise HTTPException(
-                    status_code=status.HTTP_422,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Invalid emoji: {tag.emoji}",
                 ) from exc
 
@@ -231,7 +231,7 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 flogger.debug(f"update_tag: emoji normalization failed for {tag_data.emoji}")
                 raise HTTPException(
-                    status_code=status.HTTP_422,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Invalid emoji: {tag_data.emoji}",
                 ) from exc
         flogger.debug(f"update_tag: prepared update_kwargs={update_kwargs}")

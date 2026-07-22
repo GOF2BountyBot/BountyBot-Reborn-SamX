@@ -3,11 +3,11 @@ Deep coverage tests for tags.py — third pass targeting remaining uncovered lin
 
 Uncovered lines after test_tags_extended.py + test_tags_extra.py (65%):
   86-93   - get_tag: non-dict payload where setattr raises → __dict__ fallback
-  127-128 - create: normalize_emoji raises (status.HTTP_422 bug → hits outer handler)
+  127-128 - create: normalize_emoji raises → 422 (TRUEUP-P3 fixed; was a status.HTTP_422 bug → 500)
   153-159 - create: channel.edit raises AttributeError → proxy _TagProxy fallback
   174-175 - create: dict payload emoji normalization raises (silently ignored)
   179-186 - create: non-dict payload where setattr raises → __dict__ fallback
-  235-236 - update: invalid emoji (status.HTTP_422 bug → hits outer handler)
+  235-236 - update: invalid emoji → 422 (TRUEUP-P3 fixed; was a status.HTTP_422 bug → 500)
   250-283 - update: no tag.edit, no edit_tag → tags_to_edit_payload fallback
   289-290 - update: id-lookup after edit returns None → name fallback
   292     - update: both id and name lookups fail → use original tag
@@ -273,17 +273,19 @@ class TestGetTagNonDictSetAttrRaises:
 
 
 class TestCreateForumTagDeep:
-    def test_create_invalid_emoji_normalize_raises_hits_outer_handler(self):
-        """Lines 127-128: normalize_emoji raises in create → status.HTTP_422 AttributeError
-        (real production bug — see FOLLOWUPS.md R-gw-api-0) → outer exception handler → 500."""
+    def test_create_invalid_emoji_returns_422(self):
+        """Lines 127-128: normalize_emoji raises in create → 422 "Invalid emoji: ...".
+
+        History (TRUEUP-P3, fixed): this branch used the nonexistent ``status.HTTP_422``
+        attribute (AttributeError → outer handler → 500) — see FOLLOWUPS.md R-gw-api-1."""
         ch, _edit = _make_forum_channel()
         bot = _bot_for_channel(ch)
 
         with patch("api.routers.tags.normalize_emoji", side_effect=ValueError("bad emoji")):
             client = TestClient(_make_app(bot))
             response = client.post("/api/v1/channels/555555/tags", json={"name": "Tag", "emoji": "bad_emoji_str"})
-            assert response.status_code == 500
-            assert "detail" in response.json()
+            assert response.status_code == 422
+            assert response.json()["detail"] == "Invalid emoji: bad_emoji_str"
 
     def test_create_channel_edit_attributeerror_uses_proxy_fallback(self):
         """Lines 153-159: create_tag AND the dict-payload edit both raise AttributeError →
@@ -360,9 +362,11 @@ class TestCreateForumTagDeep:
 
 
 class TestUpdateTagDeep:
-    def test_update_invalid_emoji_normalize_raises_hits_outer_handler(self):
-        """Lines 235-236: normalize_emoji raises in update → status.HTTP_422 bug
-        (real production bug — see FOLLOWUPS.md R-gw-api-0) → outer exception handler → 500."""
+    def test_update_invalid_emoji_returns_422(self):
+        """Lines 235-236: normalize_emoji raises in update → 422 "Invalid emoji: ...".
+
+        History (TRUEUP-P3, fixed): this branch used the nonexistent ``status.HTTP_422``
+        attribute (AttributeError → outer handler → 500) — see FOLLOWUPS.md R-gw-api-1."""
         tag = _make_tag(1234567890, name="Original")
         ch, _edit = _make_forum_channel(tags=[tag])
         bot = _bot_with_tag_in_guild(ch)
@@ -370,8 +374,8 @@ class TestUpdateTagDeep:
         with patch("api.routers.tags.normalize_emoji", side_effect=ValueError("bad emoji")):
             client = TestClient(_make_app(bot))
             response = client.put("/api/v1/tags/1234567890", json={"emoji": "❌bad"})
-            assert response.status_code == 500
-            assert "detail" in response.json()
+            assert response.status_code == 422
+            assert response.json()["detail"] == "Invalid emoji: ❌bad"
 
     def test_update_tag_no_edit_no_edit_tag_uses_payload_fallback(self):
         """Lines 250-283: no tag.edit, no channel.edit_tag → the real tags_to_edit_payload

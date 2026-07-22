@@ -42,11 +42,20 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
+from datetime import UTC, datetime
+
+from persist.models.guild_shop import GuildShop
+from persist.models.player import Player
+from persist.models.player_ship import PlayerShip
 from services.loadout_consistency_service import LoadoutConsistencyService
 from services.shop_service import ShopService
 
 # ---------------------------------------------------------------------------
 # Helpers
+#
+# Domain entities are real SQLAlchemy model instances (no ARRAY columns on
+# these tables), so unset attributes expose the real nullable defaults rather
+# than truthy MagicMock auto-attributes.
 # ---------------------------------------------------------------------------
 
 
@@ -59,19 +68,19 @@ def _make_player_ship(
     modules: list[str] | None = None,
     turrets: list[str] | None = None,
     secondary_weapons: list[str] | None = None,
-) -> MagicMock:
-    """Build a mock PlayerShip with real Python lists for slot attrs."""
-    ship = MagicMock()
-    ship.id = ship_id
-    ship.player_id = player_id
-    ship.ship_name = ship_name
-    ship.is_active = is_active
-    ship.weapons = list(weapons) if weapons is not None else []
-    ship.modules = list(modules) if modules is not None else []
-    ship.turrets = list(turrets) if turrets is not None else []
-    ship.secondary_weapons = list(secondary_weapons) if secondary_weapons is not None else []
-    ship.created_at = MagicMock(isoformat=MagicMock(return_value="2026-01-01T00:00:00"))
-    return ship
+) -> PlayerShip:
+    """Build a real PlayerShip with real Python lists for slot attrs."""
+    return PlayerShip(
+        id=ship_id,
+        player_id=player_id,
+        ship_name=ship_name,
+        is_active=is_active,
+        weapons=list(weapons) if weapons is not None else [],
+        modules=list(modules) if modules is not None else [],
+        turrets=list(turrets) if turrets is not None else [],
+        secondary_weapons=list(secondary_weapons) if secondary_weapons is not None else [],
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
 
 
 def _make_static_ship(
@@ -98,14 +107,15 @@ def _make_player(
     tier: str = "Bronze",
     credits: int = 10000,
     active_ship_id: int | None = None,
-) -> MagicMock:
-    p = MagicMock()
-    p.id = player_id
-    p.guild_id = guild_id
-    p.tier = tier
-    p.credits = credits
-    p.active_ship_id = active_ship_id
-    return p
+) -> Player:
+    return Player(
+        id=player_id,
+        user_id=player_id,
+        guild_id=guild_id,
+        tier=tier,
+        credits=credits,
+        active_ship_id=active_ship_id,
+    )
 
 
 def _make_shop_item(
@@ -116,16 +126,17 @@ def _make_shop_item(
     item_name: str = "Hammerhead",
     quantity: int = 1,
     price: int = 5000,
-) -> MagicMock:
-    item = MagicMock()
-    item.id = item_id
-    item.guild_id = guild_id
-    item.tier = tier
-    item.item_type = item_type
-    item.item_name = item_name
-    item.quantity = quantity
-    item.price = price
-    return item
+) -> GuildShop:
+    return GuildShop(
+        id=item_id,
+        guild_id=guild_id,
+        tier=tier,
+        tech_level=1,
+        item_type=item_type,
+        item_name=item_name,
+        quantity=quantity,
+        price=price,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import os
 from collections import OrderedDict
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -261,6 +262,29 @@ class TestBountyMapEndpoint:
         finally:
             bounty_module._map_cache = original
 
+    @pytest.fixture
+    def thread_pool_for_offload(self):
+        """Register a ThreadPoolExecutor for the real render offload seam.
+
+        ``render_route_offloaded`` runs the PIL render via ``offload_io`` which
+        reads the thread pool from executor_holder. The services conftest only
+        sets the *process* pool, so this fixture supplies the thread pool that
+        the real renderer path needs (mirrors the FastAPI lifespan wiring)."""
+        import concurrent.futures
+
+        import utils.executor_holder as holder
+
+        if holder._thread_pool is None:
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="test-maprender")
+            holder.set_thread_pool(pool)
+            try:
+                yield
+            finally:
+                pool.shutdown(wait=True)
+                holder._thread_pool = None
+        else:
+            yield
+
     def _make_app(self, mock_bounty_service, mock_renderer, mock_graph):
         """Build a test FastAPI app with dependency overrides."""
         import api.routers.bounties as bounty_module
@@ -279,39 +303,61 @@ class TestBountyMapEndpoint:
         return TestClient(app)
 
     @patch("api.routers.bounties.get_db_session")
-    def test_map_endpoint_returns_200_png(self, mock_get_db):
-        """Endpoint returns HTTP 200 with image/png content type."""
+    def test_map_endpoint_returns_200_png(self, mock_get_db, thread_pool_for_offload):
+        """Endpoint returns HTTP 200 with image/png and the REAL renderer output.
+
+        Uses the real ``MapRenderer`` (not an accept-anything stub) driven through
+        the real ``render_route_offloaded`` offload seam, so the endpoint→renderer
+        contract is genuinely exercised. The response bytes are asserted to be
+        byte-identical to rendering the bounty's own route, proving the endpoint
+        forwards ``bounty.route`` to the renderer.
+        """
         from unittest.mock import AsyncMock
 
-        # Configure the DB mock.
+        # Configure the DB mock (genuine process boundary).
         mock_session = AsyncMock()
         mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        # Mock bounty.
+        route = ["Augmenta", "Magnetar"]
+
+        # Mock bounty (returned across the service/DB boundary).
         mock_bounty = MagicMock()
         mock_bounty.id = 1
-        mock_bounty.route = ["Augmenta", "Magnetar"]
+        mock_bounty.route = route
 
-        # Mock service.
+        # Service boundary — returns the bounty.
         mock_service = AsyncMock()
         mock_service.bounty_repo = AsyncMock()
         mock_service.bounty_repo.get_by_id = AsyncMock(return_value=mock_bounty)
 
-        # Mock renderer — endpoint now calls render_route_offloaded (async), not render_route_for_bounty.
-        _fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-        mock_renderer = MagicMock()
-        mock_renderer.render_route_offloaded = AsyncMock(return_value=_fake_png)
+        # REAL renderer — no canned-PNG stub.
+        renderer = MapRenderer(map_path=_MAP_PATH)
 
-        # Mock graph (already loaded).
-        mock_graph = MagicMock()
-        mock_graph.is_loaded.return_value = True
+        # Faithful pre-warmed graph stand-in: real method behaviour (get_system /
+        # is_loaded), returns real coordinates for the route's systems.
+        class _FakeGraph:
+            def is_loaded(self):
+                return True
 
-        client = self._make_app(mock_service, mock_renderer, mock_graph)
+            def get_system(self, name):
+                coords = _SAMPLE_COORDS.get(name)
+                return SimpleNamespace(coordinates=coords) if coords is not None else None
+
+        graph = _FakeGraph()
+
+        client = self._make_app(mock_service, renderer, graph)
         response = client.get("/api/v1/bounties/1/map")
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
+
+        # The response must be exactly what the real renderer produces for the
+        # bounty's route — this is the endpoint→renderer contract assertion.
+        expected_coords = {name: _SAMPLE_COORDS[name] for name in route}
+        expected_png = MapRenderer(map_path=_MAP_PATH).render_route(route, expected_coords)
+        assert response.content == expected_png
+        assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
 
     @patch("api.routers.bounties.get_db_session")
     def test_map_endpoint_404_for_missing_bounty(self, mock_get_db):

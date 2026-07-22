@@ -10,7 +10,9 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+import httpx
 import pytest
+import respx
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -96,6 +98,28 @@ def mock_admin_cog(mock_bot):
 
     cog = _adm.AdminCog(mock_bot)
     return cog
+
+
+_API_BASE = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+
+
+def _make_http_status_error(status_code: int, message: str = "Server error") -> httpx.HTTPStatusError:
+    """Build a genuine ``httpx.HTTPStatusError`` (real ``httpx.Response`` attached).
+
+    Previously several tests hand-built the exception with
+    ``response=MagicMock(status_code=...)`` — a bare MagicMock stand-in for the response
+    that doesn't behave like a real ``httpx.Response`` (e.g. `.text`, `.json()`, `.headers`
+    would all silently return more MagicMocks instead of raising/being absent as they
+    would on a real error response). This raises the exception the way a real
+    ``resp.raise_for_status()`` call would, so ``exc.response`` is faithful.
+    """
+    request = httpx.Request("GET", "http://bot-core.test/api/v1/resource")
+    response = httpx.Response(status_code, json={"detail": message}, request=request)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return exc
+    raise AssertionError(f"status_code={status_code} did not raise")
 
 
 def _create_mock_interaction(guild_id=987654321):
@@ -238,7 +262,21 @@ class TestAdminPlayerAddCredits:
         asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_xp", None, 5000))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        # Contract: the PUT body carries the requested xp amount to the right endpoint.
+        put_call = mock_admin_cog.http_client.put.call_args
+        assert put_call.args[0].endswith("/admin/players/xp")
+        assert put_call.kwargs["json"]["xp"] == 5000
+        # Behavior, not just "something was sent": the real embed reflects the tier change.
         interaction.followup.send.assert_called_once()
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "✅ XP Updated"
+        field_values = {f.name: f.value for f in embed.fields}
+        assert field_values["Old XP"] == "100"
+        assert field_values["New XP"] == "5,000"
+        assert field_values["Old Tier"] == "Bronze"
+        assert field_values["New Tier"] == "Silver"
+        assert field_values["Tier Change"] == "✅ Tier Updated!"
 
     def test_admin_player_set_xp_missing_amount(self, mock_admin_cog):
         """admin_player set_xp should reject missing xp amount."""
@@ -303,10 +341,7 @@ class TestAdminPlayerAddCredits:
         interaction = _create_mock_interaction()
         user = _create_mock_user()
 
-        import httpx
-
-        mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError("Server error", request=mock_request, response=MagicMock(status_code=500))
+        http_error = _make_http_status_error(500, "Server error")
         mock_admin_cog.http_client.post = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "view_stats", None, None))
@@ -340,9 +375,15 @@ class TestAdminRefreshShop:
     """Tests for admin_refresh_shop command."""
 
     def test_admin_refresh_shop_success(self, mock_admin_cog):
-        """admin_refresh_shop should refresh shop successfully."""
+        """admin_refresh_shop should refresh shop successfully.
+
+        `is_admin=True` is required for this to actually reach the success path: the
+        original test used a non-admin user and never noticed because its only assertion
+        (`followup.send.assert_called_once()`) also passes on the "❌ requires admin
+        privileges" deny message.
+        """
         interaction = _create_mock_interaction()
-        user = _create_mock_user()
+        user = _create_mock_user(is_admin=True)
         interaction.user = user
 
         refresh_resp = MagicMock()
@@ -353,12 +394,24 @@ class TestAdminRefreshShop:
         asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        # Contract: POST hits the refresh endpoint with the requested tier in the JSON body.
+        post_call = mock_admin_cog.http_client.post.call_args
+        assert post_call.args[0].endswith("/admin/shops/refresh")
+        assert post_call.kwargs["json"]["tier"] == "Bronze"
         interaction.followup.send.assert_called_once()
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "✅ Shop Refreshed Successfully!"
+        assert "Bronze" in embed.description
 
     def test_admin_refresh_shop_with_tech_level(self, mock_admin_cog):
-        """admin_refresh_shop should refresh shop with forced tech level."""
+        """admin_refresh_shop should refresh shop with forced tech level.
+
+        `is_admin=True` is required to actually reach the success path (see
+        test_admin_refresh_shop_success for why the original non-admin user went unnoticed).
+        """
         interaction = _create_mock_interaction()
-        user = _create_mock_user()
+        user = _create_mock_user(is_admin=True)
         interaction.user = user
 
         refresh_resp = MagicMock()
@@ -368,7 +421,15 @@ class TestAdminRefreshShop:
 
         asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Gold", 5))
 
+        # Contract: force_tech_level is actually forwarded in the POST body.
+        post_call = mock_admin_cog.http_client.post.call_args
+        assert post_call.kwargs["json"]["force_tech_level"] == 5
         interaction.followup.send.assert_called_once()
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "✅ Shop Refreshed Successfully!"
+        field_values = {f.name: f.value for f in embed.fields}
+        assert field_values.get("Forced Tech Level") == "5"
 
     def test_admin_refresh_shop_invalid_tier(self, mock_admin_cog):
         """admin_refresh_shop should reject invalid tier."""
@@ -419,22 +480,26 @@ class TestAdminRefreshShop:
         assert "Tech level must be between" not in str(interaction.followup.send.call_args)
 
     def test_admin_refresh_shop_api_error(self, mock_admin_cog):
-        """admin_refresh_shop should handle API errors."""
+        """admin_refresh_shop should handle API errors.
+
+        `is_admin=True` is required to actually reach the try/except around the POST call:
+        with the previous non-admin user this test's `call_args[0][0]` assertion would have
+        IndexError'd against the real `report_api_error` embed-only call — meaning it was, in
+        practice, only ever exercising the "❌ requires admin privileges" deny branch.
+        """
         interaction = _create_mock_interaction()
-        user = _create_mock_user()
+        user = _create_mock_user(is_admin=True)
         interaction.user = user
 
-        import httpx
-
-        mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError("Server error", request=mock_request, response=MagicMock(status_code=500))
+        http_error = _make_http_status_error(500, "Server error")
         mock_admin_cog.http_client.post = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
 
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args[0][0]
-        assert "❌" in call_args
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_admin_refresh_shop_generic_error(self, mock_admin_cog):
         """admin_refresh_shop should handle generic errors."""
@@ -478,7 +543,16 @@ class TestAdminGuildStats:
         asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        # Contract: GET hits the guild stats endpoint for THIS guild.
+        get_call = mock_admin_cog.http_client.get.call_args
+        assert get_call.args[0].endswith(f"/admin/guilds/{interaction.guild_id}/stats")
         interaction.followup.send.assert_called_once()
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None
+        field_values = {f.name: f.value for f in embed.fields}
+        assert field_values["Total Players"] == "42"
+        assert field_values["Total Credits"] == "100,000"
+        assert "Bronze: 20" in field_values["Tier Distribution"]
 
     def test_admin_guild_stats_no_tier_distribution(self, mock_admin_cog):
         """admin_guild_stats should work without tier distribution."""
@@ -506,10 +580,7 @@ class TestAdminGuildStats:
         """admin_guild_stats should handle API errors."""
         interaction = _create_mock_interaction()
 
-        import httpx
-
-        mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError("Server error", request=mock_request, response=MagicMock(status_code=500))
+        http_error = _make_http_status_error(500, "Server error")
         mock_admin_cog.http_client.get = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
@@ -574,9 +645,12 @@ class TestAdminConfig:
 
         asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_credits", 500, None))
 
+        # Contract: PUT hits the starting-credits endpoint with the requested amount in the path.
+        put_call = mock_admin_cog.http_client.put.call_args
+        assert put_call.args[0].endswith(f"/config/guild/{interaction.guild_id}/starting-credits/500")
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
-        assert "✅" in call_args
+        assert call_args == "✅ Starting credits set to 500"
 
     def test_admin_config_set_credits_missing(self, mock_admin_cog):
         """admin_config set_credits should reject missing amount."""
@@ -602,9 +676,12 @@ class TestAdminConfig:
 
         asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_role", None, role))
 
+        # Contract: PUT hits the admin-role endpoint with the selected role's id in the path.
+        put_call = mock_admin_cog.http_client.put.call_args
+        assert put_call.args[0].endswith(f"/config/guild/{interaction.guild_id}/admin-role/222222222")
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
-        assert "✅" in call_args
+        assert call_args == "✅ Admin role set to <@&222222222>"
 
     def test_admin_config_set_role_missing(self, mock_admin_cog):
         """admin_config set_role should reject missing role."""
@@ -626,18 +703,18 @@ class TestAdminConfig:
 
         asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "reset", None, None))
 
+        # Contract: POST hits the reset endpoint for THIS guild.
+        post_call = mock_admin_cog.http_client.post.call_args
+        assert post_call.args[0].endswith(f"/config/guild/{interaction.guild_id}/reset")
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
-        assert "✅" in call_args
+        assert call_args == "✅ Guild configuration has been reset to default values"
 
     def test_admin_config_api_error(self, mock_admin_cog):
         """admin_config should handle API errors gracefully."""
         interaction = _create_mock_interaction()
 
-        import httpx
-
-        mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError("Server error", request=mock_request, response=MagicMock(status_code=500))
+        http_error = _make_http_status_error(500, "Server error")
         mock_admin_cog.http_client.get = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
@@ -670,24 +747,28 @@ class TestAdminSetupExtended:
     """Extended tests for admin_setup command."""
 
     def test_admin_setup_no_role_fetch_fallback(self, mock_admin_cog):
-        """admin_setup should fetch roles when get_role returns None."""
+        """admin_setup should send the full 16-field init payload built from channel_ids.
+
+        Rewritten: the original test drove `admin_role=None` through the callback even
+        though the command's real signature requires `admin_role: discord.Role` with no
+        default (Discord itself enforces this — the param can never actually be None in
+        production), while also priming an unused `guild.get_role`/`fetch_roles` side effect
+        and a second `role_create_resp` mock that admin_setup's code never calls (role
+        creation lives inside `ensure_bountybot_infrastructure`, which this test correctly
+        patches out). Combined with an unasserted `send.assert_called_once()`, this
+        accidentally exercised the *error* branch (the leftover `role_create_resp` was
+        consumed as the init response, so `result["message"]` raised KeyError) while still
+        passing — a real defect in the 20-field init_payload construction would have shipped
+        green. This version passes a real admin_role (the only value Discord permits), drops
+        the two dead mocks, and asserts the actual POST /admin/guilds/initialize payload.
+        """
         interaction = _create_mock_interaction()
-        user = _create_mock_user()
+        user = _create_mock_user(is_admin=True)
         interaction.user = user
 
-        created_role = MagicMock()
-        created_role.id = 333333333
-        type(created_role).mention = PropertyMock(return_value="<@&333333333>")
-
-        # get_role returns None first, then the role after fetch_roles
-        guild = MagicMock()
-        guild.get_role = MagicMock(side_effect=[None, created_role])
-        guild.fetch_roles = AsyncMock()
-        mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
-
-        role_create_resp = MagicMock()
-        role_create_resp.status_code = 200
-        role_create_resp.json.return_value = {"data": {"id": 333333333}}
+        role = MagicMock()
+        role.id = 333333333
+        type(role).mention = PropertyMock(return_value="<@&333333333>")
 
         init_resp = MagicMock()
         init_resp.status_code = 200
@@ -697,14 +778,29 @@ class TestAdminSetupExtended:
             "shops_created": 4,
         }
 
-        _channel_ids = {"category_id": 111, "bounty_channel_id": 222, "shop_channel_id": 333, "general_channel_id": 444}
+        _channel_ids = {"category_id": 111, "bronze_bounty_channel_id": 222, "shop_channel_id": 333}
         with patch("cogs.adminCog.ensure_bountybot_infrastructure", new=AsyncMock(return_value=_channel_ids)):
-            mock_admin_cog.http_client.post = AsyncMock(side_effect=[role_create_resp, init_resp])
+            mock_admin_cog.http_client.post = AsyncMock(return_value=init_resp)
 
-            asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, None, 0))
+            asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, role, 250))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        post_call = mock_admin_cog.http_client.post.call_args
+        assert post_call.args[0].endswith("/admin/guilds/initialize")
+        payload = post_call.kwargs["json"]
+        assert payload["guild_id"] == interaction.guild_id
+        assert payload["admin_role_id"] == 333333333
+        assert payload["starting_credits"] == 250
+        assert payload["category_id"] == 111
+        assert payload["bronze_bounty_channel_id"] == 222
+        assert payload["shop_channel_id"] == 333
+        # Channel keys absent from ensure_bountybot_infrastructure's return degrade to None,
+        # not KeyError — the get()-based construction must be defensive.
+        assert payload["platinum_bounty_channel_id"] is None
         interaction.followup.send.assert_called_once()
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "✅ Guild Initialization Complete!"
 
     def test_admin_setup_http_status_error(self, mock_admin_cog):
         """admin_setup should handle HTTPStatusError specifically."""
@@ -716,10 +812,7 @@ class TestAdminSetupExtended:
         role.id = 222222222
         type(role).mention = PropertyMock(return_value="<@&222222222>")
 
-        import httpx
-
-        mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError("Conflict", request=mock_request, response=MagicMock(status_code=409))
+        http_error = _make_http_status_error(409, "Conflict")
         # Patch ensure_bountybot_infrastructure so it doesn't require a real Guild mock
         _channel_ids = {"category_id": 111, "bounty_channel_id": 222, "shop_channel_id": 333, "general_channel_id": 444}
         with patch("cogs.adminCog.ensure_bountybot_infrastructure", new=AsyncMock(return_value=_channel_ids)):
@@ -960,114 +1053,21 @@ class TestTierAutocomplete:
 
 
 # ---------------------------------------------------------------------------
-# TestIsAdminPredicate — covers is_admin() predicate function
-# The predicate is a nested async function inside is_admin().
-# We invoke it directly by capturing the closure.
+# NOTE: A `TestIsAdminPredicate` class previously lived here with three tests
+# (test_is_admin_developer_override, test_is_admin_discord_administrator,
+# test_is_admin_no_rights) that were fully tautological: they never invoked
+# `is_admin()`/`_check_is_admin()` at all — they re-implemented the branch
+# logic inline and asserted on values the test itself had just assigned to
+# MagicMocks (e.g. `assert interaction.user.guild_permissions.administrator is
+# True` right after setting that same attribute to True two lines above).
+# Each would still pass if `_check_is_admin` were deleted outright — the
+# canonical SMELL this audit exists to catch. Deleted rather than rewritten:
+# `TestIsAdminPredicateDirect` immediately below already invokes the real
+# `_check_is_admin` predicate (via `asyncio.run(predicate(interaction))`) for
+# every one of the same three scenarios plus more (developer override, Discord
+# admin, API admin-role match, no-rights, API exception, role mismatch), so
+# the intent is fully covered by a real behavioral test elsewhere.
 # ---------------------------------------------------------------------------
-
-
-def _get_is_admin_predicate():
-    """Get the inner predicate function from is_admin()."""
-    sys.modules["shared"] = _mock_shared
-    sys.modules["shared.bblogger"] = _mock_bblogger
-    _evict_discord_modules()
-    import cogs.adminCog as _adm
-
-    _is_admin_fn = _adm.is_admin
-    # app_commands.check wraps the predicate. We can extract it via __closure__
-    # or just call it directly since the decorator returns a function that
-    # has the predicate stored in its closure. Simplest approach: re-implement
-    # the predicate inline for direct testing coverage.
-    # Actually, we test the predicate indirectly via the is_admin() check by
-    # calling check.__wrapped__ if available, otherwise use __closure__.
-    check_decorator = _is_admin_fn()
-    # app_commands.check stores the predicate; access via closure cells
-    if hasattr(check_decorator, "__wrapped__"):
-        return check_decorator.__wrapped__
-    # For Discord.py app_commands.check, the wrapped function is the first
-    # cell's content
-    for cell in check_decorator.__closure__ or []:
-        try:
-            obj = cell.cell_contents
-            if callable(obj) and asyncio.iscoroutinefunction(obj):
-                return obj
-        except ValueError:
-            continue
-    # Fallback: construct predicate directly
-    return None
-
-
-class TestIsAdminPredicate:
-    """Tests for is_admin() predicate."""
-
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_is_admin_developer_override(self, mock_httpx):
-        """is_admin predicate should allow developer IDs."""
-        sys.modules["shared"] = _mock_shared
-        sys.modules["shared.bblogger"] = _mock_bblogger
-        _evict_discord_modules()
-
-        # Import the module and directly test the predicate
-        import importlib
-
-        import cogs.adminCog as _adm
-
-        importlib.reload(_adm)
-
-        interaction = _create_mock_interaction()
-        interaction.user = MagicMock()
-        interaction.user.id = 555555555
-        interaction.user.guild_permissions = MagicMock()
-        interaction.user.guild_permissions.administrator = False
-        interaction.user.roles = []
-
-        # The predicate is the async function nested inside is_admin()
-        # We test it by calling the decorated command's check directly
-        with patch.dict(os.environ, {"DEVELOPERS": "555555555"}):
-            # Verify developer is in the DEVELOPERS env var
-            devs = os.getenv("DEVELOPERS", "")
-            dev_list = [d.strip() for d in devs.split(",") if d.strip()]
-            assert str(interaction.user.id) in dev_list
-
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_is_admin_discord_administrator(self, mock_httpx):
-        """is_admin predicate should allow Discord admins."""
-        interaction = _create_mock_interaction()
-        interaction.user = MagicMock()
-        interaction.user.id = 666666666
-        interaction.user.guild_permissions = MagicMock()
-        interaction.user.guild_permissions.administrator = True
-        interaction.user.roles = []
-
-        # Verify the logic directly
-        assert interaction.user.guild_permissions.administrator is True
-
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_is_admin_no_rights(self, mock_httpx_cls):
-        """is_admin predicate should deny users with no admin rights via API check."""
-        # Mock the async context manager returned by AsyncClient()
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"admin_role_id": None}
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_httpx_cls.return_value = mock_client
-
-        interaction = _create_mock_interaction()
-        interaction.user = MagicMock()
-        interaction.user.id = 777777777
-        interaction.user.guild_permissions = MagicMock()
-        interaction.user.guild_permissions.administrator = False
-        interaction.user.roles = []
-
-        # Verify the conditions: not in DEVELOPERS, not admin
-        with patch.dict(os.environ, {"DEVELOPERS": ""}):
-            devs = os.getenv("DEVELOPERS", "")
-            dev_list = [d.strip() for d in devs.split(",") if d.strip()]
-            assert str(interaction.user.id) not in dev_list
-            assert interaction.user.guild_permissions.administrator is False
 
 
 # ---------------------------------------------------------------------------
@@ -1131,25 +1131,18 @@ class TestIsAdminPredicateDirect:
             result = asyncio.run(predicate(interaction))
         assert result is True
 
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_predicate_returns_true_for_api_admin_role(self, mock_httpx_cls):
+    def test_predicate_returns_true_for_api_admin_role(self):
         """Predicate returns True when user has the configured admin role (lines 33-42).
 
         Bug fix: The check now uses guild.get_role(admin_role_id) + interaction.user.roles.
         interaction.user IS a discord.Member for guild slash commands and carries .roles.
         The old code used interaction.member which raised AttributeError (silently swallowed).
+
+        Migrated to respx: pins the real GET /config/guild/{id} route+method rather than
+        patching the whole httpx.AsyncClient class with a MagicMock chain (which asserts
+        nothing about the outbound request).
         """
         predicate = _extract_is_admin_predicate()
-
-        # Mock the async context manager returned by AsyncClient()
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"admin_role_id": 444555666}
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_httpx_cls.return_value = mock_client
 
         role = MagicMock()
         role.id = 444555666
@@ -1166,24 +1159,20 @@ class TestIsAdminPredicateDirect:
         interaction.guild = MagicMock()
         interaction.guild.get_role = MagicMock(return_value=role)
 
-        with patch.dict(os.environ, {"DEVELOPERS": ""}):
+        with (
+            patch.dict(os.environ, {"DEVELOPERS": ""}),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_API_BASE}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json={"admin_role_id": 444555666})
+            )
             result = asyncio.run(predicate(interaction))
         assert result is True
 
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_predicate_returns_false_when_no_admin_rights(self, mock_httpx_cls):
+    def test_predicate_returns_false_when_no_admin_rights(self):
         """Predicate returns False when user has no admin rights (line 46)."""
         predicate = _extract_is_admin_predicate()
 
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"admin_role_id": None}
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_httpx_cls.return_value = mock_client
-
         interaction = _create_mock_interaction()
         interaction.user = MagicMock()
         interaction.user.id = 123999
@@ -1192,21 +1181,20 @@ class TestIsAdminPredicateDirect:
         interaction.user.roles = []
         interaction.guild_id = 987654321
 
-        with patch.dict(os.environ, {"DEVELOPERS": ""}):
+        with (
+            patch.dict(os.environ, {"DEVELOPERS": ""}),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_API_BASE}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json={"admin_role_id": None})
+            )
             result = asyncio.run(predicate(interaction))
         assert result is False
 
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_predicate_returns_false_on_api_exception(self, mock_httpx_cls):
-        """Predicate returns False when API call raises exception (lines 43-44, 46)."""
+    def test_predicate_returns_false_on_api_exception(self):
+        """Predicate returns False when the API call raises a network-level error (lines 43-44, 46)."""
         predicate = _extract_is_admin_predicate()
 
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(side_effect=Exception("Connection refused"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_httpx_cls.return_value = mock_client
-
         interaction = _create_mock_interaction()
         interaction.user = MagicMock()
         interaction.user.id = 123999
@@ -1215,23 +1203,19 @@ class TestIsAdminPredicateDirect:
         interaction.user.roles = []
         interaction.guild_id = 987654321
 
-        with patch.dict(os.environ, {"DEVELOPERS": ""}):
+        with (
+            patch.dict(os.environ, {"DEVELOPERS": ""}),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_API_BASE}/config/guild/987654321").mock(
+                side_effect=httpx.ConnectError("Connection refused")
+            )
             result = asyncio.run(predicate(interaction))
         assert result is False
 
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_predicate_returns_false_when_role_does_not_match(self, mock_httpx_cls):
+    def test_predicate_returns_false_when_role_does_not_match(self):
         """Predicate returns False when user has roles but none match admin_role_id (line 41-42, 46)."""
         predicate = _extract_is_admin_predicate()
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"admin_role_id": 444555666}
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-        mock_httpx_cls.return_value = mock_client
 
         # User has roles, but none match the admin_role_id
         other_role = MagicMock()
@@ -1245,7 +1229,13 @@ class TestIsAdminPredicateDirect:
         interaction.user.roles = [other_role]
         interaction.guild_id = 987654321
 
-        with patch.dict(os.environ, {"DEVELOPERS": ""}):
+        with (
+            patch.dict(os.environ, {"DEVELOPERS": ""}),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_API_BASE}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json={"admin_role_id": 444555666})
+            )
             result = asyncio.run(predicate(interaction))
         assert result is False
 

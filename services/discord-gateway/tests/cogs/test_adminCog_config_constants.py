@@ -16,7 +16,9 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import respx
 
 # -------------------------------------------------------------------------
 # Bootstrap: mock shared.bblogger before any cog imports
@@ -142,14 +144,26 @@ def mock_admin_cog(mock_bot):
     return AdminCog(mock_bot)
 
 
-def _put_call_payload(mock_admin_cog):
-    """Return the JSON body of the single http_client.put call."""
-    mock_admin_cog.http_client.put.assert_called_once()
-    return mock_admin_cog.http_client.put.call_args.kwargs["json"]
+_API_BASE = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+
+
+def _with_real_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
+
+
+def _json_body(route):
+    """Return the decoded JSON body of a matched respx route's single call."""
+    import json as _json
+
+    assert route.called, "expected route to have been called"
+    return _json.loads(route.calls.last.request.content)
 
 
 class TestCriminalLoadoutFieldExposure:
-    """The 8 knobs must be registered + autocompletable, and the slash surface must be 33."""
+    """The 8 knobs must be registered + autocompletable, and the slash surface must be 53."""
 
     def test_all_new_fields_in_game_constant_fields(self, mock_admin_cog):
         for field in _NEW_CRIMINAL_FIELDS:
@@ -159,8 +173,9 @@ class TestCriminalLoadoutFieldExposure:
         for field in _NEW_LOOT_FIELDS:
             assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
 
-    def test_slash_field_count_is_52(self, mock_admin_cog):
-        # Locks the slash-settable surface: 25 prior + 8 criminal-loadout + 19 loot = 52.
+    def test_slash_field_count_is_53(self, mock_admin_cog):
+        # Locks the slash-settable surface: 25 prior + 8 criminal-loadout + 19 loot
+        # + 1 bounty_division_reward_mult = 53 (see _EXPECTED_SLASH_FIELD_COUNT above).
         # demotion_credit_penalty_pct stays API-only and must NOT appear here.
         assert len(mock_admin_cog._GAME_CONSTANT_FIELDS) == _EXPECTED_SLASH_FIELD_COUNT
         assert "demotion_credit_penalty_pct" not in mock_admin_cog._GAME_CONSTANT_FIELDS
@@ -174,30 +189,39 @@ class TestCriminalLoadoutFieldExposure:
 
 
 class TestCriminalLoadoutSetForwarding:
-    """A slash set must forward {setting: parsed_value} to the bot-core config API."""
+    """A slash set must forward {setting: parsed_value} to the bot-core config API.
 
-    def _run_set(self, mock_admin_cog, *, setting, int_value=None, float_value=None, json_value=None):
+    Migrated to respx: each ``_run_set`` call now pins the real
+    ``PUT {api_base}/config/guild/{guild_id}`` route (in addition to the payload
+    assertions already present in each test below), so a wrong URL/method would fail
+    the route's ``assert_all_called=True`` instead of shipping green against an
+    accept-anything MagicMock responder.
+    """
+
+    def _run_set(self, mock_admin_cog, request, *, setting, int_value=None, float_value=None, json_value=None):
+        """Run admin_config_constants under respx and return the matched PUT route."""
+        _with_real_client(mock_admin_cog, request)
         interaction = _create_mock_interaction()
-        put_resp = MagicMock()
-        put_resp.raise_for_status = MagicMock()
-        put_resp.json.return_value = {"guild_id": interaction.guild_id}
-        mock_admin_cog.http_client.put = AsyncMock(return_value=put_resp)
-        asyncio.run(
-            mock_admin_cog.admin_config_constants.callback(
-                mock_admin_cog,
-                interaction,
-                setting=setting,
-                int_value=int_value,
-                float_value=float_value,
-                json_value=json_value,
+        with respx.mock(assert_all_called=True) as mock_router:
+            route = mock_router.put(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
+                return_value=httpx.Response(200, json={"guild_id": interaction.guild_id})
             )
-        )
-        return interaction
+            asyncio.run(
+                mock_admin_cog.admin_config_constants.callback(
+                    mock_admin_cog,
+                    interaction,
+                    setting=setting,
+                    int_value=int_value,
+                    float_value=float_value,
+                    json_value=json_value,
+                )
+            )
+        return route
 
-    def test_set_dict_field_via_json_value(self, mock_admin_cog):
+    def test_set_dict_field_via_json_value(self, mock_admin_cog, request):
         payload = '{"bronze": 0, "silver": 25, "gold": 66, "platinum": 100}'
-        self._run_set(mock_admin_cog, setting="criminal_cloak_chance_by_division", json_value=payload)
-        body = _put_call_payload(mock_admin_cog)
+        route = self._run_set(mock_admin_cog, request, setting="criminal_cloak_chance_by_division", json_value=payload)
+        body = _json_body(route)
         assert body["criminal_cloak_chance_by_division"] == {
             "bronze": 0,
             "silver": 25,
@@ -205,48 +229,52 @@ class TestCriminalLoadoutSetForwarding:
             "platinum": 100,
         }
 
-    def test_set_bool_field_true_via_json_value(self, mock_admin_cog):
-        self._run_set(mock_admin_cog, setting="criminal_exclude_emp_weapons", json_value="true")
-        body = _put_call_payload(mock_admin_cog)
+    def test_set_bool_field_true_via_json_value(self, mock_admin_cog, request):
+        route = self._run_set(mock_admin_cog, request, setting="criminal_exclude_emp_weapons", json_value="true")
+        body = _json_body(route)
         assert body["criminal_exclude_emp_weapons"] is True
 
-    def test_set_bool_field_false_via_json_value(self, mock_admin_cog):
-        self._run_set(mock_admin_cog, setting="criminal_exclude_emp_weapons", json_value="false")
-        body = _put_call_payload(mock_admin_cog)
+    def test_set_bool_field_false_via_json_value(self, mock_admin_cog, request):
+        route = self._run_set(mock_admin_cog, request, setting="criminal_exclude_emp_weapons", json_value="false")
+        body = _json_body(route)
         assert body["criminal_exclude_emp_weapons"] is False
 
-    def test_set_scalar_field_via_int_value(self, mock_admin_cog):
-        self._run_set(mock_admin_cog, setting="long_range_threshold_m", int_value=3000)
-        body = _put_call_payload(mock_admin_cog)
+    def test_set_scalar_field_via_int_value(self, mock_admin_cog, request):
+        route = self._run_set(mock_admin_cog, request, setting="long_range_threshold_m", int_value=3000)
+        body = _json_body(route)
         assert body["long_range_threshold_m"] == 3000
 
-    def test_set_float_field_via_float_value(self, mock_admin_cog):
+    def test_set_float_field_via_float_value(self, mock_admin_cog, request):
         # Exercises the float_value branch: a bare float must forward as-is.
-        self._run_set(mock_admin_cog, setting="criminal_long_range_pct", float_value=0.65)
-        body = _put_call_payload(mock_admin_cog)
-        assert body == {"guild_id": _create_mock_interaction().guild_id, "criminal_long_range_pct": 0.65}
+        route = self._run_set(mock_admin_cog, request, setting="criminal_long_range_pct", float_value=0.65)
+        body = _json_body(route)
+        assert body == {"guild_id": 987654321, "criminal_long_range_pct": 0.65}
 
-    def test_set_band_weights_field_via_json_value(self, mock_admin_cog):
+    def test_set_band_weights_field_via_json_value(self, mock_admin_cog, request):
         # Distinct dict structure from the *_chance_by_division fields.
         payload = '{"center": 70, "minus1": 20, "plus1": 10}'
-        self._run_set(mock_admin_cog, setting="primary_tl_band_weights", json_value=payload)
-        body = _put_call_payload(mock_admin_cog)
+        route = self._run_set(mock_admin_cog, request, setting="primary_tl_band_weights", json_value=payload)
+        body = _json_body(route)
         assert body == {
-            "guild_id": _create_mock_interaction().guild_id,
+            "guild_id": 987654321,
             "primary_tl_band_weights": {"center": 70, "minus1": 20, "plus1": 10},
         }
 
-    def test_malformed_json_value_is_rejected_without_put(self, mock_admin_cog):
+    def test_malformed_json_value_is_rejected_without_put(self, mock_admin_cog, request):
         # Same handling as every existing dict field: parse failure → no API call.
+        _with_real_client(mock_admin_cog, request)
         interaction = _create_mock_interaction()
-        mock_admin_cog.http_client.put = AsyncMock()
-        asyncio.run(
-            mock_admin_cog.admin_config_constants.callback(
-                mock_admin_cog,
-                interaction,
-                setting="criminal_cloak_chance_by_division",
-                json_value="{not valid json",
+        with respx.mock(assert_all_called=False) as mock_router:
+            route = mock_router.put(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
+                return_value=httpx.Response(200, json={"guild_id": interaction.guild_id})
             )
-        )
-        mock_admin_cog.http_client.put.assert_not_called()
+            asyncio.run(
+                mock_admin_cog.admin_config_constants.callback(
+                    mock_admin_cog,
+                    interaction,
+                    setting="criminal_cloak_chance_by_division",
+                    json_value="{not valid json",
+                )
+            )
+        assert not route.called
         interaction.followup.send.assert_called()

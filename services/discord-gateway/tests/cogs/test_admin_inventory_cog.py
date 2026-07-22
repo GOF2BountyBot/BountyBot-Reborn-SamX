@@ -10,12 +10,15 @@ Tests for new admin inventory management commands in adminCog:
 """
 
 import asyncio
+import json as json_module
 import os
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import respx
 
 # -------------------------------------------------------------------------
 # Bootstrap: mock shared.bblogger before any cog imports
@@ -141,6 +144,16 @@ def _make_http_resp(status_code=200, json_data=None):
     return resp
 
 
+_API_BASE = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+
+
+def _with_real_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
+
+
 # -------------------------------------------------------------------------
 # Fixtures
 # -------------------------------------------------------------------------
@@ -179,81 +192,61 @@ class TestAdminGiveItem:
     The server now resolves the concrete item type from the item name.
     """
 
-    def test_give_item_success(self, mock_admin_cog):
-        """/admin_give_item should give item and show success embed.
+    def test_give_item_success(self, mock_admin_cog, request):
+        """/admin_give_item should hit POST /admin/give-item with the B.80 payload
+        (no item_type — server resolves it) and show a success embed.
 
-        B.80: no item_type in command signature; the server resolves it and returns
-        it in the response (item_type is shown in the embed from the API response).
+        Migrated to respx: pins the exact route + method + JSON body + admin_user_id
+        param, replacing the accept-anything MagicMock responder (which validated
+        nothing about the outbound request) and folding in the former
+        test_give_item_payload_has_no_item_type payload assertion.
         """
+        _with_real_client(mock_admin_cog, request)
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user(user_id=999888777)
         target_user = _create_mock_user()
 
-        resp = _make_http_resp(
-            200,
-            {
-                "player_id": 10,
-                "item_name": "Pulse Laser",
-                "item_type": "primary_weapon",
-                "new_total_quantity": 2,
-                "message": "Gave 1x Pulse Laser to player 10",
-            },
-        )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
-
-        asyncio.run(
-            mock_admin_cog.admin_give_item.callback(
-                mock_admin_cog,
-                interaction,
-                user=target_user,
-                item_name="Pulse Laser",
-                quantity=1,
+        with respx.mock(assert_all_called=True) as mock_router:
+            route = mock_router.post(f"{_API_BASE}/admin/give-item").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "player_id": 10,
+                        "item_name": "Pulse Laser",
+                        "item_type": "primary_weapon",
+                        "new_total_quantity": 2,
+                        "message": "Gave 1x Pulse Laser to player 10",
+                    },
+                )
             )
-        )
+            asyncio.run(
+                mock_admin_cog.admin_give_item.callback(
+                    mock_admin_cog,
+                    interaction,
+                    user=target_user,
+                    item_name="Pulse Laser",
+                    quantity=1,
+                )
+            )
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        mock_admin_cog.http_client.post.assert_awaited_once()
+        assert route.called
+        sent_request = route.calls.last.request
+        assert sent_request.url.params.get("admin_user_id") == "999888777"
+        sent_json = json_module.loads(sent_request.content)
+        assert sent_json == {
+            "guild_id": interaction.guild_id,
+            "user_id": target_user.id,
+            "item_name": "Pulse Laser",
+            "quantity": 1,
+        }
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-
-    def test_give_item_payload_has_no_item_type(self, mock_admin_cog):
-        """/admin_give_item must NOT send item_type in the HTTP payload (B.80)."""
-        interaction = _create_mock_interaction()
-        interaction.user = _create_mock_user(user_id=999888777)
-        target_user = _create_mock_user()
-
-        resp = _make_http_resp(
-            200,
-            {
-                "player_id": 10,
-                "item_name": "Pulse Laser",
-                "item_type": "primary_weapon",
-                "new_total_quantity": 2,
-                "message": "Gave 1x Pulse Laser to player 10",
-            },
-        )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
-
-        asyncio.run(
-            mock_admin_cog.admin_give_item.callback(
-                mock_admin_cog,
-                interaction,
-                user=target_user,
-                item_name="Pulse Laser",
-                quantity=1,
-            )
-        )
-
-        # Verify the HTTP POST payload does NOT contain item_type (B.80 key assertion)
-        call_kwargs = mock_admin_cog.http_client.post.call_args[1]
-        sent_json = call_kwargs.get("json", {})
-        assert "item_type" not in sent_json, (
-            f"B.80: /admin_give_item must not send item_type in the payload, got: {sent_json}"
-        )
-        # Verify the required fields ARE present
-        assert sent_json.get("item_name") == "Pulse Laser"
-        assert sent_json.get("quantity") == 1
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "✅ Item Given"
+        field_values = {f.name: f.value for f in embed.fields}
+        assert field_values["New Total"] == "2"
 
     def test_give_item_not_found_response(self, mock_admin_cog):
         """/admin_give_item should show error message on 404."""
@@ -276,8 +269,9 @@ class TestAdminGiveItem:
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
-        # Should be ephemeral error
+        # Should be ephemeral error, surfacing the API's detail message verbatim.
         assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "❌ Player not found"
 
     def test_give_item_bad_request_response(self, mock_admin_cog):
         """/admin_give_item should show error on 400."""
@@ -299,8 +293,9 @@ class TestAdminGiveItem:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "❌ Item does not exist"
 
     def test_give_item_api_exception(self, mock_admin_cog):
         """/admin_give_item should handle unexpected exceptions gracefully."""
@@ -321,8 +316,9 @@ class TestAdminGiveItem:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "⚠️ An error occurred while giving item."
 
 
 # -------------------------------------------------------------------------
@@ -337,80 +333,60 @@ class TestAdminRemoveItem:
     The server now resolves the concrete type from the player's inventory by item_name.
     """
 
-    def test_remove_item_success(self, mock_admin_cog):
-        """/admin_remove_item should remove item and show success embed.
+    def test_remove_item_success(self, mock_admin_cog, request):
+        """/admin_remove_item should hit POST /admin/remove-item with the B.80-style
+        payload (no item_type) and show a success embed.
 
-        B.80-style: item_type removed from slash command — not passed in callback.
+        Migrated to respx: pins the exact route + method + JSON body + admin_user_id
+        param, folding in the former test_remove_item_payload_has_no_item_type check.
         """
+        _with_real_client(mock_admin_cog, request)
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user(user_id=999888777)
         target_user = _create_mock_user()
 
-        resp = _make_http_resp(
-            200,
-            {
-                "player_id": 10,
-                "item_name": "Pulse Laser",
-                "item_type": "primary_weapon",
-                "quantity_removed": 1,
-                "new_quantity": 0,
-                "message": "Removed 1x Pulse Laser from player 10",
-            },
-        )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
-
-        asyncio.run(
-            mock_admin_cog.admin_remove_item.callback(
-                mock_admin_cog,
-                interaction,
-                user=target_user,
-                item_name="Pulse Laser",
-                quantity=1,
+        with respx.mock(assert_all_called=True) as mock_router:
+            route = mock_router.post(f"{_API_BASE}/admin/remove-item").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "player_id": 10,
+                        "item_name": "Pulse Laser",
+                        "item_type": "primary_weapon",
+                        "quantity_removed": 1,
+                        "new_quantity": 0,
+                        "message": "Removed 1x Pulse Laser from player 10",
+                    },
+                )
             )
-        )
+            asyncio.run(
+                mock_admin_cog.admin_remove_item.callback(
+                    mock_admin_cog,
+                    interaction,
+                    user=target_user,
+                    item_name="Pulse Laser",
+                    quantity=1,
+                )
+            )
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        mock_admin_cog.http_client.post.assert_awaited_once()
+        assert route.called
+        sent_request = route.calls.last.request
+        assert sent_request.url.params.get("admin_user_id") == "999888777"
+        sent_json = json_module.loads(sent_request.content)
+        assert sent_json == {
+            "guild_id": interaction.guild_id,
+            "user_id": target_user.id,
+            "item_name": "Pulse Laser",
+            "quantity": 1,
+        }
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-
-    def test_remove_item_payload_has_no_item_type(self, mock_admin_cog):
-        """/admin_remove_item must NOT send item_type in the HTTP payload (B.80-style)."""
-        interaction = _create_mock_interaction()
-        interaction.user = _create_mock_user(user_id=999888777)
-        target_user = _create_mock_user()
-
-        resp = _make_http_resp(
-            200,
-            {
-                "player_id": 10,
-                "item_name": "Pulse Laser",
-                "item_type": "primary_weapon",
-                "quantity_removed": 1,
-                "new_quantity": 0,
-                "message": "Removed 1x Pulse Laser from player 10",
-            },
-        )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
-
-        asyncio.run(
-            mock_admin_cog.admin_remove_item.callback(
-                mock_admin_cog,
-                interaction,
-                user=target_user,
-                item_name="Pulse Laser",
-                quantity=1,
-            )
-        )
-
-        call_kwargs = mock_admin_cog.http_client.post.call_args[1]
-        sent_json = call_kwargs.get("json", {})
-        assert "item_type" not in sent_json, (
-            f"B.80-style: /admin_remove_item must not send item_type in the payload, got: {sent_json}"
-        )
-        assert sent_json.get("item_name") == "Pulse Laser"
-        assert sent_json.get("quantity") == 1
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "✅ Item Removed"
+        field_values = {f.name: f.value for f in embed.fields}
+        assert field_values["Remaining"] == "0"
 
     def test_remove_item_not_found(self, mock_admin_cog):
         """/admin_remove_item should show error on 404."""
@@ -432,8 +408,9 @@ class TestAdminRemoveItem:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "❌ Player does not have Pulse Laser"
 
     def test_remove_item_bad_request(self, mock_admin_cog):
         """/admin_remove_item should show error on 400."""
@@ -455,8 +432,9 @@ class TestAdminRemoveItem:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "❌ Insufficient quantity"
 
     def test_remove_item_rejects_placeholder_sentinel(self, mock_admin_cog):
         """/admin_remove_item should respond with an ephemeral error when the placeholder sentinel value is submitted.
@@ -500,38 +478,56 @@ class TestAdminRemoveItem:
 class TestAdminGiveShip:
     """Tests for the /admin_give_ship command."""
 
-    def test_give_ship_success(self, mock_admin_cog):
-        """/admin_give_ship should create ship and show success embed."""
+    def test_give_ship_success(self, mock_admin_cog, request):
+        """/admin_give_ship should hit POST /admin/give-ship with the expected payload
+        and show a success embed.
+
+        Migrated to respx: pins the exact route + method + JSON body + admin_user_id param.
+        """
+        _with_real_client(mock_admin_cog, request)
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user(user_id=999888777)
         target_user = _create_mock_user()
 
-        resp = _make_http_resp(
-            200,
-            {
-                "player_id": 10,
-                "ship_id": 42,
-                "ship_name": "Sidewinder",
-                "is_active": False,
-                "message": "Gave ship 'Sidewinder' to player 10",
-            },
-        )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
-
-        asyncio.run(
-            mock_admin_cog.admin_give_ship.callback(
-                mock_admin_cog,
-                interaction,
-                user=target_user,
-                ship_name="Sidewinder",
+        with respx.mock(assert_all_called=True) as mock_router:
+            route = mock_router.post(f"{_API_BASE}/admin/give-ship").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "player_id": 10,
+                        "ship_id": 42,
+                        "ship_name": "Sidewinder",
+                        "is_active": False,
+                        "message": "Gave ship 'Sidewinder' to player 10",
+                    },
+                )
             )
-        )
+            asyncio.run(
+                mock_admin_cog.admin_give_ship.callback(
+                    mock_admin_cog,
+                    interaction,
+                    user=target_user,
+                    ship_name="Sidewinder",
+                )
+            )
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        mock_admin_cog.http_client.post.assert_awaited_once()
+        assert route.called
+        sent_request = route.calls.last.request
+        assert sent_request.url.params.get("admin_user_id") == "999888777"
+        sent_json = json_module.loads(sent_request.content)
+        assert sent_json == {
+            "guild_id": interaction.guild_id,
+            "user_id": target_user.id,
+            "ship_name": "Sidewinder",
+        }
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "✅ Ship Given"
+        field_values = {f.name: f.value for f in embed.fields}
+        assert field_values["Ship ID"] == "42"
 
     def test_give_ship_invalid_ship(self, mock_admin_cog):
         """/admin_give_ship shows error when ship doesn't exist in game data."""
@@ -552,8 +548,9 @@ class TestAdminGiveShip:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "❌ Ship 'FakeShip' does not exist in game data"
 
     def test_give_ship_exception(self, mock_admin_cog):
         """/admin_give_ship handles unexpected exceptions."""
@@ -573,8 +570,9 @@ class TestAdminGiveShip:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "⚠️ An error occurred while giving ship."
 
 
 # -------------------------------------------------------------------------
@@ -585,38 +583,56 @@ class TestAdminGiveShip:
 class TestAdminRemoveShip:
     """Tests for the /admin_remove_ship command."""
 
-    def test_remove_ship_success(self, mock_admin_cog):
-        """/admin_remove_ship should remove ship and show success embed."""
+    def test_remove_ship_success(self, mock_admin_cog, request):
+        """/admin_remove_ship should hit POST /admin/remove-ship with the expected
+        payload and show a success embed.
+
+        Migrated to respx: pins the exact route + method + JSON body + admin_user_id param.
+        """
+        _with_real_client(mock_admin_cog, request)
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user(user_id=999888777)
         target_user = _create_mock_user()
 
-        resp = _make_http_resp(
-            200,
-            {
-                "player_id": 10,
-                "ship_id": 42,
-                "ship_name": "Sidewinder",
-                "items_returned_to_inventory": ["Pulse Laser", "Shield Gen"],
-                "message": "Removed ship 'Sidewinder' from player 10. 2 item(s) returned.",
-            },
-        )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
-
-        asyncio.run(
-            mock_admin_cog.admin_remove_ship.callback(
-                mock_admin_cog,
-                interaction,
-                user=target_user,
-                ship_name="Sidewinder",
+        with respx.mock(assert_all_called=True) as mock_router:
+            route = mock_router.post(f"{_API_BASE}/admin/remove-ship").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "player_id": 10,
+                        "ship_id": 42,
+                        "ship_name": "Sidewinder",
+                        "items_returned_to_inventory": ["Pulse Laser", "Shield Gen"],
+                        "message": "Removed ship 'Sidewinder' from player 10. 2 item(s) returned.",
+                    },
+                )
             )
-        )
+            asyncio.run(
+                mock_admin_cog.admin_remove_ship.callback(
+                    mock_admin_cog,
+                    interaction,
+                    user=target_user,
+                    ship_name="Sidewinder",
+                )
+            )
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        mock_admin_cog.http_client.post.assert_awaited_once()
+        assert route.called
+        sent_request = route.calls.last.request
+        assert sent_request.url.params.get("admin_user_id") == "999888777"
+        sent_json = json_module.loads(sent_request.content)
+        assert sent_json == {
+            "guild_id": interaction.guild_id,
+            "user_id": target_user.id,
+            "ship_name": "Sidewinder",
+        }
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "✅ Ship Removed"
+        field_values = {f.name: f.value for f in embed.fields}
+        assert field_values["Items Returned to Inventory"] == "Pulse Laser, Shield Gen"
 
     def test_remove_ship_not_found(self, mock_admin_cog):
         """/admin_remove_ship shows error when player doesn't own the ship."""
@@ -637,8 +653,9 @@ class TestAdminRemoveShip:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "❌ Player does not own a ship named 'VenomStrike'"
 
     def test_remove_ship_only_active_ship(self, mock_admin_cog):
         """/admin_remove_ship shows error when trying to remove only active ship."""
@@ -659,8 +676,9 @@ class TestAdminRemoveShip:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "❌ Cannot remove the player's only active ship"
 
     def test_remove_ship_exception(self, mock_admin_cog):
         """/admin_remove_ship handles unexpected exceptions."""
@@ -680,8 +698,9 @@ class TestAdminRemoveShip:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
+        assert call_args[0][0] == "⚠️ An error occurred while removing ship."
 
 
 # -------------------------------------------------------------------------
@@ -693,15 +712,23 @@ class TestAdminAutocomplete:
     """Tests for admin cog autocomplete functions."""
 
     def test_item_name_autocomplete_returns_choices(self, mock_admin_cog):
-        """item_name_autocomplete returns app_commands.Choice list."""
+        """item_name_autocomplete filters the (cold-filled) catalog to matches for `current`.
+
+        Previously only asserted `isinstance(result, list)`, which passes even if
+        filtering were broken or the catalog came back empty. Clears the catalog first
+        (like the sibling error test) so this exercises the real cold-fill + fuzzy-filter
+        path, and asserts the actual filtered Choice values.
+        """
         interaction = _create_mock_interaction()
+        mock_admin_cog._item_catalog.clear()
 
         weapon_resp = _make_http_resp(200, [{"name": "Pulse Laser"}, {"name": "Scatter Gun"}])
         mock_admin_cog.http_client.get = AsyncMock(return_value=weapon_resp)
 
         result = asyncio.run(mock_admin_cog.item_name_autocomplete(interaction, "pulse"))
-        # Should have filtered to matching items
-        assert isinstance(result, list)
+        names = [c.value for c in result]
+        assert "Pulse Laser" in names
+        assert "Scatter Gun" not in names
 
     def test_item_name_autocomplete_handles_error(self, mock_admin_cog):
         """item_name_autocomplete returns empty list on network error.
@@ -718,14 +745,21 @@ class TestAdminAutocomplete:
         assert result == []
 
     def test_game_ship_autocomplete_returns_choices(self, mock_admin_cog):
-        """game_ship_autocomplete returns choices from game data."""
+        """game_ship_autocomplete filters the (cold-filled) ship catalog to matches for `current`.
+
+        Previously only asserted `isinstance(result, list)`; clears the catalog first to
+        force the real cold-fill path and asserts the actual filtered Choice values.
+        """
         interaction = _create_mock_interaction()
+        mock_admin_cog._ship_catalog.clear()
 
         ships_resp = _make_http_resp(200, [{"name": "Sidewinder"}, {"name": "VenomStrike"}])
         mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
         result = asyncio.run(mock_admin_cog.game_ship_autocomplete(interaction, "side"))
-        assert isinstance(result, list)
+        names = [c.value for c in result]
+        assert "Sidewinder" in names
+        assert "VenomStrike" not in names
 
     def test_game_ship_autocomplete_handles_error(self, mock_admin_cog):
         """game_ship_autocomplete returns empty list on error.
@@ -741,14 +775,29 @@ class TestAdminAutocomplete:
         assert result == []
 
     def test_player_ship_autocomplete_returns_choices(self, mock_admin_cog):
-        """player_ship_autocomplete returns choices from game data."""
+        """player_ship_autocomplete falls back to the game-data catalog when no target
+        user is selected yet, and the returned choices reflect the fetched catalog.
+
+        Previously only asserted `isinstance(result, list)` and left
+        `interaction.namespace.user` as a default (truthy, unspec'd) MagicMock — so the
+        test never reliably exercised the "no user selected" fallback branch it claims to
+        cover; it could equally have taken the resolve_player_id branch depending on mock
+        internals. Explicitly setting `namespace.user = None` (as the sibling error test
+        already does) pins the intended path, and the catalog is cleared first to force a
+        real cold-fill.
+        """
         interaction = _create_mock_interaction()
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = None
+        mock_admin_cog._ship_catalog.clear()
 
         ships_resp = _make_http_resp(200, [{"name": "Sidewinder"}, {"name": "VenomStrike"}])
         mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
-        assert isinstance(result, list)
+        names = [c.value for c in result]
+        assert "Sidewinder" in names
+        assert "VenomStrike" in names
 
     def test_player_ship_autocomplete_handles_error(self, mock_admin_cog):
         """player_ship_autocomplete returns empty list on error.

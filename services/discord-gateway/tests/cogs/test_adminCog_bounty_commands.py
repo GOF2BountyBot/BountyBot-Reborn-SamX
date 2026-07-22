@@ -11,6 +11,7 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 # -------------------------------------------------------------------------
@@ -124,52 +125,54 @@ def mock_admin_cog(mock_bot):
 # -------------------------------------------------------------------------
 
 
+def _real_response(json_data, status_code: int = 200) -> httpx.Response:
+    """Build a **real** ``httpx.Response`` (not a bare MagicMock).
+
+    Because it's real, ``.raise_for_status()`` genuinely raises ``httpx.HTTPStatusError``
+    for any 4xx/5xx status instead of unconditionally no-op'ing — a status_code=500 build
+    can no longer silently take the success path.
+    """
+    request = httpx.Request("GET", "http://bot-core.test/api/v1/resource")
+    return httpx.Response(status_code, json=json_data, request=request)
+
+
 def _make_clear_bounties_response(tier=None, cleared_count=3):
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {
-        "guild_id": 987654321,
-        "tier": tier,
-        "cleared_count": cleared_count,
-        "bounty_ids": list(range(1, cleared_count + 1)),
-        "announcements_deleted": cleared_count,
-    }
-    return resp
+    return _real_response(
+        {
+            "guild_id": 987654321,
+            "tier": tier,
+            "cleared_count": cleared_count,
+            "bounty_ids": list(range(1, cleared_count + 1)),
+            "announcements_deleted": cleared_count,
+        }
+    )
 
 
 def _make_bounty_config_status_response():
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {
-        "guild_id": 987654321,
-        "max_bounties_per_tier": {"bronze": 3, "silver": 3, "gold": 3},
-        "bounty_expiry_minutes": 480,
-        "bounty_spawn_interval_minutes": 60,
-        "next_spawn_check_at": "2026-04-05T12:00:00+00:00",
-        "active_bounties_per_tier": {"bronze": 2, "silver": 1, "gold": 0},
-    }
-    return resp
+    return _real_response(
+        {
+            "guild_id": 987654321,
+            "max_bounties_per_tier": {"bronze": 3, "silver": 3, "gold": 3},
+            "bounty_expiry_minutes": 480,
+            "bounty_spawn_interval_minutes": 60,
+            "next_spawn_check_at": "2026-04-05T12:00:00+00:00",
+            "active_bounties_per_tier": {"bronze": 2, "silver": 1, "gold": 0},
+        }
+    )
 
 
 def _make_bounty_config_put_response():
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {
-        "guild_id": 987654321,
-        "max_bounties_per_tier": {"bronze": 5, "silver": 3, "gold": 3},
-        "bounty_expiry_minutes": 600,
-        "bounty_spawn_interval_minutes": 90,
-    }
-    return resp
+    return _real_response(
+        {
+            "guild_id": 987654321,
+            "max_bounties_per_tier": {"bronze": 5, "silver": 3, "gold": 3},
+            "bounty_expiry_minutes": 600,
+            "bounty_spawn_interval_minutes": 90,
+        }
+    )
 
 
 def _make_admin_spawn_response(spawned_count=2, skipped_tiers=None):
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
     spawned = [
         {
             "id": i + 1,
@@ -180,13 +183,14 @@ def _make_admin_spawn_response(spawned_count=2, skipped_tiers=None):
         }
         for i in range(spawned_count)
     ]
-    resp.json.return_value = {
-        "guild_id": 987654321,
-        "spawned": spawned,
-        "skipped_tiers": skipped_tiers or [],
-        "errors": [],
-    }
-    return resp
+    return _real_response(
+        {
+            "guild_id": 987654321,
+            "spawned": spawned,
+            "skipped_tiers": skipped_tiers or [],
+            "errors": [],
+        }
+    )
 
 
 # -------------------------------------------------------------------------
@@ -249,9 +253,15 @@ class TestAdminClearBounties:
         assert "clear" in call_url
         # Should send an embed response (prompt + result, at least one embed send)
         assert interaction.followup.send.call_count >= 1
-        # The last send should contain the success embed
+        # The last send should contain the success embed, and its content (not just its
+        # presence) must reflect the API's cleared_count — previously only "an embed key
+        # exists" was checked, so a dropped/garbled count would have shipped green.
         last_kwargs = interaction.followup.send.call_args_list[-1][1]
-        assert "embed" in last_kwargs
+        embed = last_kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "🗑️ Bounties Cleared"
+        field_values = {f.name: f.value for f in embed.fields}
+        assert field_values["Bounties Cleared"] == "3"
 
     def test_clear_bounties_with_tier_filter(self, mock_admin_cog):
         """User confirms + tier=bronze → includes tier in query params."""

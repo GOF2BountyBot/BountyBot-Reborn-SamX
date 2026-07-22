@@ -11,6 +11,7 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 # -------------------------------------------------------------------------
@@ -93,6 +94,26 @@ def _create_mock_user(user_id: int = 111111111, name: str = "TestUser"):
     return user
 
 
+_API_BASE = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+
+
+def _make_http_status_error(status_code: int, message: str = "Server error") -> httpx.HTTPStatusError:
+    """Build a genuine ``httpx.HTTPStatusError`` (real ``httpx.Response`` attached).
+
+    Replaces the ``response=MagicMock(status_code=...)`` pattern — a bare MagicMock
+    stand-in for the response doesn't behave like a real ``httpx.Response`` (`.text`,
+    `.json()`, `.headers` would silently return more MagicMocks). This raises the
+    exception the way a real ``resp.raise_for_status()`` call would.
+    """
+    request = httpx.Request("GET", "http://bot-core.test/api/v1/resource")
+    response = httpx.Response(status_code, json={"detail": message}, request=request)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return exc
+    raise AssertionError(f"status_code={status_code} did not raise")
+
+
 # -------------------------------------------------------------------------
 # Fixtures
 # -------------------------------------------------------------------------
@@ -143,7 +164,14 @@ class TestAdminUninstall:
             yield
 
     def test_admin_uninstall_confirm_flow(self, mock_admin_cog):
-        """/admin_uninstall should call the delete API when user clicks Confirm (result=True)."""
+        """/admin_uninstall should call the delete API when user clicks Confirm (result=True).
+
+        Asserts the actual DELETE contract (route + user_id param) and the removed-counts
+        field content — previously only `delete.assert_called_once()` + "an embed exists"
+        was checked, so a wrong URL, missing user_id param, or dropped removed_counts field
+        would have shipped green despite this being the highest-blast-radius destructive
+        admin command in the cog.
+        """
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
@@ -167,13 +195,24 @@ class TestAdminUninstall:
         asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        # DELETE to bot-core must have been called
+        # DELETE contract: exact route + user_id param, not just "was called".
         mock_admin_cog.http_client.delete.assert_called_once()
+        delete_call = mock_admin_cog.http_client.delete.call_args
+        assert delete_call.args[0] == f"{_API_BASE}/admin/guilds/987654321/uninstall"
+        assert delete_call.kwargs.get("params") == {"user_id": interaction.user.id}
         # At least one followup send with an embed (confirmation prompt + result embed)
         assert interaction.followup.send.call_count >= 1
-        # The last followup send should contain the success embed
+        # The last followup send should contain the success embed with the real removed-counts
+        # content (not just "an embed key exists").
         last_call_kwargs = interaction.followup.send.call_args_list[-1][1]
-        assert "embed" in last_call_kwargs
+        embed = last_call_kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "✅ Bot Uninstalled"
+        removed_field = next((f for f in embed.fields if f.name == "Records Removed"), None)
+        assert removed_field is not None
+        assert "players: 5" in removed_field.value
+        assert "shops: 4" in removed_field.value
+        assert "configs: 1" in removed_field.value
 
     def test_admin_uninstall_cancel_flow(self, mock_admin_cog):
         """/admin_uninstall should NOT call delete API when user clicks Cancel (result=False)."""
@@ -220,8 +259,6 @@ class TestAdminUninstall:
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
-        import httpx
-
         # Mock GET config first (may succeed or fail; use a simple ok response)
         cfg_resp = MagicMock()
         cfg_resp.raise_for_status = MagicMock()
@@ -229,8 +266,7 @@ class TestAdminUninstall:
         mock_admin_cog.http_client.get = AsyncMock(return_value=cfg_resp)
         mock_admin_cog.bot.get_guild = MagicMock(return_value=None)
 
-        mock_req = MagicMock()
-        http_error = httpx.HTTPStatusError("Forbidden", request=mock_req, response=MagicMock(status_code=403))
+        http_error = _make_http_status_error(403, "Forbidden")
         mock_admin_cog.http_client.delete = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
@@ -456,10 +492,7 @@ class TestAdminConfigShop:
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
-        import httpx
-
-        mock_req = MagicMock()
-        http_error = httpx.HTTPStatusError("Bad Request", request=mock_req, response=MagicMock(status_code=400))
+        http_error = _make_http_status_error(400, "Bad Request")
         mock_admin_cog.http_client.put = AsyncMock(side_effect=http_error)
 
         asyncio.run(
@@ -648,10 +681,7 @@ class TestAdminConfigValidate:
         """/admin_config_validate should handle API errors gracefully."""
         interaction = _create_mock_interaction()
 
-        import httpx
-
-        mock_req = MagicMock()
-        http_error = httpx.HTTPStatusError("Server error", request=mock_req, response=MagicMock(status_code=500))
+        http_error = _make_http_status_error(500, "Server error")
         mock_admin_cog.http_client.get = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))

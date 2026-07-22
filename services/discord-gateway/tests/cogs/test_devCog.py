@@ -4,7 +4,9 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+import respx
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -67,6 +69,20 @@ def mock_bot():
         loop=loop,
     )
     return bot
+
+
+_API_BASE = "http://bot-core:8000/api/v1"
+
+
+def _with_real_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+    Registers a pytest finalizer to close the client after the test so no
+    httpx.AsyncClient instances are leaked between tests.
+    """
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
 
 
 def _evict_discord_modules():
@@ -226,87 +242,95 @@ class TestCategoryAutocomplete:
 
 
 class TestLoadDataCommand:
-    """Tests for load_data command."""
+    """Tests for load_data command.
 
-    @patch("cogs.devCog.httpx")
-    def test_load_data_single_category_success(self, mock_httpx, mock_dev_cog):
-        """load_data should load single category successfully."""
-        # Mock interaction
+    Migrated to respx: no `httpx` module patch — the cog's real ``httpx.HTTPStatusError``
+    is exercised so error paths that key off the exception type actually fire.
+    """
+
+    def test_load_data_single_category_success(self, mock_dev_cog, request):
+        """load_data should load single category successfully, hitting POST /data/{category}."""
+        _with_real_client(mock_dev_cog, request)
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
-        # Mock API response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = ["file1", "file2"]
-        mock_dev_cog.http_client.post = AsyncMock(return_value=mock_response)
+        with respx.mock(assert_all_called=True) as mock_router:
+            route = mock_router.post(f"{_API_BASE}/data/ships").mock(
+                return_value=httpx.Response(200, json=["file1", "file2"])
+            )
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
 
-        # Call command via callback
-        asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
-
-        # Verify behavior
+        assert route.called
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once_with("✅ Data load complete for **ships**: 2 files processed.")
 
-    @patch("cogs.devCog.httpx")
-    def test_load_data_all_categories_success(self, mock_httpx, mock_dev_cog):
-        """load_data should load all categories when 'All' is selected."""
-        # Mock interaction
+    def test_load_data_all_categories_success(self, mock_dev_cog, request):
+        """load_data should load all categories when 'All' is selected, hitting one POST per category."""
+        _with_real_client(mock_dev_cog, request)
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
-        # Mock API responses
         mock_dev_cog._categories = ["ships", "modules"]
 
-        ships_resp = MagicMock()
-        ships_resp.status_code = 200
-        ships_resp.json.return_value = ["ship1", "ship2"]
+        with respx.mock(assert_all_called=True) as mock_router:
+            ships_route = mock_router.post(f"{_API_BASE}/data/ships").mock(
+                return_value=httpx.Response(200, json=["ship1", "ship2"])
+            )
+            modules_route = mock_router.post(f"{_API_BASE}/data/modules").mock(
+                return_value=httpx.Response(200, json=["module1"])
+            )
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "All"))
 
-        modules_resp = MagicMock()
-        modules_resp.status_code = 200
-        modules_resp.json.return_value = ["module1"]
-
-        mock_dev_cog.http_client.post = AsyncMock(side_effect=[ships_resp, modules_resp])
-
-        # Call command via callback
-        asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "All"))
-
-        # Verify behavior
+        assert ships_route.called
+        assert modules_route.called
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
+        body = interaction.followup.send.call_args[0][0]
+        assert "Total files: 3" in body
+        assert "ships: 2 files" in body
+        assert "modules: 1 files" in body
 
-    @patch("cogs.devCog.httpx")
-    def test_load_data_api_error(self, mock_httpx, mock_dev_cog):
-        """load_data should handle API errors gracefully."""
-        # Mock interaction
+    def test_load_data_api_error(self, mock_dev_cog, request):
+        """load_data must actually raise httpx.HTTPStatusError on a 500 and take the ❌ branch.
+
+        Regression guard for the prod-shaped bug: previously the whole `httpx` module was
+        patched to a MagicMock, so `AsyncMock(side_effect=<MagicMock instance>)` treated the
+        "error" as callable and *returned* it instead of raising — the success branch ran and
+        the test passed even with the `except httpx.HTTPStatusError` handler deleted. respx
+        returns a real 500 so `resp.raise_for_status()` genuinely raises.
+        """
+        _with_real_client(mock_dev_cog, request)
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
-        # Mock HTTP client with httpx HTTPStatusError using the mocked module
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.text = "Internal Server Error"
-        error = mock_httpx.HTTPStatusError("Server error", request=MagicMock(), response=mock_response)
-        mock_dev_cog.http_client.post = AsyncMock(side_effect=error)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_API_BASE}/data/ships").mock(
+                return_value=httpx.Response(500, json={"detail": "Internal Server Error"})
+            )
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
 
-        # Call command via callback
-        asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
-
-        # Verify error handling
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
+        call_args, call_kwargs = interaction.followup.send.call_args
+        assert call_args[0].startswith("❌ "), f"expected the error branch, got: {call_args[0]!r}"
+        assert call_kwargs.get("ephemeral") is True
 
 
 class TestReloadAutocompleteCommand:
     """Tests for reload_autocomplete command."""
 
-    @patch("cogs.devCog.httpx")
-    def test_reload_autocomplete_success(self, mock_httpx, mock_dev_cog):
-        """reload_autocomplete should reload cog methods successfully."""
-        # Mock interaction
+    def test_reload_autocomplete_success(self, mock_dev_cog):
+        """reload_autocomplete should reload cog methods successfully.
+
+        Uses a real AutocompleteCache for the cache-clear targets so the assertion is on
+        actual cache state (empty after reload) rather than "a mock method was called" —
+        a mock that was never wired to real cache semantics would still pass the old assert.
+        """
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
@@ -318,8 +342,8 @@ class TestReloadAutocompleteCommand:
         about_cog._preload_ship_skins = AsyncMock()
         about_cog._preload_render_settings = AsyncMock()
         about_cog._preload_static_catalogs = AsyncMock()
-        about_cog._shop_cache = MagicMock()
-        about_cog._shop_cache.clear = MagicMock()
+        about_cog._shop_cache = AutocompleteCache(name="test-shop")
+        about_cog._shop_cache.set("bronze", [{"id": 1}])
         mock_dev_cog.bot.get_cog.return_value = about_cog
 
         # Call command via callback
@@ -332,11 +356,10 @@ class TestReloadAutocompleteCommand:
         interaction.followup.send.assert_called_once()
         assert about_cog._preload_categories.await_count >= 1
         assert about_cog._preload_render_settings.await_count >= 1
-        # And the static catalogs are cleared (self-heal on next keystroke).
-        about_cog._shop_cache.clear.assert_called()
+        # The static catalog is actually empty (self-heal on next keystroke) — real cache state.
+        assert about_cog._shop_cache.size == 0
 
-    @patch("cogs.devCog.httpx")
-    def test_reload_autocomplete_with_errors(self, mock_httpx, mock_dev_cog):
+    def test_reload_autocomplete_with_errors(self, mock_dev_cog):
         """reload_autocomplete should handle cog method failures."""
         # Mock interaction
         interaction = MagicMock()
@@ -355,14 +378,16 @@ class TestReloadAutocompleteCommand:
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
 
-    @patch("cogs.devCog.httpx")
-    def test_reload_clears_systems_cache_now_that_it_self_heals(self, mock_httpx, mock_dev_cog):
+    def test_reload_clears_systems_cache_now_that_it_self_heals(self, mock_dev_cog):
         """Phase 3 (D-010 fix): the carve-out is GONE — _systems_cache IS now cleared.
 
         Now that _systems_cache has a refresh_fn, /reload_autocomplete can clear it
         uniformly like any other cache; the next /check keystroke cold-fills it. This
         is the inverse of the old D-010 carve-out behaviour (which left it untouched).
+        Uses real AutocompleteCache instances so the assertion is on actual emptied state.
         """
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
@@ -370,52 +395,52 @@ class TestReloadAutocompleteCommand:
         cog = MagicMock()
         cog._preload_categories = AsyncMock()
         cog._preload_render_settings = AsyncMock()
-        # Distinct cache mocks so we can assert exactly which ones got cleared.
-        cog._systems_cache = MagicMock()
-        cog._systems_cache.clear = MagicMock()
-        cog._bounty_cache = MagicMock()
-        cog._bounty_cache.clear = MagicMock()
+        # Distinct real caches, pre-filled, so we can assert exactly which ones got emptied.
+        cog._systems_cache = AutocompleteCache(name="test-systems")
+        cog._systems_cache.set("sol", {"name": "Sol"})
+        cog._bounty_cache = AutocompleteCache(name="test-bounty")
+        cog._bounty_cache.set(123456789, [{"id": 1}])
         mock_dev_cog.bot.get_cog.return_value = cog
 
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
         # The static systems catalog IS now cleared (self-heals via refresh_fn).
-        cog._systems_cache.clear.assert_called()
-        cog._bounty_cache.clear.assert_called()
+        assert cog._systems_cache.size == 0
+        assert cog._bounty_cache.size == 0
 
 
 class TestErrorHandling:
     """Tests for error handling in devCog."""
 
-    @patch("cogs.devCog.httpx")
-    def test_load_data_connection_error(self, mock_httpx, mock_dev_cog):
-        """load_data should handle connection errors gracefully."""
-        import httpx
+    def test_load_data_connection_error(self, mock_dev_cog, request):
+        """load_data should handle a network-level error (not an HTTP status) gracefully.
 
-        # Make the mock httpx use real exception classes
-        mock_httpx.HTTPStatusError = httpx.HTTPStatusError
-
-        # Mock interaction
+        Uses a real httpx.ConnectError (via respx side_effect) rather than a generic
+        Exception — this is what the real client actually raises when the connection
+        fails, and it correctly falls through to the generic `except Exception` branch
+        (⚠️) rather than the httpx.HTTPStatusError branch (❌).
+        """
+        _with_real_client(mock_dev_cog, request)
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
-        # Mock HTTP client with generic Exception
-        mock_dev_cog.http_client.post = AsyncMock(side_effect=Exception("Connection failed"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_API_BASE}/data/ships").mock(side_effect=httpx.ConnectError("Connection failed"))
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
 
-        # Call command via callback
-        asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
-
-        # Verify error handling
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
+        call_args, call_kwargs = interaction.followup.send.call_args
+        assert call_args[0].startswith("⚠️ "), f"expected the generic-error branch, got: {call_args[0]!r}"
+        assert "Connection failed" in call_args[0]
+        assert call_kwargs.get("ephemeral") is True
 
 
 class TestCogUnload:
     """Tests for cog unload functionality."""
 
-    @patch("cogs.devCog.httpx")
-    def test_cog_unload_success(self, mock_httpx, mock_dev_cog):
+    def test_cog_unload_success(self, mock_dev_cog):
         """cog_unload should close http_client successfully."""
         mock_dev_cog.http_client.aclose = AsyncMock()
         asyncio.run(mock_dev_cog.cog_unload())
@@ -425,106 +450,83 @@ class TestCogUnload:
 class TestLoadDataAllCategoriesWithErrors:
     """Tests for load_data 'All' path with errors."""
 
-    @patch("cogs.devCog.httpx")
-    def test_load_data_all_with_partial_errors(self, mock_httpx, mock_dev_cog):
+    def test_load_data_all_with_partial_errors(self, mock_dev_cog, request):
         """load_data should handle partial failures when loading all categories."""
-        import httpx
-
-        # Make the mock httpx use real exception classes
-        mock_httpx.HTTPStatusError = httpx.HTTPStatusError
-
-        # Mock interaction
+        _with_real_client(mock_dev_cog, request)
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
-        # Mock API responses - one success, one failure
         mock_dev_cog._categories = ["ships", "modules"]
 
-        ships_resp = MagicMock()
-        ships_resp.status_code = 200
-        ships_resp.json.return_value = ["ship1", "ship2"]
-        ships_resp.raise_for_status = MagicMock()
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_API_BASE}/data/ships").mock(return_value=httpx.Response(200, json=["ship1", "ship2"]))
+            mock_router.post(f"{_API_BASE}/data/modules").mock(
+                return_value=httpx.Response(500, json={"detail": "Failed"})
+            )
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "All"))
 
-        # Second category fails
-        modules_error = httpx.HTTPStatusError("Failed", request=MagicMock(), response=MagicMock())
-        mock_dev_cog.http_client.post = AsyncMock(side_effect=[ships_resp, modules_error])
-
-        # Call command via callback
-        asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "All"))
-
-        # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
-        # Check that the response mentions errors
-        call_args = interaction.followup.send.call_args
-        assert call_args is not None
+        body = interaction.followup.send.call_args[0][0]
+        # Real behavior: successful category is summarized, failing category is reported
+        # under "Errors:", and the header flags the error count.
+        assert "ships: 2 files" in body
+        assert "Errors in 1 categories" in body
+        assert "modules:" in body
 
-    @patch("cogs.devCog.httpx")
-    def test_load_data_all_body_truncation(self, mock_httpx, mock_dev_cog):
+    def test_load_data_all_body_truncation(self, mock_dev_cog, request):
         """load_data should truncate very long response body for 'All'."""
-        # Mock interaction
+        _with_real_client(mock_dev_cog, request)
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
         # Create many categories to trigger truncation
-        mock_dev_cog._categories = [f"category_{i}" for i in range(50)]
+        categories = [f"category_{i}" for i in range(50)]
+        mock_dev_cog._categories = categories
 
-        # Mock responses with long data
-        responses = []
-        for _ in range(50):
-            resp = MagicMock()
-            resp.status_code = 200
-            resp.json.return_value = [f"file_{j}" for j in range(10)]
-            resp.raise_for_status = MagicMock()
-            responses.append(resp)
+        with respx.mock(assert_all_called=True) as mock_router:
+            for cat in categories:
+                mock_router.post(f"{_API_BASE}/data/{cat}").mock(
+                    return_value=httpx.Response(200, json=[f"file_{j}" for j in range(10)])
+                )
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "All"))
 
-        mock_dev_cog.http_client.post = AsyncMock(side_effect=responses)
-
-        # Call command via callback
-        asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "All"))
-
-        # Verify behavior - body should be truncated
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
+        body = interaction.followup.send.call_args[0][0]
+        assert "... (truncated)" in body
+        assert "Total files: 500" in body
 
 
 class TestLoadDataSingleCategoryErrors:
     """Tests for load_data single category error paths."""
 
-    @patch("cogs.devCog.httpx")
-    def test_load_data_http_status_error(self, mock_httpx, mock_dev_cog):
+    def test_load_data_http_status_error(self, mock_dev_cog, request):
         """load_data should handle HTTPStatusError for single category."""
-        import httpx
-
-        # Make the mock httpx use real exception classes
-        mock_httpx.HTTPStatusError = httpx.HTTPStatusError
-
-        # Mock interaction
+        _with_real_client(mock_dev_cog, request)
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
-        # Create a real HTTPStatusError
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        error = httpx.HTTPStatusError("Server error", request=MagicMock(), response=mock_response)
-        mock_dev_cog.http_client.post = AsyncMock(side_effect=error)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_API_BASE}/data/ships").mock(
+                return_value=httpx.Response(500, json={"detail": "Server error"})
+            )
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
 
-        # Call command via callback
-        asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
-
-        # Verify error handling
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
+        call_args, call_kwargs = interaction.followup.send.call_args
+        assert call_args[0].startswith("❌ ")
+        assert call_kwargs.get("ephemeral") is True
 
 
 class TestReloadAutocompleteEdgeCases:
     """Tests for reload_autocomplete edge cases."""
 
-    @patch("cogs.devCog.httpx")
-    def test_reload_autocomplete_cog_not_found(self, mock_httpx, mock_dev_cog):
+    def test_reload_autocomplete_cog_not_found(self, mock_dev_cog):
         """reload_autocomplete should handle missing cogs gracefully."""
         # Mock interaction
         interaction = MagicMock()
@@ -544,25 +546,35 @@ class TestReloadAutocompleteEdgeCases:
         call_args = interaction.followup.send.call_args[0][0]
         assert "not found" in call_args
 
-    @patch("cogs.devCog.httpx")
-    def test_reload_autocomplete_method_not_found(self, mock_httpx, mock_dev_cog):
-        """reload_autocomplete should handle missing methods gracefully."""
+    def test_reload_autocomplete_method_not_found(self, mock_dev_cog):
+        """reload_autocomplete should handle missing methods gracefully.
+
+        Both preload-method targets (DevCog._preload_categories,
+        AdminCog._preload_render_settings) are explicitly set to None so
+        ``getattr(cog, method_name, None)`` genuinely resolves to None and the
+        cog exercises the "no method" branch, rather than incidentally landing
+        there because a MagicMock auto-attribute isn't awaitable.
+        """
         # Mock interaction
         interaction = MagicMock()
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
-        # Mock cog without the expected method
+        # Mock cog without either expected preload method
         mock_cog = MagicMock()
-        mock_cog._preload_data = None  # Method doesn't exist
+        mock_cog._preload_categories = None
+        mock_cog._preload_render_settings = None
         mock_dev_cog.bot.get_cog.return_value = mock_cog
 
         # Call command via callback
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
-        # Verify behavior - should report method not found
+        # Verify behavior - should report method not found for both targets
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
+        call_args = interaction.followup.send.call_args[0][0]
+        assert "no method _preload_categories" in call_args
+        assert "no method _preload_render_settings" in call_args
 
 
 class TestCogSetup:
@@ -600,21 +612,25 @@ class TestReloadAutocompletePackageE:
     # Test #27 — invokes AdminCog._preload_static_catalogs
     # ------------------------------------------------------------------
 
-    @patch("cogs.devCog.httpx")
-    def test_reload_clears_admin_static_catalogs(self, mock_httpx, mock_dev_cog):
+    def test_reload_clears_admin_static_catalogs(self, mock_dev_cog):
         """Phase 3: AdminCog item/ship catalogs are now CLEARED (self-heal via refresh_fn)
         instead of being re-driven by _preload_static_catalogs from /reload_autocomplete.
+
+        Uses real AutocompleteCache instances so the assertion reflects actual emptied
+        cache state rather than "a mock method was called".
         """
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
         interaction = self._make_interaction()
 
         admin_cog = MagicMock()
         admin_cog._preload_render_settings = AsyncMock()
-        admin_cog._item_catalog = MagicMock()
-        admin_cog._item_catalog.clear = MagicMock()
-        admin_cog._ship_catalog = MagicMock()
-        admin_cog._ship_catalog.clear = MagicMock()
-        admin_cog._admin_pending_duel_cache = MagicMock()
-        admin_cog._admin_pending_duel_cache.clear = MagicMock()
+        admin_cog._item_catalog = AutocompleteCache(name="test-item-catalog")
+        admin_cog._item_catalog.set("laser", {"id": 1})
+        admin_cog._ship_catalog = AutocompleteCache(name="test-ship-catalog")
+        admin_cog._ship_catalog.set("scout", {"id": 2})
+        admin_cog._admin_pending_duel_cache = AutocompleteCache(name="test-pending-duel")
+        admin_cog._admin_pending_duel_cache.set(1, {"id": 3})
 
         bounty_cog = MagicMock()
 
@@ -626,9 +642,7 @@ class TestReloadAutocompletePackageE:
         skins_cog = MagicMock()
 
         shop_cog = MagicMock()
-        shop_cache = MagicMock()
-        shop_cache.clear = MagicMock()
-        shop_cog._shop_cache = shop_cache
+        shop_cog._shop_cache = AutocompleteCache(name="test-shop")
 
         def get_cog_side_effect(name):
             return {
@@ -644,16 +658,17 @@ class TestReloadAutocompletePackageE:
 
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
-        admin_cog._item_catalog.clear.assert_called()
-        admin_cog._ship_catalog.clear.assert_called()
+        assert admin_cog._item_catalog.size == 0
+        assert admin_cog._ship_catalog.size == 0
 
     # ------------------------------------------------------------------
     # Test #28 — clears ShopCog._shop_cache
     # ------------------------------------------------------------------
 
-    @patch("cogs.devCog.httpx")
-    def test_reload_clears_shop_cache(self, mock_httpx, mock_dev_cog):
-        """reload_autocomplete calls clear() on ShopCog._shop_cache."""
+    def test_reload_clears_shop_cache(self, mock_dev_cog):
+        """reload_autocomplete empties the real ShopCog._shop_cache."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
         interaction = self._make_interaction()
 
         about_cog = MagicMock()
@@ -673,9 +688,8 @@ class TestReloadAutocompletePackageE:
         admin_cog._preload_static_catalogs = AsyncMock()
 
         shop_cog = MagicMock()
-        shop_cache = MagicMock()
-        shop_cache.clear = MagicMock()
-        shop_cog._shop_cache = shop_cache
+        shop_cog._shop_cache = AutocompleteCache(name="test-shop")
+        shop_cog._shop_cache.set("bronze", [{"id": 1}])
 
         def get_cog_side_effect(name):
             return {
@@ -691,17 +705,18 @@ class TestReloadAutocompletePackageE:
 
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
-        shop_cache.clear.assert_called_once()
+        assert shop_cog._shop_cache.size == 0
 
     # ------------------------------------------------------------------
     # Test #29 — invokes BountyCog._preload_data and AdminCog._preload_render_settings
     # ------------------------------------------------------------------
 
-    @patch("cogs.devCog.httpx")
-    def test_reload_clears_bounty_systems_and_preloads_render_settings(self, mock_httpx, mock_dev_cog):
+    def test_reload_clears_bounty_systems_and_preloads_render_settings(self, mock_dev_cog):
         """Phase 3: BountyCog._systems_cache is now CLEARED (self-heal), while the plain
         in-code AdminCog._preload_render_settings list is still explicitly preloaded.
         """
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
         interaction = self._make_interaction()
 
         about_cog = MagicMock()
@@ -712,18 +727,16 @@ class TestReloadAutocompletePackageE:
         skins_cog = MagicMock()
 
         bounty_cog = MagicMock()
-        bounty_cog._systems_cache = MagicMock()
-        bounty_cog._systems_cache.clear = MagicMock()
-        bounty_cog._bounty_cache = MagicMock()
-        bounty_cog._bounty_cache.clear = MagicMock()
+        bounty_cog._systems_cache = AutocompleteCache(name="test-systems")
+        bounty_cog._systems_cache.set("sol", {"name": "Sol"})
+        bounty_cog._bounty_cache = AutocompleteCache(name="test-bounty")
+        bounty_cog._bounty_cache.set(123456789, [{"id": 1}])
 
         admin_cog = MagicMock()
         admin_cog._preload_render_settings = AsyncMock()
 
         shop_cog = MagicMock()
-        shop_cache = MagicMock()
-        shop_cache.clear = MagicMock()
-        shop_cog._shop_cache = shop_cache
+        shop_cog._shop_cache = AutocompleteCache(name="test-shop")
 
         def get_cog_side_effect(name):
             return {
@@ -739,7 +752,7 @@ class TestReloadAutocompletePackageE:
 
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
-        bounty_cog._systems_cache.clear.assert_called()
+        assert bounty_cog._systems_cache.size == 0
         admin_cog._preload_render_settings.assert_awaited_once()
 
 

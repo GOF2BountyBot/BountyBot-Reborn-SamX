@@ -332,10 +332,14 @@ async def create_role(request: Request, guild_id: int, role_data: RoleCreateRequ
         }
         if role_data.permissions is not None:
             if role_data.permissions < 0:
-                raise HTTPException(status_code=status.HTTP_422, detail="Invalid permissions bitmask")
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Invalid permissions bitmask"
+                )
             perms = discord.Permissions(role_data.permissions)
             if perms.value != role_data.permissions:
-                raise HTTPException(status_code=status.HTTP_422, detail="Invalid permissions bitmask")
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Invalid permissions bitmask"
+                )
             create_kwargs["permissions"] = perms
         if role_data.color is not None:
             create_kwargs["color"] = discord.Color(role_data.color)

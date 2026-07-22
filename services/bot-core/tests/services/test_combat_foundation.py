@@ -283,31 +283,47 @@ class TestLoadoutBuilderPlumbing:
     @pytest.mark.asyncio
     async def test_from_player_builds_without_mode_flag(self):
         """from_player builds a ShipLoadout with no manual_turret_mode surface."""
-        # 1 mock: player_repo
-        player = MagicMock()
-        player.active_ship_id = 10
+        import types as _types
 
-        player_ship = MagicMock(spec=["ship_name", "weapons", "turrets", "modules"])
-        player_ship.ship_name = "Specter"
-        player_ship.weapons = []
-        player_ship.turrets = []
-        player_ship.modules = []
+        from persist.models.player import Player
+        from persist.models.player_ship import PlayerShip
 
-        ship = MagicMock()
-        ship.armour = 200
+        # Real Player/PlayerShip (no DB session — plain kwargs; every attribute
+        # from_player() reads is supplied, per the ORM-without-session gotcha).
+        player = Player(id=1, active_ship_id=10)
+        player_ship = PlayerShip(
+            id=10,
+            player_id=1,
+            ship_name="Specter",
+            weapons=[],
+            turrets=[],
+            modules=[],
+            is_active=True,
+        )
+
+        # Static Ship row — SimpleNamespace (Ship has ARRAY cols, not SQLite-createable).
+        ship = _types.SimpleNamespace(name="Specter", armour=200, builtin_modules=None)
 
         player_repo = MagicMock()
         player_repo.get_by_id = AsyncMock(return_value=player)
 
-        def _result(val):
+        # Dispatch-by-model db.execute mock: order-independent (keys on the mapped
+        # class of the SELECT), unlike a positional side_effect list which would
+        # silently mis-map results if from_player() reordered its queries.
+        from persist.models.ship import Ship
+
+        by_model = {PlayerShip: player_ship, Ship: ship}
+
+        async def _execute(stmt, *_args, **_kwargs):
+            model = stmt.column_descriptions[0]["type"]
             r = MagicMock()
-            r.scalars.return_value.first.return_value = val
+            r.scalars.return_value.first.return_value = by_model.get(model)
             return r
 
         db = MagicMock()
-        db.execute = AsyncMock(side_effect=[_result(player_ship), _result(ship)])
+        db.execute = AsyncMock(side_effect=_execute)
 
-        # 2nd mock: item_repo (no items equipped)
+        # item_repo (no items equipped)
         item_repo = MagicMock()
         item_repo.get_by_name = AsyncMock(return_value=None)
 

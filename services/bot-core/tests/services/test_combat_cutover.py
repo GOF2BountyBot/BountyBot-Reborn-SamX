@@ -28,6 +28,7 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
 import pytest
+from persist.models.player import Player
 from services.combat_models import (
     FightResults,
     FightStats,
@@ -250,10 +251,14 @@ class TestPlayerStatPromotion:
         l2 = ShipLoadout(ship_name="B", base_armour=100)
         session_mock = AsyncMock()
 
-        mock_player = MagicMock()
-        mock_player.total_fights = 5
-        mock_player.total_nukes_fired = 0
-        mock_player.total_module_activations = 0
+        mock_player = Player(
+            user_id=101,
+            guild_id=1,
+            credits=0,
+            total_fights=5,
+            total_nukes_fired=0,
+            total_module_activations=0,
+        )
 
         with (
             patch("services.combat_log_service.CombatLogService.persist", new=AsyncMock(return_value=1)),
@@ -284,10 +289,14 @@ class TestPlayerStatPromotion:
         l2 = ShipLoadout(ship_name="NPC", base_armour=100)
         session_mock = AsyncMock()
 
-        player_mock = MagicMock()
-        player_mock.total_fights = 0
-        player_mock.total_nukes_fired = 0
-        player_mock.total_module_activations = 0
+        player_mock = Player(
+            user_id=555,
+            guild_id=10,
+            credits=0,
+            total_fights=0,
+            total_nukes_fired=0,
+            total_module_activations=0,
+        )
 
         call_args_list = []
 

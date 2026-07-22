@@ -103,38 +103,71 @@ class TestInit:
 
 
 class TestInitializeDatabase:
+    """run_create_all controls whether the create_all DDL path runs.
+
+    These tests no longer mock ``create_tables_if_not_exist`` (the method under
+    test) and then assert it was called — that was tautological.  Instead the
+    REAL ``create_tables_if_not_exist`` body executes; we instrument the async
+    engine boundary (``engine.begin()`` → ``conn.run_sync``) to observe whether
+    it actually reaches ``Base.metadata.create_all``.  ``_verify_schema_version``
+    stays a collaborator boundary here (it issues a Postgres-specific
+    ``insert(...).on_conflict_do_nothing`` that SQLite cannot host); it is
+    exercised for real in TestVerifySchemaVersion below.
+    """
+
+    @staticmethod
+    def _instrument_engine(manager):
+        """Wire manager.db_manager.engine.begin to record run_sync targets."""
+        run_sync_targets: list = []
+
+        @asynccontextmanager
+        async def _begin():
+            conn = MagicMock()
+
+            async def _run_sync(fn, *a, **k):
+                run_sync_targets.append(fn)
+
+            conn.run_sync = _run_sync
+            yield conn
+
+        manager.db_manager.engine.begin = _begin
+        return run_sync_targets
+
     @pytest.mark.asyncio
-    async def test_initialize_with_create_all_true(self, manager, mock_session):
-        """When run_create_all=True, create_tables_if_not_exist is called."""
-        # Mock create_tables_if_not_exist
-        manager.create_tables_if_not_exist = AsyncMock()
-        manager._verify_schema_version = AsyncMock()
+    async def test_initialize_with_create_all_true(self, manager):
+        """run_create_all=True → the real create path reaches Base.metadata.create_all."""
+        from persist.models.base import Base
+
+        run_sync_targets = self._instrument_engine(manager)
+        manager._verify_schema_version = AsyncMock()  # PG on_conflict boundary collaborator
 
         await manager.initialize_database(run_create_all=True)
 
-        manager.create_tables_if_not_exist.assert_awaited_once()
+        assert Base.metadata.create_all in run_sync_targets, (
+            "run_create_all=True must run Base.metadata.create_all via the engine"
+        )
         manager._verify_schema_version.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_initialize_with_create_all_false(self, manager, mock_session):
-        """When run_create_all=False (default), skip create_tables."""
-        manager.create_tables_if_not_exist = AsyncMock()
+    async def test_initialize_with_create_all_false(self, manager):
+        """run_create_all=False → the create path never touches the engine."""
+        run_sync_targets = self._instrument_engine(manager)
         manager._verify_schema_version = AsyncMock()
 
         await manager.initialize_database(run_create_all=False)
 
-        manager.create_tables_if_not_exist.assert_not_awaited()
+        assert run_sync_targets == [], "run_create_all=False must NOT run create_all DDL"
         manager._verify_schema_version.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_initialize_default_skips_create(self, manager, mock_session):
-        """Default call skips create_tables."""
-        manager.create_tables_if_not_exist = AsyncMock()
+    async def test_initialize_default_skips_create(self, manager):
+        """Default call skips the create_all DDL path."""
+        run_sync_targets = self._instrument_engine(manager)
         manager._verify_schema_version = AsyncMock()
 
         await manager.initialize_database()
 
-        manager.create_tables_if_not_exist.assert_not_awaited()
+        assert run_sync_targets == [], "default initialize_database must NOT run create_all DDL"
 
 
 # ===================================================================

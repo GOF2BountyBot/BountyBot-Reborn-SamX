@@ -598,66 +598,18 @@ class TestConcurrencyEvidence:
 
 
 class TestDeadCheckRemoved:
-    """The dead ``if cache_key in _map_cache`` check is absent from Phase-2a."""
+    """The dead ``if cache_key in _map_cache`` check is absent from Phase-2a.
 
-    def test_dead_cache_check_not_in_admin_spawn_source(self):
-        """admin_spawn_bounties Phase-2a does NOT contain the dead cache check.
-
-        The old code performed ``if cache_key in _map_cache:`` inside the render
-        loop.  Because freshly-spawned bounties cannot already be in the cache,
-        this branch was always-missing dead code.  P3-T4 removes it.
-
-        We inspect the rendered source of admin_spawn_bounties to confirm the
-        pattern is absent.
-        """
-        import inspect
-
-        import api.routers.bounties as bounties_module
-
-        source = inspect.getsource(bounties_module.admin_spawn_bounties)
-
-        # The dead check used: "if cache_key in _map_cache:"
-        # It was the branch that short-circuited to reading from the cache
-        # without rendering — always false for new bounties.
-        assert "if cache_key in _map_cache:" not in source, (
-            "The dead ``if cache_key in _map_cache:`` check was found in "
-            "admin_spawn_bounties source.  This check was always-missing for "
-            "freshly-spawned bounties and should have been removed by P3-T4."
-        )
-
-    def test_gather_fanout_present_in_admin_spawn_source(self):
-        """admin_spawn_bounties Phase-2a uses asyncio.gather for the fan-out.
-
-        Confirms the P3-T4 change is present: the serial loop was replaced by
-        an asyncio.gather call over _render_one coroutines.
-        """
-        import inspect
-
-        import api.routers.bounties as bounties_module
-
-        source = inspect.getsource(bounties_module.admin_spawn_bounties)
-
-        assert "asyncio.gather" in source, (
-            "asyncio.gather was NOT found in admin_spawn_bounties. "
-            "The P3-T4 parallel fan-out must use asyncio.gather over _render_one coroutines."
-        )
-
-    def test_render_route_offloaded_used_in_admin_spawn(self):
-        """admin_spawn_bounties Phase-2a calls render_route_offloaded (T3 seam).
-
-        Confirms the P3-T4 change uses the T3 offload seam rather than the
-        synchronous render_route_for_bounty.
-        """
-        import inspect
-
-        import api.routers.bounties as bounties_module
-
-        source = inspect.getsource(bounties_module.admin_spawn_bounties)
-
-        assert "render_route_offloaded" in source, (
-            "render_route_offloaded was NOT found in admin_spawn_bounties. "
-            "Phase-2a must use the T3 offload seam (render_route_offloaded) for the fan-out."
-        )
+    NOTE: three ``inspect.getsource(...)`` substring-grep tests were removed here
+    (test true-up).  They asserted on source *text* (``asyncio.gather`` /
+    ``render_route_offloaded`` present, dead cache-check absent), which pass or
+    fail on formatting rather than behaviour.  The real P3-T4 fan-out behaviour
+    is already proven above by TestByteIdentity40 (40 concurrent renders byte-
+    identical to serial), TestLoopResponsive40 (a side coroutine makes progress
+    DURING the fan-out — impossible without the offloaded gather) and
+    TestConcurrencyEvidence (multiple distinct worker thread idents observed).
+    The behavioural no-cache-short-circuit test below is retained.
+    """
 
     def test_no_behavior_change_from_dead_check_removal(self):
         """Removing the dead cache-check produces the same PNG output.

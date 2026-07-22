@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import types
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -122,53 +123,95 @@ def make_module_dict(
     }
 
 
-def make_mock_player(player_id: int = 1, active_ship_id: int | None = 1) -> MagicMock:
-    """Create a Player-like MagicMock."""
-    p = MagicMock()
-    p.id = player_id
-    p.active_ship_id = active_ship_id
-    return p
+def make_player(player_id: int = 1, active_ship_id: int | None = 1):
+    """Real Player ORM instance (no session — plain kwargs).
+
+    from_player() only reads .active_ship_id off the Player it gets back from
+    player_repo, so that's the only attribute that matters here; id is set for
+    realism/identity.
+    """
+    from persist.models.player import Player
+
+    return Player(id=player_id, active_ship_id=active_ship_id)
 
 
-def make_mock_player_ship(
+def make_player_ship(
     ship_id: int = 1,
     ship_name: str = "Betty",
     weapons: list[str] | None = None,
     turrets: list[str] | None = None,
     modules: list[str] | None = None,
-) -> MagicMock:
-    """Create a PlayerShip-like MagicMock."""
-    ps = MagicMock()
-    ps.id = ship_id
-    ps.ship_name = ship_name
-    ps.weapons = weapons
-    ps.turrets = turrets
-    ps.modules = modules
-    return ps
+    secondary_weapons: list[str] | None = None,
+    secondary_ammo: dict | None = None,
+):
+    """Real PlayerShip ORM instance (no session — plain kwargs).
+
+    Passes every attribute from_player() reads off the PlayerShip row: ship_name,
+    weapons, turrets, modules, secondary_weapons, secondary_ammo.
+    """
+    from persist.models.player_ship import PlayerShip
+
+    return PlayerShip(
+        id=ship_id,
+        player_id=1,
+        ship_name=ship_name,
+        weapons=weapons,
+        turrets=turrets,
+        modules=modules,
+        secondary_weapons=secondary_weapons,
+        secondary_ammo=secondary_ammo,
+        is_active=True,
+    )
 
 
-def make_mock_ship(name: str = "Betty", armour: int = 300) -> MagicMock:
-    """Create a Ship-like MagicMock (static ship definition)."""
-    s = MagicMock()
-    s.name = name
-    s.armour = armour
-    return s
+def make_static_ship(name: str = "Betty", armour: int = 300) -> SimpleNamespace:
+    """Static Ship row — SimpleNamespace (Ship has ARRAY cols, not SQLite-createable)."""
+    return SimpleNamespace(name=name, armour=armour, builtin_modules=None)
 
 
-def make_mock_weapon(name: str = "128MJ Railgun", dps: float = 25.0) -> MagicMock:
-    """Create a weapon-like MagicMock."""
-    w = MagicMock()
-    w.name = name
-    w.dps = dps
-    return w
+def make_weapon(name: str = "128MJ Railgun", dps: float = 25.0) -> SimpleNamespace:
+    """Static weapon-catalogue row (PrimaryWeapon/TurretWeapon) — SimpleNamespace."""
+    return SimpleNamespace(name=name, dps=dps, extra_atts=None, automatic=False)
 
 
-def make_mock_module(name: str = "E2 Exoclad", extra_atts: dict | None = None) -> MagicMock:
-    """Create a Module-like MagicMock."""
-    m = MagicMock()
-    m.name = name
-    m.extra_atts = extra_atts or {}
-    return m
+def make_module(name: str = "E2 Exoclad", extra_atts: dict | None = None) -> SimpleNamespace:
+    """Static Module-catalogue row — SimpleNamespace."""
+    return SimpleNamespace(name=name, extra_atts=extra_atts or {}, type="")
+
+
+def make_dispatch_db(player_ship=None, ship=None, turret=None, module=None, secondary=None) -> MagicMock:
+    """Build a db whose execute() dispatches by the ORM model class being queried.
+
+    Replaces the old ordered ``side_effect`` list of canned results: that approach
+    silently mis-maps results if from_player() ever reorders/adds queries. Dispatching
+    on ``stmt.column_descriptions[0]["type"]`` (the mapped class of the SELECT) is
+    order-independent and robust to such reorders.
+    """
+    from persist.models.module import Module
+    from persist.models.player_ship import PlayerShip
+    from persist.models.secondary_weapon import SecondaryWeapon
+    from persist.models.ship import Ship
+    from persist.models.turret_weapon import TurretWeapon
+
+    by_model = {
+        PlayerShip: player_ship,
+        Ship: ship,
+        TurretWeapon: turret,
+        Module: module,
+        SecondaryWeapon: secondary,
+    }
+
+    async def _execute(stmt, *_args, **_kwargs):
+        model = stmt.column_descriptions[0]["type"]
+        result = MagicMock()
+        scalars_result = MagicMock()
+        scalars_result.first.return_value = by_model.get(model)
+        result.scalars.return_value = scalars_result
+        return result
+
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=_execute)
+    return db
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +607,7 @@ class TestFromPlayer:
     @pytest.mark.asyncio
     async def test_player_with_no_active_ship_returns_unarmed(self):
         """Player with active_ship_id=None → default unarmed loadout."""
-        player = make_mock_player(active_ship_id=None)
+        player = make_player(active_ship_id=None)
         player_repo = MagicMock()
         player_repo.get_by_id = AsyncMock(return_value=player)
 
@@ -580,15 +623,15 @@ class TestFromPlayer:
     @pytest.mark.asyncio
     async def test_player_with_active_ship_no_equipment(self):
         """Player with active ship but no equipped items → base armour only, 0 DPS."""
-        player = make_mock_player(active_ship_id=10)
-        player_ship = make_mock_player_ship(
+        player = make_player(active_ship_id=10)
+        player_ship = make_player_ship(
             ship_id=10,
             ship_name="Betty",
             weapons=None,
             turrets=None,
             modules=None,
         )
-        ship = make_mock_ship(name="Betty", armour=300)
+        ship = make_static_ship(name="Betty", armour=300)
 
         player_repo = MagicMock()
         player_repo.get_by_id = AsyncMock(return_value=player)
@@ -596,21 +639,7 @@ class TestFromPlayer:
         item_repo = MagicMock()
         item_repo.get_by_name = AsyncMock(return_value=None)
 
-        # Build a mock db.execute() that returns different scalars per query
-        def make_execute_result(scalar_value):
-            result = MagicMock()
-            scalars_result = MagicMock()
-            scalars_result.first.return_value = scalar_value
-            result.scalars.return_value = scalars_result
-            return result
-
-        db = MagicMock()
-        db.execute = AsyncMock(
-            side_effect=[
-                make_execute_result(player_ship),  # PlayerShip query
-                make_execute_result(ship),  # Ship query
-            ]
-        )
+        db = make_dispatch_db(player_ship=player_ship, ship=ship)
 
         from unittest.mock import patch
 
@@ -629,16 +658,16 @@ class TestFromPlayer:
     @pytest.mark.asyncio
     async def test_player_with_weapons_builds_weapon_stats(self):
         """Player with equipped weapons → WeaponStats with DPS from DB."""
-        player = make_mock_player(active_ship_id=10)
-        player_ship = make_mock_player_ship(
+        player = make_player(active_ship_id=10)
+        player_ship = make_player_ship(
             ship_id=10,
             ship_name="Betty",
             weapons=["128MJ Railgun"],
             turrets=[],
             modules=[],
         )
-        ship = make_mock_ship(name="Betty", armour=300)
-        weapon = make_mock_weapon(name="128MJ Railgun", dps=25.0)
+        ship = make_static_ship(name="Betty", armour=300)
+        weapon = make_weapon(name="128MJ Railgun", dps=25.0)
 
         player_repo = MagicMock()
         player_repo.get_by_id = AsyncMock(return_value=player)
@@ -646,20 +675,7 @@ class TestFromPlayer:
         item_repo = MagicMock()
         item_repo.get_by_name = AsyncMock(return_value=weapon)
 
-        def make_execute_result(scalar_value):
-            result = MagicMock()
-            scalars_result = MagicMock()
-            scalars_result.first.return_value = scalar_value
-            result.scalars.return_value = scalars_result
-            return result
-
-        db = MagicMock()
-        db.execute = AsyncMock(
-            side_effect=[
-                make_execute_result(player_ship),  # PlayerShip query
-                make_execute_result(ship),  # Ship query
-            ]
-        )
+        db = make_dispatch_db(player_ship=player_ship, ship=ship)
 
         from unittest.mock import patch
 
@@ -676,16 +692,16 @@ class TestFromPlayer:
     @pytest.mark.asyncio
     async def test_player_with_modules_builds_module_stats(self):
         """Player with equipped armour module → ModuleStats with armour from extra_atts."""
-        player = make_mock_player(active_ship_id=10)
-        player_ship = make_mock_player_ship(
+        player = make_player(active_ship_id=10)
+        player_ship = make_player_ship(
             ship_id=10,
             ship_name="Betty",
             weapons=[],
             turrets=[],
             modules=["E2 Exoclad"],
         )
-        ship = make_mock_ship(name="Betty", armour=300)
-        module = make_mock_module(name="E2 Exoclad", extra_atts={"armour": 40})
+        ship = make_static_ship(name="Betty", armour=300)
+        module = make_module(name="E2 Exoclad", extra_atts={"armour": 40})
 
         player_repo = MagicMock()
         player_repo.get_by_id = AsyncMock(return_value=player)
@@ -693,21 +709,7 @@ class TestFromPlayer:
         item_repo = MagicMock()
         item_repo.get_by_name = AsyncMock(return_value=None)
 
-        def make_execute_result(scalar_value):
-            result = MagicMock()
-            scalars_result = MagicMock()
-            scalars_result.first.return_value = scalar_value
-            result.scalars.return_value = scalars_result
-            return result
-
-        db = MagicMock()
-        db.execute = AsyncMock(
-            side_effect=[
-                make_execute_result(player_ship),  # PlayerShip query
-                make_execute_result(ship),  # Ship query
-                make_execute_result(module),  # Module query
-            ]
-        )
+        db = make_dispatch_db(player_ship=player_ship, ship=ship, module=module)
 
         from unittest.mock import patch
 
@@ -724,18 +726,21 @@ class TestFromPlayer:
     @pytest.mark.asyncio
     async def test_from_player_full_loadout_collect_stats(self):
         """Full player loadout with weapon + shield module → correct HP and DPS."""
-        player = make_mock_player(active_ship_id=10)
-        player_ship = make_mock_player_ship(
+        player = make_player(active_ship_id=10)
+        player_ship = make_player_ship(
             ship_id=10,
             ship_name="Betty",
             weapons=["128MJ Railgun"],
             turrets=["Tug Beam"],
             modules=["Particle Shield"],
         )
-        ship = make_mock_ship(name="Betty", armour=300)
-        weapon = make_mock_weapon(name="128MJ Railgun", dps=25.0)
-        turret = make_mock_weapon(name="Tug Beam", dps=10.0)
-        shield_module = make_mock_module(name="Particle Shield", extra_atts={"shield": 380})
+        ship = make_static_ship(name="Betty", armour=300)
+        weapon = make_weapon(name="128MJ Railgun", dps=25.0)
+        # T7: turret builder queries TurretWeapon directly (for the `automatic` column) —
+        # default manual-turret (automatic=False), no extra_atts for this simple case.
+        turret = make_weapon(name="Tug Beam", dps=10.0)
+
+        shield_module = make_module(name="Particle Shield", extra_atts={"shield": 380})
 
         player_repo = MagicMock()
         player_repo.get_by_id = AsyncMock(return_value=player)
@@ -752,27 +757,7 @@ class TestFromPlayer:
 
         item_repo.get_by_name = item_repo_get_by_name
 
-        def make_execute_result(scalar_value):
-            result = MagicMock()
-            scalars_result = MagicMock()
-            scalars_result.first.return_value = scalar_value
-            result.scalars.return_value = scalars_result
-            return result
-
-        # T7: turret builder now queries TurretWeapon directly (for automatic column);
-        # add a slot for that query. turret mock must have `automatic` attr.
-        turret.automatic = False  # default: manual-turret for this legacy test mock
-        turret.extra_atts = {}  # no extra_atts for this simple mock
-
-        db = MagicMock()
-        db.execute = AsyncMock(
-            side_effect=[
-                make_execute_result(player_ship),  # PlayerShip query
-                make_execute_result(ship),  # Ship query
-                make_execute_result(turret),  # TurretWeapon query (T7 new: reads automatic column)
-                make_execute_result(shield_module),  # Module query
-            ]
-        )
+        db = make_dispatch_db(player_ship=player_ship, ship=ship, turret=turret, module=shield_module)
 
         from unittest.mock import patch
 
@@ -801,15 +786,15 @@ class TestFromPlayer:
     @pytest.mark.asyncio
     async def test_weapon_not_in_db_defaults_to_zero_dps(self):
         """Weapon name not found in DB → WeaponStats with dps=0."""
-        player = make_mock_player(active_ship_id=10)
-        player_ship = make_mock_player_ship(
+        player = make_player(active_ship_id=10)
+        player_ship = make_player_ship(
             ship_id=10,
             ship_name="Betty",
             weapons=["Unknown Weapon"],
             turrets=[],
             modules=[],
         )
-        ship = make_mock_ship(name="Betty", armour=100)
+        ship = make_static_ship(name="Betty", armour=100)
 
         player_repo = MagicMock()
         player_repo.get_by_id = AsyncMock(return_value=player)
@@ -817,20 +802,7 @@ class TestFromPlayer:
         item_repo = MagicMock()
         item_repo.get_by_name = AsyncMock(return_value=None)  # not found
 
-        def make_execute_result(scalar_value):
-            result = MagicMock()
-            scalars_result = MagicMock()
-            scalars_result.first.return_value = scalar_value
-            result.scalars.return_value = scalars_result
-            return result
-
-        db = MagicMock()
-        db.execute = AsyncMock(
-            side_effect=[
-                make_execute_result(player_ship),
-                make_execute_result(ship),
-            ]
-        )
+        db = make_dispatch_db(player_ship=player_ship, ship=ship)
 
         from unittest.mock import patch
 
@@ -847,15 +819,15 @@ class TestFromPlayer:
     @pytest.mark.asyncio
     async def test_module_not_in_db_uses_zero_effect_module(self):
         """Module name not found in DB → ModuleStats with all-zero/neutral stats."""
-        player = make_mock_player(active_ship_id=10)
-        player_ship = make_mock_player_ship(
+        player = make_player(active_ship_id=10)
+        player_ship = make_player_ship(
             ship_id=10,
             ship_name="Betty",
             weapons=[],
             turrets=[],
             modules=["Ghost Module"],
         )
-        ship = make_mock_ship(name="Betty", armour=100)
+        ship = make_static_ship(name="Betty", armour=100)
 
         player_repo = MagicMock()
         player_repo.get_by_id = AsyncMock(return_value=player)
@@ -863,21 +835,9 @@ class TestFromPlayer:
         item_repo = MagicMock()
         item_repo.get_by_name = AsyncMock(return_value=None)
 
-        def make_execute_result(scalar_value):
-            result = MagicMock()
-            scalars_result = MagicMock()
-            scalars_result.first.return_value = scalar_value
-            result.scalars.return_value = scalars_result
-            return result
-
-        db = MagicMock()
-        db.execute = AsyncMock(
-            side_effect=[
-                make_execute_result(player_ship),
-                make_execute_result(ship),
-                make_execute_result(None),  # module not found in DB
-            ]
-        )
+        # module=None (default) — dispatch returns None for the Module query, same as
+        # "not found in DB"; item_repo.get_by_name fallback also returns None (above).
+        db = make_dispatch_db(player_ship=player_ship, ship=ship)
 
         from unittest.mock import patch
 

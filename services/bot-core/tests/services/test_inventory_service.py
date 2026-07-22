@@ -8,7 +8,8 @@ module is imported (see conftest.py at the tests/ root).
 import sys
 import types
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -31,6 +32,9 @@ if "sqlalchemy_utils" not in sys.modules:
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
 import services.inventory_service as inv_svc_module
+from persist.models.player import Player
+from persist.models.player_inventory import PlayerInventory
+from persist.models.player_ship import PlayerShip
 from services.exceptions import InvalidItemTypeError
 
 # ---------------------------------------------------------------------------
@@ -38,12 +42,9 @@ from services.exceptions import InvalidItemTypeError
 # ---------------------------------------------------------------------------
 
 
-def _make_player(player_id: int = 1, guild_id: int = 999, tier: str = "Bronze") -> MagicMock:
-    p = MagicMock()
-    p.id = player_id
-    p.guild_id = guild_id
-    p.tier = tier
-    return p
+def _make_player(player_id: int = 1, guild_id: int = 999, tier: str = "Bronze") -> Player:
+    """Real (transient) Player model — constructible without a DB session."""
+    return Player(id=player_id, guild_id=guild_id, tier=tier)
 
 
 def _make_inventory_item(
@@ -52,15 +53,16 @@ def _make_inventory_item(
     item_type: str = "weapon",
     item_name: str = "Micro Gun MK I",
     quantity: int = 2,
-) -> MagicMock:
-    item = MagicMock()
-    item.id = item_id
-    item.player_id = player_id
-    item.item_type = item_type
-    item.item_name = item_name
-    item.quantity = quantity
-    item.acquired_at = datetime(2025, 1, 1, tzinfo=UTC)
-    return item
+) -> PlayerInventory:
+    """Real (transient) PlayerInventory model — constructible without a DB session."""
+    return PlayerInventory(
+        id=item_id,
+        player_id=player_id,
+        item_type=item_type,
+        item_name=item_name,
+        quantity=quantity,
+        acquired_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -259,13 +261,14 @@ class TestGetPlayerInventory:
 # ===========================================================================
 
 
-def _make_player_ship(ship_id: int, ship_name: str, is_active: bool) -> MagicMock:
-    ps = MagicMock()
-    ps.id = ship_id
-    ps.ship_name = ship_name
-    ps.is_active = is_active
-    ps.created_at = datetime(2025, 6, 1, tzinfo=UTC)
-    return ps
+def _make_player_ship(ship_id: int, ship_name: str, is_active: bool) -> PlayerShip:
+    """Real (transient) PlayerShip model — constructible without a DB session."""
+    return PlayerShip(
+        id=ship_id,
+        ship_name=ship_name,
+        is_active=is_active,
+        created_at=datetime(2025, 6, 1, tzinfo=UTC),
+    )
 
 
 class TestGetPlayerInventoryIncludeShips:
@@ -744,13 +747,11 @@ class TestValidateItemCompatibility:
     @pytest.mark.asyncio
     async def test_returns_compatible_true_for_known_ship(self, service, mock_db, mock_ship_repo):
         """Returns compatible=True when ship details are found."""
-        mock_ship = MagicMock()
-        mock_ship.name = "Betty"
-        mock_ship.max_primaries = 4
-        mock_ship.max_modules = 6
-        mock_ship.max_secondaries = 2
-        mock_ship.max_turrets = 1
-        mock_ship.value = 5000
+        # Static Ship row → SimpleNamespace (Ship has ARRAY columns; the codebase's
+        # game_data fixtures use SimpleNamespace for static lookup rows).
+        mock_ship = SimpleNamespace(
+            name="Betty", max_primaries=4, max_modules=6, max_secondaries=2, max_turrets=1, value=5000
+        )
         mock_ship_repo.get_by_name.return_value = mock_ship
 
         result = await service.validate_item_compatibility(
@@ -897,28 +898,25 @@ class TestConsolidateInventoryExtra:
     """Additional tests for InventoryService.consolidate_inventory."""
 
     @pytest.mark.asyncio
-    async def test_reraises_exception_on_unexpected_error(self, service):
-        """If an exception occurs inside consolidate_inventory, it propagates."""
-        # We need to make the try block raise - monkey-patch flogger
-        original_flogger = inv_svc_module.flogger
-        bad_flogger = MagicMock()
-        # Make the info log at the end raise (won't be reached, but we can make
-        # the internal dict creation raise by patching something)
-        # Instead: override the method slightly by using a subclass approach
-        # The simplest way: patch the method to raise from inside
-        # Actually - the consolidate_inventory body has no I/O calls, so the only
-        # way to hit the except block is to cause an exception in the try body.
-        # We'll temporarily replace the flogger.error call to verify coverage
-        # by making the debug step raise instead.
-        bad_flogger.error = MagicMock()
-        inv_svc_module.flogger = bad_flogger
+    async def test_reraises_exception_on_unexpected_error(self, service, mock_db):
+        """A repo failure inside consolidate_inventory is logged AND re-raised (not swallowed).
 
-        # Since the current implementation never raises, we simulate by patching
-        # the dict literal creation — not practical. Instead, we accept that the
-        # except block of consolidate_inventory cannot be hit with the current
-        # implementation (the body has no calls that can fail) and document it.
-        # This test verifies that if something were to raise, it propagates.
-        inv_svc_module.flogger = original_flogger
+        Rewritten from a vacuous version that asserted nothing: consolidate_inventory
+        DOES perform I/O (inventory_repo.get_player_items / remove / update_quantity), so
+        the except block is genuinely reachable. Here the first repo read raises; we assert
+        the original exception propagates and that flogger.error logged it.
+        """
+        boom = RuntimeError("db connection lost")
+        service.inventory_repo.get_player_items = AsyncMock(side_effect=boom)
+
+        with (
+            patch.object(inv_svc_module, "flogger") as mock_flogger,
+            pytest.raises(RuntimeError, match="db connection lost"),
+        ):
+            await service.consolidate_inventory(mock_db, player_id=1)
+
+        # The except block ran: it logged the error before re-raising.
+        mock_flogger.error.assert_called_once()
 
 
 # ===========================================================================
@@ -1043,13 +1041,10 @@ class TestGetShipDetails:
     @pytest.mark.asyncio
     async def test_returns_ship_data_from_repo(self, service, mock_db, mock_ship_repo):
         """Returns a dict with real ship slot data when ship is found."""
-        mock_ship = MagicMock()
-        mock_ship.name = "Betty"
-        mock_ship.max_primaries = 4
-        mock_ship.max_modules = 6
-        mock_ship.max_secondaries = 2
-        mock_ship.max_turrets = 1
-        mock_ship.value = 5000
+        # Static Ship row → SimpleNamespace (see note in TestValidateItemCompatibility).
+        mock_ship = SimpleNamespace(
+            name="Betty", max_primaries=4, max_modules=6, max_secondaries=2, max_turrets=1, value=5000
+        )
         mock_ship_repo.get_by_name.return_value = mock_ship
 
         result = await service._get_ship_details(mock_db, "Betty")

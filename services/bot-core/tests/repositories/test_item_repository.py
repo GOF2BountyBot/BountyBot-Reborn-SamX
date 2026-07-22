@@ -1,19 +1,19 @@
-"""Unit tests for ItemRepository.
+"""Tests for ItemRepository.
 
-Mock-based tests (no SQLite/ARRAY columns involved).
-Covers:
-- __init__ stores Item model (stub repository)
-- get_by_name: with and without item_type, found and not found
-- get_all_by_tech_level: with and without item_type, ship special case
-- get_random_by_tech_level: random selection, ship weighting, empty list
-- get_count: sums counts across all model types
-- create_or_update: create new and update existing
-- _get_model: unknown item_type raises ValueError
+ItemRepository is a facade over the ship/weapon/module models, all of which
+inherit an ARRAY column (`aliases`) from Item, so a full SQLite round-trip is
+not feasible — the session is mocked. The models ARE constructible in memory,
+though, so entities are REAL model instances (Ship/Module/PrimaryWeapon/Item)
+with real attributes rather than bare MagicMocks; selection behaviour is
+asserted on the returned object (membership / weight derivation) rather than by
+patching stdlib random and asserting the call. create_or_update's field mapping
+is verified with a kwarg-capturing fake over the real Item constructor and a
+real-attribute stand-in for the update branch.
 """
 
 import os
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -32,6 +32,10 @@ sys.modules.setdefault("sqlalchemy_utils", _mock_sau)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.item import Item
+from persist.models.module import Module
+from persist.models.primary_weapon import PrimaryWeapon
+from persist.models.ship import Ship
 from persist.repositories.item_repository import ItemRepository
 
 # ---------------------------------------------------------------------------
@@ -51,7 +55,20 @@ def mock_db() -> AsyncMock:
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     db.execute = AsyncMock()
+    db.rollback = AsyncMock()
     return db
+
+
+def _module(name="Mod", tech_level=3) -> Module:
+    return Module(name=name, tech_level=tech_level)
+
+
+def _weapon(name="Wpn", tech_level=3) -> PrimaryWeapon:
+    return PrimaryWeapon(name=name, tech_level=tech_level)
+
+
+def _ship(name="Ship", shop_spawn_rate=None) -> Ship:
+    return Ship(name=name, shop_spawn_rate=shop_spawn_rate)
 
 
 def _make_scalars_result(values: list) -> MagicMock:
@@ -87,8 +104,6 @@ def _make_one_or_none_result(value) -> MagicMock:
 class TestItemRepositoryInit:
     def test_init_stores_item_model(self):
         """ItemRepository.__init__ must store the Item model class."""
-        from persist.models.item import Item
-
         repo = ItemRepository()
         assert repo._model is Item
 
@@ -112,18 +127,18 @@ class TestItemRepositoryInit:
 
     def test_get_model_returns_correct_class(self):
         """_get_model should return the correct SQLAlchemy model for each type."""
-        from persist.models.module import Module
-        from persist.models.primary_weapon import PrimaryWeapon
+        from persist.models.module import Module as ModuleModel
+        from persist.models.primary_weapon import PrimaryWeapon as PW
         from persist.models.secondary_weapon import SecondaryWeapon
-        from persist.models.ship import Ship
+        from persist.models.ship import Ship as ShipModel
         from persist.models.turret_weapon import TurretWeapon
 
         repo = ItemRepository()
-        assert repo._get_model("ship") is Ship
-        assert repo._get_model("primary_weapon") is PrimaryWeapon
+        assert repo._get_model("ship") is ShipModel
+        assert repo._get_model("primary_weapon") is PW
         assert repo._get_model("secondary_weapon") is SecondaryWeapon
         assert repo._get_model("turret_weapon") is TurretWeapon
-        assert repo._get_model("module") is Module
+        assert repo._get_model("module") is ModuleModel
 
     def test_get_model_raises_for_unknown_type(self):
         """_get_model should raise ValueError for unknown item_type."""
@@ -141,7 +156,7 @@ class TestGetByName:
     @pytest.mark.asyncio
     async def test_get_by_name_with_item_type_found(self, repo, mock_db):
         """get_by_name with item_type should query that model and return the item."""
-        item = MagicMock()
+        item = _weapon(name="Laser Cannon")
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(item))
 
         result = await repo.get_by_name(mock_db, "Laser Cannon", "primary_weapon")
@@ -161,8 +176,8 @@ class TestGetByName:
     @pytest.mark.asyncio
     async def test_get_by_name_without_item_type_returns_first_match(self, repo, mock_db):
         """get_by_name without item_type searches all models and returns the first match."""
-        item = MagicMock()
-        # First call (ship) returns no result; second call (primary_weapon) returns the item
+        item = _weapon(name="Laser Cannon")
+        # First call (ship) returns no result; second call (primary_weapon) returns the item.
         mock_db.execute = AsyncMock(
             side_effect=[
                 _make_one_or_none_result(None),  # ship — not found
@@ -173,7 +188,7 @@ class TestGetByName:
         result = await repo.get_by_name(mock_db, "Laser Cannon")
 
         assert result is item
-        # Should have stopped after finding in the second model
+        # Should have stopped after finding in the second model.
         assert mock_db.execute.await_count == 2
 
     @pytest.mark.asyncio
@@ -184,7 +199,7 @@ class TestGetByName:
         result = await repo.get_by_name(mock_db, "Completely Unknown")
 
         assert result is None
-        # Should have searched all 5 models
+        # Should have searched all 5 models.
         assert mock_db.execute.await_count == 5
 
     @pytest.mark.asyncio
@@ -196,7 +211,7 @@ class TestGetByName:
     @pytest.mark.asyncio
     async def test_get_by_name_ship_type(self, repo, mock_db):
         """get_by_name with item_type='ship' queries the Ship model."""
-        ship = MagicMock()
+        ship = _ship(name="Falcon")
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(ship))
 
         result = await repo.get_by_name(mock_db, "Falcon", "ship")
@@ -206,13 +221,13 @@ class TestGetByName:
     @pytest.mark.asyncio
     async def test_get_by_name_without_item_type_returns_ship_if_first_match(self, repo, mock_db):
         """get_by_name without item_type can find a ship (first model in _TYPE_MAP)."""
-        ship = MagicMock()
+        ship = _ship(name="Falcon")
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(ship))
 
         result = await repo.get_by_name(mock_db, "Falcon")
 
         assert result is ship
-        # Only needed the first call (ship was first match)
+        # Only needed the first call (ship was first match).
         assert mock_db.execute.await_count == 1
 
 
@@ -225,7 +240,7 @@ class TestGetAllByTechLevel:
     @pytest.mark.asyncio
     async def test_get_all_by_tech_level_with_item_type(self, repo, mock_db):
         """get_all_by_tech_level with item_type queries only that model."""
-        items = [MagicMock(), MagicMock()]
+        items = [_module(name="A"), _module(name="B")]
         mock_db.execute = AsyncMock(return_value=_make_scalars_result(items))
 
         result = await repo.get_all_by_tech_level(mock_db, 3, "module")
@@ -243,10 +258,10 @@ class TestGetAllByTechLevel:
 
     @pytest.mark.asyncio
     async def test_get_all_by_tech_level_without_item_type_aggregates(self, repo, mock_db):
-        """get_all_by_tech_level without item_type aggregates results from all tech_level models."""
-        weapon1 = MagicMock()
-        weapon2 = MagicMock()
-        module1 = MagicMock()
+        """Without item_type, results from all four tech_level models are concatenated."""
+        weapon1 = _weapon(name="W1")
+        weapon2 = _weapon(name="W2")
+        module1 = _module(name="M1")
 
         # 4 tech_level models: PrimaryWeapon, SecondaryWeapon, TurretWeapon, Module
         mock_db.execute = AsyncMock(
@@ -260,10 +275,8 @@ class TestGetAllByTechLevel:
 
         result = await repo.get_all_by_tech_level(mock_db, 3)
 
-        assert weapon1 in result
-        assert weapon2 in result
-        assert module1 in result
-        assert len(result) == 3
+        # Behaviour: every non-empty model's rows are aggregated, in model order.
+        assert result == [weapon1, weapon2, module1]
         assert mock_db.execute.await_count == 4
 
     @pytest.mark.asyncio
@@ -290,15 +303,14 @@ class TestGetAllByTechLevel:
 class TestGetRandomByTechLevel:
     @pytest.mark.asyncio
     async def test_get_random_returns_item_from_list(self, repo, mock_db):
-        """get_random_by_tech_level returns one item from the list."""
-        items = [MagicMock(), MagicMock(), MagicMock()]
+        """get_random_by_tech_level returns one of the candidate items (real selection)."""
+        items = [_module(name="A"), _module(name="B"), _module(name="C")]
         mock_db.execute = AsyncMock(return_value=_make_scalars_result(items))
 
-        with patch("persist.repositories.item_repository.random.choice", return_value=items[1]) as mock_choice:
-            result = await repo.get_random_by_tech_level(mock_db, 3, "module")
+        result = await repo.get_random_by_tech_level(mock_db, 3, "module")
 
-        assert result is items[1]
-        mock_choice.assert_called_once_with(items)
+        # Behaviour: the chosen item is genuinely one of the candidates.
+        assert result in items
 
     @pytest.mark.asyncio
     async def test_get_random_returns_none_when_empty(self, repo, mock_db):
@@ -311,28 +323,23 @@ class TestGetRandomByTechLevel:
 
     @pytest.mark.asyncio
     async def test_get_random_ship_uses_weighted_selection(self, repo, mock_db):
-        """get_random_by_tech_level for ships uses shop_spawn_rate as weight."""
-        ship1 = MagicMock()
-        ship1.shop_spawn_rate = 0.8
-        ship2 = MagicMock()
-        ship2.shop_spawn_rate = 0.2
-
+        """For ships, selection weights are derived from each ship's shop_spawn_rate."""
+        ship1 = _ship(name="S1", shop_spawn_rate=0.8)
+        ship2 = _ship(name="S2", shop_spawn_rate=0.2)
         mock_db.execute = AsyncMock(return_value=_make_scalars_result([ship1, ship2]))
 
         with patch("persist.repositories.item_repository.random.choices", return_value=[ship1]) as mock_choices:
             result = await repo.get_random_by_tech_level(mock_db, 3, "ship")
 
         assert result is ship1
+        # The real behaviour under test: weight vector == shop_spawn_rate values, k=1.
         mock_choices.assert_called_once_with([ship1, ship2], weights=[0.8, 0.2], k=1)
 
     @pytest.mark.asyncio
     async def test_get_random_ship_none_spawn_rate_defaults_to_zero(self, repo, mock_db):
         """Ships with shop_spawn_rate=None are treated as weight 0."""
-        ship1 = MagicMock()
-        ship1.shop_spawn_rate = None
-        ship2 = MagicMock()
-        ship2.shop_spawn_rate = 0.5
-
+        ship1 = _ship(name="S1", shop_spawn_rate=None)
+        ship2 = _ship(name="S2", shop_spawn_rate=0.5)
         mock_db.execute = AsyncMock(return_value=_make_scalars_result([ship1, ship2]))
 
         with patch("persist.repositories.item_repository.random.choices", return_value=[ship2]) as mock_choices:
@@ -343,19 +350,16 @@ class TestGetRandomByTechLevel:
 
     @pytest.mark.asyncio
     async def test_get_random_ship_all_zero_weights_uses_uniform(self, repo, mock_db):
-        """When all ship spawn rates are 0 or None, fall back to uniform random.choice."""
-        ship1 = MagicMock()
-        ship1.shop_spawn_rate = 0.0
-        ship2 = MagicMock()
-        ship2.shop_spawn_rate = None
+        """When all ship spawn rates are 0 or None, fall back to uniform selection."""
+        ship1 = _ship(name="S1", shop_spawn_rate=0.0)
+        ship2 = _ship(name="S2", shop_spawn_rate=None)
+        ships = [ship1, ship2]
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result(ships))
 
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([ship1, ship2]))
+        result = await repo.get_random_by_tech_level(mock_db, 1, "ship")
 
-        with patch("persist.repositories.item_repository.random.choice", return_value=ship1) as mock_choice:
-            result = await repo.get_random_by_tech_level(mock_db, 1, "ship")
-
-        assert result is ship1
-        mock_choice.assert_called_once_with([ship1, ship2])
+        # Behaviour: with no positive weights it still returns a real candidate.
+        assert result in ships
 
     @pytest.mark.asyncio
     async def test_get_random_ship_empty_returns_none(self, repo, mock_db):
@@ -369,8 +373,8 @@ class TestGetRandomByTechLevel:
     @pytest.mark.asyncio
     async def test_get_random_without_item_type_aggregates(self, repo, mock_db):
         """get_random_by_tech_level without item_type searches all tech_level models."""
-        item = MagicMock()
-        # 4 tech_level models, first returns item, rest return empty
+        item = _weapon(name="OnlyOne")
+        # 4 tech_level models, first returns item, rest return empty.
         mock_db.execute = AsyncMock(
             side_effect=[
                 _make_scalars_result([item]),
@@ -380,9 +384,9 @@ class TestGetRandomByTechLevel:
             ]
         )
 
-        with patch("persist.repositories.item_repository.random.choice", return_value=item):
-            result = await repo.get_random_by_tech_level(mock_db, 3)
+        result = await repo.get_random_by_tech_level(mock_db, 3)
 
+        # Only one candidate exists across all models → it must be returned.
         assert result is item
 
     @pytest.mark.asyncio
@@ -404,7 +408,6 @@ class TestGetCount:
     @pytest.mark.asyncio
     async def test_get_count_sums_all_models(self, repo, mock_db):
         """get_count returns the total count across all 5 model types."""
-        # 5 models: ship, primary_weapon, secondary_weapon, turret_weapon, module
         mock_db.execute = AsyncMock(
             side_effect=[
                 _make_scalar_result(10),  # Ship
@@ -454,9 +457,18 @@ class TestGetCount:
 
 class TestCreateOrUpdate:
     @pytest.mark.asyncio
-    async def test_create_new_item_when_not_found(self, repo, mock_db):
-        """create_or_update should create a new Item when none exists."""
+    async def test_create_new_item_maps_fields(self, repo, mock_db):
+        """create_or_update constructs a new Item with mapped kwargs when none exists."""
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        captured_kwargs = {}
+
+        class MockItem:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                for k, v in kwargs.items():
+                    object.__setattr__(self, k, v)
 
         raw = {
             "name": "Basic Shield",
@@ -465,31 +477,44 @@ class TestCreateOrUpdate:
             "value": 100,
             "type": "module",
         }
-        result = await repo.create_or_update(mock_db, raw)
+        with patch("persist.repositories.item_repository.Item", MockItem):
+            result = await repo.create_or_update(mock_db, raw)
 
+        assert captured_kwargs["name"] == "Basic Shield"
+        assert captured_kwargs["aliases"] == ["shield"]
+        assert captured_kwargs["built_in"] is False  # builtIn → built_in mapping
+        assert captured_kwargs["value"] == 100
+        assert captured_kwargs["type"] == "module"
         mock_db.add.assert_called_once()
         mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once()
-        # result is the refreshed object
         assert result is mock_db.refresh.call_args[0][0]
 
     @pytest.mark.asyncio
-    async def test_update_existing_item_when_found(self, repo, mock_db):
-        """create_or_update should update an existing Item when found."""
-        existing = MagicMock()
+    async def test_update_existing_item_sets_all_fields(self, repo, mock_db):
+        """create_or_update sets every mapped item field on the existing object."""
+        existing = SimpleNamespace(id=1, name="Basic Shield")
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
 
         raw = {
-            "name": "Basic Shield",
-            "value": 200,
-            "type": "module",
+            "name": "Updated Shield",
+            "builtIn": True,
+            "value": 500,
         }
         result = await repo.create_or_update(mock_db, raw)
 
         mock_db.add.assert_not_called()
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(existing)
         assert result is existing
+        # Provided fields are applied...
+        assert existing.name == "Updated Shield"
+        assert existing.built_in is True
+        assert existing.value == 500
+        # ...and omitted fields are reset to their defaults, not left stale.
+        assert existing.aliases == []
+        assert existing.emoji is None
+        assert existing.icon is None
+        assert existing.wiki is None
+        assert existing.type is None
+        mock_db.refresh.assert_awaited_once_with(existing)
 
     @pytest.mark.asyncio
     async def test_create_maps_item_fields_correctly(self, repo, mock_db):
@@ -528,23 +553,6 @@ class TestCreateOrUpdate:
         assert captured_kwargs["type"] == "test_type"
 
     @pytest.mark.asyncio
-    async def test_update_sets_all_fields_on_existing(self, repo, mock_db):
-        """create_or_update sets all item fields on an existing object."""
-        existing = MagicMock()
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
-
-        raw = {
-            "name": "Updated Shield",
-            "builtIn": True,
-            "value": 500,
-        }
-        await repo.create_or_update(mock_db, raw)
-
-        # setattr should have been called for each item field
-        existing.name = "Updated Shield"  # sanity: mock accepts attribute sets
-        mock_db.refresh.assert_awaited_once_with(existing)
-
-    @pytest.mark.asyncio
     async def test_raises_value_error_when_name_missing(self, repo, mock_db):
         """create_or_update must raise ValueError when 'name' key is absent."""
         with pytest.raises(ValueError, match="Missing required key 'name' in data for item"):
@@ -571,14 +579,8 @@ class TestGetByNameAnyType:
     @pytest.mark.asyncio
     async def test_returns_item_when_found(self, repo, mock_db):
         """Returns the base Item row when the name is found in the item table."""
-        expected_item = MagicMock()
-        expected_item.id = 99
-        expected_item.name = "D'iol"
-        expected_item.type = "ArmourModule"
-
-        result_mock = MagicMock()
-        result_mock.scalars.return_value.one_or_none.return_value = expected_item
-        mock_db.execute = AsyncMock(return_value=result_mock)
+        expected_item = Item(name="D'iol", type="ArmourModule")
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(expected_item))
 
         result = await repo.get_by_name_any_type(mock_db, "D'iol")
 
@@ -589,9 +591,7 @@ class TestGetByNameAnyType:
     @pytest.mark.asyncio
     async def test_returns_none_when_not_found(self, repo, mock_db):
         """Returns None when no item with that name exists."""
-        result_mock = MagicMock()
-        result_mock.scalars.return_value.one_or_none.return_value = None
-        mock_db.execute = AsyncMock(return_value=result_mock)
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
 
         result = await repo.get_by_name_any_type(mock_db, "Nonexistent Item")
 
@@ -600,14 +600,8 @@ class TestGetByNameAnyType:
     @pytest.mark.asyncio
     async def test_primary_weapon_has_correct_type(self, repo, mock_db):
         """Returns item with PrimaryWeapon type when querying a weapon."""
-        weapon_item = MagicMock()
-        weapon_item.id = 42
-        weapon_item.name = "Pulse Laser"
-        weapon_item.type = "PrimaryWeapon"
-
-        result_mock = MagicMock()
-        result_mock.scalars.return_value.one_or_none.return_value = weapon_item
-        mock_db.execute = AsyncMock(return_value=result_mock)
+        weapon_item = Item(name="Pulse Laser", type="PrimaryWeapon")
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(weapon_item))
 
         result = await repo.get_by_name_any_type(mock_db, "Pulse Laser")
 
@@ -617,13 +611,11 @@ class TestGetByNameAnyType:
     @pytest.mark.asyncio
     async def test_queries_item_table_not_all_models(self, repo, mock_db):
         """get_by_name_any_type queries only the base Item table (one execute call)."""
-        result_mock = MagicMock()
-        result_mock.scalars.return_value.one_or_none.return_value = None
-        mock_db.execute = AsyncMock(return_value=result_mock)
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
 
         await repo.get_by_name_any_type(mock_db, "Some Item")
 
-        # Only ONE execute call — just the Item table, not all model tables
+        # Only ONE execute call — just the Item table, not all model tables.
         assert mock_db.execute.await_count == 1
 
     @pytest.mark.asyncio

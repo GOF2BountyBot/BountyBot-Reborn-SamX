@@ -46,7 +46,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from utils.discord_converters import ChannelConverter
 
 import tests.mocks.discord_mock_utils as discord_mock_utils
 
@@ -169,6 +168,11 @@ def _force_payload(payload_or_exc):
     exception-handler tests, while leaving resolve_bot/get_entity_or_404/
     handle_discord_exception/everything else real.
     """
+    # Resolve the converter dynamically: the api-package conftest purges cached
+    # utils/api modules per test, so the class the router imported THIS test is
+    # the one that must be patched (a module-level import would go stale).
+    from utils.discord_converters import ChannelConverter
+
     with patch.object(ChannelConverter, "forum_tag_to_payload") as mock_fn:
         if isinstance(payload_or_exc, Exception):
             mock_fn.side_effect = payload_or_exc
@@ -277,9 +281,7 @@ class TestCreateForumTagDeep:
 
         with patch("api.routers.tags.normalize_emoji", side_effect=ValueError("bad emoji")):
             client = TestClient(_make_app(bot))
-            response = client.post(
-                "/api/v1/channels/555555/tags", json={"name": "Tag", "emoji": "bad_emoji_str"}
-            )
+            response = client.post("/api/v1/channels/555555/tags", json={"name": "Tag", "emoji": "bad_emoji_str"})
             assert response.status_code == 500
             assert "detail" in response.json()
 
@@ -570,9 +572,7 @@ class TestDeleteTagDeep:
         tag = _make_tag(tag_id=1234567890, name="Del Tag")
         other_tag = _make_tag(tag_id=9999999, name="Keep")
         ch, real_edit = _make_forum_channel(tags=[tag, other_tag])
-        ch.edit = AsyncMock(
-            side_effect=_chained_edit(real_edit, TypeError("wrong type"), AttributeError("no edit"))
-        )
+        ch.edit = AsyncMock(side_effect=_chained_edit(real_edit, TypeError("wrong type"), AttributeError("no edit")))
         bot = _bot_with_tag_in_guild(ch)
 
         client = TestClient(_make_app(bot))
@@ -626,9 +626,10 @@ class TestGetTagDictFallbackWithEmoji:
             def __dict__(self):
                 return {"id": self.id, "channel_id": self.channel_id, "name": self.name, "emoji": self.emoji}
 
-        with _force_payload(_FrozenEmojiPayload()), patch(
-            "api.routers.tags.normalize_emoji", return_value="🚀"
-        ) as mock_norm:
+        with (
+            _force_payload(_FrozenEmojiPayload()),
+            patch("api.routers.tags.normalize_emoji", return_value="🚀") as mock_norm,
+        ):
             client = TestClient(_make_app(bot))
             response = client.get("/api/v1/tags/1234567890")
             assert response.status_code == 200
@@ -654,8 +655,9 @@ class TestGetTagDictFallbackWithEmoji:
             def __dict__(self):
                 return {"id": self.id, "channel_id": self.channel_id, "name": self.name, "emoji": self.emoji}
 
-        with _force_payload(_FrozenEmojiPayload2()), patch(
-            "api.routers.tags.normalize_emoji", side_effect=ValueError("bad")
+        with (
+            _force_payload(_FrozenEmojiPayload2()),
+            patch("api.routers.tags.normalize_emoji", side_effect=ValueError("bad")),
         ):
             client = TestClient(_make_app(bot))
             response = client.get("/api/v1/tags/1234567890")
@@ -692,9 +694,10 @@ class TestCreateFrozenPayloadWithEmoji:
             def __dict__(self):
                 return {"id": self.id, "channel_id": self.channel_id, "name": self.name, "emoji": self.emoji}
 
-        with _force_payload(_FrozenTagWithEmoji()), patch(
-            "api.routers.tags.normalize_emoji", return_value="🎯"
-        ) as mock_norm:
+        with (
+            _force_payload(_FrozenTagWithEmoji()),
+            patch("api.routers.tags.normalize_emoji", return_value="🎯") as mock_norm,
+        ):
             client = TestClient(_make_app(bot))
             response = client.post("/api/v1/channels/555555/tags", json={"name": "Emoji Create Tag"})
             assert response.status_code == 201
@@ -719,8 +722,9 @@ class TestCreateFrozenPayloadWithEmoji:
             def __dict__(self):
                 return {"id": self.id, "channel_id": self.channel_id, "name": self.name, "emoji": self.emoji}
 
-        with _force_payload(_FrozenTagBadEmoji()), patch(
-            "api.routers.tags.normalize_emoji", side_effect=ValueError("bad")
+        with (
+            _force_payload(_FrozenTagBadEmoji()),
+            patch("api.routers.tags.normalize_emoji", side_effect=ValueError("bad")),
         ):
             client = TestClient(_make_app(bot))
             response = client.post("/api/v1/channels/555555/tags", json={"name": "Bad Emoji Create"})
@@ -1032,8 +1036,9 @@ class TestUpdateTagNonDictResponseEmojiPaths:
             def __dict__(self):
                 return {"id": self.id, "channel_id": self.channel_id, "name": self.name, "emoji": self.emoji}
 
-        with _force_payload(_FrozenUpdatedTagWithEmoji()), patch(
-            "api.routers.tags.normalize_emoji", side_effect=ValueError("bad")
+        with (
+            _force_payload(_FrozenUpdatedTagWithEmoji()),
+            patch("api.routers.tags.normalize_emoji", side_effect=ValueError("bad")),
         ):
             client = TestClient(_make_app(bot))
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag"})

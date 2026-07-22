@@ -829,23 +829,17 @@ class TestDatabaseManagerExecuteSql:
 
 
 class TestDatabaseManagerTableExists:
-    """Tests for table_exists() error path – lines 188-196.
+    """Tests for table_exists() – both result values and the error path.
 
-    TRUEUP-05 FINDING (documented in TEST_SUITE_TRUEUP_FOLLOWUPS.md, section
-    R-bc-db-manager): swapping the mocked `inspect()`/engine in this class for
-    a REAL async engine surfaced a genuine production bug — `table_exists()`
-    calls the *synchronous* `inspect(self._engine.sync_engine)` /
-    `inspector.has_table(...)` API directly from inside an `async def` method,
-    with no `conn.run_sync(...)` bridge. Against a real AsyncEngine (verified
-    against both a real aiosqlite engine AND the real asyncpg engine pointed
-    at the disposable postgres on 127.0.0.1:55432) this ALWAYS raises
-    `sqlalchemy.exc.MissingGreenlet` ("greenlet_spawn has not been called"),
-    which `table_exists()`'s `except SQLAlchemyError` catches and converts to
-    `return False`. In other words: `table_exists()` returns False
-    UNCONDITIONALLY today, regardless of whether the table actually exists.
-    Not fixed here (test-only branch) — see the follow-ups doc for the
-    suggested fix (`await self._engine.connect() as conn: await
-    conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table(...))`).
+    History (TRUEUP-P5, FIXED): swapping the mocked `inspect()`/engine in this
+    class for a REAL async engine surfaced a genuine production bug — the old
+    code inspected `self._engine.sync_engine` directly from `async def` with
+    no `conn.run_sync(...)` bridge, so it always raised `MissingGreenlet`,
+    which `except SQLAlchemyError` swallowed into an UNCONDITIONAL `False`
+    (verified against real aiosqlite and asyncpg engines — see
+    TEST_SUITE_TRUEUP_FOLLOWUPS.md section R-bc-db-manager). The method now
+    runs the inspection through the async connection's greenlet bridge and
+    these tests assert the real true/false results.
     """
 
     @pytest.mark.asyncio
@@ -859,19 +853,17 @@ class TestDatabaseManagerTableExists:
 
     @pytest.mark.asyncio
     async def test_table_exists_sqlalchemy_error_returns_false(self):
-        """When inspector raises SQLAlchemyError, returns False.
+        """When the connection genuinely fails, returns False.
 
-        TRUEUP-05: real engine — no need to inject a failure via
-        `patch("persist.database.manager.inspect", side_effect=...)`. The real
-        `inspect()`/`has_table()` call against a real AsyncEngine's
-        `.sync_engine` genuinely raises `MissingGreenlet` on its own (see the
-        class docstring finding above); this test only needed a real engine to
-        exercise the branch it names.
+        TRUEUP-05: real failure, not an injected one — an aiosqlite engine
+        pointed at a file in a nonexistent directory raises a real
+        `OperationalError` (a `SQLAlchemyError`) on connect, exercising the
+        except branch for real.
         """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mgr._engine = _real_sqlite_engine()
+        mgr._engine = create_async_engine("sqlite+aiosqlite:////nonexistent-dir/no-such/db.sqlite")
         try:
             result = await mgr.table_exists("some_table")
             assert result is False
@@ -879,11 +871,13 @@ class TestDatabaseManagerTableExists:
             await mgr._engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_table_exists_returns_false_even_when_table_genuinely_exists(self):
-        """PRODUCTION BUG (see class docstring / R-bc-db-manager): table_exists()
-        returns False even for a table that was just created for real, because
-        the MissingGreenlet failure fires unconditionally, independent of
-        whether the table is actually present.
+    async def test_table_exists_true_for_real_table_false_for_missing(self):
+        """table_exists() reports the genuine state of a real database.
+
+        History (TRUEUP-P5, fixed): before the run_sync bridge fix this
+        returned False even for the just-created table — the demonstration
+        test here asserted that wrong result with a pointer to
+        R-bc-db-manager. Now asserts the real contract, both directions.
         """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
@@ -893,11 +887,8 @@ class TestDatabaseManagerTableExists:
             await conn.execute(text("CREATE TABLE genuinely_present (id INTEGER)"))
         mgr._engine = engine
         try:
-            result = await mgr.table_exists("genuinely_present")
-            assert result is False, (
-                "table_exists() is expected to (incorrectly) return False here — "
-                "see R-bc-db-manager in TEST_SUITE_TRUEUP_FOLLOWUPS.md"
-            )
+            assert await mgr.table_exists("genuinely_present") is True
+            assert await mgr.table_exists("never_created") is False
         finally:
             await engine.dispose()
 
@@ -960,15 +951,15 @@ class TestModuleLevelConvenienceFunctions:
     async def test_module_table_exists_delegates(self):
         """table_exists() should delegate to db_manager.table_exists() and return its real result.
 
-        Note: the real result is False here — see
-        TestDatabaseManagerTableExists / R-bc-db-manager above for the
-        genuine production defect this surfaces (table_exists() always
-        returns False against a real async engine due to a sync/async
-        bridging bug, independent of whether the table exists).
+        The table is created for real so the delegated call proves a genuine
+        True round-trip (TRUEUP-P5 fixed — previously this could only ever
+        observe False).
         """
         with patch("persist.database.manager.bblogger"):
             real_mgr = DatabaseManager()
         real_mgr._engine = _real_sqlite_engine()
+        async with real_mgr._engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE players (id INTEGER)"))
         try:
             with (
                 patch("persist.database.manager.db_manager", real_mgr),
@@ -976,7 +967,7 @@ class TestModuleLevelConvenienceFunctions:
             ):
                 result = await module_table_exists("players")
             spy.assert_awaited_once_with("players", None)
-            assert result is False
+            assert result is True
         finally:
             await real_mgr._engine.dispose()
 

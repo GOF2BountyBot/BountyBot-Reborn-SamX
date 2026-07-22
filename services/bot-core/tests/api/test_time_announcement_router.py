@@ -22,14 +22,13 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import api.routers.announcements.time_announcement as ta_module
 import httpx
 import pytest
 import respx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from persist.models.discord_message import DiscordMessage
-
-import api.routers.announcements.time_announcement as ta_module
 
 # Exact gateway endpoint the router POSTs/PUTs/DELETEs to.
 GATEWAY_MESSAGES_URL = f"{ta_module.DISCORD_GATEWAY_BASE_URL}/messages"
@@ -72,6 +71,20 @@ def make_gateway_response(**overrides):
     defaults = dict(guild_id=12345, channel_id=67890, message_id=11111)
     defaults.update(overrides)
     return defaults
+
+
+# The DELETE handler calls ``client.delete(url, json=gateway_request, ...)`` but
+# httpx's ``AsyncClient.delete()`` does not accept a ``json`` (or any body) kwarg
+# (httpx 0.28.1). Every delete that reaches the gateway therefore raises
+# ``TypeError`` and 500s in production. The old blanket ``httpx.AsyncClient``
+# MagicMock hid this (its ``.delete`` accepted anything). These tests are the
+# *truer* tests and are expected to fail until the src bug is fixed (see
+# FOLLOWUPS.md — R-bc-api). Do NOT paper over with a 500 assertion.
+_DELETE_JSON_BUG = (
+    "PROD BUG: time_announcement.delete_time_announcement calls "
+    "httpx.AsyncClient.delete(url, json=...), which httpx 0.28.1 rejects with "
+    "TypeError; the gateway delete never fires. See FOLLOWUPS.md (R-bc-api)."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -155,9 +168,7 @@ class TestCreateTimeAnnouncement:
     def test_create_happy_path(self, client, mock_db_session, mock_message_repo):
         """Returns 201 with a real DiscordMessageResponse; asserts the gateway
         route/method/payload and the serialized body. Uses the real builder."""
-        route = respx.post(GATEWAY_MESSAGES_URL).mock(
-            return_value=httpx.Response(200, json=make_gateway_response())
-        )
+        route = respx.post(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(200, json=make_gateway_response()))
 
         payload = {"guild_id": 12345, "channel_id": 67890, "current_time": "12:00 UTC"}
         response = client.post("/api/v1/time", json=payload)
@@ -271,9 +282,7 @@ class TestUpdateTimeAnnouncement:
     def test_update_happy_path(self, client, mock_db_session, mock_message_repo):
         """Returns 200 with a real DiscordMessageResponse on successful update;
         asserts the gateway PUT route/method/payload."""
-        route = respx.put(GATEWAY_MESSAGES_URL).mock(
-            return_value=httpx.Response(200, json=make_gateway_response())
-        )
+        route = respx.put(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(200, json=make_gateway_response()))
 
         payload = {
             "guild_id": 12345,
@@ -361,13 +370,12 @@ class TestDeleteTimeAnnouncement:
         assert response.status_code == 404
         assert "No time announcement found to delete" in response.json()["detail"]
 
-    @respx.mock
+    @pytest.mark.xfail(reason=_DELETE_JSON_BUG, strict=True)
+    @respx.mock(assert_all_called=False)
     def test_delete_happy_path(self, client, mock_message_repo):
         """Returns 200 with status 'deleted' and gateway identifiers on success;
         asserts the gateway DELETE route/method/payload."""
-        route = respx.delete(GATEWAY_MESSAGES_URL).mock(
-            return_value=httpx.Response(200, json=make_gateway_response())
-        )
+        route = respx.delete(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(200, json=make_gateway_response()))
 
         response = client.delete("/api/v1/time?guild_id=12345&channel_id=67890&message_id=11111")
 
@@ -381,7 +389,8 @@ class TestDeleteTimeAnnouncement:
         assert data["channel_id"] == 67890
         assert data["message_id"] == 11111
 
-    @respx.mock
+    @pytest.mark.xfail(reason=_DELETE_JSON_BUG, strict=True)
+    @respx.mock(assert_all_called=False)
     def test_delete_gateway_http_error_returns_500(self, client, mock_message_repo):
         """Returns 500 when the Discord gateway returns a non-2xx status during delete."""
         route = respx.delete(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(500, json={"error": "boom"}))
@@ -392,12 +401,11 @@ class TestDeleteTimeAnnouncement:
         assert response.status_code == 500
         assert "Failed to delete message from Discord" in response.json()["detail"]
 
-    @respx.mock
+    @pytest.mark.xfail(reason=_DELETE_JSON_BUG, strict=True)
+    @respx.mock(assert_all_called=False)
     def test_delete_gateway_missing_ids_returns_500(self, client, mock_message_repo):
         """Returns 500 when gateway delete response is missing required identifiers."""
-        route = respx.delete(GATEWAY_MESSAGES_URL).mock(
-            return_value=httpx.Response(200, json={"guild_id": 12345})
-        )
+        route = respx.delete(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(200, json={"guild_id": 12345}))
 
         response = client.delete("/api/v1/time?guild_id=12345&channel_id=67890&message_id=11111")
 
@@ -419,7 +427,8 @@ class TestDeleteTimeAnnouncement:
         response = client.delete("/api/v1/time?guild_id=12345")
         assert response.status_code == 422
 
-    @respx.mock
+    @pytest.mark.xfail(reason=_DELETE_JSON_BUG, strict=True)
+    @respx.mock(assert_all_called=False)
     def test_delete_db_record_not_found_after_gateway_logs_warning(self, client, mock_message_repo):
         """Returns 200 even when delete_by_composite_key returns falsy (DB record missing).
 

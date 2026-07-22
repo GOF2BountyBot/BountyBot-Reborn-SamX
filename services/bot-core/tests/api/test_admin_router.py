@@ -1272,16 +1272,22 @@ class TestAddInventoryItem:
         assert call_args[0][4] == 3  # quantity
 
     @patch("api.routers.admin.get_db_session")
-    def test_add_inventory_item_persisted_to_db(self, mock_get_db, client, mock_inventory_service):
-        """Verifies inventory_service.add_item_to_inventory is called (DB write confirmed).
+    def test_add_inventory_item_delegates_request_and_echoes_service_result(
+        self, mock_get_db, client, mock_inventory_service
+    ):
+        """The router forwards the request to the inventory service and serializes
+        its result into the response.
 
-        This test focuses on the persistence contract: the response data must echo back
-        exactly what the service returned, confirming the item was committed via the service.
+        NOTE: this does NOT prove a DB write — the db session is a mock and nothing
+        is persisted here (see the integration suite for real-DB persistence). What
+        this asserts is the router↔service contract: the concrete request fields are
+        passed through to add_item_to_inventory, and the service's returned
+        transaction details are echoed back in the response body.
         """
         _configure_db_mock(mock_get_db)
         real_item_name = "Micro Gun MK I"  # actual game asset name from import_data/
         expected_details = _make_transaction_details(
-            player_id=7, item_type="weapon", item_name=real_item_name, quantity=1
+            player_id=7, item_type="primary_weapon", item_name=real_item_name, quantity=1
         )
         mock_inventory_service.add_item_to_inventory = AsyncMock(return_value=expected_details)
 
@@ -1290,9 +1296,14 @@ class TestAddInventoryItem:
         response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
-        # Service was invoked — item will have been written to the DB session
+        # Delegation: the concrete request fields reached the service verbatim.
         mock_inventory_service.add_item_to_inventory.assert_awaited_once()
-        # Response echoes the service-returned data, proving the write path completed
+        call_args = mock_inventory_service.add_item_to_inventory.call_args
+        assert call_args[0][1] == 7  # player_id
+        assert call_args[0][2] == "primary_weapon"  # item_type
+        assert call_args[0][3] == real_item_name  # item_name
+        assert call_args[0][4] == 1  # quantity
+        # Echo: the service's transaction details are serialized into the response.
         data = response.json()
         assert data["player_id"] == 7
         assert data["item_name"] == real_item_name

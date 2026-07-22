@@ -18,14 +18,13 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import api.routers.discord_message as dm_module
 import httpx
 import pytest
 import respx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from persist.models.discord_message import DiscordMessage
-
-import api.routers.discord_message as dm_module
 
 # Exact gateway endpoint the router POSTs/PUTs to. Derived from the module so a
 # change to the gateway host/port constants keeps the assertion honest.
@@ -155,9 +154,7 @@ class TestCreateDiscordMessage:
     def test_create_discord_message_happy_path(self, client, mock_message_repo, mock_db_session):
         """Returns 201 with a real DiscordMessageResponse; asserts the gateway
         route/method/payload and the serialized body."""
-        route = respx.post(GATEWAY_MESSAGES_URL).mock(
-            return_value=httpx.Response(200, json=make_gateway_response())
-        )
+        route = respx.post(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(200, json=make_gateway_response()))
 
         payload = {
             "guild_id": 67890,
@@ -375,9 +372,7 @@ class TestListDiscordMessagesByType:
 
     def test_list_by_type_happy_path(self, client, mock_message_repo):
         """Returns 200 with real serialized messages for the guild+type."""
-        mock_message_repo.list_by_guild_and_type = AsyncMock(
-            return_value=[make_discord_message(message_type="shop")]
-        )
+        mock_message_repo.list_by_guild_and_type = AsyncMock(return_value=[make_discord_message(message_type="shop")])
 
         response = client.get("/api/v1/discord-message/guild/67890/type/shop")
 
@@ -452,9 +447,7 @@ class TestCreateDiscordMessageUnexpectedError:
         than httpx.HTTPStatusError and HTTPException.
         """
         # Gateway returns OK so we proceed past it; then the repo raises.
-        route = respx.post(GATEWAY_MESSAGES_URL).mock(
-            return_value=httpx.Response(200, json=make_gateway_response())
-        )
+        route = respx.post(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(200, json=make_gateway_response()))
         mock_message_repo.create_or_update = AsyncMock(side_effect=RuntimeError("Unexpected DB crash"))
 
         payload = {
@@ -481,9 +474,7 @@ class TestUpdateDiscordMessageHappyPath:
         Covers the gateway PUT call, response parsing, missing-ids check, and the
         DB persistence block, and asserts the outbound gateway payload.
         """
-        route = respx.put(GATEWAY_MESSAGES_URL).mock(
-            return_value=httpx.Response(200, json=make_gateway_response())
-        )
+        route = respx.put(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(200, json=make_gateway_response()))
 
         payload = {
             "guild_id": 67890,
@@ -530,9 +521,7 @@ class TestUpdateDiscordMessageUnexpectedError:
     def test_update_discord_message_unexpected_exception_returns_500(self, client, mock_message_repo):
         """Returns 500 when an unexpected exception occurs after the gateway PUT call."""
         # Gateway returns OK, but the repo raises an unexpected error.
-        route = respx.put(GATEWAY_MESSAGES_URL).mock(
-            return_value=httpx.Response(200, json=make_gateway_response())
-        )
+        route = respx.put(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(200, json=make_gateway_response()))
         mock_message_repo.create_or_update = AsyncMock(side_effect=RuntimeError("DB crash on update"))
 
         payload = {

@@ -4,7 +4,7 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -85,15 +85,17 @@ class TestApiLoadData:
     @patch("api.routers.data.load_data")
     def test_load_data_module_happy_path(self, mock_load, client):
         """Returns 200 with list of loaded names for 'module' category."""
-        mock_load.return_value = AsyncMock(return_value=["Module A", "Module B"])()
-        mock_load.side_effect = None
+        # load_data is async and awaited by the router, so @patch auto-substitutes
+        # an AsyncMock — a single return_value is all that's needed (the previous
+        # triple reassignment created and discarded a stray coroutine).
         mock_load.return_value = ["Module A", "Module B"]
 
         response = client.post("/api/v1/data/module")
 
         assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
+        # Assert the router actually forwards the loaded names and the category arg.
+        assert response.json() == ["Module A", "Module B"]
+        mock_load.assert_awaited_once_with("module")
 
     @patch("api.routers.data.load_data")
     def test_load_data_ship_category(self, mock_load, client):

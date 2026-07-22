@@ -63,7 +63,6 @@ services/bot-core/
     │   ├── routers/                    # 16 FastAPI routers (auto-discovered by main.py)
     │   │   ├── about.py                # /about — game data browsing
     │   │   ├── admin.py                # /admin — admin operations (ADMIN_USER_IDS auth, audit-logged)
-    │   │   ├── announcements/          # Subpackage; time_announcement.py defines a /time router
     │   │   │                           #   NOT mounted (package __init__ exposes no router)
     │   │   ├── bounties.py             # /bounties — bounty lifecycle
     │   │   ├── combat_log.py           # /combat-log — persisted fight records (list + detail)
@@ -142,11 +141,7 @@ services/bot-core/
     │   ├── shop_service.py
     │   ├── system_graph_service.py
     │   └── temperature_service.py
-    ├── message_builders/               # Discord embed payload builder framework
-    │   ├── base.py                     # MessagePayloadBuilder abstract base
-    │   ├── factory.py                  # MessageBuilderFactory (registry pattern)
     │   └── builders/
-    │       └── time_announcement.py    # TimeAnnouncementBuilder
     └── utils/                          # NOTE: utils/__init__.py auto-imports every module in the package
         ├── auto_seeder.py              # Idempotent startup seeder from import_data/
         ├── bounty_announcement_payload.py  # Bounty announcement/payout embed builders
@@ -168,7 +163,6 @@ services/bot-core/
             ├── pg_backup_executor.py
             ├── shop_refresh_executor.py
             ├── temperature_decay_executor.py
-            └── time_announcement_executor.py
 ```
 
 ---
@@ -254,7 +248,7 @@ services/bot-core/
 | `systems.py` | `/systems` | systems | GET /route?start&end (A* pathfinding), GET /route/map (PNG, bounded LRU cache) |
 | `users.py` | `/users` | users | POST /, GET /{user_id}, PUT /{user_id}, GET /, POST /{user_id}/get-or-create |
 
-> **Router auto-discovery**: `main.py` uses `pkgutil.iter_modules()` to scan `api/routers/`. Any module in that package that exposes a `router` attribute is automatically mounted at `/api/v1`. No manual registration in `main.py` is needed. The scan is non-recursive: the `announcements/` subpackage exposes no `router` in its `__init__.py`, so the `/time` router inside it is **not** mounted (see `src/api/routers/AGENTS.md`).
+> **Router auto-discovery**: `main.py` uses `pkgutil.iter_modules()` to scan `api/routers/`. Any module in that package that exposes a `router` attribute is automatically mounted at `/api/v1`. No manual registration in `main.py` is needed. The scan is non-recursive: subpackages are only mounted if their `__init__.py` exposes a `router`.
 
 ---
 
@@ -518,7 +512,6 @@ Embed builders for bounty announcements/payouts and shop-refresh announcements P
 
 | job_type | Executor function |
 |---|---|
-| `time_announcement` | `execute_time_announcement_job` |
 | `shop_refresh` | `execute_shop_refresh_job` |
 | `bounty_spawn_orchestrate` | `execute_bounty_spawn_orchestrate_job` |
 | `bounty_spawn_one` | `execute_bounty_spawn_one_job` |
@@ -545,25 +538,10 @@ Embed builders for bounty announcements/payouts and shop-refresh announcements P
 | `pg_backup_executor.py` | `pg_backup` | Every 3 hours at :15 | zstd-compressed PostgreSQL dump to `BACKUP_DIR` (default `/app/data/backups`); retains `BACKUP_RETAIN_DAYS` (default 7) |
 | `shop_refresh_executor.py` | `shop_refresh` | Every 6 hours | Call ShopService.refresh_shop() for all guild configs |
 | `temperature_decay_executor.py` | `temperature_decay` | Every 1 hour | Apply guild temperature decay via TemperatureService |
-| `time_announcement_executor.py` | `time_announcement` | On-demand | Drive the `/api/v1/time` announcement REST flow via httpx |
 
 > All executor functions use **deferred imports** (imports inside the function body) to avoid transitive ORM dependencies at module load time — important for clean test isolation.
 
 > See `src/utils/executors/AGENTS.md` for full executor documentation.
-
----
-
-## Message Builders
-
-| File | Class | Purpose |
-|---|---|---|
-| `base.py` | `MessagePayloadBuilder` | Abstract base; requires `build_payload()`, `extract_data()`, `get_message_type()`, `validate_input()` |
-| `factory.py` | `MessageBuilderFactory` | Registry pattern; `create_builder(message_type)` returns the appropriate builder; `register_builder()` for extension; `get_supported_types()` |
-| `builders/time_announcement.py` | `TimeAnnouncementBuilder` | Builds Discord embed payload for time-based announcements |
-
-To add a new message type:
-1. Create `builders/<type>.py` implementing `MessagePayloadBuilder`
-2. Register in `MessageBuilderFactory._builders` dict in `factory.py`
 
 ---
 
@@ -617,7 +595,7 @@ tests/
 │   └── game_data.py        # Real game data fixtures (ships, weapons, criminals, systems)
 ├── api/                    # Router-level tests (23 files)
 │   ├── conftest.py         # API test fixtures (TestClient, app setup)
-│   └── test_*.py           # One file per router (plus time_announcement, loadout, etc.)
+│   └── test_*.py           # One file per router (plus loadout, etc.)
 ├── services/               # Service-level tests (51 files)
 │   ├── conftest.py         # Service test fixtures
 │   └── test_*.py

@@ -16,7 +16,7 @@ async def execute_<job_type>_job(job_id: str, payload: dict) -> dict:
 
 ### Entry Point
 
-`utils/job_executor.py` dispatches to these functions via `JobExecutor.execute()` on `payload["job_type"]`. The full dispatch set: `time_announcement`, `shop_refresh`, `bounty_spawn_orchestrate`, `bounty_spawn_one`, `bounty_expire`, `bounty_respawn`, `bounty_failsafe_cleanup`, `duel_expire`, `temperature_decay`, `pg_backup`, `db_retention`.
+`utils/job_executor.py` dispatches to these functions via `JobExecutor.execute()` on `payload["job_type"]`. The full dispatch set: `shop_refresh`, `bounty_spawn_orchestrate`, `bounty_spawn_one`, `bounty_expire`, `bounty_respawn`, `bounty_failsafe_cleanup`, `duel_expire`, `temperature_decay`, `pg_backup`, `db_retention`.
 
 ```python
 async def execute(self, job_id: str, payload: dict):
@@ -82,7 +82,7 @@ resp.raise_for_status()
 
 | Variable | Default | Used by |
 |---|---|---|
-| `EXECUTOR_HOST` | `bot-core` | `time_announcement_executor` (`/api/v1/time`); `bounty_spawn_executor` HTTP-fallback scheduling and `BountyService.clear_bounties` A.11 cleanup (`/api/v1/jobs`) |
+| `EXECUTOR_HOST` | `bot-core` | `bounty_spawn_executor` HTTP-fallback scheduling and `BountyService.clear_bounties` A.11 cleanup (`/api/v1/jobs`) |
 | `EXECUTOR_PORT` | `8000` | Same as above |
 | `DISCORD_GATEWAY_HOST` | `discord-gateway` | Announcement + cache calls to gateway (`/api/v1/...`) |
 | `GATEWAY_PORT` | `7999` | Announcement + cache calls to gateway |
@@ -216,19 +216,6 @@ No credits move on expiry — pending stakes are an implicit reservation, not a 
 3. Apply `TemperatureService.decay_temperature()` to each division's value (×2/3, floored at 1.0, one decimal place)
 4. Persist via `ConfigRepository.update_division_temperatures()`
 5. Return a per-guild decay summary dict
-
----
-
-### time_announcement_executor.py
-
-**Function**: `execute_time_announcement_job(job_id, payload)`  
-**Triggered by**: On-demand (scheduled dynamically)  
-**Payload fields**: `guild_id`, `channel_id`, message fields
-
-**Flow** (drives bot-core's own `/api/v1/time` REST API at `EXECUTOR_HOST:EXECUTOR_PORT`):
-1. `GET /time` to check whether the announcement message exists
-2. `POST /time` to create, or `PUT /time` to update
-3. On first POST, modifies the scheduler job so its payload carries the new `message_id`
 
 ---
 
@@ -394,4 +381,4 @@ with patch("persist.database.manager.db_manager", fake_db_manager):
 
 ---
 
-*Last updated: 2026-06-11 — doc-vs-code reconciliation: 10 executors (pg_backup added, db_retention 4th combat_log pass); direct in-process scheduling (P6-T8/B.23a) documented; spawn-one payload corrected to guild_id/tier; duel_expire corrected to single-duel expire_duel; temperature decay corrected to per-division ×2/3 model; time_announcement corrected to /time REST flow; duel-cache push added; testing section aligned with tests/AGENTS.md (patch source module, not executor namespace).*
+*Last updated: 2026-07-22 — doc-vs-code reconciliation: 9 executors after time_announcement prototype removal (pg_backup added, db_retention 4th combat_log pass); direct in-process scheduling (P6-T8/B.23a) documented; spawn-one payload corrected to guild_id/tier; duel_expire corrected to single-duel expire_duel; temperature decay corrected to per-division ×2/3 model; duel-cache push added; testing section aligned with tests/AGENTS.md (patch source module, not executor namespace).*

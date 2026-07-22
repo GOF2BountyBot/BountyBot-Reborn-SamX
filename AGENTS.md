@@ -91,7 +91,6 @@ BountyBot-Reborn-SamX/
     │   │   │   ├── models/         # 23 SQLAlchemy ORM model modules
     │   │   │   └── repositories/   # 22 CRUD repositories
     │   │   ├── services/           # 27 business-logic service modules
-    │   │   ├── message_builders/   # Discord embed builder framework
     │   │   ├── shared/             # bblogger + http_retry (build-time copy of services/shared)
     │   │   └── utils/
     │   │       ├── auto_seeder.py
@@ -313,7 +312,6 @@ Additional executors (triggered on demand or by other jobs):
 - `bounty_expire_executor` — expires old bounties
 - `bounty_respawn_executor` — respawns criminals after bounty cleared
 - `duel_expire_executor` — expires pending duel challenges
-- `time_announcement_executor` — posts time-based announcements
 
 `db_retention_default` deletes terminal-state rows older than configurable
 windows: bounties/duels at 24h, audit logs at 30 days, combat logs at 72h.

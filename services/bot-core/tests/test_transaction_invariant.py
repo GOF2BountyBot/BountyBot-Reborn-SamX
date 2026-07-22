@@ -14,7 +14,6 @@ Allowlist — known-correct "leave-as-is" sites identified in A.44/A.47 audit
     admin.py:499     — bare session + explicit commit, no db.begin()
     bounties.py:165  — bare session + explicit commit, single-row write, no db.begin()
     discord_message.py:131,200,314 — bare session + explicit commit, single-write ops
-    announcements/time_announcement.py:95,178,231 — bare session, single-write ops
 
 None of these violate the invariant because they do NOT have a db.begin() in
 the same with-block as their db.commit() calls.

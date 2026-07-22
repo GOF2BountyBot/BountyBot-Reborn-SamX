@@ -34,6 +34,7 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
+from persist.models.player_ship import PlayerShip
 from services.loadout_consistency_service import LoadoutConsistencyService
 
 # ---------------------------------------------------------------------------

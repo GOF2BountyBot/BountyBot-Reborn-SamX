@@ -36,6 +36,7 @@ if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
+from persist.models.player_ship import PlayerShip
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,8 +121,7 @@ class TestConsumeEmergencySystem:
     @pytest.mark.asyncio
     async def test_activation_removes_es_module_from_loadout(self):
         """ES fired on side 1 → the EmergencySystemModule is removed from ship.modules."""
-        ship = MagicMock()
-        ship.id = 1
+        ship = PlayerShip(id=1, player_id=100, ship_name="Betty")
         ship.modules = ["Beamshield II", "Emergency System", "Ketar Repair Bot"]
         lookup = {
             "Beamshield II": _module("Beamshield II", "ShieldModule"),
@@ -137,8 +137,7 @@ class TestConsumeEmergencySystem:
     @pytest.mark.asyncio
     async def test_no_activation_leaves_loadout_untouched(self):
         """No emergency_system activation in summary → modules unchanged, no ship lookup."""
-        ship = MagicMock()
-        ship.id = 1
+        ship = PlayerShip(id=1, player_id=100, ship_name="Betty")
         ship.modules = ["Emergency System", "Beamshield II"]
         lookup = {"Emergency System": _module("Emergency System", _ES_TYPE)}
         # Booster fired, but not the ES.
@@ -152,7 +151,7 @@ class TestConsumeEmergencySystem:
     @pytest.mark.asyncio
     async def test_npc_side_no_db_access(self):
         """Both sides NPC (user_id None) → never touches the DB."""
-        ship = MagicMock()
+        ship = PlayerShip(id=1, player_id=100, ship_name="Betty")
         ship.modules = ["Emergency System"]
         fr = _fight_results(slot_block={"name": "NPC", "module_activations": {"emergency_system": 1}}, slot_key="2")
 
@@ -169,8 +168,7 @@ class TestConsumeEmergencySystem:
     @pytest.mark.asyncio
     async def test_only_one_instance_consumed_when_two_equipped(self):
         """ES fires at most once per fight → only one of two equipped ES modules is removed."""
-        ship = MagicMock()
-        ship.id = 1
+        ship = PlayerShip(id=1, player_id=100, ship_name="Betty")
         ship.modules = ["Emergency System", "Emergency System", "Beamshield II"]
         lookup = {
             "Emergency System": _module("Emergency System", _ES_TYPE),
@@ -185,8 +183,7 @@ class TestConsumeEmergencySystem:
     @pytest.mark.asyncio
     async def test_activation_but_no_es_equipped_is_noop(self):
         """Defensive: summary claims ES fired but no ES in modules → leave list intact, no crash."""
-        ship = MagicMock()
-        ship.id = 1
+        ship = PlayerShip(id=1, player_id=100, ship_name="Betty")
         ship.modules = ["Beamshield II", "Ketar Repair Bot"]
         lookup = {
             "Beamshield II": _module("Beamshield II", "ShieldModule"),

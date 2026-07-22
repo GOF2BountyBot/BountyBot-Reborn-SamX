@@ -49,33 +49,24 @@ def _make_player_ship(
     weapons: list[str] | None = None,
     modules: list[str] | None = None,
     turrets: list[str] | None = None,
-) -> MagicMock:
-    """Build a mock PlayerShip that delegates get_equipped_count to real lists."""
-    ship = MagicMock()
-    ship.id = ship_id
-    ship.player_id = player_id
-    ship.ship_name = ship_name
-    ship.nickname = None
-    ship.is_active = False
-    ship.weapons = list(weapons) if weapons is not None else []
-    ship.modules = list(modules) if modules is not None else []
-    ship.turrets = list(turrets) if turrets is not None else []
-    ship.secondary_weapons = []
-    ship.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+):
+    """Build a real PlayerShip so get_equipped_count runs the actual model method
+    instead of a hand-rolled closure that can drift from it (no DB session needed —
+    plain kwargs construction; every attribute the service reads is supplied)."""
+    from persist.models.player_ship import PlayerShip
 
-    # Delegate to the real PlayerShip logic
-    def _get_equipped_count(equipment_type: str) -> int:
-        mapping = {
-            "weapons": ship.weapons,
-            "secondary_weapons": ship.secondary_weapons,
-            "modules": ship.modules,
-            "turrets": ship.turrets,
-        }
-        lst = mapping.get(equipment_type, [])
-        return len(lst) if lst else 0
-
-    ship.get_equipped_count = _get_equipped_count
-    return ship
+    return PlayerShip(
+        id=ship_id,
+        player_id=player_id,
+        ship_name=ship_name,
+        nickname=None,
+        is_active=False,
+        weapons=list(weapons) if weapons is not None else [],
+        modules=list(modules) if modules is not None else [],
+        turrets=list(turrets) if turrets is not None else [],
+        secondary_weapons=[],
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
 
 
 def _make_static_ship(
@@ -135,8 +126,15 @@ def _make_base_item(name: str = "Pulse Laser", item_type: str = "PrimaryWeapon")
 def svc() -> EquipmentService:
     """EquipmentService with all repositories replaced by AsyncMocks.
 
-    This is *mock 2* — a single consolidated mock that replaces all five
-    repos so individual tests need only configure the relevant methods.
+    R3 justification: this replaces 6 repos (ship_repo, inventory_repo, item_repo,
+    module_repo, ship_data_repo, player_repo) with AsyncMocks, exceeding the
+    "<=2 mocks/test" guideline. This is a deliberate, justified DB-boundary mock:
+    EquipmentService is a thin orchestrator over these repos, and there is no
+    in-memory-DB-backed substitute for the repo layer itself (repos are the
+    thing under substitution here, not the models they return — those are real
+    PlayerShip instances / SimpleNamespace static rows, see _make_player_ship
+    and friends above). Consolidating all repo mocks onto one fixture keeps
+    each test's per-repo `.return_value` configuration to a minimum.
     """
     service = EquipmentService.__new__(EquipmentService)
 

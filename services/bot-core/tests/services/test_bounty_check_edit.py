@@ -61,10 +61,7 @@ GATEWAY_PORT = "8888"
 
 
 def _gateway_put_url(channel_id: int, message_id: int) -> str:
-    return (
-        f"http://{GATEWAY_HOST}:{GATEWAY_PORT}/api/v1/announcements/bounty"
-        f"/channel/{channel_id}/message/{message_id}"
-    )
+    return f"http://{GATEWAY_HOST}:{GATEWAY_PORT}/api/v1/announcements/bounty/channel/{channel_id}/message/{message_id}"
 
 
 # ---------------------------------------------------------------------------

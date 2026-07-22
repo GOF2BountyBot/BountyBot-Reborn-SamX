@@ -105,64 +105,16 @@ def _make_ta_scheduler(*, modify_job_side_effect=None) -> MagicMock:
 # ===========================================================================
 
 
-class TestNoHttpLoopbackInSource:
-    """Tier A: source code must NOT contain the self-HTTP POST /jobs loopback
-    in the orchestrator scheduling block."""
-
-    def _read_source(self, filename: str) -> str:
-        path = os.path.join(_SRC_DIR, "utils", "executors", filename)
-        with open(path) as f:
-            return f.read()
-
-    def test_bounty_spawn_executor_no_self_post_jobs(self):
-        """Orchestrator must not POST to _SELF_BASE_URL/jobs for spawn-one scheduling.
-
-        Grep for the exact self-HTTP loopback pattern: posting to the /jobs
-        endpoint inside the orchestrator's scheduling block.  The B.23a HTTP
-        fallback in _schedule_expiry_job is a separate function and is allowed.
-        """
-        src = self._read_source("bounty_spawn_executor.py")
-        # Locate the execute_bounty_spawn_orchestrate_job function body.
-        # The loopback pattern would be an httpx POST to _SELF_BASE_URL/jobs
-        # inside a block that constructs spawn_job_id and one_time_payload.
-        # After P6-T8, that block must NOT contain an httpx client.post call
-        # referencing _SELF_BASE_URL and "/jobs".
-
-        # Find the orchestrate function.
-        orch_start = src.find("async def execute_bounty_spawn_orchestrate_job")
-        assert orch_start != -1, "Could not locate execute_bounty_spawn_orchestrate_job in source"
-
-        # Find the next top-level async def after the orchestrate function.
-        orch_end = src.find("\nasync def execute_bounty_spawn_one_job", orch_start + 1)
-        if orch_end == -1:
-            orch_end = len(src)
-        orch_body = src[orch_start:orch_end]
-
-        # The self-HTTP loopback would reference _SELF_BASE_URL + "/jobs"
-        # in an httpx POST call inside the scheduling block.
-        # The correct post-T8 code calls scheduler.add_job directly.
-        assert 'f"{_SELF_BASE_URL}/jobs"' not in orch_body and "f'{_SELF_BASE_URL}/jobs'" not in orch_body, (
-            "execute_bounty_spawn_orchestrate_job still contains the self-HTTP POST /jobs loopback (P6-T8 not applied)"
-        )
-
-        # The direct add_job call must be present.
-        assert "add_job(" in orch_body, (
-            "execute_bounty_spawn_orchestrate_job must call scheduler.add_job directly (P6-T8)"
-        )
-        assert "get_scheduler()" in orch_body, "execute_bounty_spawn_orchestrate_job must call get_scheduler() (P6-T8)"
-
-    def test_time_announcement_executor_no_put_jobs_loopback(self):
-        """time_announcement_executor must not PUT to /api/v1/jobs/{job_id} loopback."""
-        src = self._read_source("time_announcement_executor.py")
-
-        # The old loopback: f"http://{API_HOST}:{API_PORT}/api/v1/jobs/{job_id}"
-        assert "/api/v1/jobs/" not in src, (
-            "time_announcement_executor still contains the self-HTTP PUT /jobs/{id} loopback (P6-T8 not applied)"
-        )
-
-        # The direct modify_job call must be present.
-        assert "modify_job(" in src, "time_announcement_executor must call scheduler.modify_job directly (P6-T8)"
-        assert "get_scheduler()" in src, "time_announcement_executor must call get_scheduler() (P6-T8)"
+# ===========================================================================
+# NOTE: class TestNoHttpLoopbackInSource (two source-text greps asserting the
+# ``_SELF_BASE_URL/jobs`` POST and ``/api/v1/jobs/`` PUT loopbacks are absent)
+# was removed here (test true-up).  Those greps pass/fail on source text; the
+# no-loopback behaviour is proven for real below by TestOrchestratorDirectAddJob
+# (the orchestrator calls scheduler.add_job directly) and by the respx tests
+# with ``assert_all_mocked=True`` (test_no_http_call_to_jobs_endpoint /
+# test_no_http_put_to_jobs_loopback) which fail loudly if ANY HTTP call to the
+# jobs endpoint is made.
+# ===========================================================================
 
 
 # ===========================================================================
@@ -528,47 +480,36 @@ class TestTimeAnnouncementDirectModifyJob:
       - new args == [job_id, {**original_payload, "message_id": <new_msg_id>}]
     """
 
-    def _make_http_ctx(self, get_status: int = 404, message_id: str = "ta-msg-99"):
-        """Build a mock httpx context for the GET + POST calls in time_announcement."""
-        get_resp = MagicMock()
-        get_resp.status_code = get_status
-        get_resp.text = ""
+    @staticmethod
+    def _base_time_url() -> str:
+        """The /time URL the executor actually uses (computed from env at import)."""
+        import utils.executors.time_announcement_executor as ta_mod
 
-        post_resp = MagicMock()
-        post_resp.status_code = 201
-        post_resp.text = ""
-        post_resp.raise_for_status = MagicMock()
-        post_resp.json = MagicMock(return_value={"message_id": message_id})
+        return ta_mod.BASE_TIME_URL
 
-        put_resp = MagicMock()
-        put_resp.status_code = 200
-        put_resp.text = ""
-        put_resp.raise_for_status = MagicMock()
-        put_resp.json = MagicMock(return_value={})
+    def _register_time_routes(self, router, *, get_status: int = 404, message_id: str = "ta-msg-99"):
+        """Register transport-level GET/POST/PUT routes on the real /time URL.
 
-        client = AsyncMock()
-        client.get = AsyncMock(return_value=get_resp)
-        client.post = AsyncMock(return_value=post_resp)
-        client.put = AsyncMock(return_value=put_resp)
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=client)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        return ctx, client
+        Replaces the previous accept-anything MagicMock httpx client — respx now
+        asserts the route + verb, so a POST/PUT to the wrong endpoint fails.
+        """
+        base = self._base_time_url()
+        router.get(url__startswith=base).respond(get_status, text="")
+        router.post(url__startswith=base).respond(201, json={"message_id": message_id})
+        router.put(url__startswith=base).respond(200, json={})
 
     async def test_modify_job_called_on_first_creation(self):
         """On first creation (GET=404, POST=201), modify_job is called to update args."""
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        ctx, _client = self._make_http_ctx(get_status=404, message_id="new-ta-msg")
         sched = _make_ta_scheduler()
-
         payload = {"guild_id": "g1", "channel_id": "c1", "current_time": "2026-01-01T00:00:00Z"}
 
         with (
-            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
             patch("utils.scheduler_holder.get_scheduler", return_value=sched),
         ):
+            self._register_time_routes(router, get_status=404, message_id="new-ta-msg")
             await execute_time_announcement_job("ta-job-new", payload)
 
         sched.modify_job.assert_called_once()
@@ -581,10 +522,7 @@ class TestTimeAnnouncementDirectModifyJob:
         """
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        # GET returns 200 → exists path (PUT).
-        ctx, _client = self._make_http_ctx(get_status=200)
         sched = _make_ta_scheduler()
-
         payload = {
             "guild_id": "g1",
             "channel_id": "c1",
@@ -593,9 +531,11 @@ class TestTimeAnnouncementDirectModifyJob:
         }
 
         with (
-            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
             patch("utils.scheduler_holder.get_scheduler", return_value=sched),
         ):
+            # GET returns 200 → exists path (PUT).
+            self._register_time_routes(router, get_status=200)
             await execute_time_announcement_job("ta-job-upd", payload)
 
         sched.modify_job.assert_not_called()
@@ -604,15 +544,14 @@ class TestTimeAnnouncementDirectModifyJob:
         """modify_job args= kwarg includes the message_id returned by the POST."""
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        ctx, _client = self._make_http_ctx(get_status=404, message_id="fresh-id-42")
         sched = _make_ta_scheduler()
-
         payload = {"guild_id": "g2", "channel_id": "c2", "current_time": "2026-06-01T00:00:00Z"}
 
         with (
-            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
             patch("utils.scheduler_holder.get_scheduler", return_value=sched),
         ):
+            self._register_time_routes(router, get_status=404, message_id="fresh-id-42")
             await execute_time_announcement_job("ta-job-args", payload)
 
         call = sched.modify_job.call_args
@@ -678,16 +617,14 @@ class TestTimeAnnouncementDirectModifyJob:
         """
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        ctx, _client = self._make_http_ctx(get_status=404, message_id="fail-test-msg")
-
         sched = _make_ta_scheduler(modify_job_side_effect=RuntimeError("scheduler not available"))
-
         payload = {"guild_id": "g4", "channel_id": "c4", "current_time": "2026-01-01T00:00:00Z"}
 
         with (
-            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
             patch("utils.scheduler_holder.get_scheduler", return_value=sched),
         ):
+            self._register_time_routes(router, get_status=404, message_id="fail-test-msg")
             # Must NOT raise — failure is non-fatal (logged and swallowed).
             result = await execute_time_announcement_job("ta-fail", payload)
 
@@ -704,14 +641,13 @@ class TestTimeAnnouncementDirectModifyJob:
         """
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        ctx, _client = self._make_http_ctx(get_status=404, message_id="none-sched-msg")
-
         payload = {"guild_id": "g5", "channel_id": "c5", "current_time": "2026-01-01T00:00:00Z"}
 
         with (
-            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
             patch("utils.scheduler_holder.get_scheduler", return_value=None),
         ):
+            self._register_time_routes(router, get_status=404, message_id="none-sched-msg")
             result = await execute_time_announcement_job("ta-none", payload)
 
         assert result == {"status": "success"}, (

@@ -4,7 +4,8 @@ Unit tests for DuelService.
 Strategy:
 - Mock duel_repo and player_repo at the service instance level (2 mocks max per test).
 - Use a REAL CombatService with 0% variance or a custom deterministic resolver.
-- Use SimpleNamespace / MagicMock objects for Player and DuelRequest (no real DB).
+- Use REAL (transient) Player / PlayerShip model instances and SimpleNamespace
+  DuelRequest rows (no real DB session needed — models are constructible with kwargs).
 
 The conftest.py already patches shared.bblogger before imports reach here.
 """
@@ -38,6 +39,8 @@ if "sqlalchemy_utils" not in sys.modules:
 
 from unittest.mock import patch
 
+from persist.models.player import Player
+from persist.models.player_ship import PlayerShip
 from services.combat_models import (
     FightResults,
     FightStats,
@@ -61,33 +64,41 @@ def make_player(
     duel_losses: int = 0,
     duel_credits_won: int = 0,
     duel_credits_lost: int = 0,
-) -> MagicMock:
-    """Create a Player-like MagicMock with mutable integer attributes."""
-    p = MagicMock()
-    p.id = player_id
-    p.user_id = player_id * 100
-    p.guild_id = 9999
-    p.credits = credits
-    p.lifetime_credits = credits
-    p.duel_wins = duel_wins
-    p.duel_losses = duel_losses
-    p.duel_credits_won = duel_credits_won
-    p.duel_credits_lost = duel_credits_lost
-    p.active_ship = active_ship
-    # T7: pin active_ship_id to None so the over-cap gate's compute_free_cargo
-    # takes the no-active-ship early return (cap 0, load 0 → under cap) instead of
-    # walking the ship/module DB path against an auto-MagicMock. Dedicated over-cap
-    # behaviour is covered by tests/integration/test_t7_over_cap_lockout.py.
-    p.active_ship_id = None
-    return p
+) -> Player:
+    """Create a real (transient) Player model with mutable integer attributes.
+
+    A real ORM instance (constructible without a DB session) replaces the former
+    MagicMock: it exposes the real column set, so the duel credit/stat arithmetic
+    runs against real ints and an unset attribute would raise instead of silently
+    returning a truthy Mock.
+    """
+    return Player(
+        id=player_id,
+        user_id=player_id * 100,
+        guild_id=9999,
+        credits=credits,
+        lifetime_credits=credits,
+        duel_wins=duel_wins,
+        duel_losses=duel_losses,
+        duel_credits_won=duel_credits_won,
+        duel_credits_lost=duel_credits_lost,
+        active_ship=active_ship,
+        # T7: pin active_ship_id to None so the over-cap gate's compute_free_cargo
+        # takes the no-active-ship early return (cap 0, load 0 → under cap) instead of
+        # walking the ship/module DB path. Dedicated over-cap behaviour is covered by
+        # tests/integration/test_t7_over_cap_lockout.py.
+        active_ship_id=None,
+    )
 
 
-def make_active_ship(ship_name: str, armour: int = 100) -> MagicMock:
-    """Create a PlayerShip-like MagicMock."""
-    ship = MagicMock()
-    ship.ship_name = ship_name
-    ship.armour = armour
-    return ship
+def make_active_ship(ship_name: str, armour: int = 100) -> PlayerShip:
+    """Create a real (transient) PlayerShip model.
+
+    Note: PlayerShip carries no `armour` column (armour is static Ship data, surfaced
+    through the ShipLoadout the mocked LoadoutBuilder.from_player returns). The
+    `armour` parameter is retained for call-site compatibility but is not a column.
+    """
+    return PlayerShip(ship_name=ship_name, weapons=[], modules=[], turrets=[], secondary_weapons=[])
 
 
 def make_ship_loadout(ship_name: str, base_armour: int = 100) -> ShipLoadout:
@@ -620,52 +631,28 @@ class TestAcceptDuel:
         with pytest.raises(ValueError, match="can no longer cover this duel"):
             await svc.accept_duel(db=None, duel_id=1)
 
-    @pytest.mark.asyncio
-    async def test_accept_real_stalemate_with_zero_dps_ships(self):
-        """Real CombatService: two unarmed ships produce a stalemate."""
-        # No active ship → default "Unarmed" loadout, 0 DPS
-        challenger = make_player(1, credits=500, active_ship=None)
-        target = make_player(2, credits=500, active_ship=None)
+    def test_real_stalemate_with_zero_dps_ships(self):
+        """Real combat resolver: two unarmed (0-DPS) ships genuinely produce a stalemate.
 
-        duel = make_duel(duel_id=4, challenger_id=1, target_id=2, stakes=100)
+        This backs DuelService's stalemate handling (see
+        ``test_accept_stalemate_no_credits_transferred``, which drives accept_duel with an
+        injected stalemate) with the REAL tick resolver instead of a canned FightResults.
+        Two 0-DPS loadouts can never deplete each other, so the fight must run to the time
+        cap and terminate ``is_stalemate=True`` with no winner. No mocks — this is the
+        real computation that the injected-result accept tests rely on being true.
 
-        duel_repo = AsyncMock()
-        duel_repo.get_by_id.return_value = duel
-        duel_repo.get_by_id_for_update.return_value = duel  # X3-duel: accept re-reads under lock
-        duel_repo.update_status.return_value = duel
-        duel_repo.get_total_pending_stakes_for_player.return_value = 0
+        (The former version of this test claimed "Real CombatService" in its docstring but
+        actually injected a mocked ``fight_ships`` return value, asserting the very stalemate
+        it fed in — it would have passed even if the resolver's zero-DPS handling regressed.)
+        """
+        from services.combat_resolver import TickResolver
 
-        player_repo = AsyncMock()
-        # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
-        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
-            1: challenger,
-            2: target,
-        }.get(pid)
+        unarmed_a = make_ship_loadout("Unarmed", base_armour=100)  # 0 weapons → 0 DPS
+        unarmed_b = make_ship_loadout("Unarmed", base_armour=100)
+        result = TickResolver(seed=0).resolve(unarmed_a, unarmed_b)
 
-        # T10: fight_ships is async. Mock it to return a deterministic stalemate.
-        mock_combat_svc = MagicMock()
-        mock_combat_svc.fight_ships = AsyncMock(
-            return_value=_make_fight_results(winner=None, loser=None, is_stalemate=True)
-        )
-        svc = make_service(
-            duel_repo=duel_repo,
-            player_repo=player_repo,
-            combat_service=mock_combat_svc,
-        )
-
-        # LoadoutBuilder.from_player needs DB access; mock it to return 0-DPS unarmed ships
-        async def mock_from_player(db, player_id):
-            return make_ship_loadout("Unarmed", base_armour=100)  # 0 weapons → 0 DPS
-
-        mock_db = AsyncMock()
-        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
-            result = await svc.accept_duel(db=mock_db, duel_id=4)
-
-        # Two ships with 0 DPS → stalemate
-        fight = result["fight_results"]
-        assert fight.is_stalemate is True
-        assert result["credits_transferred"] == 0
-        mock_db.commit.assert_awaited_once()
+        assert result.is_stalemate is True
+        assert result.winner_name is None
 
 
 # ---------------------------------------------------------------------------

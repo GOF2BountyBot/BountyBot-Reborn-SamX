@@ -4,9 +4,18 @@ CI-20 — name identity: same-ship names → distinct labels; dropdown "X vs Y";
 CI-21 — de-spam: sliver-regen → ONE shield depleted until ≥25% recovery; summary stats byte-identical.
 CI-22 — baseline events: engagement + first-hit + outcome + per-side 50%/25% milestones; tick-sorted.
 CI-24 — summary slot-keying: same-ship fight → per-side stats DISTINCT; single-name unchanged.
-CI-19 — probe retry: gateway probe retries, only ERRORs after exhaustion.
 
 Max 2 mocks per test. Real objects preferred.
+
+Note: the former TestCI19ProbeRetry class (CI-19 gateway startup probe) was removed
+during the mock true-up. Those three tests re-implemented the retry loop inline and
+imported no production code — they exercised a hand-copied loop, not the real probe
+`_autocomplete_health_probe` in services/discord-gateway/src/bot.py. The copy had
+already drifted from production (the real code logs `flogger.warning` after exhaustion;
+the deleted tests asserted `.error`), so they would pass even if the real probe were
+broken or deleted. The real probe is a non-importable nested closure in a different
+service; testing it faithfully needs a src refactor (extract an importable helper) +
+a respx-backed test in the gateway suite — logged in FOLLOWUPS.md (## R-bc-svc-A).
 """
 
 from __future__ import annotations
@@ -710,176 +719,15 @@ class TestCI24SlotKeying:
 
 # ---------------------------------------------------------------------------
 # CI-19 — probe retry (gateway bot.py)
+#
+# The former TestCI19ProbeRetry class was DELETED here (3 tests). It
+# re-implemented bot.py's retry loop inline with hand-rolled _FakeHTTP/
+# _FakeLogger fakes and imported no production code, so it tested a copy —
+# and one that had drifted from the real code (production logs
+# `flogger.warning` after exhaustion; the deleted tests asserted `.error`).
+# The real probe `_autocomplete_health_probe` is a non-importable nested
+# closure in services/discord-gateway/src/bot.py; a faithful test requires a
+# src refactor (extract an importable helper) + a respx-backed gateway-suite
+# test — out of scope for this bot-core mock true-up. See FOLLOWUPS.md
+# (## R-bc-svc-A).
 # ---------------------------------------------------------------------------
-
-
-class TestCI19ProbeRetry:
-    """Verify the startup probe retries before logging ERROR."""
-
-    async def test_probe_succeeds_on_first_attempt(self):
-        """Probe logs INFO when bot-core responds on first attempt."""
-        import asyncio
-
-        calls: list[int] = []
-        logged_info: list[str] = []
-        logged_error: list[str] = []
-
-        class _FakeResp:
-            status_code = 200
-
-            def raise_for_status(self):
-                pass
-
-        class _FakeHTTP:
-            async def get(self, url, timeout=3.0):
-                calls.append(1)
-                return _FakeResp()
-
-        class _FakeLogger:
-            def info(self, msg):
-                logged_info.append(msg)
-
-            def error(self, msg):
-                logged_error.append(msg)
-
-            def critical(self, *a, **kw):
-                pass
-
-            def trace(self, *a, **kw):
-                pass
-
-        # Simulate the probe logic from bot.py
-        http = _FakeHTTP()
-        log = _FakeLogger()
-        api_base = "http://bot-core:8000/api/v1"
-
-        _probe_attempts = 3
-        _probe_backoff_s = (0.0, 0.0, 0.0)  # instant backoff for tests
-        _probe_ok = False
-        _last_probe_exc_unused = None
-        for _attempt in range(1, _probe_attempts + 1):
-            try:
-                probe_resp = await http.get(f"{api_base}/health", timeout=3.0)
-                probe_resp.raise_for_status()
-                log.info(f"Autocomplete health probe OK (attempt {_attempt}): api_base={api_base}")
-                _probe_ok = True
-                break
-            except Exception as _exc:
-                _last_probe_exc_unused = _exc
-                if _attempt < _probe_attempts:
-                    await asyncio.sleep(_probe_backoff_s[_attempt - 1])
-        if not _probe_ok:
-            log.error(f"Autocomplete health probe FAILED after {_probe_attempts} attempts")
-
-        assert _probe_ok is True
-        assert len(logged_info) == 1
-        assert len(logged_error) == 0
-        assert len(calls) == 1  # only one attempt needed
-
-    async def test_probe_retries_then_errors_after_exhaustion(self):
-        """Probe retries configured number of times, then logs ERROR (not before)."""
-        import asyncio
-
-        call_count = 0
-        logged_error: list[str] = []
-        logged_info: list[str] = []
-
-        class _FakeHTTP:
-            async def get(self, url, timeout=3.0):
-                nonlocal call_count
-                call_count += 1
-                raise ConnectionError("bot-core not up")
-
-        class _FakeLogger:
-            def info(self, msg):
-                logged_info.append(msg)
-
-            def error(self, msg):
-                logged_error.append(msg)
-
-            def critical(self, *a, **kw):
-                pass
-
-        http = _FakeHTTP()
-        log = _FakeLogger()
-        api_base = "http://bot-core:8000/api/v1"
-
-        _probe_attempts = 3
-        _probe_backoff_s = (0.0, 0.0, 0.0)
-        _probe_ok = False
-        _last_probe_exc_unused = None
-        for _attempt in range(1, _probe_attempts + 1):
-            try:
-                probe_resp = await http.get(f"{api_base}/health", timeout=3.0)
-                probe_resp.raise_for_status()
-                log.info(f"Probe OK attempt {_attempt}")
-                _probe_ok = True
-                break
-            except Exception as _exc:
-                _last_probe_exc_unused = _exc
-                if _attempt < _probe_attempts:
-                    log.info(f"Probe attempt {_attempt} failed, retrying...")
-                    await asyncio.sleep(_probe_backoff_s[_attempt - 1])
-        if not _probe_ok:
-            log.error(f"Autocomplete health probe FAILED after {_probe_attempts} attempts")
-
-        assert _probe_ok is False
-        assert call_count == _probe_attempts  # all attempts made
-        # ERROR logged only after exhaustion — exactly once
-        assert len(logged_error) == 1
-        assert "FAILED" in logged_error[0]
-        # No ERROR logged mid-retry
-        assert all("FAILED" not in msg for msg in logged_info)
-
-    async def test_probe_succeeds_on_second_attempt(self):
-        """Probe logs INFO (not ERROR) when second attempt succeeds."""
-        import asyncio
-
-        attempt_num = 0
-
-        class _FakeResp:
-            def raise_for_status(self):
-                pass
-
-        class _FakeHTTP:
-            async def get(self, url, timeout=3.0):
-                nonlocal attempt_num
-                attempt_num += 1
-                if attempt_num == 1:
-                    raise ConnectionError("not ready yet")
-                return _FakeResp()
-
-        logged_error: list[str] = []
-
-        class _FakeLogger:
-            def info(self, msg):
-                pass
-
-            def error(self, msg):
-                logged_error.append(msg)
-
-        http = _FakeHTTP()
-        log = _FakeLogger()
-        api_base = "http://bot-core:8000/api/v1"
-
-        _probe_attempts = 3
-        _probe_backoff_s = (0.0, 0.0, 0.0)
-        _probe_ok = False
-        _last_probe_exc_unused = None
-        for _attempt in range(1, _probe_attempts + 1):
-            try:
-                probe_resp = await http.get(f"{api_base}/health", timeout=3.0)
-                probe_resp.raise_for_status()
-                log.info(f"OK attempt {_attempt}")
-                _probe_ok = True
-                break
-            except Exception as _exc:
-                _last_probe_exc_unused = _exc
-                if _attempt < _probe_attempts:
-                    await asyncio.sleep(_probe_backoff_s[_attempt - 1])
-        if not _probe_ok:
-            log.error("FAILED")
-
-        assert _probe_ok is True
-        assert len(logged_error) == 0  # no ERROR logged
-        assert attempt_num == 2  # first failed, second succeeded

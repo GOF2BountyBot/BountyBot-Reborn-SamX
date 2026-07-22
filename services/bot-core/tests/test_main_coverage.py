@@ -348,42 +348,81 @@ class TestLifespan:
         the branch at main.py:190 is actually entered.
         """
         from contextlib import asynccontextmanager
+        from datetime import UTC, datetime, timedelta
 
         from main import run_stale_state_recovery_sweep
+        from persist.models.base import Base
+        from persist.models.bounty import Bounty
+        from persist.models.duel_request import DuelRequest
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-        # Set up DB session: returns one stale bounty (id=1, guild_id=67890)
-        mock_execute_result = MagicMock()
-        mock_execute_result.all.return_value = [(1, 67890)]  # sync list — one stale bounty
+        # Real SQLite engine with the tables the sweep's real UPDATEs touch.
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all, tables=[Bounty.__table__, DuelRequest.__table__])
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-        mock_db_session = AsyncMock()
-        mock_db_session.execute = AsyncMock(return_value=mock_execute_result)
-        mock_db_session.commit = AsyncMock()
-        mock_db_session.rollback = AsyncMock()
+        # Seed ONE genuinely-stale active bounty (end_time in the past) so the
+        # REAL recovery SELECT/UPDATE finds it — no hand-built result tuple.
+        now = datetime.now(UTC)
+        async with factory() as db:
+            db.add(
+                Bounty(
+                    guild_id=67890,
+                    division="bronze",
+                    criminal_name="StaleCrim",
+                    criminal_faction="TestFaction",
+                    route=["Sys-A", "Sys-B"],
+                    answer="Sys-B",
+                    reward=1000,
+                    reward_per_sys=500,
+                    checked={"Sys-A": -1, "Sys-B": -1},
+                    issue_time=now - timedelta(hours=10),
+                    end_time=now - timedelta(hours=1),  # past → stale
+                    tech_level=1,
+                    criminal_ship={"ship_name": "S", "ship_armour": 100, "weapons": [], "turrets": []},
+                    status="active",
+                )
+            )
+            await db.commit()
 
         mock_db_mgr_inner = MagicMock()
 
         @asynccontextmanager
-        async def _mock_get_session():
-            yield mock_db_session
+        async def _sqlite_get_session():
+            async with factory() as session:
+                yield session
 
-        mock_db_mgr_inner.get_session = _mock_get_session
+        mock_db_mgr_inner.get_session = _sqlite_get_session
 
+        # Gateway HTTP boundary — the only mock; assert the real sweep drove it.
         mock_delete_announcement = AsyncMock()
 
-        with (
-            patch("main.db_manager", mock_db_mgr_inner),
-            # The function does a lazy import inside itself; patch the source module.
-            patch(
-                "utils.executors.bounty_expire_executor._delete_bounty_announcement",
-                mock_delete_announcement,
-            ),
-        ):
-            await run_stale_state_recovery_sweep()
+        try:
+            with (
+                patch("main.db_manager", mock_db_mgr_inner),
+                # The function does a lazy import inside itself; patch the source module.
+                patch(
+                    "utils.executors.bounty_expire_executor._delete_bounty_announcement",
+                    mock_delete_announcement,
+                ),
+            ):
+                await run_stale_state_recovery_sweep()
 
-        # The cleanup branch (main.py:190) must have been entered.
-        # _delete_bounty_announcement is called inside the loop at main.py:198,
-        # once per stale bounty.
-        mock_delete_announcement.assert_awaited_once()
+            # The REAL recovery query found the seeded stale bounty, so the B.23b
+            # cleanup branch ran once for it.
+            mock_delete_announcement.assert_awaited_once()
+
+            # And the bounty was actually marked expired by the real bulk UPDATE.
+            from sqlalchemy import select as _select
+
+            async with factory() as verify_db:
+                rows = (await verify_db.execute(_select(Bounty.status))).all()
+            assert rows and all(r[0] == "expired" for r in rows), (
+                f"Stale bounty must be marked expired, got {rows!r}"
+            )
+        finally:
+            await engine.dispose()
 
     @pytest.mark.asyncio
     async def test_lifespan_db_init_failure_raises(self):
@@ -559,21 +598,44 @@ class TestLifespan:
 
 class TestMainBlock:
     def test_main_block_calls_uvicorn(self):
-        """Test the if __name__ == '__main__' block by simulating it."""
-        with patch("uvicorn.run"):
-            # Execute the block manually
-            import main as main_module
+        """The real ``if __name__ == '__main__'`` block runs uvicorn.run with the pinned config.
 
-            # Simulate __name__ == "__main__"
-            original_name = main_module.__name__
-            try:
-                main_module.__name__ = "__main__"
-                # We can't re-execute the module, but we can test the components
-                # Test HealthFilter integration
-                health_filter = main_module.HealthFilter()
-                assert isinstance(health_filter, logging.Filter)
-            finally:
-                main_module.__name__ = original_name
+        The former test patched uvicorn.run but never executed the block, then
+        asserted only ``isinstance(HealthFilter(), logging.Filter)`` — a tautology
+        that would pass even if the __main__ block were deleted.  Here we extract
+        the REAL block body from main.py and exec it (with uvicorn.run patched),
+        asserting it launches ``main:app`` with the pinned uvloop/httptools config.
+        """
+        import textwrap
+
+        import main as main_module
+
+        with open(main_module.__file__, encoding="utf-8") as _f:
+            src = _f.read()
+        marker = 'if __name__ == "__main__":'
+        assert marker in src, "main.py must retain its __main__ guard block"
+        block_body = textwrap.dedent(src.split(marker, 1)[1])
+
+        ns = {
+            "__name__": "__main__",
+            "os": os,
+            "flogger": main_module.flogger,
+            "pyLogging": logging,
+            "HealthFilter": main_module.HealthFilter,
+        }
+
+        with patch("uvicorn.run") as mock_run:
+            exec(compile(block_body, main_module.__file__, "exec"), ns)
+
+        mock_run.assert_called_once()
+        call = mock_run.call_args
+        # First positional arg is the ASGI app import string.
+        assert call.args and call.args[0] == "main:app", f"uvicorn.run must launch 'main:app', got {call.args!r}"
+        # The pinned event-loop / http implementations must be passed explicitly.
+        assert call.kwargs.get("loop") == "uvloop"
+        assert call.kwargs.get("http") == "httptools"
+        # host/port resolve from env with the documented defaults.
+        assert call.kwargs.get("host") == os.getenv("BOT_HOST", "0.0.0.0")
 
 
 # ===================================================================

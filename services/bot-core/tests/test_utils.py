@@ -17,6 +17,7 @@ import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import respx
 
 # ---------------------------------------------------------------------------
 # Mock shared / shared.bblogger BEFORE importing any source modules.
@@ -125,7 +126,12 @@ class TestEmojiServiceNormalize:
 
 
 class TestEmojiServiceFetchApplicationEmojis:
-    """Tests for EmojiService.fetch_application_emojis."""
+    """Tests for EmojiService.fetch_application_emojis.
+
+    Uses respx transport-level mocking so the exact Discord emoji-list endpoint
+    (URL + Bot auth header) is asserted, instead of a MagicMock httpx.Client that
+    accepted any request.  The real (sync) httpx.Client runs against the mock.
+    """
 
     @pytest.fixture()
     def svc(self, monkeypatch):
@@ -135,108 +141,74 @@ class TestEmojiServiceFetchApplicationEmojis:
 
         return EmojiService()
 
+    @staticmethod
+    def _emoji_url(svc) -> str:
+        return f"https://discord.com/api/v10/applications/{svc.app_id}/emojis"
+
     def test_fetch_list_response(self, svc):
-        """Handles a direct list response from Discord."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = [
-            {"name": "Shield", "id": "111"},
-            {"name": "Laser", "id": "222"},
-        ]
-
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.get.return_value = mock_response
-
-        with patch("utils.emoji_service.httpx.Client", return_value=mock_client):
+        """Handles a direct list response from Discord and hits the correct URL + auth header."""
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            route = router.get(self._emoji_url(svc)).respond(
+                200, json=[{"name": "Shield", "id": "111"}, {"name": "Laser", "id": "222"}]
+            )
             result = svc.fetch_application_emojis()
 
         assert result == {"shield": "111", "laser": "222"}
+        assert route.calls.last.request.headers["Authorization"] == f"Bot {svc.bot_token}"
 
     def test_fetch_items_wrapper_response(self, svc):
         """Handles a dict with 'items' key from Discord."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "items": [
-                {"name": "Cannon", "id": "333"},
-            ]
-        }
-
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.get.return_value = mock_response
-
-        with patch("utils.emoji_service.httpx.Client", return_value=mock_client):
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            router.get(self._emoji_url(svc)).respond(200, json={"items": [{"name": "Cannon", "id": "333"}]})
             result = svc.fetch_application_emojis()
 
         assert result == {"cannon": "333"}
 
     def test_fetch_empty_list(self, svc):
         """Returns empty dict when Discord returns no emojis."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = []
-
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.get.return_value = mock_response
-
-        with patch("utils.emoji_service.httpx.Client", return_value=mock_client):
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            router.get(self._emoji_url(svc)).respond(200, json=[])
             result = svc.fetch_application_emojis()
 
         assert result == {}
 
     def test_fetch_skips_items_missing_name_or_id(self, svc):
         """Entries missing name or id are silently skipped."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = [
-            {"name": "Good", "id": "999"},
-            {"name": "NoId"},
-            {"id": "NoName"},
-        ]
-
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.get.return_value = mock_response
-
-        with patch("utils.emoji_service.httpx.Client", return_value=mock_client):
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            router.get(self._emoji_url(svc)).respond(
+                200, json=[{"name": "Good", "id": "999"}, {"name": "NoId"}, {"id": "NoName"}]
+            )
             result = svc.fetch_application_emojis()
 
         assert result == {"good": "999"}
 
     def test_fetch_http_error_raises_runtime_error(self, svc):
-        """HTTPError from httpx is wrapped in RuntimeError."""
+        """A real transport ConnectError is wrapped in RuntimeError."""
         import httpx
 
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.get.side_effect = httpx.HTTPError("connection refused")
-
         with (
-            patch("utils.emoji_service.httpx.Client", return_value=mock_client),
+            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
             pytest.raises(RuntimeError, match="Discord API request failed"),
         ):
+            router.get(self._emoji_url(svc)).mock(side_effect=httpx.ConnectError("connection refused"))
+            svc.fetch_application_emojis()
+
+    def test_fetch_http_500_raises_runtime_error(self, svc):
+        """A 500 response (raise_for_status → HTTPStatusError) is wrapped in RuntimeError."""
+        with (
+            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
+            pytest.raises(RuntimeError, match="Discord API request failed"),
+        ):
+            router.get(self._emoji_url(svc)).respond(500)
             svc.fetch_application_emojis()
 
     def test_fetch_generic_exception_raises_runtime_error(self, svc):
-        """Unexpected exceptions during JSON processing are wrapped in RuntimeError."""
-        mock_response = MagicMock()
-        mock_response.json.side_effect = ValueError("bad json")
-
-        mock_client = MagicMock()
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client.get.return_value = mock_response
-
+        """Malformed (non-JSON) body → JSON parse error wrapped in RuntimeError."""
         with (
-            patch("utils.emoji_service.httpx.Client", return_value=mock_client),
+            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
             pytest.raises(RuntimeError, match="Failed to process emoji data"),
         ):
+            router.get(self._emoji_url(svc)).respond(200, text="not valid json {{{")
             svc.fetch_application_emojis()
 
 
@@ -687,63 +659,42 @@ class TestRunJobWrapper:
 
 
 class TestExecuteTimeAnnouncementJob:
-    """Tests for execute_time_announcement_job."""
+    """Tests for execute_time_announcement_job.
 
-    @pytest.fixture()
-    def _patch_env(self, monkeypatch):
-        monkeypatch.setenv("EXECUTOR_HOST", "localhost")
-        monkeypatch.setenv("EXECUTOR_PORT", "8000")
+    Uses respx transport-level mocking routed on the executor's real
+    ``BASE_TIME_URL`` (GET/POST/PUT to ``/api/v1/time``), so the endpoint, verb
+    and JSON body are asserted — replacing the previous MagicMock AsyncClient
+    that returned success for any request.
+    """
 
-    def _make_async_client(self, get_status=200, post_status=201, put_status=200, post_json=None, put_json=None):
-        """Build a mock httpx.AsyncClient."""
-        get_resp = MagicMock()
-        get_resp.status_code = get_status
-        get_resp.text = ""
+    @staticmethod
+    def _base_url() -> str:
+        # Read the URL the executor actually uses (computed from env at import).
+        import utils.executors.time_announcement_executor as ta_mod
 
-        post_resp = MagicMock()
-        post_resp.status_code = post_status
-        post_resp.text = ""
-        post_resp.json.return_value = post_json or {"message_id": "new-msg-id"}
-        post_resp.raise_for_status = MagicMock()
+        return ta_mod.BASE_TIME_URL
 
-        put_resp = MagicMock()
-        put_resp.status_code = put_status
-        put_resp.text = ""
-        put_resp.json.return_value = put_json or {"message_id": "existing-msg-id"}
-        put_resp.raise_for_status = MagicMock()
-
-        client = AsyncMock()
-        client.get = AsyncMock(return_value=get_resp)
-        client.post = AsyncMock(return_value=post_resp)
-        client.put = AsyncMock(return_value=put_resp)
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=client)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
-        return ctx, client, get_resp, post_resp, put_resp
-
-    async def test_post_when_not_exists(self, _patch_env):
+    async def test_post_when_not_exists(self):
         """When GET returns non-200, a POST is issued to create the announcement."""
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        ctx, client, _, _post_resp, _ = self._make_async_client(get_status=404)
-        payload = {
-            "guild_id": "g1",
-            "channel_id": "c1",
-            "current_time": "2026-01-01T00:00:00Z",
-        }
+        base = self._base_url()
+        payload = {"guild_id": "g1", "channel_id": "c1", "current_time": "2026-01-01T00:00:00Z"}
 
-        with patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx):
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            get_route = router.get(url__startswith=base).respond(404)
+            post_route = router.post(url__startswith=base).respond(201, json={"message_id": "new-msg-id"})
             await execute_time_announcement_job("job-new", payload)
 
-        client.post.assert_awaited_once()
+        assert get_route.called
+        assert post_route.call_count == 1
+        assert post_route.calls.last.request.method == "POST"
 
-    async def test_put_when_exists(self, _patch_env):
+    async def test_put_when_exists(self):
         """When GET returns 200, a PUT is issued to update the announcement."""
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        ctx, client, _, _, _put_resp = self._make_async_client(get_status=200)
+        base = self._base_url()
         payload = {
             "guild_id": "g1",
             "channel_id": "c1",
@@ -751,16 +702,21 @@ class TestExecuteTimeAnnouncementJob:
             "current_time": "2026-01-01T00:00:00Z",
         }
 
-        with patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx):
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            router.get(url__startswith=base).respond(200, json={"message_id": "existing-msg-id"})
+            put_route = router.put(url__startswith=base).respond(200, json={"message_id": "existing-msg-id"})
             await execute_time_announcement_job("job-update", payload)
 
-        client.put.assert_awaited()
+        assert put_route.call_count == 1
+        # The PUT body must carry the message_id being updated.
+        put_body = json.loads(put_route.calls.last.request.content)
+        assert put_body.get("message_id") == "existing-msg-id"
 
-    async def test_message_id_param_included_in_get_when_present(self, _patch_env):
+    async def test_message_id_param_included_in_get_when_present(self):
         """If message_id is in payload, it is passed as a GET query param."""
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        ctx, client, _, _, _ = self._make_async_client(get_status=200)
+        base = self._base_url()
         payload = {
             "guild_id": "g1",
             "channel_id": "c1",
@@ -768,124 +724,95 @@ class TestExecuteTimeAnnouncementJob:
             "current_time": "2026-01-01T00:00:00Z",
         }
 
-        with patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx):
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            get_route = router.get(url__startswith=base).respond(200, json={"message_id": "m999"})
+            router.put(url__startswith=base).respond(200, json={"message_id": "m999"})
             await execute_time_announcement_job("job-mid", payload)
 
-        call_kwargs = client.get.call_args
-        # Accept that params are passed either as positional or keyword
-        all_args = str(call_kwargs)
-        assert "m999" in all_args
+        get_url = str(get_route.calls.last.request.url)
+        assert "message_id=m999" in get_url, f"GET must carry message_id query param, url={get_url!r}"
+        assert "guild_id=g1" in get_url
+        assert "channel_id=c1" in get_url
 
-    async def test_get_timeout_raises(self, _patch_env):
+    async def test_get_timeout_raises(self):
         """TimeoutException on GET propagates upward."""
         import httpx
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        client = AsyncMock()
-        client.get = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=client)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
+        base = self._base_url()
         payload = {"guild_id": "g1", "channel_id": "c1"}
 
         with (
-            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
             pytest.raises(httpx.TimeoutException),
         ):
+            router.get(url__startswith=base).mock(side_effect=httpx.TimeoutException("timed out"))
             await execute_time_announcement_job("job-timeout", payload)
 
-    async def test_get_http_error_raises(self, _patch_env):
-        """HTTPError on GET propagates upward."""
+    async def test_get_http_error_raises(self):
+        """A transport ConnectError on GET propagates upward."""
         import httpx
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        client = AsyncMock()
-        client.get = AsyncMock(side_effect=httpx.HTTPError("bad gateway"))
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=client)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
+        base = self._base_url()
         payload = {"guild_id": "g1", "channel_id": "c1"}
 
         with (
-            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
             pytest.raises(httpx.HTTPError),
         ):
+            router.get(url__startswith=base).mock(side_effect=httpx.ConnectError("bad gateway"))
             await execute_time_announcement_job("job-http-err", payload)
 
-    async def test_post_http_error_raises(self, _patch_env):
-        """HTTPError on POST propagates upward."""
+    async def test_post_http_error_raises(self):
+        """A 5xx on POST (raise_for_status → HTTPStatusError) propagates upward."""
         import httpx
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        get_resp = MagicMock()
-        get_resp.status_code = 404
-        get_resp.text = ""
-
-        client = AsyncMock()
-        client.get = AsyncMock(return_value=get_resp)
-        client.post = AsyncMock(side_effect=httpx.HTTPError("post failed"))
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=client)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
+        base = self._base_url()
         payload = {"guild_id": "g1", "channel_id": "c1"}
 
         with (
-            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
             pytest.raises(httpx.HTTPError),
         ):
+            router.get(url__startswith=base).respond(404)
+            router.post(url__startswith=base).respond(502)
             await execute_time_announcement_job("job-post-err", payload)
 
-    async def test_updates_job_args_after_first_create(self, _patch_env):
+    async def test_updates_job_args_after_first_create(self):
         """After a POST (new announcement), the executor updates the job args with the new message_id.
 
         P6-T8: update is now via direct scheduler.modify_job (no HTTP PUT loopback).
         Verifies that modify_job is called with args=[job_id, updated_payload] where
-        updated_payload includes the new message_id.
+        updated_payload includes the new message_id, AND that NO PUT is issued.
         """
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        get_resp = MagicMock()
-        get_resp.status_code = 404
-        get_resp.text = ""
-
-        post_resp = MagicMock()
-        post_resp.status_code = 201
-        post_resp.text = ""
-        post_resp.raise_for_status = MagicMock()
-        post_resp.json.return_value = {"message_id": "brand-new-id"}
-
-        client = AsyncMock()
-        client.get = AsyncMock(return_value=get_resp)
-        client.post = AsyncMock(return_value=post_resp)
-
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=client)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-
+        base = self._base_url()
         payload = {"guild_id": "g1", "channel_id": "c1", "current_time": "2026-01-01T00:00:00Z"}
 
         mock_scheduler = MagicMock()
         mock_scheduler.modify_job = MagicMock(return_value=None)
 
         with (
-            patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx),
+            # assert_all_called=False: the PUT route is intentionally registered
+            # to prove it is NEVER hit (no HTTP loopback).
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
             patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler),
         ):
+            get_route = router.get(url__startswith=base).respond(404)
+            post_route = router.post(url__startswith=base).respond(201, json={"message_id": "brand-new-id"})
+            # A PUT route is registered but must remain uncalled (no loopback).
+            put_route = router.put(url__startswith=base).respond(200, json={})
             await execute_time_announcement_job("job-create", payload)
 
+        assert get_route.called and post_route.call_count == 1
         # P6-T8: modify_job must be called directly (no HTTP PUT loopback).
         mock_scheduler.modify_job.assert_called_once()
         call_args = mock_scheduler.modify_job.call_args
-        # First positional arg is the job_id.
         job_id_arg = call_args.args[0] if call_args.args else call_args.kwargs.get("job_id")
         assert job_id_arg == "job-create", f"modify_job job_id={job_id_arg!r}, expected 'job-create'"
-        # args= kwarg carries [job_id, new_payload].
         new_args = call_args.kwargs.get("args")
         assert new_args is not None, "modify_job must be called with args= kwarg"
         assert len(new_args) == 2, f"Expected args=[job_id, payload], got {new_args!r}"
@@ -893,28 +820,22 @@ class TestExecuteTimeAnnouncementJob:
         assert new_payload.get("message_id") == "brand-new-id", (
             f"Updated payload must include message_id='brand-new-id', got {new_payload!r}"
         )
+        assert not put_route.called, "HTTP PUT to /jobs/ (or /time) must NOT be made (P6-T8 no-loopback)"
 
-        # No HTTP PUT to the scheduler API (P6-T8 no-loopback assertion).
-        all_put_calls = [str(c) for c in client.put.call_args_list] if hasattr(client, "put") else []
-        assert not any("/jobs/" in c for c in all_put_calls), (
-            f"HTTP PUT to /jobs/ should NOT be made (P6-T8 no-loopback); calls: {all_put_calls}"
-        )
-
-    async def test_uses_current_time_from_payload_if_provided(self, _patch_env):
-        """If 'current_time' is in payload, it is used instead of datetime.now."""
+    async def test_uses_current_time_from_payload_if_provided(self):
+        """If 'current_time' is in payload, it is used instead of datetime.now (asserted in POST body)."""
         from utils.executors.time_announcement_executor import execute_time_announcement_job
 
-        ctx, client, _, _post_resp2, _ = self._make_async_client(get_status=404)
+        base = self._base_url()
         fixed_time = "2026-03-11T12:00:00Z"
-        payload = {
-            "guild_id": "g1",
-            "channel_id": "c1",
-            "current_time": fixed_time,
-        }
+        payload = {"guild_id": "g1", "channel_id": "c1", "current_time": fixed_time}
 
-        with patch("utils.executors.time_announcement_executor.httpx.AsyncClient", return_value=ctx):
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            router.get(url__startswith=base).respond(404)
+            post_route = router.post(url__startswith=base).respond(201, json={"message_id": "new-msg-id"})
             await execute_time_announcement_job("job-time", payload)
 
-        post_call_kwargs = client.post.call_args
-        body = post_call_kwargs.kwargs.get("json") or {}
+        body = json.loads(post_route.calls.last.request.content)
         assert body.get("current_time") == fixed_time
+        assert body.get("guild_id") == "g1"
+        assert body.get("channel_id") == "c1"

@@ -483,32 +483,80 @@ passing — see R-bc-db-manager above. Gate: `tests/test_database.py` 66 passed,
 with the mandatory `POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=55432 ...` overrides) 5562 passed,
 5 skipped, 1 xfailed. Ruff clean.
 
-**TRUEUP-01 (discord-gateway cog respx migration): PARTIAL.** Completed in this pass:
-`test_aboutCog.py`'s `TestMakeRouteCommand` (7 tests), `TestCreateObjectEmbed`'s 3 icon-HEAD
-tests, and `TestD006IconValidationCache` (8 tests) — all migrated off the accept-anything
-MagicMock/AsyncMock HTTP responder to `respx.mock(assert_all_called=True)` pinned to the real
-URL/verb/query-params, per the house `_with_real_http_client` pattern (added locally to this
-file, mirroring `test_adminCog.py`). `test_aboutCog.py` is now fully respx-migrated; 140/140
-passing, ruff clean. **NOT completed in this pass, for time** — this was the bulk of the
-Part 1 scope and remains exactly as characterized in R-gw-cogs-0/R-gw-cogs-2 above: the ~300+
-"bulk happy-path" command tests in `test_playerCog.py` (~150 tests across
-`TestLeaderboardCommand`, `TestPrestigeConfirmFlow`, `TestPromoteCommand`,
-`TestPromoteTierRoleSwap`, `TestDemoteCommand`, `TestDemoteTierRoleSwap`,
-`TestUnregisterCommand`, `TestRegisterAlias`, `TestLoadoutCommand`, etc.), `test_shopCog.py`
-(~45 tests: `TestShopCommand`/`TestShopCommandBranches`/`TestShopCommandWithStats`/
-`TestSellCommand`/`TestShopsCommand`), `test_shipsCog.py` (`TestShipsCommand`/
-`TestShipCommand`/`TestNicknameCommand`), `test_bountyCog.py` (~60 tests: `TestCheckCommand`/
-`TestBountiesCommand`/`TestRouteCommand`/`TestCriminalLoadoutCommand`/etc.), and
-`test_duelCog.py` (~31 command/error tests, including the stakes/guild_id challenge-JSON-body
-assertion called out in this task's brief) are still on the shared `make_mock_response`
-fixture / inline `AsyncMock(http_client.<verb>)` responders. Each of these already has at
-least one dedicated respx contract-test class locking its happy-path URL (per R-gw-cogs-0/2),
-so the "wrong URL/verb ships green" blast radius is closed file-wide even though per-test
-migration is not done. Investigation during this pass confirmed the migration is real
-per-test work, not a single shared-fixture fix: each bulk test hand-builds its own
-`MagicMock`/response payload inline (no common factory to patch once), and reconstructing
-each one as a real `httpx.Response` requires reading the corresponding cog source method to
-pin the exact URL/verb/params — effort L per file (~5 files), consistent with the prior
-pass's own estimate. Recommend a follow-up pass scoped to ONE file at a time (start with
-`test_duelCog.py`, the smallest, ~31 tests, and the one explicitly named in this task's
-brief) rather than attempting all 5 in one sitting.
+**TRUEUP-01 (discord-gateway cog respx migration): 5 of 6 files COMPLETE** (`test_aboutCog.py`,
+`test_duelCog.py`, `test_shipsCog.py`, `test_shopCog.py`, `test_bountyCog.py`); `test_playerCog.py`
+not attempted (see below). All migrated files use the same house pattern: a module-level
+`_with_real_http_client(cog, request)` helper (mirroring `test_adminCog.py`'s), a real
+`httpx.AsyncClient` swapped onto `cog.http_client`, and `respx.mock(assert_all_called=True)`
+routes pinned to the real bot-core URL/verb/query-params, returning real `httpx.Response`
+bodies — replacing every accept-anything `MagicMock`/`AsyncMock(http_client.<verb>)` responder
+and the shared `make_mock_response` fixture in the files below.
+
+- **`test_aboutCog.py`**: `TestMakeRouteCommand` (7), `TestCreateObjectEmbed`'s 3 icon-HEAD
+  tests, `TestD006IconValidationCache` (8). File fully respx-migrated; 140/140 passing.
+- **`test_duelCog.py`** (2026-07-22, session 2): `TestDuelChallengeCommand` (5),
+  `TestDuelAcceptCommand` (7), `TestDuelOverCapLockout` (3), `TestDuelRejectCommand` (2),
+  `TestGetPlayerId` (4), `TestDuelChallengePlayerResolution` (4),
+  `TestDuelAcceptPlayerResolution` (3), `TestDuelRejectPlayerResolution` (3),
+  `TestDuelAcceptAdditionalErrors` (4), `TestDuelRejectAdditionalErrors` (5),
+  `TestDuelCancelCommand` (10) — 50 tests migrated. Also closed the brief's explicitly-named
+  follow-up: `TestDuelCommandRespx::test_duel_challenge_calls_correct_urls` and the new
+  `TestDuelChallengeCommand::test_challenge_success_displays_embed` now both assert the posted
+  challenge JSON body (`challenger_id`/`target_id`/`stakes`/`guild_id`), not just the URL.
+  Remaining un-migrated tests in this file are legitimate zero-HTTP autocomplete-cache
+  tripwires (`AsyncMock(side_effect=AssertionError("HTTP must not be called"))`), not
+  accept-anything responders — no further migration needed. File fully green: 117/117.
+- **`test_shipsCog.py`** (session 2): `TestGetPlayerIdHelper` (2), `TestShipsCommand` (9),
+  `TestShipCommand` (9), `TestSetActiveCommand` (7), `TestNicknameCommand` (7),
+  `TestShipsCommandAdditionalBranches` (2), `TestShipsPermissionChecks` (2),
+  `TestSetactiveInvalidShipId` (1), `TestShipCommandStrParamHandling` (1),
+  `TestNicknameCommandStrParamHandling` (1) — 41 tests migrated. `TestSetactiveAutocomplete`/
+  `TestShipAutocomplete` carry an unused `make_mock_response` fixture parameter (dead, never
+  called in the test body — confirmed a false positive, matching R-gw-cogs-2's note above);
+  left as-is. File fully green: 68/68.
+- **`test_shopCog.py`** (session 2): `TestGetPlayerDataHelper` (2), `TestShopCommand` (9),
+  `TestBuyCommand` (9), `TestShopCommandBranches` (8), `TestBuyCommandBranches` (4),
+  `TestBuyItemTypeFieldRendering` (5), `TestShopFallbackLabel` (2), `TestSellCommand` (7),
+  `TestShopsCommand` (6), `TestShopCommandWithStats` (5), `TestShopCommandCachePeekFirst` (3)
+  — 60 tests migrated. Cache-ordering note: `shop()` bypasses `_shop_cache` entirely whenever
+  a truthy `item_type` is passed (a pre-existing quirk where several tests pass tier-like
+  strings such as `"Bronze"` for the `item_type` positional arg — harmless because any truthy
+  value forces the HTTP path); tests that omit `item_type` explicitly `.invalidate()` their
+  cache key first so the HTTP path is exercised deterministically regardless of what else ran
+  earlier in this module-scoped-cog file. File fully green: 144/144.
+- **`test_bountyCog.py`** (session 2): `TestBountiesDisplayLiveFetch` (1), `TestCheckCommand`
+  (7), `TestCheckCommandEphemeralBehavior` (7), `TestCheckCommandRespx`'s remaining un-migrated
+  test (1), `TestBountiesCommand` (5), `TestBountiesCommandLiveFetch` (4), `TestRouteCommand`
+  (8), `TestCriminalLoadoutCommand` (7), `TestBountiesShowAllParam` (3),
+  `TestBountiesNoTimestampsInBadLocations` (2), `TestCheckCommandCombatResults` (1),
+  `TestCheckCommandCooldownAndRecentlySpotted` (5), `TestCheckOverCapLockout` (2),
+  `TestCheckMultiBountyResponse` (4), `TestCheckCommandEmptySystemsPassthrough` (3),
+  `TestCheckCommandGuildAndPlayerErrors` (2 of 4 — the 2 that touch HTTP),
+  `TestCheckCommandTierRoleUpdate` (3), `TestBountiesCommandHttpErrors` (3),
+  `TestRouteCommandHttpErrors` (1), `TestCriminalLoadoutHttpErrors` (1),
+  `TestBuildMultiCheckEmbedPayoutBreakdown`'s 1 HTTP-touching test — roughly 70 tests
+  migrated. `TestBountiesCommand`/`TestBountiesShowAllParam`/`TestBountiesCommandHttpErrors`
+  each got a `_cold_player_cache` autouse fixture (`ac_state.player_cache.invalidate(...)`)
+  for the same module-scoped-cog cache-ordering reason as shopCog above, so the POST
+  /players/ path is exercised deterministically. `TestIsGuildNotConfigured` and
+  `TestErrorHandlers`' `MagicMock()`-based objects were left as-is — they unit-test a pure
+  helper function and the discord.py error-handler callback signature respectively, neither
+  of which involves `self.http_client` at all (out of scope for an HTTP-mock migration). File
+  fully green: 282/282.
+
+**NOT completed, for time — `test_playerCog.py`** (~150 tests across ~21 classes: e.g.
+`TestProfileCommand`, `TestLeaderboardCommand`, `TestPrestigeCommand`,
+`TestPrestigeConfirmFlow`, `TestProfileRoleAssignment`, `TestUnregisterCommand`,
+`TestPromoteCommand`, `TestPromoteTierRoleSwap`, `TestPromoteConfirmView`, `TestDemoteCommand`,
+`TestDemoteTierRoleSwap`, `TestLoadoutCommand`, `TestRegisterAlias`, etc.) — the largest file
+and, per the coordinator's own "smallest/highest-value first" ordering, the explicitly
+lowest-priority item; still on inline `MagicMock()` response construction (this file has no
+shared `make_mock_response` fixture at all — every one of the ~150 tests hand-builds its own
+mock inline). Several commands here (`promote`/`demote`/`prestige`) chain up to 4 sequential
+endpoints per test (`POST /players/` → `GET .../promotion-status` → `PUT .../promote` or
+`.../demote` → `GET /config/guild/{id}` for role sync), making this the most complex
+remaining migration surface in the whole cog suite — effort L, consistent with the R-gw-cogs-2
+report's own estimate ("effort L to fully migrate all ~150 tests in this 4200-line file").
+Recommend a follow-up pass starting with `TestProfileCommand`/`TestLeaderboardCommand`/
+`TestPrestigeCommand` (single- or dual-endpoint flows, and each already has a proven
+`*Respx` reference class in-file to mirror), then the promote/demote families last.

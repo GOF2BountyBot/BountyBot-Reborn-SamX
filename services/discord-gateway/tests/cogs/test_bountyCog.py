@@ -1,6 +1,7 @@
 """Tests for bountyCog — covers /check, /bounties, /route, /criminal-loadout."""
 
 import asyncio
+import json
 import os
 import sys
 import types
@@ -72,6 +73,22 @@ def _evict_discord_modules():
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
+
+
+_BOT_CORE_URL = "http://bot-core:8000/api/v1"
+
+
+def _with_real_http_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+    House pattern — see this file's own `TestCheckCommandRespx._with_real_client`
+    and test_adminCog.py's `_with_real_http_client`.
+    """
+    import httpx
+
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
 
 
 def _create_mock_interaction(user_id=111111111, guild_id=987654321):
@@ -553,7 +570,14 @@ class TestBountiesDisplayLiveFetch:
     is harmless), but must NOT back the display count.
     """
 
-    def test_display_ignores_stale_cache_and_uses_live_count(self, mock_bounty_cog):
+    def test_display_ignores_stale_cache_and_uses_live_count(self, mock_bounty_cog, request):
+        """TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off manual MagicMock response
+        construction to respx, pinned to the real GET /bounties/ URL.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         guild_id = 987654321
         user_id = 111111111
         route = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
@@ -581,17 +605,16 @@ class TestBountiesDisplayLiveFetch:
             guild_id=guild_id, user_id=user_id, player_tier="Bronze", bounties=stale, cog=mock_bounty_cog
         )
 
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json = MagicMock(return_value=live)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
-
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            bounties_route = mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(200, json=live)
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
         # A live fetch to /bounties/ must have happened — the cache was bypassed.
-        mock_bounty_cog.http_client.get.assert_awaited_once()
-        assert mock_bounty_cog.http_client.get.call_args[0][0].endswith("/bounties/")
+        assert bounties_route.call_count == 1
 
         # The embed shows the LIVE count (2/5), never the stale cached count (1/5).
         embed = interaction.followup.send.call_args[1]["embed"]
@@ -764,15 +787,22 @@ class TestCheckCommand:
         """Populate _systems so resolve_system_name can resolve the test system names."""
         mock_bounty_cog._systems_cache.set("all", ["Alpha", "Beta", "Delta", "Sol"])
 
-    def test_check_correct_result_green_embed(self, mock_bounty_cog, make_mock_response):
+    def test_check_correct_result_green_embed(self, mock_bounty_cog, request):
         """/check CORRECT (capture) sends a single public capture embed with payout detail."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            _make_check_response("correct", bounty_id=1, message="Target neutralised!", division="bronze")
-        )
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=_make_check_response("correct", bounty_id=1, message="Target neutralised!", division="bronze"),
+                )
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -783,13 +813,19 @@ class TestCheckCommand:
         # Must NOT be ephemeral — this is the public channel message
         assert not call_kwargs.get("ephemeral", False)
 
-    def test_check_not_found_result_orange_embed(self, mock_bounty_cog, make_mock_response):
+    def test_check_not_found_result_orange_embed(self, mock_bounty_cog, request):
         """/check NOT_FOUND result should display orange embed."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("not_found"))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Delta"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=_make_check_response("not_found"))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Delta"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -798,15 +834,21 @@ class TestCheckCommand:
 
         assert call_kwargs["embed"].color == discord.Color.orange()
 
-    def test_check_incorrect_result_red_embed(self, mock_bounty_cog, make_mock_response):
+    def test_check_incorrect_result_red_embed(self, mock_bounty_cog, request):
         """/check INCORRECT result should display tier-colored embed (Sub-task A)."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            _make_check_response("incorrect", message="Bounty is 2 jumps away.", division="silver")
-        )
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Beta"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(
+                    200, json=_make_check_response("incorrect", message="Bounty is 2 jumps away.", division="silver")
+                )
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Beta"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -815,13 +857,19 @@ class TestCheckCommand:
 
         assert call_kwargs["embed"].color.value == TIER_COLORS["silver"]
 
-    def test_check_already_checked_result_yellow_embed(self, mock_bounty_cog, make_mock_response):
+    def test_check_already_checked_result_yellow_embed(self, mock_bounty_cog, request):
         """/check ALREADY_CHECKED result should display tier-colored embed (Sub-task A)."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("already_checked", division="gold"))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=_make_check_response("already_checked", division="gold"))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -830,43 +878,50 @@ class TestCheckCommand:
 
         assert call_kwargs["embed"].color.value == TIER_COLORS["gold"]
 
-    def test_check_cooldown_429_response(self, mock_bounty_cog, make_mock_response):
+    def test_check_cooldown_429_response(self, mock_bounty_cog, request):
         """/check 429 response should show cooldown message."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response({}, status_code=429)
-        resp.status_code = 429
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(return_value=httpx.Response(429, json={}))
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "cooldown" in call_kwargs[0][0].lower()
 
-    def test_check_api_error_handled_gracefully(self, mock_bounty_cog):
+    def test_check_api_error_handled_gracefully(self, mock_bounty_cog, request):
         """/check generic exception should show error message."""
-        interaction = _create_mock_interaction()
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=RuntimeError("connection refused"))
+        import respx
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(side_effect=RuntimeError("connection refused"))
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_check_http_status_error_handled(self, mock_bounty_cog):
+    def test_check_http_status_error_handled(self, mock_bounty_cog, request):
         """/check HTTPStatusError (non-429) should show API error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError("500 Error", request=MagicMock(), response=error_response)
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -907,79 +962,90 @@ class TestCheckCommandEphemeralBehavior:
     def _populate_systems(self, mock_bounty_cog):
         mock_bounty_cog._systems_cache.set("all", ["Alpha"])
 
-    def _run_check(self, cog, make_mock_response, response_data, system="Alpha"):
+    def _run_check(self, cog, request, response_data, system="Alpha"):
+        """TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx, pinned to the real POST /bounties/check URL.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(cog, request)
         interaction = _create_mock_interaction()
-        resp = make_mock_response(response_data)
-        cog.http_client.post = AsyncMock(return_value=resp)
-        asyncio.run(cog.check.callback(cog, interaction, system))
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=response_data)
+            )
+            asyncio.run(cog.check.callback(cog, interaction, system))
+
         call_kwargs = interaction.followup.send.call_args[1]
         return call_kwargs
 
-    def test_correct_combat_won_true_is_public(self, mock_bounty_cog, make_mock_response):
+    def test_correct_combat_won_true_is_public(self, mock_bounty_cog, request):
         """result='correct' + combat_won=True → public capture payout embed (not ephemeral)."""
         resp_data = {
             "result": "correct",
             "outcomes": [{"result": "correct", "bounty_id": 1, "combat_won": True, "division": "bronze"}],
             "result_count": 1,
         }
-        call_kwargs = self._run_check(mock_bounty_cog, make_mock_response, resp_data)
+        call_kwargs = self._run_check(mock_bounty_cog, request, resp_data)
         assert not call_kwargs.get("ephemeral"), (
             "Capture (result=correct, combat_won=True) must be public (ephemeral=False)"
         )
         assert "embed" in call_kwargs
 
-    def test_correct_combat_won_none_is_public(self, mock_bounty_cog, make_mock_response):
+    def test_correct_combat_won_none_is_public(self, mock_bounty_cog, request):
         """result='correct' + combat_won absent (None) → public capture payout embed (not ephemeral)."""
         resp_data = {
             "result": "correct",
             "outcomes": [{"result": "correct", "bounty_id": 1, "division": "bronze"}],
             "result_count": 1,
         }
-        call_kwargs = self._run_check(mock_bounty_cog, make_mock_response, resp_data)
+        call_kwargs = self._run_check(mock_bounty_cog, request, resp_data)
         assert not call_kwargs.get("ephemeral"), (
             "Capture (result=correct, combat_won absent) must be public (ephemeral=False)"
         )
         assert "embed" in call_kwargs
 
-    def test_correct_combat_won_false_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+    def test_correct_combat_won_false_is_not_ephemeral(self, mock_bounty_cog, request):
         """result='correct' + combat_won=False → NOT ephemeral (player lost)."""
         resp_data = {
             "result": "correct",
             "outcomes": [{"result": "correct", "bounty_id": 1, "combat_won": False, "division": "bronze"}],
             "result_count": 1,
         }
-        call_kwargs = self._run_check(mock_bounty_cog, make_mock_response, resp_data)
+        call_kwargs = self._run_check(mock_bounty_cog, request, resp_data)
         # combat_won=False means player lost — NOT a capture, should be public
         assert not call_kwargs.get("ephemeral"), "Combat loss (result=correct, combat_won=False) must NOT be ephemeral"
 
-    def test_incorrect_result_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+    def test_incorrect_result_is_not_ephemeral(self, mock_bounty_cog, request):
         """result='incorrect' → NOT ephemeral (wrong system, public feedback)."""
         call_kwargs = self._run_check(
             mock_bounty_cog,
-            make_mock_response,
+            request,
             _make_check_response("incorrect"),
         )
         assert not call_kwargs.get("ephemeral"), "Incorrect result must NOT be ephemeral"
 
-    def test_not_found_result_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+    def test_not_found_result_is_not_ephemeral(self, mock_bounty_cog, request):
         """result='not_found' → NOT ephemeral."""
         call_kwargs = self._run_check(
             mock_bounty_cog,
-            make_mock_response,
+            request,
             _make_check_response("not_found"),
         )
         assert not call_kwargs.get("ephemeral"), "not_found result must NOT be ephemeral"
 
-    def test_already_checked_result_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+    def test_already_checked_result_is_not_ephemeral(self, mock_bounty_cog, request):
         """result='already_checked' → NOT ephemeral."""
         call_kwargs = self._run_check(
             mock_bounty_cog,
-            make_mock_response,
+            request,
             _make_check_response("already_checked"),
         )
         assert not call_kwargs.get("ephemeral"), "already_checked result must NOT be ephemeral"
 
-    def test_multi_outcome_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+    def test_multi_outcome_is_not_ephemeral(self, mock_bounty_cog, request):
         """Multi-outcome path always stays public (NOT ephemeral)."""
         resp_data = {
             "result": "correct",
@@ -989,11 +1055,7 @@ class TestCheckCommandEphemeralBehavior:
             ],
             "result_count": 2,
         }
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(resp_data)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
-        call_kwargs = interaction.followup.send.call_args[1]
+        call_kwargs = self._run_check(mock_bounty_cog, request, resp_data)
         assert not call_kwargs.get("ephemeral"), "Multi-outcome path must stay public (NOT ephemeral)"
 
 
@@ -1107,22 +1169,28 @@ class TestCheckCommandRespx:
             "Did you forget to raise the timeout from 10 to 20?"
         )
 
-    def test_check_graceful_error_on_timeout(self, mock_bounty_cog, make_mock_response):
+    def test_check_graceful_error_on_timeout(self, mock_bounty_cog, request):
         """/check should show graceful error message when /bounties/check times out.
 
         Player resolution (first post) succeeds; the /bounties/check post times out.
         The outer except-Exception handler sends an ephemeral error message.
+
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx, pinned to the real POST /players/ and
+        POST /bounties/check URLs.
         """
         import httpx
+        import respx
 
+        self._with_real_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
         # _populate_systems autouse fixture already set the cache, but set again for clarity
         mock_bounty_cog._systems_cache.set("all", ["Sol"])
-        player_resp = make_mock_response({"id": 1})
-        timeout_exc = httpx.TimeoutException("timed out", request=MagicMock())
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=[player_resp, timeout_exc])
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, system="Sol"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{self._BOT_API}/bounties/check").mock(side_effect=httpx.TimeoutException("timed out"))
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, system="Sol"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1136,35 +1204,61 @@ class TestCheckCommandRespx:
 
 
 class TestBountiesCommand:
-    """Tests for the /bounties slash command."""
+    """Tests for the /bounties slash command.
 
-    def test_bounties_lists_active_bounties(self, mock_bounty_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real POST /players/ and
+    GET /bounties/ URLs.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _cold_player_cache(self, mock_bounty_cog):
+        """Ensure the shared autocomplete_state.player_cache is cold for the default
+        (guild_id, user_id) used by _create_mock_interaction(), so these tests reach
+        the POST /players/ HTTP path deterministically (bounties() peeks this cache
+        first — see TestBountiesCommandLiveFetch, which populates it for its own
+        tests elsewhere in this module-scoped-cog file)."""
+        import utils.autocomplete_state as ac_state
+
+        if ac_state.player_cache is not None:
+            ac_state.player_cache.invalidate((987654321, 111111111))
+
+    def test_bounties_lists_active_bounties(self, mock_bounty_cog, request):
         """/bounties (default) should list active bounties for the player's tier."""
-        interaction = _create_mock_interaction()
-        bounty_list = [
-            _make_bounty_public(1, "BlackViper", "bronze"),
-        ]
-        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
-        bounty_resp = make_mock_response(bounty_list)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json={"id": 1, "tier": "Bronze"})
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(200, json=[_make_bounty_public(1, "BlackViper", "bronze")])
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_bounties_no_active_bounties_shows_empty_message(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_no_active_bounties_shows_empty_message(self, mock_bounty_cog, request):
         """/bounties with no bounties for the player's tier should show 'No active bounties'."""
-        interaction = _create_mock_interaction()
-        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
-        bounty_resp = make_mock_response([])
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json={"id": 1, "tier": "Bronze"})
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(return_value=httpx.Response(200, json=[]))
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1172,47 +1266,69 @@ class TestBountiesCommand:
         embed = call_kwargs["embed"]
         assert "no active bounties" in embed.description.lower()
 
-    def test_bounties_default_filters_to_player_tier(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_default_filters_to_player_tier(self, mock_bounty_cog, request):
         """/bounties default (show_all=False) should pass the player's tier as division param."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        bounty_list = [_make_bounty_public(1, "GoldHawk", "gold")]
-        player_resp = make_mock_response({"id": 1, "tier": "Gold"})
-        bounty_resp = make_mock_response(bounty_list)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json={"id": 1, "tier": "Gold"})
+            )
+            bounties_route = mock_router.get(f"{_BOT_CORE_URL}/bounties/", params={"division": "gold"}).mock(
+                return_value=httpx.Response(200, json=[_make_bounty_public(1, "GoldHawk", "gold")])
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
-        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
-        assert get_call_kwargs["params"].get("division") == "gold"
+        # respx only registered a route with params={"division": "gold"} — a genuine
+        # call proves the param was passed exactly as expected.
+        assert bounties_route.called
         embed = interaction.followup.send.call_args[1]["embed"]
         assert "Gold" in embed.title
 
-    def test_bounties_show_all_omits_division_filter(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_show_all_omits_division_filter(self, mock_bounty_cog, request):
         """/bounties show_all=True should NOT pass division to API and show all tiers in title."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        bounty_list = [
-            _make_bounty_public(1, "BlackViper", "bronze"),
-            _make_bounty_public(2, "GoldHawk", "gold"),
-        ]
-        resp = make_mock_response(bounty_list)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
+        with respx.mock(assert_all_called=True) as mock_router:
+            bounties_route = mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        _make_bounty_public(1, "BlackViper", "bronze"),
+                        _make_bounty_public(2, "GoldHawk", "gold"),
+                    ],
+                )
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
-        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
-        assert "division" not in get_call_kwargs["params"]
+            request_params = bounties_route.calls.last.request.url.params
+
+        assert "division" not in request_params
         embed = interaction.followup.send.call_args[1]["embed"]
         assert "All Tiers" in embed.title
 
-    def test_bounties_api_error_handled(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_api_error_handled(self, mock_bounty_cog, request):
         """/bounties generic exception on GET should show error message."""
-        interaction = _create_mock_interaction()
-        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json={"id": 1, "tier": "Bronze"})
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(side_effect=RuntimeError("boom"))
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1240,8 +1356,20 @@ class TestBountiesCommandLiveFetch:
             ac_state.player_cache = AutocompleteCache(name="player-test-bounties")
         ac_state.player_cache.set((guild_id, user_id), {"id": 1, "tier": tier})
 
-    def test_bounties_fetches_live_even_when_cache_warm(self, mock_bounty_cog, make_mock_response):
-        """A warm _bounty_cache must NOT suppress the live GET (the core fix)."""
+    def test_bounties_fetches_live_even_when_cache_warm(self, mock_bounty_cog, request):
+        """A warm _bounty_cache must NOT suppress the live GET (the core fix).
+
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx. No POST route is registered — a warm
+        player_cache means the cog should never call POST /players/; respx's
+        default assert_all_mocked=True means an unexpected POST would raise, a
+        stronger guarantee than the old `AsyncMock(side_effect=AssertionError(...))`
+        tripwire.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
@@ -1250,19 +1378,22 @@ class TestBountiesCommandLiveFetch:
         self._setup_player_cache(guild_id, user_id, tier="Bronze")
         mock_bounty_cog._bounty_cache.set(guild_id, [_make_bounty_public(1, "StaleViper", "bronze")])
 
-        bounty_resp = make_mock_response([_make_bounty_public(1, "LiveViper", "bronze")])
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP POST must not be called"))
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        with respx.mock(assert_all_called=True) as mock_router:
+            bounties_route = mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(200, json=[_make_bounty_public(1, "LiveViper", "bronze")])
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
-
-        mock_bounty_cog.http_client.get.assert_awaited_once()
-        assert mock_bounty_cog.http_client.get.call_args[0][0].endswith("/bounties/")
+        assert bounties_route.call_count == 1
         interaction.followup.send.assert_awaited_once()
         assert interaction.followup.send.call_args[1].get("embed") is not None
 
-    def test_bounties_cold_cache_also_fetches_live(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_cold_cache_also_fetches_live(self, mock_bounty_cog, request):
         """Cold _bounty_cache → still a single live GET /bounties/ (unchanged behavior)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
@@ -1270,17 +1401,21 @@ class TestBountiesCommandLiveFetch:
         self._setup_player_cache(guild_id, user_id, tier="Bronze")
         mock_bounty_cog._bounty_cache.invalidate(guild_id)
 
-        bounty_resp = make_mock_response([_make_bounty_public(1, "FallbackViper", "bronze")])
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP POST must not be called"))
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        with respx.mock(assert_all_called=True) as mock_router:
+            bounties_route = mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(200, json=[_make_bounty_public(1, "FallbackViper", "bronze")])
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
-
-        mock_bounty_cog.http_client.get.assert_awaited_once()
+        assert bounties_route.call_count == 1
         interaction.followup.send.assert_awaited_once()
 
-    def test_bounties_show_all_fetches_live_no_division(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_show_all_fetches_live_no_division(self, mock_bounty_cog, request):
         """/bounties show_all=True fetches live with no division filter, even with warm cache."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
@@ -1290,35 +1425,41 @@ class TestBountiesCommandLiveFetch:
             [_make_bounty_public(1, "BronzeViper", "bronze"), _make_bounty_public(2, "GoldHawk", "gold")],
         )
 
-        bounty_resp = make_mock_response(
-            [_make_bounty_public(1, "BronzeViper", "bronze"), _make_bounty_public(2, "GoldHawk", "gold")]
-        )
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("No POST expected"))
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        with respx.mock(assert_all_called=True) as mock_router:
+            bounties_route = mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[_make_bounty_public(1, "BronzeViper", "bronze"), _make_bounty_public(2, "GoldHawk", "gold")],
+                )
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
+            request_params = bounties_route.calls.last.request.url.params
 
-        mock_bounty_cog.http_client.get.assert_awaited_once()
-        assert "division" not in (mock_bounty_cog.http_client.get.call_args.kwargs.get("params") or {})
+        assert bounties_route.call_count == 1
+        assert "division" not in request_params
         interaction.followup.send.assert_awaited_once()
         assert "All Tiers" in interaction.followup.send.call_args[1]["embed"].title
 
-    def test_bounties_passes_division_filter_to_live_fetch(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_passes_division_filter_to_live_fetch(self, mock_bounty_cog, request):
         """Tier filtering is delegated to the live API via the division query param."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         self._setup_player_cache(guild_id, user_id, tier="Silver")
 
-        bounty_resp = make_mock_response([_make_bounty_public(2, "SilverFox", "silver")])
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("No POST expected"))
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        with respx.mock(assert_all_called=True) as mock_router:
+            bounties_route = mock_router.get(f"{_BOT_CORE_URL}/bounties/", params={"division": "silver"}).mock(
+                return_value=httpx.Response(200, json=[_make_bounty_public(2, "SilverFox", "silver")])
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
-
-        mock_bounty_cog.http_client.get.assert_awaited_once()
-        assert mock_bounty_cog.http_client.get.call_args.kwargs["params"].get("division") == "silver"
+        assert bounties_route.called
         interaction.followup.send.assert_awaited_once()
         assert "Silver" in interaction.followup.send.call_args[1]["embed"].title
 
@@ -1329,22 +1470,34 @@ class TestBountiesCommandLiveFetch:
 
 
 class TestRouteCommand:
-    """Tests for the /route slash command."""
+    """Tests for the /route slash command.
 
-    def test_route_displays_checked_and_unchecked_systems(self, mock_bounty_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real
+    GET /bounties/{bounty_id}/route URL.
+    """
+
+    def test_route_displays_checked_and_unchecked_systems(self, mock_bounty_cog, request):
         """/route should show strikethrough for checked systems."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            _make_route_response(
-                route=["Alpha", "Beta", "Gamma"],
-                checked={"Alpha": 1},
-                # B.24: system_statuses is the new rendering source; provide it
-                system_statuses={"Alpha": "checked"},
-            )
-        )
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/route").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=_make_route_response(
+                        route=["Alpha", "Beta", "Gamma"],
+                        checked={"Alpha": 1},
+                        # B.24: system_statuses is the new rendering source; provide it
+                        system_statuses={"Alpha": "checked"},
+                    ),
+                )
+            )
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -1368,76 +1521,97 @@ class TestRouteCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "invalid" in call_kwargs[0][0].lower()
 
-    def test_route_404_shows_bounty_not_found(self, mock_bounty_cog):
+    def test_route_404_shows_bounty_not_found(self, mock_bounty_cog, request):
         """/route 404 should send bounty not found message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        error_response = MagicMock()
-        error_response.status_code = 404
-        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "999"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/999/route").mock(return_value=httpx.Response(404))
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "999"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "not found" in call_kwargs[0][0].lower()
 
-    def test_route_api_error_handled(self, mock_bounty_cog):
+    def test_route_api_error_handled(self, mock_bounty_cog, request):
         """/route generic exception should show error message."""
-        interaction = _create_mock_interaction()
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
+        import respx
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/route").mock(side_effect=RuntimeError("boom"))
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_route_shows_division_in_description(self, mock_bounty_cog, make_mock_response):
+    def test_route_shows_division_in_description(self, mock_bounty_cog, request):
         """/route should show the bounty's division (tier) in the embed description."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
+
         route_data = _make_route_response(route=["Alpha", "Beta"])
         route_data["division"] = "gold"
-        resp = make_mock_response(route_data)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/route").mock(return_value=httpx.Response(200, json=route_data))
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
         assert "Gold" in embed.description
 
-    def test_route_no_division_in_description_when_not_present(self, mock_bounty_cog, make_mock_response):
+    def test_route_no_division_in_description_when_not_present(self, mock_bounty_cog, request):
         """/route description should not include tier when division is absent."""
-        interaction = _create_mock_interaction()
-        route_data = _make_route_response(route=["A", "B"])
-        # No division key in response
-        resp = make_mock_response(route_data)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        # No division key in response
+        route_data = _make_route_response(route=["A", "B"])
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/route").mock(return_value=httpx.Response(200, json=route_data))
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
         assert "Tier:" not in embed.description
 
-    def test_route_recently_spotted_uses_bold_strikethrough(self, mock_bounty_cog, make_mock_response):
+    def test_route_recently_spotted_uses_bold_strikethrough(self, mock_bounty_cog, request):
         """B.24: /route renders recently_spotted systems with **~~bold strikethrough~~** + 🔍."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            _make_route_response(
-                route=["Alpha", "Beta", "Gamma"],
-                checked={"Alpha": 1, "Beta": 2},
-                system_statuses={"Alpha": "checked", "Beta": "recently_spotted"},
-            )
-        )
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/route").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=_make_route_response(
+                        route=["Alpha", "Beta", "Gamma"],
+                        checked={"Alpha": 1, "Beta": 2},
+                        system_statuses={"Alpha": "checked", "Beta": "recently_spotted"},
+                    ),
+                )
+            )
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
@@ -1453,19 +1627,24 @@ class TestRouteCommand:
         assert "~~Gamma~~" not in field_value
         assert "Gamma" in field_value
 
-    def test_route_checked_system_uses_strikethrough_checkmark(self, mock_bounty_cog, make_mock_response):
+    def test_route_checked_system_uses_strikethrough_checkmark(self, mock_bounty_cog, request):
         """B.24: /route renders checked (not recently spotted) systems with ~~strikethrough~~ ✅."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            _make_route_response(
-                route=["Proxima", "Tau"],
-                checked={"Proxima": 1},
-                system_statuses={"Proxima": "checked"},
-            )
-        )
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/route").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=_make_route_response(
+                        route=["Proxima", "Tau"], checked={"Proxima": 1}, system_statuses={"Proxima": "checked"}
+                    ),
+                )
+            )
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         field_value = interaction.followup.send.call_args[1]["embed"].fields[0].value
@@ -1473,19 +1652,21 @@ class TestRouteCommand:
         assert "✅" in field_value
         assert "**~~Proxima~~**" not in field_value  # not recently spotted
 
-    def test_route_unchecked_system_is_plain(self, mock_bounty_cog, make_mock_response):
+    def test_route_unchecked_system_is_plain(self, mock_bounty_cog, request):
         """B.24: /route renders unchecked systems as plain text (no markdown)."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            _make_route_response(
-                route=["Sol", "Proxima"],
-                checked={},
-                system_statuses={},
-            )
-        )
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/route").mock(
+                return_value=httpx.Response(
+                    200, json=_make_route_response(route=["Sol", "Proxima"], checked={}, system_statuses={})
+                )
+            )
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         field_value = interaction.followup.send.call_args[1]["embed"].fields[0].value
@@ -1495,9 +1676,14 @@ class TestRouteCommand:
         assert "~~Proxima~~" not in field_value
         assert "Proxima" in field_value
 
-    def test_route_backward_compat_no_system_statuses_field(self, mock_bounty_cog, make_mock_response):
+    def test_route_backward_compat_no_system_statuses_field(self, mock_bounty_cog, request):
         """B.24: /route falls back gracefully when system_statuses field is missing (API backward compat)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
+
         # API response WITHOUT system_statuses (older API version simulation)
         route_data = {
             "bounty_id": 1,
@@ -1506,10 +1692,10 @@ class TestRouteCommand:
             "checked": {"Alpha": 1},
             "status": "active",
         }
-        resp = make_mock_response(route_data)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/route").mock(return_value=httpx.Response(200, json=route_data))
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
 
         # Should not crash — should still send an embed
         interaction.followup.send.assert_awaited_once()
@@ -1523,15 +1709,26 @@ class TestRouteCommand:
 
 
 class TestCriminalLoadoutCommand:
-    """Tests for the /criminal-loadout slash command (shared embed builder consumer)."""
+    """Tests for the /criminal-loadout slash command (shared embed builder consumer).
 
-    def test_criminal_loadout_sends_embed_public(self, mock_bounty_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real
+    GET /bounties/{bounty_id}/loadout URL.
+    """
+
+    def test_criminal_loadout_sends_embed_public(self, mock_bounty_cog, request):
         """Happy path: response sent public (not ephemeral) with shared embed."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_loadout_response())
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout_response())
+            )
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -1540,13 +1737,19 @@ class TestCriminalLoadoutCommand:
         assert call_kwargs.get("ephemeral") is not True
         assert "embed" in call_kwargs
 
-    def test_criminal_loadout_embed_has_sections(self, mock_bounty_cog, make_mock_response):
+    def test_criminal_loadout_embed_has_sections(self, mock_bounty_cog, request):
         """Embed contains Active Ship + Ship Stats + Primary Weapons + Modules + Cargo Hold fields."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_loadout_response())
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout_response())
+            )
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         names = [f.name for f in embed.fields]
@@ -1557,37 +1760,55 @@ class TestCriminalLoadoutCommand:
         # Criminal path ALWAYS shows Cargo Hold <0/M>
         assert any(n.startswith("Cargo Hold") for n in names)
 
-    def test_criminal_loadout_cargo_hold_shows_capacity(self, mock_bounty_cog, make_mock_response):
+    def test_criminal_loadout_cargo_hold_shows_capacity(self, mock_bounty_cog, request):
         """Cargo Hold header format is '<0/M>' where M = ship_stats.cargo."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_loadout_response())  # default cargo=45
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            # default cargo=45
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout_response())
+            )
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         cargo_field = next(f for f in embed.fields if f.name.startswith("Cargo Hold"))
         assert cargo_field.name == "Cargo Hold <0/45>"
 
-    def test_criminal_loadout_thumbnail_is_criminal_icon(self, mock_bounty_cog, make_mock_response):
+    def test_criminal_loadout_thumbnail_is_criminal_icon(self, mock_bounty_cog, request):
         """Thumbnail uses Criminal.icon (thumbnail_url), not ship_icon."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_loadout_response())
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout_response())
+            )
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         assert embed.thumbnail.url == "https://cdn/criminal.png"
 
-    def test_criminal_loadout_missing_criminal_ship_sends_ephemeral_error(self, mock_bounty_cog, make_mock_response):
+    def test_criminal_loadout_missing_criminal_ship_sends_ephemeral_error(self, mock_bounty_cog, request):
         """message='Criminal ship data unavailable' → red error embed, ephemeral."""
-        interaction = _create_mock_interaction()
-        data = _make_loadout_response(message="Criminal ship data unavailable")
-        resp = make_mock_response(data)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout_response(message="Criminal ship data unavailable"))
+            )
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
 
         call_kwargs = interaction.followup.send.call_args[1]
         # Errors always ephemeral
@@ -1606,42 +1827,52 @@ class TestCriminalLoadoutCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "invalid" in call_kwargs[0][0].lower()
 
-    def test_criminal_loadout_404_shows_not_found(self, mock_bounty_cog):
+    def test_criminal_loadout_404_shows_not_found(self, mock_bounty_cog, request):
         """/criminal-loadout 404 should send bounty not found message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        error_response = MagicMock()
-        error_response.status_code = 404
-        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "999"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/999/loadout").mock(return_value=httpx.Response(404))
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "999"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "not found" in call_kwargs[0][0].lower()
 
-    def test_criminal_loadout_api_error_handled(self, mock_bounty_cog):
+    def test_criminal_loadout_api_error_handled(self, mock_bounty_cog, request):
         """/criminal-loadout generic exception should show error message."""
-        interaction = _create_mock_interaction()
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
+        import respx
 
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/loadout").mock(side_effect=RuntimeError("boom"))
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_criminal_loadout_ship_stats_includes_hp_and_dps(self, mock_bounty_cog, make_mock_response):
+    def test_criminal_loadout_ship_stats_includes_hp_and_dps(self, mock_bounty_cog, request):
         """Ship Stats field includes HP, Armour, Handling, DPS (but NOT cargo)."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_loadout_response())
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout_response())
+            )
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         stats_field = next(f for f in embed.fields if f.name == "Ship Stats")
@@ -1659,42 +1890,74 @@ class TestCriminalLoadoutCommand:
 
 
 class TestBountiesShowAllParam:
-    """Tests for the show_all parameter on /bounties."""
+    """Tests for the show_all parameter on /bounties.
 
-    def test_bounties_show_all_false_title_contains_tier(self, mock_bounty_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _cold_player_cache(self, mock_bounty_cog):
+        """See TestBountiesCommand._cold_player_cache for rationale."""
+        import utils.autocomplete_state as ac_state
+
+        if ac_state.player_cache is not None:
+            ac_state.player_cache.invalidate((987654321, 111111111))
+
+    def test_bounties_show_all_false_title_contains_tier(self, mock_bounty_cog, request):
         """/bounties default embed title should contain the player's tier name."""
-        interaction = _create_mock_interaction()
-        player_resp = make_mock_response({"id": 1, "tier": "Silver"})
-        bounty_resp = make_mock_response([_make_bounty_public(1, "SilverFox", "silver")])
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json={"id": 1, "tier": "Silver"})
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(200, json=[_make_bounty_public(1, "SilverFox", "silver")])
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         assert "Silver Tier" in embed.title
 
-    def test_bounties_show_all_true_title_contains_all_tiers(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_show_all_true_title_contains_all_tiers(self, mock_bounty_cog, request):
         """/bounties show_all=True embed title should indicate all tiers."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response([_make_bounty_public(1, "SilverFox", "silver")])
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(200, json=[_make_bounty_public(1, "SilverFox", "silver")])
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         assert "All Tiers" in embed.title
 
-    def test_bounties_show_all_true_does_not_call_players_endpoint(self, mock_bounty_cog, make_mock_response):
-        """/bounties show_all=True must NOT call the /players/ endpoint."""
+    def test_bounties_show_all_true_does_not_call_players_endpoint(self, mock_bounty_cog, request):
+        """/bounties show_all=True must NOT call the /players/ endpoint.
+
+        TRUEUP-01: no /players/ route registered at all — respx's default
+        assert_all_mocked=True means an unexpected call there would raise, a
+        stronger guarantee than the old `assert_not_awaited()` check on a mock
+        that accepted any call in the first place.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        resp = make_mock_response([])
-        mock_bounty_cog.http_client.post = AsyncMock()
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
-
-        mock_bounty_cog.http_client.post.assert_not_awaited()
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(return_value=httpx.Response(200, json=[]))
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
 
 # ---------------------------------------------------------------------------
@@ -1768,28 +2031,35 @@ class TestBountiesNoTimestampsInBadLocations:
     in the embed footer or author fields for the /bounties command.
     """
 
-    def _get_bounties_embed(self, mock_bounty_cog, make_mock_response):
-        """Helper: trigger /bounties (show_all=True to avoid player resolve call) and return embed."""
-        interaction = _create_mock_interaction()
-        bounty_list = [
-            _make_bounty_public(1, "BlackViper", "bronze"),
-        ]
-        resp = make_mock_response(bounty_list)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+    def _get_bounties_embed(self, mock_bounty_cog, request):
+        """Helper: trigger /bounties (show_all=True to avoid player resolve call) and return embed.
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx, pinned to the real GET /bounties/ URL.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(200, json=[_make_bounty_public(1, "BlackViper", "bronze")])
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         return call_kwargs.get("embed")
 
-    def test_bounties_no_timestamps_in_footer(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_no_timestamps_in_footer(self, mock_bounty_cog, request):
         """The /bounties embed footer must not contain a Discord timestamp (<t:...) pattern.
 
         Discord renders <t:...> timestamps in fields and descriptions but NOT in footer
         text where they appear as raw code, confusing users.
         """
-        embed = self._get_bounties_embed(mock_bounty_cog, make_mock_response)
+        embed = self._get_bounties_embed(mock_bounty_cog, request)
         assert embed is not None, "expected /bounties to send an embed; a missing embed must fail, not skip"
 
         footer = embed.footer
@@ -1805,9 +2075,9 @@ class TestBountiesNoTimestampsInBadLocations:
             "Timestamps in footers render as raw text — move them to fields or description."
         )
 
-    def test_bounties_no_timestamps_in_author(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_no_timestamps_in_author(self, mock_bounty_cog, request):
         """The /bounties embed author field must not contain a Discord timestamp (<t:...) pattern."""
-        embed = self._get_bounties_embed(mock_bounty_cog, make_mock_response)
+        embed = self._get_bounties_embed(mock_bounty_cog, request)
         assert embed is not None, "expected /bounties to send an embed; a missing embed must fail, not skip"
 
         author = embed.author
@@ -2568,22 +2838,32 @@ class TestCheckCommandCombatResults:
         base.update(kwargs)
         return base
 
-    def test_check_captured_bonus_won_sends_green_embed(self, mock_bounty_cog, make_mock_response):
-        """/check with result='captured' and bonus_won=True sends tier-colored embed (Sub-task A)."""
+    def test_check_captured_bonus_won_sends_green_embed(self, mock_bounty_cog, request):
+        """/check with result='captured' and bonus_won=True sends tier-colored embed (Sub-task A).
+
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx, pinned to the real POST /bounties/check URL.
+        """
+        import httpx
+        import respx
         from cogs.bountyCog import TIER_COLORS
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            self._make_full_check_response(
-                result="captured",
-                bonus_won=True,
-                total_reward=1000,
-                reward=500,
-            )
-        )
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=self._make_full_check_response(
+                        result="captured",
+                        bonus_won=True,
+                        total_reward=1000,
+                        reward=500,
+                    ),
+                )
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
@@ -2889,53 +3169,79 @@ class TestCheckCommandCooldownAndRecentlySpotted:
             "cooldown_until": cooldown_until,
         }
 
-    def test_on_cooldown_with_cooldown_until_uses_discord_timestamp(self, mock_bounty_cog, make_mock_response):
-        """When result=on_cooldown and cooldown_until is set, message uses <t:X:R> format."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(self._make_on_cooldown_response(cooldown_until=1700000000))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+    def test_on_cooldown_with_cooldown_until_uses_discord_timestamp(self, mock_bounty_cog, request):
+        """When result=on_cooldown and cooldown_until is set, message uses <t:X:R> format.
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx, pinned to the real POST /bounties/check URL.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=self._make_on_cooldown_response(cooldown_until=1700000000))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         interaction.followup.send.assert_awaited_once()
         sent_msg = interaction.followup.send.call_args[0][0]
         assert "<t:1700000000:R>" in sent_msg
         assert "check again" in sent_msg.lower()
 
-    def test_on_cooldown_without_cooldown_until_falls_back_to_message(self, mock_bounty_cog, make_mock_response):
+    def test_on_cooldown_without_cooldown_until_falls_back_to_message(self, mock_bounty_cog, request):
         """When result=on_cooldown with no cooldown_until, fallback to the message string."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            self._make_on_cooldown_response(cooldown_until=None, message="On cooldown for 60 more seconds")
-        )
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        cooldown_data = self._make_on_cooldown_response(cooldown_until=None, message="On cooldown for 60 more seconds")
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=cooldown_data)
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         interaction.followup.send.assert_awaited_once()
         sent_msg = interaction.followup.send.call_args[0][0]
         assert "60 more seconds" in sent_msg
 
-    def test_recently_spotted_incorrect_shows_orange_embed(self, mock_bounty_cog, make_mock_response):
+    def test_recently_spotted_incorrect_shows_orange_embed(self, mock_bounty_cog, request):
         """When result=incorrect and recently_spotted=True, embed uses tier color (Sub-task A)."""
+        import httpx
+        import respx
         from cogs.bountyCog import TIER_COLORS
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            {
-                "result": "incorrect",
-                "message": "Recently spotted here!",
-                "recently_spotted": True,
-                "division": "bronze",
-                "outcomes": [
-                    {"result": "incorrect", "recently_spotted": True, "division": "bronze", "criminal_name": "Bob"}
-                ],
-                "result_count": 1,
-            }
-        )
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "result": "incorrect",
+                        "message": "Recently spotted here!",
+                        "recently_spotted": True,
+                        "division": "bronze",
+                        "outcomes": [
+                            {
+                                "result": "incorrect",
+                                "recently_spotted": True,
+                                "division": "bronze",
+                                "criminal_name": "Bob",
+                            }
+                        ],
+                        "result_count": 1,
+                    },
+                )
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
@@ -2943,47 +3249,64 @@ class TestCheckCommandCooldownAndRecentlySpotted:
         assert embed.color.value == TIER_COLORS["bronze"]
         assert "Recently Spotted" in embed.title
 
-    def test_recently_spotted_false_shows_red_embed(self, mock_bounty_cog, make_mock_response):
+    def test_recently_spotted_false_shows_red_embed(self, mock_bounty_cog, request):
         """When result=incorrect and recently_spotted=False, embed uses tier color (Sub-task A)."""
+        import httpx
+        import respx
         from cogs.bountyCog import TIER_COLORS
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            {
-                "result": "incorrect",
-                "message": "No sign of criminal",
-                "recently_spotted": False,
-                "division": "silver",
-                "outcomes": [
-                    {"result": "incorrect", "recently_spotted": False, "division": "silver", "criminal_name": "Bob"}
-                ],
-                "result_count": 1,
-            }
-        )
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "result": "incorrect",
+                        "message": "No sign of criminal",
+                        "recently_spotted": False,
+                        "division": "silver",
+                        "outcomes": [
+                            {
+                                "result": "incorrect",
+                                "recently_spotted": False,
+                                "division": "silver",
+                                "criminal_name": "Bob",
+                            }
+                        ],
+                        "result_count": 1,
+                    },
+                )
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
         assert embed.color.value == TIER_COLORS["silver"]
 
-    def test_recently_spotted_missing_defaults_to_false(self, mock_bounty_cog, make_mock_response):
+    def test_recently_spotted_missing_defaults_to_false(self, mock_bounty_cog, request):
         """When recently_spotted key is absent, embed uses tier color (falls back to blue if no division)."""
         import discord
+        import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            {
-                "result": "incorrect",
-                "message": "No sign of criminal",
-                "outcomes": [{"result": "incorrect", "recently_spotted": False, "criminal_name": "Bob"}],
-                "result_count": 1,
-            }
-        )
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "result": "incorrect",
+                        "message": "No sign of criminal",
+                        "outcomes": [{"result": "incorrect", "recently_spotted": False, "criminal_name": "Bob"}],
+                        "result_count": 1,
+                    },
+                )
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
@@ -3026,12 +3349,18 @@ class TestCheckOverCapLockout:
             "result_count": 1,
         }
 
-    def test_over_cap_renders_exact_ephemeral_no_embed(self, mock_bounty_cog, make_mock_response):
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(self._make_over_cap_response(32, 25))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+    def test_over_cap_renders_exact_ephemeral_no_embed(self, mock_bounty_cog, request):
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=self._make_over_cap_response(32, 25))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         interaction.followup.send.assert_awaited_once()
         args, kwargs = interaction.followup.send.call_args
@@ -3040,13 +3369,21 @@ class TestCheckOverCapLockout:
         # No embed — the lockout is a plain ephemeral pre-gate, not a result embed.
         assert "embed" not in kwargs
 
-    def test_non_over_cap_response_proceeds_to_embed(self, mock_bounty_cog, make_mock_response):
+    def test_non_over_cap_response_proceeds_to_embed(self, mock_bounty_cog, request):
         """A normal CORRECT response still renders an embed (no over-cap regression)."""
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("correct", bounty_id=1, message="Captured!", division="bronze"))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(
+                    200, json=_make_check_response("correct", bounty_id=1, message="Captured!", division="bronze")
+                )
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         kwargs = interaction.followup.send.call_args[1]
@@ -3098,8 +3435,16 @@ class TestCheckMultiBountyResponse:
         """Populate _systems so resolve_system_name can resolve 'Sol'."""
         mock_bounty_cog._systems_cache.set("all", ["Sol"])
 
-    def test_check_multi_outcomes_renders_consolidated_embed(self, mock_bounty_cog, make_mock_response):
-        """When response has >1 outcome, exactly one embed is sent with N fields."""
+    def test_check_multi_outcomes_renders_consolidated_embed(self, mock_bounty_cog, request):
+        """When response has >1 outcome, exactly one embed is sent with N fields.
+
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx, pinned to the real POST /bounties/check URL.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
         outcomes = [
             {
@@ -3125,10 +3470,12 @@ class TestCheckMultiBountyResponse:
                 "message": "System Sol already checked",
             },
         ]
-        resp = make_mock_response(_make_multi_check_response(outcomes))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=_make_multi_check_response(outcomes))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -3142,10 +3489,13 @@ class TestCheckMultiBountyResponse:
         # Exactly 3 outcome fields
         assert len(embed.fields) == 3
 
-    def test_check_multi_outcomes_capture_uses_green_color(self, mock_bounty_cog, make_mock_response):
+    def test_check_multi_outcomes_capture_uses_green_color(self, mock_bounty_cog, request):
         """Multi-outcome embed with at least one capture is green."""
         import discord
+        import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
         outcomes = [
             {
@@ -3163,10 +3513,12 @@ class TestCheckMultiBountyResponse:
                 "recently_spotted": False,
             },
         ]
-        resp = make_mock_response(_make_multi_check_response(outcomes))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=_make_multi_check_response(outcomes))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         assert embed.color == discord.Color.green()
@@ -3174,8 +3526,12 @@ class TestCheckMultiBountyResponse:
         assert "Sol" in (embed.description or "")
         assert "2" in (embed.description or "")
 
-    def test_check_multi_outcomes_lists_each_bounty_credit_amount(self, mock_bounty_cog, make_mock_response):
+    def test_check_multi_outcomes_lists_each_bounty_credit_amount(self, mock_bounty_cog, request):
         """Multi-bounty capture embed surfaces each bounty's credit reward independently."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
         outcomes = [
             {
@@ -3195,10 +3551,12 @@ class TestCheckMultiBountyResponse:
                 "total_reward": 5678,
             },
         ]
-        resp = make_mock_response(_make_multi_check_response(outcomes))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=_make_multi_check_response(outcomes))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         # Both reward amounts must appear in the embed (formatted with thousands sep)
@@ -3206,8 +3564,12 @@ class TestCheckMultiBountyResponse:
         assert "1,234" in all_text
         assert "5,678" in all_text
 
-    def test_check_single_outcome_capture_sends_public_embed(self, mock_bounty_cog, make_mock_response):
+    def test_check_single_outcome_capture_sends_public_embed(self, mock_bounty_cog, request):
         """Single-outcome capture sends a single public embed with the full payout detail."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
         outcomes = [
             {
@@ -3220,10 +3582,12 @@ class TestCheckMultiBountyResponse:
                 "division": "gold",
             },
         ]
-        resp = make_mock_response(_make_multi_check_response(outcomes))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=_make_multi_check_response(outcomes))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -3262,18 +3626,27 @@ class TestCheckCommandEmptySystemsPassthrough:
         """Ensure _systems is empty (simulates failed preload)."""
         mock_bounty_cog._systems_cache.set("all", [])
 
-    def test_check_empty_systems_does_not_send_unknown_system_error(self, mock_bounty_cog, make_mock_response):
+    def test_check_empty_systems_does_not_send_unknown_system_error(self, mock_bounty_cog, request):
         """/check with _systems=[] must NOT return the 'Unknown system' ephemeral error.
 
         The guard `if self._systems:` prevents resolve_system_name from running when
         the list is empty, so the typed value passes through to bot-core instead of
         being rejected client-side.
-        """
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("not_found"))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "SomeSystem"))
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx, pinned to the real POST /bounties/check URL.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=_make_check_response("not_found"))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "SomeSystem"))
 
         # Must have sent exactly one followup — the bot-core response embed, NOT an error.
         interaction.followup.send.assert_awaited_once()
@@ -3285,39 +3658,51 @@ class TestCheckCommandEmptySystemsPassthrough:
             "The empty _systems guard is not working — 'Unknown system' was returned instead of passthrough."
         )
 
-    def test_check_empty_systems_does_not_call_resolve_system_name(self, mock_bounty_cog, make_mock_response):
+    def test_check_empty_systems_does_not_call_resolve_system_name(self, mock_bounty_cog, request):
         """/check with _systems=[] must skip the resolve_system_name call entirely.
 
         Verifies the guard `if self._systems:` prevents the resolution function
         from being called when the systems list has not been loaded.
         """
-        interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("incorrect"))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        with patch("cogs.bountyCog.resolve_system_name") as mock_resolve:
-            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "AnySystem"))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=_make_check_response("incorrect"))
+            )
+            with patch("cogs.bountyCog.resolve_system_name") as mock_resolve:
+                asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "AnySystem"))
 
         # resolve_system_name must NOT have been called when _systems is empty.
         mock_resolve.assert_not_called()
 
-    def test_check_empty_systems_passes_typed_value_to_bot_core(self, mock_bounty_cog, make_mock_response):
+    def test_check_empty_systems_passes_typed_value_to_bot_core(self, mock_bounty_cog, request):
         """/check with _systems=[] passes the user's typed string unchanged to the API.
 
         Verifies that the POST to /bounties/check carries exactly the system name
         the user typed, not a resolved canonical form and not empty/None.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("not_found"))
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "UnknownStarSystem"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            check_route = mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=_make_check_response("not_found"))
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "UnknownStarSystem"))
 
-        # Verify the POST was called and the typed name was forwarded.
-        mock_bounty_cog.http_client.post.assert_awaited_once()
-        call_kwargs = mock_bounty_cog.http_client.post.call_args[1]
-        assert call_kwargs["json"]["system_name"] == "UnknownStarSystem", (
-            f"Expected system_name='UnknownStarSystem' in POST body but got: {call_kwargs['json']!r}"
+            # Verify the POST was called and the typed name was forwarded.
+            posted_json = json.loads(check_route.calls[0].request.content)
+
+        assert posted_json["system_name"] == "UnknownStarSystem", (
+            f"Expected system_name='UnknownStarSystem' in POST body but got: {posted_json!r}"
         )
 
 
@@ -3334,18 +3719,24 @@ class TestCheckCommandGuildAndPlayerErrors:
         """Populate _systems so resolve_system_name can resolve the test system names."""
         mock_bounty_cog._systems_cache.set("all", ["Alpha"])
 
-    def test_check_guild_not_configured_shows_setup_message(self, mock_bounty_cog):
-        """/check guild-not-configured 400 should show setup message."""
+    def test_check_guild_not_configured_shows_setup_message(self, mock_bounty_cog, request):
+        """/check guild-not-configured 400 should show setup message.
+
+        The guild-not-configured 400 is raised by `_get_player_id()`'s own POST
+        /players/ call (re-raised for the check() handler to catch) — the cog
+        never reaches POST /bounties/check on this path.
+        """
         import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Guild not configured"}
-        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(400, json={"detail": "Guild not configured"})
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -3379,20 +3770,18 @@ class TestCheckCommandGuildAndPlayerErrors:
         assert call_kwargs[1].get("ephemeral", False)
         assert "unknown system" in call_kwargs[0][0].lower()
 
-    def test_check_429_status_code_on_response(self, mock_bounty_cog, make_mock_response):
+    def test_check_429_status_code_on_response(self, mock_bounty_cog, request):
         """/check with HTTP 429 (rate-limited) from the bounties/check POST shows cooldown."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
         mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
 
-        error_response = MagicMock()
-        error_response.status_code = 429
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("429 Too Many Requests", request=MagicMock(), response=error_response)
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(return_value=httpx.Response(429, json={}))
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -3418,8 +3807,17 @@ class TestCheckCommandTierRoleUpdate:
         """Populate _systems so resolve_system_name can resolve the test system names."""
         mock_bounty_cog._systems_cache.set("all", ["Sol"])
 
-    def test_check_new_tier_triggers_role_update_call(self, mock_bounty_cog, make_mock_response):
-        """/check when new_tier is in response should attempt to fetch guild config."""
+    def test_check_new_tier_triggers_role_update_call(self, mock_bounty_cog, request):
+        """/check when new_tier is in response should attempt to fetch guild config.
+
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx, pinned to the real POST /bounties/check
+        and GET /config/guild/{guild_id} URLs.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
         # Set up guild and user with roles
         interaction.guild = MagicMock()
@@ -3437,28 +3835,31 @@ class TestCheckCommandTierRoleUpdate:
             "reward": 500,
             "combat_won": True,
         }
-        check_resp = make_mock_response(check_resp_data)
-
         config_resp_data = {
             "bronze_role_id": 101,
             "silver_role_id": 102,
             "gold_role_id": 103,
             "platinum_role_id": 104,
         }
-        config_resp = make_mock_response(config_resp_data)
 
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=check_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=check_resp_data)
+            )
+            config_route = mock_router.get(f"{_BOT_CORE_URL}/config/guild/{interaction.guild_id}").mock(
+                return_value=httpx.Response(200, json=config_resp_data)
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         # Verify the config GET was called to look up role IDs
-        mock_bounty_cog.http_client.get.assert_awaited_once()
-        get_call_url = str(mock_bounty_cog.http_client.get.call_args[0][0])
-        assert "config/guild" in get_call_url
+        assert config_route.call_count == 1
 
-    def test_check_new_tier_adds_new_role_when_found(self, mock_bounty_cog, make_mock_response):
+    def test_check_new_tier_adds_new_role_when_found(self, mock_bounty_cog, request):
         """/check tier update adds new role when it exists and isn't already assigned."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
         interaction.guild = MagicMock()
 
@@ -3484,20 +3885,25 @@ class TestCheckCommandTierRoleUpdate:
             "reward": 500,
             "combat_won": True,
         }
-        check_resp = make_mock_response(check_resp_data)
-        config_resp = make_mock_response(
-            {"silver_role_id": 102, "bronze_role_id": 101, "gold_role_id": 103, "platinum_role_id": 104}
-        )
 
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=check_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        config_data = {"silver_role_id": 102, "bronze_role_id": 101, "gold_role_id": 103, "platinum_role_id": 104}
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=check_resp_data)
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/config/guild/{interaction.guild_id}").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         interaction.user.add_roles.assert_awaited_once_with(new_role, reason="BountyBot promoted to silver")
 
-    def test_check_new_tier_config_failure_doesnt_crash(self, mock_bounty_cog, make_mock_response):
+    def test_check_new_tier_config_failure_doesnt_crash(self, mock_bounty_cog, request):
         """/check when config fetch fails during tier role update should not crash."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
         interaction.guild = MagicMock()
         interaction.user.roles = []
@@ -3512,13 +3918,16 @@ class TestCheckCommandTierRoleUpdate:
             "reward": 500,
             "combat_won": True,
         }
-        check_resp = make_mock_response(check_resp_data)
 
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=check_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("config service down"))
-
-        # Should not raise — error is swallowed with a warning log
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=check_resp_data)
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/config/guild/{interaction.guild_id}").mock(
+                side_effect=RuntimeError("config service down")
+            )
+            # Should not raise — error is swallowed with a warning log
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         interaction.followup.send.assert_awaited_once()
 
@@ -3529,21 +3938,34 @@ class TestCheckCommandTierRoleUpdate:
 
 
 class TestBountiesCommandHttpErrors:
-    """Tests for /bounties HTTP error paths."""
+    """Tests for /bounties HTTP error paths.
 
-    def test_bounties_guild_not_configured_shows_setup_message(self, mock_bounty_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _cold_player_cache(self, mock_bounty_cog):
+        """See TestBountiesCommand._cold_player_cache for rationale."""
+        import utils.autocomplete_state as ac_state
+
+        if ac_state.player_cache is not None:
+            ac_state.player_cache.invalidate((987654321, 111111111))
+
+    def test_bounties_guild_not_configured_shows_setup_message(self, mock_bounty_cog, request):
         """/bounties guild-not-configured 400 (from player resolve) should show setup message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Guild not configured"}
-        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
-        # POST /players/ raises the guild-not-configured error
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            # POST /players/ raises the guild-not-configured error
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(400, json={"detail": "Guild not configured"})
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -3551,20 +3973,20 @@ class TestBountiesCommandHttpErrors:
         msg = call_kwargs[0][0]
         assert "admin_setup" in msg.lower() or "set up" in msg.lower()
 
-    def test_bounties_http_status_error_non_guild_uses_report_api_error(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_http_status_error_non_guild_uses_report_api_error(self, mock_bounty_cog, request):
         """/bounties non-guild-config HTTP error on GET should send embed via report_api_error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        error_response = MagicMock()
-        error_response.status_code = 500
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json={"id": 1, "tier": "Bronze"})
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -3573,18 +3995,24 @@ class TestBountiesCommandHttpErrors:
         assert embed is not None
         assert "bot-core" not in (embed.description or "")
 
-    def test_bounties_embed_contains_bounty_fields(self, mock_bounty_cog, make_mock_response):
+    def test_bounties_embed_contains_bounty_fields(self, mock_bounty_cog, request):
         """/bounties embed fields include criminal name and reward details."""
-        interaction = _create_mock_interaction()
-        bounty_list = [
-            _make_bounty_public(1, "VoidShadow", "gold", reward=9999, reward_per_sys=1000),
-        ]
-        player_resp = make_mock_response({"id": 1, "tier": "Gold"})
-        bounty_resp = make_mock_response(bounty_list)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        import httpx
+        import respx
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+        _with_real_http_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json={"id": 1, "tier": "Gold"})
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/").mock(
+                return_value=httpx.Response(
+                    200, json=[_make_bounty_public(1, "VoidShadow", "gold", reward=9999, reward_per_sys=1000)]
+                )
+            )
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         field_names = [f.name for f in embed.fields]
@@ -3864,18 +4292,17 @@ class TestBuildMultiCheckEmbedWithCombat:
 class TestRouteCommandHttpErrors:
     """Tests for /route non-404 HTTP error path."""
 
-    def test_route_http_status_error_non_404_uses_report_api_error(self, mock_bounty_cog):
+    def test_route_http_status_error_non_404_uses_report_api_error(self, mock_bounty_cog, request):
         """/route non-404 HTTP error should send embed via report_api_error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        error_response = MagicMock()
-        error_response.status_code = 500
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/route").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -3893,18 +4320,17 @@ class TestRouteCommandHttpErrors:
 class TestCriminalLoadoutHttpErrors:
     """Tests for /criminal-loadout non-404 HTTP error path."""
 
-    def test_criminal_loadout_http_status_error_non_404_uses_report_api_error(self, mock_bounty_cog):
+    def test_criminal_loadout_http_status_error_non_404_uses_report_api_error(self, mock_bounty_cog, request):
         """/criminal-loadout non-404 HTTP error should send embed via report_api_error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction()
-        error_response = MagicMock()
-        error_response.status_code = 500
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/bounties/1/loadout").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -5061,8 +5487,16 @@ class TestBuildMultiCheckEmbedPayoutBreakdown:
     # End-to-end: check command with multi-capture and payout_breakdown
     # -----------------------------------------------------------------------
 
-    def test_check_multi_capture_embed_shows_payout_breakdown_per_bounty(self, mock_bounty_cog, make_mock_response):
-        """/check multi-capture response with payout_breakdown shows per-bounty payout fields."""
+    def test_check_multi_capture_embed_shows_payout_breakdown_per_bounty(self, mock_bounty_cog, request):
+        """/check multi-capture response with payout_breakdown shows per-bounty payout fields.
+
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx, pinned to the real POST /bounties/check URL.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_bounty_cog, request)
         mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
         mock_bounty_cog._systems_cache.set("all", ["Magnetar"])
         interaction = _create_mock_interaction()
@@ -5095,10 +5529,12 @@ class TestBuildMultiCheckEmbedPayoutBreakdown:
                 },
             ]
         )
-        resp = make_mock_response(response_data)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Magnetar"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/check").mock(
+                return_value=httpx.Response(200, json=response_data)
+            )
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Magnetar"))
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]

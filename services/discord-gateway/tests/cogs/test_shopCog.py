@@ -1,6 +1,7 @@
 """Tests for shopCog — boosting coverage from 0% to 60%+."""
 
 import asyncio
+import json
 import os
 import sys
 import types
@@ -73,6 +74,22 @@ def _evict_discord_modules():
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
+
+
+_BOT_CORE_URL = "http://bot-core:8000/api/v1"
+
+
+def _with_real_http_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+    House pattern — see this file's own `TestShopCommandRespx._with_real_client`
+    and test_adminCog.py's `_with_real_http_client`.
+    """
+    import httpx
+
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
 
 
 def _create_mock_interaction(user_id=111111111, guild_id=987654321):
@@ -216,24 +233,39 @@ class TestCogUnload:
 
 
 class TestGetPlayerDataHelper:
-    """Tests for the _get_player_data helper method."""
+    """Tests for the _get_player_data helper method.
 
-    def test_get_player_data_success(self, mock_shop_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real POST /players/ URL.
+    """
+
+    def test_get_player_data_success(self, mock_shop_cog, request):
         """_get_player_data should return player dict on success."""
-        resp = make_mock_response(_make_player_data())
-        mock_shop_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        result = asyncio.run(mock_shop_cog._get_player_data(111111111, 987654321))
+        _with_real_http_client(mock_shop_cog, request)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data())
+            )
+            result = asyncio.run(mock_shop_cog._get_player_data(111111111, 987654321))
+
         assert result is not None
         assert result["tier"] == "Bronze"
 
-    def test_get_player_data_api_error_returns_none(self, mock_shop_cog):
+    def test_get_player_data_api_error_returns_none(self, mock_shop_cog, request):
         """_get_player_data should return None on API error."""
         import httpx
+        import respx
 
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=httpx.HTTPError("connection error"))
+        _with_real_http_client(mock_shop_cog, request)
 
-        result = asyncio.run(mock_shop_cog._get_player_data(111111111, 987654321))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=httpx.HTTPError("connection error"))
+            result = asyncio.run(mock_shop_cog._get_player_data(111111111, 987654321))
+
         assert result is None
 
     def test_get_player_data_generic_exception_returns_none(self, mock_shop_cog):
@@ -316,24 +348,48 @@ class TestTierAutocomplete:
 
 
 class TestShopCommand:
-    """Tests for the /shop slash command."""
+    """Tests for the /shop slash command.
 
-    def test_shop_happy_path_with_items(self, mock_shop_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real POST /players/ and
+    GET /shops/guild/{guild_id}/tier/{tier} URLs.
+
+    Cache note: these tests call `shop.callback(..., item_type=<truthy string>)`
+    (a pre-existing quirk — the positional arg is named `item_type` in the
+    current source but several tests here pass tier-like strings such as
+    "Bronze"/"Silver"/"Gold" for it; harmless because any truthy `item_type`
+    unconditionally bypasses `_shop_cache` and goes straight to HTTP — see
+    shopCog.py's `if not item_type: ... else: # item_type filter requires
+    HTTP`). Tests that omit item_type (pass `None`) DO hit `_shop_cache.peek()`
+    first; since `mock_shop_cog` is module-scoped and shared across the whole
+    file, those tests explicitly `.invalidate()` their cache key first so the
+    HTTP path is exercised deterministically regardless of what ran earlier in
+    the module (mirrors the pattern already used in
+    `TestShopCommandCachePeekFirst`).
+    """
+
+    def test_shop_happy_path_with_items(self, mock_shop_cog, request):
         """shop should display ephemeral embed when items are available (B.69)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=2000))
-        items_resp = make_mock_response(
-            [
-                _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500),
-                _make_shop_item(2, "ShieldModule", "module", "Bronze", 300),
-            ]
-        )
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=2000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500),
+                        _make_shop_item(2, "ShieldModule", "module", "Bronze", 300),
+                    ],
+                )
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
@@ -344,24 +400,29 @@ class TestShopCommand:
         embed = call_kwargs["embed"]
         assert len(embed.fields) > 0
 
-    def test_shop_empty_shop(self, mock_shop_cog, make_mock_response):
+    def test_shop_empty_shop(self, mock_shop_cog, request):
         """shop should send ephemeral message when shop is empty."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze"))
-        items_resp = make_mock_response([])
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze"))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "empty" in call_kwargs[0][0].lower()
 
-    def test_shop_player_not_found_via_http_error(self, mock_shop_cog):
+    def test_shop_player_not_found_via_http_error(self, mock_shop_cog, request):
         """shop should send 'Player not found' when the player API returns a non-guild HTTP error.
 
         The /shop command no longer accepts a tier parameter — it always uses the
@@ -369,92 +430,104 @@ class TestShopCommand:
         verifies the player-not-found path via a 404 HTTPStatusError.
         """
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        error_resp = MagicMock()
-        error_resp.status_code = 404
-        mock_shop_cog.http_client.post = AsyncMock(
-            side_effect=httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_resp)
-        )
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(404, json={}))
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "Player not found" in call_kwargs[0][0]
 
-    def test_shop_player_not_found(self, mock_shop_cog):
+    def test_shop_player_not_found(self, mock_shop_cog, request):
         """shop should send error when player not found."""
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=RuntimeError("player error"))
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_shop_strict_same_tier_bronze_sees_bronze_shop(self, mock_shop_cog, make_mock_response):
+    def test_shop_strict_same_tier_bronze_sees_bronze_shop(self, mock_shop_cog, request):
         """Strict same-tier: Bronze player always sees the Bronze shop.
 
         The /shop command no longer accepts a tier parameter — the player's own
         tier is used unconditionally.  This test verifies that the GET request
         targets the Bronze-tier shop endpoint for a Bronze player.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze"))
-        items_resp = make_mock_response([_make_shop_item(1, "BronzeItem", "module", "Bronze", 100, 5, 1)])
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze"))
+            )
+            shop_route = mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[_make_shop_item(1, "BronzeItem", "module", "Bronze", 100, 5, 1)])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert send_kwargs.get("ephemeral", False)
-        # GET must target the player's own tier (Bronze), not any other tier
-        get_url = mock_shop_cog.http_client.get.call_args[0][0]
-        assert "/tier/Bronze" in get_url
+        # GET must target the player's own tier (Bronze), not any other tier — respx
+        # only registered a route at .../tier/Bronze, so a genuine call here proves it.
+        assert shop_route.called
         # Embed footer confirms the player's tier
         embed = send_kwargs["embed"]
         assert "Bronze" in (embed.footer.text or "")
 
-    def test_shop_http_status_error(self, mock_shop_cog, make_mock_response):
+    def test_shop_http_status_error(self, mock_shop_cog, request):
         """shop should handle HTTPStatusError gracefully."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze"))
-
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError("500 Error", request=MagicMock(), response=error_response)
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze"))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(500)
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_shop_generic_exception(self, mock_shop_cog, make_mock_response):
+    def test_shop_generic_exception(self, mock_shop_cog, request):
         """shop should handle generic exception gracefully."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze"))
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze"))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                side_effect=RuntimeError("boom")
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -462,77 +535,96 @@ class TestShopCommand:
 
     # R.1 — optional tier parameter defaulting to player's current tier
 
-    def test_shop_omit_tier_uses_player_tier_bronze(self, mock_shop_cog, make_mock_response):
+    def test_shop_omit_tier_uses_player_tier_bronze(self, mock_shop_cog, request):
         """R.1: /shop with no tier defaults to the invoker's current tier (Bronze)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
+        # item_type=None hits _shop_cache.peek() first; invalidate to force the HTTP path.
+        mock_shop_cog._shop_cache.invalidate((interaction.guild_id, "Bronze"))
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-        items_resp = make_mock_response([_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500)])
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        # Call with tier=None (omitted)
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=1000))
+            )
+            shop_route = mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500)])
+            )
+            # Call with tier=None (omitted)
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
 
         # Verify an embed was sent (not an error)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
-
         # Verify the API was called with the Bronze tier URL
-        get_call = mock_shop_cog.http_client.get.call_args
-        assert "Bronze" in get_call[0][0]
+        assert shop_route.called
 
-    def test_shop_omit_tier_uses_player_tier_gold(self, mock_shop_cog, make_mock_response):
+    def test_shop_omit_tier_uses_player_tier_gold(self, mock_shop_cog, request):
         """R.1: /shop with no tier defaults to the invoker's current tier (Gold)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
+        mock_shop_cog._shop_cache.invalidate((interaction.guild_id, "Gold"))
 
-        player_resp = make_mock_response(_make_player_data(tier="Gold", credits=5000))
-        items_resp = make_mock_response([_make_shop_item(1, "LaserCannon", "weapon", "Gold", 2000)])
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Gold", credits=5000))
+            )
+            shop_route = mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Gold").mock(
+                return_value=httpx.Response(200, json=[_make_shop_item(1, "LaserCannon", "weapon", "Gold", 2000)])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        assert shop_route.called
 
-        get_call = mock_shop_cog.http_client.get.call_args
-        assert "Gold" in get_call[0][0]
-
-    def test_shop_explicit_tier_still_works(self, mock_shop_cog, make_mock_response):
+    def test_shop_explicit_tier_still_works(self, mock_shop_cog, request):
         """R.1: explicitly passing a tier still works as before."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=2000))
-        items_resp = make_mock_response([_make_shop_item(1, "ShieldModule", "module", "Silver", 800)])
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Silver"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Silver", credits=2000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Silver").mock(
+                return_value=httpx.Response(200, json=[_make_shop_item(1, "ShieldModule", "module", "Silver", 800)])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Silver"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_shop_omit_tier_player_tier_missing_falls_back_to_bronze(self, mock_shop_cog, make_mock_response):
+    def test_shop_omit_tier_player_tier_missing_falls_back_to_bronze(self, mock_shop_cog, request):
         """R.1: if player.tier is missing/None, falls back to Bronze with a warning log."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
+        mock_shop_cog._shop_cache.invalidate((interaction.guild_id, "Bronze"))
 
         # Player data with no tier field
         player_data = _make_player_data(tier="Bronze", credits=500)
         del player_data["tier"]  # simulate missing field
-        player_resp = make_mock_response(player_data)
-        items_resp = make_mock_response([_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 300)])
 
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 300)])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
 
         # Should not error — fallback to Bronze
         interaction.followup.send.assert_awaited_once()
@@ -540,14 +632,18 @@ class TestShopCommand:
         # Should get an embed, not an error
         assert "embed" in call_kwargs
 
-    def test_shop_omit_tier_player_not_found_shows_error(self, mock_shop_cog):
+    def test_shop_omit_tier_player_not_found_shows_error(self, mock_shop_cog, request):
         """R.1: omitting tier but having no player data shows error message."""
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        # _get_player_data returns None on non-configured-guild
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
+        # _get_player_data returns None on non-configured-guild; the cog never
+        # reaches the shop GET.
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=RuntimeError("player error"))
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -560,20 +656,32 @@ class TestShopCommand:
 
 
 class TestBuyCommand:
-    """Tests for the /buy slash command."""
+    """Tests for the /buy slash command.
 
-    def test_buy_successful_purchase(self, mock_shop_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real POST /players/,
+    GET /shops/item/{id}, and POST /shops/purchase[-ship] URLs.
+    """
+
+    def test_buy_successful_purchase(self, mock_shop_cog, request):
         """buy should display success embed on valid purchase (non-ship item)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=2000))
-        item_resp = make_mock_response(_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10))
-        purchase_resp = make_mock_response(_make_transaction("LaserCannon", "weapon", 500, 1500))
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, purchase_resp])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=2000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/shops/purchase").mock(
+                return_value=httpx.Response(200, json=_make_transaction("LaserCannon", "weapon", 500, 1500))
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
@@ -584,86 +692,100 @@ class TestBuyCommand:
         assert "inventory" in embed.footer.text.lower()
         assert len(embed.fields) > 0 or embed.description
 
-    def test_buy_ship_calls_purchase_ship_endpoint(self, mock_shop_cog, make_mock_response):
+    def test_buy_ship_calls_purchase_ship_endpoint(self, mock_shop_cog, request):
         """buy a ship should call POST /shops/purchase-ship and show hangar footer."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        ship_item_resp = make_mock_response(_make_shop_item(2, "Eagle", "ship", "Bronze", 2000, 3))
-        ship_purchase_resp = make_mock_response(_make_transaction("Eagle", "ship", 2000, 3000))
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, ship_purchase_resp])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=ship_item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 2, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/2").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(2, "Eagle", "ship", "Bronze", 2000, 3))
+            )
+            # Registering a route ONLY at /shops/purchase-ship (not /shops/purchase)
+            # is itself the URL-contract assertion: a call to the wrong endpoint
+            # would go unmocked and raise, failing the test.
+            mock_router.post(f"{_BOT_CORE_URL}/shops/purchase-ship").mock(
+                return_value=httpx.Response(200, json=_make_transaction("Eagle", "ship", 2000, 3000))
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 2, 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-        # Verify it called purchase-ship endpoint
-        post_calls = mock_shop_cog.http_client.post.call_args_list
-        # Second post call should be to purchase-ship
-        purchase_call = post_calls[1]
-        assert "purchase-ship" in purchase_call[0][0]
-
         # Footer should say hangar for ship
         embed = call_kwargs["embed"]
         assert "hangar" in embed.footer.text.lower()
 
-    def test_buy_ship_purchase_data_has_sell_old_ship_false(self, mock_shop_cog, make_mock_response):
+    def test_buy_ship_purchase_data_has_sell_old_ship_false(self, mock_shop_cog, request):
         """Ship purchase request should include sell_old_ship: False."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        ship_item_resp = make_mock_response(_make_shop_item(2, "Eagle", "ship", "Bronze", 2000, 3))
-        ship_purchase_resp = make_mock_response(_make_transaction("Eagle", "ship", 2000, 3000))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/2").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(2, "Eagle", "ship", "Bronze", 2000, 3))
+            )
+            purchase_route = mock_router.post(f"{_BOT_CORE_URL}/shops/purchase-ship").mock(
+                return_value=httpx.Response(200, json=_make_transaction("Eagle", "ship", 2000, 3000))
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 2, 1))
 
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, ship_purchase_resp])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=ship_item_resp)
+            # Verify the purchase-ship payload
+            purchase_body = json.loads(purchase_route.calls[0].request.content)
 
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 2, 1))
+        assert purchase_body["sell_old_ship"] is False
+        assert purchase_body["shop_item_id"] == 2
 
-        # Verify the purchase-ship payload
-        post_calls = mock_shop_cog.http_client.post.call_args_list
-        purchase_call_kwargs = post_calls[1][1]
-        assert purchase_call_kwargs["json"]["sell_old_ship"] is False
-        assert purchase_call_kwargs["json"]["shop_item_id"] == 2
-
-    def test_buy_insufficient_credits(self, mock_shop_cog, make_mock_response):
+    def test_buy_insufficient_credits(self, mock_shop_cog, request):
         """buy should send error when player has insufficient credits."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        # Player only has 100 credits but item costs 500
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=100))
-        item_resp = make_mock_response(_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10))
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            # Player only has 100 credits but item costs 500
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=100))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10))
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "Insufficient credits" in call_kwargs[0][0]
 
-    def test_buy_item_not_found_404(self, mock_shop_cog, make_mock_response):
+    def test_buy_item_not_found_404(self, mock_shop_cog, request):
         """buy should handle 404 for missing shop item."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=2000))
-
-        error_response = MagicMock()
-        error_response.status_code = 404
-        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 999, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=2000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/999").mock(return_value=httpx.Response(404))
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 999, 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -681,71 +803,85 @@ class TestBuyCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Quantity" in call_kwargs[0][0]
 
-    def test_buy_player_not_found(self, mock_shop_cog):
+    def test_buy_player_not_found(self, mock_shop_cog, request):
         """buy should send error when player not found."""
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=RuntimeError("player error"))
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_buy_insufficient_stock(self, mock_shop_cog, make_mock_response):
+    def test_buy_insufficient_stock(self, mock_shop_cog, request):
         """buy should reject purchase when stock is insufficient."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        # Item only has 2 in stock but user wants 5
-        item_resp = make_mock_response(_make_shop_item(1, "RareCannon", "weapon", "Bronze", 100, 2))
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 5))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            # Item only has 2 in stock but user wants 5
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(1, "RareCannon", "weapon", "Bronze", 100, 2))
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 5))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "stock" in call_kwargs[0][0].lower()
 
-    def test_buy_tier_access_locked(self, mock_shop_cog, make_mock_response):
+    def test_buy_tier_access_locked(self, mock_shop_cog, request):
         """buy should reject purchase of item from higher tier."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        # Bronze player trying to buy a Gold item
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        item_resp = make_mock_response(_make_shop_item(1, "GoldLaser", "weapon", "Gold", 1000, 5))
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            # Bronze player trying to buy a Gold item
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(1, "GoldLaser", "weapon", "Gold", 1000, 5))
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_buy_api_400_error_with_detail(self, mock_shop_cog, make_mock_response):
+    def test_buy_api_400_error_with_detail(self, mock_shop_cog, request):
         """buy should display error detail from 400 response."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=2000))
-        item_resp = make_mock_response(_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10))
-
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Already owned"}
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=2000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/shops/purchase").mock(
+                return_value=httpx.Response(400, json={"detail": "Already owned"})
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1103,64 +1239,81 @@ class TestErrorHandlers:
 
 
 class TestShopCommandBranches:
-    """Additional tests for /shop covering uncovered branches."""
+    """Additional tests for /shop covering uncovered branches.
 
-    def test_shop_with_item_type_filter(self, mock_shop_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx. All of these pass a truthy `item_type`
+    (a real item-type string, or a tier-like string per the pre-existing quirk
+    noted on TestShopCommand), so `shop()` always bypasses `_shop_cache` and
+    goes straight to HTTP — no cache invalidation needed here.
+    """
+
+    def test_shop_with_item_type_filter(self, mock_shop_cog, request):
         """shop with item_type should pass params and show filtered title."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=3000))
-        items_resp = make_mock_response(
-            [
-                _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 5, 2),
-            ]
-        )
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Silver", credits=3000))
+            )
+            shop_route = mock_router.get(
+                f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Silver", params={"item_type": "weapon"}
+            ).mock(
+                return_value=httpx.Response(
+                    200, json=[_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 5, 2)]
+                )
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="weapon"))
 
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="weapon"))
-
-        # Verify item_type param was passed to the GET request
-        call_kwargs = mock_shop_cog.http_client.get.call_args[1]
-        assert call_kwargs["params"] == {"item_type": "weapon"}
-
+        # respx only registered a route with params={"item_type": "weapon"} — a genuine
+        # call proves the param was passed exactly as expected.
+        assert shop_route.called
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shop_empty_with_item_type_filter(self, mock_shop_cog, make_mock_response):
+    def test_shop_empty_with_item_type_filter(self, mock_shop_cog, request):
         """shop empty message should include item_type filter text."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-        items_resp = make_mock_response([])
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="ship"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=1000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="ship"))
 
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]
         assert "ship" in msg.lower()
         assert "empty" in msg.lower()
 
-    def test_shop_item_quantity_greater_than_one(self, mock_shop_cog, make_mock_response):
+    def test_shop_item_quantity_greater_than_one(self, mock_shop_cog, request):
         """Items with quantity > 1 should show 'xN' in display."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        items_resp = make_mock_response(
-            [
-                _make_shop_item(1, "BulkLaser", "weapon", "Bronze", 100, 5, 2),
-            ]
-        )
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[_make_shop_item(1, "BulkLaser", "weapon", "Bronze", 100, 5, 2)])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -1170,21 +1323,22 @@ class TestShopCommandBranches:
         # quantity=5 → shown as a pipe-delimited 'x5' field (not run together with tech level)
         assert " | x5" in all_text, f"Expected pipe-delimited '| x5' in:\n{all_text}"
 
-    def test_shop_item_quantity_one_no_suffix(self, mock_shop_cog, make_mock_response):
+    def test_shop_item_quantity_one_no_suffix(self, mock_shop_cog, request):
         """Items with quantity == 1 should not show 'x1'."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        items_resp = make_mock_response(
-            [
-                _make_shop_item(1, "SingleItem", "weapon", "Bronze", 100, 1, 3),
-            ]
-        )
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[_make_shop_item(1, "SingleItem", "weapon", "Bronze", 100, 1, 3)])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -1194,39 +1348,46 @@ class TestShopCommandBranches:
         assert "x1" not in all_text, f"Expected no 'x1' token for singleton stock, got:\n{all_text}"
         assert " | T3" in all_text, f"Expected pipe-delimited '| T3' tech level in:\n{all_text}"
 
-    def test_shop_item_no_tech_level(self, mock_shop_cog, make_mock_response):
+    def test_shop_item_no_tech_level(self, mock_shop_cog, request):
         """Items with tech_level=None should display empty tech string."""
-        interaction = _create_mock_interaction()
+        import httpx
+        import respx
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        _with_real_http_client(mock_shop_cog, request)
+        interaction = _create_mock_interaction()
 
         item_no_tech = _make_shop_item(1, "BasicShip", "ship", "Bronze", 200, 3)
         item_no_tech["tech_level"] = None
 
-        items_resp = make_mock_response([item_no_tech])
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[item_no_tech])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
 
-    def test_shop_item_unaffordable_strikethrough(self, mock_shop_cog, make_mock_response):
+    def test_shop_item_unaffordable_strikethrough(self, mock_shop_cog, request):
         """Items the player can't afford should get strikethrough price."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=50))
-        items_resp = make_mock_response(
-            [
-                _make_shop_item(1, "ExpensiveLaser", "weapon", "Bronze", 9999, 3, 1),
-            ]
-        )
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=50))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(
+                    200, json=[_make_shop_item(1, "ExpensiveLaser", "weapon", "Bronze", 9999, 3, 1)]
+                )
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -1235,21 +1396,25 @@ class TestShopCommandBranches:
         all_text = " ".join(f.value for f in embed.fields if f.value)
         assert "~~" in all_text
 
-    def test_shop_more_than_10_items_truncated(self, mock_shop_cog, make_mock_response):
+    def test_shop_more_than_10_items_truncated(self, mock_shop_cog, request):
         """When a type has > 10 items, should show '... and N more items'."""
-        interaction = _create_mock_interaction()
+        import httpx
+        import respx
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=50000))
+        _with_real_http_client(mock_shop_cog, request)
+        interaction = _create_mock_interaction()
 
         # Create 15 items of same type
         many_items = [_make_shop_item(i, f"Weapon{i}", "weapon", "Bronze", 100 * i, 5, 1) for i in range(1, 16)]
 
-        items_resp = make_mock_response(many_items)
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=50000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=many_items)
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -1258,23 +1423,32 @@ class TestShopCommandBranches:
         all_text = " ".join(f.value for f in embed.fields if f.value) + (embed.description or "")
         assert "more" in all_text.lower() or "..." in all_text
 
-    def test_shop_multiple_item_types(self, mock_shop_cog, make_mock_response):
+    def test_shop_multiple_item_types(self, mock_shop_cog, request):
         """Shop with multiple item types should group them into separate fields."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Gold", credits=10000))
-        items_resp = make_mock_response(
-            [
-                _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 5, 1),
-                _make_shop_item(2, "ShieldModule", "module", "Bronze", 300, 3, 2),
-                _make_shop_item(3, "Eagle", "ship", "Bronze", 1000, 2, 1),
-            ]
-        )
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Gold", credits=10000))
+            )
+            # Player tier is "Gold" — the URL always targets the player's OWN tier
+            # (`tier` in shopCog.py), independent of the truthy `item_type` positional
+            # arg ("Bronze" here) used only as the ?item_type= filter param.
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Gold").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 5, 1),
+                        _make_shop_item(2, "ShieldModule", "module", "Bronze", 300, 3, 2),
+                        _make_shop_item(3, "Eagle", "ship", "Bronze", 1000, 2, 1),
+                    ],
+                )
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -1300,64 +1474,74 @@ class TestBuyCommandBranches:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Quantity" in call_kwargs[0][0]
 
-    def test_buy_multi_quantity_success(self, mock_shop_cog, make_mock_response):
+    def test_buy_multi_quantity_success(self, mock_shop_cog, request):
         """buy with quantity > 1 should calculate total cost correctly."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        item_resp = make_mock_response(_make_shop_item(1, "Ammo", "weapon", "Bronze", 100, 50))
-        purchase_resp = make_mock_response(_make_transaction("Ammo", "weapon", 300, 4700))
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, purchase_resp])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 3))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(1, "Ammo", "weapon", "Bronze", 100, 50))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/shops/purchase").mock(
+                return_value=httpx.Response(200, json=_make_transaction("Ammo", "weapon", 300, 4700))
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 3))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_buy_400_error_json_parse_fails(self, mock_shop_cog, make_mock_response):
+    def test_buy_400_error_json_parse_fails(self, mock_shop_cog, request):
         """buy 400 error where response.json() fails should fallback message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        item_resp = make_mock_response(_make_shop_item(1, "Laser", "weapon", "Bronze", 500, 10))
-
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.side_effect = ValueError("invalid json")
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(1, "Laser", "weapon", "Bronze", 500, 10))
+            )
+            # Real httpx.Response with a body that is not valid JSON — resp.json()
+            # genuinely raises, exercising the real fallback path (not an injected mock).
+            mock_router.post(f"{_BOT_CORE_URL}/shops/purchase").mock(
+                return_value=httpx.Response(400, content=b"not json")
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "Invalid purchase request" in call_kwargs[0][0]
 
-    def test_buy_non_400_404_http_error(self, mock_shop_cog, make_mock_response):
+    def test_buy_non_400_404_http_error(self, mock_shop_cog, request):
         """buy with 500 HTTP error should show generic API error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        item_resp = make_mock_response(_make_shop_item(1, "Laser", "weapon", "Bronze", 500, 10))
-
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError("500 Internal Server Error", request=MagicMock(), response=error_response)
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(1, "Laser", "weapon", "Bronze", 500, 10))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/shops/purchase").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -1368,16 +1552,20 @@ class TestBuyCommandBranches:
         assert "bot-core" not in (embed.description or "")
         assert "http://" not in (embed.description or "")
 
-    def test_buy_generic_exception(self, mock_shop_cog, make_mock_response):
+    def test_buy_generic_exception(self, mock_shop_cog, request):
         """buy should handle generic exception gracefully."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected"))
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(side_effect=RuntimeError("unexpected"))
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1397,18 +1585,32 @@ class TestBuyItemTypeFieldRendering:
     Site 1 fix: transaction["item_type"].replace("_", " ").title()
     """
 
-    def _run_buy_with_item_type(self, mock_shop_cog, make_mock_response, item_type):
-        """Helper: run /buy for a given item_type and return the success embed."""
+    def _run_buy_with_item_type(self, mock_shop_cog, request, item_type):
+        """Helper: run /buy for a given item_type and return the success embed.
+
+        TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+        accept-anything AsyncMock to respx.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        item_resp = make_mock_response(_make_shop_item(1, "TestItem", item_type, "Bronze", 500, 10))
-        purchase_resp = make_mock_response(_make_transaction("TestItem", item_type, 500, 4500))
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, purchase_resp])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
-
-        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+        purchase_url = (
+            f"{_BOT_CORE_URL}/shops/purchase-ship" if item_type == "ship" else f"{_BOT_CORE_URL}/shops/purchase"
+        )
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/item/1").mock(
+                return_value=httpx.Response(200, json=_make_shop_item(1, "TestItem", item_type, "Bronze", 500, 10))
+            )
+            mock_router.post(purchase_url).mock(
+                return_value=httpx.Response(200, json=_make_transaction("TestItem", item_type, 500, 4500))
+            )
+            asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -1421,36 +1623,36 @@ class TestBuyItemTypeFieldRendering:
         assert field is not None, "Success embed must contain an 'Item Type' field"
         return field.value
 
-    def test_buy_primary_weapon_item_type_renders_without_underscore(self, mock_shop_cog, make_mock_response):
+    def test_buy_primary_weapon_item_type_renders_without_underscore(self, mock_shop_cog, request):
         """DEF-CLEANUP-001 site 1: /buy primary_weapon → 'Primary Weapon' (no underscore)."""
-        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "primary_weapon")
+        embed = self._run_buy_with_item_type(mock_shop_cog, request, "primary_weapon")
         value = self._get_item_type_field(embed)
         assert "_" not in value, f"Item Type field must not contain underscores, got: {value!r}"
         assert value == "Primary Weapon", f"Expected 'Primary Weapon', got: {value!r}"
 
-    def test_buy_secondary_weapon_item_type_renders_without_underscore(self, mock_shop_cog, make_mock_response):
+    def test_buy_secondary_weapon_item_type_renders_without_underscore(self, mock_shop_cog, request):
         """DEF-CLEANUP-001 site 1: /buy secondary_weapon → 'Secondary Weapon' (no underscore)."""
-        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "secondary_weapon")
+        embed = self._run_buy_with_item_type(mock_shop_cog, request, "secondary_weapon")
         value = self._get_item_type_field(embed)
         assert "_" not in value, f"Item Type field must not contain underscores, got: {value!r}"
         assert value == "Secondary Weapon", f"Expected 'Secondary Weapon', got: {value!r}"
 
-    def test_buy_turret_weapon_item_type_renders_without_underscore(self, mock_shop_cog, make_mock_response):
+    def test_buy_turret_weapon_item_type_renders_without_underscore(self, mock_shop_cog, request):
         """DEF-CLEANUP-001 site 1: /buy turret_weapon → 'Turret Weapon' (no underscore)."""
-        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "turret_weapon")
+        embed = self._run_buy_with_item_type(mock_shop_cog, request, "turret_weapon")
         value = self._get_item_type_field(embed)
         assert "_" not in value, f"Item Type field must not contain underscores, got: {value!r}"
         assert value == "Turret Weapon", f"Expected 'Turret Weapon', got: {value!r}"
 
-    def test_buy_ship_item_type_unchanged(self, mock_shop_cog, make_mock_response):
+    def test_buy_ship_item_type_unchanged(self, mock_shop_cog, request):
         """Ship type has no underscore so title() is sufficient; verify still renders 'Ship'."""
-        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "ship")
+        embed = self._run_buy_with_item_type(mock_shop_cog, request, "ship")
         value = self._get_item_type_field(embed)
         assert value == "Ship", f"Expected 'Ship', got: {value!r}"
 
-    def test_buy_module_item_type_unchanged(self, mock_shop_cog, make_mock_response):
+    def test_buy_module_item_type_unchanged(self, mock_shop_cog, request):
         """Module type has no underscore; verify still renders 'Module'."""
-        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "module")
+        embed = self._run_buy_with_item_type(mock_shop_cog, request, "module")
         value = self._get_item_type_field(embed)
         assert value == "Module", f"Expected 'Module', got: {value!r}"
 
@@ -1467,25 +1669,28 @@ class TestShopFallbackLabel:
     The fix: type_labels.get(item_type_key, f"{item_type_key.replace('_', ' ').title()}s")
     """
 
-    def test_shop_unknown_item_type_primary_weapon_fallback_no_underscore(self, mock_shop_cog, make_mock_response):
+    def test_shop_unknown_item_type_primary_weapon_fallback_no_underscore(self, mock_shop_cog, request):
         """DEF-CLEANUP-001 site 2: Unknown type 'primary_weapon' falls back to label without underscore.
 
         Since 'primary_weapon' IS in type_labels, it returns the proper label. This verifies the
         known-type path still works after the fix.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        items_resp = make_mock_response(
-            [
-                _make_shop_item(1, "Nirai EX 1", "primary_weapon", "Bronze", 500, 5, 1),
-            ]
-        )
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(
+                    200, json=[_make_shop_item(1, "Nirai EX 1", "primary_weapon", "Bronze", 500, 5, 1)]
+                )
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -1501,24 +1706,27 @@ class TestShopFallbackLabel:
         assert "_" not in pw_field, f"Primary Weapons field name contains underscore: {pw_field!r}"
         assert pw_field == "Primary Weapons (1)", f"Expected 'Primary Weapons (1)', got: {pw_field!r}"
 
-    def test_shop_exotic_unknown_item_type_fallback_no_underscore(self, mock_shop_cog, make_mock_response):
+    def test_shop_exotic_unknown_item_type_fallback_no_underscore(self, mock_shop_cog, request):
         """DEF-CLEANUP-001 site 2: A fictional 'exotic_weapon' type not in type_labels falls back
         to 'Exotic Weapons' (no underscore). This exercises the fallback branch directly.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        # Inject an unknown type 'exotic_weapon' that is NOT in type_labels
-        items_resp = make_mock_response(
-            [
-                _make_shop_item(99, "Exotic Blaster", "exotic_weapon", "Bronze", 999, 1, 1),
-            ]
-        )
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            # Inject an unknown type 'exotic_weapon' that is NOT in type_labels
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(
+                    200, json=[_make_shop_item(99, "Exotic Blaster", "exotic_weapon", "Bronze", 999, 1, 1)]
+                )
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -1552,9 +1760,14 @@ def _make_sell_transaction(total_value=250, remaining_credits=1250, item_type="p
 
 
 class TestSellCommand:
-    """Tests for the /sell slash command."""
+    """Tests for the /sell slash command.
 
-    def test_sell_happy_path(self, mock_shop_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real POST /players/ and
+    POST /shops/sell URLs.
+    """
+
+    def test_sell_happy_path(self, mock_shop_cog, request):
         """A.42 regression: /sell Micro Gun MK I posts item_name only; no item_type or target_tier.
 
         The cog sends only {player_id, item_name, quantity} and the server resolves
@@ -1562,14 +1775,23 @@ class TestSellCommand:
         Also verifies that the success embed correctly displays the concrete type label
         returned by the server (DEF-A42-003 fix).
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-        sell_resp = make_mock_response(_make_sell_transaction(250, 1250, item_type="primary_weapon"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=1000))
+            )
+            sell_route = mock_router.post(f"{_BOT_CORE_URL}/shops/sell").mock(
+                return_value=httpx.Response(200, json=_make_sell_transaction(250, 1250, item_type="primary_weapon"))
+            )
+            asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "Micro Gun MK I", 1))
 
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, sell_resp])
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "Micro Gun MK I", 1))
+            # Verify POST payload has only player_id, item_name, quantity — no item_type, no target_tier
+            sent_json = json.loads(sell_route.calls[0].request.content)
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
@@ -1584,9 +1806,6 @@ class TestSellCommand:
             f"Expected 'Primary Weapon' label for primary_weapon concrete type, got: {item_type_field.value!r}"
         )
 
-        # Verify POST payload has only player_id, item_name, quantity — no item_type, no target_tier
-        sell_call = mock_shop_cog.http_client.post.call_args_list[1]
-        sent_json = sell_call[1]["json"]
         assert "item_name" in sent_json
         assert "quantity" in sent_json
         assert "item_type" not in sent_json
@@ -1614,78 +1833,79 @@ class TestSellCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Quantity" in call_kwargs[0][0]
 
-    def test_sell_player_not_found(self, mock_shop_cog):
+    def test_sell_player_not_found(self, mock_shop_cog, request):
         """sell should send error when player not found."""
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=RuntimeError("player error"))
+            asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "Player not found" in call_kwargs[0][0]
 
-    def test_sell_http_400_with_detail(self, mock_shop_cog, make_mock_response):
+    def test_sell_http_400_with_detail(self, mock_shop_cog, request):
         """sell 400 error should display error detail from response."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Item not in inventory"}
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=1000))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/shops/sell").mock(
+                return_value=httpx.Response(400, json={"detail": "Item not in inventory"})
+            )
+            asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "Item not in inventory" in call_kwargs[0][0]
 
-    def test_sell_http_400_json_parse_fails(self, mock_shop_cog, make_mock_response):
+    def test_sell_http_400_json_parse_fails(self, mock_shop_cog, request):
         """sell 400 error where response.json() fails should fallback."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.side_effect = ValueError("bad json")
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=1000))
+            )
+            # Real unparseable body — resp.json() genuinely raises.
+            mock_router.post(f"{_BOT_CORE_URL}/shops/sell").mock(return_value=httpx.Response(400, content=b"not json"))
+            asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "Invalid sell request" in call_kwargs[0][0]
 
-    def test_sell_non_400_http_error(self, mock_shop_cog, make_mock_response):
+    def test_sell_non_400_http_error(self, mock_shop_cog, request):
         """sell with 500 HTTP error should show generic API error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=1000))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/shops/sell").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -1696,31 +1916,42 @@ class TestSellCommand:
         assert "bot-core" not in (embed.description or "")
         assert "http://" not in (embed.description or "")
 
-    def test_sell_generic_exception(self, mock_shop_cog, make_mock_response):
+    def test_sell_generic_exception(self, mock_shop_cog, request):
         """sell should handle generic exception gracefully."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("boom")])
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=1000))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/shops/sell").mock(side_effect=RuntimeError("boom"))
+            asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_sell_multi_quantity(self, mock_shop_cog, make_mock_response):
+    def test_sell_multi_quantity(self, mock_shop_cog, request):
         """sell with quantity > 1 should work correctly."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=2000))
-        sell_resp = make_mock_response(_make_sell_transaction(750, 2750))
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, sell_resp])
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "ShieldModule", 3))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Silver", credits=2000))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/shops/sell").mock(
+                return_value=httpx.Response(200, json=_make_sell_transaction(750, 2750))
+            )
+            asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "ShieldModule", 3))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -2030,7 +2261,12 @@ class TestSellTypeMappings:
 
 
 class TestShopsCommand:
-    """Tests for the /shops slash command."""
+    """Tests for the /shops slash command.
+
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real GET
+    /shops/guild/{guild_id}/summary and POST /players/ URLs.
+    """
 
     def _make_shops_summary(self):
         """Return a minimal shops summary dict."""
@@ -2043,17 +2279,22 @@ class TestShopsCommand:
             },
         }
 
-    def test_shops_happy_path_with_player(self, mock_shop_cog, make_mock_response):
+    def test_shops_happy_path_with_player(self, mock_shop_cog, request):
         """shops should display ephemeral summary embed with player tier info (B.69)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        summary_resp = make_mock_response(self._make_shops_summary())
-        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=3000))
-
-        mock_shop_cog.http_client.get = AsyncMock(return_value=summary_resp)
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/summary").mock(
+                return_value=httpx.Response(200, json=self._make_shops_summary())
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Silver", credits=3000))
+            )
+            asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
@@ -2062,85 +2303,94 @@ class TestShopsCommand:
         # B.69: /shops overview response must be ephemeral
         assert send_kwargs.get("ephemeral") is True
 
-    def test_shops_without_player_data(self, mock_shop_cog, make_mock_response):
+    def test_shops_without_player_data(self, mock_shop_cog, request):
         """shops should still work when player data is not found."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        summary_resp = make_mock_response(self._make_shops_summary())
-
-        mock_shop_cog.http_client.get = AsyncMock(return_value=summary_resp)
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
-
-        asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/summary").mock(
+                return_value=httpx.Response(200, json=self._make_shops_summary())
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=RuntimeError("player error"))
+            asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shops_missing_tier_shows_empty(self, mock_shop_cog, make_mock_response):
+    def test_shops_missing_tier_shows_empty(self, mock_shop_cog, request):
         """Tiers not in summary should show 'Empty'."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        # Summary only has Bronze, missing Silver/Gold/Platinum
-        summary_resp = make_mock_response(
-            {
-                "total_items": 5,
-                "shops": {
-                    "Bronze": {"items": 5, "total_quantity": 20},
-                },
-            }
-        )
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=500))
-
-        mock_shop_cog.http_client.get = AsyncMock(return_value=summary_resp)
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            # Summary only has Bronze, missing Silver/Gold/Platinum
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/summary").mock(
+                return_value=httpx.Response(
+                    200, json={"total_items": 5, "shops": {"Bronze": {"items": 5, "total_quantity": 20}}}
+                )
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=500))
+            )
+            asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shops_player_tier_access_icons(self, mock_shop_cog, make_mock_response):
+    def test_shops_player_tier_access_icons(self, mock_shop_cog, request):
         """shops should show unlock/lock icons based on player tier."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        # All tiers present
-        summary_resp = make_mock_response(
-            {
-                "total_items": 30,
-                "shops": {
-                    "Bronze": {"items": 10, "total_quantity": 50},
-                    "Silver": {"items": 8, "total_quantity": 30},
-                    "Gold": {"items": 7, "total_quantity": 25},
-                    "Platinum": {"items": 5, "total_quantity": 10},
-                },
-            }
-        )
-
-        # Silver player — should unlock Bronze & Silver, lock Gold & Platinum
-        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=3000))
-
-        mock_shop_cog.http_client.get = AsyncMock(return_value=summary_resp)
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            # All tiers present
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/summary").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "total_items": 30,
+                        "shops": {
+                            "Bronze": {"items": 10, "total_quantity": 50},
+                            "Silver": {"items": 8, "total_quantity": 30},
+                            "Gold": {"items": 7, "total_quantity": 25},
+                            "Platinum": {"items": 5, "total_quantity": 10},
+                        },
+                    },
+                )
+            )
+            # Silver player — should unlock Bronze & Silver, lock Gold & Platinum
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Silver", credits=3000))
+            )
+            asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
 
-    def test_shops_http_status_error(self, mock_shop_cog):
+    def test_shops_http_status_error(self, mock_shop_cog, request):
         """shops should handle HTTPStatusError gracefully."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError("500 Error", request=MagicMock(), response=error_response)
-
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/summary").mock(
+                return_value=httpx.Response(500)
+            )
+            asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -2151,13 +2401,18 @@ class TestShopsCommand:
         assert "bot-core" not in (embed.description or "")
         assert "http://" not in (embed.description or "")
 
-    def test_shops_generic_exception(self, mock_shop_cog):
+    def test_shops_generic_exception(self, mock_shop_cog, request):
         """shops should handle generic exception gracefully."""
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
-
-        asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/summary").mock(
+                side_effect=RuntimeError("boom")
+            )
+            asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -2668,22 +2923,32 @@ class TestFormatShopItemStats:
 
 
 class TestShopCommandWithStats:
-    """Integration-style tests: /shop embed shows stats for items that have them."""
+    """Integration-style tests: /shop embed shows stats for items that have them.
 
-    def test_shop_weapon_with_dps_in_embed(self, mock_shop_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx.
+    """
+
+    def test_shop_weapon_with_dps_in_embed(self, mock_shop_cog, request):
         """Weapon item with dps field shows '| DPS: x.x' in the shop embed text."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
         # Item has dps field (new schema field)
         weapon_item = _make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500, 5, 1)
         weapon_item["dps"] = 92.3
-        items_resp = make_mock_response([weapon_item])
 
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[weapon_item])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -2693,21 +2958,27 @@ class TestShopCommandWithStats:
         all_text = " ".join(f.value for f in embed.fields if f.value)
         assert "DPS: 92.3" in all_text, f"Expected 'DPS: 92.3' in embed fields, got:\n{all_text}"
 
-    def test_shop_line_fields_pipe_delimited(self, mock_shop_cog, make_mock_response):
+    def test_shop_line_fields_pipe_delimited(self, mock_shop_cog, request):
         """Stat, tech level and quantity on the item line are all joined by ' | '
         (regression: tech level and quantity used to be space-separated and ran
         together as 'T1 x5')."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
         weapon_item = _make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500, 5, 1)
         weapon_item["dps"] = 92.3
-        items_resp = make_mock_response([weapon_item])
 
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[weapon_item])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         send_kwargs = interaction.followup.send.call_args[1]
         embed = send_kwargs["embed"]
@@ -2716,19 +2987,25 @@ class TestShopCommandWithStats:
         # No space-separated run-together (the original legibility bug)
         assert "T1 x5" not in all_text, f"Tech level and quantity must not run together, got:\n{all_text}"
 
-    def test_shop_module_with_shield_in_embed(self, mock_shop_cog, make_mock_response):
+    def test_shop_module_with_shield_in_embed(self, mock_shop_cog, request):
         """Shield module shows '| Shield: n' in the shop embed text."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
         shield_item = _make_shop_item(2, "ParticleShield", "module", "Bronze", 300, 3, 2)
         shield_item["shield"] = 380
-        items_resp = make_mock_response([shield_item])
 
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[shield_item])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -2736,19 +3013,25 @@ class TestShopCommandWithStats:
         all_text = " ".join(f.value for f in embed.fields if f.value)
         assert "Shield: 380" in all_text, f"Expected 'Shield: 380' in embed fields, got:\n{all_text}"
 
-    def test_shop_ship_with_hull_in_embed(self, mock_shop_cog, make_mock_response):
+    def test_shop_ship_with_hull_in_embed(self, mock_shop_cog, request):
         """Ship item shows '| Hull: n' in the shop embed text."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=10000))
         ship_item = _make_shop_item(3, "Eagle", "ship", "Bronze", 2000, 1, 1)
         ship_item["hull_hp"] = 1200
-        items_resp = make_mock_response([ship_item])
 
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=10000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[ship_item])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -2756,19 +3039,25 @@ class TestShopCommandWithStats:
         all_text = " ".join(f.value for f in embed.fields if f.value)
         assert "Hull: 1200" in all_text, f"Expected 'Hull: 1200' in embed fields, got:\n{all_text}"
 
-    def test_shop_item_without_stats_shows_no_pipe(self, mock_shop_cog, make_mock_response):
+    def test_shop_item_without_stats_shows_no_pipe(self, mock_shop_cog, request):
         """Item with no relevant stat (utility module) shows no ' | Stat' suffix."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
-        utility_item = _make_shop_item(4, "CabinModule", "module", "Bronze", 200, 2, 1)
         # No shield or armour keys — utility module
-        items_resp = make_mock_response([utility_item])
+        utility_item = _make_shop_item(4, "CabinModule", "module", "Bronze", 200, 2, 1)
 
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{interaction.guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[utility_item])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
@@ -2866,75 +3155,81 @@ class TestShopCommandCachePeekFirst:
             ac_state.player_cache = AutocompleteCache(name="player-test-shop")
         ac_state.player_cache.set((guild_id, user_id), {"id": 1, "tier": tier, "credits": 5000})
 
-    def test_shop_reads_from_shop_cache_no_http_get(self, mock_shop_cog, make_mock_response):
+    def test_shop_reads_from_shop_cache_no_http_get(self, mock_shop_cog, request):
         """/shop with no item_type uses _shop_cache.peek() when warm — no GET to bot-core.
 
         Player data still requires HTTP POST (player upsert), but the shop item fetch
         must come from the cache, not from bot-core GET.
+
+        TRUEUP-01: real httpx client + respx with NO GET route registered at all —
+        if the cog attempted an HTTP GET, respx's default assert_all_mocked=True
+        would raise (no route matches), which is a stronger guarantee than the old
+        `AsyncMock(side_effect=AssertionError(...))` tripwire.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
-
-        # Set up player POST response (needed to resolve tier)
-        player_data = _make_player_data(tier="Bronze", credits=5000)
-        player_resp = make_mock_response(player_data)
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
 
         # Pre-populate shop cache
         items = [_make_shop_item(1, "CachedItem", "module", "Bronze", 100)]
         mock_shop_cog._shop_cache.set((guild_id, "Bronze"), items)
 
-        # GET must NOT be called when cache is warm
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP GET must not be called"))
-
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            # Set up player POST response (needed to resolve tier) — no GET route.
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         embed = send_kwargs.get("embed")
         assert embed is not None, "Expected embed in cache-hit path for /shop"
 
-    def test_shop_falls_back_to_http_when_cache_cold(self, mock_shop_cog, make_mock_response):
+    def test_shop_falls_back_to_http_when_cache_cold(self, mock_shop_cog, request):
         """/shop falls back to HTTP GET when _shop_cache is cold (miss → None)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
-        player_data = _make_player_data(tier="Bronze", credits=5000)
-        player_resp = make_mock_response(player_data)
-        items = [_make_shop_item(1, "FallbackItem", "module", "Bronze", 100)]
-        items_resp = make_mock_response(items)
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
-
         # Ensure cache is cold
         mock_shop_cog._shop_cache.invalidate((guild_id, "Bronze"))
 
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            get_route = mock_router.get(f"{_BOT_CORE_URL}/shops/guild/{guild_id}/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[_make_shop_item(1, "FallbackItem", "module", "Bronze", 100)])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
 
-        # HTTP GET must have been called for the fallback
-        mock_shop_cog.http_client.get.assert_awaited_once()
+            # HTTP GET must have been called for the fallback
+            assert get_route.call_count == 1
+
         interaction.followup.send.assert_awaited_once()
 
-    def test_shop_with_item_type_always_uses_http(self, mock_shop_cog, make_mock_response):
+    def test_shop_with_item_type_always_uses_http(self, mock_shop_cog, request):
         """/shop with item_type filter always makes HTTP GET (cache stores unfiltered list).
 
         Even if the cache is warm for the tier, the item_type filter requires an HTTP
         call because the cache stores the unfiltered list (not per-type).
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_shop_cog, request)
         guild_id = 987654321
         user_id = 111111111
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
-
-        player_data = _make_player_data(tier="Bronze", credits=5000)
-        player_resp = make_mock_response(player_data)
-        filtered_items = [_make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500)]
-        items_resp = make_mock_response(filtered_items)
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
 
         # Pre-populate cache (but item_type filter should bypass it)
         all_items = [
@@ -2943,10 +3238,21 @@ class TestShopCommandCachePeekFirst:
         ]
         mock_shop_cog._shop_cache.set((guild_id, "Bronze"), all_items)
 
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="primary_weapon"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=5000))
+            )
+            get_route = mock_router.get(
+                f"{_BOT_CORE_URL}/shops/guild/{guild_id}/tier/Bronze", params={"item_type": "primary_weapon"}
+            ).mock(
+                return_value=httpx.Response(
+                    200, json=[_make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500)]
+                )
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="primary_weapon"))
 
-        # HTTP GET is ALWAYS called when item_type is specified
-        mock_shop_cog.http_client.get.assert_awaited_once()
+            # HTTP GET is ALWAYS called when item_type is specified
+            assert get_route.call_count == 1
 
 
 if __name__ == "__main__":

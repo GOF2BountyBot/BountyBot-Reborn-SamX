@@ -1,11 +1,12 @@
 """Tests for duelCog — covers /duel-challenge, /duel-accept, /duel-reject, autocomplete."""
 
 import asyncio
+import json
 import os
 import sys
 import types
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -69,6 +70,22 @@ def _evict_discord_modules():
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
+
+
+_BOT_CORE_URL = "http://bot-core:8000/api/v1"
+
+
+def _with_real_http_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+    House pattern — see test_adminCog.py's `_with_real_http_client` / this file's
+    own `TestDuelCommandRespx._with_real_client`.
+    """
+    import httpx
+
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
 
 
 def _create_mock_interaction(user_id=111111111, guild_id=987654321):
@@ -218,21 +235,45 @@ class TestDuelCogInitialization:
 
 
 class TestDuelChallengeCommand:
-    """Tests for the /duel-challenge slash command."""
+    """Tests for the /duel-challenge slash command.
 
-    def test_challenge_success_displays_embed(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off the shared `make_mock_response`
+    +  `AsyncMock(side_effect=[...])` responder to respx, pinned to the real
+    POST /players/ and POST /duels/challenge URLs. `test_challenge_success_displays_embed`
+    also asserts the challenge JSON body (challenger_id/target_id/stakes/guild_id) —
+    the specific follow-up item named in this task's brief.
+    """
+
+    def test_challenge_success_displays_embed(self, mock_duel_cog, request):
         """/duel-challenge success should display an embed with duel details."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
         target.mention = "<@200>"
 
-        # POST calls: 1) resolve challenger player ID, 2) resolve target player ID, 3) create duel
-        challenger_player_resp = make_mock_response({"id": 1})
-        target_player_resp = make_mock_response({"id": 2})
-        duel_resp = make_mock_response(_make_mock_duel(duel_id=1, challenger_id=1, target_id=2))
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, duel_resp])
+        with respx.mock(assert_all_called=True) as mock_router:
+            players_route = mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                side_effect=[httpx.Response(200, json={"id": 1}), httpx.Response(200, json={"id": 2})]
+            )
+            challenge_route = mock_router.post(f"{_BOT_CORE_URL}/duels/challenge").mock(
+                return_value=httpx.Response(200, json=_make_mock_duel(duel_id=1, challenger_id=1, target_id=2))
+            )
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
 
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
+            # Follow-up item named in this task's brief: assert the posted challenge
+            # JSON body (stakes/guild_id), not just the URL+verb contract.
+            challenge_body = json.loads(challenge_route.calls[0].request.content)
+
+        assert players_route.call_count == 2
+        assert challenge_body == {
+            "challenger_id": 1,
+            "target_id": 2,
+            "stakes": 500,
+            "guild_id": interaction.guild_id,
+        }
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -241,86 +282,91 @@ class TestDuelChallengeCommand:
         embed = call_kwargs["embed"]
         assert "Duel Challenge" in embed.title or "⚔️" in embed.title
 
-    def test_challenge_self_duel_rejected(self, mock_duel_cog, make_mock_response):
+    def test_challenge_self_duel_rejected(self, mock_duel_cog, request):
         """/duel-challenge with self as target should show error on 400."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=100, username="SameUser")
 
-        # Player resolution succeeds for both; duel creation returns 400
-        challenger_player_resp = make_mock_response({"id": 1})
-        target_player_resp = make_mock_response({"id": 1})  # same player ID (self-duel)
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "A player cannot challenge themselves to a duel."}
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, http_error])
-
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+        with respx.mock(assert_all_called=True) as mock_router:
+            # Player resolution succeeds for both (same player ID — self-duel);
+            # duel creation returns 400.
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                side_effect=[httpx.Response(200, json={"id": 1}), httpx.Response(200, json={"id": 1})]
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/duels/challenge").mock(
+                return_value=httpx.Response(400, json={"detail": "A player cannot challenge themselves to a duel."})
+            )
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_challenge_insufficient_credits(self, mock_duel_cog, make_mock_response):
+    def test_challenge_insufficient_credits(self, mock_duel_cog, request):
         """/duel-challenge with insufficient credits should show error on 400."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
 
-        # Player resolution succeeds; duel creation returns 400 insufficient credits
-        challenger_player_resp = make_mock_response({"id": 1})
-        target_player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Challenger has insufficient credits: has 100, needs 500."}
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, http_error])
-
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                side_effect=[httpx.Response(200, json={"id": 1}), httpx.Response(200, json={"id": 2})]
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/duels/challenge").mock(
+                return_value=httpx.Response(
+                    400, json={"detail": "Challenger has insufficient credits: has 100, needs 500."}
+                )
+            )
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_challenge_api_error_handled(self, mock_duel_cog, make_mock_response):
+    def test_challenge_api_error_handled(self, mock_duel_cog, request):
         """/duel-challenge generic exception during duel creation should show error message."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
-        # Player resolution succeeds; the duel creation itself throws a non-HTTP error
-        challenger_player_resp = make_mock_response({"id": 1})
-        target_player_resp = make_mock_response({"id": 2})
-        mock_duel_cog.http_client.post = AsyncMock(
-            side_effect=[challenger_player_resp, target_player_resp, RuntimeError("connection refused")]
-        )
 
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                side_effect=[httpx.Response(200, json={"id": 1}), httpx.Response(200, json={"id": 2})]
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/duels/challenge").mock(side_effect=RuntimeError("connection refused"))
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_challenge_500_uses_sanitized_embed(self, mock_duel_cog, make_mock_response):
+    def test_challenge_500_uses_sanitized_embed(self, mock_duel_cog, request):
         """B.31b: non-400 HTTPStatusError during duel creation flows through the helper
         and produces an embed whose description does NOT contain the raw bot-core URL."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
 
-        # Player resolution succeeds; the duel creation returns 500
-        challenger_player_resp = make_mock_response({"id": 1})
-        target_player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, http_error])
-
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                side_effect=[httpx.Response(200, json={"id": 1}), httpx.Response(200, json={"id": 2})]
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/duels/challenge").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -337,25 +383,37 @@ class TestDuelChallengeCommand:
 
 
 class TestDuelAcceptCommand:
-    """Tests for the /duel-accept slash command."""
+    """Tests for the /duel-accept slash command.
 
-    def test_accept_winner_result_shows_embed(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response` +
+    `AsyncMock(side_effect=[...])` to respx, pinned to the real POST /players/
+    and POST /duels/{id}/accept URLs.
+    """
+
+    def test_accept_winner_result_shows_embed(self, mock_duel_cog, request):
         """/duel-accept with decisive result should show winner embed."""
-        interaction = _create_mock_interaction(user_id=200)
-        # POST calls: 1) resolve player ID, 2) accept duel
-        player_resp = make_mock_response({"id": 2})
-        accept_resp = make_mock_response(
-            _make_accept_result(
-                duel_id=1,
-                is_stalemate=False,
-                winner_name="Ship A",
-                loser_name="Ship B",
-                credits_transferred=500,
-            )
-        )
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, accept_resp])
+        import discord
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=200)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=_make_accept_result(
+                        duel_id=1,
+                        is_stalemate=False,
+                        winner_name="Ship A",
+                        loser_name="Ship B",
+                        credits_transferred=500,
+                    ),
+                )
+            )
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -363,51 +421,48 @@ class TestDuelAcceptCommand:
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
         assert "Victory" in embed.title or "⚔️" in embed.title
-        import discord
-
         assert embed.color == discord.Color.green()
 
-    def test_accept_stalemate_result_shows_embed(self, mock_duel_cog, make_mock_response):
+    def test_accept_stalemate_result_shows_embed(self, mock_duel_cog, request):
         """/duel-accept with stalemate result should show stalemate embed."""
-        interaction = _create_mock_interaction(user_id=200)
-        # POST calls: 1) resolve player ID, 2) accept duel
-        player_resp = make_mock_response({"id": 2})
-        accept_resp = make_mock_response(
-            _make_accept_result(
-                duel_id=1,
-                is_stalemate=True,
-                winner_name="",
-                loser_name="",
-                credits_transferred=0,
-            )
-        )
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, accept_resp])
+        import discord
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=200)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=_make_accept_result(
+                        duel_id=1, is_stalemate=True, winner_name="", loser_name="", credits_transferred=0
+                    ),
+                )
+            )
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
         assert "Stalemate" in embed.title
-        import discord
-
         assert embed.color == discord.Color.yellow()
 
-    def test_accept_duel_not_found(self, mock_duel_cog, make_mock_response):
+    def test_accept_duel_not_found(self, mock_duel_cog, request):
         """/duel-accept with non-existent duel should show not found error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        # Player resolution succeeds; duel accept returns 404
-        player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "999"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/999/accept").mock(return_value=httpx.Response(404, json={}))
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "999"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -425,73 +480,80 @@ class TestDuelAcceptCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "invalid" in call_kwargs[0][0].lower()
 
-    def test_accept_uses_timeout_15(self, mock_duel_cog, make_mock_response):
+    def test_accept_uses_timeout_15(self, mock_duel_cog, request):
         """/duel-accept POST to /duels/<id>/accept must use timeout=15 (G-T2: raised from 10s).
 
         Mutation proof: setting timeout=10 in source causes this assertion to fail.
+        respx doesn't surface the caller's `timeout=` kwarg on the captured request
+        (it's a transport-level setting, not part of the wire request), so the real
+        `http_client.post` bound method is wrapped (`wraps=`, not replaced) purely to
+        observe the kwargs the cog passed — the call itself still goes through respx
+        for a real routed response.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        accept_resp = make_mock_response(
-            _make_accept_result(duel_id=1, is_stalemate=False, winner_name="A", loser_name="B")
-        )
 
-        timeout_values: list = []
-        call_count = 0
+        with (
+            respx.mock(assert_all_called=True) as mock_router,
+            patch.object(mock_duel_cog.http_client, "post", wraps=mock_duel_cog.http_client.post) as post_spy,
+        ):
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(
+                return_value=httpx.Response(
+                    200, json=_make_accept_result(duel_id=1, is_stalemate=False, winner_name="A", loser_name="B")
+                )
+            )
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
-        async def _spy_post(url, **kw):
-            nonlocal call_count
-            call_count += 1
-            timeout_values.append(kw.get("timeout"))
-            if call_count == 1:
-                return player_resp
-            return accept_resp
-
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=_spy_post)
-
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
-
-        assert len(timeout_values) >= 2, f"Expected 2+ post() calls, got {len(timeout_values)}"
-        accept_timeout = timeout_values[1]
+        assert post_spy.await_count == 2, f"Expected 2 post() calls, got {post_spy.await_count}"
+        accept_timeout = post_spy.await_args_list[1].kwargs.get("timeout")
         assert accept_timeout == 15, (
             f"Expected /duels/accept timeout=15 (G-T2), got {accept_timeout!r}. "
             "Did you forget to raise the timeout from 10 to 15?"
         )
 
-    def test_accept_graceful_error_on_failure(self, mock_duel_cog, make_mock_response):
+    def test_accept_graceful_error_on_failure(self, mock_duel_cog, request):
         """/duel-accept shows graceful error on network failure (no auto-retry)."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        error = httpx.TimeoutException("timed out", request=MagicMock())
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, error])
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(side_effect=httpx.TimeoutException("timed out"))
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         # Must show exactly ONE follow-up (the error message), no retry
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False), "Error response should be ephemeral"
 
-    def test_accept_no_auto_retry(self, mock_duel_cog, make_mock_response):
+    def test_accept_no_auto_retry(self, mock_duel_cog, request):
         """/duel-accept must NOT retry on HTTP failure — idempotency makes it safe but
         verify the implementation has no retry loop (single attempt only)."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError("500", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            players_route = mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(200, json={"id": 2})
+            )
+            accept_route = mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+            # post() must be called exactly once per route (no retry loop)
+            players_calls = players_route.call_count
+            accept_calls = accept_route.call_count
 
-        # post() must be called exactly twice: once for player resolution, once for accept
-        assert mock_duel_cog.http_client.post.await_count == 2, (
-            f"Expected exactly 2 post() calls (no retry), got {mock_duel_cog.http_client.post.await_count}"
-        )
+        assert players_calls == 1
+        assert accept_calls == 1, f"Expected exactly 1 accept POST (no retry), got {accept_calls}"
 
 
 # ---------------------------------------------------------------------------
@@ -500,65 +562,90 @@ class TestDuelAcceptCommand:
 # ---------------------------------------------------------------------------
 
 
-def _over_cap_409(current_load: int, effective_cap: int):
-    """An httpx 409 HTTPStatusError carrying the structured over_cap detail."""
+def _over_cap_response(current_load: int, effective_cap: int):
+    """A real httpx.Response(409, ...) carrying the structured over_cap detail.
+
+    TRUEUP-01: real httpx.Response (not a hand-built MagicMock HTTPStatusError)
+    — resp.raise_for_status() genuinely raises httpx.HTTPStatusError for this
+    status, exercising the real raise path instead of a fabricated exception.
+    """
     import httpx
 
-    error_response = MagicMock()
-    error_response.status_code = 409
-    error_response.json.return_value = {
-        "detail": {
-            "error": "over_cap",
-            "message": f"Cargo Overloaded — {current_load}/{effective_cap}. Unable to leave station.",
-            "current_load": current_load,
-            "effective_cap": effective_cap,
-        }
-    }
-    return httpx.HTTPStatusError("409 Conflict", request=MagicMock(), response=error_response)
+    return httpx.Response(
+        409,
+        json={
+            "detail": {
+                "error": "over_cap",
+                "message": f"Cargo Overloaded — {current_load}/{effective_cap}. Unable to leave station.",
+                "current_load": current_load,
+                "effective_cap": effective_cap,
+            }
+        },
+    )
 
 
 class TestDuelOverCapLockout:
-    """The 409 over_cap rejection → exact ephemeral 'Cargo Overloaded — NN/XX.' string."""
+    """The 409 over_cap rejection → exact ephemeral 'Cargo Overloaded — NN/XX.' string.
 
-    def test_challenge_over_cap_renders_exact_ephemeral(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response` +
+    `AsyncMock(side_effect=[...])` to respx, pinned to the real URLs.
+    """
+
+    def test_challenge_over_cap_renders_exact_ephemeral(self, mock_duel_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
-        challenger_player_resp = make_mock_response({"id": 1})
-        target_player_resp = make_mock_response({"id": 2})
-        mock_duel_cog.http_client.post = AsyncMock(
-            side_effect=[challenger_player_resp, target_player_resp, _over_cap_409(26, 25)]
-        )
 
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                side_effect=[httpx.Response(200, json={"id": 1}), httpx.Response(200, json={"id": 2})]
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/duels/challenge").mock(return_value=_over_cap_response(26, 25))
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         args, kwargs = interaction.followup.send.call_args
         assert args[0] == "Cargo Overloaded — 26/25. Unable to leave station."
         assert kwargs.get("ephemeral", False)
 
-    def test_accept_over_cap_renders_exact_ephemeral(self, mock_duel_cog, make_mock_response):
-        interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, _over_cap_409(30, 25)])
+    def test_accept_over_cap_renders_exact_ephemeral(self, mock_duel_cog, request):
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=200)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(return_value=_over_cap_response(30, 25))
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         args, kwargs = interaction.followup.send.call_args
         assert args[0] == "Cargo Overloaded — 30/25. Unable to leave station."
         assert kwargs.get("ephemeral", False)
 
-    def test_challenge_non_over_cap_proceeds_normally(self, mock_duel_cog, make_mock_response):
+    def test_challenge_non_over_cap_proceeds_normally(self, mock_duel_cog, request):
         """A normal (non-over-cap) response still builds the challenge embed (no regression)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
         target.mention = "<@200>"
-        challenger_player_resp = make_mock_response({"id": 1})
-        target_player_resp = make_mock_response({"id": 2})
-        duel_resp = make_mock_response(_make_mock_duel(duel_id=7, challenger_id=1, target_id=2))
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, duel_resp])
 
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                side_effect=[httpx.Response(200, json={"id": 1}), httpx.Response(200, json={"id": 2})]
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/duels/challenge").mock(
+                return_value=httpx.Response(200, json=_make_mock_duel(duel_id=7, challenger_id=1, target_id=2))
+            )
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1072,19 +1159,29 @@ class TestBuildAcceptEmbedCompactLayout:
 
 
 class TestDuelRejectCommand:
-    """Tests for the /duel-reject slash command."""
+    """Tests for the /duel-reject slash command.
 
-    def test_reject_success_shows_confirmation(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response` +
+    `AsyncMock(side_effect=[...])` to respx, pinned to the real POST /players/
+    and POST /duels/{id}/reject URLs.
+    """
+
+    def test_reject_success_shows_confirmation(self, mock_duel_cog, request):
         """/duel-reject success should show rejection confirmation embed."""
-        interaction = _create_mock_interaction(user_id=200)
-        # POST calls: 1) resolve player ID, 2) reject duel
-        player_resp = make_mock_response({"id": 2})
-        reject_resp = make_mock_response(
-            _make_mock_duel(duel_id=1, challenger_id=100, target_id=200, status="rejected")
-        )
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, reject_resp])
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=200)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/reject").mock(
+                return_value=httpx.Response(
+                    200, json=_make_mock_duel(duel_id=1, challenger_id=100, target_id=200, status="rejected")
+                )
+            )
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -1093,20 +1190,18 @@ class TestDuelRejectCommand:
         embed = call_kwargs["embed"]
         assert "Reject" in embed.title or "🚫" in embed.title
 
-    def test_reject_duel_not_found(self, mock_duel_cog, make_mock_response):
+    def test_reject_duel_not_found(self, mock_duel_cog, request):
         """/duel-reject with non-existent duel should show not found error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        # Player resolution succeeds; duel reject returns 404
-        player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "999"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/999/reject").mock(return_value=httpx.Response(404, json={}))
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "999"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1298,49 +1393,64 @@ class TestIsGuildNotConfigured:
 
 
 class TestGetPlayerId:
-    """Tests for the DuelCog._get_player_id helper method."""
+    """Tests for the DuelCog._get_player_id helper method.
 
-    def test_get_player_id_success(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/manual
+    MagicMock HTTPStatusError construction to respx, pinned to the real
+    POST /players/ URL.
+    """
+
+    def test_get_player_id_success(self, mock_duel_cog, request):
         """_get_player_id should return player ID on success."""
-        resp = make_mock_response({"id": 42})
-        mock_duel_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        result = asyncio.run(mock_duel_cog._get_player_id(111111111, 987654321))
+        _with_real_http_client(mock_duel_cog, request)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 42}))
+            result = asyncio.run(mock_duel_cog._get_player_id(111111111, 987654321))
 
         assert result == 42
 
-    def test_get_player_id_non_configured_error_reraises(self, mock_duel_cog):
+    def test_get_player_id_non_configured_error_reraises(self, mock_duel_cog, request):
         """_get_player_id should re-raise HTTPStatusError for guild-not-configured 400."""
         import httpx
+        import respx
 
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Guild not configured"}
-        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
+        _with_real_http_client(mock_duel_cog, request)
 
-        with pytest.raises(httpx.HTTPStatusError):
-            asyncio.run(mock_duel_cog._get_player_id(111111111, 987654321))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(400, json={"detail": "Guild not configured"})
+            )
+            with pytest.raises(httpx.HTTPStatusError):
+                asyncio.run(mock_duel_cog._get_player_id(111111111, 987654321))
 
-    def test_get_player_id_other_http_error_returns_none(self, mock_duel_cog):
+    def test_get_player_id_other_http_error_returns_none(self, mock_duel_cog, request):
         """_get_player_id should return None for non-guild-config HTTP errors."""
         import httpx
+        import respx
 
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {"detail": "Not found"}
-        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
+        _with_real_http_client(mock_duel_cog, request)
 
-        result = asyncio.run(mock_duel_cog._get_player_id(111111111, 987654321))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(404, json={"detail": "Not found"})
+            )
+            result = asyncio.run(mock_duel_cog._get_player_id(111111111, 987654321))
 
         assert result is None
 
-    def test_get_player_id_network_error_returns_none(self, mock_duel_cog):
+    def test_get_player_id_network_error_returns_none(self, mock_duel_cog, request):
         """_get_player_id should return None on network errors."""
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=RuntimeError("connection refused"))
+        import respx
 
-        result = asyncio.run(mock_duel_cog._get_player_id(111111111, 987654321))
+        _with_real_http_client(mock_duel_cog, request)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=RuntimeError("connection refused"))
+            result = asyncio.run(mock_duel_cog._get_player_id(111111111, 987654321))
 
         assert result is None
 
@@ -1351,47 +1461,56 @@ class TestGetPlayerId:
 
 
 class TestDuelChallengePlayerResolution:
-    """Tests verifying player-ID resolution in /duel-challenge (B.51)."""
+    """Tests verifying player-ID resolution in /duel-challenge (B.51).
 
-    def test_challenge_uses_player_pk_not_discord_id(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/manual
+    MagicMock HTTPStatusError construction to respx, pinned to the real URLs.
+    """
+
+    def test_challenge_uses_player_pk_not_discord_id(self, mock_duel_cog, request):
         """/duel-challenge should POST player PKs (not Discord snowflakes) to the duels API."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=402296276617527306)  # real-looking Discord snowflake
         target = DiscordMockUtils.create_mock_user(user_id=970691862035841048, username="TargetUser")
         target.mention = "<@970691862035841048>"
 
-        # _get_player_id returns small PKs, not snowflakes
-        player_resp_challenger = make_mock_response({"id": 1})
-        player_resp_target = make_mock_response({"id": 2})
-        duel_resp = make_mock_response(_make_mock_duel(duel_id=5, challenger_id=1, target_id=2))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                # _get_player_id returns small PKs, not snowflakes
+                side_effect=[httpx.Response(200, json={"id": 1}), httpx.Response(200, json={"id": 2})]
+            )
+            challenge_route = mock_router.post(f"{_BOT_CORE_URL}/duels/challenge").mock(
+                return_value=httpx.Response(200, json=_make_mock_duel(duel_id=5, challenger_id=1, target_id=2))
+            )
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 100))
 
-        post_responses = [player_resp_challenger, player_resp_target, duel_resp]
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=post_responses)
+            # Verify the duel-creation POST used player PKs not Discord snowflakes
+            json_body = json.loads(challenge_route.calls[0].request.content)
 
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 100))
-
-        # Verify the third POST (the actual duel creation) used player PKs not Discord snowflakes
-        duel_post_call = mock_duel_cog.http_client.post.call_args_list[2]
-        json_body = duel_post_call.kwargs["json"]
         assert json_body["challenger_id"] == 1, "Must use player PK, not Discord snowflake"
         assert json_body["target_id"] == 2, "Must use player PK, not Discord snowflake"
         assert json_body["challenger_id"] != 402296276617527306
         assert json_body["target_id"] != 970691862035841048
 
-    def test_challenge_challenger_not_found_shows_error(self, mock_duel_cog, make_mock_response):
+    def test_challenge_challenger_not_found_shows_error(self, mock_duel_cog, request):
         """/duel-challenge when challenger has no player profile should show error."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
 
-        # _get_player_id returns None for challenger (404 from players endpoint)
-        import httpx
-
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {"detail": "Not found"}
-        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+        # _get_player_id returns None for challenger (404 from players endpoint) — the
+        # cog never reaches /duels/challenge, so only /players/ needs a route.
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(404, json={"detail": "Not found"})
+            )
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1399,37 +1518,21 @@ class TestDuelChallengePlayerResolution:
         msg = call_kwargs[0][0]
         assert "profile" in msg.lower() or "register" in msg.lower()
 
-    def test_challenge_target_not_found_shows_error(self, mock_duel_cog, make_mock_response):
+    def test_challenge_target_not_found_shows_error(self, mock_duel_cog, request):
         """/duel-challenge when target has no player profile should show error."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
 
-        challenger_resp = make_mock_response({"id": 1})
-
-        import httpx
-
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {"detail": "Not found"}
-        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
-
-        # First call (challenger) succeeds, second call (target) returns None
-        target_resp = MagicMock()
-        target_resp.raise_for_status = MagicMock(side_effect=http_error)
-        target_resp.status_code = 404
-
-        call_count = 0
-
-        async def side_effect(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return challenger_resp
-            raise http_error
-
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=side_effect)
-
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+        with respx.mock(assert_all_called=True) as mock_router:
+            # First call (challenger) succeeds, second call (target) returns 404.
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                side_effect=[httpx.Response(200, json={"id": 1}), httpx.Response(404, json={"detail": "Not found"})]
+            )
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1437,20 +1540,20 @@ class TestDuelChallengePlayerResolution:
         msg = call_kwargs[0][0]
         assert "target" in msg.lower() or "profile" in msg.lower()
 
-    def test_challenge_guild_not_configured_shows_setup_message(self, mock_duel_cog):
+    def test_challenge_guild_not_configured_shows_setup_message(self, mock_duel_cog, request):
         """/duel-challenge when guild not configured should show setup message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
 
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Guild not configured"}
-        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(400, json={"detail": "Guild not configured"})
+            )
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1465,40 +1568,50 @@ class TestDuelChallengePlayerResolution:
 
 
 class TestDuelAcceptPlayerResolution:
-    """Tests verifying player-ID resolution in /duel-accept (B.51)."""
+    """Tests verifying player-ID resolution in /duel-accept (B.51).
 
-    def test_accept_uses_player_pk_not_discord_id(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/manual
+    MagicMock HTTPStatusError construction to respx, pinned to the real URLs.
+    """
+
+    def test_accept_uses_player_pk_not_discord_id(self, mock_duel_cog, request):
         """/duel-accept should pass player PK (not Discord snowflake) as user_id param."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=402296276617527306)
 
-        player_resp = make_mock_response({"id": 2})
-        accept_resp = make_mock_response(
-            _make_accept_result(duel_id=1, is_stalemate=False, winner_name="Ship A", loser_name="Ship B")
-        )
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            accept_route = mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=_make_accept_result(duel_id=1, is_stalemate=False, winner_name="Ship A", loser_name="Ship B"),
+                )
+            )
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
-        post_calls = [player_resp, accept_resp]
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=post_calls)
+            # The accept POST should pass player PK not Discord snowflake as user_id
+            accept_request = accept_route.calls[0].request
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        params = accept_request.url.params
+        assert params["user_id"] == "2", "Must use player PK, not Discord snowflake"
+        assert params["user_id"] != "402296276617527306"
 
-        # The second POST (accept) should pass player PK not Discord snowflake as user_id
-        accept_post_call = mock_duel_cog.http_client.post.call_args_list[1]
-        params = accept_post_call.kwargs.get("params", {})
-        assert params["user_id"] == 2, "Must use player PK, not Discord snowflake"
-        assert params["user_id"] != 402296276617527306
-
-    def test_accept_player_not_found_shows_error(self, mock_duel_cog):
+    def test_accept_player_not_found_shows_error(self, mock_duel_cog, request):
         """/duel-accept when user has no player profile should show error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {"detail": "Not found"}
-        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(404, json={"detail": "Not found"})
+            )
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1506,18 +1619,19 @@ class TestDuelAcceptPlayerResolution:
         msg = call_kwargs[0][0]
         assert "profile" in msg.lower() or "register" in msg.lower()
 
-    def test_accept_guild_not_configured_shows_setup_message(self, mock_duel_cog):
+    def test_accept_guild_not_configured_shows_setup_message(self, mock_duel_cog, request):
         """/duel-accept when guild not configured should show setup message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Guild not configured"}
-        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(400, json={"detail": "Guild not configured"})
+            )
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1532,38 +1646,49 @@ class TestDuelAcceptPlayerResolution:
 
 
 class TestDuelRejectPlayerResolution:
-    """Tests verifying player-ID resolution in /duel-reject (B.51)."""
+    """Tests verifying player-ID resolution in /duel-reject (B.51).
 
-    def test_reject_uses_player_pk_not_discord_id(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/manual
+    MagicMock HTTPStatusError construction to respx, pinned to the real URLs.
+    """
+
+    def test_reject_uses_player_pk_not_discord_id(self, mock_duel_cog, request):
         """/duel-reject should pass player PK (not Discord snowflake) as user_id param."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=402296276617527306)
 
-        player_resp = make_mock_response({"id": 2})
-        reject_resp = make_mock_response(_make_mock_duel(duel_id=1, challenger_id=1, target_id=2, status="rejected"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            reject_route = mock_router.post(f"{_BOT_CORE_URL}/duels/1/reject").mock(
+                return_value=httpx.Response(
+                    200, json=_make_mock_duel(duel_id=1, challenger_id=1, target_id=2, status="rejected")
+                )
+            )
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
 
-        post_calls = [player_resp, reject_resp]
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=post_calls)
+            # The reject POST should pass player PK not Discord snowflake as user_id
+            reject_request = reject_route.calls[0].request
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+        params = reject_request.url.params
+        assert params["user_id"] == "2", "Must use player PK, not Discord snowflake"
+        assert params["user_id"] != "402296276617527306"
 
-        # The second POST (reject) should pass player PK not Discord snowflake as user_id
-        reject_post_call = mock_duel_cog.http_client.post.call_args_list[1]
-        params = reject_post_call.kwargs.get("params", {})
-        assert params["user_id"] == 2, "Must use player PK, not Discord snowflake"
-        assert params["user_id"] != 402296276617527306
-
-    def test_reject_player_not_found_shows_error(self, mock_duel_cog):
+    def test_reject_player_not_found_shows_error(self, mock_duel_cog, request):
         """/duel-reject when user has no player profile should show error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {"detail": "Not found"}
-        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(404, json={"detail": "Not found"})
+            )
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1571,18 +1696,19 @@ class TestDuelRejectPlayerResolution:
         msg = call_kwargs[0][0]
         assert "profile" in msg.lower() or "register" in msg.lower()
 
-    def test_reject_guild_not_configured_shows_setup_message(self, mock_duel_cog):
+    def test_reject_guild_not_configured_shows_setup_message(self, mock_duel_cog, request):
         """/duel-reject when guild not configured should show setup message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Guild not configured"}
-        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(400, json={"detail": "Guild not configured"})
+            )
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1644,72 +1770,81 @@ class TestAutocompletePlayerResolution:
 
 
 class TestDuelAcceptAdditionalErrors:
-    """Tests for /duel-accept 403, 400, and generic Exception paths."""
+    """Tests for /duel-accept 403, 400, and generic Exception paths.
 
-    def test_accept_forbidden_403_shows_error(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/manual
+    MagicMock HTTPStatusError construction to respx, pinned to the real
+    POST /players/ and POST /duels/1/accept URLs.
+    """
+
+    def test_accept_forbidden_403_shows_error(self, mock_duel_cog, request):
         """/duel-accept 403 should tell user they can only accept their own duels."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 403
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("403 Forbidden", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(return_value=httpx.Response(403, json={}))
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "only accept" in call_kwargs[0][0].lower()
 
-    def test_accept_400_shows_detail_message(self, mock_duel_cog, make_mock_response):
+    def test_accept_400_shows_detail_message(self, mock_duel_cog, request):
         """/duel-accept 400 should show the detail from the response."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Duel has already been resolved."}
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(
+                return_value=httpx.Response(400, json={"detail": "Duel has already been resolved."})
+            )
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "already been resolved" in call_kwargs[0][0].lower()
 
-    def test_accept_generic_exception_shows_error(self, mock_duel_cog, make_mock_response):
+    def test_accept_generic_exception_shows_error(self, mock_duel_cog, request):
         """/duel-accept generic Exception should show generic error message."""
-        interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("connection refused")])
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=200)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(side_effect=RuntimeError("connection refused"))
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_accept_500_uses_sanitized_embed(self, mock_duel_cog, make_mock_response):
+    def test_accept_500_uses_sanitized_embed(self, mock_duel_cog, request):
         """B.31b: non-400/403/404 HTTPStatusError flows through report_api_error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 500
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/accept").mock(return_value=httpx.Response(500, json={}))
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -1725,59 +1860,63 @@ class TestDuelAcceptAdditionalErrors:
 
 
 class TestDuelRejectAdditionalErrors:
-    """Tests for /duel-reject 403, 400, 500, and generic Exception paths."""
+    """Tests for /duel-reject 403, 400, 500, and generic Exception paths.
 
-    def test_reject_forbidden_403_shows_error(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/manual
+    MagicMock HTTPStatusError construction to respx, pinned to the real
+    POST /players/ and POST /duels/1/reject URLs.
+    """
+
+    def test_reject_forbidden_403_shows_error(self, mock_duel_cog, request):
         """/duel-reject 403 should tell user they can only reject their own duels."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 403
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("403 Forbidden", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/reject").mock(return_value=httpx.Response(403, json={}))
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "only reject" in call_kwargs[0][0].lower()
 
-    def test_reject_400_shows_detail_message(self, mock_duel_cog, make_mock_response):
+    def test_reject_400_shows_detail_message(self, mock_duel_cog, request):
         """/duel-reject 400 should show the detail from the response."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Duel has already been resolved."}
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/reject").mock(
+                return_value=httpx.Response(400, json={"detail": "Duel has already been resolved."})
+            )
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "already been resolved" in call_kwargs[0][0].lower()
 
-    def test_reject_500_uses_sanitized_embed(self, mock_duel_cog, make_mock_response):
+    def test_reject_500_uses_sanitized_embed(self, mock_duel_cog, request):
         """B.31b: non-404/403/400 HTTPStatusError flows through report_api_error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        error_response = MagicMock()
-        error_response.status_code = 500
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/reject").mock(return_value=httpx.Response(500, json={}))
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -1786,35 +1925,47 @@ class TestDuelRejectAdditionalErrors:
         assert embed is not None
         assert "bot-core" not in (embed.description or "")
 
-    def test_reject_generic_exception_shows_error(self, mock_duel_cog, make_mock_response):
+    def test_reject_generic_exception_shows_error(self, mock_duel_cog, request):
         """/duel-reject generic Exception should show generic error message."""
-        interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("connection refused")])
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=200)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/reject").mock(side_effect=RuntimeError("connection refused"))
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_reject_with_challenger_name_shows_field(self, mock_duel_cog, make_mock_response):
+    def test_reject_with_challenger_name_shows_field(self, mock_duel_cog, request):
         """/duel-reject when data has challenger_name should include it in the embed field."""
-        interaction = _create_mock_interaction(user_id=200)
-        player_resp = make_mock_response({"id": 2})
-        reject_resp = make_mock_response(
-            {
-                "id": 1,
-                "challenger_id": 100,
-                "target_id": 200,
-                "status": "rejected",
-                "challenger_name": "BigBoss",
-            }
-        )
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, reject_resp])
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=200)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/reject").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "id": 1,
+                        "challenger_id": 100,
+                        "target_id": 200,
+                        "status": "rejected",
+                        "challenger_name": "BigBoss",
+                    },
+                )
+            )
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1831,16 +1982,27 @@ class TestDuelRejectAdditionalErrors:
 
 
 class TestDuelCancelCommand:
-    """Tests for the /duel-cancel slash command (B.64 challenger self-cancel)."""
+    """Tests for the /duel-cancel slash command (B.64 challenger self-cancel).
 
-    def test_cancel_success_shows_confirmation_embed(self, mock_duel_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/manual
+    MagicMock HTTPStatusError construction to respx, pinned to the real
+    POST /players/ and POST /duels/{id}/cancel URLs.
+    """
+
+    def test_cancel_success_shows_confirmation_embed(self, mock_duel_cog, request):
         """/duel-cancel success should show a confirmation embed."""
-        interaction = _create_mock_interaction(user_id=100)
-        player_resp = make_mock_response({"id": 1})
-        cancel_resp = make_mock_response({"id": 1, "target_id": 200, "target_name": "TargetUser"})
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, cancel_resp])
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=100)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/cancel").mock(
+                return_value=httpx.Response(200, json={"id": 1, "target_id": 200, "target_name": "TargetUser"})
+            )
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -1849,40 +2011,58 @@ class TestDuelCancelCommand:
         embed = call_kwargs["embed"]
         assert "Cancelled" in embed.title or "✅" in embed.title
 
-    def test_cancel_success_embed_has_target_name(self, mock_duel_cog, make_mock_response):
+    def test_cancel_success_embed_has_target_name(self, mock_duel_cog, request):
         """/duel-cancel embed description should mention the target's name."""
-        interaction = _create_mock_interaction(user_id=100)
-        player_resp = make_mock_response({"id": 1})
-        cancel_resp = make_mock_response({"id": 1, "target_id": 200, "target_name": "TargetPlayer"})
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, cancel_resp])
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=100)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/cancel").mock(
+                return_value=httpx.Response(200, json={"id": 1, "target_id": 200, "target_name": "TargetPlayer"})
+            )
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
 
         call_kwargs = interaction.followup.send.call_args[1]
         embed = call_kwargs["embed"]
         assert "TargetPlayer" in embed.description
 
-    def test_cancel_success_uses_target_id_fallback_when_no_name(self, mock_duel_cog, make_mock_response):
+    def test_cancel_success_uses_target_id_fallback_when_no_name(self, mock_duel_cog, request):
         """/duel-cancel embed should fall back to 'Player {id}' when target_name is absent."""
-        interaction = _create_mock_interaction(user_id=100)
-        player_resp = make_mock_response({"id": 1})
-        cancel_resp = make_mock_response({"id": 1, "target_id": 999})
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, cancel_resp])
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=100)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/cancel").mock(
+                return_value=httpx.Response(200, json={"id": 1, "target_id": 999})
+            )
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
 
         call_kwargs = interaction.followup.send.call_args[1]
         embed = call_kwargs["embed"]
         assert "Player 999" in embed.description
 
-    def test_cancel_success_is_ephemeral(self, mock_duel_cog, make_mock_response):
+    def test_cancel_success_is_ephemeral(self, mock_duel_cog, request):
         """/duel-cancel success is sent ephemeral."""
-        interaction = _create_mock_interaction(user_id=100)
-        player_resp = make_mock_response({"id": 1})
-        cancel_resp = make_mock_response({"id": 1, "target_id": 200, "target_name": "TargetUser"})
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, cancel_resp])
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=100)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/cancel").mock(
+                return_value=httpx.Response(200, json={"id": 1, "target_id": 200, "target_name": "TargetUser"})
+            )
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
 
         call_kwargs = interaction.followup.send.call_args[1]
         assert call_kwargs.get("ephemeral") is True
@@ -1898,88 +2078,93 @@ class TestDuelCancelCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "invalid" in call_kwargs[0][0].lower()
 
-    def test_cancel_404_shows_not_found(self, mock_duel_cog, make_mock_response):
+    def test_cancel_404_shows_not_found(self, mock_duel_cog, request):
         """/duel-cancel 404 should show duel not found error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
-        player_resp = make_mock_response({"id": 1})
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "999"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/999/cancel").mock(return_value=httpx.Response(404, json={}))
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "999"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "not found" in call_kwargs[0][0].lower()
 
-    def test_cancel_400_shows_detail_message(self, mock_duel_cog, make_mock_response):
+    def test_cancel_400_shows_detail_message(self, mock_duel_cog, request):
         """/duel-cancel 400 should show the detail from the response."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
-        player_resp = make_mock_response({"id": 1})
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "You are not the challenger."}
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/cancel").mock(
+                return_value=httpx.Response(400, json={"detail": "You are not the challenger."})
+            )
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "not the challenger" in call_kwargs[0][0].lower()
 
-    def test_cancel_500_shows_generic_error(self, mock_duel_cog, make_mock_response):
+    def test_cancel_500_shows_generic_error(self, mock_duel_cog, request):
         """/duel-cancel non-404/400 HTTP error should show generic error message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
-        player_resp = make_mock_response({"id": 1})
-        error_response = MagicMock()
-        error_response.status_code = 500
-        error_response.json.return_value = {}
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/cancel").mock(return_value=httpx.Response(500, json={}))
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_cancel_generic_exception_shows_error(self, mock_duel_cog, make_mock_response):
+    def test_cancel_generic_exception_shows_error(self, mock_duel_cog, request):
         """/duel-cancel generic Exception should show generic error message."""
-        interaction = _create_mock_interaction(user_id=100)
-        player_resp = make_mock_response({"id": 1})
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("connection refused")])
+        import httpx
+        import respx
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+        _with_real_http_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=100)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{_BOT_CORE_URL}/duels/1/cancel").mock(side_effect=RuntimeError("connection refused"))
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_cancel_guild_not_configured_shows_setup_message(self, mock_duel_cog):
+    def test_cancel_guild_not_configured_shows_setup_message(self, mock_duel_cog, request):
         """/duel-cancel when guild not configured should show setup message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Guild not configured"}
-        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(400, json={"detail": "Guild not configured"})
+            )
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1987,18 +2172,19 @@ class TestDuelCancelCommand:
         msg = call_kwargs[0][0]
         assert "admin_setup" in msg.lower() or "set up" in msg.lower()
 
-    def test_cancel_player_not_found_shows_error(self, mock_duel_cog):
+    def test_cancel_player_not_found_shows_error(self, mock_duel_cog, request):
         """/duel-cancel when user has no player profile should show error."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_duel_cog, request)
         interaction = _create_mock_interaction(user_id=100)
-        error_response = MagicMock()
-        error_response.status_code = 404
-        error_response.json.return_value = {"detail": "Not found"}
-        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(
+                return_value=httpx.Response(404, json={"detail": "Not found"})
+            )
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -2355,7 +2541,11 @@ class TestDuelCommandRespx:
     # ------------------------------------------------------------------
 
     def test_duel_challenge_calls_correct_urls(self, mock_duel_cog, request):
-        """/duel-challenge must POST /players/ (×2) and POST /duels/challenge."""
+        """/duel-challenge must POST /players/ (×2) and POST /duels/challenge.
+
+        TRUEUP-01 follow-up (per task brief): also asserts the posted challenge
+        JSON body (challenger_id/target_id/stakes/guild_id), not just the URL+verb.
+        """
         import httpx
         import respx
 
@@ -2374,9 +2564,20 @@ class TestDuelCommandRespx:
                     httpx.Response(200, json={"id": 2}),
                 ]
             )
-            mock_router.post(f"{self._BOT_API}/duels/challenge").mock(return_value=httpx.Response(200, json=duel_data))
+            challenge_route = mock_router.post(f"{self._BOT_API}/duels/challenge").mock(
+                return_value=httpx.Response(200, json=duel_data)
+            )
 
             asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
+
+            challenge_body = json.loads(challenge_route.calls[0].request.content)
+
+        assert challenge_body == {
+            "challenger_id": 1,
+            "target_id": 2,
+            "stakes": 500,
+            "guild_id": interaction.guild_id,
+        }
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()

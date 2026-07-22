@@ -43,7 +43,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from utils.discord_converters import ChannelConverter
 
 import tests.mocks.discord_mock_utils as discord_mock_utils
 
@@ -146,6 +145,11 @@ def _force_payload(payload_or_exc):
     exception-handler tests, while leaving resolve_bot/get_entity_or_404/
     handle_discord_exception/everything else real.
     """
+    # Resolve the converter dynamically: the api-package conftest purges cached
+    # utils/api modules per test, so the class the router imported THIS test is
+    # the one that must be patched (a module-level import would go stale).
+    from utils.discord_converters import ChannelConverter
+
     with patch.object(ChannelConverter, "forum_tag_to_payload") as mock_fn:
         if isinstance(payload_or_exc, Exception):
             mock_fn.side_effect = payload_or_exc

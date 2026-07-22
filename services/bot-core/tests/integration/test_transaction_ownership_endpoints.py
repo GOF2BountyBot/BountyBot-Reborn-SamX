@@ -212,8 +212,10 @@ class TestShopsSellEndpoint:
         Asserts HTTP 200 and that player credits increased.
 
         Key assertion: status is NOT 500 (which would indicate the nested-begin bug).
-        Mock budget: 1 mock (ShopService._get_item_base_price — static item tables
-        are not in the SQLite integration schema).
+        Mock budget: 2 mocks (ShopService._get_item_base_price AND
+        ._get_item_tech_level — both read the static item STI tables whose ARRAY
+        columns are absent from the SQLite integration schema; patched at the
+        method boundary and returning the int shapes the real methods return).
         """
         engine, factory = await _make_sqlite_session_factory()
 
@@ -933,10 +935,17 @@ class TestShipTransferRollback:
     real rows, triggers a mid-loop inventory failure, and asserts that ownership
     of the PlayerShip was NOT changed in the database.
 
-    Mock budget: 2
-      - Mock 1: InventoryRepository -- controls add_item; raises on 2nd call (partial failure)
-      - Mock 2: ItemRepository -- returns a synthetic item so concrete type is resolved
-        (the real Item/weapon tables are not in the SQLite integration schema)
+    Mock budget: 2 true fakes (the constructor swaps below total 4 patch() calls
+    plus the get_db_session session-injection cm-patch, but only 2 are actual
+    fakes — the other 2 inject REAL repo instances):
+      - FAKE 1: InventoryRepository -- add_item raises on the 2nd call (drives the
+        partial-failure), doing a REAL insert on the 1st so the rollback is meaningful
+      - FAKE 2: ItemRepository -- returns a synthetic item so the concrete type is
+        resolved (the real Item/weapon STI tables have ARRAY columns absent from the
+        SQLite integration schema — R1-legit)
+      - REAL (not fakes): PlayerShipRepository + ShipRepository constructor patches
+        inject genuine repo instances (they hit the live SQLite session); the
+        get_db_session cm-patch injects the real per-test SQLite session.
     """
 
     async def test_ship_transfer_real_db_rollback_preserves_source_ownership(self):

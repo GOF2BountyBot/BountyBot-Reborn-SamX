@@ -14,6 +14,7 @@ from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.shop_repository import ShopRepository
+from services.shop_service import ShopService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # ---------------------------------------------------------------------------
@@ -154,33 +155,31 @@ async def test_browse_shop_filter_by_item_type(
 
 async def test_purchase_deducts_player_credits(
     db_session: AsyncSession,
-    shop_repo: ShopRepository,
     player_repo: PlayerRepository,
-    inventory_repo: InventoryRepository,
 ):
-    """After a purchase the player's credit balance is reduced by the item price."""
+    """After a REAL ``ShopService.purchase_item`` the player's credit balance is
+    reduced by the item price (exercises the real purchase orchestration:
+    tier gate, quantity/credit checks, atomic credit-deduct + inventory-add +
+    shop-quantity update)."""
     await _create_guild_config(db_session, guild_id=9003)
     user = await _create_user(db_session, user_id=200001)
     player = await _create_player(db_session, user_id=user.id, guild_id=9003, credits=500)
     shop_item = await _create_shop_item(db_session, guild_id=9003, item_name="Ion Blaster", price=150, quantity=2)
 
-    # Manual purchase: deduct credits, add to inventory, reduce shop quantity
-    total_cost = shop_item.price * 1
-    await player_repo.update_credits(db_session, player.id, player.credits - total_cost)
-    await inventory_repo.add_item(db_session, player.id, shop_item.item_type, shop_item.item_name, 1)
-    await shop_repo.update_quantity(db_session, shop_item.id, shop_item.quantity - 1)
+    result = await ShopService().purchase_item(db_session, player_id=player.id, shop_item_id=shop_item.id, quantity=1)
 
+    assert result["total_cost"] == 150
+    assert result["remaining_credits"] == 350
     updated_player = await player_repo.get_by_id(db_session, player.id)
     assert updated_player.credits == 350
 
 
 async def test_purchase_adds_item_to_inventory(
     db_session: AsyncSession,
-    shop_repo: ShopRepository,
-    player_repo: PlayerRepository,
     inventory_repo: InventoryRepository,
 ):
-    """After a purchase the item appears in the player's inventory."""
+    """After a REAL purchase the item appears in the player's inventory under the
+    shop item's type (the real purchase path performs the inventory add)."""
     await _create_guild_config(db_session, guild_id=9004)
     user = await _create_user(db_session, user_id=200002)
     player = await _create_player(db_session, user_id=user.id, guild_id=9004, credits=1000)
@@ -188,7 +187,7 @@ async def test_purchase_adds_item_to_inventory(
         db_session, guild_id=9004, item_name="Turbo Shield", item_type="module", price=100, quantity=5
     )
 
-    await inventory_repo.add_item(db_session, player.id, shop_item.item_type, shop_item.item_name, 2)
+    await ShopService().purchase_item(db_session, player_id=player.id, shop_item_id=shop_item.id, quantity=2)
 
     inv_items = await inventory_repo.get_player_items(db_session, player.id, item_type="module")
     assert len(inv_items) == 1
@@ -199,20 +198,17 @@ async def test_purchase_adds_item_to_inventory(
 async def test_purchase_reduces_shop_quantity(
     db_session: AsyncSession,
     shop_repo: ShopRepository,
-    player_repo: PlayerRepository,
-    inventory_repo: InventoryRepository,
 ):
-    """After purchase, the shop item quantity is decremented by the purchased amount."""
+    """After a REAL purchase, the shop item quantity is decremented by the
+    purchased amount (the real purchase path performs the shop-quantity update)."""
     await _create_guild_config(db_session, guild_id=9005)
     user = await _create_user(db_session, user_id=200003)
     player = await _create_player(db_session, user_id=user.id, guild_id=9005, credits=1000)
     shop_item = await _create_shop_item(db_session, guild_id=9005, item_name="Micro Missile", price=50, quantity=5)
 
-    purchase_qty = 2
-    await player_repo.update_credits(db_session, player.id, player.credits - shop_item.price * purchase_qty)
-    await inventory_repo.add_item(db_session, player.id, shop_item.item_type, shop_item.item_name, purchase_qty)
-    await shop_repo.update_quantity(db_session, shop_item.id, shop_item.quantity - purchase_qty)
+    result = await ShopService().purchase_item(db_session, player_id=player.id, shop_item_id=shop_item.id, quantity=2)
 
+    assert result["remaining_shop_quantity"] == 3
     refreshed = await shop_repo.get_by_id(db_session, shop_item.id)
     assert refreshed.quantity == 3
 
@@ -227,21 +223,24 @@ async def test_purchase_rejected_when_insufficient_credits(
     player_repo: PlayerRepository,
     inventory_repo: InventoryRepository,
 ):
-    """A purchase that would exceed the player's credits must be rejected with no side effects."""
+    """The REAL purchase path rejects (raises ValueError) when the player cannot
+    afford the item, and leaves no credit/inventory side effects."""
     await _create_guild_config(db_session, guild_id=9006)
     user = await _create_user(db_session, user_id=200004)
     player = await _create_player(db_session, user_id=user.id, guild_id=9006, credits=50)
-    expensive_price = 500
+    shop_item = await _create_shop_item(db_session, guild_id=9006, item_name="Plasma Cannon", price=500, quantity=2)
+    player_id, item_id = player.id, shop_item.id  # capture before rollback expires the ORM objects
 
-    can_afford = player.credits >= expensive_price
+    with pytest.raises(ValueError, match="Insufficient credits"):
+        await ShopService().purchase_item(db_session, player_id=player_id, shop_item_id=item_id, quantity=1)
 
-    assert not can_afford
+    # The failed purchase left the read transaction open — discard it before re-reading.
+    await db_session.rollback()
 
-    # Credits and inventory should be unchanged
-    unchanged_player = await player_repo.get_by_id(db_session, player.id)
+    # Credits and inventory unchanged (the real path rejected before any mutation).
+    unchanged_player = await player_repo.get_by_id(db_session, player_id)
     assert unchanged_player.credits == 50
-
-    items_in_inventory = await inventory_repo.get_player_items(db_session, player.id)
+    items_in_inventory = await inventory_repo.get_player_items(db_session, player_id)
     assert len(items_in_inventory) == 0
 
 
@@ -251,30 +250,28 @@ async def test_purchase_rejected_leaves_no_inventory_side_effects(
     player_repo: PlayerRepository,
     inventory_repo: InventoryRepository,
 ):
-    """
-    When a purchase is rejected due to insufficient credits, the shop quantity
-    must remain unchanged and nothing should appear in the player's inventory.
-    """
+    """When the REAL purchase path rejects (insufficient credits), the shop
+    quantity stays unchanged and nothing is added to inventory — the whole
+    credit-deduct + inventory-add + shop-decrement unit of work is skipped."""
     await _create_guild_config(db_session, guild_id=9007)
     user = await _create_user(db_session, user_id=200005)
     player = await _create_player(db_session, user_id=user.id, guild_id=9007, credits=10)
     shop_item = await _create_shop_item(db_session, guild_id=9007, item_name="Heavy Torpedo", price=999, quantity=3)
+    player_id, item_id = player.id, shop_item.id  # capture before rollback expires the ORM objects
 
-    # Guard: do not proceed with purchase if credits are insufficient
-    total_cost = shop_item.price
-    if player.credits < total_cost:
-        pass  # Purchase rejected — no side effects
+    with pytest.raises(ValueError, match="Insufficient credits"):
+        await ShopService().purchase_item(db_session, player_id=player_id, shop_item_id=item_id, quantity=1)
 
-    # Shop quantity unchanged
-    refreshed_item = await shop_repo.get_by_id(db_session, shop_item.id)
+    await db_session.rollback()
+
+    # Shop quantity unchanged.
+    refreshed_item = await shop_repo.get_by_id(db_session, item_id)
     assert refreshed_item.quantity == 3
-
-    # Inventory still empty
-    inventory = await inventory_repo.get_player_items(db_session, player.id)
+    # Inventory still empty.
+    inventory = await inventory_repo.get_player_items(db_session, player_id)
     assert len(inventory) == 0
-
-    # Credits unchanged
-    unchanged_player = await player_repo.get_by_id(db_session, player.id)
+    # Credits unchanged.
+    unchanged_player = await player_repo.get_by_id(db_session, player_id)
     assert unchanged_player.credits == 10
 
 

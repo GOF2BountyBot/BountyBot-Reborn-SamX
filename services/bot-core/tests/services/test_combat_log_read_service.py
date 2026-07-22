@@ -15,6 +15,7 @@ from __future__ import annotations
 import sys
 import types
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.combat_log import CombatLog
 from services.combat_log_service import CombatLogService
 
 # ---------------------------------------------------------------------------
@@ -61,85 +63,96 @@ def _make_row(
     c1_final_hull: int = 50,
     c2_final_hull: int = 0,
     timeline: list | None = None,
-):
-    """Build a MagicMock that looks like a CombatLog ORM row."""
-    row = MagicMock()
-    row.id = row_id
-    row.guild_id = guild_id
-    row.context = context
-    row.combatant1_name = c1_name
-    row.combatant2_name = c2_name
-    row.combatant1_user_id = c1_user_id
-    row.combatant2_user_id = c2_user_id
-    row.winner_name = winner_name
-    row.is_stalemate = is_stalemate
-    row.created_at = created_at or datetime.now(UTC)
+) -> CombatLog:
+    """Build a real (transient) CombatLog ORM row (constructible without a DB session).
 
-    # Build data blob mirroring the real schema
-    row.data = {
-        "schema_version": 1,
-        "summary": {
-            "reason": "hp_depleted",
-            "winner": winner_name,
-            "outcome": "stalemate" if is_stalemate else "win",
-            "combatants": {
-                "1": {
-                    "name": c1_name,
-                    "ship": c1_name,
-                    "start_hp": {"hull": 95, "armour": 40, "shield": 0},
-                    "final_hp": {"hull": c1_final_hull, "armour": 20, "shield": 0},
-                    "shots_fired": 60,
-                    "shots_hit": 40,
-                    "damage_dealt": 120,
-                    "damage_taken": 80,
-                },
-                "2": {
-                    "name": c2_name,
-                    "ship": c2_name,
-                    "start_hp": {"hull": 95, "armour": 40, "shield": 0},
-                    "final_hp": {"hull": c2_final_hull, "armour": 0, "shield": 0},
-                    "shots_fired": 55,
-                    "shots_hit": 35,
-                    "damage_dealt": 80,
-                    "damage_taken": 120,
-                },
-            },
-            "duration_ticks": 3488,
-        },
-        "timeline": timeline if timeline is not None else [],
-        "metadata": {
-            "tick_ms": 10,
-            "resolver": "tick_v1",
-            "total_ticks": 3488,
-            "pvc_damage_reduction": 0.0,
-        },
-    }
-    return row
-
-
-def _make_sub_row(row: MagicMock, *, key_events: list | None = None) -> MagicMock:
-    """Build a MagicMock that looks like a get_subpath_for_detail Row namedtuple.
-
-    P4-T7b: get_detail now calls get_subpath_for_detail() first and gets back a
-    sub-path Row with fields: id, guild_id, context, combatant1/2_name/user_id,
-    winner_name, is_stalemate, created_at, summary, metadata, key_events.
-    Pass key_events=None to simulate a legacy row (triggers full-row fallback).
+    Replaces a bare MagicMock: a real model exposes the real column set, so a test
+    reading an attribute the row doesn't carry raises instead of silently returning a
+    truthy Mock (the exact fragility this audit targets for POV/outcome logic).
     """
-    sub = MagicMock()
-    sub.id = row.id
-    sub.guild_id = row.guild_id
-    sub.context = row.context
-    sub.combatant1_name = row.combatant1_name
-    sub.combatant2_name = row.combatant2_name
-    sub.combatant1_user_id = row.combatant1_user_id
-    sub.combatant2_user_id = row.combatant2_user_id
-    sub.winner_name = row.winner_name
-    sub.is_stalemate = row.is_stalemate
-    sub.created_at = row.created_at
-    sub.summary = row.data["summary"]
-    sub.metadata = row.data["metadata"]
-    sub.key_events = key_events
-    return sub
+    return CombatLog(
+        id=row_id,
+        guild_id=guild_id,
+        context=context,
+        combatant1_name=c1_name,
+        combatant2_name=c2_name,
+        combatant1_user_id=c1_user_id,
+        combatant2_user_id=c2_user_id,
+        winner_name=winner_name,
+        is_stalemate=is_stalemate,
+        created_at=created_at or datetime.now(UTC),
+        # data blob mirroring the real persisted schema
+        data={
+            "schema_version": 1,
+            "summary": {
+                "reason": "hp_depleted",
+                "winner": winner_name,
+                "outcome": "stalemate" if is_stalemate else "win",
+                "combatants": {
+                    "1": {
+                        "name": c1_name,
+                        "ship": c1_name,
+                        "start_hp": {"hull": 95, "armour": 40, "shield": 0},
+                        "final_hp": {"hull": c1_final_hull, "armour": 20, "shield": 0},
+                        "shots_fired": 60,
+                        "shots_hit": 40,
+                        "damage_dealt": 120,
+                        "damage_taken": 80,
+                    },
+                    "2": {
+                        "name": c2_name,
+                        "ship": c2_name,
+                        "start_hp": {"hull": 95, "armour": 40, "shield": 0},
+                        "final_hp": {"hull": c2_final_hull, "armour": 0, "shield": 0},
+                        "shots_fired": 55,
+                        "shots_hit": 35,
+                        "damage_dealt": 80,
+                        "damage_taken": 120,
+                    },
+                },
+                "duration_ticks": 3488,
+            },
+            "timeline": timeline if timeline is not None else [],
+            "metadata": {
+                "tick_ms": 10,
+                "resolver": "tick_v1",
+                "total_ticks": 3488,
+                "pvc_damage_reduction": 0.0,
+            },
+        },
+    )
+
+
+def _make_sub_row(row: CombatLog, *, key_events: list | None = None, recurring: list | None = None) -> SimpleNamespace:
+    """Build a SimpleNamespace mimicking the get_subpath_for_detail Row projection.
+
+    P4-T7b: get_detail calls get_subpath_for_detail() first and gets back a sub-path
+    Row with fields: id, guild_id, context, combatant1/2_name/user_id, winner_name,
+    is_stalemate, created_at, summary, metadata, key_events, recurring.
+    Pass key_events=None (or recurring=None) to simulate a legacy row → full-row fallback.
+
+    This is a query-result Row (not an ORM entity), so a SimpleNamespace with exactly
+    the projected fields is the faithful stand-in — no truthy-for-unset Mock behaviour.
+    (The former MagicMock silently satisfied the `recurring` sub-path with a truthy Mock,
+    hiding it from the test; here it is modelled explicitly and defaults to a present list
+    so the fast path is exercised, matching a freshly-written row.)
+    """
+    return SimpleNamespace(
+        id=row.id,
+        guild_id=row.guild_id,
+        context=row.context,
+        combatant1_name=row.combatant1_name,
+        combatant2_name=row.combatant2_name,
+        combatant1_user_id=row.combatant1_user_id,
+        combatant2_user_id=row.combatant2_user_id,
+        winner_name=row.winner_name,
+        is_stalemate=row.is_stalemate,
+        created_at=row.created_at,
+        summary=row.data["summary"],
+        metadata=row.data["metadata"],
+        key_events=key_events,
+        recurring=[] if recurring is None else recurring,
+    )
 
 
 # ---------------------------------------------------------------------------

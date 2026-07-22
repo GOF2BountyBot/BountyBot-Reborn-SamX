@@ -2,8 +2,12 @@
 Unit tests for AuditService.
 
 Strategy:
-- Mock the AsyncSession and AdminAuditLog add/commit/rollback behaviour.
-- Max 2 mocks per test (session + one additional where needed).
+- Happy-path tests run against a REAL in-memory SQLite AsyncSession + the REAL
+  AdminAuditLog model, then SELECT the persisted row back to assert the real
+  write/serialisation behaviour (no session mock).
+- Graceful-degradation tests keep a faithful (spec'd) AsyncSession mock, because
+  they inject a commit()/rollback() failure that a real committed session cannot
+  naturally produce — a genuine failure-boundary mock.
 - Tests cover: successful log creation, graceful DB failure, JSON serialisation.
 """
 
@@ -15,6 +19,8 @@ import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ---------------------------------------------------------------------------
 # Bootstrap shared.bblogger stub so the module can be imported without the
@@ -38,7 +44,31 @@ if "sqlalchemy_utils" not in sys.modules:
 # persist/models/__init__.py (triggered above). Import via the canonical path
 # so we reference the same class object that AuditService uses.
 from persist.models.admin_audit_log import AdminAuditLog
+from persist.models.base import Base
 from services.audit_service import AuditService
+
+# ---------------------------------------------------------------------------
+# Real in-memory SQLite session (AdminAuditLog is ARRAY/UUID-free → SQLite-creatable)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def audit_engine():
+    """Fresh in-memory SQLite engine with only the admin_audit_logs table."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=[AdminAuditLog.__table__])
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(audit_engine) -> AsyncSession:
+    """A real AsyncSession over the in-memory engine (no mock)."""
+    session_factory = async_sessionmaker(audit_engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_factory() as session:
+        yield session
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,8 +76,13 @@ from services.audit_service import AuditService
 
 
 def make_db_session() -> AsyncMock:
-    """Return a minimal AsyncSession mock with add, commit, and rollback."""
-    db = AsyncMock()
+    """Return a FAITHFUL AsyncSession mock (spec'd) for failure-injection tests only.
+
+    Used where a real committed session cannot naturally fail (commit/rollback raising).
+    spec=AsyncSession keeps the surface honest: add() is sync (MagicMock), commit/rollback
+    are awaitable (AsyncMock).
+    """
+    db = AsyncMock(spec=AsyncSession)
     db.add = MagicMock()  # add() is synchronous on SQLAlchemy sessions
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
@@ -60,15 +95,16 @@ def make_db_session() -> AsyncMock:
 
 
 class TestLogActionSuccess:
-    """Happy-path: audit entry created and committed."""
+    """Happy-path: audit entry created and committed to a REAL SQLite session."""
+
+    async def _fetch_all(self, db_session) -> list[AdminAuditLog]:
+        return list((await db_session.execute(select(AdminAuditLog))).scalars().all())
 
     @pytest.mark.asyncio
-    async def test_adds_entry_and_commits(self):
-        """log_action adds an AdminAuditLog record and commits the session."""
-        db = make_db_session()
-
+    async def test_adds_entry_and_commits(self, db_session):
+        """log_action persists an AdminAuditLog row that is readable back after commit."""
         await AuditService.log_action(
-            db,
+            db_session,
             user_id=123456,
             action="guild_reset",
             guild_id=999,
@@ -77,66 +113,61 @@ class TestLogActionSuccess:
             details={"preserve_players": True},
         )
 
-        # db.add() must have been called once with an AdminAuditLog instance
-        assert db.add.call_count == 1
-        added_obj = db.add.call_args[0][0]
-        assert isinstance(added_obj, AdminAuditLog)
-        assert added_obj.user_id == 123456
-        assert added_obj.action == "guild_reset"
-        assert added_obj.guild_id == 999
-        assert added_obj.resource_type == "guild"
-        assert added_obj.resource_id == "999"
-        assert added_obj.status == "success"
-
-        db.commit.assert_awaited_once()
-        db.rollback.assert_not_awaited()
+        # Committed → the row is readable back from the real DB in a fresh SELECT.
+        rows = await self._fetch_all(db_session)
+        assert len(rows) == 1
+        entry = rows[0]
+        assert entry.user_id == 123456
+        assert entry.action == "guild_reset"
+        assert entry.guild_id == 999
+        assert entry.resource_type == "guild"
+        assert entry.resource_id == "999"
+        assert entry.status == "success"
+        assert entry.id is not None  # autoincrement PK assigned on flush/commit
 
     @pytest.mark.asyncio
-    async def test_details_serialised_as_json(self):
-        """details dict is stored as a JSON string in the audit log entry."""
-        db = make_db_session()
+    async def test_details_serialised_as_json(self, db_session):
+        """details dict is stored as a JSON string in the persisted audit log entry."""
         details_payload = {"player_id": 42, "credits": 500}
 
         await AuditService.log_action(
-            db,
+            db_session,
             user_id=1,
             action="credits_update",
             details=details_payload,
         )
 
-        added_obj = db.add.call_args[0][0]
-        assert added_obj.details is not None
-        parsed = json.loads(added_obj.details)
-        assert parsed == details_payload
+        rows = await self._fetch_all(db_session)
+        assert len(rows) == 1
+        assert rows[0].details is not None
+        assert json.loads(rows[0].details) == details_payload
 
     @pytest.mark.asyncio
-    async def test_none_details_stored_as_none(self):
-        """When details=None, the DB column value is also None (no JSON dump)."""
-        db = make_db_session()
-
+    async def test_none_details_stored_as_none(self, db_session):
+        """When details=None, the persisted column value is also None (no JSON dump)."""
         await AuditService.log_action(
-            db,
+            db_session,
             user_id=7,
             action="player_reset",
         )
 
-        added_obj = db.add.call_args[0][0]
-        assert added_obj.details is None
+        rows = await self._fetch_all(db_session)
+        assert len(rows) == 1
+        assert rows[0].details is None
 
     @pytest.mark.asyncio
-    async def test_custom_status_propagated(self):
-        """Explicit status value (e.g. 'failed') is stored on the entry."""
-        db = make_db_session()
-
+    async def test_custom_status_propagated(self, db_session):
+        """Explicit status value (e.g. 'failed') is persisted on the entry."""
         await AuditService.log_action(
-            db,
+            db_session,
             user_id=1,
             action="shop_refresh",
             status="failed",
         )
 
-        added_obj = db.add.call_args[0][0]
-        assert added_obj.status == "failed"
+        rows = await self._fetch_all(db_session)
+        assert len(rows) == 1
+        assert rows[0].status == "failed"
 
 
 class TestLogActionGracefulDegradation:

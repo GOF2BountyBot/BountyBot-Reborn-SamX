@@ -144,6 +144,10 @@ class TestShopCogGuildNotConfigured:
         assert _EXPECTED_MESSAGE_FRAGMENT in sent_text
         # Must be ephemeral
         assert interaction.followup.send.call_args[1].get("ephemeral") is True
+        # The 400 must have come from resolving the player (POST /players/), not some
+        # other route — a regression pointing this at the wrong endpoint must fail here.
+        cog.http_client.post.assert_awaited_once()
+        assert cog.http_client.post.call_args[0][0].endswith("/players/")
 
     @pytest.mark.asyncio
     async def test_is_guild_not_configured_detects_correct_error(self, cog):
@@ -218,6 +222,8 @@ class TestPlayerCogGuildNotConfigured:
         sent_text = interaction.followup.send.call_args[0][0]
         assert _EXPECTED_MESSAGE_FRAGMENT in sent_text
         assert interaction.followup.send.call_args[1].get("ephemeral") is True
+        cog.http_client.post.assert_awaited_once()
+        assert cog.http_client.post.call_args[0][0].endswith("/players/")
 
     @pytest.mark.asyncio
     async def test_is_guild_not_configured_helper(self, cog):
@@ -262,6 +268,8 @@ class TestBountyCogGuildNotConfigured:
         sent_text = interaction.followup.send.call_args[0][0]
         assert _EXPECTED_MESSAGE_FRAGMENT in sent_text
         assert interaction.followup.send.call_args[1].get("ephemeral") is True
+        cog.http_client.post.assert_awaited_once()
+        assert cog.http_client.post.call_args[0][0].endswith("/players/")
 
     @pytest.mark.asyncio
     async def test_is_guild_not_configured_helper(self, cog):
@@ -311,6 +319,8 @@ class TestInventoryCogGuildNotConfigured:
         sent_text = interaction.followup.send.call_args[0][0]
         assert _EXPECTED_MESSAGE_FRAGMENT in sent_text
         assert interaction.followup.send.call_args[1].get("ephemeral") is True
+        cog.http_client.post.assert_awaited_once()
+        assert cog.http_client.post.call_args[0][0].endswith("/players/")
 
     @pytest.mark.asyncio
     async def test_is_guild_not_configured_helper(self, cog):
@@ -358,6 +368,8 @@ class TestShipsCogGuildNotConfigured:
         sent_text = interaction.followup.send.call_args[0][0]
         assert _EXPECTED_MESSAGE_FRAGMENT in sent_text
         assert interaction.followup.send.call_args[1].get("ephemeral") is True
+        cog.http_client.post.assert_awaited_once()
+        assert cog.http_client.post.call_args[0][0].endswith("/players/")
 
     @pytest.mark.asyncio
     async def test_is_guild_not_configured_helper(self, cog):

@@ -12,26 +12,32 @@ Actual routes in threads.py:
   GET    /threads/{thread_id}/messages/{message_id}
   PUT    /threads/{thread_id}/messages/{message_id}
   DELETE /threads/{thread_id}/messages/{message_id}
+
+Fidelity notes
+--------------
+No ``sys.modules["discord"]`` swap and no patches on ``resolve_bot``,
+``handle_discord_exception``, ``find_thread_by_id``, ``ChannelConverter``,
+``MessageConverter`` or ``EmbedConverter``: the mock bot is
+``spec=commands.Bot`` with ``is_ready()==True`` so ``find_thread_by_id``'s
+real cache-walk and 404 fetch-fallback (real ``discord.NotFound``) run
+end-to-end, and the mock thread/message objects carry real-typed attributes
+so the real converters produce genuine serialized bodies.
 """
 
-import importlib
-import os
 import sys
 import types
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
+import discord
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
 import tests.mocks.discord_mock_utils as discord_mock_utils
 
 DiscordMockUtils = discord_mock_utils.DiscordMockUtils
-
-# Create module-level mock utilities
-_mock_utils = DiscordMockUtils()
+create_discord_not_found = discord_mock_utils.create_discord_not_found
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -40,6 +46,7 @@ _mock_bblogger = types.ModuleType("shared.bblogger")
 
 
 def _make_mock_logger(*_args, **_kwargs):
+    """Return a MagicMock that already has common log-level methods."""
     logger = MagicMock()
     logger.info = MagicMock()
     logger.debug = MagicMock()
@@ -55,71 +62,49 @@ _mock_bblogger.get_logger = _make_mock_logger
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
 
-# Setup mock discord module with discord_mock_utils
-# create_mock_discord_module() already wires real discord exception classes
-# (NotFound, Forbidden, HTTPException) so except clauses work correctly.
-_mock_discord = _mock_utils.create_mock_discord_module_with_factories()
-
-# Mock discord.ext with MagicMock Bot for module-level compatibility
-_mock_discord_ext = types.ModuleType("discord.ext")
-_mock_discord_ext.commands = types.ModuleType("discord.ext.commands")
-_mock_discord_ext.commands.Bot = MagicMock
-
-_mock_discord.ext = _mock_discord_ext
-
-sys.modules["discord"] = _mock_discord
-sys.modules["discord.ext"] = _mock_discord_ext
-sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-
-# ---------------------------------------------------------------------------
-# Per-test isolation fixture
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _restore_real_discord():
-    """
-    Re-assert the real discord module into sys.modules before each test
-    and reload api.routers.threads so its ``discord`` reference is fresh.
-    """
-    _cm = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
-    sys.modules["discord"] = _cm._REAL_DISCORD
-    sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
-    sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
-    # Reload discord_mock_utils so create_discord_not_found() uses real discord
-    import tests.mocks.discord_mock_utils as _dmu_mod
-
-    importlib.reload(_dmu_mod)
-    # Force the threads router to re-bind its 'discord' global to real discord
-    from api.routers import threads as _threads_mod
-
-    importlib.reload(_threads_mod)
-    yield
-
 
 def create_mock_thread(thread_id=1234567890):
-    """Create a mock Discord thread using DiscordMockUtils."""
+    """Create a mock Discord thread using DiscordMockUtils.
+
+    ``__class__`` is set to the real ``discord.Thread`` so that
+    ``find_thread_by_id``'s ``isinstance(ch, discord.Thread)`` check (its
+    fast cached-lookup path) passes for real.
+    """
     thread = DiscordMockUtils.create_mock_thread(
         thread_id=thread_id,
         name="Test Thread",
         archived=False,
         locked=False,
     )
-    thread.edit = AsyncMock()
+    thread.__class__ = discord.Thread
+
+    async def _edit(**kwargs):
+        if "name" in kwargs:
+            thread.name = kwargs["name"]
+        if "archived" in kwargs:
+            thread.archived = kwargs["archived"]
+        if "locked" in kwargs:
+            thread.locked = kwargs["locked"]
+
+    thread.edit = AsyncMock(side_effect=_edit)
     thread.send = AsyncMock()
     thread.fetch_message = AsyncMock()
+
+    async def _empty_history(limit=100):
+        return
+        yield  # pragma: no cover - makes this an async generator
+
+    thread.history = MagicMock(return_value=_empty_history())
     return thread
 
 
-def create_mock_message(message_id=999999999):
+def create_mock_message(message_id=999999999, thread=None):
     """Create a mock Discord message using DiscordMockUtils."""
     msg = DiscordMockUtils.create_mock_message(
         message_id=message_id,
         content="test message",
         author_id=123456789,
+        channel=thread,
     )
     msg.embeds = []
     msg.edit = AsyncMock()
@@ -129,94 +114,45 @@ def create_mock_message(message_id=999999999):
 
 @pytest.fixture
 def mock_bot():
-    """Create a mock Discord bot using DiscordMockUtils."""
+    """Create a mock Discord bot using DiscordMockUtils.
+
+    ``fetch_channel`` raises a real ``discord.NotFound`` on cache miss so the
+    real ``find_thread_by_id`` -> ``bot.get_channel`` -> ``bot.fetch_channel``
+    resolution chain (in each router handler) produces a genuine 404 instead
+    of the test hand-rolling its own not-found branch.
+    """
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+    thread = create_mock_thread(1234567890)
+
+    def get_channel(channel_id):
+        if channel_id == thread.id:
+            return thread
+        return None
+
+    async def fetch_channel(channel_id):
+        found = get_channel(channel_id)
+        if found is None:
+            raise create_discord_not_found(f"Channel {channel_id} not found")
+        return found
+
+    bot.get_channel = get_channel
+    bot.fetch_channel = AsyncMock(side_effect=fetch_channel)
     bot.guilds = []
-    bot.get_channel = MagicMock(return_value=None)
-    bot.fetch_channel = AsyncMock(return_value=None)
+
     return bot
 
 
 @pytest.fixture
 def threads_test_app(mock_bot):
-    """Create a test FastAPI app with the threads router and mocked dependencies."""
+    """Create a test FastAPI app with the threads router and a real bot state."""
     app = FastAPI(title="Discord Gateway API Test")
     app.state.bot = mock_bot
 
-    # Create mock thread and message objects
-    mock_thread = create_mock_thread(1234567890)
-    mock_message = create_mock_message(999999999)
-    mock_thread.fetch_message = AsyncMock(return_value=mock_message)
-    # make thread.send return a mock message
-    mock_thread.send = AsyncMock(return_value=mock_message)
+    from api.routers.threads import router
 
-    # make thread.history an async generator returning empty list
-    async def _empty_history(limit=100):
-        return
-        yield  # make it an async generator
+    app.include_router(router, prefix="/api/v1")
 
-    mock_thread.history = MagicMock(return_value=_empty_history())
-
-    with (
-        patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-        patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-        patch("api.routers.threads.find_thread_by_id") as mock_find,
-        patch("api.routers.threads.ChannelConverter") as mock_channel_converter,
-        patch("api.routers.threads.MessageConverter") as mock_message_converter,
-        patch("api.routers.threads.EmbedConverter") as mock_embed_converter,
-    ):
-
-        async def mock_resolve_bot(request):
-            return mock_bot
-
-        mock_resolve.side_effect = mock_resolve_bot
-        mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
-
-        def _find_thread(bot, thread_id):
-            if thread_id == 1234567890:
-                return mock_thread
-            return None
-
-        mock_find.side_effect = _find_thread
-
-        # ChannelConverter.thread_to_detail returns a Thread schema object
-        from api.schemas.channel_schemas import Thread as ThreadSchema
-
-        _mock_thread_data = ThreadSchema(
-            id=1234567890,
-            name="Test Thread",
-            channel_id=555555555,
-            guild_id=987654321,
-            owner_id=111111111,
-            archived=False,
-            locked=False,
-            message_count=0,
-            member_count=0,
-            created_at="2024-01-01T00:00:00",
-        )
-        mock_channel_converter.thread_to_detail.return_value = _mock_thread_data
-
-        # MessageConverter.message_to_payload returns a Message schema object
-        from api.schemas.message_schemas import Message as MessageSchema
-
-        _mock_message_data = MessageSchema(
-            id=999999999,
-            channel_id=1234567890,
-            guild_id=987654321,
-            author_id=123456789,
-            content=None,
-            timestamp=datetime(2024, 1, 1),
-        )
-        mock_message_converter.message_to_payload.return_value = _mock_message_data
-
-        # EmbedConverter mock for create_thread_message
-        mock_embed_converter.payload_to_embed.return_value = MagicMock()
-
-        from api.routers.threads import router
-
-        app.include_router(router, prefix="/api/v1")
-
-        yield app
+    yield app
 
 
 @pytest.fixture
@@ -229,7 +165,7 @@ class TestGetThread:
     """Tests for GET /threads/{thread_id} endpoint."""
 
     def test_get_thread_returns_200(self, threads_client):
-        """GET /threads/{thread_id} should return 200 with thread details."""
+        """GET /threads/{thread_id} should return 200 with real serialized thread details."""
         response = threads_client.get("/api/v1/threads/1234567890")
         assert response.status_code == 200
 
@@ -237,9 +173,11 @@ class TestGetThread:
         assert data["status"] == "success"
         assert "data" in data
         assert data["data"]["id"] == 1234567890
+        assert data["data"]["name"] == "Test Thread"
+        assert data["data"]["archived"] is False
 
     def test_get_thread_not_found_returns_404(self, threads_client):
-        """GET /threads/{thread_id} should return 404 for non-existent thread."""
+        """GET /threads/{thread_id} should return 404 (real discord.NotFound on fetch-miss)."""
         response = threads_client.get("/api/v1/threads/9999999999")
         assert response.status_code == 404
         assert "thread" in response.json()["detail"].lower()
@@ -249,7 +187,7 @@ class TestUpdateThread:
     """Tests for PUT /threads/{thread_id} endpoint."""
 
     def test_update_thread_success(self, threads_client):
-        """PUT /threads/{thread_id} should update thread successfully."""
+        """PUT /threads/{thread_id} should update thread successfully; response reflects the real edit."""
         update_data = {
             "name": "Updated Thread Name",
         }
@@ -258,7 +196,7 @@ class TestUpdateThread:
 
         data = response.json()
         assert data["status"] == "updated"
-        assert "data" in data
+        assert data["data"]["name"] == "Updated Thread Name"
 
     def test_update_thread_not_found(self, threads_client):
         """PUT /threads/{thread_id} should return 404 for non-existent thread."""
@@ -272,12 +210,13 @@ class TestCloseThread:
     """Tests for PUT /threads/{thread_id}/close endpoint."""
 
     def test_close_thread_success(self, threads_client):
-        """PUT /threads/{thread_id}/close should close thread successfully."""
+        """PUT /threads/{thread_id}/close should close thread successfully via the real thread.edit call."""
         response = threads_client.put("/api/v1/threads/1234567890/close")
         assert response.status_code == 200
 
         data = response.json()
         assert data["status"] == "closed"
+        assert "test thread" in data["message"].lower()
 
     def test_close_thread_not_found(self, threads_client):
         """PUT /threads/{thread_id}/close should return 404 for non-existent thread."""
@@ -290,7 +229,7 @@ class TestOpenThread:
     """Tests for PUT /threads/{thread_id}/open endpoint."""
 
     def test_open_thread_success(self, threads_client):
-        """PUT /threads/{thread_id}/open should open thread successfully."""
+        """PUT /threads/{thread_id}/open should open thread successfully via the real thread.edit call."""
         response = threads_client.put("/api/v1/threads/1234567890/open")
         assert response.status_code == 200
 
@@ -307,15 +246,24 @@ class TestOpenThread:
 class TestGetThreadMessages:
     """Tests for GET /threads/{thread_id}/messages endpoint."""
 
-    def test_get_messages_success(self, threads_client):
-        """GET /threads/{thread_id}/messages should return 200 with message list."""
+    def test_get_messages_success(self, threads_client, mock_bot):
+        """GET /threads/{thread_id}/messages should return 200 with the real, serialized message list."""
+        thread = mock_bot.get_channel(1234567890)
+        message = create_mock_message(message_id=555000111, thread=thread)
+
+        async def _one_message(limit=100):
+            yield message
+
+        thread.history = MagicMock(return_value=_one_message())
+
         response = threads_client.get("/api/v1/threads/1234567890/messages")
         assert response.status_code == 200
 
         data = response.json()
         assert data["status"] == "success"
-        assert "data" in data
         assert isinstance(data["data"], list)
+        assert len(data["data"]) == 1
+        assert data["data"][0]["id"] == 555000111
 
     def test_get_messages_not_found(self, threads_client):
         """GET /threads/{thread_id}/messages should return 404 for non-existent thread."""
@@ -327,9 +275,12 @@ class TestGetThreadMessages:
 class TestCreateThreadMessage:
     """Tests for POST /threads/{thread_id}/messages endpoint."""
 
-    def test_create_message_success(self, threads_client):
-        """POST /threads/{thread_id}/messages should create message successfully."""
-        # The create_thread_message endpoint expects a MessageCreateRequest
+    def test_create_message_success(self, threads_client, mock_bot):
+        """POST /threads/{thread_id}/messages should create message successfully via the real thread.send call."""
+        thread = mock_bot.get_channel(1234567890)
+        sent_message = create_mock_message(message_id=777888999, thread=thread)
+        thread.send = AsyncMock(return_value=sent_message)
+
         message_data = {
             "content": {
                 "title": "Hello Thread",
@@ -341,7 +292,11 @@ class TestCreateThreadMessage:
 
         data = response.json()
         assert data["status"] == "created"
-        assert "data" in data
+        assert data["data"]["id"] == 777888999
+        # thread.send was invoked with a real discord.Embed built by EmbedConverter
+        _, send_kwargs = thread.send.call_args
+        assert send_kwargs["embed"].title == "Hello Thread"
+        assert send_kwargs["embed"].description == "test content"
 
     def test_create_message_not_found(self, threads_client):
         """POST /threads/{thread_id}/messages should return 404 for non-existent thread."""
@@ -354,14 +309,19 @@ class TestCreateThreadMessage:
 class TestGetThreadMessage:
     """Tests for GET /threads/{thread_id}/messages/{message_id} endpoint."""
 
-    def test_get_thread_message_success(self, threads_client):
-        """GET /threads/{thread_id}/messages/{message_id} should return 200."""
+    def test_get_thread_message_success(self, threads_client, mock_bot):
+        """GET /threads/{thread_id}/messages/{message_id} should return 200 with the requested message."""
+        thread = mock_bot.get_channel(1234567890)
+        message = create_mock_message(message_id=999999999, thread=thread)
+        thread.fetch_message = AsyncMock(return_value=message)
+
         response = threads_client.get("/api/v1/threads/1234567890/messages/999999999")
         assert response.status_code == 200
 
         data = response.json()
         assert data["status"] == "found"
-        assert "data" in data
+        assert data["data"]["id"] == 999999999
+        thread.fetch_message.assert_awaited_once_with(999999999)
 
     def test_get_thread_message_thread_not_found(self, threads_client):
         """GET /threads/{thread_id}/messages/{message_id} should return 404 if thread not found."""
@@ -369,21 +329,29 @@ class TestGetThreadMessage:
         assert response.status_code == 404
         assert "thread" in response.json()["detail"].lower()
 
+    def test_get_thread_message_message_not_found(self, threads_client, mock_bot):
+        """GET .../messages/{message_id} should return 404 (real discord.NotFound) for an unknown message."""
+        thread = mock_bot.get_channel(1234567890)
+        thread.fetch_message = AsyncMock(side_effect=create_discord_not_found("Message not found"))
+
+        response = threads_client.get("/api/v1/threads/1234567890/messages/424242")
+        assert response.status_code == 404
+        assert "message" in response.json()["detail"].lower()
+
 
 class TestErrorHandling:
-    """Tests for error handling in threads endpoints."""
+    """Tests for error handling in threads endpoints.
+
+    ``resolve_bot`` (a network/readiness boundary) is patched to raise a
+    generic error so ``handle_discord_exception``'s real, unpatched mapping
+    of an unrecognized exception to HTTP 500 is exercised end-to-end.
+    """
 
     def test_handle_discord_exception(self, threads_client):
-        """Threads endpoints should handle Discord exceptions gracefully."""
-        from fastapi import HTTPException as FastAPIHTTPException
+        """Threads endpoints should map an unexpected error to a real 500 via handle_discord_exception."""
+        from unittest.mock import patch
 
-        with (
-            patch("api.routers.threads.resolve_bot", side_effect=Exception("Test Discord error")),
-            patch(
-                "api.routers.threads.handle_discord_exception",
-                side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error"),
-            ),
-        ):
+        with patch("api.routers.threads.resolve_bot", side_effect=RuntimeError("Test Discord error")):
             response = threads_client.get("/api/v1/threads/1234567890")
             assert response.status_code == 500
-            assert "internal server error" in response.json()["detail"].lower()
+            assert "test discord error" in response.json()["detail"].lower()

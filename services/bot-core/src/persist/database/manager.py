@@ -316,9 +316,12 @@ class DatabaseManager:
             return False
         try:
             flogger.debug(f"Checking if table '{table_name}' exists in schema '{schema}'")
-            # Use the underlying sync engine for inspection
-            inspector = inspect(self._engine.sync_engine)
-            exists = inspector.has_table(table_name, schema=schema)
+            # The inspection API is synchronous — it must run through the async
+            # connection's greenlet bridge (TRUEUP-P5: inspecting .sync_engine
+            # directly raises MissingGreenlet, which the except below swallowed
+            # into an unconditional False).
+            async with self._engine.connect() as conn:
+                exists = await conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table(table_name, schema=schema))
             flogger.debug(f"Table '{table_name}' exists: {exists}")
             return exists
         except SQLAlchemyError as e:

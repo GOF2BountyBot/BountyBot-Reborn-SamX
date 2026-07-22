@@ -3,7 +3,6 @@ Unit tests for bot-core utility modules:
   - utils.data_loader
   - utils.emoji_service
   - utils.job_executor
-  - utils.executors.time_announcement_executor
 
 IMPORTANT: shared.bblogger must be mocked BEFORE any source imports.
 The conftest.py already does this via sys.modules patching, so the
@@ -588,28 +587,28 @@ class TestLoadData:
 class TestJobExecutorDispatch:
     """Tests for JobExecutor.execute dispatch logic."""
 
-    async def test_dispatches_time_announcement_job(self):
-        """time_announcement payload routes to execute_time_announcement_job."""
+    async def test_dispatches_shop_refresh_job(self):
+        """shop_refresh payload routes to execute_shop_refresh_job."""
         from utils.job_executor import JobExecutor
 
         executor = JobExecutor()
-        payload = {"job_type": "time_announcement", "guild_id": "g1", "channel_id": "c1"}
+        payload = {"job_type": "shop_refresh", "guild_id": "g1"}
 
         mock_fn = AsyncMock(return_value=None)
-        with patch("utils.job_executor.execute_time_announcement_job", mock_fn):
+        with patch("utils.job_executor.execute_shop_refresh_job", mock_fn):
             await executor.execute("job-001", payload)
 
         mock_fn.assert_awaited_once_with("job-001", payload)
 
     async def test_generic_job_runs_without_dispatch(self):
-        """Non-time_announcement payloads complete without calling the time executor."""
+        """Unrecognized payloads complete without calling any typed executor."""
         from utils.job_executor import JobExecutor
 
         executor = JobExecutor()
         payload = {"job_type": "some_other_type"}
 
         mock_fn = AsyncMock()
-        with patch("utils.job_executor.execute_time_announcement_job", mock_fn):
+        with patch("utils.job_executor.execute_shop_refresh_job", mock_fn):
             await executor.execute("job-002", payload)
 
         mock_fn.assert_not_called()
@@ -619,10 +618,10 @@ class TestJobExecutorDispatch:
         from utils.job_executor import JobExecutor
 
         executor = JobExecutor()
-        payload = {"job_type": "time_announcement"}
+        payload = {"job_type": "shop_refresh"}
 
         boom = AsyncMock(side_effect=RuntimeError("boom"))
-        with patch("utils.job_executor.execute_time_announcement_job", boom):
+        with patch("utils.job_executor.execute_shop_refresh_job", boom):
             # Should not raise
             await executor.execute("job-err", payload)
 
@@ -632,7 +631,7 @@ class TestJobExecutorDispatch:
 
         executor = JobExecutor()
         mock_fn = AsyncMock()
-        with patch("utils.job_executor.execute_time_announcement_job", mock_fn):
+        with patch("utils.job_executor.execute_shop_refresh_job", mock_fn):
             await executor.execute("job-empty", {})
 
         mock_fn.assert_not_called()
@@ -648,194 +647,6 @@ class TestRunJobWrapper:
         mock_execute = AsyncMock()
         je._executor.execute = mock_execute
 
-        await je.run_job("job-rj", {"job_type": "time_announcement"})
+        await je.run_job("job-rj", {"job_type": "shop_refresh"})
 
-        mock_execute.assert_awaited_once_with("job-rj", {"job_type": "time_announcement"})
-
-
-# ===========================================================================
-# Tests for utils.executors.time_announcement_executor
-# ===========================================================================
-
-
-class TestExecuteTimeAnnouncementJob:
-    """Tests for execute_time_announcement_job.
-
-    Uses respx transport-level mocking routed on the executor's real
-    ``BASE_TIME_URL`` (GET/POST/PUT to ``/api/v1/time``), so the endpoint, verb
-    and JSON body are asserted — replacing the previous MagicMock AsyncClient
-    that returned success for any request.
-    """
-
-    @staticmethod
-    def _base_url() -> str:
-        # Read the URL the executor actually uses (computed from env at import).
-        import utils.executors.time_announcement_executor as ta_mod
-
-        return ta_mod.BASE_TIME_URL
-
-    async def test_post_when_not_exists(self):
-        """When GET returns non-200, a POST is issued to create the announcement."""
-        from utils.executors.time_announcement_executor import execute_time_announcement_job
-
-        base = self._base_url()
-        payload = {"guild_id": "g1", "channel_id": "c1", "current_time": "2026-01-01T00:00:00Z"}
-
-        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
-            get_route = router.get(url__startswith=base).respond(404)
-            post_route = router.post(url__startswith=base).respond(201, json={"message_id": "new-msg-id"})
-            await execute_time_announcement_job("job-new", payload)
-
-        assert get_route.called
-        assert post_route.call_count == 1
-        assert post_route.calls.last.request.method == "POST"
-
-    async def test_put_when_exists(self):
-        """When GET returns 200, a PUT is issued to update the announcement."""
-        from utils.executors.time_announcement_executor import execute_time_announcement_job
-
-        base = self._base_url()
-        payload = {
-            "guild_id": "g1",
-            "channel_id": "c1",
-            "message_id": "existing-msg-id",
-            "current_time": "2026-01-01T00:00:00Z",
-        }
-
-        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
-            router.get(url__startswith=base).respond(200, json={"message_id": "existing-msg-id"})
-            put_route = router.put(url__startswith=base).respond(200, json={"message_id": "existing-msg-id"})
-            await execute_time_announcement_job("job-update", payload)
-
-        assert put_route.call_count == 1
-        # The PUT body must carry the message_id being updated.
-        put_body = json.loads(put_route.calls.last.request.content)
-        assert put_body.get("message_id") == "existing-msg-id"
-
-    async def test_message_id_param_included_in_get_when_present(self):
-        """If message_id is in payload, it is passed as a GET query param."""
-        from utils.executors.time_announcement_executor import execute_time_announcement_job
-
-        base = self._base_url()
-        payload = {
-            "guild_id": "g1",
-            "channel_id": "c1",
-            "message_id": "m999",
-            "current_time": "2026-01-01T00:00:00Z",
-        }
-
-        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
-            get_route = router.get(url__startswith=base).respond(200, json={"message_id": "m999"})
-            router.put(url__startswith=base).respond(200, json={"message_id": "m999"})
-            await execute_time_announcement_job("job-mid", payload)
-
-        get_url = str(get_route.calls.last.request.url)
-        assert "message_id=m999" in get_url, f"GET must carry message_id query param, url={get_url!r}"
-        assert "guild_id=g1" in get_url
-        assert "channel_id=c1" in get_url
-
-    async def test_get_timeout_raises(self):
-        """TimeoutException on GET propagates upward."""
-        import httpx
-        from utils.executors.time_announcement_executor import execute_time_announcement_job
-
-        base = self._base_url()
-        payload = {"guild_id": "g1", "channel_id": "c1"}
-
-        with (
-            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
-            pytest.raises(httpx.TimeoutException),
-        ):
-            router.get(url__startswith=base).mock(side_effect=httpx.TimeoutException("timed out"))
-            await execute_time_announcement_job("job-timeout", payload)
-
-    async def test_get_http_error_raises(self):
-        """A transport ConnectError on GET propagates upward."""
-        import httpx
-        from utils.executors.time_announcement_executor import execute_time_announcement_job
-
-        base = self._base_url()
-        payload = {"guild_id": "g1", "channel_id": "c1"}
-
-        with (
-            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
-            pytest.raises(httpx.HTTPError),
-        ):
-            router.get(url__startswith=base).mock(side_effect=httpx.ConnectError("bad gateway"))
-            await execute_time_announcement_job("job-http-err", payload)
-
-    async def test_post_http_error_raises(self):
-        """A 5xx on POST (raise_for_status → HTTPStatusError) propagates upward."""
-        import httpx
-        from utils.executors.time_announcement_executor import execute_time_announcement_job
-
-        base = self._base_url()
-        payload = {"guild_id": "g1", "channel_id": "c1"}
-
-        with (
-            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
-            pytest.raises(httpx.HTTPError),
-        ):
-            router.get(url__startswith=base).respond(404)
-            router.post(url__startswith=base).respond(502)
-            await execute_time_announcement_job("job-post-err", payload)
-
-    async def test_updates_job_args_after_first_create(self):
-        """After a POST (new announcement), the executor updates the job args with the new message_id.
-
-        P6-T8: update is now via direct scheduler.modify_job (no HTTP PUT loopback).
-        Verifies that modify_job is called with args=[job_id, updated_payload] where
-        updated_payload includes the new message_id, AND that NO PUT is issued.
-        """
-        from utils.executors.time_announcement_executor import execute_time_announcement_job
-
-        base = self._base_url()
-        payload = {"guild_id": "g1", "channel_id": "c1", "current_time": "2026-01-01T00:00:00Z"}
-
-        mock_scheduler = MagicMock()
-        mock_scheduler.modify_job = MagicMock(return_value=None)
-
-        with (
-            # assert_all_called=False: the PUT route is intentionally registered
-            # to prove it is NEVER hit (no HTTP loopback).
-            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
-            patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler),
-        ):
-            get_route = router.get(url__startswith=base).respond(404)
-            post_route = router.post(url__startswith=base).respond(201, json={"message_id": "brand-new-id"})
-            # A PUT route is registered but must remain uncalled (no loopback).
-            put_route = router.put(url__startswith=base).respond(200, json={})
-            await execute_time_announcement_job("job-create", payload)
-
-        assert get_route.called and post_route.call_count == 1
-        # P6-T8: modify_job must be called directly (no HTTP PUT loopback).
-        mock_scheduler.modify_job.assert_called_once()
-        call_args = mock_scheduler.modify_job.call_args
-        job_id_arg = call_args.args[0] if call_args.args else call_args.kwargs.get("job_id")
-        assert job_id_arg == "job-create", f"modify_job job_id={job_id_arg!r}, expected 'job-create'"
-        new_args = call_args.kwargs.get("args")
-        assert new_args is not None, "modify_job must be called with args= kwarg"
-        assert len(new_args) == 2, f"Expected args=[job_id, payload], got {new_args!r}"
-        new_payload = new_args[1]
-        assert new_payload.get("message_id") == "brand-new-id", (
-            f"Updated payload must include message_id='brand-new-id', got {new_payload!r}"
-        )
-        assert not put_route.called, "HTTP PUT to /jobs/ (or /time) must NOT be made (P6-T8 no-loopback)"
-
-    async def test_uses_current_time_from_payload_if_provided(self):
-        """If 'current_time' is in payload, it is used instead of datetime.now (asserted in POST body)."""
-        from utils.executors.time_announcement_executor import execute_time_announcement_job
-
-        base = self._base_url()
-        fixed_time = "2026-03-11T12:00:00Z"
-        payload = {"guild_id": "g1", "channel_id": "c1", "current_time": fixed_time}
-
-        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
-            router.get(url__startswith=base).respond(404)
-            post_route = router.post(url__startswith=base).respond(201, json={"message_id": "new-msg-id"})
-            await execute_time_announcement_job("job-time", payload)
-
-        body = json.loads(post_route.calls.last.request.content)
-        assert body.get("current_time") == fixed_time
-        assert body.get("guild_id") == "g1"
-        assert body.get("channel_id") == "c1"
+        mock_execute.assert_awaited_once_with("job-rj", {"job_type": "shop_refresh"})

@@ -3281,7 +3281,7 @@ class TestClearBountiesSchedulerCleanup:
 
         jobs = [
             {"id": "refresh", "args": [None, {"job_type": "shop_refresh", "guild_id": 555}]},
-            {"id": "time", "args": [None, {"job_type": "time_announcement", "guild_id": 555}]},
+            {"id": "decay", "args": [None, {"job_type": "temperature_decay", "guild_id": 555}]},
             # bounty_expire but a DIFFERENT bounty — must not be deleted
             {"id": "other-bounty", "args": [None, {"job_type": "bounty_expire", "bounty_id": 9999}]},
             # Missing args shape — must be tolerated

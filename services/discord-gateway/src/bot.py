@@ -237,6 +237,13 @@ async def lifespan(app: FastAPI):
     # expected to fail there; on a single-container gateway restart bot-core is already
     # up and the probe confirms reachability.
     # Retries mirror the cog preload retry pattern: a few attempts with backoff.
+    # TESTING (TRUEUP-04): accepted as non-unit-testable in place — this nested closure
+    # captures lifespan-scoped state (autocomplete_http, api_base) and cannot be imported.
+    # Manual validation in a live environment: restart ONLY the gateway container while
+    # bot-core is up and check the gateway log for "Autocomplete health probe OK";
+    # restart the full stack cold and check for the probe-attempt INFO lines followed by
+    # "Autocomplete health probe FAILED after 3 attempts" at WARNING (expected — bot-core
+    # isn't up yet), then confirm autocomplete works once the warm jobs run.
     async def _autocomplete_health_probe() -> None:
         _probe_attempts = 3
         _probe_backoff_s = (1.0, 2.0)  # per-attempt wait BEFORE retry (used for attempts 1 and 2 only)

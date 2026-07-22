@@ -423,3 +423,92 @@ above).
 `test_threads.py` 15→16, `test_roles.py` 21→23, `test_users.py` 11→12 (added tests
 strengthening real-object coverage, e.g. multi-entity role selection, real 404-on-fetch
 paths); all other touched files unchanged in count.
+
+## R-bc-db-manager (TRUEUP-05)
+
+**Real production bug found (not fixed — out of scope for a test-refactor pass):**
+`services/bot-core/src/persist/database/manager.py::DatabaseManager.table_exists()`
+(~line 310) calls the *synchronous* SQLAlchemy reflection API directly from inside an
+`async def` method with no `run_sync` bridge:
+
+```python
+inspector = inspect(self._engine.sync_engine)
+exists = inspector.has_table(table_name, schema=schema)
+```
+
+Swapping the mocked `inspect()`/engine in `tests/test_database.py::TestDatabaseManagerTableExists`
+for a REAL `AsyncEngine` (both a real aiosqlite engine and, independently, the real asyncpg
+engine pointed at the disposable postgres on `127.0.0.1:55432`) surfaced that this
+unconditionally raises `sqlalchemy.exc.MissingGreenlet` ("greenlet_spawn has not been called;
+can't call await_only() here") — caught by `table_exists()`'s own `except SQLAlchemyError`
+and converted to `return False`. **`table_exists()` returns `False` unconditionally today,
+regardless of whether the table actually exists** — verified by creating a real table on a
+real engine and calling `table_exists()` on it (still `False`). The previous test suite never
+caught this because it patched `inspect()` itself to control the return value, which
+presupposes `inspect()` can be called successfully in the first place.
+
+Impact: any caller relying on `table_exists()` for a real yes/no answer (e.g. startup
+migration-guard checks) always gets `False`, i.e. "table does not exist," even when it does.
+No such caller was found in a quick grep of `services/bot-core/src` as of this writing, so the
+practical blast radius may be limited to future use, but the method is silently broken.
+
+Suggested fix (code branch, not here): bridge through a real connection, e.g.
+`async with self._engine.connect() as conn: return await conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table(table_name, schema=schema))`.
+
+Test evidence: `tests/test_database.py::TestDatabaseManagerTableExists::test_table_exists_sqlalchemy_error_returns_false`
+(renamed/repurposed, no longer needs an injected `side_effect` — the real engine fails on its
+own) and the new `test_table_exists_returns_false_even_when_table_genuinely_exists`, plus
+`TestModuleLevelConvenienceFunctions::test_module_table_exists_delegates`.
+
+## TRUEUP-01 / TRUEUP-05 completion status (2026-07-22 pass)
+
+**TRUEUP-05 (bot-core `tests/test_database.py`): COMPLETE.** All mocked engine/session/pool
+plumbing checks now run against a real `sqlite+aiosqlite:///:memory:` `AsyncEngine`
+(`poolclass=AsyncAdaptedQueuePool` where real `Pool.size()`/`.status()` introspection is
+needed — a bare `:memory:` URL defaults to `StaticPool`, which lacks that API; `StaticPool`
+is used instead, deliberately, for the AC-7 auto-commit/rollback tests that need
+cross-checkout persistence to prove data was genuinely committed/rolled back, not just that a
+mock method was called). Real invalid-driver strings (`sqlite+doesnotexist://`) and an
+unreachable file path replace `patch(create_async_engine, side_effect=...)` /
+`patch(inspect, side_effect=...)` mocks for the two forced-failure paths that have a genuine
+live equivalent. Three tests in `TestDatabaseManagerTestConnection` (the exact-N-failures-
+then-recover retry/backoff tests) remain on constructed `AsyncMock` connections — justified
+in-file: no real database can be made to fail transiently exactly N times on a controlled
+schedule without infrastructure (e.g. killing/restarting a real Postgres mid-test) far beyond
+a unit test's scope; the existing mocks already model the real `async with engine.connect()
+as conn: await conn.execute(...)` shape faithfully (house rule 2) and exist purely to control
+retry *timing*, not to fake a live-object contract. One genuine production bug found in
+passing — see R-bc-db-manager above. Gate: `tests/test_database.py` 66 passed, 3 skipped
+(pre-existing live-DB-reachability skips, unrelated to this pass); full bot-core suite (run
+with the mandatory `POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=55432 ...` overrides) 5562 passed,
+5 skipped, 1 xfailed. Ruff clean.
+
+**TRUEUP-01 (discord-gateway cog respx migration): PARTIAL.** Completed in this pass:
+`test_aboutCog.py`'s `TestMakeRouteCommand` (7 tests), `TestCreateObjectEmbed`'s 3 icon-HEAD
+tests, and `TestD006IconValidationCache` (8 tests) — all migrated off the accept-anything
+MagicMock/AsyncMock HTTP responder to `respx.mock(assert_all_called=True)` pinned to the real
+URL/verb/query-params, per the house `_with_real_http_client` pattern (added locally to this
+file, mirroring `test_adminCog.py`). `test_aboutCog.py` is now fully respx-migrated; 140/140
+passing, ruff clean. **NOT completed in this pass, for time** — this was the bulk of the
+Part 1 scope and remains exactly as characterized in R-gw-cogs-0/R-gw-cogs-2 above: the ~300+
+"bulk happy-path" command tests in `test_playerCog.py` (~150 tests across
+`TestLeaderboardCommand`, `TestPrestigeConfirmFlow`, `TestPromoteCommand`,
+`TestPromoteTierRoleSwap`, `TestDemoteCommand`, `TestDemoteTierRoleSwap`,
+`TestUnregisterCommand`, `TestRegisterAlias`, `TestLoadoutCommand`, etc.), `test_shopCog.py`
+(~45 tests: `TestShopCommand`/`TestShopCommandBranches`/`TestShopCommandWithStats`/
+`TestSellCommand`/`TestShopsCommand`), `test_shipsCog.py` (`TestShipsCommand`/
+`TestShipCommand`/`TestNicknameCommand`), `test_bountyCog.py` (~60 tests: `TestCheckCommand`/
+`TestBountiesCommand`/`TestRouteCommand`/`TestCriminalLoadoutCommand`/etc.), and
+`test_duelCog.py` (~31 command/error tests, including the stakes/guild_id challenge-JSON-body
+assertion called out in this task's brief) are still on the shared `make_mock_response`
+fixture / inline `AsyncMock(http_client.<verb>)` responders. Each of these already has at
+least one dedicated respx contract-test class locking its happy-path URL (per R-gw-cogs-0/2),
+so the "wrong URL/verb ships green" blast radius is closed file-wide even though per-test
+migration is not done. Investigation during this pass confirmed the migration is real
+per-test work, not a single shared-fixture fix: each bulk test hand-builds its own
+`MagicMock`/response payload inline (no common factory to patch once), and reconstructing
+each one as a real `httpx.Response` requires reading the corresponding cog source method to
+pin the exact URL/verb/params — effort L per file (~5 files), consistent with the prior
+pass's own estimate. Recommend a follow-up pass scoped to ONE file at a time (start with
+`test_duelCog.py`, the smallest, ~31 tests, and the one explicitly named in this task's
+brief) rather than attempting all 5 in one sitting.

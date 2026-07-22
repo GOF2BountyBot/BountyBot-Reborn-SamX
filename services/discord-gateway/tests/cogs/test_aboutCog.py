@@ -109,6 +109,21 @@ def _close_coro(coro):
     return MagicMock()
 
 
+_BOT_CORE_URL = "http://bot-core:8000/api/v1"
+
+
+def _with_real_http_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+    House pattern — see test_adminCog.py's `_with_real_http_client`.
+    """
+    import httpx
+
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
+
+
 def _make_mock_bot_with_loop():
     """Create a mock bot that has a working loop.create_task."""
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
@@ -912,46 +927,63 @@ class TestCreateObjectEmbed:
         assert result is not None
         assert type(result).__name__ == "Embed"
 
-    def test_embed_icon_url_success(self, mock_about_cog):
-        """_create_object_embed should set thumbnail when icon HEAD returns 200."""
+    def test_embed_icon_url_success(self, mock_about_cog, request):
+        """_create_object_embed should set thumbnail when icon HEAD returns 200.
+
+        TRUEUP-01 (R-gw-cogs-0): respx-pinned to the real icon URL + HEAD verb,
+        returning a real httpx.Response — replaces the accept-anything MagicMock
+        responder.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_about_cog, request)
         obj_data = {
             **_make_object_data("Eagle", "criminal", 70),
             "icon": "https://example.com/icon.png",
         }
-        head_resp = MagicMock()
-        head_resp.status_code = 200
-        mock_about_cog.http_client.head = AsyncMock(return_value=head_resp)
+        with respx.mock(assert_all_called=True) as mock_router:
+            route = mock_router.head("https://example.com/icon.png").mock(return_value=httpx.Response(200))
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
 
-        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
         assert result is not None
         assert type(result).__name__ == "Embed"
-        mock_about_cog.http_client.head.assert_awaited_once()
+        assert route.call_count == 1
 
-    def test_embed_icon_url_non_200(self, mock_about_cog):
+    def test_embed_icon_url_non_200(self, mock_about_cog, request):
         """_create_object_embed should skip thumbnail when icon HEAD returns non-200."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_about_cog, request)
         obj_data = {
             **_make_object_data("Eagle", "criminal", 71),
             "icon": "https://example.com/broken.png",
         }
-        head_resp = MagicMock()
-        head_resp.status_code = 404
-        mock_about_cog.http_client.head = AsyncMock(return_value=head_resp)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.head("https://example.com/broken.png").mock(return_value=httpx.Response(404))
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
 
-        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
         assert result is not None
         assert type(result).__name__ == "Embed"
+        assert result.thumbnail is None or result.thumbnail.url is None
 
-    def test_embed_icon_url_exception(self, mock_about_cog):
+    def test_embed_icon_url_exception(self, mock_about_cog, request):
         """_create_object_embed should handle icon HEAD request exception."""
+        import respx
+
+        _with_real_http_client(mock_about_cog, request)
         obj_data = {
             **_make_object_data("Eagle", "criminal", 72),
             "icon": "https://example.com/timeout.png",
         }
-        mock_about_cog.http_client.head = AsyncMock(side_effect=RuntimeError("connection timeout"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.head("https://example.com/timeout.png").mock(side_effect=RuntimeError("connection timeout"))
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
 
-        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
         assert result is not None
         assert type(result).__name__ == "Embed"
+        assert result.thumbnail is None or result.thumbnail.url is None
 
     def test_embed_with_aliases(self, mock_about_cog):
         """_create_object_embed should add aliases field."""
@@ -1402,130 +1434,156 @@ class TestSystemAutocomplete:
 
 
 class TestMakeRouteCommand:
-    """Tests for the /make-route slash command."""
+    """Tests for the /make-route slash command.
 
-    def test_make_route_success(self, mock_about_cog):
+    TRUEUP-01 (R-gw-cogs-0): migrated off the accept-anything
+    AsyncMock(http_client.get) responder to respx, pinned to the real
+    /systems/route (+ best-effort /systems/route/map) URLs, verb, and query
+    params — replacing a single MagicMock return value that both GET calls
+    happened to share.
+    """
+
+    @staticmethod
+    def _mock_route_and_map(mock_router, start: str, end: str, route_json: dict, *, map_ok: bool = True):
+        import httpx
+
+        mock_router.get(f"{_BOT_CORE_URL}/systems/route", params={"start": start, "end": end}).mock(
+            return_value=httpx.Response(200, json=route_json)
+        )
+        map_response = httpx.Response(200, content=b"fake-png-bytes") if map_ok else httpx.Response(503)
+        mock_router.get(f"{_BOT_CORE_URL}/systems/route/map", params={"start": start, "end": end}).mock(
+            return_value=map_response
+        )
+
+    def test_make_route_success(self, mock_about_cog, request):
         """make_route should display a route embed on success."""
+        import respx
+
+        _with_real_http_client(mock_about_cog, request)
         interaction = _create_mock_interaction()
 
-        route_resp = MagicMock()
-        route_resp.raise_for_status = MagicMock()
-        route_resp.json.return_value = {
-            "route": ["Sol", "Alpha", "Beta"],
-            "hops": 2,
-        }
-        mock_about_cog.http_client.get = AsyncMock(return_value=route_resp)
-
-        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Beta"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._mock_route_and_map(mock_router, "Sol", "Beta", {"route": ["Sol", "Alpha", "Beta"], "hops": 2})
+            asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Beta"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        # Map GET succeeded (real 200 + bytes) → a route-map file attachment is included.
+        assert "file" in call_kwargs
 
-    def test_make_route_embed_title_contains_start_and_end(self, mock_about_cog):
+    def test_make_route_embed_title_contains_start_and_end(self, mock_about_cog, request):
         """make_route embed title should contain start and end system names."""
+        import respx
+
+        _with_real_http_client(mock_about_cog, request)
         interaction = _create_mock_interaction()
 
-        route_resp = MagicMock()
-        route_resp.raise_for_status = MagicMock()
-        route_resp.json.return_value = {
-            "route": ["Sol", "Beta"],
-            "hops": 1,
-        }
-        mock_about_cog.http_client.get = AsyncMock(return_value=route_resp)
-
-        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Beta"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._mock_route_and_map(mock_router, "Sol", "Beta", {"route": ["Sol", "Beta"], "hops": 1})
+            asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Beta"))
 
         call_kwargs = interaction.followup.send.call_args[1]
         embed = call_kwargs["embed"]
         assert "Sol" in embed.title
         assert "Beta" in embed.title
 
-    def test_make_route_no_route_found_404(self, mock_about_cog):
+    def test_make_route_no_route_found_404(self, mock_about_cog, request):
         """make_route should send ephemeral error when route is not found (404)."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_about_cog, request)
         interaction = _create_mock_interaction()
 
-        error_response = MagicMock()
-        error_response.status_code = 404
-        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
-        mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Nowhere"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/systems/route", params={"start": "Sol", "end": "Nowhere"}).mock(
+                return_value=httpx.Response(404, json={"detail": "No route found"})
+            )
+            asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Nowhere"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "no route" in call_kwargs[0][0].lower()
 
-    def test_make_route_too_long_400(self, mock_about_cog):
+    def test_make_route_too_long_400(self, mock_about_cog, request):
         """make_route should send ephemeral error when route is too long (400)."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_about_cog, request)
         interaction = _create_mock_interaction()
 
-        error_response = MagicMock()
-        error_response.status_code = 400
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-        mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "A", "Z"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/systems/route", params={"start": "A", "end": "Z"}).mock(
+                return_value=httpx.Response(400, json={"detail": "Route exceeds maximum length"})
+            )
+            asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "A", "Z"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "maximum length" in call_kwargs[0][0].lower()
 
-    def test_make_route_api_error_non_404_non_400(self, mock_about_cog):
+    def test_make_route_api_error_non_404_non_400(self, mock_about_cog, request):
         """make_route should handle non-404/400 HTTP errors gracefully."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_about_cog, request)
         interaction = _create_mock_interaction()
 
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-        mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "A", "B"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/systems/route", params={"start": "A", "end": "B"}).mock(
+                return_value=httpx.Response(500, json={"detail": "Internal error"})
+            )
+            asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "A", "B"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_make_route_generic_exception(self, mock_about_cog):
+    def test_make_route_generic_exception(self, mock_about_cog, request):
         """make_route should handle generic exceptions gracefully."""
+        import respx
+
+        _with_real_http_client(mock_about_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_about_cog.http_client.get = AsyncMock(side_effect=RuntimeError("network failure"))
-
-        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "A", "B"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/systems/route", params={"start": "A", "end": "B"}).mock(
+                side_effect=RuntimeError("network failure")
+            )
+            asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "A", "B"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_make_route_calls_correct_api_endpoint(self, mock_about_cog):
+    def test_make_route_calls_correct_api_endpoint(self, mock_about_cog, request):
         """make_route should call the /systems/route endpoint with correct params."""
+        import respx
+
+        _with_real_http_client(mock_about_cog, request)
         interaction = _create_mock_interaction()
 
-        route_resp = MagicMock()
-        route_resp.raise_for_status = MagicMock()
-        route_resp.json.return_value = {"route": ["Sol", "Alpha"], "hops": 1}
-        mock_about_cog.http_client.get = AsyncMock(return_value=route_resp)
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._mock_route_and_map(mock_router, "Sol", "Alpha", {"route": ["Sol", "Alpha"], "hops": 1})
+            asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Alpha"))
+            # make_route makes 2 GET calls: /systems/route (first) and /systems/route/map
+            # (second). Both routes are registered above; verify the FIRST real request made
+            # was the route endpoint, with start/end genuinely encoded in the query string.
+            # (Captured inside the `with` block — respx clears `.calls` on context exit.)
+            calls = list(mock_router.calls)
 
-        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Alpha"))
-
-        # make_route makes 2 GET calls: /systems/route (first) and /systems/route/map (second).
-        # Verify the first call is the route endpoint with the correct start/end params.
-        assert mock_about_cog.http_client.get.await_count >= 1
-        first_call = mock_about_cog.http_client.get.call_args_list[0]
-        assert "systems/route" in first_call[0][0]
-        # Verify start and end were passed as params
-        assert first_call[1].get("params", {}).get("start") == "Sol"
-        assert first_call[1].get("params", {}).get("end") == "Alpha"
+        assert len(calls) == 2
+        first_request = calls[0].request
+        assert "systems/route" in str(first_request.url)
+        assert "systems/route/map" not in str(first_request.url)
+        assert first_request.url.params["start"] == "Sol"
+        assert first_request.url.params["end"] == "Alpha"
 
 
 # ---------------------------------------------------------------------------
@@ -2654,135 +2712,151 @@ class TestD005SecondaryNoAdditionalInfoLoadingSpeed:
 
 
 class TestD006IconValidationCache:
-    """D-006 — _validate_icon_with_cache: retry, success-only caching, fail-closed."""
+    """D-006 — _validate_icon_with_cache: retry, success-only caching, fail-closed.
 
-    def _fresh_cog(self, mock_about_cog):
-        """Return mock_about_cog with a cleared icon cache and a fresh AsyncMock head."""
+    TRUEUP-01 (R-gw-cogs-0): migrated off the accept-anything MagicMock `.head`
+    responder to a real httpx.AsyncClient + respx, pinned to each test's real
+    icon URL + HEAD verb. `respx.mock(assert_all_called=True)`'s route
+    `.call_count` replaces the old `http_client.head.await_count` assertions.
+    `cogs.aboutCog.asyncio.sleep` / `cogs.aboutCog.time.monotonic` patches are
+    kept — they control internal retry-timing/cache-TTL logic, not HTTP I/O,
+    so they are not in scope for the mock-HTTP-response migration.
+    """
+
+    def _fresh_cog(self, mock_about_cog, request):
+        """Return mock_about_cog with a cleared icon cache and a real http_client."""
         mock_about_cog._icon_ok_cache = {}
-        mock_about_cog.http_client.head = AsyncMock()
+        _with_real_http_client(mock_about_cog, request)
         return mock_about_cog
 
     # -------------------------------------------------------------------------
     # Cache-hit path
     # -------------------------------------------------------------------------
 
-    def test_cache_hit_second_call_skips_head(self, mock_about_cog):
+    def test_cache_hit_second_call_skips_head(self, mock_about_cog, request):
         """Two calls for the same URL → http_client.head invoked only ONCE; both return True."""
-        cog = self._fresh_cog(mock_about_cog)
-        head_resp = MagicMock()
-        head_resp.status_code = 200
-        cog.http_client.head = AsyncMock(return_value=head_resp)
+        import httpx
+        import respx
 
+        cog = self._fresh_cog(mock_about_cog, request)
         url = "https://example.com/icon1.png"
 
-        result1 = asyncio.run(cog._validate_icon_with_cache(url))
-        result2 = asyncio.run(cog._validate_icon_with_cache(url))
+        with respx.mock(assert_all_called=True) as mock_router:
+            route = mock_router.head(url).mock(return_value=httpx.Response(200))
+            result1 = asyncio.run(cog._validate_icon_with_cache(url))
+            result2 = asyncio.run(cog._validate_icon_with_cache(url))
 
         assert result1 is True
         assert result2 is True
         # HEAD called exactly once — second call hits the cache
-        assert cog.http_client.head.await_count == 1
+        assert route.call_count == 1
 
     # -------------------------------------------------------------------------
     # Retry-then-success path
     # -------------------------------------------------------------------------
 
-    def test_retry_then_success_returns_true_head_called_twice(self, mock_about_cog):
+    def test_retry_then_success_returns_true_head_called_twice(self, mock_about_cog, request):
         """First HEAD fails (exception), second HEAD returns 200 → returns True; head called twice."""
-        cog = self._fresh_cog(mock_about_cog)
+        import httpx
+        import respx
 
-        call_count = 0
-
-        async def _head_side_effect(url, **_kw):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("rate limited")
-            resp = MagicMock()
-            resp.status_code = 200
-            return resp
-
-        cog.http_client.head = AsyncMock(side_effect=_head_side_effect)
+        cog = self._fresh_cog(mock_about_cog, request)
         url = "https://example.com/icon2.png"
 
-        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            route = mock_router.head(url).mock(side_effect=[RuntimeError("rate limited"), httpx.Response(200)])
             result = asyncio.run(cog._validate_icon_with_cache(url))
 
         assert result is True
-        assert call_count == 2
+        assert route.call_count == 2
 
-    def test_retry_non_200_then_200_returns_true(self, mock_about_cog):
+    def test_retry_non_200_then_200_returns_true(self, mock_about_cog, request):
         """First HEAD returns non-200, second returns 200 → returns True; thumbnail would be set."""
-        cog = self._fresh_cog(mock_about_cog)
+        import httpx
+        import respx
 
-        responses = [MagicMock(status_code=429), MagicMock(status_code=200)]
-        cog.http_client.head = AsyncMock(side_effect=responses)
+        cog = self._fresh_cog(mock_about_cog, request)
         url = "https://example.com/icon3.png"
 
-        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            route = mock_router.head(url).mock(side_effect=[httpx.Response(429), httpx.Response(200)])
             result = asyncio.run(cog._validate_icon_with_cache(url))
 
         assert result is True
-        assert cog.http_client.head.await_count == 2
+        assert route.call_count == 2
 
     # -------------------------------------------------------------------------
     # Ultimate failure — NOT cached
     # -------------------------------------------------------------------------
 
-    def test_ultimate_failure_not_cached_head_called_each_time(self, mock_about_cog):
+    def test_ultimate_failure_not_cached_head_called_each_time(self, mock_about_cog, request):
         """HEAD always fails → returns False on both calls AND head is attempted on BOTH calls (not cached)."""
-        cog = self._fresh_cog(mock_about_cog)
+        import respx
 
-        cog.http_client.head = AsyncMock(side_effect=RuntimeError("always fails"))
+        cog = self._fresh_cog(mock_about_cog, request)
         url = "https://example.com/icon_bad.png"
 
-        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            route = mock_router.head(url).mock(side_effect=RuntimeError("always fails"))
             result1 = asyncio.run(cog._validate_icon_with_cache(url))
-        # Reset the mock between calls (but keep the side_effect logic)
-        cog.http_client.head.reset_mock(side_effect=True)
-        cog.http_client.head = AsyncMock(side_effect=RuntimeError("always fails"))
-        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
             result2 = asyncio.run(cog._validate_icon_with_cache(url))
 
         assert result1 is False
         assert result2 is False
-        # Both calls attempted HEAD (2 tries each = 2 total on second call confirms no caching)
-        assert cog.http_client.head.await_count == 2  # second call made 2 attempts
+        # Both calls attempted HEAD (2 tries each = 4 total confirms no caching)
+        assert route.call_count == 4
         assert url not in cog._icon_ok_cache, "Failure must NOT be cached"
 
     # -------------------------------------------------------------------------
     # 200 path sets thumbnail; non-200-after-retries skips it
     # -------------------------------------------------------------------------
 
-    def test_200_path_sets_thumbnail_on_embed(self, mock_about_cog):
+    def test_200_path_sets_thumbnail_on_embed(self, mock_about_cog, request):
         """When _validate_icon_with_cache returns True, embed.set_thumbnail is called."""
-        cog = self._fresh_cog(mock_about_cog)
-        cog._icon_ok_cache = {}
-        head_resp = MagicMock()
-        head_resp.status_code = 200
-        cog.http_client.head = AsyncMock(return_value=head_resp)
+        import httpx
+        import respx
+
+        cog = self._fresh_cog(mock_about_cog, request)
+        url = "https://example.com/eagle_icon.png"
 
         obj_data = {
             **_make_object_data("Eagle", "criminal", 70),
-            "icon": "https://example.com/eagle_icon.png",
+            "icon": url,
         }
-        embed = _run_embed(cog, obj_data)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.head(url).mock(return_value=httpx.Response(200))
+            embed = _run_embed(cog, obj_data)
         assert embed is not None
         # Thumbnail is set on the embed when validation succeeds
         assert embed.thumbnail is not None
-        assert embed.thumbnail.url == "https://example.com/eagle_icon.png"
+        assert embed.thumbnail.url == url
 
-    def test_non_200_after_retries_skips_thumbnail(self, mock_about_cog):
+    def test_non_200_after_retries_skips_thumbnail(self, mock_about_cog, request):
         """When _validate_icon_with_cache returns False, embed has no thumbnail."""
-        cog = self._fresh_cog(mock_about_cog)
-        cog._icon_ok_cache = {}
-        cog.http_client.head = AsyncMock(return_value=MagicMock(status_code=404))
+        import httpx
+        import respx
+
+        cog = self._fresh_cog(mock_about_cog, request)
+        url = "https://example.com/broken_icon.png"
 
         obj_data = {
             **_make_object_data("Eagle", "criminal", 71),
-            "icon": "https://example.com/broken_icon.png",
+            "icon": url,
         }
-        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.head(url).mock(return_value=httpx.Response(404))
             embed = _run_embed(cog, obj_data)
         assert embed is not None
         # Thumbnail must NOT be set when validation fails
@@ -2792,7 +2866,7 @@ class TestD006IconValidationCache:
     # Expired-cache path — cached entry beyond TTL must re-HEAD
     # -------------------------------------------------------------------------
 
-    def test_expired_cache_entry_triggers_revalidation(self, mock_about_cog):
+    def test_expired_cache_entry_triggers_revalidation(self, mock_about_cog, request):
         """Cache entry older than _ICON_CACHE_TTL_S must NOT count as a hit → HEAD called again.
 
         Pre-seeds _icon_ok_cache with a timestamp that is _ICON_CACHE_TTL_S + 1 seconds
@@ -2802,9 +2876,11 @@ class TestD006IconValidationCache:
         """
         import time as _time
 
+        import httpx
+        import respx
         from cogs.aboutCog import _ICON_CACHE_TTL_S
 
-        cog = self._fresh_cog(mock_about_cog)
+        cog = self._fresh_cog(mock_about_cog, request)
         url = "https://example.com/icon_stale.png"
 
         # Record a real baseline so we can compute an artificially old timestamp.
@@ -2814,34 +2890,33 @@ class TestD006IconValidationCache:
         # Seed the cache with the stale timestamp
         cog._icon_ok_cache[url] = stale_ts
 
-        head_resp = MagicMock()
-        head_resp.status_code = 200
-        cog.http_client.head = AsyncMock(return_value=head_resp)
-
         # Patch time.monotonic so the "now" inside _validate_icon_with_cache always
         # returns base_now, which is _ICON_CACHE_TTL_S + 1 seconds after stale_ts.
-        with patch("cogs.aboutCog.time.monotonic", return_value=base_now):
+        with (
+            patch("cogs.aboutCog.time.monotonic", return_value=base_now),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            route = mock_router.head(url).mock(return_value=httpx.Response(200))
             result = asyncio.run(cog._validate_icon_with_cache(url))
 
         assert result is True
         # HEAD must have been called — stale cache entry is not a hit
-        assert cog.http_client.head.await_count == 1, (
-            f"Expected exactly 1 HEAD call on stale cache; got {cog.http_client.head.await_count}"
-        )
+        assert route.call_count == 1, f"Expected exactly 1 HEAD call on stale cache; got {route.call_count}"
         # Cache must now hold an updated (non-stale) timestamp
         assert url in cog._icon_ok_cache
         assert cog._icon_ok_cache[url] != stale_ts, "Cache must be updated after re-validation"
 
-    def test_within_ttl_cache_entry_is_still_a_hit(self, mock_about_cog):
+    def test_within_ttl_cache_entry_is_still_a_hit(self, mock_about_cog, request):
         """Cache entry younger than _ICON_CACHE_TTL_S must still be treated as a hit (HEAD skipped).
 
         Complementary guard: ensures TTL expiry is one-sided — a fresh entry is kept.
         """
         import time as _time
 
+        import respx
         from cogs.aboutCog import _ICON_CACHE_TTL_S
 
-        cog = self._fresh_cog(mock_about_cog)
+        cog = self._fresh_cog(mock_about_cog, request)
         url = "https://example.com/icon_fresh.png"
 
         base_now = _time.monotonic()
@@ -2849,18 +2924,26 @@ class TestD006IconValidationCache:
 
         cog._icon_ok_cache[url] = fresh_ts
 
-        head_resp = MagicMock()
-        head_resp.status_code = 200
-        cog.http_client.head = AsyncMock(return_value=head_resp)
-
-        with patch("cogs.aboutCog.time.monotonic", return_value=base_now):
+        # Deliberately NO respx route registered: a fresh cache hit must not attempt
+        # any HTTP call at all. respx's default assert_all_mocked=True means any
+        # unexpected request (route or not) raises, so this proves zero HEAD calls —
+        # a stronger guarantee than an await_count==0 assertion on a mock that was
+        # never wired to intercept anything in the first place.
+        with (
+            patch("cogs.aboutCog.time.monotonic", return_value=base_now),
+            respx.mock() as mock_router,
+        ):
             result = asyncio.run(cog._validate_icon_with_cache(url))
+            # HEAD must NOT be called — fresh entry is a cache hit. Captured inside the
+            # `with` block since respx clears `.calls` on context exit; independently, had
+            # an unexpected request actually been attempted, respx's default
+            # assert_all_mocked=True would have raised inside asyncio.run() above (no route
+            # was registered to match it), so this assertion is a secondary, more precise
+            # guarantee on top of that hard failure mode.
+            call_count = len(mock_router.calls)
 
         assert result is True
-        # HEAD must NOT be called — fresh entry is a cache hit
-        assert cog.http_client.head.await_count == 0, (
-            f"Expected 0 HEAD calls for fresh cache hit; got {cog.http_client.head.await_count}"
-        )
+        assert call_count == 0, f"Expected 0 HTTP calls for fresh cache hit; got {call_count}"
 
 
 if __name__ == "__main__":

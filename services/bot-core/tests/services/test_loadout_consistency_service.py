@@ -50,19 +50,23 @@ def _make_player_ship(
     turrets: list[str] | None = None,
     secondary_weapons: list[str] | None = None,
     is_active: bool = False,
-) -> MagicMock:
-    """Build a mock PlayerShip whose slot lists are real Python lists."""
-    ship = MagicMock()
-    ship.id = ship_id
-    ship.player_id = player_id
-    ship.ship_name = ship_name
-    ship.is_active = is_active
-    ship.weapons = list(weapons) if weapons is not None else []
-    ship.modules = list(modules) if modules is not None else []
-    ship.turrets = list(turrets) if turrets is not None else []
-    ship.secondary_weapons = list(secondary_weapons) if secondary_weapons is not None else []
-    ship.created_at = datetime(2026, 1, 1, tzinfo=UTC)
-    return ship
+) -> PlayerShip:
+    """Build a real PlayerShip instance whose slot lists are real Python lists.
+
+    Real model exposes true nullable defaults (nickname/secondary_ammo -> None)
+    instead of the truthy auto-mocks a MagicMock returns for unset attrs.
+    """
+    return PlayerShip(
+        id=ship_id,
+        player_id=player_id,
+        ship_name=ship_name,
+        is_active=is_active,
+        weapons=list(weapons) if weapons is not None else [],
+        modules=list(modules) if modules is not None else [],
+        turrets=list(turrets) if turrets is not None else [],
+        secondary_weapons=list(secondary_weapons) if secondary_weapons is not None else [],
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
 
 
 def _make_static_ship(

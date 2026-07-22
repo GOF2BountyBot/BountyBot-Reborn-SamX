@@ -22,8 +22,10 @@ sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.base import Base
 from persist.models.user import User
 from persist.repositories.user_repository import UserRepository
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -82,6 +84,31 @@ def mock_db() -> AsyncMock:
     db.get = AsyncMock()
     db.flush = AsyncMock()
     return db
+
+
+# ---------------------------------------------------------------------------
+# Real-SQLite fixtures (mock-true-up): back behavioral round-trip tests where
+# MagicMock(spec=User) would auto-mock un-defaulted attributes and mask
+# display-name upsert gaps.
+# ---------------------------------------------------------------------------
+
+_USER_TABLES = [User.__table__]
+
+
+@pytest.fixture
+async def async_engine():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_USER_TABLES)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(async_engine) -> AsyncSession:
+    factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        yield session
 
 
 # ===================================================================
@@ -217,44 +244,45 @@ class TestGetOrCreateUser:
         mock_db.rollback.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_get_or_create_user_creates_with_display_name(self, repo, mock_db):
-        """When user doesn't exist, creates with display_name if provided (C.1)."""
-        mock_db.get = AsyncMock(return_value=None)
+    async def test_get_or_create_user_creates_with_display_name(self, repo, db_session):
+        """When user doesn't exist, creates with display_name if provided (C.1).
 
-        captured_user = None
+        Real-SQLite round trip (mock-true-up): a MagicMock(spec=User)/captured-object
+        approach only proves the constructor was called with the right kwargs — it
+        never proves the row was actually persisted or that a re-fetch sees it.
+        """
+        user = await repo.get_or_create_user(db_session, discord_id=111, username="SamX", display_name="SamAccountX")
 
-        def _capture_add(obj):
-            nonlocal captured_user
-            captured_user = obj
+        assert user.display_name == "SamAccountX"
+        assert user.discord_username == "SamX"
 
-        mock_db.add = MagicMock(side_effect=_capture_add)
-        mock_db.commit = AsyncMock()
-        mock_db.refresh = AsyncMock()
-
-        await repo.get_or_create_user(mock_db, discord_id=111, username="SamX", display_name="SamAccountX")
-
-        assert captured_user is not None
-        assert captured_user.display_name == "SamAccountX"
+        refetched = await repo.get_by_id(db_session, 111)
+        assert refetched is not None
+        assert refetched.display_name == "SamAccountX"
 
     @pytest.mark.asyncio
-    async def test_get_or_create_user_updates_display_name_on_existing(self, repo, mock_db):
+    async def test_get_or_create_user_updates_display_name_on_existing(self, repo, db_session):
         """When user exists, updates display_name if provided and different (C.1)."""
-        existing = _make_user(id=111, discord_username="SamX", display_name="OldName")
-        mock_db.get = AsyncMock(return_value=existing)
-        mock_db.commit = AsyncMock()
-        mock_db.refresh = AsyncMock()
+        existing = User(id=111, discord_username="SamX", display_name="OldName")
+        await repo.add(db_session, existing)
 
-        await repo.get_or_create_user(mock_db, discord_id=111, display_name="SamAccountX")
+        updated = await repo.get_or_create_user(db_session, discord_id=111, display_name="SamAccountX")
 
-        assert existing.display_name == "SamAccountX"
+        assert updated.display_name == "SamAccountX"
+
+        refetched = await repo.get_by_id(db_session, 111)
+        assert refetched.display_name == "SamAccountX"
 
     @pytest.mark.asyncio
-    async def test_get_or_create_user_does_not_overwrite_display_name_when_none(self, repo, mock_db):
+    async def test_get_or_create_user_does_not_overwrite_display_name_when_none(self, repo, db_session):
         """When display_name=None, does not overwrite existing display_name (C.1)."""
-        existing = _make_user(id=111, discord_username="SamX", display_name="ExistingName")
-        mock_db.get = AsyncMock(return_value=existing)
+        existing = User(id=111, discord_username="SamX", display_name="ExistingName")
+        await repo.add(db_session, existing)
 
-        await repo.get_or_create_user(mock_db, discord_id=111, display_name=None)
+        result = await repo.get_or_create_user(db_session, discord_id=111, display_name=None)
 
         # display_name should remain unchanged
-        assert existing.display_name == "ExistingName"
+        assert result.display_name == "ExistingName"
+
+        refetched = await repo.get_by_id(db_session, 111)
+        assert refetched.display_name == "ExistingName"

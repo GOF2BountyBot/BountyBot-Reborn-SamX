@@ -1,11 +1,19 @@
-"""Unit tests for PlayerRepository – mock-based (no real database).
+"""Tests for PlayerRepository.
 
-Targets the exception-handling paths that integration tests do not reach.
+Mix of:
+  - mock-based tests targeting exception-handling paths that integration
+    tests do not reach (a mock AsyncSession is appropriate here — we are
+    deliberately forcing DB failures).
+  - real-SQLite round-trip tests (in-memory aiosqlite) for behavioral paths,
+    notably the ``active_within_days`` date predicate in
+    ``get_players_by_guild`` and the update_* happy paths, so real attribute
+    mutation / persistence is exercised instead of a mock echoing back
+    whatever the test told it to return.
 """
 
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,17 +29,27 @@ sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.base import Base
 from persist.models.player import Player
+from persist.models.user import User
 from persist.repositories.player_repository import PlayerRepository
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_player(**overrides) -> MagicMock:
+def _make_player(**overrides) -> Player:
+    """Build a real, unpersisted Player instance with sensible defaults.
+
+    A real instance (rather than ``MagicMock(spec=Player)``) is used so that
+    attribute mutation performed by the repository under test (e.g.
+    ``player.credits = new_credits``) is genuine attribute mutation on a real
+    mapped object, not a mock recording a call. Callers that need a real DB
+    round-trip should go through ``_seed_player`` instead.
+    """
     defaults = dict(
-        id=1,
         user_id=12345,
         guild_id=67890,
         credits=1000,
@@ -48,10 +66,22 @@ def _make_player(**overrides) -> MagicMock:
         updated_at=datetime.now(UTC),
     )
     defaults.update(overrides)
-    obj = MagicMock(spec=Player)
-    for k, v in defaults.items():
-        setattr(obj, k, v)
-    return obj
+    return Player(**defaults)
+
+
+async def _seed_player(db_session: AsyncSession, **overrides) -> Player:
+    """Create and commit a User + Player row, returning the persisted Player.
+
+    ``user_id`` may be supplied via overrides; a User row is created to
+    satisfy Player.user_id's foreign key.
+    """
+    user_id = overrides.pop("user_id", 12345)
+    db_session.add(User(id=user_id, discord_username=f"user{user_id}"))
+    player = _make_player(user_id=user_id, **overrides)
+    db_session.add(player)
+    await db_session.commit()
+    await db_session.refresh(player)
+    return player
 
 
 def _make_scalars_result(items) -> MagicMock:
@@ -73,6 +103,8 @@ def _make_scalar_one_result(value) -> MagicMock:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+_PLAYER_TABLES = [User.__table__, Player.__table__]
+
 
 @pytest.fixture
 def repo() -> PlayerRepository:
@@ -91,6 +123,22 @@ def mock_db() -> AsyncMock:
     db.get = AsyncMock()
     db.flush = AsyncMock()
     return db
+
+
+@pytest.fixture
+async def async_engine():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_PLAYER_TABLES)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(async_engine) -> AsyncSession:
+    factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        yield session
 
 
 # ===================================================================
@@ -199,59 +247,72 @@ class TestGetPlayersByGuild:
             await repo.get_players_by_guild(mock_db, guild_id=456)
 
     @pytest.mark.asyncio
-    async def test_get_players_by_guild_no_filter_returns_all(self, repo, mock_db):
-        """active_within_days=None: no date filter applied, all players returned."""
-        player_a = _make_player(id=1)
-        player_b = _make_player(id=2)
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([player_a, player_b]))
-
-        result = await repo.get_players_by_guild(mock_db, guild_id=456)
-
-        assert len(result) == 2
-        assert player_a in result
-        assert player_b in result
-
-    @pytest.mark.asyncio
-    async def test_get_players_by_guild_active_within_days_filters_by_updated_at(self, repo, mock_db):
-        """active_within_days=7: only the recent player is returned (mock filters DB results)."""
-        from datetime import UTC, datetime
-
+    async def test_get_players_by_guild_no_filter_returns_all(self, repo, db_session):
+        """active_within_days=None: no date filter applied, all players returned
+        regardless of how stale their updated_at is (real SQLite round-trip)."""
+        guild_id = 456
         now = datetime.now(UTC)
-        recent_player = _make_player(id=1, updated_at=now)
-        # This test exercises the filter via a mock — the actual SQL WHERE clause
-        # is verified by checking that execute() is called (the mock controls the result).
-        # The integration test in tests/integration/ covers the real WHERE clause behavior.
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([recent_player]))
+        recent = await _seed_player(db_session, user_id=1, guild_id=guild_id, updated_at=now)
+        ancient = await _seed_player(db_session, user_id=2, guild_id=guild_id, updated_at=now - timedelta(days=1000))
 
-        result = await repo.get_players_by_guild(mock_db, guild_id=456, active_within_days=7)
+        result = await repo.get_players_by_guild(db_session, guild_id=guild_id)
 
-        assert len(result) == 1
-        assert result[0] is recent_player
-        # Confirm execute was called (the filter clause was built into the query)
-        mock_db.execute.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_get_players_by_guild_active_within_days_zero_no_filter(self, repo, mock_db):
-        """active_within_days=0: treat as 'no filter' (same as None)."""
-        player_a = _make_player(id=1)
-        player_b = _make_player(id=2)
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([player_a, player_b]))
-
-        result = await repo.get_players_by_guild(mock_db, guild_id=456, active_within_days=0)
-
-        # Both players returned — 0 means no date filter
+        ids = {p.id for p in result}
         assert len(result) == 2
+        assert recent.id in ids
+        assert ancient.id in ids
 
     @pytest.mark.asyncio
-    async def test_get_players_by_guild_active_within_days_one_day(self, repo, mock_db):
-        """active_within_days=1: the repo query runs; mock returns what we set."""
-        recent_player = _make_player(id=3)
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([recent_player]))
+    async def test_get_players_by_guild_active_within_days_filters_by_updated_at(self, repo, db_session):
+        """active_within_days=7: only the player updated within the window is
+        returned — a real SQLite round-trip that exercises the actual SQL
+        WHERE clause (Player.updated_at >= cutoff), not a mock echoing back
+        whatever the test told it to return."""
+        guild_id = 456
+        now = datetime.now(UTC)
+        recent = await _seed_player(db_session, user_id=1, guild_id=guild_id, updated_at=now)
+        stale = await _seed_player(db_session, user_id=2, guild_id=guild_id, updated_at=now - timedelta(days=30))
 
-        result = await repo.get_players_by_guild(mock_db, guild_id=456, active_within_days=1)
+        result = await repo.get_players_by_guild(db_session, guild_id=guild_id, active_within_days=7)
 
-        assert result == [recent_player]
-        mock_db.execute.assert_awaited_once()
+        ids = {p.id for p in result}
+        assert recent.id in ids
+        assert stale.id not in ids
+
+    @pytest.mark.asyncio
+    async def test_get_players_by_guild_active_within_days_zero_no_filter(self, repo, db_session):
+        """active_within_days=0: treat as 'no filter' (same as None) — a
+        player last updated a thousand days ago must still come back."""
+        guild_id = 456
+        now = datetime.now(UTC)
+        recent = await _seed_player(db_session, user_id=1, guild_id=guild_id, updated_at=now)
+        ancient = await _seed_player(db_session, user_id=2, guild_id=guild_id, updated_at=now - timedelta(days=1000))
+
+        result = await repo.get_players_by_guild(db_session, guild_id=guild_id, active_within_days=0)
+
+        ids = {p.id for p in result}
+        assert len(result) == 2
+        assert recent.id in ids
+        assert ancient.id in ids
+
+    @pytest.mark.asyncio
+    async def test_get_players_by_guild_active_within_days_one_day(self, repo, db_session):
+        """active_within_days=1: a player updated 2 hours ago is inside the
+        window, a player updated 3 days ago is outside it."""
+        guild_id = 456
+        now = datetime.now(UTC)
+        within_window = await _seed_player(
+            db_session, user_id=1, guild_id=guild_id, updated_at=now - timedelta(hours=2)
+        )
+        outside_window = await _seed_player(
+            db_session, user_id=2, guild_id=guild_id, updated_at=now - timedelta(days=3)
+        )
+
+        result = await repo.get_players_by_guild(db_session, guild_id=guild_id, active_within_days=1)
+
+        ids = {p.id for p in result}
+        assert within_window.id in ids
+        assert outside_window.id not in ids
 
 
 # ===================================================================
@@ -296,12 +357,20 @@ class TestUpdateCredits:
         mock_db.rollback.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_update_credits_commit_false_uses_flush(self, repo, mock_db):
-        player = _make_player(id=1)
-        mock_db.get = AsyncMock(return_value=player)
-        await repo.update_credits(mock_db, player_id=1, new_credits=500, commit=False)
-        mock_db.flush.assert_awaited_once()
-        mock_db.commit.assert_not_awaited()
+    async def test_update_credits_commit_false_uses_flush(self, repo, db_session):
+        """commit=False flushes the mutation (visible in-session) but does not
+        commit it — proven by rolling back and re-fetching, which must show
+        the ORIGINAL credits. A mock can't catch a real missing-commit bug;
+        a genuine rollback can."""
+        player = await _seed_player(db_session, user_id=1, credits=1000)
+        player_id = player.id  # capture before rollback expires the instance
+
+        result = await repo.update_credits(db_session, player_id=player_id, new_credits=500, commit=False)
+        assert result.credits == 500
+
+        await db_session.rollback()
+        refetched = await repo.get_by_id(db_session, player_id)
+        assert refetched.credits == 1000
 
     @pytest.mark.asyncio
     async def test_update_credits_player_not_found_raises_value_error(self, repo, mock_db):
@@ -386,12 +455,18 @@ class TestUpdateActiveShip:
         mock_db.rollback.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_update_active_ship_clear(self, repo, mock_db):
-        player = _make_player(id=1)
-        mock_db.get = AsyncMock(return_value=player)
-        result = await repo.update_active_ship(mock_db, player_id=1, ship_id=None)
-        mock_db.commit.assert_awaited()
-        assert result is player
+    async def test_update_active_ship_clear(self, repo, db_session):
+        """ship_id=None really clears (and commits) active_ship_id in the DB —
+        not just an in-memory mutation on a mock that would happily accept a
+        no-op commit."""
+        player = await _seed_player(db_session, user_id=1, active_ship_id=42)
+
+        result = await repo.update_active_ship(db_session, player_id=player.id, ship_id=None)
+        assert result.active_ship_id is None
+
+        # Re-fetch to prove the NULL was actually committed, not just held in memory.
+        refetched = await repo.get_by_id(db_session, player.id)
+        assert refetched.active_ship_id is None
 
     @pytest.mark.asyncio
     async def test_update_active_ship_player_not_found_raises_value_error(self, repo, mock_db):

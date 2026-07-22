@@ -4,53 +4,35 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 
 The time_announcement router uses request.app.state.db_manager for DB access
-and makes outbound HTTP calls via httpx to the Discord Gateway.
-Tests mock both of these dependencies, along with the MessageBuilderFactory.
+and makes outbound HTTP calls via httpx to the Discord Gateway. The gateway is
+mocked at the httpx transport layer with ``respx`` so the exact route/method/
+payload the router emits is asserted. The REAL ``MessageBuilderFactory`` /
+``TimeAnnouncementBuilder`` build the embed payload (no builder mock), and
+response bodies flow through the REAL ``DiscordMessageResponse`` pydantic model
+built from REAL ``DiscordMessage`` ORM rows.
 
-KNOWN PRODUCTION BUG: time_announcement.py line 16 imports EmbedPayloadDict
-from `routers.discord_message`, but that class is defined in
-`api.schemas.discord_message_schema` and is NOT re-exported from the discord
-message router. This means the module cannot be imported under the normal test
-path and we must patch the routers.discord_message module namespace before
-importing time_announcement. The patch is applied once at module load time
-below.
+Note: the router imports ``EmbedPayloadDict`` directly from
+``api.schemas.discord_message_schema`` (see time_announcement.py), so the old
+``routers.discord_message`` re-export workaround this module used to carry has
+been removed — it no longer reflects the source.
 """
 
-# ---------------------------------------------------------------------------
-# Bug workaround: inject EmbedPayloadDict into routers.discord_message so
-# that the `from routers.discord_message import ... EmbedPayloadDict` inside
-# time_announcement.py succeeds. This is safe to do here because conftest.py
-# has already inserted src/ at position 0 on sys.path.
-# ---------------------------------------------------------------------------
-import importlib as _importlib
 import json
-import sys
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import httpx
 import pytest
+import respx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from persist.models.discord_message import DiscordMessage
 
-# Ensure both api.routers.discord_message and its routers.* alias are loaded
-_rdm = _importlib.import_module("api.routers.discord_message")
-# Inject into routers.discord_message (the alias the module uses)
-if "routers.discord_message" not in sys.modules:
-    sys.modules["routers.discord_message"] = _rdm
-if "routers" not in sys.modules:
-    import api.routers as _ar
+import api.routers.announcements.time_announcement as ta_module
 
-    sys.modules["routers"] = _ar
-
-# Import the real EmbedPayloadDict and patch it into the alias
-from api.schemas.discord_message_schema import EmbedPayloadDict as _EmbedPayloadDict
-
-if not hasattr(_rdm, "EmbedPayloadDict"):
-    _rdm.EmbedPayloadDict = _EmbedPayloadDict
-sys.modules["routers.discord_message"].EmbedPayloadDict = _EmbedPayloadDict
-
+# Exact gateway endpoint the router POSTs/PUTs/DELETEs to.
+GATEWAY_MESSAGES_URL = f"{ta_module.DISCORD_GATEWAY_BASE_URL}/messages"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,8 +41,12 @@ sys.modules["routers.discord_message"].EmbedPayloadDict = _EmbedPayloadDict
 SAMPLE_UUID = uuid4()
 
 
-def make_mock_message(**overrides):
-    """Create a mock DiscordMessage ORM object."""
+def make_discord_message(**overrides):
+    """Build a REAL ``DiscordMessage`` ORM instance (transient, no DB).
+
+    Using the real model means ``DiscordMessageResponse.from_orm`` runs
+    unpatched and column drift surfaces in the serialized body.
+    """
     defaults = dict(
         id=SAMPLE_UUID,
         guild_id=12345,
@@ -78,10 +64,7 @@ def make_mock_message(**overrides):
         updated_at=datetime(2026, 1, 1, 12, 0, 0),
     )
     defaults.update(overrides)
-    msg = MagicMock()
-    for k, v in defaults.items():
-        setattr(msg, k, v)
-    return msg
+    return DiscordMessage(**defaults)
 
 
 def make_gateway_response(**overrides):
@@ -89,40 +72,6 @@ def make_gateway_response(**overrides):
     defaults = dict(guild_id=12345, channel_id=67890, message_id=11111)
     defaults.update(overrides)
     return defaults
-
-
-def make_embed_payload_dict():
-    """Valid EmbedPayloadDict-compatible payload."""
-    return {
-        "title": "🕒 Current Time",
-        "description": "**Current time:** 12:00 UTC",
-        "color": 3447003,
-        "fields": [],
-        "footer_text": "Time Announcement",
-        "footer_icon_url": None,
-        "timestamp": None,
-        "thumbnail_url": None,
-        "image_url": None,
-    }
-
-
-def make_mock_http_response(status_code=200, json_data=None):
-    """Create a mock httpx response."""
-    resp = MagicMock()
-    resp.status_code = status_code
-    resp.json.return_value = json_data if json_data is not None else make_gateway_response()
-    resp.raise_for_status = MagicMock()
-    return resp
-
-
-def make_http_error_response(status_code=500):
-    """Create an httpx response that raises HTTPStatusError on raise_for_status."""
-    resp = MagicMock()
-    resp.status_code = status_code
-    resp.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError("Server error", request=MagicMock(), response=MagicMock())
-    )
-    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -151,31 +100,15 @@ def mock_db_manager(mock_db_session):
 
 @pytest.fixture
 def mock_message_repo():
-    """Mock DiscordMessageRepository."""
+    """Mock DiscordMessageRepository — returns REAL DiscordMessage ORM rows."""
     repo = MagicMock()
-    repo.create_or_update = AsyncMock(return_value=make_mock_message())
-    repo.get_by_composite_key = AsyncMock(return_value=make_mock_message())
+    repo.create_or_update = AsyncMock(return_value=make_discord_message())
+    repo.get_by_composite_key = AsyncMock(return_value=make_discord_message())
     repo.delete_by_composite_key = AsyncMock(return_value=True)
-    repo.list_by_guild = AsyncMock(return_value=[make_mock_message()])
-    repo.list_by_guild_and_channel = AsyncMock(return_value=[make_mock_message()])
-    repo.list_by_guild_and_type = AsyncMock(return_value=[make_mock_message()])
+    repo.list_by_guild = AsyncMock(return_value=[make_discord_message()])
+    repo.list_by_guild_and_channel = AsyncMock(return_value=[make_discord_message()])
+    repo.list_by_guild_and_type = AsyncMock(return_value=[make_discord_message()])
     return repo
-
-
-@pytest.fixture
-def mock_builder():
-    """Mock MessagePayloadBuilder that returns a valid embed payload."""
-    builder = MagicMock()
-    builder.build_payload = MagicMock(
-        return_value={
-            "title": "🕒 Current Time",
-            "description": "**Current time:** 12:00 UTC",
-            "color": 3447003,
-            "footer_text": "Time Announcement",
-            "timestamp": "2026-01-01T12:00:00+00:00",
-        }
-    )
-    return builder
 
 
 @pytest.fixture
@@ -185,8 +118,6 @@ def test_app(mock_db_manager, mock_message_repo):
     The router has prefix="/time" and in production is mounted at "/api/v1".
     So routes are accessible at "/api/v1/time/...".
     """
-    import api.routers.announcements.time_announcement as ta_module
-
     app = FastAPI()
     app.include_router(ta_module.router, prefix="/api/v1")
     app.state.db_manager = mock_db_manager
@@ -202,6 +133,16 @@ def client(test_app):
     return TestClient(test_app)
 
 
+def _assert_message_body(data):
+    """Assert a serialized DiscordMessageResponse body matches the seeded row."""
+    assert data["id"] == str(SAMPLE_UUID)
+    assert data["guild_id"] == 12345
+    assert data["channel_id"] == 67890
+    assert data["message_id"] == 11111
+    assert data["message_type"] == "time_announcement"
+    assert isinstance(data["embed_payload"], str)
+
+
 # ===========================================================================
 # 1. POST /announcements/time  (create_time_announcement)
 # ===========================================================================
@@ -210,91 +151,65 @@ def client(test_app):
 class TestCreateTimeAnnouncement:
     """Tests for POST /api/v1/announcements/time."""
 
-    @patch("api.routers.announcements.time_announcement.MessageBuilderFactory.create_builder")
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_create_happy_path(
-        self, mock_httpx_class, mock_create_builder, client, mock_db_session, mock_message_repo, mock_builder
-    ):
-        """Returns 201 with DiscordMessageResponse on success."""
-        # Wire up the builder mock
-        mock_create_builder.return_value = mock_builder
-
-        # Wire up the HTTP client mock
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_http.post = AsyncMock(return_value=make_mock_http_response())
-
-        # Wire up from_orm to return a serialisable object
-        import api.routers.announcements.time_announcement as ta_module
-
-        with patch.object(
-            ta_module.DiscordMessageResponse,
-            "from_orm",
-            return_value=MagicMock(
-                id=str(SAMPLE_UUID),
-                guild_id=12345,
-                channel_id=67890,
-                message_id=11111,
-                embed_payload=json.dumps({"title": "test"}),
-                message_type="time_announcement",
-                created_at=datetime(2026, 1, 1),
-                updated_at=datetime(2026, 1, 1),
-            ),
-        ):
-            payload = {
-                "guild_id": 12345,
-                "channel_id": 67890,
-                "current_time": "12:00 UTC",
-            }
-            response = client.post("/api/v1/time", json=payload)
-
-        assert response.status_code == 201
-
-    @patch("api.routers.announcements.time_announcement.MessageBuilderFactory.create_builder")
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_create_gateway_http_error_returns_500(self, mock_httpx_class, mock_create_builder, client, mock_builder):
-        """Returns 500 when the Discord gateway returns a non-2xx status."""
-        mock_create_builder.return_value = mock_builder
-
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_http.post = AsyncMock(return_value=make_http_error_response())
-
-        payload = {"guild_id": 12345, "channel_id": 67890, "current_time": "12:00 UTC"}
-        response = client.post("/api/v1/time", json=payload)
-
-        assert response.status_code == 500
-        assert "Failed to send message to Discord" in response.json()["detail"]
-
-    @patch("api.routers.announcements.time_announcement.MessageBuilderFactory.create_builder")
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_create_gateway_missing_ids_returns_500(self, mock_httpx_class, mock_create_builder, client, mock_builder):
-        """Returns 500 when gateway response is missing required identifiers."""
-        mock_create_builder.return_value = mock_builder
-
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        # Response missing message_id
-        mock_http.post = AsyncMock(
-            return_value=make_mock_http_response(json_data={"guild_id": 12345, "channel_id": 67890})
+    @respx.mock
+    def test_create_happy_path(self, client, mock_db_session, mock_message_repo):
+        """Returns 201 with a real DiscordMessageResponse; asserts the gateway
+        route/method/payload and the serialized body. Uses the real builder."""
+        route = respx.post(GATEWAY_MESSAGES_URL).mock(
+            return_value=httpx.Response(200, json=make_gateway_response())
         )
 
         payload = {"guild_id": 12345, "channel_id": 67890, "current_time": "12:00 UTC"}
         response = client.post("/api/v1/time", json=payload)
 
-        assert response.status_code == 500
-        assert "Discord gateway did not return required message identifiers" in response.json()["detail"]
+        assert response.status_code == 201
+        assert route.called
+        sent = json.loads(route.calls.last.request.content)
+        assert sent["guild_id"] == 12345
+        assert sent["channel_id"] == 67890
+        # The real TimeAnnouncementBuilder embeds the current_time in the description.
+        assert "12:00 UTC" in sent["content"]["description"]
+        assert sent["content"]["title"] == "🕒 Current Time"
+        _assert_message_body(response.json())
 
-    @patch("api.routers.announcements.time_announcement.MessageBuilderFactory.create_builder")
-    def test_create_unexpected_exception_returns_500(self, mock_create_builder, client):
-        """Returns 500 when an unexpected exception occurs outside gateway call."""
-        mock_create_builder.side_effect = RuntimeError("Builder blew up")
+    @respx.mock
+    def test_create_gateway_http_error_returns_500(self, client):
+        """Returns 500 when the Discord gateway returns a non-2xx status."""
+        route = respx.post(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(500, json={"error": "boom"}))
 
         payload = {"guild_id": 12345, "channel_id": 67890, "current_time": "12:00 UTC"}
         response = client.post("/api/v1/time", json=payload)
+
+        assert route.called
+        assert response.status_code == 500
+        assert "Failed to send message to Discord" in response.json()["detail"]
+
+    @respx.mock
+    def test_create_gateway_missing_ids_returns_500(self, client):
+        """Returns 500 when gateway response is missing required identifiers."""
+        route = respx.post(GATEWAY_MESSAGES_URL).mock(
+            return_value=httpx.Response(200, json={"guild_id": 12345, "channel_id": 67890})
+        )
+
+        payload = {"guild_id": 12345, "channel_id": 67890, "current_time": "12:00 UTC"}
+        response = client.post("/api/v1/time", json=payload)
+
+        assert route.called
+        assert response.status_code == 500
+        assert "Discord gateway did not return required message identifiers" in response.json()["detail"]
+
+    def test_create_unexpected_exception_returns_500(self, client):
+        """Returns 500 when an unexpected exception occurs outside the gateway call.
+
+        The builder factory is forced to raise to exercise the generic
+        except-block; this is a targeted internal-failure injection, not a
+        stand-in for the builder itself.
+        """
+        with patch.object(
+            ta_module.MessageBuilderFactory, "create_builder", side_effect=RuntimeError("Builder blew up")
+        ):
+            payload = {"guild_id": 12345, "channel_id": 67890, "current_time": "12:00 UTC"}
+            response = client.post("/api/v1/time", json=payload)
 
         assert response.status_code == 500
         assert "Failed to create time announcement" in response.json()["detail"]
@@ -352,83 +267,12 @@ class TestUpdateTimeAnnouncement:
         assert response.status_code == 404
         assert "No existing time announcement found to update" in response.json()["detail"]
 
-    @patch("api.routers.announcements.time_announcement.MessageBuilderFactory.create_builder")
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_update_happy_path(
-        self, mock_httpx_class, mock_create_builder, client, mock_db_session, mock_message_repo, mock_builder
-    ):
-        """Returns 200 with DiscordMessageResponse on successful update."""
-        mock_create_builder.return_value = mock_builder
-
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_http.put = AsyncMock(return_value=make_mock_http_response())
-
-        import api.routers.announcements.time_announcement as ta_module
-
-        with patch.object(
-            ta_module.DiscordMessageResponse,
-            "from_orm",
-            return_value=MagicMock(
-                id=str(SAMPLE_UUID),
-                guild_id=12345,
-                channel_id=67890,
-                message_id=11111,
-                embed_payload=json.dumps({"title": "test"}),
-                message_type="time_announcement",
-                created_at=datetime(2026, 1, 1),
-                updated_at=datetime(2026, 1, 1),
-            ),
-        ):
-            payload = {
-                "guild_id": 12345,
-                "channel_id": 67890,
-                "message_id": 11111,
-                "current_time": "14:00 UTC",
-            }
-            response = client.put("/api/v1/time", json=payload)
-
-        assert response.status_code == 200
-
-    @patch("api.routers.announcements.time_announcement.MessageBuilderFactory.create_builder")
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_update_gateway_http_error_returns_500(
-        self, mock_httpx_class, mock_create_builder, client, mock_message_repo, mock_builder
-    ):
-        """Returns 500 when the Discord gateway returns a non-2xx status during update."""
-        mock_create_builder.return_value = mock_builder
-
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_http.put = AsyncMock(return_value=make_http_error_response())
-
-        payload = {
-            "guild_id": 12345,
-            "channel_id": 67890,
-            "message_id": 11111,
-            "current_time": "14:00 UTC",
-        }
-        response = client.put("/api/v1/time", json=payload)
-
-        assert response.status_code == 500
-        assert "Failed to update message in Discord" in response.json()["detail"]
-
-    @patch("api.routers.announcements.time_announcement.MessageBuilderFactory.create_builder")
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_update_gateway_missing_ids_returns_500(
-        self, mock_httpx_class, mock_create_builder, client, mock_message_repo, mock_builder
-    ):
-        """Returns 500 when gateway update response is missing required identifiers."""
-        mock_create_builder.return_value = mock_builder
-
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        # Missing message_id in response
-        mock_http.put = AsyncMock(
-            return_value=make_mock_http_response(json_data={"guild_id": 12345, "channel_id": 67890})
+    @respx.mock
+    def test_update_happy_path(self, client, mock_db_session, mock_message_repo):
+        """Returns 200 with a real DiscordMessageResponse on successful update;
+        asserts the gateway PUT route/method/payload."""
+        route = respx.put(GATEWAY_MESSAGES_URL).mock(
+            return_value=httpx.Response(200, json=make_gateway_response())
         )
 
         payload = {
@@ -439,6 +283,49 @@ class TestUpdateTimeAnnouncement:
         }
         response = client.put("/api/v1/time", json=payload)
 
+        assert response.status_code == 200
+        assert route.called
+        sent = json.loads(route.calls.last.request.content)
+        # The router forwards the EXISTING record's ids to the gateway.
+        assert sent["guild_id"] == 12345
+        assert sent["channel_id"] == 67890
+        assert sent["message_id"] == 11111
+        assert "14:00 UTC" in sent["content"]["description"]
+        _assert_message_body(response.json())
+
+    @respx.mock
+    def test_update_gateway_http_error_returns_500(self, client, mock_message_repo):
+        """Returns 500 when the Discord gateway returns a non-2xx status during update."""
+        route = respx.put(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(500, json={"error": "boom"}))
+
+        payload = {
+            "guild_id": 12345,
+            "channel_id": 67890,
+            "message_id": 11111,
+            "current_time": "14:00 UTC",
+        }
+        response = client.put("/api/v1/time", json=payload)
+
+        assert route.called
+        assert response.status_code == 500
+        assert "Failed to update message in Discord" in response.json()["detail"]
+
+    @respx.mock
+    def test_update_gateway_missing_ids_returns_500(self, client, mock_message_repo):
+        """Returns 500 when gateway update response is missing required identifiers."""
+        route = respx.put(GATEWAY_MESSAGES_URL).mock(
+            return_value=httpx.Response(200, json={"guild_id": 12345, "channel_id": 67890})
+        )
+
+        payload = {
+            "guild_id": 12345,
+            "channel_id": 67890,
+            "message_id": 11111,
+            "current_time": "14:00 UTC",
+        }
+        response = client.put("/api/v1/time", json=payload)
+
+        assert route.called
         assert response.status_code == 500
         assert "Discord gateway did not return required message identifiers" in response.json()["detail"]
 
@@ -474,46 +361,47 @@ class TestDeleteTimeAnnouncement:
         assert response.status_code == 404
         assert "No time announcement found to delete" in response.json()["detail"]
 
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_delete_happy_path(self, mock_httpx_class, client, mock_message_repo):
-        """Returns 200 with status 'deleted' and gateway identifiers on success."""
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_http.delete = AsyncMock(return_value=make_mock_http_response())
+    @respx.mock
+    def test_delete_happy_path(self, client, mock_message_repo):
+        """Returns 200 with status 'deleted' and gateway identifiers on success;
+        asserts the gateway DELETE route/method/payload."""
+        route = respx.delete(GATEWAY_MESSAGES_URL).mock(
+            return_value=httpx.Response(200, json=make_gateway_response())
+        )
 
         response = client.delete("/api/v1/time?guild_id=12345&channel_id=67890&message_id=11111")
 
         assert response.status_code == 200
+        assert route.called
+        sent = json.loads(route.calls.last.request.content)
+        assert sent == {"guild_id": 12345, "channel_id": 67890, "message_id": 11111}
         data = response.json()
         assert data["status"] == "deleted"
         assert data["guild_id"] == 12345
         assert data["channel_id"] == 67890
         assert data["message_id"] == 11111
 
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_delete_gateway_http_error_returns_500(self, mock_httpx_class, client, mock_message_repo):
+    @respx.mock
+    def test_delete_gateway_http_error_returns_500(self, client, mock_message_repo):
         """Returns 500 when the Discord gateway returns a non-2xx status during delete."""
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_http.delete = AsyncMock(return_value=make_http_error_response())
+        route = respx.delete(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(500, json={"error": "boom"}))
 
         response = client.delete("/api/v1/time?guild_id=12345&channel_id=67890&message_id=11111")
 
+        assert route.called
         assert response.status_code == 500
         assert "Failed to delete message from Discord" in response.json()["detail"]
 
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_delete_gateway_missing_ids_returns_500(self, mock_httpx_class, client, mock_message_repo):
+    @respx.mock
+    def test_delete_gateway_missing_ids_returns_500(self, client, mock_message_repo):
         """Returns 500 when gateway delete response is missing required identifiers."""
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_http.delete = AsyncMock(return_value=make_mock_http_response(json_data={"guild_id": 12345}))
+        route = respx.delete(GATEWAY_MESSAGES_URL).mock(
+            return_value=httpx.Response(200, json={"guild_id": 12345})
+        )
 
         response = client.delete("/api/v1/time?guild_id=12345&channel_id=67890&message_id=11111")
 
+        assert route.called
         assert response.status_code == 500
         assert "Discord gateway did not return required message identifiers" in response.json()["detail"]
 
@@ -531,18 +419,15 @@ class TestDeleteTimeAnnouncement:
         response = client.delete("/api/v1/time?guild_id=12345")
         assert response.status_code == 422
 
-    @patch("api.routers.announcements.time_announcement.httpx.AsyncClient")
-    def test_delete_db_record_not_found_after_gateway_logs_warning(self, mock_httpx_class, client, mock_message_repo):
+    @respx.mock
+    def test_delete_db_record_not_found_after_gateway_logs_warning(self, client, mock_message_repo):
         """Returns 200 even when delete_by_composite_key returns falsy (DB record missing).
 
-        Covers line 267: flogger.warning('Discord message deleted but database record not found').
-        This path is reached when the gateway delete succeeds but the DB repo returns
-        a falsy value from delete_by_composite_key (e.g., record was already gone).
+        Covers the flogger.warning('Discord message deleted but database record not found')
+        path: the gateway delete succeeds but the DB repo returns a falsy value from
+        delete_by_composite_key (e.g., record was already gone).
         """
-        mock_http = AsyncMock()
-        mock_httpx_class.return_value.__aenter__ = AsyncMock(return_value=mock_http)
-        mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_http.delete = AsyncMock(return_value=make_mock_http_response())
+        respx.delete(GATEWAY_MESSAGES_URL).mock(return_value=httpx.Response(200, json=make_gateway_response()))
 
         # delete_by_composite_key returns False → record not found → warning logged
         mock_message_repo.delete_by_composite_key = AsyncMock(return_value=False)
@@ -572,26 +457,11 @@ class TestGetTimeAnnouncement:
         assert "No time announcement found" in response.json()["detail"]
 
     def test_get_happy_path(self, client, mock_message_repo):
-        """Returns 200 with DiscordMessageResponse when announcement exists."""
-        import api.routers.announcements.time_announcement as ta_module
-
-        with patch.object(
-            ta_module.DiscordMessageResponse,
-            "from_orm",
-            return_value=MagicMock(
-                id=str(SAMPLE_UUID),
-                guild_id=12345,
-                channel_id=67890,
-                message_id=11111,
-                embed_payload=json.dumps({"title": "test"}),
-                message_type="time_announcement",
-                created_at=datetime(2026, 1, 1),
-                updated_at=datetime(2026, 1, 1),
-            ),
-        ):
-            response = client.get("/api/v1/time?guild_id=12345&channel_id=67890&message_id=11111")
+        """Returns 200 with a real DiscordMessageResponse when announcement exists."""
+        response = client.get("/api/v1/time?guild_id=12345&channel_id=67890&message_id=11111")
 
         assert response.status_code == 200
+        _assert_message_body(response.json())
 
     def test_get_unexpected_exception_returns_500(self, client, mock_message_repo):
         """Returns 500 when an unexpected exception occurs during get."""
@@ -617,28 +487,13 @@ class TestListTimeAnnouncementsByGuild:
     """Tests for GET /api/v1/announcements/time/guild/{guild_id}."""
 
     def test_list_by_guild_happy_path(self, client, mock_message_repo):
-        """Returns 200 with list of announcements for the given guild."""
-        import api.routers.announcements.time_announcement as ta_module
-
-        with patch.object(
-            ta_module.DiscordMessageResponse,
-            "from_orm",
-            return_value=MagicMock(
-                id=str(SAMPLE_UUID),
-                guild_id=12345,
-                channel_id=67890,
-                message_id=11111,
-                embed_payload="{}",
-                message_type="time_announcement",
-                created_at=datetime(2026, 1, 1),
-                updated_at=datetime(2026, 1, 1),
-            ),
-        ):
-            response = client.get("/api/v1/time/guild/12345")
+        """Returns 200 with a list of real serialized announcements for the guild."""
+        response = client.get("/api/v1/time/guild/12345")
 
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, list)
+        assert isinstance(data, list) and len(data) == 1
+        _assert_message_body(data[0])
 
     def test_list_by_guild_empty(self, client, mock_message_repo):
         """Returns 200 with empty list when guild has no announcements."""
@@ -659,28 +514,13 @@ class TestListTimeAnnouncementsByChannel:
     """Tests for GET /api/v1/announcements/time/guild/{guild_id}/channel/{channel_id}."""
 
     def test_list_by_channel_happy_path(self, client, mock_message_repo):
-        """Returns 200 with list of announcements for the given guild+channel."""
-        import api.routers.announcements.time_announcement as ta_module
-
-        with patch.object(
-            ta_module.DiscordMessageResponse,
-            "from_orm",
-            return_value=MagicMock(
-                id=str(SAMPLE_UUID),
-                guild_id=12345,
-                channel_id=67890,
-                message_id=11111,
-                embed_payload="{}",
-                message_type="time_announcement",
-                created_at=datetime(2026, 1, 1),
-                updated_at=datetime(2026, 1, 1),
-            ),
-        ):
-            response = client.get("/api/v1/time/guild/12345/channel/67890")
+        """Returns 200 with a list of real serialized announcements for guild+channel."""
+        response = client.get("/api/v1/time/guild/12345/channel/67890")
 
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, list)
+        assert isinstance(data, list) and len(data) == 1
+        _assert_message_body(data[0])
 
     def test_list_by_channel_empty(self, client, mock_message_repo):
         """Returns 200 with empty list when no announcements for channel."""
@@ -701,28 +541,13 @@ class TestListTimeAnnouncementsByType:
     """Tests for GET /api/v1/announcements/time/guild/{guild_id}/type/{message_type}."""
 
     def test_list_by_type_happy_path(self, client, mock_message_repo):
-        """Returns 200 with list of announcements for the given guild+type."""
-        import api.routers.announcements.time_announcement as ta_module
-
-        with patch.object(
-            ta_module.DiscordMessageResponse,
-            "from_orm",
-            return_value=MagicMock(
-                id=str(SAMPLE_UUID),
-                guild_id=12345,
-                channel_id=67890,
-                message_id=11111,
-                embed_payload="{}",
-                message_type="time_announcement",
-                created_at=datetime(2026, 1, 1),
-                updated_at=datetime(2026, 1, 1),
-            ),
-        ):
-            response = client.get("/api/v1/time/guild/12345/type/time_announcement")
+        """Returns 200 with a list of real serialized announcements for guild+type."""
+        response = client.get("/api/v1/time/guild/12345/type/time_announcement")
 
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, list)
+        assert isinstance(data, list) and len(data) == 1
+        _assert_message_body(data[0])
 
     def test_list_by_type_empty(self, client, mock_message_repo):
         """Returns 200 with empty list when no announcements match the type."""

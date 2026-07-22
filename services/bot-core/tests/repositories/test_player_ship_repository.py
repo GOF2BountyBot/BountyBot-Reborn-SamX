@@ -1,8 +1,15 @@
-"""Unit tests for PlayerShipRepository – mock-based (no real database).
+"""Tests for PlayerShipRepository.
 
-Targets the exception-handling paths (except Exception as e: blocks).
-Missed lines: 25-27, 38-40, 50-53, 94-97, 108-110, 124-126, 204,
-              248-253, 303-305
+Mix of:
+  - mock-based tests targeting the exception-handling paths (except
+    Exception as e: blocks) that integration tests do not reach — a mock
+    AsyncSession is appropriate here since we are deliberately forcing DB
+    failures, and the ValueError branch tests only need a ship-like object
+    for ``db.get`` to return.
+  - real-SQLite round-trip tests (in-memory aiosqlite) for the
+    add_equipment / remove_equipment list-mutation behavior (weapons /
+    modules / turrets), so the actual list append/remove + persistence is
+    exercised instead of a mock echoing back whatever we set on it.
 """
 
 import os
@@ -23,18 +30,27 @@ sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.base import Base
+from persist.models.player import Player
 from persist.models.player_ship import PlayerShip
+from persist.models.user import User
 from persist.repositories.player_ship_repository import PlayerShipRepository
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_ship(**overrides) -> MagicMock:
-    """Return a MagicMock with PlayerShip-like attributes."""
+def _make_ship(**overrides) -> PlayerShip:
+    """Build a real, unpersisted PlayerShip instance with sensible defaults.
+
+    A real instance (rather than ``MagicMock(spec=PlayerShip)``) is used so
+    that list mutation performed by the repository under test is genuine
+    list mutation on a real mapped object. Callers that need a real DB
+    round-trip should go through ``_seed_ship`` instead.
+    """
     defaults = dict(
-        id=1,
         player_id=10,
         ship_name="Viper Mk II",
         nickname=None,
@@ -45,10 +61,29 @@ def _make_ship(**overrides) -> MagicMock:
         created_at=datetime.now(UTC),
     )
     defaults.update(overrides)
-    obj = MagicMock(spec=PlayerShip)
-    for k, v in defaults.items():
-        setattr(obj, k, v)
-    return obj
+    return PlayerShip(**defaults)
+
+
+async def _seed_ship(db_session: AsyncSession, **overrides) -> PlayerShip:
+    """Create and commit a User + Player + PlayerShip row, returning the ship.
+
+    ``player_id``/``user_id`` are not taken from overrides directly — a
+    fresh User + Player pair is always created to satisfy PlayerShip's
+    foreign key, so tests only need to specify ship-level fields
+    (weapons/modules/turrets/etc).
+    """
+    user_id = overrides.pop("user_id", 900000)
+    guild_id = overrides.pop("guild_id", 1)
+    db_session.add(User(id=user_id, discord_username=f"user{user_id}"))
+    player = Player(user_id=user_id, guild_id=guild_id, credits=0)
+    db_session.add(player)
+    await db_session.flush()
+
+    ship = _make_ship(player_id=player.id, **overrides)
+    db_session.add(ship)
+    await db_session.commit()
+    await db_session.refresh(ship)
+    return ship
 
 
 def _make_scalars_result(items) -> MagicMock:
@@ -63,6 +98,8 @@ def _make_scalars_result(items) -> MagicMock:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+_PLAYER_SHIP_TABLES = [User.__table__, Player.__table__, PlayerShip.__table__]
 
 
 @pytest.fixture
@@ -82,6 +119,22 @@ def mock_db() -> AsyncMock:
     db.get = AsyncMock()
     db.flush = AsyncMock()
     return db
+
+
+@pytest.fixture
+async def async_engine():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_PLAYER_SHIP_TABLES)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(async_engine) -> AsyncSession:
+    factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        yield session
 
 
 # ===================================================================

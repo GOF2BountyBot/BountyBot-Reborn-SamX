@@ -31,12 +31,24 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
+from persist.models.guild_config import GuildConfig
+from persist.models.guild_shop import GuildShop
+from persist.models.player import Player
+from persist.models.player_inventory import PlayerInventory
+from persist.models.player_ship import PlayerShip
+from persist.models.ship import Ship
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants
 from services.shop_service import ShopService
 
 # ---------------------------------------------------------------------------
 # Helpers
+#
+# Domain entities are real SQLAlchemy model instances (constructible without a
+# DB — these tables have no ARRAY columns except Ship, whose ARRAY fields we
+# leave unset). Real models expose the true column defaults and the real
+# GuildConfig.get_count_range / get_quantity_range dispatch, so range tests
+# exercise the actual per-item-type lookup rather than a canned MagicMock.
 # ---------------------------------------------------------------------------
 
 
@@ -45,13 +57,8 @@ def _make_player(
     guild_id: int = 999,
     tier: str = "Bronze",
     credits: int = 1000,
-) -> MagicMock:
-    p = MagicMock()
-    p.id = player_id
-    p.guild_id = guild_id
-    p.tier = tier
-    p.credits = credits
-    return p
+) -> Player:
+    return Player(id=player_id, guild_id=guild_id, user_id=player_id, tier=tier, credits=credits)
 
 
 def _make_shop_item(
@@ -63,30 +70,32 @@ def _make_shop_item(
     quantity: int = 5,
     price: int = 200,
     last_restocked: datetime | None = None,
-) -> MagicMock:
-    item = MagicMock()
-    item.id = item_id
-    item.guild_id = guild_id
-    item.tier = tier
-    item.item_type = item_type
-    item.item_name = item_name
-    item.quantity = quantity
-    item.price = price
-    item.last_restocked = last_restocked or datetime(2025, 1, 1, tzinfo=UTC)
-    item.is_refresh_due = MagicMock(return_value=False)
-    return item
+    tech_level: int = 1,
+    refresh_interval_hours: int = 12,
+) -> GuildShop:
+    """Real GuildShop row. ``is_refresh_due()`` is the model's own method,
+    computed from ``last_restocked``/``refresh_interval_hours`` — default
+    ``last_restocked=now`` keeps it not-due (matching the prior forced False)."""
+    return GuildShop(
+        id=item_id,
+        guild_id=guild_id,
+        tier=tier,
+        tech_level=tech_level,
+        item_type=item_type,
+        item_name=item_name,
+        quantity=quantity,
+        price=price,
+        last_restocked=last_restocked or datetime.now(UTC),
+        refresh_interval_hours=refresh_interval_hours,
+    )
 
 
 def _make_inventory_item(
     quantity: int = 3,
     item_name: str = "Micro Gun MK I",
     item_type: str = "weapon",
-) -> MagicMock:
-    item = MagicMock()
-    item.quantity = quantity
-    item.item_name = item_name
-    item.item_type = item_type
-    return item
+) -> PlayerInventory:
+    return PlayerInventory(player_id=1, quantity=quantity, item_name=item_name, item_type=item_type)
 
 
 def _make_ship_static(
@@ -96,16 +105,16 @@ def _make_ship_static(
     max_modules: int = 2,
     max_turrets: int = 1,
     max_secondaries: int = 0,
-) -> MagicMock:
-    """Create a mock static Ship model."""
-    ship = MagicMock()
-    ship.name = name
-    ship.value = value
-    ship.max_primaries = max_primaries
-    ship.max_modules = max_modules
-    ship.max_turrets = max_turrets
-    ship.max_secondaries = max_secondaries
-    return ship
+) -> Ship:
+    """Create a real static Ship model instance (ARRAY columns left unset)."""
+    return Ship(
+        name=name,
+        value=value,
+        max_primaries=max_primaries,
+        max_modules=max_modules,
+        max_turrets=max_turrets,
+        max_secondaries=max_secondaries,
+    )
 
 
 def _make_player_ship(
@@ -116,35 +125,45 @@ def _make_player_ship(
     weapons: list | None = None,
     modules: list | None = None,
     turrets: list | None = None,
-) -> MagicMock:
-    """Create a mock PlayerShip instance."""
-    ps = MagicMock()
-    ps.id = ship_id
-    ps.player_id = player_id
-    ps.ship_name = ship_name
-    ps.is_active = is_active
-    ps.weapons = weapons if weapons is not None else []
-    ps.modules = modules if modules is not None else []
-    ps.turrets = turrets if turrets is not None else []
-    ps.secondary_weapons = []
-    return ps
+) -> PlayerShip:
+    """Create a real PlayerShip model instance."""
+    return PlayerShip(
+        id=ship_id,
+        player_id=player_id,
+        ship_name=ship_name,
+        is_active=is_active,
+        weapons=weapons if weapons is not None else [],
+        modules=modules if modules is not None else [],
+        turrets=turrets if turrets is not None else [],
+        secondary_weapons=[],
+    )
 
 
 def _make_config(
     sale_price_factor: float = 0.8,
     tech_level_probabilities: dict | None = None,
     xp_thresholds: dict | None = None,
-) -> MagicMock:
-    config = MagicMock()
-    config.sale_price_factor = sale_price_factor
-    config.tech_level_probabilities = tech_level_probabilities or {
-        "same_level": 0.7,
-        "one_lower": 0.2,
-        "two_lower": 0.1,
-    }
-    config.get_count_range = MagicMock(return_value={"min": 1, "max": 2})
-    config.get_quantity_range = MagicMock(return_value={"min": 1, "max": 3})
-    return config
+) -> GuildConfig:
+    """Real GuildConfig. get_count_range/get_quantity_range dispatch off the
+    real per-type range columns; all types share {1,2}/{1,3} to mirror the
+    prior canned MagicMock return values."""
+    return GuildConfig(
+        guild_id=999,
+        sale_price_factor=sale_price_factor,
+        tech_level_probabilities=tech_level_probabilities
+        or {"same_level": 0.7, "one_lower": 0.2, "two_lower": 0.1},
+        xp_thresholds=xp_thresholds or {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
+        ship_count_range={"min": 1, "max": 2},
+        weapon_count_range={"min": 1, "max": 2},
+        secondary_weapon_count_range={"min": 1, "max": 2},
+        module_count_range={"min": 1, "max": 2},
+        turret_count_range={"min": 1, "max": 2},
+        ship_quantity_range={"min": 1, "max": 3},
+        weapon_quantity_range={"min": 1, "max": 3},
+        secondary_weapon_quantity_range={"min": 1, "max": 3},
+        module_quantity_range={"min": 1, "max": 3},
+        turret_quantity_range={"min": 1, "max": 3},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -958,8 +977,9 @@ class TestCheckAndRefreshShop:
     @pytest.mark.asyncio
     async def test_does_not_refresh_when_items_fresh(self, service, mock_db, mock_shop_repo):
         """refresh_shop is NOT called when items are not due for refresh."""
-        items = [_make_shop_item()]
-        items[0].is_refresh_due.return_value = False
+        # Fresh restock (now) + 12h interval → real is_refresh_due() is False.
+        items = [_make_shop_item(last_restocked=datetime.now(UTC), refresh_interval_hours=12)]
+        assert items[0].is_refresh_due() is False
         mock_shop_repo.get_shop_items.return_value = items
         service.refresh_shop = AsyncMock()
 
@@ -970,8 +990,9 @@ class TestCheckAndRefreshShop:
     @pytest.mark.asyncio
     async def test_triggers_refresh_when_item_due(self, service, mock_db, mock_shop_repo):
         """refresh_shop is called when at least one item is due for refresh."""
-        items = [_make_shop_item()]
-        items[0].is_refresh_due.return_value = True
+        # Restocked well beyond the interval → real is_refresh_due() is True.
+        items = [_make_shop_item(last_restocked=datetime(2025, 1, 1, tzinfo=UTC), refresh_interval_hours=12)]
+        assert items[0].is_refresh_due() is True
         mock_shop_repo.get_shop_items.return_value = items
         service.refresh_shop = AsyncMock()
 
@@ -1862,16 +1883,50 @@ class TestShopExcludesDeferredSecondarySubtypes:
 # ===========================================================================
 
 
+def _real_config_from_maps(
+    count_map: dict[str, dict],
+    qty_map: dict[str, dict] | None = None,
+    *,
+    default_qty: dict | None = None,
+    tech_level_probabilities: dict | None = None,
+) -> GuildConfig:
+    """Build a REAL GuildConfig from per-config-key count/quantity range maps.
+
+    Keys are the config keys ``GuildConfig.get_count_range`` dispatches on
+    ('ship','weapon','secondary_weapon','module','turret'). The real model's
+    own get_count_range/get_quantity_range methods then do the lookup — no
+    simulated MagicMock dispatch.
+    """
+    qty_map = qty_map or {}
+    dq = default_qty if default_qty is not None else {"min": 1, "max": 1}
+    return GuildConfig(
+        guild_id=999,
+        tech_level_probabilities=tech_level_probabilities
+        or {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0},
+        ship_count_range=count_map.get("ship", {"min": 0, "max": 0}),
+        weapon_count_range=count_map.get("weapon", {"min": 0, "max": 0}),
+        secondary_weapon_count_range=count_map.get("secondary_weapon", {"min": 0, "max": 0}),
+        module_count_range=count_map.get("module", {"min": 0, "max": 0}),
+        turret_count_range=count_map.get("turret", {"min": 0, "max": 0}),
+        ship_quantity_range=qty_map.get("ship", dq),
+        weapon_quantity_range=qty_map.get("weapon", dq),
+        secondary_weapon_quantity_range=qty_map.get("secondary_weapon", dq),
+        module_quantity_range=qty_map.get("module", dq),
+        turret_quantity_range=qty_map.get("turret", dq),
+    )
+
+
 def _make_config_with_separate_ranges(
     primary_count_range: dict | None = None,
     secondary_count_range: dict | None = None,
     primary_qty_range: dict | None = None,
     secondary_qty_range: dict | None = None,
-) -> MagicMock:
-    """Build a mock GuildConfig whose get_count_range/get_quantity_range dispatch correctly.
+) -> GuildConfig:
+    """Build a real GuildConfig with independent primary/secondary ranges.
 
-    Simulates the real GuildConfig.get_count_range() which now looks up
-    'weapon' for primary_weapon and 'secondary_weapon' for secondary_weapon.
+    Exercises the real GuildConfig.get_count_range()/get_quantity_range()
+    dispatch which looks up 'weapon' for primary_weapon and 'secondary_weapon'
+    for secondary_weapon.
     """
     primary_count = primary_count_range or {"min": 3, "max": 5}
     secondary_count = secondary_count_range or {"min": 3, "max": 5}
@@ -1892,12 +1947,7 @@ def _make_config_with_separate_ranges(
         "module": {"min": 2, "max": 4},
         "turret": {"min": 2, "max": 4},
     }
-
-    config = MagicMock()
-    config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
-    config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 1, "max": 1}))
-    config.get_quantity_range = MagicMock(side_effect=lambda k: qty_map.get(k, {"min": 1, "max": 1}))
-    return config
+    return _real_config_from_maps(count_map, qty_map)
 
 
 class TestCI11SecondaryWeaponOwnRange:
@@ -1997,12 +2047,7 @@ class TestCI11SecondaryWeaponOwnRange:
             "module": {"min": 0, "max": 0},
             "turret": {"min": 0, "max": 0},
         }
-        qty_map: dict[str, dict] = {}
-
-        config = MagicMock()
-        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
-        config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
-        config.get_quantity_range = MagicMock(side_effect=lambda k: qty_map.get(k, {"min": 1, "max": 1}))
+        config = _real_config_from_maps(count_map)
         mock_config_repo.get_by_guild_id.return_value = config
 
         type_counts: dict[str, int] = {}
@@ -2064,10 +2109,7 @@ class TestCI11SecondaryWeaponOwnRange:
             "module": {"min": 0, "max": 0},
             "turret": {"min": 0, "max": 0},
         }
-        config = MagicMock()
-        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
-        config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
-        config.get_quantity_range = MagicMock(return_value={"min": 1, "max": 1})
+        config = _real_config_from_maps(count_map)
         mock_config_repo.get_by_guild_id.return_value = config
 
         names_generated: list[str] = []
@@ -2112,11 +2154,7 @@ def _make_config_secondary_only(qty_min: int = 3, qty_max: int = 3) -> MagicMock
         "module": {"min": 0, "max": 0},
         "turret": {"min": 0, "max": 0},
     }
-    config = MagicMock()
-    config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
-    config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
-    config.get_quantity_range = MagicMock(return_value={"min": qty_min, "max": qty_max})
-    return config
+    return _real_config_from_maps(count_map, default_qty={"min": qty_min, "max": qty_max})
 
 
 class TestSecondaryQuantityScalers:
@@ -2205,10 +2243,7 @@ class TestSecondaryQuantityScalers:
             "module": {"min": 0, "max": 0},
             "turret": {"min": 0, "max": 0},
         }
-        config = MagicMock()
-        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
-        config.get_count_range = MagicMock(side_effect=lambda k: count_map.get(k, {"min": 0, "max": 0}))
-        config.get_quantity_range = MagicMock(return_value={"min": 3, "max": 3})
+        config = _real_config_from_maps(count_map, default_qty={"min": 3, "max": 3})
         mock_config_repo.get_by_guild_id.return_value = config
 
         quantities: list[int] = []
@@ -2844,12 +2879,7 @@ class TestPerGuildCombatProbOverride:
         }
 
         # Guild config with explicit shop_combat_module_prob override = 1.0
-        config = MagicMock()
-        config.tech_level_probabilities = {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0}
-        config.get_count_range = MagicMock(
-            side_effect=lambda k: {"min": 0, "max": 0} if k != "module" else {"min": 5, "max": 5}
-        )
-        config.get_quantity_range = MagicMock(return_value={"min": 1, "max": 1})
+        config = _real_config_from_maps({"module": {"min": 5, "max": 5}})
         config.shop_combat_module_prob = 1.0  # explicit per-guild float override
         mock_config_repo.get_by_guild_id.return_value = config
 
@@ -2878,8 +2908,7 @@ class TestPerGuildCombatProbOverride:
         """NULL shop_combat_module_prob column falls back to 0.75 default."""
         from services.game_constants import GameConstants, resolve_constant
 
-        config = MagicMock()
-        config.shop_combat_module_prob = None  # NULL -> resolve_constant must fall back to 0.75
+        config = GuildConfig(guild_id=999, shop_combat_module_prob=None)  # NULL -> resolve_constant falls back
         mock_config_repo.get_by_guild_id.return_value = config
 
         resolved_prob = resolve_constant(config, "shop_combat_module_prob", GameConstants.SHOP_COMBAT_MODULE_PROB)

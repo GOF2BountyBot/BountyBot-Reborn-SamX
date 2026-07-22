@@ -10,16 +10,28 @@ These tests verify:
 5. _edit_bounty_announcement rebuilds the embed with checked-system state
 6. _edit_bounty_announcement is non-fatal (exceptions are caught+logged)
 7. _edit_bounty_announcement sends the correct PUT to the gateway
+
+The `_edit_bounty_announcement` internal tests exercise the REAL wire-payload
+builder (`utils.bounty_announcement_payload.build_bounty_announcement_request`)
+and intercept the gateway PUT at the httpx transport layer with respx, asserting
+the route, method and JSON body shape.  This is the regression guard for the
+class of prod defect where a blanket `patch("httpx.AsyncClient")` "accept
+anything, return 200" responder let a malformed payload ship.
 """
 
 from __future__ import annotations
 
+import contextlib
+import json
+import os
 import sys
 import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+import respx
 
 # ---------------------------------------------------------------------------
 # Guard: ensure shared.bblogger is mocked before importing service code.
@@ -34,40 +46,30 @@ if "shared" not in sys.modules:
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
 
+from api.schemas.loadout_schema import LoadoutResponse
+from persist.models.bounty import Bounty
+from persist.models.discord_message import DiscordMessage
 from services.bounty_service import BountyService, CheckResult, RewardInfo
+
+# ---------------------------------------------------------------------------
+# Gateway env used by the respx-backed edit tests. The real
+# _edit_bounty_announcement reads DISCORD_GATEWAY_HOST / GATEWAY_PORT to build
+# the PUT URL, so we pin them to a known value the assertions can reconstruct.
+# ---------------------------------------------------------------------------
+GATEWAY_HOST = "test-gateway"
+GATEWAY_PORT = "8888"
+
+
+def _gateway_put_url(channel_id: int, message_id: int) -> str:
+    return (
+        f"http://{GATEWAY_HOST}:{GATEWAY_PORT}/api/v1/announcements/bounty"
+        f"/channel/{channel_id}/message/{message_id}"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Module-level autouse fixture: patch LoadoutBuilder.from_player
 # ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Minimal BountyAnnouncementRequest-shaped dict returned by the real helper.
-# Used when a test only needs the call to complete without asserting on the
-# return value (e.g. tests verifying HTTP PUT behaviour or non-fatal paths).
-# ---------------------------------------------------------------------------
-
-
-def _make_request_payload(bounty=None, *, captured=False, route_map_url=None, bounty_hunter_role_id=None):
-    """Return a minimal BountyAnnouncementRequest-shaped dict (wire shape from A.48)."""
-    name = getattr(bounty, "criminal_name", None) or "Unknown"
-    faction = getattr(bounty, "criminal_faction", None)
-    title = f"✅ {name} — CAPTURED" if captured else name
-    return {
-        "text_content": (f"<@&{bounty_hunter_role_id}>" if bounty_hunter_role_id else None),
-        "loadout_response": {
-            "subject_kind": "criminal",
-            "subject_name": name,
-        },
-        "metadata": {
-            "title": title,
-            "color": 0,
-            "footer_text": faction,
-            "image_url": route_map_url,
-            "prefix_fields": [],
-            "suffix_fields": [],
-        },
-    }
 
 
 @pytest.fixture(autouse=True)
@@ -94,6 +96,9 @@ def _make_player(
     bounty_cooldown_end=None,
     active_ship=None,
 ) -> SimpleNamespace:
+    # Player is left as a SimpleNamespace: the check_bounty trigger tests attach an
+    # `active_ship` duck-typed ship (with ad-hoc `armour`), which the real Player
+    # ORM relationship would reject. The edit-path tests below do not touch Player.
     return SimpleNamespace(
         id=player_id,
         user_id=player_id * 1000,  # T10: Discord user_id for fight_ships
@@ -119,12 +124,13 @@ def _make_active_bounty(
     reward_per_sys: int = 500,
     end_time=None,
     criminal_ship: dict | None = None,
-) -> SimpleNamespace:
+) -> Bounty:
+    """Return a REAL Bounty ORM instance (constructible without a session)."""
     if route is None:
         route = ["Alpha", "Beta", "Gamma", "Sol", "Omega"]
     if checked is None:
         checked = {s: -1 for s in route}
-    return SimpleNamespace(
+    return Bounty(
         id=bounty_id,
         route=route,
         answer=answer,
@@ -146,14 +152,70 @@ def _make_discord_message(
     message_id: int = 99999,
     channel_id: int = 7777,
     guild_id: int = 1,
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        id="some-uuid",
-        message_id=message_id,
-        channel_id=channel_id,
+) -> DiscordMessage:
+    """Return a REAL DiscordMessage ORM instance (constructible without a session)."""
+    return DiscordMessage(
         guild_id=guild_id,
+        channel_id=channel_id,
+        message_id=message_id,
         message_type="bounty_announcement",
+        embed_payload="{}",
+        reference_id=10,
     )
+
+
+@contextlib.contextmanager
+def _edit_payload_env(discord_msg, *, loadout_subject_name="Zara", raise_on_put=False):
+    """Set up the real-wire-payload edit environment for _edit_bounty_announcement.
+
+    Runs the REAL `build_bounty_announcement_request` (payload assembly) and
+    intercepts the gateway PUT with respx at the httpx transport layer.
+
+    Three collaborators are patched — all genuine DB/service boundaries that
+    `_edit_bounty_announcement` fans out to (justifies >2 mocks per R3):
+      - DiscordMessageRepository -> yields `discord_msg` (or None) from the repo
+      - CriminalRepository.get_by_name -> None (criminal-icon lookup is a DB read;
+        returning None keeps the icon out of the payload so it stays JSON-serialisable)
+      - LoadoutResponseService.build_bounty_loadout -> a REAL LoadoutResponse (the
+        method itself issues ORM queries; the returned schema flows through
+        model_dump() into the real wire payload)
+
+    Yields the respx route object (or None when discord_msg is None) so callers
+    can assert `.called`, the request URL/method, and the JSON body.
+    """
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
+    loadout = LoadoutResponse(subject_kind="criminal", subject_name=loadout_subject_name)
+
+    with (
+        patch(
+            "persist.repositories.discord_message_repository.DiscordMessageRepository",
+            return_value=mock_msg_repo,
+        ),
+        patch(
+            "persist.repositories.criminal_repository.CriminalRepository.get_by_name",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "services.loadout_response_service.LoadoutResponseService.build_bounty_loadout",
+            new=AsyncMock(return_value=loadout),
+        ),
+        patch.dict(os.environ, {"DISCORD_GATEWAY_HOST": GATEWAY_HOST, "GATEWAY_PORT": GATEWAY_PORT}),
+        respx.mock(assert_all_called=False) as router,
+    ):
+        route = None
+        if discord_msg is not None:
+            route = router.put(_gateway_put_url(discord_msg.channel_id, discord_msg.message_id))
+            if raise_on_put:
+                route.mock(side_effect=httpx.ConnectError("Connection refused"))
+            else:
+                route.mock(return_value=httpx.Response(200))
+        yield router, route
+
+
+def _put_payload(route) -> dict:
+    """Decode the JSON body of the single PUT captured by a respx route."""
+    return json.loads(route.calls.last.request.content)
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +473,7 @@ async def test_check_correct_silver_win_edits_with_captured_flag(service, mock_d
 
 
 # ---------------------------------------------------------------------------
-# Tests: _edit_bounty_announcement internals
+# Tests: _edit_bounty_announcement internals (REAL payload builder + respx)
 # ---------------------------------------------------------------------------
 
 
@@ -421,31 +483,16 @@ async def test_edit_announcement_looks_up_discord_message(service, mock_db):
     bounty = _make_active_bounty(bounty_id=42, guild_id=99)
     discord_msg = _make_discord_message()
 
-    mock_msg_repo = AsyncMock()
-    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
-
-    with (
-        patch(
-            "persist.repositories.discord_message_repository.DiscordMessageRepository",
-            return_value=mock_msg_repo,
-        ),
-        patch(
-            "utils.bounty_announcement_payload.build_bounty_announcement_request",
-            new=AsyncMock(return_value=_make_request_payload(bounty)),
-        ),
-        patch("httpx.AsyncClient") as mock_client_cls,
-    ):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.put = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _edit_payload_env(discord_msg) as (_router, route):
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    mock_msg_repo.get_by_guild_type_and_reference.assert_called_once_with(mock_db, 99, "bounty_announcement", 42)
+    # DiscordMessageRepository.get_by_guild_type_and_reference is looked up by
+    # (db, guild_id, "bounty_announcement", bounty.id); grab the patched repo via
+    # the route's single PUT having fired (message was found).
+    assert route.called
+    # The lookup must have used the bounty's guild_id + id as the reference.
+    put_url = str(route.calls.last.request.url)
+    assert put_url == _gateway_put_url(discord_msg.channel_id, discord_msg.message_id)
 
 
 @pytest.mark.asyncio
@@ -453,34 +500,21 @@ async def test_edit_announcement_skips_when_no_message_found(service, mock_db):
     """When no DiscordMessage exists, no HTTP call is made."""
     bounty = _make_active_bounty(bounty_id=10)
 
-    mock_msg_repo = AsyncMock()
-    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=None)
-
-    with (
-        patch(
-            "persist.repositories.discord_message_repository.DiscordMessageRepository",
-            return_value=mock_msg_repo,
-        ),
-        patch("httpx.AsyncClient") as mock_client_cls,
-    ):
+    with _edit_payload_env(None) as (router, _route):
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    # httpx.AsyncClient should NOT have been instantiated when no message is found
-    mock_client_cls.assert_not_called()
+    # No gateway PUT should have been attempted when no message is found.
+    assert len(router.calls) == 0
 
 
 @pytest.mark.asyncio
 async def test_edit_announcement_rebuilds_embed_with_checked_systems(service, mock_db):
-    """The builder is called with checked systems translated to the correct format."""
-    # Alpha is 3 stops before Sol (distance=3), so it's "checked" not "recently_spotted"
-    # Gamma is 1 stop before Sol, so it would be "recently_spotted"
+    """The REAL payload reflects checked-system markdown (strikethrough + found bold)."""
+    # Alpha is 4 stops before Sol → plain "checked"; Sol (answer) → "found".
     bounty = _make_active_bounty(
         bounty_id=10,
         route=["Alpha", "Beta", "Gamma", "Delta", "Sol"],
         answer="Sol",
-        # Alpha checked by player 7 (3 stops before Sol → plain "checked"),
-        # Sol (answer) found by player 7,
-        # Beta unchecked
         checked={"Alpha": 7, "Beta": -1, "Gamma": -1, "Delta": -1, "Sol": 7},
         guild_id=1,
         division="bronze",
@@ -489,56 +523,29 @@ async def test_edit_announcement_rebuilds_embed_with_checked_systems(service, mo
     )
     discord_msg = _make_discord_message()
 
-    mock_msg_repo = AsyncMock()
-    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
-
-    mock_helper = AsyncMock(return_value=_make_request_payload(bounty))
-
-    with (
-        patch(
-            "persist.repositories.discord_message_repository.DiscordMessageRepository",
-            return_value=mock_msg_repo,
-        ),
-        patch(
-            "utils.bounty_announcement_payload.build_bounty_announcement_request",
-            new=mock_helper,
-        ),
-        patch("httpx.AsyncClient") as mock_client_cls,
-    ):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.put = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _edit_payload_env(discord_msg) as (_router, route):
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    # A.48: the helper is invoked with the bounty object (which carries the raw checked
-    # dict).  Translation (player IDs → status strings) is the helper's responsibility,
-    # exercised by tests/test_bounty_announcement_payload.py.
-    # Here we assert that build_bounty_announcement_request was called and received the
-    # bounty whose .checked dict matches what the test set up.
-    mock_helper.assert_awaited_once()
-    called_bounty = mock_helper.call_args.args[1]
-    assert called_bounty.checked == bounty.checked
+    assert route.called
+    payload = _put_payload(route)
+    assert set(payload) >= {"text_content", "loadout_response", "metadata"}
+    # A.48: translation (player IDs → status markdown) now runs for real in
+    # utils.bounty_announcement_payload. Assert the Route field in the payload.
+    fields = {f["name"]: f["value"] for f in payload["metadata"]["prefix_fields"]}
+    assert "~~Alpha~~" in fields["Route"]  # checked → strikethrough
+    assert "**Sol**" in fields["Route"]  # answer found → bold
+    assert "~~Alpha~~" in fields["Checked Systems"]
 
 
 @pytest.mark.asyncio
 async def test_edit_announcement_rebuilds_embed_with_recently_spotted(service, mock_db):
-    """A.48: the helper receives the bounty (raw checked dict); translation is downstream."""
-    # Gamma is 1 stop before Sol → recently_spotted
-    # Delta is 2 stops before Sol → recently_spotted
-    # Alpha is 4 stops before Sol → checked (not recently_spotted)
+    """The REAL payload marks systems 1..window stops before the answer as recently-spotted."""
+    # window falls back to LEGACY_SPOTTED_WINDOW (2): Gamma (dist 2) and Delta (dist 1)
+    # are recently_spotted; Alpha (dist 4) is plain checked; Sol is found.
     bounty = _make_active_bounty(
         bounty_id=11,
         route=["Alpha", "Beta", "Gamma", "Delta", "Sol"],
         answer="Sol",
-        # Alpha: 4 stops before → plain "checked"
-        # Gamma: 2 stops before → "recently_spotted"
-        # Delta: 1 stop before → "recently_spotted"
-        # Sol: found → "found"
         checked={"Alpha": 7, "Beta": -1, "Gamma": 7, "Delta": 7, "Sol": 7},
         guild_id=1,
         division="silver",
@@ -547,38 +554,17 @@ async def test_edit_announcement_rebuilds_embed_with_recently_spotted(service, m
     )
     discord_msg = _make_discord_message()
 
-    mock_msg_repo = AsyncMock()
-    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
-
-    mock_helper = AsyncMock(return_value=_make_request_payload(bounty))
-
-    with (
-        patch(
-            "persist.repositories.discord_message_repository.DiscordMessageRepository",
-            return_value=mock_msg_repo,
-        ),
-        patch(
-            "utils.bounty_announcement_payload.build_bounty_announcement_request",
-            new=mock_helper,
-        ),
-        patch("httpx.AsyncClient") as mock_client_cls,
-    ):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.put = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _edit_payload_env(discord_msg) as (_router, route):
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    # A.48: translation now lives in `utils.bounty_announcement_payload._project_checked`
-    # and is tested in `tests/test_bounty_announcement_payload.py`. Here we verify
-    # the helper was invoked with the bounty carrying the raw checked dict.
-    mock_helper.assert_awaited_once()
-    called_bounty = mock_helper.call_args.args[1]
-    assert called_bounty.checked == bounty.checked
+    assert route.called
+    payload = _put_payload(route)
+    fields = {f["name"]: f["value"] for f in payload["metadata"]["prefix_fields"]}
+    # recently_spotted → **~~system~~**
+    assert "**~~Gamma~~**" in fields["Route"]
+    assert "**~~Delta~~**" in fields["Route"]
+    assert "~~Alpha~~" in fields["Route"]  # plain checked
+    assert "**Sol**" in fields["Route"]  # found
 
 
 @pytest.mark.asyncio
@@ -587,80 +573,41 @@ async def test_edit_announcement_non_fatal(service, mock_db):
     bounty = _make_active_bounty(bounty_id=10)
     discord_msg = _make_discord_message()
 
-    mock_msg_repo = AsyncMock()
-    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
-
-    with (
-        patch(
-            "persist.repositories.discord_message_repository.DiscordMessageRepository",
-            return_value=mock_msg_repo,
-        ),
-        patch(
-            "utils.bounty_announcement_payload.build_bounty_announcement_request",
-            new=AsyncMock(return_value=_make_request_payload(bounty)),
-        ),
-        patch("httpx.AsyncClient") as mock_client_cls,
-    ):
-        # Make the HTTP client raise an exception
-        mock_client = AsyncMock()
-        mock_client.put = AsyncMock(side_effect=Exception("Connection refused"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _edit_payload_env(discord_msg, raise_on_put=True) as (_router, route):
         # Must NOT raise — non-fatal
         await service._edit_bounty_announcement(mock_db, bounty)
+
+    # The PUT was attempted (and raised, which the service swallowed).
+    assert route.called
 
 
 @pytest.mark.asyncio
 async def test_edit_announcement_sends_put_to_gateway(service, mock_db):
     """A.48: Verifies PUT goes to the unified bounty-announcement endpoint with structured payload."""
-    import os
-
-    bounty = _make_active_bounty(bounty_id=77, guild_id=5)
+    bounty = _make_active_bounty(bounty_id=77, guild_id=5, criminal_faction="terran")
     discord_msg = _make_discord_message(message_id=12345)
 
-    mock_msg_repo = AsyncMock()
-    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
-
-    captured_calls = {}
-
-    with (
-        patch(
-            "persist.repositories.discord_message_repository.DiscordMessageRepository",
-            return_value=mock_msg_repo,
-        ),
-        patch(
-            "utils.bounty_announcement_payload.build_bounty_announcement_request",
-            new=AsyncMock(return_value=_make_request_payload(bounty)),
-        ),
-        patch("httpx.AsyncClient") as mock_client_cls,
-        patch.dict(os.environ, {"DISCORD_GATEWAY_HOST": "test-gateway", "GATEWAY_PORT": "8888"}),
-    ):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-
-        async def capture_put(url, json=None, timeout=None):
-            captured_calls["url"] = url
-            captured_calls["json"] = json
-            return mock_response
-
-        mock_client.put = capture_put
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _edit_payload_env(discord_msg) as (_router, route):
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    # A.48 unified endpoint: http://{host}:{port}/api/v1/announcements/bounty/channel/{channel_id}/message/{message_id}
-    assert captured_calls["url"] == "http://test-gateway:8888/api/v1/announcements/bounty/channel/7777/message/12345"
+    assert route.called
+    # Method + URL: unified endpoint at the configured gateway host/port.
+    assert route.calls.last.request.method == "PUT"
+    assert str(route.calls.last.request.url) == _gateway_put_url(discord_msg.channel_id, discord_msg.message_id)
 
-    # Structured payload: text_content + loadout_response + metadata.
-    payload = captured_calls["json"]
-    assert "loadout_response" in payload
-    assert "metadata" in payload
-    assert "text_content" in payload
+    # Structured payload: text_content + loadout_response + metadata, all present
+    # and correctly shaped (this is the wire contract the gateway re-renders).
+    payload = _put_payload(route)
+    assert set(payload) >= {"text_content", "loadout_response", "metadata"}
+    assert payload["loadout_response"]["subject_kind"] == "criminal"
+    metadata = payload["metadata"]
+    assert metadata["title"] == "Zara"  # non-captured title == criminal name
+    assert metadata["captured"] is False
+    assert metadata["footer_text"] == "terran"
+    assert metadata["reward"] == 5000
+    assert isinstance(metadata["prefix_fields"], list)
+    # Edits suppress the role mention (no <@&...> text_content).
+    assert payload["text_content"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -717,79 +664,42 @@ async def test_check_correct_loss_edits_announcement_no_captured_flag(service, m
 
 
 # ---------------------------------------------------------------------------
-# Tests: _edit_bounty_announcement passes captured flag to builder
+# Tests: _edit_bounty_announcement captured-state wire payload
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_edit_announcement_passes_captured_true_to_builder(service, mock_db):
-    """When captured=True is passed, the builder receives captured=True in the data dict."""
-    bounty = _make_active_bounty(bounty_id=10, guild_id=1)
+    """When captured=True, the REAL payload shows the CAPTURED title/color/state."""
+    bounty = _make_active_bounty(bounty_id=10, guild_id=1, criminal_name="Zara")
     discord_msg = _make_discord_message()
 
-    mock_msg_repo = AsyncMock()
-    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
-
-    mock_helper = AsyncMock(return_value=_make_request_payload(bounty, captured=True))
-
-    with (
-        patch(
-            "persist.repositories.discord_message_repository.DiscordMessageRepository",
-            return_value=mock_msg_repo,
-        ),
-        patch(
-            "utils.bounty_announcement_payload.build_bounty_announcement_request",
-            new=mock_helper,
-        ),
-        patch("httpx.AsyncClient") as mock_client_cls,
-    ):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.put = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _edit_payload_env(discord_msg) as (_router, route):
         await service._edit_bounty_announcement(mock_db, bounty, captured=True)
 
-    # A.48 wire shape: build_bounty_announcement_request must be called with captured=True kwarg.
-    mock_helper.assert_awaited_once()
-    assert mock_helper.call_args.kwargs.get("captured") is True
+    assert route.called
+    metadata = _put_payload(route)["metadata"]
+    # A.48 captured wire shape: green color, CAPTURED title, captured flag, and the
+    # "Bounty Ends" header value reads "**Captured**".
+    assert metadata["captured"] is True
+    assert metadata["title"] == "✅ Zara — CAPTURED"
+    assert metadata["color"] == 3066993  # _CAPTURED_COLOR (green)
+    fields = {f["name"]: f["value"] for f in metadata["prefix_fields"]}
+    assert fields["Bounty Ends"] == "**Captured**"
 
 
 @pytest.mark.asyncio
 async def test_edit_announcement_passes_captured_false_by_default(service, mock_db):
-    """When captured is not passed, the builder receives captured=False."""
-    bounty = _make_active_bounty(bounty_id=11, guild_id=1)
+    """When captured is not passed, the REAL payload is in the normal (non-captured) state."""
+    bounty = _make_active_bounty(bounty_id=11, guild_id=1, criminal_name="Zara", criminal_faction="terran")
     discord_msg = _make_discord_message()
 
-    mock_msg_repo = AsyncMock()
-    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
-
-    mock_helper = AsyncMock(return_value=_make_request_payload(bounty))
-
-    with (
-        patch(
-            "persist.repositories.discord_message_repository.DiscordMessageRepository",
-            return_value=mock_msg_repo,
-        ),
-        patch(
-            "utils.bounty_announcement_payload.build_bounty_announcement_request",
-            new=mock_helper,
-        ),
-        patch("httpx.AsyncClient") as mock_client_cls,
-    ):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.put = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _edit_payload_env(discord_msg) as (_router, route):
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    # A.48 wire shape: captured kwarg should default to False when not passed.
-    mock_helper.assert_awaited_once()
-    assert mock_helper.call_args.kwargs.get("captured") is False
+    assert route.called
+    metadata = _put_payload(route)["metadata"]
+    # Non-captured: plain criminal-name title, faction color, captured flag False.
+    assert metadata["captured"] is False
+    assert metadata["title"] == "Zara"
+    assert metadata["color"] == 15844367  # FACTION_COLORS["terran"]

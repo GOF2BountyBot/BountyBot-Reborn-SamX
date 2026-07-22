@@ -1,7 +1,15 @@
-"""Unit tests for DuelRepository.
+"""Tests for DuelRepository.
 
-Mock-based tests (no real database needed).
-Covers all CRUD methods and domain-specific queries.
+Behavioural tests run against a real in-memory SQLite engine with the real
+DuelRequest model (only SQLite-compatible column types — no ARRAY/JSONB — so
+it round-trips without PostgreSQL). This exercises the real
+guild/status/players/expiry predicates instead of hard-coding the "filtered"
+rows in a mock.
+
+The expires_at > func.now() guard (B.14 sibling) is verified by seeding a
+past-expiry pending duel and asserting it is excluded, plus a statement-compile
+assertion that the emitted SQL references func.now(). Error/rollback paths keep
+a mock session — a real SQLite commit cannot be forced to fail deterministically.
 """
 
 import os
@@ -11,7 +19,7 @@ from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 # ---------------------------------------------------------------------------
-# Mock shared.bblogger and sqlalchemy_utils BEFORE any src imports
+# Mock shared.bblogger BEFORE any src imports
 # ---------------------------------------------------------------------------
 _mock_shared = ModuleType("shared")
 _mock_shared.bblogger = MagicMock()
@@ -19,25 +27,22 @@ _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())
 sys.modules.setdefault("shared", _mock_shared)
 sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 
-_mock_sau = ModuleType("sqlalchemy_utils")
-_mock_sau.UUIDType = MagicMock()
-sys.modules.setdefault("sqlalchemy_utils", _mock_sau)
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.base import Base
 from persist.models.duel_request import DuelRequest
 from persist.repositories.duel_repository import DuelRepository
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_duel(**overrides) -> MagicMock:
-    """Return a MagicMock with DuelRequest-like attributes."""
+def _make_duel(**overrides) -> DuelRequest:
+    """Build a real, minimally-valid DuelRequest instance."""
     defaults = dict(
-        id=1,
         guild_id=111222333,
         challenger_id=100000001,
         target_id=100000002,
@@ -47,32 +52,30 @@ def _make_duel(**overrides) -> MagicMock:
         expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
     defaults.update(overrides)
-    obj = MagicMock(spec=DuelRequest)
-    for k, v in defaults.items():
-        setattr(obj, k, v)
-    return obj
-
-
-def _make_scalars_result(items) -> MagicMock:
-    """Mimic async execute() returning a result whose scalars().all() gives items."""
-    scalars_mock = MagicMock()
-    scalars_mock.all = MagicMock(return_value=items)
-    scalars_mock.first = MagicMock(return_value=items[0] if items else None)
-    result_mock = MagicMock()
-    result_mock.scalars = MagicMock(return_value=scalars_mock)
-    return result_mock
-
-
-def _make_rowcount_result(count: int) -> MagicMock:
-    """Mimic async execute() returning a result with rowcount."""
-    result_mock = MagicMock()
-    result_mock.rowcount = count
-    return result_mock
+    return DuelRequest(**defaults)
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixtures — real SQLite engine (mirrors test_combat_log_repository.py)
 # ---------------------------------------------------------------------------
+
+_DUEL_TABLES = [DuelRequest.__table__]
+
+
+@pytest.fixture
+async def async_engine():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_DUEL_TABLES)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(async_engine) -> AsyncSession:
+    factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        yield session
 
 
 @pytest.fixture
@@ -82,6 +85,7 @@ def repo() -> DuelRepository:
 
 @pytest.fixture
 def mock_db() -> AsyncMock:
+    """Mock session for error-path and statement-compile assertions only."""
     db = AsyncMock()
     db.add = MagicMock()
     db.commit = AsyncMock()
@@ -94,231 +98,215 @@ def mock_db() -> AsyncMock:
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests — CRUD round-trips
 # ---------------------------------------------------------------------------
 
 
 class TestCreateDuelRequest:
-    @pytest.mark.asyncio
-    async def test_create_duel_request(self, repo, mock_db):
-        """create() should add the duel request, commit, and refresh it."""
+    async def test_create_duel_request(self, repo, db_session):
         duel = _make_duel()
-        mock_db.refresh = AsyncMock(side_effect=lambda d: None)
 
-        result = await repo.create(mock_db, duel)
+        result = await repo.create(db_session, duel)
 
-        mock_db.add.assert_called_once_with(duel)
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(duel)
-        assert result is duel
+        assert result.id is not None
+        fetched = await repo.get_by_id(db_session, result.id)
+        assert fetched is not None
+        assert fetched.challenger_id == 100000001
 
-    @pytest.mark.asyncio
-    async def test_create_duel_request_with_zero_stakes(self, repo, mock_db):
-        """create() persists duel request with zero stakes."""
+    async def test_create_duel_request_with_zero_stakes(self, repo, db_session):
         duel = _make_duel(stakes=0)
-        mock_db.refresh = AsyncMock(side_effect=lambda d: None)
 
-        result = await repo.create(mock_db, duel)
+        result = await repo.create(db_session, duel)
 
-        mock_db.add.assert_called_once_with(duel)
-        assert result.stakes == 0
+        fetched = await repo.get_by_id(db_session, result.id)
+        assert fetched.stakes == 0
 
 
 class TestGetById:
-    @pytest.mark.asyncio
-    async def test_get_by_id(self, repo, mock_db):
-        """get_by_id() should return the duel request fetched by db.get()."""
-        duel = _make_duel(id=42)
-        mock_db.get = AsyncMock(return_value=duel)
+    async def test_get_by_id(self, repo, db_session):
+        duel = await repo.create(db_session, _make_duel())
 
-        result = await repo.get_by_id(mock_db, 42)
+        result = await repo.get_by_id(db_session, duel.id)
 
-        mock_db.get.assert_awaited_once_with(DuelRequest, 42)
-        assert result is duel
+        assert result is not None
+        assert result.id == duel.id
 
-    @pytest.mark.asyncio
-    async def test_get_by_id_not_found(self, repo, mock_db):
-        """get_by_id() should return None when the duel request does not exist."""
-        mock_db.get = AsyncMock(return_value=None)
-
-        result = await repo.get_by_id(mock_db, 9999)
+    async def test_get_by_id_not_found(self, repo, db_session):
+        result = await repo.get_by_id(db_session, 9999)
 
         assert result is None
 
 
 class TestGetPendingByPlayers:
-    @pytest.mark.asyncio
-    async def test_get_pending_by_players(self, repo, mock_db):
-        """get_pending_by_players() should return a pending duel between two players."""
-        duel = _make_duel(challenger_id=100, target_id=200, guild_id=111, status="pending")
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([duel]))
+    async def test_get_pending_by_players_matches_exact_pair(self, repo, db_session):
+        target = await repo.create(
+            db_session, _make_duel(challenger_id=100, target_id=200, guild_id=111, status="pending")
+        )
+        # Non-matches: swapped players, other guild, non-pending.
+        await repo.create(db_session, _make_duel(challenger_id=200, target_id=100, guild_id=111))
+        await repo.create(db_session, _make_duel(challenger_id=100, target_id=200, guild_id=222))
+        await repo.create(
+            db_session, _make_duel(challenger_id=100, target_id=200, guild_id=111, status="accepted")
+        )
 
-        result = await repo.get_pending_by_players(mock_db, 100, 200, 111)
+        result = await repo.get_pending_by_players(db_session, 100, 200, 111)
 
-        mock_db.execute.assert_awaited_once()
-        assert result is duel
+        assert result is not None
+        assert result.id == target.id
 
-    @pytest.mark.asyncio
-    async def test_get_pending_by_players_not_found(self, repo, mock_db):
-        """get_pending_by_players() should return None when no pending duel exists."""
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
-
-        result = await repo.get_pending_by_players(mock_db, 100, 200, 111)
+    async def test_get_pending_by_players_not_found(self, repo, db_session):
+        result = await repo.get_pending_by_players(db_session, 100, 200, 111)
 
         assert result is None
 
 
 class TestUpdateStatus:
-    @pytest.mark.asyncio
-    async def test_update_status(self, repo, mock_db):
-        """update_status() should change the status and commit."""
-        duel = _make_duel(id=10, status="pending")
-        mock_db.get = AsyncMock(return_value=duel)
-        mock_db.refresh = AsyncMock(side_effect=lambda d: None)
+    async def test_update_status(self, repo, db_session):
+        duel = await repo.create(db_session, _make_duel(status="pending"))
 
-        result = await repo.update_status(mock_db, 10, "accepted")
+        result = await repo.update_status(db_session, duel.id, "accepted")
 
-        mock_db.get.assert_awaited_once_with(DuelRequest, 10)
-        assert duel.status == "accepted"
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(duel)
-        assert result is duel
+        assert result.status == "accepted"
+        db_session.expunge_all()
+        fetched = await repo.get_by_id(db_session, duel.id)
+        assert fetched.status == "accepted"
 
-    @pytest.mark.asyncio
-    async def test_update_status_not_found(self, repo, mock_db):
-        """update_status() returns None when duel request does not exist."""
-        mock_db.get = AsyncMock(return_value=None)
-
-        result = await repo.update_status(mock_db, 9999, "accepted")
+    async def test_update_status_not_found(self, repo, db_session):
+        result = await repo.update_status(db_session, 9999, "accepted")
 
         assert result is None
 
 
 class TestDeleteExpired:
-    @pytest.mark.asyncio
-    async def test_delete_expired(self, repo, mock_db):
-        """delete_expired() should delete expired pending duels and return count."""
+    async def test_delete_expired_removes_only_expired_pending(self, repo, db_session):
         now = datetime.now(UTC)
-        mock_db.execute = AsyncMock(return_value=_make_rowcount_result(3))
+        expired = await repo.create(
+            db_session, _make_duel(status="pending", expires_at=now - timedelta(minutes=1))
+        )
+        # Future-expiry pending, and an expired-but-accepted — both must survive.
+        future = await repo.create(
+            db_session, _make_duel(status="pending", expires_at=now + timedelta(minutes=5))
+        )
+        accepted = await repo.create(
+            db_session, _make_duel(status="accepted", expires_at=now - timedelta(minutes=1))
+        )
 
-        result = await repo.delete_expired(mock_db, now)
+        # SQLite drops tzinfo on read, so the ORM "evaluate" sync strategy would
+        # compare naive (refreshed) values against tz-aware `now`. Expunging the
+        # identity map forces the bulk DELETE to run purely in SQL (as it does in
+        # production Postgres, where stored values remain tz-aware).
+        db_session.expunge_all()
+        count = await repo.delete_expired(db_session, now)
 
-        mock_db.execute.assert_awaited_once()
-        mock_db.commit.assert_awaited_once()
-        assert result == 3
+        assert count == 1
+        db_session.expunge_all()
+        assert await repo.get_by_id(db_session, expired.id) is None
+        assert await repo.get_by_id(db_session, future.id) is not None
+        assert await repo.get_by_id(db_session, accepted.id) is not None
 
-    @pytest.mark.asyncio
-    async def test_delete_expired_none(self, repo, mock_db):
-        """delete_expired() returns 0 when no expired duels exist."""
+    async def test_delete_expired_none(self, repo, db_session):
         now = datetime.now(UTC)
-        mock_db.execute = AsyncMock(return_value=_make_rowcount_result(0))
+        await repo.create(db_session, _make_duel(status="pending", expires_at=now + timedelta(minutes=5)))
 
-        result = await repo.delete_expired(mock_db, now)
+        count = await repo.delete_expired(db_session, now)
 
-        assert result == 0
+        assert count == 0
 
 
 class TestGetActiveByGuild:
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild(self, repo, mock_db):
-        """get_active_by_guild() should return only pending duels for the guild."""
-        pending_duel = _make_duel(status="pending", guild_id=111)
+    async def test_get_active_by_guild_returns_pending_non_expired(self, repo, db_session):
+        now = datetime.now(UTC)
+        active = await repo.create(
+            db_session, _make_duel(guild_id=111, status="pending", expires_at=now + timedelta(minutes=5))
+        )
+        # never-expiring pending is also "active"
+        never = await repo.create(db_session, _make_duel(guild_id=111, status="pending", expires_at=None))
+        # excluded: accepted, other guild, past expiry
+        await repo.create(db_session, _make_duel(guild_id=111, status="accepted", expires_at=None))
+        await repo.create(db_session, _make_duel(guild_id=222, status="pending", expires_at=None))
+        await repo.create(
+            db_session, _make_duel(guild_id=111, status="pending", expires_at=now - timedelta(minutes=1))
+        )
 
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([pending_duel]))
+        result = await repo.get_active_by_guild(db_session, guild_id=111)
 
-        result = await repo.get_active_by_guild(mock_db, guild_id=111)
+        assert {d.id for d in result} == {active.id, never.id}
 
-        mock_db.execute.assert_awaited_once()
-        assert len(result) == 1
-        assert result[0].status == "pending"
+    async def test_get_active_by_guild_empty(self, repo, db_session):
+        result = await repo.get_active_by_guild(db_session, guild_id=999)
 
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild_empty(self, repo, mock_db):
-        """get_active_by_guild() returns empty list when no pending duels exist."""
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
+        assert result == []
 
-        result = await repo.get_active_by_guild(mock_db, guild_id=999)
+    async def test_get_active_by_guild_excludes_past_expiry_duels(self, repo, db_session):
+        """B.14 sibling: a pending duel past its expires_at is excluded."""
+        now = datetime.now(UTC)
+        await repo.create(
+            db_session, _make_duel(guild_id=111, status="pending", expires_at=now - timedelta(minutes=1))
+        )
+
+        result = await repo.get_active_by_guild(db_session, guild_id=111)
 
         assert result == []
 
+    async def test_get_active_by_guild_includes_pending_duel_with_future_expiry(self, repo, db_session):
+        now = datetime.now(UTC)
+        future = await repo.create(
+            db_session, _make_duel(guild_id=444, status="pending", expires_at=now + timedelta(hours=1))
+        )
+
+        result = await repo.get_active_by_guild(db_session, guild_id=444)
+
+        assert [d.id for d in result] == [future.id]
+
     @pytest.mark.asyncio
-    async def test_get_active_by_guild_excludes_past_expiry_duels(self, repo, mock_db):
-        """B.14 sibling: get_active_by_guild() must exclude pending duels past their expires_at.
+    async def test_get_active_by_guild_sql_uses_now(self, repo, mock_db):
+        """B.14 sibling: emitted SQL must include a func.now() time guard."""
+        scalars = MagicMock()
+        scalars.all = MagicMock(return_value=[])
+        result_mock = MagicMock()
+        result_mock.scalars = MagicMock(return_value=scalars)
+        mock_db.execute = AsyncMock(return_value=result_mock)
 
-        Verifies the emitted SQL contains a func.now() time guard so stale duels do not
-        appear as pending when the expire executor was missed (e.g. on app restart).
-        """
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
+        await repo.get_active_by_guild(mock_db, guild_id=111)
 
-        result = await repo.get_active_by_guild(mock_db, guild_id=111)
-
-        assert result == []
-        call_args = mock_db.execute.call_args
-        stmt = call_args[0][0]
+        stmt = mock_db.execute.call_args[0][0]
         stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
-        assert "now" in stmt_str.lower(), (
-            f"B.14 sibling: get_active_by_guild() (DuelRepository) WHERE clause must include "
-            f"func.now() time filter. Got SQL: {stmt_str}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild_includes_pending_duel_with_future_expiry(self, repo, mock_db):
-        """B.14 sibling: pending duels with expires_at in the future must be included."""
-        future_duel = _make_duel(
-            status="pending",
-            guild_id=444,
-            expires_at=datetime.now(UTC) + timedelta(hours=1),
-        )
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([future_duel]))
-
-        result = await repo.get_active_by_guild(mock_db, guild_id=444)
-
-        assert len(result) == 1
-        assert result[0].status == "pending"
+        assert "now" in stmt_str.lower()
 
 
 class TestGetPendingByTarget:
-    @pytest.mark.asyncio
-    async def test_get_pending_by_target_excludes_past_expiry_duels(self, repo, mock_db):
-        """B.14 sibling: get_pending_by_target() must exclude pending duels past their expires_at.
+    async def test_get_pending_by_target_excludes_past_expiry_duels(self, repo, db_session):
+        """B.14 sibling: get_pending_by_target excludes pending duels past expires_at."""
+        now = datetime.now(UTC)
+        await repo.create(
+            db_session,
+            _make_duel(target_id=100, guild_id=111, status="pending", expires_at=now - timedelta(minutes=1)),
+        )
 
-        Verifies the emitted SQL contains a func.now() time guard so stale duels do not
-        appear in autocomplete when the expire executor was missed (e.g. on app restart).
-        """
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
-
-        result = await repo.get_pending_by_target(mock_db, target_id=100, guild_id=111)
+        result = await repo.get_pending_by_target(db_session, target_id=100, guild_id=111)
 
         assert result == []
-        call_args = mock_db.execute.call_args
-        stmt = call_args[0][0]
-        stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
-        assert "now" in stmt_str.lower(), (
-            f"B.14 sibling: get_pending_by_target() (DuelRepository) WHERE clause must include "
-            f"func.now() time filter. Got SQL: {stmt_str}"
+
+    async def test_get_pending_by_target_returns_non_expired_pending_duels(self, repo, db_session):
+        now = datetime.now(UTC)
+        future = await repo.create(
+            db_session,
+            _make_duel(target_id=555, guild_id=111, status="pending", expires_at=now + timedelta(minutes=30)),
         )
+        # Wrong target / wrong guild excluded.
+        await repo.create(db_session, _make_duel(target_id=999, guild_id=111, status="pending"))
+        await repo.create(db_session, _make_duel(target_id=555, guild_id=222, status="pending"))
 
-    @pytest.mark.asyncio
-    async def test_get_pending_by_target_returns_non_expired_pending_duels(self, repo, mock_db):
-        """B.14 sibling: get_pending_by_target() includes pending duels with future expiry."""
-        future_duel = _make_duel(
-            status="pending",
-            target_id=555,
-            guild_id=111,
-            expires_at=datetime.now(UTC) + timedelta(minutes=30),
-        )
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([future_duel]))
+        result = await repo.get_pending_by_target(db_session, target_id=555, guild_id=111)
 
-        result = await repo.get_pending_by_target(mock_db, target_id=555, guild_id=111)
-
-        assert len(result) == 1
-        assert result[0].target_id == 555
+        assert [d.id for d in result] == [future.id]
 
 
 class TestErrorHandling:
+    """Error/rollback paths — justified mock use (SQLite commit can't be forced to fail)."""
+
     @pytest.mark.asyncio
     async def test_create_rolls_back_on_error(self, repo, mock_db):
-        """create() should rollback on commit failure."""
         duel = _make_duel()
         mock_db.commit = AsyncMock(side_effect=Exception("DB error"))
 
@@ -329,8 +317,8 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_update_status_rolls_back_on_error(self, repo, mock_db):
-        """update_status() should rollback on commit failure."""
-        duel = _make_duel(id=10)
+        duel = _make_duel()
+        duel.id = 10
         mock_db.get = AsyncMock(return_value=duel)
         mock_db.commit = AsyncMock(side_effect=Exception("DB error"))
 

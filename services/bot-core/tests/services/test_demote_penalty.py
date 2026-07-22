@@ -31,6 +31,8 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
+from persist.models.guild_config import GuildConfig
+from persist.models.player import Player
 from services.player_service import PlayerService
 
 # Convenience alias to keep patch strings under the 120-char line limit.
@@ -38,21 +40,27 @@ _SCRUB_TARGET = "services.player_service.PlayerService._scrub_orphaned_checks_af
 
 
 def _make_player(player_id=1, guild_id=999, tier="Silver", credits=1000):
-    player = MagicMock()
-    player.id = player_id
-    player.guild_id = guild_id
-    player.tier = tier
-    player.credits = credits
-    player.xp = 5000
-    player.tier_change_cooldown_end = None
-    return player
+    # Real Player instance (no DB session needed for plain-kwarg construction). Every
+    # attribute the demote-penalty arithmetic reads/writes is passed explicitly since
+    # column defaults only apply on DB flush, not on bare construction.
+    return Player(
+        id=player_id,
+        guild_id=guild_id,
+        tier=tier,
+        credits=credits,
+        xp=5000,
+        tier_change_cooldown_end=None,
+    )
 
 
-def _make_config():
-    config = MagicMock()
-    config.tier_change_cooldown = None
-    config.demotion_credit_penalty_pct = None  # NULL → falls back to GameConstants default (10%)
-    return config
+def _make_config(guild_id=999):
+    # Real GuildConfig instance; None is the valid "use GameConstants default" sentinel
+    # for these nullable override columns.
+    return GuildConfig(
+        guild_id=guild_id,
+        tier_change_cooldown=None,
+        demotion_credit_penalty_pct=None,  # NULL → falls back to GameConstants default (10%)
+    )
 
 
 @pytest.fixture

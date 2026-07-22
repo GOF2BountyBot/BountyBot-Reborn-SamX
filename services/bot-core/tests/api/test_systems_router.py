@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from services.pathfinding_service import PathfindingError
+from services.pathfinding_service import PathfindingError, PathfindingService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,11 +47,17 @@ def _make_node(name: str, x: int, y: int, neighbours: list[str]):
     )
 
 
-# Shared graph: A(0,0) - B(10,0) - C(20,0)
+# Shared graph: a linear chain A-B-C-D-E plus an unreachable "Isolated" node.
+# The chain gives deterministic multi-hop routes; "Isolated" has no neighbours
+# and nothing points to it, so a real search from A can never reach it (exercises
+# the genuine NO_ROUTE_FOUND branch without patching the algorithm).
 _SYSTEMS = {
     "A": _make_node("A", 0, 0, ["B"]),
     "B": _make_node("B", 10, 0, ["A", "C"]),
-    "C": _make_node("C", 20, 0, ["B"]),
+    "C": _make_node("C", 20, 0, ["B", "D"]),
+    "D": _make_node("D", 30, 0, ["C", "E"]),
+    "E": _make_node("E", 40, 0, ["D"]),
+    "Isolated": _make_node("Isolated", 500, 500, []),
 }
 
 
@@ -112,13 +118,12 @@ class TestFindRoute:
     """Tests for GET /api/v1/systems/route."""
 
     def test_route_found_between_two_systems(self, client, test_app):
-        """Returns 200 with route list and hop count when a path exists."""
-        with patch("api.routers.systems.PathfindingService") as mock_pf_cls:
-            mock_pf = MagicMock()
-            mock_pf.make_route = MagicMock(return_value=["A", "B", "C"])
-            mock_pf_cls.return_value = mock_pf
+        """Returns 200 with route list and hop count when a path exists.
 
-            response = client.get("/api/v1/systems/route?start=A&end=C")
+        Runs the REAL PathfindingService over the real SystemNode graph — the A*
+        search actually computes A→B→C.
+        """
+        response = client.get("/api/v1/systems/route?start=A&end=C")
 
         assert response.status_code == 200
         data = response.json()
@@ -126,13 +131,8 @@ class TestFindRoute:
         assert data["hops"] == 2
 
     def test_same_start_and_end_returns_single_system(self, client, test_app):
-        """Returns 200 with single-element route when start == end."""
-        with patch("api.routers.systems.PathfindingService") as mock_pf_cls:
-            mock_pf = MagicMock()
-            mock_pf.make_route = MagicMock(return_value=["A"])
-            mock_pf_cls.return_value = mock_pf
-
-            response = client.get("/api/v1/systems/route?start=A&end=A")
+        """Returns 200 with single-element route when start == end (real service)."""
+        response = client.get("/api/v1/systems/route?start=A&end=A")
 
         assert response.status_code == 200
         data = response.json()
@@ -140,37 +140,40 @@ class TestFindRoute:
         assert data["hops"] == 0
 
     def test_no_route_found_returns_404(self, client, test_app):
-        """Returns 404 when pathfinding returns NO_ROUTE_FOUND."""
-        with patch("api.routers.systems.PathfindingService") as mock_pf_cls:
-            mock_pf = MagicMock()
-            mock_pf.make_route = MagicMock(return_value=PathfindingError.NO_ROUTE_FOUND)
-            mock_pf_cls.return_value = mock_pf
+        """Returns 404 when the real search cannot reach an unreachable system.
 
-            response = client.get("/api/v1/systems/route?start=A&end=Isolated")
+        "Isolated" exists in the graph but has no neighbours and nothing points to
+        it, so the real A* search genuinely exhausts and returns NO_ROUTE_FOUND.
+        """
+        response = client.get("/api/v1/systems/route?start=A&end=Isolated")
 
         assert response.status_code == 404
         assert "no route found" in response.json()["detail"].lower()
 
     def test_invalid_system_name_returns_404(self, client, test_app):
-        """Returns 404 when one or both system names do not exist in the graph."""
-        with patch("api.routers.systems.PathfindingService") as mock_pf_cls:
-            mock_pf = MagicMock()
-            # PathfindingService returns NO_ROUTE_FOUND for unknown systems
-            mock_pf.make_route = MagicMock(return_value=PathfindingError.NO_ROUTE_FOUND)
-            mock_pf_cls.return_value = mock_pf
+        """Returns 404 when a system name does not exist in the graph.
 
-            response = client.get("/api/v1/systems/route?start=DoesNotExist&end=C")
+        The real PathfindingService returns NO_ROUTE_FOUND when an endpoint is not
+        present (end_node is None) — no patching needed.
+        """
+        response = client.get("/api/v1/systems/route?start=DoesNotExist&end=C")
 
         assert response.status_code == 404
 
     def test_max_length_reached_returns_400(self, client, test_app):
-        """Returns 400 when pathfinding returns MAX_LENGTH_REACHED."""
+        """Returns 400 when pathfinding returns MAX_LENGTH_REACHED.
+
+        A >50-hop graph is impractical to construct as a fixture, so this error
+        branch alone forces the enum via a spec'd PathfindingService whose
+        make_route returns MAX_LENGTH_REACHED (the only patched case; the found /
+        same / no-route / hop-count cases all run the real algorithm).
+        """
         with patch("api.routers.systems.PathfindingService") as mock_pf_cls:
-            mock_pf = MagicMock()
+            mock_pf = MagicMock(spec=PathfindingService)
             mock_pf.make_route = MagicMock(return_value=PathfindingError.MAX_LENGTH_REACHED)
             mock_pf_cls.return_value = mock_pf
 
-            response = client.get("/api/v1/systems/route?start=A&end=Z")
+            response = client.get("/api/v1/systems/route?start=A&end=E")
 
         assert response.status_code == 400
         assert "maximum length" in response.json()["detail"].lower()
@@ -186,16 +189,15 @@ class TestFindRoute:
         assert response.status_code == 422
 
     def test_route_response_has_correct_hop_count(self, client, test_app):
-        """Hop count equals len(route) - 1."""
-        with patch("api.routers.systems.PathfindingService") as mock_pf_cls:
-            route = ["Sol", "Alpha", "Beta", "Gamma", "Delta"]
-            mock_pf = MagicMock()
-            mock_pf.make_route = MagicMock(return_value=route)
-            mock_pf_cls.return_value = mock_pf
+        """Hop count equals len(route) - 1, computed by the real service.
 
-            response = client.get("/api/v1/systems/route?start=Sol&end=Delta")
+        A→E traverses the full real chain (A,B,C,D,E), so the router's
+        hops == len(route) - 1 invariant is verified against a genuine 4-hop path.
+        """
+        response = client.get("/api/v1/systems/route?start=A&end=E")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["hops"] == len(route) - 1
+        assert data["route"] == ["A", "B", "C", "D", "E"]
+        assert data["hops"] == len(data["route"]) - 1
         assert data["hops"] == 4

@@ -32,10 +32,19 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
+from persist.models.guild_config import GuildConfig
+from persist.models.player import Player
+from persist.models.player_ship import PlayerShip
+from persist.models.user import User
 from services.player_service import PlayerService
 
 # ---------------------------------------------------------------------------
 # Helpers
+#
+# Entities are real SQLAlchemy model instances (constructible without a DB —
+# no ARRAY columns on these tables). Real models expose the true read-only
+# ``tier_level`` property and the real ``credits`` column, so credit tests
+# assert the persisted field rather than a MagicMock-swallowed alias.
 # ---------------------------------------------------------------------------
 
 
@@ -54,45 +63,50 @@ def _make_player(
     duel_credits_lost: int = 100,
     systems_checked: int = 5,
     bounty_wins: int = 2,
-) -> MagicMock:
-    """Return a mock Player object with sensible defaults."""
-    player = MagicMock()
-    player.id = player_id
-    player.user_id = user_id
-    player.guild_id = guild_id
-    player.tier = tier
-    player.tier_level = {"Bronze": 1, "Silver": 2, "Gold": 3, "Platinum": 4}.get(tier, 1)
-    player.xp = xp
-    player.credits = credits
+) -> Player:
+    """Return a real Player model instance with sensible defaults.
+
+    ``tier_level`` is intentionally NOT set — it is a read-only ``@property``
+    derived from ``tier`` on the real model.
+    """
+    player = Player(
+        id=player_id,
+        user_id=user_id,
+        guild_id=guild_id,
+        tier=tier,
+        xp=xp,
+        credits=credits,
+        lifetime_credits=lifetime_credits,
+        prestige_count=prestige_count,
+        xp_surplus=0,
+        duel_wins=duel_wins,
+        duel_losses=duel_losses,
+        duel_credits_won=duel_credits_won,
+        duel_credits_lost=duel_credits_lost,
+        systems_checked=systems_checked,
+        bounty_wins=bounty_wins,
+        created_at=datetime(2025, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2025, 6, 1, tzinfo=UTC),
+        tier_change_cooldown_end=None,
+        bounty_cooldown_end=None,
+    )
+    # Backward-compat in-memory alias the service writes alongside the real
+    # ``credits`` column (not a DB column); seed it so pre-service reads work.
     player.new_credits = credits
-    player.lifetime_credits = lifetime_credits
-    player.prestige_count = prestige_count
-    player.duel_wins = duel_wins
-    player.duel_losses = duel_losses
-    player.duel_credits_won = duel_credits_won
-    player.duel_credits_lost = duel_credits_lost
-    player.systems_checked = systems_checked
-    player.bounty_wins = bounty_wins
-    player.created_at = datetime(2025, 1, 1, tzinfo=UTC)
-    player.updated_at = datetime(2025, 6, 1, tzinfo=UTC)
-    player.tier_change_cooldown_end = None
-    player.bounty_cooldown_end = None
     return player
 
 
-def _make_user(discord_id: int = 111, username: str = "TestUser") -> MagicMock:
-    user = MagicMock()
-    user.id = discord_id
-    user.discord_username = username
-    return user
+def _make_user(discord_id: int = 111, username: str = "TestUser") -> User:
+    return User(id=discord_id, discord_username=username)
 
 
-def _make_config(starting_credits: int = 500, xp_thresholds: dict | None = None) -> MagicMock:
-    config = MagicMock()
-    config.starting_credits = starting_credits
-    config.xp_thresholds = xp_thresholds or {"Silver": 1000, "Gold": 5000, "Platinum": 15000}
-    config.tier_change_cooldown = None
-    return config
+def _make_config(starting_credits: int = 500, xp_thresholds: dict | None = None) -> GuildConfig:
+    return GuildConfig(
+        guild_id=999,
+        starting_credits=starting_credits,
+        xp_thresholds=xp_thresholds or {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
+        tier_change_cooldown=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +365,9 @@ class TestUpdatePlayerCredits:
 
         await service.update_player_credits(mock_db, player_id=1, new_credits=800)
 
+        # Assert the real persisted `credits` column was written (the primary
+        # source of truth), plus the in-memory back-compat alias as secondary.
+        assert player.credits == 800
         assert player.new_credits == 800
         mock_db.commit.assert_awaited_once()
         mock_db.refresh.assert_awaited_once_with(player)
@@ -528,17 +545,18 @@ class TestCalculateTierFromXp:
 # ===========================================================================
 
 
-def _config_with_prestige(threshold: int = 50_000) -> MagicMock:
-    """Helper: build a guild config mock with the given Prestige XP threshold."""
-    cfg = MagicMock()
-    cfg.xp_thresholds = {
-        "Silver": 1000,
-        "Gold": 5000,
-        "Platinum": 15000,
-        "Prestige": threshold,
-    }
-    cfg.tier_change_cooldown = None
-    return cfg
+def _config_with_prestige(threshold: int = 50_000) -> GuildConfig:
+    """Helper: build a real GuildConfig with the given Prestige XP threshold."""
+    return GuildConfig(
+        guild_id=999,
+        xp_thresholds={
+            "Silver": 1000,
+            "Gold": 5000,
+            "Platinum": 15000,
+            "Prestige": threshold,
+        },
+        tier_change_cooldown=None,
+    )
 
 
 def _patch_prestige_side_effects(service, *, existing_ships: list | None = None):
@@ -655,12 +673,9 @@ class TestPrestigePlayer:
         mock_player_repo.get_by_id.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _config_with_prestige()
 
-        ship_a = MagicMock()
-        ship_a.id = 100
-        ship_b = MagicMock()
-        ship_b.id = 101
-        ship_c = MagicMock()
-        ship_c.id = 102
+        ship_a = PlayerShip(id=100, player_id=1, ship_name="Betty")
+        ship_b = PlayerShip(id=101, player_id=1, ship_name="Nemesis")
+        ship_c = PlayerShip(id=102, player_id=1, ship_name="Fenix")
 
         from unittest.mock import patch as _patch
 
@@ -847,9 +862,11 @@ class TestPrestigePlayer:
         mock_player_repo.get_by_id.return_value = player
 
         # Config has Silver/Gold/Platinum but NO Prestige — exercises the fallback.
-        legacy_cfg = MagicMock()
-        legacy_cfg.xp_thresholds = {"Silver": 10, "Gold": 20, "Platinum": 30}
-        legacy_cfg.tier_change_cooldown = None
+        legacy_cfg = GuildConfig(
+            guild_id=999,
+            xp_thresholds={"Silver": 10, "Gold": 20, "Platinum": 30},
+            tier_change_cooldown=None,
+        )
         mock_config_repo.get_by_guild_id.return_value = legacy_cfg
 
         with pytest.raises(ValueError, match=r"50,000 XP to prestige"):
@@ -907,7 +924,8 @@ class TestGetPlayerStatistics:
             systems_checked=10,
             bounty_wins=3,
         )
-        player.tier_level = 2
+        # tier_level is a read-only @property derived from tier ("Silver" -> 2)
+        # on the real model; it cannot be (and must not be) set directly.
         mock_player_repo.get_by_id.return_value = player
 
         stats = await service.get_player_statistics(mock_db, player_id=1)

@@ -76,6 +76,28 @@ class _FakeHTTPResponse:
         self.reason: str = reason
 
 
+class _MockAsset:
+    """
+    Minimal stand-in for ``discord.Asset`` (the type returned by
+    ``User.avatar`` / ``Guild.icon``).
+
+    Real discord.py never exposes these as bare strings — they are ``Asset``
+    objects whose ``.url`` yields the CDN URL, or ``None`` when unset.  Modeling
+    them as an object with a ``.url`` attribute (rather than a raw ``str``) keeps
+    the ``getattr(obj, "url", None)`` access pattern used by the converters
+    faithful to production.
+    """
+
+    def __init__(self, url: str):
+        self.url: str = url
+
+    def __bool__(self) -> bool:
+        return bool(self.url)
+
+    def __str__(self) -> str:
+        return self.url
+
+
 # ---------------------------------------------------------------------------
 # Exception factories (return REAL discord exception instances)
 # ---------------------------------------------------------------------------
@@ -207,20 +229,28 @@ class DiscordMockUtils:
         public_flags: int = 0,
         **kwargs,
     ) -> MagicMock:
-        """Create a mock Discord User object."""
+        """Create a mock Discord User object.
+
+        Fidelity notes:
+        - Real ``discord.User`` exposes ``.name`` (not ``.username``) and
+          ``.public_flags`` (not ``.flags``); those phantom aliases are NOT set
+          here so a converter that reads a misnamed attribute fails in the test
+          the same way it would in production.
+        - ``.avatar`` is a ``discord.Asset | None`` in production, so it is
+          modeled as a ``_MockAsset`` (exposing ``.url``) or ``None`` — never a
+          bare ``str``.
+        """
         mock_user = MagicMock()
         mock_user.id = user_id
         mock_user.name = username
-        mock_user.username = username
         mock_user.discriminator = discriminator
-        mock_user.avatar = avatar
+        mock_user.avatar = _MockAsset(avatar) if isinstance(avatar, str) else avatar
         mock_user.bot = bot
         mock_user.system = system
         mock_user.mfa_enabled = mfa_enabled
         mock_user.locale = locale
         mock_user.verified = verified
         mock_user.email = email
-        mock_user.flags = mock_user._flags = MagicMock(value=flags)
         mock_user.premium_type = premium_type
         mock_user.public_flags = mock_user._public_flags = MagicMock(value=public_flags)
         mock_user.mention = f"<@!{user_id}>"
@@ -265,17 +295,19 @@ class DiscordMockUtils:
         mock_member.guild = guild
         mock_member.id = user_id
         mock_member.name = username
-        mock_member.username = username
         mock_member.discriminator = discriminator
         mock_member.nick = nickname
         mock_member.roles = roles
         mock_member.joined_at = joined_at or datetime(2020, 1, 1)
         mock_member.premium_since = premium_since
         mock_member.pending = pending
-        mock_member.permissions = permissions or MagicMock()
+        # Real Member.permissions / .guild_permissions are discord.Permissions
+        # objects — default to a real (empty) Permissions so a permission check
+        # can actually evaluate falsy, instead of an always-truthy bare MagicMock.
+        mock_member.permissions = permissions if permissions is not None else discord.Permissions(0)
         mock_member.mention = f"<@!{user_id}>"
         mock_member.display_name = nickname or username
-        mock_member.guild_permissions = permissions or MagicMock()
+        mock_member.guild_permissions = permissions if permissions is not None else discord.Permissions(0)
         mock_member.colour = MagicMock()
         mock_member.color = mock_member.colour
         mock_member.voice = None
@@ -313,8 +345,13 @@ class DiscordMockUtils:
         mock_guild = MagicMock()
         mock_guild.id = guild_id
         mock_guild.name = name
-        mock_guild.icon = MagicMock()
-        mock_guild.icon.url = icon_url or f"https://cdn.discordapp.com/icons/{guild_id}/{icon}.png"
+        # Real Guild.icon is ``discord.Asset | None`` and is ``None`` when the
+        # guild has no icon — model that so ``if guild.icon:`` branches can be
+        # exercised falsy.  Only synthesize an Asset when an icon was supplied.
+        if icon or icon_url:
+            mock_guild.icon = _MockAsset(icon_url or f"https://cdn.discordapp.com/icons/{guild_id}/{icon}.png")
+        else:
+            mock_guild.icon = None
         mock_guild.member_count = member_count
         mock_guild.owner_id = owner_id
         mock_guild.description = description
@@ -630,7 +667,7 @@ class DiscordMockUtils:
         embeds: list[dict[str, Any]] | None = None,
         reactions: list[dict[str, Any]] | None = None,
         pinned: bool = False,
-        type: int = 0,
+        type: "discord.MessageType | int" = discord.MessageType.default,
         activity: dict[str, Any] | None = None,
         application: dict[str, Any] | None = None,
         message_reference: dict[str, Any] | None = None,
@@ -675,13 +712,16 @@ class DiscordMockUtils:
         mock_message.embeds = embeds
         mock_message.reactions = reactions
         mock_message.pinned = pinned
-        mock_message.type = type
+        # Real Message.type is a discord.MessageType enum (has .name); an int
+        # default would make ``message.type.name`` explode.  Coerce ints to the
+        # matching enum member so the default (and any int caller) is faithful.
+        mock_message.type = discord.MessageType(type) if isinstance(type, int) else type
         mock_message.activity = activity
         mock_message.application = application
         mock_message.message_reference = message_reference
         mock_message.flags = flags
-        mock_message.sticky = sticky
-        mock_message.mention = author.mention
+        # NOTE: discord.Message has no ``.mention`` or ``.sticky`` attributes;
+        # those phantom aliases are intentionally NOT set.
 
         for key, value in kwargs.items():
             setattr(mock_message, key, value)
@@ -704,14 +744,18 @@ class DiscordMockUtils:
         author: dict[str, Any] | None = None,
         fields: list[dict[str, Any]] | None = None,
         **kwargs,
-    ) -> MagicMock:
+    ) -> discord.Embed:
         """
-        Create a mock Discord Embed object.
+        Create a **real** ``discord.Embed`` (discord.py is fully constructible
+        without a live client).
 
-        Sub-object fields (footer, image, thumbnail, video, provider, author)
-        are stored as real ``EmbedProxy`` instances matching discord.py
-        behaviour.  An empty/unset field is a falsy ``EmbedProxy({})``,
-        NOT ``None``.
+        This replaces the former MagicMock re-creation, so the returned object
+        has genuine discord.py behaviour: ``.fields`` are real ``EmbedProxy``
+        entries (``.name``/``.value``/``.inline``), the sub-objects
+        (``footer``/``image``/``thumbnail``/``author``) are falsy ``EmbedProxy``
+        when unset (never ``None``), ``.color`` is a real ``discord.Colour`` (or
+        ``None``), ``add_field`` enforces discord's length/count limits, and
+        ``to_dict()`` produces the canonical payload.
 
         Example::
 
@@ -721,57 +765,48 @@ class DiscordMockUtils:
 
             embed2 = DiscordMockUtils.create_mock_embed()
             assert not embed2.footer           # falsy when empty
-            assert embed2.footer is not None   # but never None
         """
-        if fields is None:
-            fields = []
+        embed = discord.Embed(title=title, description=description, url=url)
 
-        mock_embed = MagicMock()
-        mock_embed.title = title
-        mock_embed.description = description
-        mock_embed.url = url
-        mock_embed.timestamp = timestamp
-
-        mock_color = MagicMock()
         if color_value is not None:
-            mock_color.value = color_value
+            embed.colour = discord.Colour(color_value)
         elif color is not None:
-            mock_color.value = color
-        else:
-            mock_color.value = 0
-        mock_embed.color = mock_color
-        mock_embed.colour = mock_color
+            embed.colour = discord.Colour(color)
 
-        # Use real EmbedProxy objects so tests behave like real discord.py
-        mock_embed.footer = EmbedProxy(footer or {})
-        mock_embed.image = EmbedProxy(image or {})
-        mock_embed.thumbnail = EmbedProxy(thumbnail or {})
-        mock_embed.video = EmbedProxy(video or {})
-        mock_embed.provider = EmbedProxy(provider or {})
-        mock_embed.author = EmbedProxy(author or {})
-        mock_embed.fields = fields
+        if timestamp is not None:
+            embed.timestamp = timestamp
 
-        mock_embed.to_dict = MagicMock(
-            return_value={
-                "title": title,
-                "description": description,
-                "url": url,
-                "timestamp": timestamp.isoformat() if timestamp else None,
-                "color": mock_color.value,
-                "footer": footer,
-                "image": image,
-                "thumbnail": thumbnail,
-                "video": video,
-                "provider": provider,
-                "author": author,
-                "fields": fields,
-            }
-        )
+        for field in fields or []:
+            if isinstance(field, dict):
+                fname = field.get("name", "")
+                fvalue = field.get("value", "")
+                finline = bool(field.get("inline", False))
+            else:
+                fname = getattr(field, "name", "")
+                fvalue = getattr(field, "value", "")
+                finline = bool(getattr(field, "inline", False))
+            embed.add_field(name=fname, value=fvalue, inline=finline)
+
+        if footer:
+            embed.set_footer(text=footer.get("text"), icon_url=footer.get("icon_url"))
+        if image:
+            embed.set_image(url=image.get("url"))
+        if thumbnail:
+            embed.set_thumbnail(url=thumbnail.get("url"))
+        if author:
+            embed.set_author(
+                name=author.get("name", ""),
+                url=author.get("url"),
+                icon_url=author.get("icon_url"),
+            )
+        # NOTE: video/provider are API-populated read-only proxies on a real
+        # Embed and cannot be set client-side; the params are accepted for
+        # backward compatibility but intentionally not applied.
 
         for key, value in kwargs.items():
-            setattr(mock_embed, key, value)
+            setattr(embed, key, value)
 
-        return mock_embed
+        return embed
 
     @staticmethod
     def create_mock_permission_overwrite(
@@ -780,31 +815,18 @@ class DiscordMockUtils:
         target: MagicMock | type[MagicMock] | None = None,
         target_type: str = "role",
         **kwargs,
-    ) -> MagicMock:
-        """Create a mock Discord PermissionOverwrite object."""
-        if target is None:
-            if target_type == "role":
-                target = DiscordMockUtils.create_mock_role()
-            else:
-                target = DiscordMockUtils.create_mock_member()
+    ) -> discord.PermissionOverwrite:
+        """Create a **real** ``discord.PermissionOverwrite``.
 
-        mock_permission = MagicMock()
-        mock_permission.allow = MagicMock(value=allow)
-        mock_permission.deny = MagicMock(value=deny)
-        mock_permission.target = target
-        mock_permission.target_id = target.id
-        mock_permission.type = target_type
-
-        allow_obj = MagicMock()
-        allow_obj.value = allow
-        deny_obj = MagicMock()
-        deny_obj.value = deny
-        mock_permission.pair = MagicMock(return_value=(allow_obj, deny_obj))
-
-        for key, value in kwargs.items():
-            setattr(mock_permission, key, value)
-
-        return mock_permission
+        ``discord.PermissionOverwrite`` is directly constructible, so this
+        returns a real one built from the ``allow``/``deny`` permission bitmasks
+        via ``from_pair``.  Its ``.pair()`` therefore returns real
+        ``discord.Permissions`` objects with genuine ``.value`` integers, exactly
+        as production code sees.  (The ``target``/``target_type`` args are legacy
+        and unused — the payload converter takes the target as a separate
+        argument, not from the overwrite.)
+        """
+        return discord.PermissionOverwrite.from_pair(discord.Permissions(allow), discord.Permissions(deny))
 
     @staticmethod
     def create_mock_bot(
@@ -937,7 +959,11 @@ class DiscordMockUtils:
         if member is None:
             member = DiscordMockUtils.create_mock_member(user_id=user_id, guild_id=guild_id, guild=guild)
 
-        mock_interaction = MagicMock()
+        # spec=discord.Interaction forbids reading phantom attributes: a real
+        # Interaction isn't constructible without a live client, but speccing it
+        # means a test that reads an attribute discord.Interaction does NOT have
+        # fails instead of silently getting a truthy auto-mock.
+        mock_interaction = MagicMock(spec=discord.Interaction)
         mock_interaction.id = interaction_id
         mock_interaction.token = token
         mock_interaction.version = version

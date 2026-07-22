@@ -40,8 +40,26 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 _SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+# Ensure src/ is FIRST on sys.path so ``api.routers.*`` resolves to src/api/
+# rather than the tests/api/ package.  A sibling live-PG module (e.g.
+# test_t7_over_cap_lockout / test_t10_balance_sanity) inserts the tests/ dir at
+# sys.path[0] for its ``pg_env`` import; when this module is collected AFTER one
+# of those in the same session, ``_SRC`` is already present but no longer at the
+# front, so a plain ``if _SRC not in sys.path`` guard would leave tests/ ahead
+# and ``from api.routers`` would import the routerless tests/api package.
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
+elif sys.path[0] != _SRC:
+    sys.path.remove(_SRC)
+    sys.path.insert(0, _SRC)
+
+# Purge any stale api.* entries already loaded from tests/api/ by a sibling module.
+for _key in list(sys.modules):
+    if _key == "api" or _key.startswith("api."):
+        _mod = sys.modules[_key]
+        _file = getattr(_mod, "__file__", "") or ""
+        if _SRC not in _file:
+            del sys.modules[_key]
 
 import pytest
 from api.routers.bounties import _loot_to_schema

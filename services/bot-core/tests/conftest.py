@@ -192,8 +192,17 @@ def mock_db_context(mock_db_session):
 
 
 def make_mock_player(**overrides):
-    """Create a mock player object with sensible defaults."""
+    """Create a REAL ``persist.models.player.Player`` instance with sensible defaults.
+
+    Previously returned a ``MagicMock`` whose auto-attributes masked schema drift
+    (any missing/renamed column silently resolved to a truthy sub-mock). Building a
+    real ORM instance means field-presence and type assertions actually bite, while
+    keeping the exact same defaults/signature callers relied on. The instance is
+    transient (never added to a session), so it constructs without a DB.
+    """
     from datetime import datetime
+
+    from persist.models.player import Player
 
     defaults = dict(
         id=1,
@@ -222,10 +231,7 @@ def make_mock_player(**overrides):
         updated_at=datetime(2026, 1, 1),
     )
     defaults.update(overrides)
-    player = MagicMock()
-    for k, v in defaults.items():
-        setattr(player, k, v)
-    return player
+    return Player(**defaults)
 
 
 # ---------------------------------------------------------------------------

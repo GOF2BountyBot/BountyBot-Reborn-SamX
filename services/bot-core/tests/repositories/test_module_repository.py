@@ -11,7 +11,7 @@ Covers:
 
 import os
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -81,13 +81,15 @@ class TestModuleRepositoryInit:
 class TestGetByName:
     @pytest.mark.asyncio
     async def test_get_by_name_returns_module_when_found(self, repo, mock_db):
-        """get_by_name should return the matching module."""
-        module = MagicMock()
+        """get_by_name should return the matching module with its real attributes intact."""
+        module = SimpleNamespace(id=7, name="Shield MK1")
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(module))
 
         result = await repo.get_by_name(mock_db, "Shield MK1")
 
         assert result is module
+        assert result.id == 7
+        assert result.name == "Shield MK1"
         mock_db.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -108,8 +110,18 @@ class TestGetByName:
 class TestCreateOrUpdate:
     @pytest.mark.asyncio
     async def test_create_new_module_when_not_found(self, repo, mock_db):
-        """create_or_update should create a new Module when none exists."""
+        """create_or_update should create a new Module, mapping item_fields and
+        module_fields onto the real Module constructor kwargs."""
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        captured_kwargs = {}
+
+        class MockModule:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                for k, v in kwargs.items():
+                    object.__setattr__(self, k, v)
 
         raw = {
             "name": "Shield MK1",
@@ -117,17 +129,24 @@ class TestCreateOrUpdate:
             "techLevel": 3,
             "maxEquipped": 2,
         }
-        result = await repo.create_or_update(mock_db, raw)
+        with patch("persist.repositories.module_repository.Module", MockModule):
+            result = await repo.create_or_update(mock_db, raw)
 
+        assert captured_kwargs["name"] == "Shield MK1"
+        assert captured_kwargs["built_in"] is True
+        assert captured_kwargs["tech_level"] == 3
+        assert captured_kwargs["max_equipped"] == 2
         mock_db.add.assert_called_once()
         mock_db.commit.assert_awaited_once()
         mock_db.refresh.assert_awaited_once()
         assert result is mock_db.refresh.call_args[0][0]
+        assert result.tech_level == 3
+        assert result.max_equipped == 2
 
     @pytest.mark.asyncio
     async def test_update_existing_module_when_found(self, repo, mock_db):
-        """create_or_update should update an existing Module."""
-        existing = MagicMock()
+        """create_or_update should update mapped item/module attrs on an existing Module."""
+        existing = SimpleNamespace(id=3, name="Shield MK1", tech_level=1, max_equipped=1, extra_atts={})
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
 
         raw = {
@@ -141,11 +160,26 @@ class TestCreateOrUpdate:
         mock_db.commit.assert_awaited_once()
         mock_db.refresh.assert_awaited_once_with(existing)
         assert result is existing
+        assert existing.tech_level == 5
+        assert existing.max_equipped == 1
+        # builtIn absent from raw -> item_fields default of False is applied
+        assert existing.built_in is False
+        assert existing.extra_atts == {}
 
     @pytest.mark.asyncio
     async def test_create_with_item_fields_separated(self, repo, mock_db):
-        """create_or_update must separate item_fields from module_fields."""
+        """create_or_update must separate item_fields from module_fields and map
+        each onto the real Module constructor kwargs (no leftover extra_atts)."""
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        captured_kwargs = {}
+
+        class MockModule:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                for k, v in kwargs.items():
+                    object.__setattr__(self, k, v)
 
         raw = {
             "name": "Armor Plate",
@@ -159,11 +193,25 @@ class TestCreateOrUpdate:
             "techLevel": 2,
             "maxEquipped": 3,
         }
-        await repo.create_or_update(mock_db, raw)
+        with patch("persist.repositories.module_repository.Module", MockModule):
+            await repo.create_or_update(mock_db, raw)
 
-        added = mock_db.add.call_args[0][0]
-        # Module was constructed and added
-        assert added is not None
+        assert captured_kwargs["name"] == "Armor Plate"
+        assert captured_kwargs["aliases"] == ["armor"]
+        assert captured_kwargs["built_in"] is False
+        assert captured_kwargs["emoji"] == ":shield:"
+        assert captured_kwargs["icon"] == "armor.png"
+        assert captured_kwargs["value"] == 500
+        assert captured_kwargs["wiki"] == "http://wiki/armor"
+        assert captured_kwargs["type"] == "defense"
+        assert captured_kwargs["tech_level"] == 2
+        assert captured_kwargs["max_equipped"] == 3
+        # NOTE: the extra-field filter in module_repository.create_or_update excludes
+        # raw keys by their *item_fields* dict keys (snake_case), so the camelCase
+        # "builtIn" key is not recognised as already-consumed and leaks into
+        # extra_atts alongside the correctly-mapped built_in=False. Documented here
+        # as observed behaviour, not desired behaviour (see report for suspected bug).
+        assert captured_kwargs["extra_atts"] == {"builtIn": False}
 
     @pytest.mark.asyncio
     async def test_extra_fields_go_to_extra_atts(self, repo, mock_db):

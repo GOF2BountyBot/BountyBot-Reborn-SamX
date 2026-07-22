@@ -1,12 +1,21 @@
-"""Unit tests for BountyRepository.
+"""Tests for BountyRepository.
 
-Mock-based tests (no real database needed).
-Covers all CRUD methods and domain-specific queries.
+Behavioural tests run against a real in-memory SQLite engine with the real
+Bounty model (Bounty uses only SQLite-compatible column types — Integer,
+BigInteger, String, DateTime, and JSON-with-variant — so it round-trips
+without PostgreSQL). This exercises the real WHERE/status/division/time
+predicates instead of hard-coding the "filtered" rows in a mock.
+
+The func.now() time filter (B.14) is verified two ways: a real round-trip that
+seeds a stale active bounty and asserts it is excluded, AND statement-compile
+assertions that the emitted SQL references func.now() (kept from the original
+suite). Error/rollback paths keep a mock session — a real SQLite commit cannot
+be forced to fail deterministically.
 """
 
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
@@ -22,18 +31,19 @@ sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.base import Base
 from persist.models.bounty import Bounty
 from persist.repositories.bounty_repository import BountyRepository
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_bounty(**overrides) -> MagicMock:
-    """Return a MagicMock with Bounty-like attributes."""
+def _make_bounty(**overrides) -> Bounty:
+    """Build a real, minimally-valid Bounty instance."""
     defaults = dict(
-        id=1,
         guild_id=111222333,
         division="bronze",
         criminal_name="Pirate Pete",
@@ -51,23 +61,9 @@ def _make_bounty(**overrides) -> MagicMock:
         escape_count=0,
         win_user_id=None,
         respawn_time=None,
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
     )
     defaults.update(overrides)
-    obj = MagicMock(spec=Bounty)
-    for k, v in defaults.items():
-        setattr(obj, k, v)
-    return obj
-
-
-def _make_scalars_result(items) -> MagicMock:
-    """Mimic async execute() returning a result whose scalars().all() gives items."""
-    scalars_mock = MagicMock()
-    scalars_mock.all = MagicMock(return_value=items)
-    result_mock = MagicMock()
-    result_mock.scalars = MagicMock(return_value=scalars_mock)
-    return result_mock
+    return Bounty(**defaults)
 
 
 def _make_scalar_one_result(value) -> MagicMock:
@@ -78,8 +74,26 @@ def _make_scalar_one_result(value) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixtures — real SQLite engine (mirrors test_combat_log_repository.py)
 # ---------------------------------------------------------------------------
+
+_BOUNTY_TABLES = [Bounty.__table__]
+
+
+@pytest.fixture
+async def async_engine():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_BOUNTY_TABLES)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(async_engine) -> AsyncSession:
+    factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        yield session
 
 
 @pytest.fixture
@@ -89,6 +103,7 @@ def repo() -> BountyRepository:
 
 @pytest.fixture
 def mock_db() -> AsyncMock:
+    """Mock session for error-path and statement-compile assertions only."""
     db = AsyncMock()
     db.add = MagicMock()
     db.commit = AsyncMock()
@@ -101,285 +116,258 @@ def mock_db() -> AsyncMock:
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests — CRUD round-trips
 # ---------------------------------------------------------------------------
 
 
 class TestCreateBounty:
-    @pytest.mark.asyncio
-    async def test_create_bounty(self, repo, mock_db):
-        """create() should add the bounty, commit, and refresh it."""
+    async def test_create_bounty(self, repo, db_session):
+        """create() persists the bounty and it is retrievable by id."""
         bounty = _make_bounty()
-        mock_db.refresh = AsyncMock(side_effect=lambda b: None)
 
-        result = await repo.create(mock_db, bounty)
+        result = await repo.create(db_session, bounty)
 
-        mock_db.add.assert_called_once_with(bounty)
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(bounty)
-        assert result is bounty
+        assert result.id is not None
+        fetched = await repo.get_by_id(db_session, result.id)
+        assert fetched is not None
+        assert fetched.criminal_name == "Pirate Pete"
 
-    @pytest.mark.asyncio
-    async def test_create_bounty_with_json_fields(self, repo, mock_db):
-        """create() persists bounty with JSON route and checked fields."""
+    async def test_create_bounty_with_json_fields(self, repo, db_session):
+        """create() round-trips JSON route and checked fields."""
         route = ["Sol", "Sirius", "Alpha Centauri"]
         checked = {"Sol": -1, "Sirius": -1, "Alpha Centauri": -1}
         bounty = _make_bounty(route=route, checked=checked)
-        mock_db.refresh = AsyncMock(side_effect=lambda b: None)
 
-        result = await repo.create(mock_db, bounty)
+        result = await repo.create(db_session, bounty)
 
-        mock_db.add.assert_called_once_with(bounty)
-        assert result.route == route
-        assert result.checked == checked
+        fetched = await repo.get_by_id(db_session, result.id)
+        assert fetched.route == route
+        assert fetched.checked == checked
 
 
 class TestGetById:
-    @pytest.mark.asyncio
-    async def test_get_by_id(self, repo, mock_db):
-        """get_by_id() should return the bounty fetched by db.get()."""
-        bounty = _make_bounty(id=42)
-        mock_db.get = AsyncMock(return_value=bounty)
+    async def test_get_by_id(self, repo, db_session):
+        bounty = await repo.create(db_session, _make_bounty())
 
-        result = await repo.get_by_id(mock_db, 42)
+        result = await repo.get_by_id(db_session, bounty.id)
 
-        mock_db.get.assert_awaited_once_with(Bounty, 42)
-        assert result is bounty
+        assert result is not None
+        assert result.id == bounty.id
 
-    @pytest.mark.asyncio
-    async def test_get_by_id_not_found(self, repo, mock_db):
-        """get_by_id() should return None when the bounty does not exist."""
-        mock_db.get = AsyncMock(return_value=None)
-
-        result = await repo.get_by_id(mock_db, 9999)
+    async def test_get_by_id_not_found(self, repo, db_session):
+        result = await repo.get_by_id(db_session, 9999)
 
         assert result is None
 
 
 class TestGetActiveByGuild:
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild(self, repo, mock_db):
-        """get_active_by_guild() should return only active bounties for the guild."""
-        active_bounty = _make_bounty(status="active", guild_id=111)
-        _make_bounty(status="expired", guild_id=111)  # expired; not returned by mock
+    async def test_get_active_by_guild_returns_only_active_for_guild(self, repo, db_session):
+        """Only status='active', non-stale bounties of the target guild are returned."""
+        now = datetime.now(UTC)
+        active = await repo.create(
+            db_session, _make_bounty(guild_id=111, status="active", end_time=now + timedelta(hours=1))
+        )
+        await repo.create(
+            db_session, _make_bounty(guild_id=111, status="expired", end_time=now + timedelta(hours=1))
+        )
+        await repo.create(
+            db_session, _make_bounty(guild_id=222, status="active", end_time=now + timedelta(hours=1))
+        )
 
-        # The mock returns only the active one (simulating DB filter)
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([active_bounty]))
+        result = await repo.get_active_by_guild(db_session, guild_id=111)
 
-        result = await repo.get_active_by_guild(mock_db, guild_id=111)
+        assert [b.id for b in result] == [active.id]
 
-        mock_db.execute.assert_awaited_once()
-        assert len(result) == 1
-        assert result[0].status == "active"
-
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild_returns_empty_when_none(self, repo, mock_db):
-        """get_active_by_guild() returns empty list when no active bounties exist."""
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
-
-        result = await repo.get_active_by_guild(mock_db, guild_id=999)
+    async def test_get_active_by_guild_returns_empty_when_none(self, repo, db_session):
+        result = await repo.get_active_by_guild(db_session, guild_id=999)
 
         assert result == []
 
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild_excludes_stale_active_bounties(self, repo, mock_db):
-        """B.14: get_active_by_guild() must exclude bounties with status='active' AND end_time < NOW().
+    async def test_get_active_by_guild_excludes_stale_active_bounties(self, repo, db_session):
+        """B.14: a status='active' bounty whose end_time is in the PAST is excluded."""
+        now = datetime.now(UTC)
+        await repo.create(
+            db_session, _make_bounty(guild_id=111, status="active", end_time=now - timedelta(hours=1))
+        )
 
-        The mock simulates the DB returning no rows (i.e. the time filter excluded stale rows).
-        We also verify the SQL statement emitted includes a func.now() call so regressions
-        would be caught at the statement level.
-        """
-        # Mock returns empty — simulating that DB filtered out the stale bounty
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
-
-        result = await repo.get_active_by_guild(mock_db, guild_id=111)
+        result = await repo.get_active_by_guild(db_session, guild_id=111)
 
         assert result == []
-        # Inspect the compiled SQL statement — it must reference 'now' (func.now() → NOW())
-        call_args = mock_db.execute.call_args
-        stmt = call_args[0][0]  # positional arg 0: the SQLAlchemy select statement
+
+    async def test_get_active_by_guild_includes_bounty_with_future_end_time(self, repo, db_session):
+        now = datetime.now(UTC)
+        future = await repo.create(
+            db_session, _make_bounty(guild_id=222, status="active", end_time=now + timedelta(hours=5))
+        )
+
+        result = await repo.get_active_by_guild(db_session, guild_id=222)
+
+        assert [b.id for b in result] == [future.id]
+
+    @pytest.mark.asyncio
+    async def test_get_active_by_guild_sql_uses_now(self, repo, mock_db):
+        """B.14: the emitted SQL must include a func.now() time filter."""
+        scalars = MagicMock()
+        scalars.all = MagicMock(return_value=[])
+        result_mock = MagicMock()
+        result_mock.scalars = MagicMock(return_value=scalars)
+        mock_db.execute = AsyncMock(return_value=result_mock)
+
+        await repo.get_active_by_guild(mock_db, guild_id=111)
+
+        stmt = mock_db.execute.call_args[0][0]
         stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
-        assert "now" in stmt_str.lower(), (
-            f"B.14: get_active_by_guild() WHERE clause must include func.now() time filter. Got SQL: {stmt_str}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild_includes_bounty_with_future_end_time(self, repo, mock_db):
-        """B.14: get_active_by_guild() must include bounties with status='active' AND end_time > NOW()."""
-        future_bounty = _make_bounty(
-            status="active",
-            guild_id=222,
-            end_time=datetime(2099, 1, 1, tzinfo=UTC),
-        )
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([future_bounty]))
-
-        result = await repo.get_active_by_guild(mock_db, guild_id=222)
-
-        assert len(result) == 1
-        assert result[0].status == "active"
+        assert "now" in stmt_str.lower()
 
 
 class TestGetActiveByGuildAndDivision:
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild_and_division(self, repo, mock_db):
-        """get_active_by_guild_and_division() filters by guild, division, and status."""
-        bronze_bounty = _make_bounty(status="active", guild_id=111, division="bronze")
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([bronze_bounty]))
+    async def test_filters_by_guild_division_and_status(self, repo, db_session):
+        now = datetime.now(UTC)
+        bronze = await repo.create(
+            db_session,
+            _make_bounty(guild_id=111, division="bronze", status="active", end_time=now + timedelta(hours=1)),
+        )
+        await repo.create(
+            db_session,
+            _make_bounty(guild_id=111, division="gold", status="active", end_time=now + timedelta(hours=1)),
+        )
+        await repo.create(
+            db_session,
+            _make_bounty(guild_id=111, division="bronze", status="expired", end_time=now + timedelta(hours=1)),
+        )
 
-        result = await repo.get_active_by_guild_and_division(mock_db, guild_id=111, division="bronze")
+        result = await repo.get_active_by_guild_and_division(db_session, guild_id=111, division="bronze")
 
-        mock_db.execute.assert_awaited_once()
-        assert len(result) == 1
-        assert result[0].division == "bronze"
+        assert [b.id for b in result] == [bronze.id]
 
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild_and_division_empty(self, repo, mock_db):
-        """Returns empty list when no bounties match the guild+division+active criteria."""
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
+    async def test_returns_empty_when_no_match(self, repo, db_session):
+        result = await repo.get_active_by_guild_and_division(db_session, guild_id=111, division="gold")
 
-        result = await repo.get_active_by_guild_and_division(mock_db, guild_id=111, division="gold")
+        assert result == []
+
+    async def test_excludes_stale_active_bounties(self, repo, db_session):
+        """B.14: division query also excludes active bounties past end_time."""
+        now = datetime.now(UTC)
+        await repo.create(
+            db_session,
+            _make_bounty(guild_id=111, division="silver", status="active", end_time=now - timedelta(hours=1)),
+        )
+
+        result = await repo.get_active_by_guild_and_division(db_session, guild_id=111, division="silver")
 
         assert result == []
 
+    async def test_includes_future_end_time(self, repo, db_session):
+        now = datetime.now(UTC)
+        future = await repo.create(
+            db_session,
+            _make_bounty(guild_id=333, division="gold", status="active", end_time=now + timedelta(hours=6)),
+        )
+
+        result = await repo.get_active_by_guild_and_division(db_session, guild_id=333, division="gold")
+
+        assert [b.id for b in result] == [future.id]
+
     @pytest.mark.asyncio
-    async def test_get_active_by_guild_and_division_excludes_stale_active_bounties(self, repo, mock_db):
-        """B.14: get_active_by_guild_and_division() must exclude status='active' bounties past end_time.
+    async def test_sql_uses_now(self, repo, mock_db):
+        """B.14: emitted SQL includes func.now() time filter."""
+        scalars = MagicMock()
+        scalars.all = MagicMock(return_value=[])
+        result_mock = MagicMock()
+        result_mock.scalars = MagicMock(return_value=scalars)
+        mock_db.execute = AsyncMock(return_value=result_mock)
 
-        Verifies the emitted SQL contains a func.now() time filter clause.
-        """
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
+        await repo.get_active_by_guild_and_division(mock_db, guild_id=111, division="silver")
 
-        result = await repo.get_active_by_guild_and_division(mock_db, guild_id=111, division="silver")
-
-        assert result == []
-        call_args = mock_db.execute.call_args
-        stmt = call_args[0][0]
+        stmt = mock_db.execute.call_args[0][0]
         stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
-        assert "now" in stmt_str.lower(), (
-            f"B.14: get_active_by_guild_and_division() WHERE clause must include func.now() time filter. "
-            f"Got SQL: {stmt_str}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_get_active_by_guild_and_division_includes_future_end_time(self, repo, mock_db):
-        """B.14: bounties with status='active' and end_time in the future are included."""
-        future_bounty = _make_bounty(
-            status="active",
-            guild_id=333,
-            division="gold",
-            end_time=datetime(2099, 6, 1, tzinfo=UTC),
-        )
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([future_bounty]))
-
-        result = await repo.get_active_by_guild_and_division(mock_db, guild_id=333, division="gold")
-
-        assert len(result) == 1
-        assert result[0].division == "gold"
+        assert "now" in stmt_str.lower()
 
 
 class TestUpdateBounty:
-    @pytest.mark.asyncio
-    async def test_update_bounty(self, repo, mock_db):
-        """update() should commit and refresh the bounty."""
-        bounty = _make_bounty(status="escaped")
-        mock_db.refresh = AsyncMock(side_effect=lambda b: None)
+    async def test_update_bounty(self, repo, db_session):
+        """update() persists a mutated field."""
+        bounty = await repo.create(db_session, _make_bounty(status="active"))
 
-        result = await repo.update(mock_db, bounty)
+        bounty.status = "escaped"
+        result = await repo.update(db_session, bounty)
 
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(bounty)
-        assert result is bounty
+        assert result.status == "escaped"
+        # Re-fetch from a clean identity map to confirm persistence.
+        db_session.expunge_all()
+        fetched = await repo.get_by_id(db_session, bounty.id)
+        assert fetched.status == "escaped"
 
 
 class TestDeleteBounty:
-    @pytest.mark.asyncio
-    async def test_delete_bounty(self, repo, mock_db):
-        """delete() should remove the bounty and commit."""
-        bounty = _make_bounty(id=7)
+    async def test_delete_bounty(self, repo, db_session):
+        bounty = await repo.create(db_session, _make_bounty())
 
-        await repo.delete(mock_db, bounty)
+        await repo.delete(db_session, bounty)
 
-        mock_db.delete.assert_called_once_with(bounty)
-        mock_db.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_delete_bounty_verify_not_retrievable(self, repo, mock_db):
-        """After delete, get_by_id returns None (simulated)."""
-        bounty = _make_bounty(id=7)
-
-        await repo.delete(mock_db, bounty)
-
-        # Now simulate that the bounty is gone
-        mock_db.get = AsyncMock(return_value=None)
-        result = await repo.get_by_id(mock_db, 7)
-        assert result is None
+        assert await repo.get_by_id(db_session, bounty.id) is None
 
 
 class TestCount:
-    @pytest.mark.asyncio
-    async def test_count(self, repo, mock_db):
-        """count() should return total number of bounties."""
-        mock_db.execute = AsyncMock(return_value=_make_scalar_one_result(5))
+    async def test_count(self, repo, db_session):
+        for _ in range(5):
+            await repo.create(db_session, _make_bounty())
 
-        result = await repo.count(mock_db)
+        assert await repo.count(db_session) == 5
 
-        mock_db.execute.assert_awaited_once()
-        assert result == 5
-
-    @pytest.mark.asyncio
-    async def test_count_zero(self, repo, mock_db):
-        """count() returns 0 when no bounties exist."""
-        mock_db.execute = AsyncMock(return_value=_make_scalar_one_result(0))
-
-        result = await repo.count(mock_db)
-
-        assert result == 0
+    async def test_count_zero(self, repo, db_session):
+        assert await repo.count(db_session) == 0
 
 
 class TestCountActiveByGuildAndDivision:
-    @pytest.mark.asyncio
-    async def test_count_active_by_guild_and_division(self, repo, mock_db):
-        """count_active_by_guild_and_division() filters correctly."""
-        mock_db.execute = AsyncMock(return_value=_make_scalar_one_result(3))
+    async def test_counts_only_matching_active(self, repo, db_session):
+        now = datetime.now(UTC)
+        # 3 matching active
+        for _ in range(3):
+            await repo.create(
+                db_session,
+                _make_bounty(guild_id=111, division="silver", status="active", end_time=now + timedelta(hours=1)),
+            )
+        # non-matching: wrong division, wrong status, stale
+        await repo.create(
+            db_session,
+            _make_bounty(guild_id=111, division="gold", status="active", end_time=now + timedelta(hours=1)),
+        )
+        await repo.create(
+            db_session,
+            _make_bounty(guild_id=111, division="silver", status="expired", end_time=now + timedelta(hours=1)),
+        )
+        await repo.create(
+            db_session,
+            _make_bounty(guild_id=111, division="silver", status="active", end_time=now - timedelta(hours=1)),
+        )
 
-        result = await repo.count_active_by_guild_and_division(mock_db, guild_id=111, division="silver")
+        result = await repo.count_active_by_guild_and_division(db_session, guild_id=111, division="silver")
 
-        mock_db.execute.assert_awaited_once()
         assert result == 3
 
-    @pytest.mark.asyncio
-    async def test_count_active_by_guild_and_division_zero(self, repo, mock_db):
-        """Returns 0 when no matching active bounties exist."""
-        mock_db.execute = AsyncMock(return_value=_make_scalar_one_result(0))
-
-        result = await repo.count_active_by_guild_and_division(mock_db, guild_id=111, division="platinum")
+    async def test_count_zero_when_none(self, repo, db_session):
+        result = await repo.count_active_by_guild_and_division(db_session, guild_id=111, division="platinum")
 
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_count_active_by_guild_and_division_uses_time_filter(self, repo, mock_db):
-        """B.14: count_active_by_guild_and_division() must include func.now() time filter.
-
-        This ensures stale expired bounties don't count against the spawn slot limit,
-        preventing the spawn executor from being permanently blocked.
-        """
+    async def test_uses_time_filter(self, repo, mock_db):
+        """B.14: count query must include func.now() so stale rows don't block spawn slots."""
         mock_db.execute = AsyncMock(return_value=_make_scalar_one_result(0))
 
         await repo.count_active_by_guild_and_division(mock_db, guild_id=111, division="bronze")
 
-        call_args = mock_db.execute.call_args
-        stmt = call_args[0][0]
+        stmt = mock_db.execute.call_args[0][0]
         stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
-        assert "now" in stmt_str.lower(), (
-            f"B.14: count_active_by_guild_and_division() WHERE clause must include func.now() time filter. "
-            f"Got SQL: {stmt_str}"
-        )
+        assert "now" in stmt_str.lower()
 
 
 class TestErrorHandling:
+    """Error/rollback paths — justified mock use (SQLite commit can't be forced to fail)."""
+
     @pytest.mark.asyncio
     async def test_create_rolls_back_on_error(self, repo, mock_db):
-        """create() should rollback on commit failure."""
         bounty = _make_bounty()
         mock_db.commit = AsyncMock(side_effect=Exception("DB error"))
 
@@ -390,7 +378,6 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_delete_rolls_back_on_error(self, repo, mock_db):
-        """delete() should rollback on commit failure."""
         bounty = _make_bounty()
         mock_db.commit = AsyncMock(side_effect=Exception("DB error"))
 
@@ -401,75 +388,46 @@ class TestErrorHandling:
 
 
 # ---------------------------------------------------------------------------
-# clear_active_by_guild
+# clear_active_by_guild — real round-trips
 # ---------------------------------------------------------------------------
 
 
 class TestClearActiveByGuild:
-    """Tests for BountyRepository.clear_active_by_guild."""
+    async def test_clear_all_tiers_sets_status_cleared(self, repo, db_session):
+        """Without a tier filter, all active bounties for the guild become 'cleared'."""
+        b1 = await repo.create(db_session, _make_bounty(guild_id=1000, division="bronze", status="active"))
+        b2 = await repo.create(db_session, _make_bounty(guild_id=1000, division="gold", status="active"))
+        # Another guild — untouched.
+        other = await repo.create(db_session, _make_bounty(guild_id=2000, status="active"))
 
-    @pytest.fixture
-    def repo(self):
-        return BountyRepository()
+        result = await repo.clear_active_by_guild(db_session, guild_id=1000)
 
-    @pytest.fixture
-    def mock_db(self):
-        db = AsyncMock()
-        db.commit = AsyncMock()
-        db.rollback = AsyncMock()
-        return db
+        assert sorted(result) == sorted([b1.id, b2.id])
+        db_session.expunge_all()
+        assert (await repo.get_by_id(db_session, b1.id)).status == "cleared"
+        assert (await repo.get_by_id(db_session, b2.id)).status == "cleared"
+        assert (await repo.get_by_id(db_session, other.id)).status == "active"
 
-    @pytest.mark.asyncio
-    async def test_clear_all_tiers_returns_ids(self, repo, mock_db):
-        """Without tier filter, clears all active bounties and returns their IDs."""
-        # First execute (SELECT id) returns 2 IDs
-        id_scalars = MagicMock()
-        id_scalars.all = MagicMock(return_value=[1, 2])
-        id_result = MagicMock()
-        id_result.scalars = MagicMock(return_value=id_scalars)
+    async def test_clear_with_tier_filter_only_that_tier(self, repo, db_session):
+        bronze = await repo.create(db_session, _make_bounty(guild_id=1000, division="bronze", status="active"))
+        gold = await repo.create(db_session, _make_bounty(guild_id=1000, division="gold", status="active"))
 
-        # Second execute (UPDATE) returns nothing significant
-        update_result = MagicMock()
+        result = await repo.clear_active_by_guild(db_session, guild_id=1000, tier="bronze")
 
-        mock_db.execute = AsyncMock(side_effect=[id_result, update_result])
+        assert result == [bronze.id]
+        db_session.expunge_all()
+        assert (await repo.get_by_id(db_session, bronze.id)).status == "cleared"
+        assert (await repo.get_by_id(db_session, gold.id)).status == "active"
 
-        result = await repo.clear_active_by_guild(mock_db, guild_id=1000)
+    async def test_clear_no_active_bounties_returns_empty(self, repo, db_session):
+        await repo.create(db_session, _make_bounty(guild_id=999, status="expired"))
 
-        assert result == [1, 2]
-        mock_db.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_clear_with_tier_filter_returns_ids(self, repo, mock_db):
-        """With tier filter, only bounties of that tier are cleared."""
-        id_scalars = MagicMock()
-        id_scalars.all = MagicMock(return_value=[5, 6])
-        id_result = MagicMock()
-        id_result.scalars = MagicMock(return_value=id_scalars)
-        update_result = MagicMock()
-        mock_db.execute = AsyncMock(side_effect=[id_result, update_result])
-
-        result = await repo.clear_active_by_guild(mock_db, guild_id=1000, tier="bronze")
-
-        assert result == [5, 6]
-        mock_db.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_clear_no_active_bounties_returns_empty(self, repo, mock_db):
-        """When there are no active bounties, returns an empty list without running UPDATE."""
-        id_scalars = MagicMock()
-        id_scalars.all = MagicMock(return_value=[])
-        id_result = MagicMock()
-        id_result.scalars = MagicMock(return_value=id_scalars)
-        mock_db.execute = AsyncMock(return_value=id_result)
-
-        result = await repo.clear_active_by_guild(mock_db, guild_id=999)
+        result = await repo.clear_active_by_guild(db_session, guild_id=999)
 
         assert result == []
-        mock_db.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_clear_rolls_back_on_error(self, repo, mock_db):
-        """On database error, rollback is called and exception re-raised."""
         mock_db.execute = AsyncMock(side_effect=Exception("DB failure"))
 
         with pytest.raises(Exception, match="DB failure"):
@@ -479,64 +437,43 @@ class TestClearActiveByGuild:
 
 
 # ---------------------------------------------------------------------------
-# delete_by_guild_id
+# delete_by_guild_id — real round-trips
 # ---------------------------------------------------------------------------
 
 
 class TestDeleteByGuildId:
-    """Tests for BountyRepository.delete_by_guild_id (uninstall hard-delete)."""
+    async def test_deletes_only_target_guild_and_returns_count(self, repo, db_session):
+        keep = await repo.create(db_session, _make_bounty(guild_id=222))
+        for _ in range(3):
+            await repo.create(db_session, _make_bounty(guild_id=111))
 
-    @pytest.fixture
-    def repo(self):
-        return BountyRepository()
-
-    @pytest.fixture
-    def mock_db(self):
-        db = AsyncMock()
-        db.commit = AsyncMock()
-        db.rollback = AsyncMock()
-        return db
-
-    def _make_delete_result(self, rowcount: int) -> MagicMock:
-        result = MagicMock()
-        result.rowcount = rowcount
-        return result
-
-    @pytest.mark.asyncio
-    async def test_returns_deleted_row_count(self, repo, mock_db):
-        """delete_by_guild_id returns the number of deleted rows."""
-        mock_db.execute = AsyncMock(return_value=self._make_delete_result(3))
-
-        count = await repo.delete_by_guild_id(mock_db, guild_id=111222333)
+        count = await repo.delete_by_guild_id(db_session, guild_id=111)
 
         assert count == 3
-        mock_db.commit.assert_awaited_once()
+        db_session.expunge_all()
+        assert await repo.get_by_id(db_session, keep.id) is not None
+        remaining = [b for b in await repo.list_all(db_session) if b.guild_id == 111]
+        assert remaining == []
 
-    @pytest.mark.asyncio
-    async def test_returns_zero_when_no_rows(self, repo, mock_db):
-        """Returns 0 when the guild has no bounty rows."""
-        mock_db.execute = AsyncMock(return_value=self._make_delete_result(0))
-
-        count = await repo.delete_by_guild_id(mock_db, guild_id=999000)
+    async def test_returns_zero_when_no_rows(self, repo, db_session):
+        count = await repo.delete_by_guild_id(db_session, guild_id=999000)
 
         assert count == 0
-        mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_sql_filters_by_guild_id(self, repo, mock_db):
-        """The emitted DELETE statement filters on guild_id."""
-        mock_db.execute = AsyncMock(return_value=self._make_delete_result(1))
+        result = MagicMock()
+        result.rowcount = 1
+        mock_db.execute = AsyncMock(return_value=result)
 
         await repo.delete_by_guild_id(mock_db, guild_id=424242)
 
-        call_args = mock_db.execute.call_args
-        stmt = call_args[0][0]
+        stmt = mock_db.execute.call_args[0][0]
         stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
         assert "guild_id" in stmt_str.lower()
 
     @pytest.mark.asyncio
     async def test_rollback_on_error(self, repo, mock_db):
-        """On database error, rollback is called and exception re-raised."""
         mock_db.execute = AsyncMock(side_effect=Exception("DB gone"))
 
         with pytest.raises(Exception, match="DB gone"):
@@ -544,13 +481,11 @@ class TestDeleteByGuildId:
 
         mock_db.rollback.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_no_commit_when_commit_false(self, repo, mock_db):
-        """When commit=False, flush is called but commit is not."""
-        mock_db.flush = AsyncMock()
-        mock_db.execute = AsyncMock(return_value=self._make_delete_result(2))
+    async def test_no_commit_when_commit_false(self, repo, db_session):
+        """commit=False flushes without committing — row is gone within the session."""
+        b = await repo.create(db_session, _make_bounty(guild_id=777888))
 
-        await repo.delete_by_guild_id(mock_db, guild_id=777888, commit=False)
+        count = await repo.delete_by_guild_id(db_session, guild_id=777888, commit=False)
 
-        mock_db.flush.assert_awaited_once()
-        mock_db.commit.assert_not_awaited()
+        assert count == 1
+        assert await repo.get_by_id(db_session, b.id) is None

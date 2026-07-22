@@ -242,3 +242,145 @@ async def test_default_backfill_server_default_zero(sqlite_engine):
         assert sd is not None
         # SQLAlchemy wraps the text; verify the raw value is "0"
         assert "0" in str(sd.arg)
+
+
+# ---------------------------------------------------------------------------
+# Real migration DDL — drives the actual 0011 upgrade()/downgrade() against a
+# live Postgres inside an always-rolled-back transaction (0015/0016/0017
+# pattern).  Uses a real alembic Operations bound to the live connection so the
+# migration's op.create_table / add_column / create_index / drop_* calls run
+# for real — the migration's own DDL is exercised, not just the ORM metadata.
+# ---------------------------------------------------------------------------
+
+import contextlib  # noqa: E402
+import importlib.util  # noqa: E402
+
+import sqlalchemy as sa  # noqa: E402
+from alembic.migration import MigrationContext  # noqa: E402
+from alembic.operations import Operations  # noqa: E402
+from tests.pg_env import PG_SYNC_URL as _PG_SYNC_URL  # noqa: E402
+from tests.pg_env import pg_skip_reason  # noqa: E402
+
+_PG_SKIP = pg_skip_reason()
+_PG_MARK = pytest.mark.skipif(bool(_PG_SKIP), reason=_PG_SKIP or "")
+
+_MIGRATION_0011_PATH = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "src",
+        "persist",
+        "database",
+        "revisions",
+        "versions",
+        "0011_combat_log_and_phase1_stats.py",
+    )
+)
+
+
+def _load_migration_0011():
+    """Load the real 0011 migration module via importlib (avoids Alembic env)."""
+    spec = importlib.util.spec_from_file_location("migration_0011_real", _MIGRATION_0011_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@contextlib.contextmanager
+def _rollback_conn(engine: sa.engine.Engine):
+    """Connection inside a transaction that is ALWAYS rolled back."""
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            yield conn
+        finally:
+            if trans.is_active:
+                trans.rollback()
+
+
+@_PG_MARK
+class TestMigration0011RealDDL:
+    """Drive the real 0011 upgrade()/downgrade() against live Postgres.
+
+    All DDL runs inside a rolled-back transaction so the live schema (already at
+    head) is untouched.  We downgrade first (dropping combat_log + the indexes)
+    then upgrade again, so both directions of the shipped migration are proven.
+    """
+
+    @pytest.fixture(scope="class")
+    def pg_engine(self):
+        engine = sa.create_engine(_PG_SYNC_URL, echo=False)
+        yield engine
+        engine.dispose()
+
+    def _op(self, conn: sa.engine.Connection) -> Operations:
+        return Operations(MigrationContext.configure(conn))
+
+    def test_downgrade_then_upgrade_round_trips_combat_log(self, pg_engine):
+        """Real downgrade() drops combat_log; real upgrade() recreates it + indexes."""
+        mod = _load_migration_0011()
+
+        with _rollback_conn(pg_engine) as conn:
+            conn.execute(sa.text("SET session_replication_role = 'replica'"))
+            insp = sa.inspect(conn)
+            assert insp.has_table("combat_log"), "precondition: combat_log exists at head"
+
+            mod.op = self._op(conn)
+            mod.downgrade()
+            insp = sa.inspect(conn)
+            assert not insp.has_table("combat_log"), "downgrade() must drop the combat_log table"
+
+            mod.op = self._op(conn)
+            mod.upgrade()
+            insp = sa.inspect(conn)
+            assert insp.has_table("combat_log"), "upgrade() must recreate the combat_log table"
+
+            index_names = {i["name"] for i in insp.get_indexes("combat_log")}
+            assert "ix_combat_log_combatant1_user_id" in index_names
+            assert "ix_combat_log_combatant2_user_id" in index_names
+
+    def test_upgrade_is_idempotent_at_head(self, pg_engine):
+        """Real upgrade() on an already-migrated schema is a no-op (inspector guards)."""
+        mod = _load_migration_0011()
+
+        with _rollback_conn(pg_engine) as conn:
+            conn.execute(sa.text("SET session_replication_role = 'replica'"))
+            mod.op = self._op(conn)
+            mod.upgrade()  # every guard sees the objects already present → no-op
+            mod.upgrade()  # second run must also not raise
+
+            insp = sa.inspect(conn)
+            assert insp.has_table("combat_log")
+
+    def test_upgrade_recreates_combat_log_columns(self, pg_engine):
+        """After downgrade()+upgrade(), combat_log has the expected column set + nullability."""
+        mod = _load_migration_0011()
+
+        with _rollback_conn(pg_engine) as conn:
+            conn.execute(sa.text("SET session_replication_role = 'replica'"))
+            mod.op = self._op(conn)
+            mod.downgrade()
+            mod.op = self._op(conn)
+            mod.upgrade()
+
+            insp = sa.inspect(conn)
+            cols = {c["name"]: c for c in insp.get_columns("combat_log")}
+            required = {
+                "id",
+                "guild_id",
+                "context",
+                "combatant1_name",
+                "combatant2_name",
+                "combatant1_user_id",
+                "combatant2_user_id",
+                "winner_name",
+                "is_stalemate",
+                "data",
+                "created_at",
+            }
+            assert required <= set(cols), f"Missing columns after upgrade: {required - set(cols)}"
+            # NPC side is nullable; core identity columns are not.
+            assert cols["combatant1_user_id"]["nullable"] is True
+            assert cols["combatant2_user_id"]["nullable"] is True
+            assert cols["guild_id"]["nullable"] is False
+            assert cols["is_stalemate"]["nullable"] is False

@@ -6,6 +6,17 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
+import respx
+
+# Capture the genuine asyncio.create_task BEFORE any test patches it, so a
+# create_task stub can still schedule a real (harmless) completed task.
+_REAL_CREATE_TASK = asyncio.create_task
+
+
+async def _noop() -> None:
+    """A trivially-completing coroutine used to satisfy create_task stubs."""
+    return None
+
 
 # Setup mock shared.bblogger module
 _mock_shared = types.ModuleType("shared")
@@ -364,184 +375,172 @@ class TestErrorHandling:
 # ---------------------------------------------------------------------------
 
 
-class TestAutocompleteStateEnvVar:
-    """Verify that the lifespan reads BOT_API_BASE_URL (not BOT_CORE_URL) for autocomplete init.
+def _make_lifespan_app():
+    """Return a lightweight object with a ``.state`` namespace for the lifespan."""
+    return types.SimpleNamespace(state=types.SimpleNamespace())
 
-    CI-19 root cause: the old code used os.getenv("BOT_CORE_URL", ...) which is never set
-    in the dev stack.  The fix changes this to BOT_API_BASE_URL — the same var all cogs use.
+
+def _make_neutralized_bot():
+    """A stand-in for GatewayBot whose start/close are no-op coroutines.
+
+    The lifespan launches ``bot.start()`` as a background task; neutralizing it
+    keeps the real lifespan code path intact while never touching the Discord
+    network.
+    """
+    fake_bot = MagicMock()
+    fake_bot.start = AsyncMock()
+    fake_bot.close = AsyncMock()
+    fake_bot.wait_until_ready = AsyncMock()
+    fake_bot.guilds = []
+    return fake_bot
+
+
+def _stub_create_task(coro):
+    """create_task replacement: discard the (un-run) coroutine and return a real,
+    already-completing task so the lifespan's cancel/await shutdown path works."""
+    coro.close()
+    return _REAL_CREATE_TASK(_noop())
+
+
+class TestAutocompleteStateEnvVar:
+    """Drive the REAL bot.py lifespan and assert it initializes autocomplete state
+    from BOT_API_BASE_URL (not BOT_CORE_URL).
+
+    CI-19 root cause: the old code used os.getenv("BOT_CORE_URL", ...) which is never
+    set in the dev stack.  The fix reads BOT_API_BASE_URL — the same var all cogs use.
+    Rather than re-implementing the getenv call in the test body, these tests execute
+    the actual ``lifespan`` context manager with ``init_autocomplete_state`` patched to
+    capture the ``api_base`` the lifespan resolves, so the assertion fails if bot.py
+    ever reverts to reading BOT_CORE_URL.
     """
 
-    def test_lifespan_uses_bot_api_base_url_not_bot_core_url(self, monkeypatch):
-        """init_autocomplete_state is called with the value of BOT_API_BASE_URL, not BOT_CORE_URL.
+    async def _capture_api_base(self, bot_mod, monkeypatch) -> str:
+        """Enter+exit the real lifespan and return the api_base it passed to
+        init_autocomplete_state."""
+        captured: list[str] = []
 
-        Strategy: patch os.getenv so that BOT_API_BASE_URL returns a sentinel and
-        BOT_CORE_URL returns a different value.  Then assert the captured api_base
-        passed to init_autocomplete_state matches the sentinel (BOT_API_BASE_URL value).
-        """
+        def _capturing_init(http_client, api_base):
+            captured.append(api_base)
+            return None
+
+        monkeypatch.setattr(bot_mod, "init_autocomplete_state", _capturing_init)
+        monkeypatch.setattr(bot_mod, "GatewayBot", lambda: _make_neutralized_bot())
+        monkeypatch.setattr("bot.asyncio.create_task", _stub_create_task)
+
+        app = _make_lifespan_app()
+        async with bot_mod.lifespan(app):
+            pass
+        assert len(captured) == 1, f"init_autocomplete_state called {len(captured)} times, expected 1"
+        return captured[0]
+
+    async def test_lifespan_uses_bot_api_base_url_not_bot_core_url(self, monkeypatch):
+        """The lifespan must pass BOT_API_BASE_URL's value (not BOT_CORE_URL's) to
+        init_autocomplete_state."""
         _evict_discord_modules()
         import bot as bot_mod
 
         sentinel_url = "http://bot-core:18000/api/v1"
         wrong_url = "http://bot-core:8000/api/v1"  # old BOT_CORE_URL default
 
-        captured: list[str] = []
+        monkeypatch.setenv("BOTTOKEN", "fake-token-not-used")
+        monkeypatch.setenv("BOT_API_BASE_URL", sentinel_url)
+        monkeypatch.setenv("BOT_CORE_URL", wrong_url)
 
-        real_getenv = os.getenv
+        resolved = await self._capture_api_base(bot_mod, monkeypatch)
 
-        def _patched_getenv(key, default=None):
-            if key == "BOT_API_BASE_URL":
-                return sentinel_url
-            if key == "BOT_CORE_URL":
-                return wrong_url
-            return real_getenv(key, default)
-
-        monkeypatch.setattr(bot_mod.os, "getenv", _patched_getenv)
-
-        def _capturing_init(http_client, api_base):
-            captured.append(api_base)
-            # Don't actually run real init in this unit test
-            return None
-
-        monkeypatch.setattr(bot_mod, "init_autocomplete_state", _capturing_init)
-
-        # Extract api_base from bot.py lifespan source — simpler than running the full
-        # async lifespan: just call os.getenv through the patched module directly.
-        resolved = bot_mod.os.getenv("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
         assert resolved == sentinel_url, (
-            f"BOT_API_BASE_URL should resolve to {sentinel_url!r} but got {resolved!r}. "
+            f"lifespan resolved api_base={resolved!r}; expected BOT_API_BASE_URL {sentinel_url!r}. "
             "The lifespan must use BOT_API_BASE_URL, not BOT_CORE_URL."
         )
+        assert resolved != wrong_url
 
-        wrong_resolved = bot_mod.os.getenv("BOT_CORE_URL", "http://bot-core:8000/api/v1")
-        assert wrong_resolved == wrong_url
-        # Confirm sentinel != wrong — so the two env vars are distinguishable
-        assert sentinel_url != wrong_url
-
-    def test_bot_api_base_url_env_var_is_canonical(self, monkeypatch):
-        """BOT_CORE_URL env var is not set in the dev stack; BOT_API_BASE_URL is the sole source.
-
-        This test documents the contract: if BOT_CORE_URL is absent but BOT_API_BASE_URL
-        is set, the lifespan must pick up BOT_API_BASE_URL.
-        """
+    async def test_bot_api_base_url_env_var_is_canonical(self, monkeypatch):
+        """With BOT_CORE_URL absent, the lifespan still uses BOT_API_BASE_URL (proving
+        BOT_CORE_URL is not consulted)."""
         _evict_discord_modules()
         import bot as bot_mod
 
-        # Simulate dev stack: BOT_API_BASE_URL is set, BOT_CORE_URL is absent
+        monkeypatch.setenv("BOTTOKEN", "fake-token-not-used")
         monkeypatch.setenv("BOT_API_BASE_URL", "http://bot-core:18000/api/v1")
         monkeypatch.delenv("BOT_CORE_URL", raising=False)
 
-        # The correct pattern used in bot.py after the fix:
-        api_base = bot_mod.os.getenv("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
-        assert api_base == "http://bot-core:18000/api/v1"
+        resolved = await self._capture_api_base(bot_mod, monkeypatch)
 
-        # The old (broken) pattern would have returned the default (:8000) since BOT_CORE_URL is absent:
-        old_pattern_result = os.getenv("BOT_CORE_URL", "http://bot-core:8000/api/v1")
-        assert old_pattern_result == "http://bot-core:8000/api/v1", (
-            "BOT_CORE_URL is unset → old pattern falls back to wrong :8000 default, proving the bug"
-        )
+        assert resolved == "http://bot-core:18000/api/v1"
 
 
 class TestAutocompleteHealthProbe:
-    """Verify the startup health probe behaviour (CI-19).
+    """Drive the REAL startup health probe (the closure inside bot.py's lifespan) via a
+    respx-mocked transport.
 
     The probe runs as a non-blocking background task — the bot must not crash and the
     lifespan must not stall.  When bot-core is unreachable (expected on a full cold
     start, since bot-core starts AFTER the gateway), the probe logs a WARNING rather
     than ERROR: it is non-fatal and the recurring warm jobs populate the caches once
-    bot-core comes up.
+    bot-core comes up.  These tests exercise the genuine probe code (real httpx client,
+    real raise_for_status) rather than a copy pasted into the test body.
     """
 
-    async def test_health_probe_logs_warning_on_connect_failure(self, monkeypatch, caplog):
-        """When the health endpoint returns a connection error, flogger.warning is called.
+    @staticmethod
+    def _patches(bot_mod, monkeypatch, shared_logger, api_base):
+        monkeypatch.setenv("BOTTOKEN", "fake-token-not-used")
+        monkeypatch.setenv("BOT_API_BASE_URL", api_base)
+        # Neutralize the Discord bot and the warm-on-boot task so only the probe runs.
+        monkeypatch.setattr(bot_mod, "GatewayBot", lambda: _make_neutralized_bot())
+        monkeypatch.setattr(bot_mod, "_warm_on_boot", AsyncMock())
+        # One shared logger so we can inspect the probe's info/warning calls.
+        monkeypatch.setattr(bot_mod.bblogger, "get_logger", lambda *a, **kw: shared_logger)
 
-        We test the probe logic in isolation: build the probe block inputs (a fake
-        async http client that raises ConnectError) and verify the failure path.
-        """
-        import httpx
+    @staticmethod
+    def _messages(mock_method):
+        return [c.args[0] if c.args else "" for c in mock_method.call_args_list]
 
-        flogger_calls: list[str] = []
+    async def test_health_probe_logs_info_on_success(self, monkeypatch):
+        """When GET {api_base}/health returns 200, the probe logs an OK info and no failure warning."""
+        _evict_discord_modules()
+        import bot as bot_mod
 
-        class _FakeLogger:
-            def info(self, msg, *a, **kw):
-                pass
+        api_base = "http://bot-core.test:18000/api/v1"
+        shared_logger = MagicMock()
+        self._patches(bot_mod, monkeypatch, shared_logger, api_base)
 
-            def warning(self, msg, *a, **kw):
-                flogger_calls.append(msg)
+        async with respx.mock:
+            respx.get(f"{api_base}/health").mock(return_value=httpx.Response(200, json={"status": "ok"}))
+            app = _make_lifespan_app()
+            cm = bot_mod.lifespan(app)
+            await cm.__aenter__()
+            await app.state.probe_task  # run the real probe to completion
+            await cm.__aexit__(None, None, None)
 
-            def error(self, msg, *a, **kw):
-                pass
+        info_msgs = self._messages(shared_logger.info)
+        warning_msgs = self._messages(shared_logger.warning)
+        assert any("health probe OK" in m for m in info_msgs), info_msgs
+        assert not any("FAILED" in m for m in warning_msgs), warning_msgs
 
-            def critical(self, msg, *a, **kw):
-                pass
+    async def test_health_probe_logs_warning_on_connect_failure(self, monkeypatch):
+        """When GET {api_base}/health raises ConnectError on every attempt, the probe logs a
+        FAILED warning mentioning the api_base (and does not crash the lifespan)."""
+        _evict_discord_modules()
+        import bot as bot_mod
 
-            def debug(self, msg, *a, **kw):
-                pass
+        api_base = "http://unreachable-host.test:18000/api/v1"
+        shared_logger = MagicMock()
+        self._patches(bot_mod, monkeypatch, shared_logger, api_base)
+        # The probe retries with 1s/2s backoff; skip the real waits.
+        monkeypatch.setattr("bot.asyncio.sleep", AsyncMock())
 
-            def trace(self, msg, *a, **kw):
-                pass
+        async with respx.mock:
+            respx.get(f"{api_base}/health").mock(side_effect=httpx.ConnectError("Connection refused"))
+            app = _make_lifespan_app()
+            cm = bot_mod.lifespan(app)
+            await cm.__aenter__()
+            await app.state.probe_task
+            await cm.__aexit__(None, None, None)
 
-        fake_flogger = _FakeLogger()
-        api_base = "http://unreachable-host:18000/api/v1"
-
-        # Simulate the probe block from bot.py lifespan directly
-        class _FailingClient:
-            async def get(self, url, timeout=None):
-                raise httpx.ConnectError("Connection refused")
-
-        autocomplete_http = _FailingClient()
-        try:
-            probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
-            probe_resp.raise_for_status()
-            fake_flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
-        except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
-            fake_flogger.warning(
-                f"Autocomplete health probe FAILED after 3 attempts — "
-                f"bot-core not reachable at gateway startup (expected on a full cold start). "
-                f"Recurring warm jobs will populate the autocomplete caches once bot-core is up. "
-                f"api_base={api_base!r} last_error={_probe_exc!r}."
-            )
-
-        assert len(flogger_calls) == 1
-        assert "FAILED" in flogger_calls[0]
-        assert api_base in flogger_calls[0]
-
-    async def test_health_probe_logs_info_on_success(self):
-        """When the health endpoint responds 200, only flogger.info is called (no error)."""
-        import httpx
-
-        info_calls: list[str] = []
-        warning_calls: list[str] = []
-
-        class _FakeLogger:
-            def info(self, msg, *a, **kw):
-                info_calls.append(msg)
-
-            def warning(self, msg, *a, **kw):
-                warning_calls.append(msg)
-
-        fake_flogger = _FakeLogger()
-        api_base = "http://bot-core:18000/api/v1"
-
-        class _OKClient:
-            async def get(self, url, timeout=None):
-                resp = httpx.Response(200, json={"status": "ok"}, request=httpx.Request("GET", url))
-                return resp
-
-        autocomplete_http = _OKClient()
-        try:
-            probe_resp = await autocomplete_http.get(f"{api_base}/health", timeout=3.0)
-            probe_resp.raise_for_status()
-            fake_flogger.info(f"Autocomplete health probe OK: api_base={api_base}")
-        except Exception as _probe_exc:  # pylint: disable=broad-exception-caught
-            fake_flogger.warning(
-                f"Autocomplete health probe FAILED after 3 attempts — "
-                f"bot-core not reachable at gateway startup (expected on a full cold start). "
-                f"Recurring warm jobs will populate the autocomplete caches once bot-core is up. "
-                f"api_base={api_base!r} last_error={_probe_exc!r}."
-            )
-
-        assert any("OK" in m for m in info_calls)
-        assert warning_calls == [], f"No warning expected on success, but got: {warning_calls}"
+        warning_msgs = self._messages(shared_logger.warning)
+        failed = [m for m in warning_msgs if "FAILED" in m]
+        assert len(failed) == 1, warning_msgs
+        assert api_base in failed[0]
 
 
 class TestWarmOnBoot:

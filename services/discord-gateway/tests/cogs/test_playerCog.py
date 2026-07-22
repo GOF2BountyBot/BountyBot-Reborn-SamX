@@ -503,6 +503,53 @@ class TestLeaderboardCommand:
 
 
 # ---------------------------------------------------------------------------
+# /leaderboard URL+method contract (respx)
+# ---------------------------------------------------------------------------
+
+
+class TestLeaderboardCommandRespx:
+    """respx-backed contract test for /leaderboard.
+
+    TestLeaderboardCommand above uses AsyncMock(http_client.get) which accepts
+    ANY url/method — a wrong leaderboard URL would still pass. This locks the
+    real contract: GET /api/v1/players/guild/{guild_id}?tier=<tier>.
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_leaderboard_calls_correct_url_and_method(self, mock_player_cog, request):
+        """/leaderboard must GET /players/guild/{guild_id} with a tier query param."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+        players = [{"user_id": 111, "tier": "Gold", "xp": 1000, "credits": 5000}]
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            route = mock_router.get(f"{self._BOT_API}/players/guild/987654321", params={"tier": "Gold"}).mock(
+                return_value=httpx.Response(200, json=players)
+            )
+            asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier="Gold"))
+
+        assert route.called
+        request_sent = route.calls.last.request
+        assert request_sent.method == "GET"
+        interaction.followup.send.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
 # prestige command
 # ---------------------------------------------------------------------------
 
@@ -591,7 +638,17 @@ class TestPrestigeCommand:
 
 
 class TestPrestigeConfirmFlow:
-    """Tests for the /prestige confirm flow (button-based, B.50)."""
+    """Tests for the /prestige confirm flow (button-based, B.50).
+
+    Note on mock count: the role-swap tests below (test_prestige_swaps_roles_correctly,
+    test_prestige_notifications_enabled_swaps_roles, etc.) legitimately exceed 2 mocks
+    per test because they exercise a real multi-boundary flow: two HTTP calls
+    (player-upsert POST + prestige POST), a config GET, and Discord's role-mutation API
+    (guild.get_role/add_roles/remove_roles). The Discord role boundary cannot be
+    constructed as a live object without a real gateway connection, so MagicMock role
+    objects + role-list assertions are the correct fidelity here. The config GET's
+    URL+method contract is covered separately by TestPrestigeCommandRespx below.
+    """
 
     def _make_confirm_view_mock(self, result: bool | None):
         """Return a ConfirmView mock with view.result pre-set and wait() returning immediately."""
@@ -1058,6 +1115,68 @@ class TestPrestigeConfirmFlow:
 
 
 # ---------------------------------------------------------------------------
+# /prestige URL+method contract (respx)
+# ---------------------------------------------------------------------------
+
+
+class TestPrestigeCommandRespx:
+    """respx-backed contract test for /prestige.
+
+    TestPrestigeConfirmFlow above uses AsyncMock(http_client.post/get) which accepts
+    ANY url/method — none of the three prestige-flow endpoints were previously
+    asserted anywhere. Locks the real contract:
+
+      POST /api/v1/players/                          (player upsert)
+      POST /api/v1/players/{id}/prestige              (prestige execution)
+      GET  /api/v1/config/guild/{guild_id}            (role-swap config lookup)
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_prestige_calls_correct_urls_and_methods(self, mock_player_cog, request):
+        """/prestige must POST players/, POST players/{id}/prestige, GET config/guild/{id}."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        prestige_data = {"player_id": 1, "prestige_count": 1, "tier_before": "Platinum", "xp_before": 50000}
+        config_data = {"bronze_role_id": None, "platinum_role_id": None}
+
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=None)
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.post(f"{self._BOT_API}/players/1/prestige").mock(
+                return_value=httpx.Response(200, json=prestige_data)
+            )
+            mock_router.get(f"{self._BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
+
+        # respx assert_all_called=True ensures all three endpoints were hit with
+        # the right method; a wrong URL/verb here would raise inside the block.
+        interaction.followup.send.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
 # _get_tier_color helper
 # ---------------------------------------------------------------------------
 
@@ -1221,7 +1340,9 @@ class TestProfileNoTimestampsInBadLocations:
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
-        return call_kwargs.get("embed")
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "expected /profile to send an embed on the happy path"
+        return embed
 
     def test_profile_no_timestamps_in_footer(self, mock_player_cog):
         """Profile embed footer must not contain a Discord timestamp (<t:...) pattern.
@@ -1230,8 +1351,6 @@ class TestProfileNoTimestampsInBadLocations:
         where they appear as raw text, confusing users.
         """
         embed = self._get_profile_embed(mock_player_cog)
-        if embed is None:
-            return  # embed not sent (error path) — skip
 
         footer = embed.footer
         footer_text = ""
@@ -1253,8 +1372,6 @@ class TestProfileNoTimestampsInBadLocations:
         Discord renders <t:...> in fields/descriptions but NOT in author fields.
         """
         embed = self._get_profile_embed(mock_player_cog)
-        if embed is None:
-            return
 
         author = embed.author
         author_text = ""

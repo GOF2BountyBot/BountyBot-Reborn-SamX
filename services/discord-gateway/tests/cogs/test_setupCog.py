@@ -238,7 +238,15 @@ class TestOnGuildRemove:
     """Tests for on_guild_remove event listener."""
 
     def test_on_guild_remove_logs_removal(self, mock_setup_cog):
-        """on_guild_remove should log the removal event."""
+        """on_guild_remove should log the removal event and call the cleanup endpoint.
+
+        R-gw-cogs-2: the prior version guarded the logger assertion behind
+        ``if _module_logger is not None``, so the test would silently pass even
+        if the logger wiring were broken (SMELL). The URL+method contract for
+        the DELETE call itself is asserted by TestOnGuildRemoveRespx below —
+        this test now asserts the logger call unconditionally plus that the
+        cleanup endpoint was actually invoked.
+        """
         guild = _make_mock_guild()
 
         # Cleanup endpoint — any response is fine
@@ -248,9 +256,9 @@ class TestOnGuildRemove:
 
         asyncio.run(mock_setup_cog.on_guild_remove(guild))
 
-        # Module-level logger should have logged an info message
-        if _module_logger is not None:
-            _module_logger.info.assert_called()
+        assert _module_logger is not None, "module logger must be wired via shared.bblogger.get_logger"
+        _module_logger.info.assert_called()
+        mock_setup_cog.http_client.delete.assert_awaited_once()
 
     def test_on_guild_remove_cleanup_failure_is_nonfatal(self, mock_setup_cog):
         """on_guild_remove should not raise if the cleanup API call fails."""

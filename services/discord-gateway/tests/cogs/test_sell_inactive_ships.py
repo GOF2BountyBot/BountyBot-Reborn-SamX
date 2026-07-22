@@ -7,6 +7,17 @@ Acceptance criteria:
 - Ship choice values are encoded as "ship:<player_ship_id>"
 - /sell routes ship choices to /shops/sell-ship endpoint
 - /sell regular items still work normally
+
+R-gw-cogs-2 remediation: the cache/choice helpers below used to return bare
+MagicMocks with an accept-anything ``.peek()`` (ignoring the lookup key
+entirely) and a MagicMock stand-in for ``NormalizedChoice``. Both the real
+``AutocompleteCache`` (cogs._shared.autocomplete_cache) and the real
+``NormalizedChoice`` NamedTuple (utils.autocomplete_state) are trivially
+constructible with no DB/HTTP client — the sibling
+tests/cogs/test_shopCog.py::TestSellItemAutocomplete proves the pattern. Using
+the real cache means a lookup keyed on the wrong (guild_id, id) tuple now
+actually misses, and a MagicMock choice can no longer silently satisfy any
+attribute access the cog happens to read.
 """
 
 import os
@@ -67,41 +78,64 @@ def _make_cog():
 
 
 def _make_normalized_choice(label, value, norm, raw):
-    """Return a mock NormalizedChoice object."""
-    choice = MagicMock()
-    choice.label = label
-    choice.value = value
-    choice.norm = norm
-    choice.raw = raw
-    return choice
+    """Return a real ``NormalizedChoice`` (NamedTuple) — same shape production reads.
+
+    Replaces the prior MagicMock stand-in: a MagicMock choice satisfies ANY
+    attribute access, so a cog reading a wrong/renamed attribute would still
+    pass. The real NamedTuple only has label/value/norm/raw — an
+    AttributeError on a typo'd field name now surfaces immediately.
+    """
+    from utils.autocomplete_state import NormalizedChoice
+
+    return NormalizedChoice(label=label, value=value, norm=norm, raw=raw)
 
 
-def _make_player_cache(player_id=42, tier="Bronze", guild_id=999):
-    """Return a mock AutocompleteCache for player_cache."""
-    cache = MagicMock()
-    cache.peek = MagicMock(return_value={"id": player_id, "tier": tier})
-    cache.schedule_refresh = MagicMock()
+def _make_player_cache(player_id=42, tier="Bronze", guild_id=999, user_id=111):
+    """Return a real ``AutocompleteCache`` pre-populated with a player at (guild_id, user_id).
+
+    A real cache does a genuine keyed lookup — unlike the former MagicMock
+    whose ``.peek()`` returned the same canned value regardless of the key
+    the cog passed in.
+    """
+    from cogs._shared.autocomplete_cache import AutocompleteCache
+
+    cache = AutocompleteCache(name="player-test")
+    cache.set((guild_id, user_id), {"id": player_id, "tier": tier})
+    return cache
+
+
+def _make_inventory_cache(items=None, guild_id=999, player_id=42):
+    """Return a real ``AutocompleteCache`` for inventory_cache keyed by (guild_id, player_id).
+
+    ``items`` is a list of raw item dicts; each is wrapped in a real
+    ``NormalizedChoice`` the way ``utils.autocomplete_state`` actually stores
+    inventory entries.
+    """
+    from cogs._shared.autocomplete_cache import AutocompleteCache
+    from utils.autocomplete_utils import normalize_for_search
+
+    cache = AutocompleteCache(name="inventory-test")
+    choices = []
+    for item in items or []:
+        item_name = item.get("item_name", "")
+        item_type = item.get("item_type", "")
+        label = f"{item_name} ({item_type.replace('_', ' ').title()})"
+        choices.append(_make_normalized_choice(label, item_name, normalize_for_search(label), item))
+    cache.set((guild_id, player_id), choices)
     return cache
 
 
 def _make_inventory_cache_with_item(item_name="Ridil Blaster", item_type="primary_weapon"):
-    """Return a mock AutocompleteCache for inventory_cache with one item."""
-    from utils.autocomplete_utils import normalize_for_search
-
-    raw = {"item_name": item_name, "item_type": item_type}
-    label = f"{item_name} (Primary Weapon)"
-    choice = _make_normalized_choice(label, item_name, normalize_for_search(label), raw)
-    cache = MagicMock()
-    cache.peek = MagicMock(return_value=[choice])
-    cache.schedule_refresh = MagicMock()
-    return cache
+    """Return a real inventory AutocompleteCache with a single item (default key: 999/42)."""
+    return _make_inventory_cache([{"item_name": item_name, "item_type": item_type}])
 
 
-def _make_ships_cache(ships):
-    """Return a mock AutocompleteCache for ships_cache."""
-    cache = MagicMock()
-    cache.peek = MagicMock(return_value=ships)
-    cache.schedule_refresh = MagicMock()
+def _make_ships_cache(ships, guild_id=999, player_id=42):
+    """Return a real ``AutocompleteCache`` for ships_cache keyed by (guild_id, player_id)."""
+    from cogs._shared.autocomplete_cache import AutocompleteCache
+
+    cache = AutocompleteCache(name="ships-test")
+    cache.set((guild_id, player_id), ships)
     return cache
 
 
@@ -131,9 +165,7 @@ class TestSellAutocompleteIncludesInactiveShips:
         ac_state.player_cache = _make_player_cache(player_id=42)
 
         # Set up inventory cache (empty for simplicity)
-        ac_state.inventory_cache = MagicMock()
-        ac_state.inventory_cache.peek = MagicMock(return_value=[])
-        ac_state.inventory_cache.schedule_refresh = MagicMock()
+        ac_state.inventory_cache = _make_inventory_cache([])
 
         # Set up ships cache with one inactive ship
         inactive_ship_raw = {
@@ -167,9 +199,7 @@ class TestSellAutocompleteIncludesInactiveShips:
         interaction = _make_interaction()
 
         ac_state.player_cache = _make_player_cache(player_id=42)
-        ac_state.inventory_cache = MagicMock()
-        ac_state.inventory_cache.peek = MagicMock(return_value=[])
-        ac_state.inventory_cache.schedule_refresh = MagicMock()
+        ac_state.inventory_cache = _make_inventory_cache([])
 
         # Active ship
         active_ship_raw = {
@@ -196,9 +226,7 @@ class TestSellAutocompleteIncludesInactiveShips:
         interaction = _make_interaction()
 
         ac_state.player_cache = _make_player_cache(player_id=42)
-        ac_state.inventory_cache = MagicMock()
-        ac_state.inventory_cache.peek = MagicMock(return_value=[])
-        ac_state.inventory_cache.schedule_refresh = MagicMock()
+        ac_state.inventory_cache = _make_inventory_cache([])
 
         inactive_ship_raw = {
             "is_active": False,
@@ -225,9 +253,7 @@ class TestSellAutocompleteIncludesInactiveShips:
         interaction = _make_interaction()
 
         ac_state.player_cache = _make_player_cache(player_id=42)
-        ac_state.inventory_cache = MagicMock()
-        ac_state.inventory_cache.peek = MagicMock(return_value=[])
-        ac_state.inventory_cache.schedule_refresh = MagicMock()
+        ac_state.inventory_cache = _make_inventory_cache([])
 
         inactive_ship_raw = {
             "is_active": False,
@@ -257,18 +283,9 @@ class TestSellAutocompleteIncludesInactiveShips:
         ac_state.player_cache = _make_player_cache(player_id=42)
 
         # Inventory with one item
-        from utils.autocomplete_utils import normalize_for_search as nfs
-
-        inv_raw = {"item_name": "Plasma Cannon", "item_type": "primary_weapon"}
-        inv_choice = _make_normalized_choice(
-            "Plasma Cannon (Primary Weapon)",
-            "Plasma Cannon",
-            nfs("Plasma Cannon (Primary Weapon)"),
-            inv_raw,
+        ac_state.inventory_cache = _make_inventory_cache(
+            [{"item_name": "Plasma Cannon", "item_type": "primary_weapon"}]
         )
-        ac_state.inventory_cache = MagicMock()
-        ac_state.inventory_cache.peek = MagicMock(return_value=[inv_choice])
-        ac_state.inventory_cache.schedule_refresh = MagicMock()
 
         # Ships cache empty
         ac_state.ships_cache = _make_ships_cache([])
@@ -310,9 +327,12 @@ class TestSellAutocompleteIncludesInactiveShips:
 
         await cog.sell.callback(cog, interaction, item="ship:77", quantity=1)
 
-        # Verify that the sell-ship endpoint was called
+        # Verify that the sell-ship endpoint was called with the right payload shape
         call_args = cog.http_client.post.call_args
         assert "/shops/sell-ship" in call_args[0][0]
+        sent_json = call_args[1]["json"]
+        assert sent_json["player_id"] == 42
+        assert sent_json["ship_id"] == 77
 
     @pytest.mark.asyncio
     async def test_sell_routes_regular_item_to_sell_endpoint(self):
@@ -348,6 +368,10 @@ class TestSellAutocompleteIncludesInactiveShips:
         call_args = cog.http_client.post.call_args
         assert "/shops/sell" in call_args[0][0]
         assert "/shops/sell-ship" not in call_args[0][0]
+        sent_json = call_args[1]["json"]
+        assert sent_json["player_id"] == 42
+        assert sent_json["item_name"] == "Plasma Cannon"
+        assert sent_json["quantity"] == 1
 
     @pytest.mark.asyncio
     async def test_sell_ship_invalid_id_returns_error(self):
@@ -377,9 +401,7 @@ class TestSellAutocompleteEdgeCases:
         interaction = _make_interaction()
 
         ac_state.player_cache = _make_player_cache(player_id=42)
-        ac_state.inventory_cache = MagicMock()
-        ac_state.inventory_cache.peek = MagicMock(return_value=[])
-        ac_state.inventory_cache.schedule_refresh = MagicMock()
+        ac_state.inventory_cache = _make_inventory_cache([])
         ac_state.ships_cache = None  # No ships cache at all
 
         # Must not raise
@@ -392,17 +414,15 @@ class TestSellAutocompleteEdgeCases:
     async def test_player_cache_miss_returns_empty(self):
         """When player_cache has no entry, autocomplete returns []."""
         import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
 
         cog = _make_cog()
         interaction = _make_interaction()
 
-        # Player cache misses
-        pc = MagicMock()
-        pc.peek = MagicMock(return_value=None)
-        pc.schedule_refresh = MagicMock()
-        ac_state.player_cache = pc
-        ac_state.inventory_cache = MagicMock()
-        ac_state.ships_cache = MagicMock()
+        # Real cache, deliberately left empty — peek()/get_with_timeout() both miss.
+        ac_state.player_cache = AutocompleteCache(name="player-empty-test")
+        ac_state.inventory_cache = _make_inventory_cache([])
+        ac_state.ships_cache = _make_ships_cache([])
 
         choices = await cog.sell_item_autocomplete(interaction, "")
         assert choices == []
@@ -411,20 +431,16 @@ class TestSellAutocompleteEdgeCases:
     async def test_ships_cache_peek_returns_none_handled_gracefully(self):
         """When ships_cache.peek() returns None (cold cache), no ship choices appear."""
         import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
 
         cog = _make_cog()
         interaction = _make_interaction()
 
         ac_state.player_cache = _make_player_cache(player_id=42)
-        ac_state.inventory_cache = MagicMock()
-        ac_state.inventory_cache.peek = MagicMock(return_value=[])
-        ac_state.inventory_cache.schedule_refresh = MagicMock()
+        ac_state.inventory_cache = _make_inventory_cache([])
 
-        # ships_cache exists but peek returns None (cold cache)
-        sc = MagicMock()
-        sc.peek = MagicMock(return_value=None)
-        sc.schedule_refresh = MagicMock()
-        ac_state.ships_cache = sc
+        # ships_cache exists but is empty (real cold-cache miss for this key)
+        ac_state.ships_cache = AutocompleteCache(name="ships-cold-test")
 
         choices = await cog.sell_item_autocomplete(interaction, "")
         assert not any(v.startswith("ship:") for c in choices for v in [c.value])
@@ -438,9 +454,7 @@ class TestSellAutocompleteEdgeCases:
         interaction = _make_interaction()
 
         ac_state.player_cache = _make_player_cache(player_id=42)
-        ac_state.inventory_cache = MagicMock()
-        ac_state.inventory_cache.peek = MagicMock(return_value=[])
-        ac_state.inventory_cache.schedule_refresh = MagicMock()
+        ac_state.inventory_cache = _make_inventory_cache([])
 
         # Ship with no player_ship_id and no 'id'
         bad_ship_raw = {
@@ -451,9 +465,9 @@ class TestSellAutocompleteEdgeCases:
         }
         from utils.autocomplete_utils import normalize_for_search as nfs
 
+        # Real NormalizedChoice with value=None — mirrors a choice built with no
+        # resolvable ship id, exactly as production would encode it.
         ship_choice = _make_normalized_choice("Ghost", None, nfs("Ghost"), bad_ship_raw)
-        # Also make ship_choice.value return None
-        ship_choice.value = None
         sc = _make_ships_cache([ship_choice])
         ac_state.ships_cache = sc
 

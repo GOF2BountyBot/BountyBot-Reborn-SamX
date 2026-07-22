@@ -853,7 +853,11 @@ class TestSubtaskBAudit:
 
         interaction = _make_mock_interaction(user_id=user_id, guild_id=guild_id)
         result = asyncio.run(bounty_cog.bounty_autocomplete(interaction, ""))
-        assert len(result) >= 0  # just confirms no HTTP error
+        # R-gw-cogs-2: `len(result) >= 0` is always true (SMELL) — the AssertionError
+        # side_effect above is the real regression guard for zero-HTTP, but the
+        # cache was warmed with exactly one matching choice, so assert that too.
+        assert len(result) == 1
+        assert result[0].value == "1"
 
     def test_job_autocomplete_zero_http_on_warm_cache(self, scheduler_cog):
         """job_id_autocomplete must not call HTTP when cache is warm."""

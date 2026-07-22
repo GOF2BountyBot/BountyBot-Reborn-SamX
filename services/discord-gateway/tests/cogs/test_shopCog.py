@@ -810,6 +810,196 @@ class TestBuyCommandRespx:
 
 
 # ---------------------------------------------------------------------------
+# /shop, /sell, /shops URL+method contracts (respx)
+# ---------------------------------------------------------------------------
+
+
+class TestShopCommandRespx:
+    """respx-backed contract test for /shop.
+
+    TestShopCommand/TestShopCommandBranches/TestShopCommandWithStats above use
+    AsyncMock(http_client.get/post), which accepts ANY url/method — no test
+    anywhere previously asserted the /shop GET contract. Locks:
+
+      POST /api/v1/players/                                   (player upsert)
+      GET  /api/v1/shops/guild/{guild_id}/tier/{tier}         (tier-shop items)
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_shop_calls_correct_urls_and_methods(self, mock_shop_cog, request):
+        """/shop must POST players/ then GET shops/guild/{id}/tier/{tier}."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_shop_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=2000))
+            )
+            mock_router.get(f"{self._BOT_API}/shops/guild/987654321/tier/Bronze").mock(
+                return_value=httpx.Response(200, json=[_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500)])
+            )
+            asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+
+
+class TestSellCommandRespx:
+    """respx-backed contract test for /sell (regular item + inactive-ship routes).
+
+    TestSellCommand above uses accept-anything AsyncMock(http_client.post) — no
+    test anywhere asserted the /sell POST url/payload. Locks:
+
+      POST /api/v1/players/            (player upsert)
+      POST /api/v1/shops/sell          (regular item sell) — payload: player_id/item_name/quantity
+      POST /api/v1/shops/sell-ship     (inactive ship sell) — payload: player_id/ship_id
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_sell_item_calls_correct_url_and_payload(self, mock_shop_cog, request):
+        """/sell (regular item) must POST shops/sell with player_id/item_name/quantity."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_shop_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=2000))
+            )
+            sell_route = mock_router.post(f"{self._BOT_API}/shops/sell").mock(
+                return_value=httpx.Response(
+                    200, json={"item_type": "weapon", "total_value": 250, "remaining_credits": 2250}
+                )
+            )
+            asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
+
+        assert sell_route.called
+        import json as _json
+
+        body = _json.loads(sell_route.calls.last.request.content)
+        assert body["item_name"] == "LaserCannon"
+        assert body["quantity"] == 1
+        assert body["player_id"] == 1
+        interaction.followup.send.assert_awaited_once()
+
+    def test_sell_ship_calls_correct_url_and_payload(self, mock_shop_cog, request):
+        """/sell with a 'ship:<id>' value must POST shops/sell-ship with player_id/ship_id."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_shop_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze", credits=2000))
+            )
+            ship_route = mock_router.post(f"{self._BOT_API}/shops/sell-ship").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "item_name": "Betty",
+                        "total_value": 1000,
+                        "remaining_credits": 3000,
+                        "items_unequipped_to_inventory": 0,
+                    },
+                )
+            )
+            asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "ship:42", 1))
+
+        assert ship_route.called
+        import json as _json
+
+        body = _json.loads(ship_route.calls.last.request.content)
+        assert body["ship_id"] == 42
+        assert body["player_id"] == 1
+        interaction.followup.send.assert_awaited_once()
+
+
+class TestShopsCommandRespx:
+    """respx-backed contract test for /shops (guild shop summary).
+
+    TestShopsCommand above uses accept-anything AsyncMock(http_client.get) — no
+    test anywhere asserted the summary GET url. Locks:
+
+      GET /api/v1/shops/guild/{guild_id}/summary
+      POST /api/v1/players/   (player tier lookup for the embed)
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_shops_calls_correct_urls(self, mock_shop_cog, request):
+        """/shops must GET shops/guild/{id}/summary and POST players/ for tier context."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_shop_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{self._BOT_API}/shops/guild/987654321/summary").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "Bronze": {"item_count": 5},
+                        "Silver": {"item_count": 3},
+                        "Gold": {"item_count": 0},
+                        "Platinum": {"item_count": 0},
+                    },
+                )
+            )
+            mock_router.post(f"{self._BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze"))
+            )
+            asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
 # _get_tier_color helper
 # ---------------------------------------------------------------------------
 

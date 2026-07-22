@@ -90,21 +90,39 @@ class TestTemplateCogInitialization:
         assert hasattr(mock_template_cog, "bot")
         assert mock_template_cog.__class__.__name__ == "TemplateCog"
 
-    def test_cog_has_commands(self, mock_template_cog):
-        """TemplateCog should have at least one command."""
-        # Check that the cog has the example command
-        assert hasattr(mock_template_cog, "example")
+    @pytest.mark.asyncio
+    async def test_cog_has_commands(self, mock_template_cog):
+        """TemplateCog's /example command should be a registered app_commands.Command
+        that actually invokes the example callback (not just present on the object).
+
+        R-gw-cogs-2: the prior version only checked hasattr(cog, "example"), which
+        would pass even if the command body were deleted or the decorator removed
+        the callback wiring. This now exercises the real callback and asserts its
+        observable effect.
+        """
+        from discord import app_commands
+
+        assert isinstance(mock_template_cog.example, app_commands.Command)
+
+        interaction = AsyncMock(spec=discord.Interaction)
+        interaction.user = MagicMock(id=123)
+        interaction.guild_id = 999
+        interaction.response.send_message = AsyncMock()
+
+        await mock_template_cog.example.callback(mock_template_cog, interaction)
+
+        interaction.response.send_message.assert_awaited_once_with("This is an example command.")
 
 
 class TestTemplateCogCommands:
     """Tests for templateCog commands."""
 
     def test_example_command_exists(self, mock_template_cog):
-        """example command should exist in cog."""
-        # Check that example command exists
-        assert hasattr(mock_template_cog, "example")
-        # Should be an app_commands.Command
-        assert mock_template_cog.example is not None
+        """example command should be registered as a real app_commands.Command."""
+        from discord import app_commands
+
+        assert isinstance(mock_template_cog.example, app_commands.Command)
+        assert mock_template_cog.example.name == "example"
 
     def test_example_error_handler_exists(self, mock_template_cog):
         """example_error handler should exist in cog."""
@@ -179,15 +197,19 @@ class TestTemplateCogConfiguration:
     """Tests for templateCog configuration."""
 
     def test_is_developer_function(self):
-        """is_developer function should exist and return boolean."""
+        """is_developer() is a template stub hardcoded to always return True.
+
+        R-gw-cogs-2: `assert isinstance(result, bool)` is tautological (True and
+        False both satisfy it — a regression that flipped the hardcoded value
+        would pass unnoticed). Assert the actual value.
+        """
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
         _evict_discord_modules()
 
         from cogs.templateCog import is_developer
 
-        result = is_developer()
-        assert isinstance(result, bool)
+        assert is_developer() is True
 
     def test_api_base_configured(self):
         """templateCog should load with API base URL configuration."""

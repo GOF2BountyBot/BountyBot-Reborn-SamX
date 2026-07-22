@@ -2420,6 +2420,12 @@ class TestCompositeTextures:
         assert result is None
         msg = interaction.followup.send.call_args[0][0]
         assert "timed out" in msg.lower() or "❌" in msg
+        # R-gw-cogs-2: the request was sent before the mock raised — assert the
+        # posted payload, not just the observed return value.
+        call_kwargs = mock_skins_cog.blender_client.post.call_args
+        assert call_kwargs.args[0] == "/textures/composite"
+        assert call_kwargs.kwargs["data"]["ship_path"] == "/ship"
+        assert call_kwargs.kwargs["data"]["base_texture_path"] == "/diffuse.bmp"
 
     def test_composite_textures_generic_exception_returns_none(self, mock_skins_cog):
         """_composite_textures returns None on generic exception."""
@@ -2433,6 +2439,10 @@ class TestCompositeTextures:
         assert result is None
         msg = interaction.followup.send.call_args[0][0]
         assert "failed" in msg.lower() or "❌" in msg
+        # R-gw-cogs-2: assert the posted payload, not just the return value.
+        call_kwargs = mock_skins_cog.blender_client.post.call_args
+        assert call_kwargs.args[0] == "/textures/composite"
+        assert call_kwargs.kwargs["data"]["ship_path"] == "/ship"
 
     def test_composite_textures_passes_square_mode(self, mock_skins_cog):
         """_composite_textures passes square_mode to the blender endpoint."""
@@ -2505,6 +2515,11 @@ class TestCompositeTexturesWithUpload:
         )
 
         assert result is None
+        # R-gw-cogs-2: assert the posted payload, not just the return value.
+        call_kwargs = mock_skins_cog.blender_client.post.call_args
+        assert call_kwargs.args[0] == "/textures/composite"
+        assert call_kwargs.kwargs["data"]["ship_path"] == "/ship"
+        assert call_kwargs.kwargs["files"][0][0] == "base_texture"
 
     def test_composite_with_upload_generic_exception_returns_none(self, mock_skins_cog):
         """_composite_textures_with_upload returns None on generic exception."""
@@ -2518,6 +2533,10 @@ class TestCompositeTexturesWithUpload:
         )
 
         assert result is None
+        # R-gw-cogs-2: assert the posted payload, not just the return value.
+        call_kwargs = mock_skins_cog.blender_client.post.call_args
+        assert call_kwargs.args[0] == "/textures/composite"
+        assert call_kwargs.kwargs["data"]["ship_path"] == "/ship"
 
 
 class TestRenderSkinErrorPaths:

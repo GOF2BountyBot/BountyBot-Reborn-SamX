@@ -1,163 +1,210 @@
-"""Tests for shop_announcements_role_id in shop_refresh_executor.
+"""Tests for shop_announcements_role_id role selection in shop_refresh_executor.
 
-Verifies that the executor uses shop_announcements_role_id when available,
-falls back to bounty_hunter_role_id, and passes None when both are None.
+Drives the REAL ``execute_shop_refresh_job`` (real SQLite GuildConfig + respx),
+mirroring the Tier-B/C pattern in ``test_shop_refresh_executor.py``.  Verifies
+that the executor:
 
-These tests check the logic inline with the executor source to avoid complex
-deferred-import patching. The key logic is:
-    mention_role_id = shop_announcements_role_id or bounty_hunter_role_id
+  - prefers ``shop_announcements_role_id`` over ``bounty_hunter_role_id`` for the
+    first-tier (Bronze) mention,
+  - falls back to ``bounty_hunter_role_id`` when the shop role is None,
+  - emits NO role mention when both are None,
+  - only mentions on the first tier (Bronze), never on Silver/Gold/Platinum.
 
-We test this by examining what _announce_shop_refresh is called with.
+The previous version of this file re-implemented the selection expression inside
+the test and asserted on the copy, plus grepped source files for substrings —
+neither exercised any production code.  Real column presence is now proven via
+``GuildConfig.__table__`` introspection rather than a source-text search.
 """
 
+from __future__ import annotations
+
+import json
 import os
 import sys
 import types
-from unittest.mock import MagicMock
+from contextlib import asynccontextmanager
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
-# Mock shared / shared.bblogger before any source imports
+# Path setup + stub registration (mirrors test_shop_refresh_executor.py).
 # ---------------------------------------------------------------------------
+
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
 if "shared" not in sys.modules:
     _mock_shared = types.ModuleType("shared")
-    _mock_bblogger = types.ModuleType("shared.bblogger")
-
-    def _make_logger(name="test"):
-        logger = MagicMock()
-        for m in ("info", "debug", "warning", "error", "trace", "critical"):
-            setattr(logger, m, MagicMock())
-        return logger
-
-    _mock_bblogger.get_logger = _make_logger
-    _mock_shared.bblogger = _mock_bblogger
+    _mock_shared.bblogger = MagicMock()  # type: ignore[attr-defined]
+    _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())  # type: ignore[attr-defined]
     sys.modules["shared"] = _mock_shared
-    sys.modules["shared.bblogger"] = _mock_bblogger
+    sys.modules["shared.bblogger"] = _mock_shared.bblogger  # type: ignore[arg-type]
 
-# Ensure src is on the path
-_SRC = os.path.join(os.path.dirname(__file__), "..", "src")
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
+if "sqlalchemy_utils" not in sys.modules:
+    _mock_sau = types.ModuleType("sqlalchemy_utils")
+    _mock_sau.UUIDType = MagicMock()  # type: ignore[attr-defined]
+    sys.modules["sqlalchemy_utils"] = _mock_sau
+
+import pytest
+import respx
+import utils.executors.shop_refresh_executor as exec_module
+from persist.models.base import Base
+from persist.models.guild_config import GuildConfig
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+execute_shop_refresh_job = exec_module.execute_shop_refresh_job
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_SQLITE_TABLES = [GuildConfig.__table__]
+
+GUILD_ID = 9_600_000_010
+SHOP_CHANNEL = 12_500
+SHOP_ANN_ROLE = 44_444
+BH_ROLE = 33_333
+
+GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
+GATEWAY_CHANNEL_URL = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}/api/v1/channels/{SHOP_CHANNEL}/messages"
+
+_FAKE_REFRESH_RESULT: dict = {"status": "ok", "items_added": 3, "tech_level": 5, "items": []}
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: role selection logic (pure Python, no deferred imports)
+# Fixtures / helpers (same shape as test_shop_refresh_executor.py)
 # ---------------------------------------------------------------------------
 
 
-class TestShopAnnouncementsRoleSelectionLogic:
-    """Verify the role-selection logic: shop_announcements or fallback to bounty_hunter.
+@pytest.fixture
+async def sqlite_engine_and_factory():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_SQLITE_TABLES)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        yield engine, factory
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all, tables=_SQLITE_TABLES)
+        await engine.dispose()
 
-    Logic: mention_role_id = _shop_ann_id if isinstance(_shop_ann_id, int) else _bh_role_id
+
+async def _seed_guild_config(
+    db: AsyncSession,
+    *,
+    shop_channel_id: int | None = SHOP_CHANNEL,
+    shop_announcements_role_id: int | None = None,
+    bounty_hunter_role_id: int | None = None,
+) -> GuildConfig:
+    config = GuildConfig(
+        guild_id=GUILD_ID,
+        shop_channel_id=shop_channel_id,
+        shop_announcements_role_id=shop_announcements_role_id,
+        bounty_hunter_role_id=bounty_hunter_role_id,
+        division_temperatures={"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0},
+    )
+    db.add(config)
+    await db.commit()
+    await db.refresh(config)
+    return config
+
+
+def _make_fake_db_manager(factory: Any):
+    """MagicMock db_manager whose get_session() yields a real SQLite session.
+
+    # 1 mock — db_manager bridge (Tier B/C)
     """
 
-    def _select_mention_role(self, shop_ann_id, bh_role_id):
-        """Mirror the selection logic from the executor/admin router."""
-        return shop_ann_id if isinstance(shop_ann_id, int) else bh_role_id
+    @asynccontextmanager
+    async def _fake_get_db():
+        async with factory() as session:
+            yield session
 
-    def test_shop_announcements_role_preferred(self):
-        """shop_announcements_role_id (int) takes priority over bounty_hunter_role_id."""
-        mention_role_id = self._select_mention_role(44444, 33333)
-        assert mention_role_id == 44444
-
-    def test_falls_back_to_bounty_hunter_when_shop_announcements_none(self):
-        """Falls back to bounty_hunter_role_id when shop_announcements_role_id is None."""
-        mention_role_id = self._select_mention_role(None, 33333)
-        assert mention_role_id == 33333
-
-    def test_none_when_both_are_none(self):
-        """Returns None when both role IDs are None."""
-        mention_role_id = self._select_mention_role(None, None)
-        assert mention_role_id is None
-
-    def test_non_int_shop_announcement_falls_back(self):
-        """A non-int shop_announcements_role_id (e.g. MagicMock) falls back to bounty_hunter."""
-        from unittest.mock import MagicMock
-
-        mention_role_id = self._select_mention_role(MagicMock(), 33333)
-        assert mention_role_id == 33333
+    fake = MagicMock()
+    fake.get_session = MagicMock(side_effect=_fake_get_db)
+    return fake
 
 
-class TestShopRefreshExecutorSourceContainsFallback:
-    """Verify the source code of shop_refresh_executor has the fallback logic."""
+async def _run_and_capture_mentions(factory, router) -> list:
+    """Run the bulk refresh and return the ordered list of per-tier text_content values."""
+    captured: list = []
 
-    def test_executor_source_has_shop_announcements_role_id(self):
-        """shop_refresh_executor source must reference shop_announcements_role_id."""
-        executor_path = os.path.join(
-            _SRC,
-            "utils",
-            "executors",
-            "shop_refresh_executor.py",
-        )
-        with open(executor_path) as f:
-            source = f.read()
-        assert "shop_announcements_role_id" in source, "shop_refresh_executor.py must use shop_announcements_role_id"
+    def _capture(request):
+        body = json.loads(request.content)
+        captured.append(body.get("text_content"))
+        return respx.MockResponse(200, json={"ok": True})
 
-    def test_executor_source_has_fallback_pattern(self):
-        """shop_refresh_executor source must have the fallback to bounty_hunter_role_id."""
-        executor_path = os.path.join(
-            _SRC,
-            "utils",
-            "executors",
-            "shop_refresh_executor.py",
-        )
-        with open(executor_path) as f:
-            source = f.read()
-        # Check that both role IDs are referenced (fallback pattern present)
-        assert "shop_announcements_role_id" in source and "bounty_hunter_role_id" in source, (
-            "shop_refresh_executor.py must have fallback from shop_announcements_role_id to bounty_hunter_role_id"
-        )
+    router.post(GATEWAY_CHANNEL_URL).mock(side_effect=_capture)
+
+    with (
+        patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+        patch("services.shop_service.ShopService.refresh_shop", new=AsyncMock(return_value=_FAKE_REFRESH_RESULT)),
+        patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
+    ):
+        result = await execute_shop_refresh_job("job-role", {})
+
+    assert result["status"] == "success"
+    return captured
 
 
-class TestAdminRouterShopRefreshSourceContainsFallback:
-    """Verify admin.py shop refresh also uses shop_announcements_role_id."""
-
-    def test_admin_router_source_has_shop_announcements_role_id(self):
-        """admin.py refresh_shop must reference shop_announcements_role_id."""
-        admin_path = os.path.join(
-            _SRC,
-            "api",
-            "routers",
-            "admin.py",
-        )
-        with open(admin_path) as f:
-            source = f.read()
-        assert "shop_announcements_role_id" in source, "admin.py refresh_shop must use shop_announcements_role_id"
+# ---------------------------------------------------------------------------
+# Real column-presence check (introspection, not source grep)
+# ---------------------------------------------------------------------------
 
 
-class TestGuildConfigModelHasField:
-    """Verify GuildConfig model has shop_announcements_role_id field."""
-
-    def test_guild_config_model_has_field(self):
-        """GuildConfig model source must declare shop_announcements_role_id."""
-        model_path = os.path.join(
-            _SRC,
-            "persist",
-            "models",
-            "guild_config.py",
-        )
-        with open(model_path) as f:
-            source = f.read()
-        assert "shop_announcements_role_id" in source, (
-            "GuildConfig model must declare shop_announcements_role_id column"
-        )
+def test_guild_config_declares_shop_announcements_role_id_column():
+    """GuildConfig ORM model actually declares the shop_announcements_role_id column."""
+    cols = GuildConfig.__table__.c
+    assert "shop_announcements_role_id" in cols, "GuildConfig must declare shop_announcements_role_id"
+    assert cols["shop_announcements_role_id"].nullable is True
 
 
-class TestMigrationFileExists:
-    """Verify the Alembic migration file for shop_announcements_role_id exists."""
+# ---------------------------------------------------------------------------
+# Behavioural role-selection tests (real executor + respx)
+# ---------------------------------------------------------------------------
 
-    def test_migration_file_exists(self):
-        """Migration 0003 must exist and reference shop_announcements_role_id."""
-        migration_path = os.path.join(
-            _SRC,
-            "persist",
-            "database",
-            "revisions",
-            "versions",
-            "0003_add_shop_announcements_role_id.py",
-        )
-        assert os.path.exists(migration_path), "Migration file 0003_add_shop_announcements_role_id.py must exist"
-        with open(migration_path) as f:
-            source = f.read()
-        assert "shop_announcements_role_id" in source
-        assert "guild_configs" in source
-        assert "add_column" in source
+
+class TestShopAnnouncementsRoleSelection:
+    """Role mention is driven by the executor's real config-read + selection logic."""
+
+    async def test_shop_announcements_role_preferred_over_bounty_hunter(self, sqlite_engine_and_factory):
+        """shop_announcements_role_id (int) is used for the Bronze mention over bounty_hunter_role_id."""
+        _engine, factory = sqlite_engine_and_factory
+        async with factory() as db:
+            await _seed_guild_config(db, shop_announcements_role_id=SHOP_ANN_ROLE, bounty_hunter_role_id=BH_ROLE)
+
+        with respx.mock(assert_all_called=False) as router:
+            mentions = await _run_and_capture_mentions(factory, router)
+
+        assert len(mentions) == 4, f"Expected 4 tier announcements, got {mentions!r}"
+        assert mentions[0] == f"<@&{SHOP_ANN_ROLE}>", f"Bronze must mention shop role, got {mentions[0]!r}"
+        for m in mentions[1:]:
+            assert m is None, f"Non-Bronze tiers must not mention any role, got {m!r}"
+
+    async def test_falls_back_to_bounty_hunter_when_shop_role_none(self, sqlite_engine_and_factory):
+        """With shop_announcements_role_id None, Bronze mention falls back to bounty_hunter_role_id."""
+        _engine, factory = sqlite_engine_and_factory
+        async with factory() as db:
+            await _seed_guild_config(db, shop_announcements_role_id=None, bounty_hunter_role_id=BH_ROLE)
+
+        with respx.mock(assert_all_called=False) as router:
+            mentions = await _run_and_capture_mentions(factory, router)
+
+        assert mentions[0] == f"<@&{BH_ROLE}>", f"Bronze must fall back to bounty hunter role, got {mentions[0]!r}"
+        for m in mentions[1:]:
+            assert m is None
+
+    async def test_no_mention_when_both_roles_none(self, sqlite_engine_and_factory):
+        """With both role IDs None, no tier includes a role mention."""
+        _engine, factory = sqlite_engine_and_factory
+        async with factory() as db:
+            await _seed_guild_config(db, shop_announcements_role_id=None, bounty_hunter_role_id=None)
+
+        with respx.mock(assert_all_called=False) as router:
+            mentions = await _run_and_capture_mentions(factory, router)
+
+        assert len(mentions) == 4
+        assert all(m is None for m in mentions), f"Expected no mentions, got {mentions!r}"

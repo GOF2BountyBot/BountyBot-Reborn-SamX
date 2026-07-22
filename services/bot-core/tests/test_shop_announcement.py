@@ -14,10 +14,11 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Path setup and shared stub registration
@@ -253,116 +254,66 @@ class TestBuildInventoryFields:
 # ===========================================================================
 
 
+# ---------------------------------------------------------------------------
+# respx helper — transport-level mock that ASSERTS the route + method and
+# captures the JSON payload.  Replaces the old accept-anything monkeypatch of
+# httpx.AsyncClient.post (which validated neither URL nor verb).
+# ---------------------------------------------------------------------------
+
+
+async def _announce_and_capture(**kwargs) -> dict:
+    """Run announce_shop_refresh under respx and return the single POST body.
+
+    The route is registered on the exact gateway channel-messages URL with the
+    POST verb; ``assert_all_mocked=True`` makes any request to a different
+    URL/method fail loudly, so a wrong route or verb is caught.
+    """
+    captured: list[dict] = []
+
+    with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+
+        def _capture(request):
+            captured.append(json.loads(request.content))
+            return respx.MockResponse(200, json={"ok": True})
+
+        route = router.post(GATEWAY_URL).mock(side_effect=_capture)
+        await announce_shop_refresh(channel_id=CHANNEL_ID, **kwargs)
+
+    assert route.called, f"Expected a POST to {GATEWAY_URL}, but no matching request was made"
+    assert route.call_count == 1, f"Expected exactly 1 POST, got {route.call_count}"
+    assert route.calls.last.request.method == "POST"
+    assert len(captured) == 1
+    return captured[0]
+
+
 class TestAnnounceShopRefreshNewPath:
     """Tests for the new inventory-aware embed path (items is not None)."""
 
     async def test_tier_color_used_in_bronze_embed(self):
         """Bronze tier announcement uses #CD7F32 (13467442)."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Bronze",
-                items=[],
-            )
-
-        assert len(captured) == 1
-        assert captured[0]["content"]["color"] == _TIER_COLORS["bronze"]
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Bronze", items=[])
+        assert body["content"]["color"] == _TIER_COLORS["bronze"]
 
     async def test_tier_color_used_in_silver_embed(self):
         """Silver tier announcement uses #C0C0C0 (12632256)."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Silver",
-                items=[],
-            )
-
-        assert captured[0]["content"]["color"] == _TIER_COLORS["silver"]
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Silver", items=[])
+        assert body["content"]["color"] == _TIER_COLORS["silver"]
 
     async def test_tier_color_used_in_gold_embed(self):
         """Gold tier announcement uses #FFD700 (16766720)."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Gold",
-                items=[],
-            )
-
-        assert captured[0]["content"]["color"] == _TIER_COLORS["gold"]
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Gold", items=[])
+        assert body["content"]["color"] == _TIER_COLORS["gold"]
 
     async def test_tier_color_used_in_platinum_embed(self):
         """Platinum tier announcement uses #E5E4E2 (15066082)."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Platinum",
-                items=[],
-            )
-
-        assert captured[0]["content"]["color"] == _TIER_COLORS["platinum"]
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Platinum", items=[])
+        assert body["content"]["color"] == _TIER_COLORS["platinum"]
 
     async def test_empty_items_shows_no_stock_description(self):
         """Empty items list → 'no items currently stocked' description, no item fields."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Bronze",
-                items=[],
-            )
-
-        embed = captured[0]["content"]
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Bronze", items=[])
+        embed = body["content"]
         assert "no items are currently stocked" in embed["description"]
-        # No inventory fields should be added
         assert embed["fields"] == []
 
     async def test_with_items_shows_restocked_description(self):
@@ -370,185 +321,58 @@ class TestAnnounceShopRefreshNewPath:
         items = [
             {"item_type": "module", "item_name": "Shield Mk1", "price": 500, "quantity": 2},
         ]
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Bronze",
-                items=items,
-            )
-
-        embed = captured[0]["content"]
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Bronze", items=items)
+        embed = body["content"]
         assert "restocked" in embed["description"]
-        # Inventory fields should be present
         assert len(embed["fields"]) > 0
 
     async def test_title_includes_tier_and_tech_level(self):
         """When tier and tech_level are both provided, title includes both."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Gold",
-                items=[],
-                tech_level=7,
-            )
-
-        title = captured[0]["content"]["title"]
+        body = await _announce_and_capture(
+            caller_label="TestCaller", guild_id=GUILD_ID, tier="Gold", items=[], tech_level=7
+        )
+        title = body["content"]["title"]
         assert "Gold" in title
         assert "7" in title
         assert "Tech Level" in title
 
     async def test_title_includes_tier_only_when_no_tech_level(self):
         """When tier is provided but tech_level is None, title includes tier only."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Silver",
-                items=[],
-                tech_level=None,
-            )
-
-        title = captured[0]["content"]["title"]
+        body = await _announce_and_capture(
+            caller_label="TestCaller", guild_id=GUILD_ID, tier="Silver", items=[], tech_level=None
+        )
+        title = body["content"]["title"]
         assert "Silver" in title
         assert "Tech Level" not in title
 
     async def test_footer_text_correct_for_new_path(self):
         """New path uses the /buy footer text."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Bronze",
-                items=[],
-            )
-
-        footer = captured[0]["content"]["footer_text"]
-        assert "/buy" in footer
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Bronze", items=[])
+        assert "/buy" in body["content"]["footer_text"]
 
     async def test_role_mention_included_when_provided(self):
         """Role mention appears in text_content when bounty_hunter_role_id is set."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                bounty_hunter_role_id=ROLE_ID,
-                tier="Bronze",
-                items=[],
-            )
-
-        text_content = captured[0]["text_content"]
-        assert text_content == f"<@&{ROLE_ID}>"
+        body = await _announce_and_capture(
+            caller_label="TestCaller", guild_id=GUILD_ID, bounty_hunter_role_id=ROLE_ID, tier="Bronze", items=[]
+        )
+        assert body["text_content"] == f"<@&{ROLE_ID}>"
 
     async def test_no_role_mention_when_none(self):
         """text_content is None when bounty_hunter_role_id is None."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                bounty_hunter_role_id=None,
-                tier="Bronze",
-                items=[],
-            )
-
-        assert captured[0]["text_content"] is None
+        body = await _announce_and_capture(
+            caller_label="TestCaller", guild_id=GUILD_ID, bounty_hunter_role_id=None, tier="Bronze", items=[]
+        )
+        assert body["text_content"] is None
 
     async def test_default_color_when_tier_is_none(self):
         """When tier is None but items is provided, use default blue color."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier=None,
-                items=[],
-            )
-
-        assert captured[0]["content"]["color"] == _DEFAULT_SHOP_COLOR
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier=None, items=[])
+        assert body["content"]["color"] == _DEFAULT_SHOP_COLOR
 
     async def test_case_insensitive_tier_color_lookup(self):
         """Tier name 'BRONZE' (uppercase) maps to correct bronze color."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="BRONZE",
-                items=[],
-            )
-
-        assert captured[0]["content"]["color"] == _TIER_COLORS["bronze"]
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="BRONZE", items=[])
+        assert body["content"]["color"] == _TIER_COLORS["bronze"]
 
 
 class TestAnnounceShopRefreshLegacyPath:
@@ -556,110 +380,35 @@ class TestAnnounceShopRefreshLegacyPath:
 
     async def test_legacy_path_uses_blue_color(self):
         """Legacy call (items=None) uses the original blue #3498DB color."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Bronze",
-                # items not passed → legacy path
-            )
-
-        assert captured[0]["content"]["color"] == 3447003
+        # items not passed → legacy path
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Bronze")
+        assert body["content"]["color"] == 3447003
 
     async def test_legacy_path_title_is_shop_refreshed(self):
         """Legacy call always uses '🛒 Shop Refreshed!' title regardless of tier."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Gold",
-            )
-
-        assert captured[0]["content"]["title"] == "🛒 Shop Refreshed!"
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Gold")
+        assert body["content"]["title"] == "🛒 Shop Refreshed!"
 
     async def test_legacy_path_tier_none_shows_all_tiers(self):
         """Legacy call with tier=None shows 'Bronze · Silver · Gold · Platinum' field."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier=None,
-            )
-
-        fields = captured[0]["content"]["fields"]
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier=None)
+        fields = body["content"]["fields"]
         assert len(fields) == 1
         assert "Bronze" in fields[0]["value"]
         assert "Platinum" in fields[0]["value"]
 
     async def test_legacy_path_with_tier_shows_tier_refreshed_field(self):
         """Legacy call with tier='Silver' shows tier-specific field."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-                tier="Silver",
-            )
-
-        fields = captured[0]["content"]["fields"]
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID, tier="Silver")
+        fields = body["content"]["fields"]
         assert len(fields) == 1
         assert fields[0]["name"] == "Tier Refreshed"
         assert fields[0]["value"] == "Silver"
 
     async def test_legacy_path_footer_ends_with_exclamation(self):
         """Legacy call uses 'Use /shop to browse!' footer."""
-        captured: list[dict] = []
-
-        async def _fake_post(self_client, url, json=None, timeout=None):
-            captured.append(json)
-            response = MagicMock()
-            response.raise_for_status = MagicMock()
-            return response
-
-        with patch("httpx.AsyncClient.post", _fake_post):
-            await announce_shop_refresh(
-                caller_label="TestCaller",
-                guild_id=GUILD_ID,
-                channel_id=CHANNEL_ID,
-            )
-
-        footer = captured[0]["content"]["footer_text"]
-        assert footer == "Use /shop to browse!"
+        body = await _announce_and_capture(caller_label="TestCaller", guild_id=GUILD_ID)
+        assert body["content"]["footer_text"] == "Use /shop to browse!"
 
 
 class TestAnnounceShopRefreshChannelNone:
@@ -667,9 +416,8 @@ class TestAnnounceShopRefreshChannelNone:
 
     async def test_no_http_call_when_channel_none(self):
         """When channel_id is None, no HTTP POST is made."""
-        with (
-            patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post,
-        ):
+        with respx.mock(assert_all_called=False, assert_all_mocked=True) as router:
+            # No route registered — any HTTP call would raise under assert_all_mocked.
             await announce_shop_refresh(
                 caller_label="TestCaller",
                 guild_id=GUILD_ID,
@@ -677,35 +425,29 @@ class TestAnnounceShopRefreshChannelNone:
                 tier="Bronze",
                 items=[],
             )
-
-        mock_post.assert_not_called()
+            assert router.calls.call_count == 0
 
     async def test_no_http_call_legacy_when_channel_none(self):
         """Legacy path: when channel_id is None, no HTTP POST is made."""
-        with (
-            patch("httpx.AsyncClient.post", new=AsyncMock()) as mock_post,
-        ):
+        with respx.mock(assert_all_called=False, assert_all_mocked=True) as router:
             await announce_shop_refresh(
                 caller_label="TestCaller",
                 guild_id=GUILD_ID,
                 channel_id=None,
             )
-
-        mock_post.assert_not_called()
+            assert router.calls.call_count == 0
 
 
 class TestAnnounceShopRefreshHttpFailure:
     """Tests that HTTP failures are non-fatal."""
 
     async def test_http_error_does_not_propagate(self):
-        """HTTP failure is caught and logged; function returns normally."""
+        """A real httpx.ConnectError at the transport is caught and logged; no raise."""
         import httpx as httpx_mod
 
-        async def _failing_post(self_client, url, json=None, timeout=None):
-            raise httpx_mod.ConnectError("connection refused")
-
-        # Should not raise
-        with patch("httpx.AsyncClient.post", _failing_post):
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            route = router.post(GATEWAY_URL).mock(side_effect=httpx_mod.ConnectError("connection refused"))
+            # Should not raise.
             await announce_shop_refresh(
                 caller_label="TestCaller",
                 guild_id=GUILD_ID,
@@ -713,11 +455,12 @@ class TestAnnounceShopRefreshHttpFailure:
                 tier="Bronze",
                 items=[],
             )
+            assert route.called, "The announce path must still attempt the POST before failing"
 
     async def test_500_response_does_not_propagate(self):
         """HTTP 500 response is caught and logged; function returns normally."""
-        with respx.mock(assert_all_called=False) as router:
-            router.post(GATEWAY_URL).respond(500)
+        with respx.mock(assert_all_called=True, assert_all_mocked=True) as router:
+            route = router.post(GATEWAY_URL).respond(500)
             # Should not raise
             await announce_shop_refresh(
                 caller_label="TestCaller",
@@ -726,3 +469,4 @@ class TestAnnounceShopRefreshHttpFailure:
                 tier="Bronze",
                 items=[],
             )
+            assert route.called

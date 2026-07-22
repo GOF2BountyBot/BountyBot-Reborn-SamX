@@ -252,14 +252,15 @@ async def test_default_backfill_server_default_zero(sqlite_engine):
 # for real — the migration's own DDL is exercised, not just the ORM metadata.
 # ---------------------------------------------------------------------------
 
-import contextlib  # noqa: E402
-import importlib.util  # noqa: E402
+import contextlib
+import importlib.util
 
-import sqlalchemy as sa  # noqa: E402
-from alembic.migration import MigrationContext  # noqa: E402
-from alembic.operations import Operations  # noqa: E402
-from tests.pg_env import PG_SYNC_URL as _PG_SYNC_URL  # noqa: E402
-from tests.pg_env import pg_skip_reason  # noqa: E402
+import sqlalchemy as sa
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+
+from tests.pg_env import PG_SYNC_URL as _PG_SYNC_URL
+from tests.pg_env import pg_skip_reason
 
 _PG_SKIP = pg_skip_reason()
 _PG_MARK = pytest.mark.skipif(bool(_PG_SKIP), reason=_PG_SKIP or "")

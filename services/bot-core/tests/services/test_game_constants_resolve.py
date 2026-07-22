@@ -7,6 +7,7 @@ zero-int override, zero-float override, and dict override.
 from unittest.mock import MagicMock
 
 import pytest
+from persist.models.guild_config import GuildConfig
 from services.game_constants import GameConstants, resolve_constant
 
 # ---------------------------------------------------------------------------
@@ -20,7 +21,7 @@ def test_resolve_constant_returns_fallback_when_config_is_none():
 
 
 def test_resolve_constant_returns_fallback_when_field_is_none():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.bounty_pvc_armour_buff_factor = None
     result = resolve_constant(cfg, "bounty_pvc_armour_buff_factor", 1.5)
     assert result == 1.5
@@ -38,7 +39,7 @@ def test_resolve_constant_handles_missing_attribute():
 
 
 def test_resolve_constant_returns_override_when_field_is_set():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.bounty_pvc_armour_buff_factor = 2.0
     result = resolve_constant(cfg, "bounty_pvc_armour_buff_factor", 1.5)
     assert result == 2.0
@@ -46,7 +47,7 @@ def test_resolve_constant_returns_override_when_field_is_set():
 
 def test_resolve_constant_zero_int_is_valid_override():
     """0 is a legitimate override value and MUST NOT fall back to the default."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.duel_cloak_chance = 0
     result = resolve_constant(cfg, "duel_cloak_chance", 20)
     assert result == 0  # 0 is a valid override, NOT fallback
@@ -54,14 +55,14 @@ def test_resolve_constant_zero_int_is_valid_override():
 
 def test_resolve_constant_zero_float_is_valid_override():
     """0.0 is a legitimate override value and MUST NOT fall back to the default."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.duel_variance_percent = 0.0
     result = resolve_constant(cfg, "duel_variance_percent", 0.05)
     assert result == 0.0  # 0.0 is a valid override, NOT fallback
 
 
 def test_resolve_constant_dict_override():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.division_max_tl = {"bronze": 3, "silver": 6, "gold": 9, "platinum": 10}
     result = resolve_constant(cfg, "division_max_tl", GameConstants.DIVISION_MAX_TL)
     assert result["bronze"] == 3
@@ -91,7 +92,7 @@ def test_resolve_constant_dict_override():
 )
 def test_resolve_constant_various_fields(field, override_val, fallback):
     """Override takes precedence over fallback for various field types."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     setattr(cfg, field, override_val)
     result = resolve_constant(cfg, field, fallback)
     assert result == override_val
@@ -107,7 +108,7 @@ def test_resolve_constant_various_fields(field, override_val, fallback):
 )
 def test_resolve_constant_none_field_falls_back(field, fallback):
     """When the config attribute is None, the fallback is returned."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     setattr(cfg, field, None)
     result = resolve_constant(cfg, field, fallback)
     assert result == fallback
@@ -171,7 +172,7 @@ def test_loot_knob_count_is_nineteen():
 @pytest.mark.parametrize("field, default, override_val", _LOOT_KNOBS)
 def test_loot_knob_resolves_to_default_when_null(field, default, override_val):
     """NULL guild column resolves to the GameConstants default."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     setattr(cfg, field, None)
     assert resolve_constant(cfg, field, default) == default
 
@@ -179,6 +180,6 @@ def test_loot_knob_resolves_to_default_when_null(field, default, override_val):
 @pytest.mark.parametrize("field, default, override_val", _LOOT_KNOBS)
 def test_loot_knob_resolves_to_override_when_set(field, default, override_val):
     """A set guild column overrides the GameConstants default."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     setattr(cfg, field, override_val)
     assert resolve_constant(cfg, field, default) == override_val

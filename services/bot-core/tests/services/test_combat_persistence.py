@@ -419,4 +419,5 @@ class TestDbRetentionExecutorCombatLogPass:
             result = await execute_db_retention_job("test-job", {})
 
         assert "combat_logs_deleted" in result, "Return dict must include 'combat_logs_deleted'"
+        assert result["combat_logs_deleted"] == 3
         assert result["status"] == "success"

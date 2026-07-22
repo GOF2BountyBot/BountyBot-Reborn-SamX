@@ -30,7 +30,9 @@ if "shared" not in sys.modules:
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
 
-from services.bounty_service import BountyService, RewardInfo
+from persist.models.bounty import Bounty
+from persist.models.guild_config import GuildConfig
+from services.bounty_service import BountyService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,15 +44,20 @@ def _make_bounty(
     reward_per_sys: int = 100,
     answer: str = "Sol",
     checked: dict | None = None,
-) -> SimpleNamespace:
-    """Build a minimal Bounty-like SimpleNamespace for calc_rewards tests."""
+) -> Bounty:
+    """Build a real Bounty ORM row (no DB session needed) for calc_rewards tests."""
     if checked is None:
         checked = {"Sol": 42, "Alpha": -1}  # player 42 checked the answer
-    return SimpleNamespace(
+    return Bounty(
+        guild_id=1,
+        division="bronze",
+        criminal_name="Crusher",
+        route=["Sol", "Alpha"],
+        answer=answer,
         reward=reward,
         reward_per_sys=reward_per_sys,
-        answer=answer,
         checked=checked,
+        tech_level=3,
     )
 
 
@@ -79,9 +86,10 @@ class TestWinnerReserveFactorOverride:
         bounty = _make_bounty(reward=1000, checked={"Sol": 42}, answer="Sol")
         db = AsyncMock()
 
-        cfg = MagicMock()
-        cfg.bounty_winner_reserve_factor = 0.5
-        cfg.bounty_reward_to_xp_gain_mult = None  # use global XP mult
+        # Real GuildConfig: unset override columns read back as None (the "use
+        # GameConstants default" sentinel), so bounty_reward_to_xp_gain_mult
+        # naturally falls back to the global XP mult without setting it explicitly.
+        cfg = GuildConfig(guild_id=1, bounty_winner_reserve_factor=0.5)
 
         rewards = await service.calc_rewards(db, bounty, cfg=cfg)
         winner = next(r for r in rewards if r.is_winner)
@@ -101,9 +109,8 @@ class TestWinnerReserveFactorOverride:
         )
         db = AsyncMock()
 
-        cfg = MagicMock()
-        cfg.bounty_winner_reserve_factor = 0.5
-        cfg.bounty_reward_to_xp_gain_mult = None
+        # Unset bounty_reward_to_xp_gain_mult reads back None → falls back to global.
+        cfg = GuildConfig(guild_id=1, bounty_winner_reserve_factor=0.5)
 
         rewards = await service.calc_rewards(db, bounty, cfg=cfg)
         winner = next(r for r in rewards if r.is_winner)
@@ -121,9 +128,7 @@ class TestWinnerReserveFactorOverride:
         bounty = _make_bounty(reward=1000, checked={"Sol": 42}, answer="Sol")
         db = AsyncMock()
 
-        cfg = MagicMock()
-        cfg.bounty_winner_reserve_factor = 0.0
-        cfg.bounty_reward_to_xp_gain_mult = None
+        cfg = GuildConfig(guild_id=1, bounty_winner_reserve_factor=0.0)
 
         rewards = await service.calc_rewards(db, bounty, cfg=cfg)
         winner = next(r for r in rewards if r.is_winner)
@@ -155,9 +160,8 @@ class TestXPMultOverride:
         bounty = _make_bounty(reward=1000, checked={"Sol": 42}, answer="Sol")
         db = AsyncMock()
 
-        cfg = MagicMock()
-        cfg.bounty_winner_reserve_factor = None  # use global
-        cfg.bounty_reward_to_xp_gain_mult = 0.5  # 5x the global 0.1
+        # bounty_winner_reserve_factor left unset → reads back None → uses global.
+        cfg = GuildConfig(guild_id=1, bounty_reward_to_xp_gain_mult=0.5)  # 5x the global 0.1
 
         rewards = await service.calc_rewards(db, bounty, cfg=cfg)
         winner = next(r for r in rewards if r.is_winner)
@@ -169,9 +173,7 @@ class TestXPMultOverride:
         bounty = _make_bounty(reward=1000, checked={"Sol": 42}, answer="Sol")
         db = AsyncMock()
 
-        cfg = MagicMock()
-        cfg.bounty_winner_reserve_factor = None
-        cfg.bounty_reward_to_xp_gain_mult = 0.0
+        cfg = GuildConfig(guild_id=1, bounty_reward_to_xp_gain_mult=0.0)
 
         rewards = await service.calc_rewards(db, bounty, cfg=cfg)
         winner = next(r for r in rewards if r.is_winner)
@@ -187,8 +189,8 @@ class TestPvcArmourBuffOverride:
     """_process_single_bounty_check passes per-guild bounty_pvc_armour_buff_factor
     to combat_service.fight_ships as ``player_armour_buff``."""
 
-    def _make_bronze_bounty(self, bounty_id: int = 1) -> SimpleNamespace:
-        return SimpleNamespace(
+    def _make_bronze_bounty(self, bounty_id: int = 1) -> Bounty:
+        return Bounty(
             id=bounty_id,
             guild_id=100,
             answer="Sol",
@@ -200,6 +202,8 @@ class TestPvcArmourBuffOverride:
             end_time=None,
             division="bronze",
             status="active",  # X3-bounty: _process_single_bounty_check checks status under lock
+            route=["Sol"],
+            tech_level=1,
         )
 
     def _make_player(self) -> SimpleNamespace:
@@ -240,23 +244,25 @@ class TestPvcArmourBuffOverride:
         service.bounty_repo.get_by_id_for_update = AsyncMock(return_value=bounty)
 
         with (
+            # distribute_rewards writes real player rows via player_repo against a
+            # real DB session — `db` here is a bare AsyncMock, not a real session,
+            # so a real distribute_rewards call would just error on the ORM calls.
+            # Not part of what this test verifies (pvc_damage_reduction plumbing).
             patch("services.bounty_service.BountyService.distribute_rewards", new=AsyncMock(return_value=None)),
-            patch(
-                "services.bounty_service.BountyService.calc_rewards",
-                new=AsyncMock(
-                    return_value=[RewardInfo(player_id=42, credits_earned=500, xp_earned=50, is_winner=True)]
-                ),
-            ),
+            # calc_rewards is real (see below, no patch) — it only reads
+            # bounty/cfg attributes, no DB access, so it's cheap to run for real.
             # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids.
             # This test uses a real BountyService with a real PlayerRepository against a mock db,
             # so we patch _build_payout_breakdown to avoid a real DB call.
             patch("services.bounty_service.BountyService._build_payout_breakdown", new=AsyncMock(return_value=[])),
             patch("services.bounty_service.BountyService._award_combat_bonus", new=AsyncMock()),
+            # from_player needs real Ship/Item DB lookups via repositories — out of
+            # reach of the bare AsyncMock db used here, so it stays mocked.
             patch("services.loadout_builder.LoadoutBuilder.from_player") as mock_from_player,
-            patch("services.loadout_builder.LoadoutBuilder.from_criminal_ship") as mock_from_criminal,
+            # from_criminal_ship is real (see below, no patch) — it's a pure
+            # dict-parsing staticmethod, no DB involved.
         ):
             mock_from_player.return_value = ShipLoadout(ship_name="Betty", base_armour=100)
-            mock_from_criminal.return_value = ShipLoadout(ship_name="Crusher", base_armour=80)
 
             await service._process_single_bounty_check(
                 db,
@@ -294,27 +300,32 @@ class TestPvcArmourBuffOverride:
         # X3-bounty: _process_single_bounty_check calls get_by_id_for_update before reading checked
         service.bounty_repo.get_by_id_for_update = AsyncMock(return_value=bounty)
 
-        cfg = MagicMock()
-        cfg.pvc_damage_reduction = 0.20  # T10: per-guild override for PvC DR
+        # Real GuildConfig: only pvc_damage_reduction is overridden; every other
+        # override column reads back None (unset), so calc_rewards' resolve_constant
+        # lookups correctly fall through to the global defaults instead of a
+        # truthy-but-meaningless MagicMock attribute.
+        cfg = GuildConfig(guild_id=100, pvc_damage_reduction=0.20)  # T10: per-guild override for PvC DR
 
         with (
+            # distribute_rewards writes real player rows via player_repo against a
+            # real DB session — `db` here is a bare AsyncMock, not a real session,
+            # so a real distribute_rewards call would just error on the ORM calls.
+            # Not part of what this test verifies (pvc_damage_reduction plumbing).
             patch("services.bounty_service.BountyService.distribute_rewards", new=AsyncMock(return_value=None)),
-            patch(
-                "services.bounty_service.BountyService.calc_rewards",
-                new=AsyncMock(
-                    return_value=[RewardInfo(player_id=42, credits_earned=500, xp_earned=50, is_winner=True)]
-                ),
-            ),
+            # calc_rewards is real (see below, no patch) — it only reads
+            # bounty/cfg attributes, no DB access, so it's cheap to run for real.
             # P6-T1: _build_payout_breakdown now calls player_repo.get_by_ids.
             # This test uses a real BountyService with a real PlayerRepository against a mock db,
             # so we patch _build_payout_breakdown to avoid a real DB call.
             patch("services.bounty_service.BountyService._build_payout_breakdown", new=AsyncMock(return_value=[])),
             patch("services.bounty_service.BountyService._award_combat_bonus", new=AsyncMock()),
+            # from_player needs real Ship/Item DB lookups via repositories — out of
+            # reach of the bare AsyncMock db used here, so it stays mocked.
             patch("services.loadout_builder.LoadoutBuilder.from_player") as mock_from_player,
-            patch("services.loadout_builder.LoadoutBuilder.from_criminal_ship") as mock_from_criminal,
+            # from_criminal_ship is real (see below, no patch) — it's a pure
+            # dict-parsing staticmethod, no DB involved.
         ):
             mock_from_player.return_value = ShipLoadout(ship_name="Betty", base_armour=100)
-            mock_from_criminal.return_value = ShipLoadout(ship_name="Vandal", base_armour=80)
 
             await service._process_single_bounty_check(
                 db,

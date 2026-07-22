@@ -4633,7 +4633,14 @@ def _make_edit_bounty(
 
 
 class TestEditBountyAnnouncementCriminalIcon:
-    """Tests for _edit_bounty_announcement criminal_icon lookup fix."""
+    """Tests for _edit_bounty_announcement criminal_icon lookup fix.
+
+    R3 justification: each test patches the three DB/service boundaries the method
+    fans out to (DiscordMessageRepository, CriminalRepository, the payload builder)
+    plus the httpx gateway client. The httpx fake is now a FAITHFUL responder — it
+    asserts the PUT route and structured-payload shape (R2) rather than accepting
+    anything. The full real-payload wire contract is exercised in test_bounty_check_edit.py.
+    """
 
     @pytest.fixture
     def svc(self):
@@ -4689,6 +4696,12 @@ class TestEditBountyAnnouncementCriminalIcon:
                 pass
 
             async def put(self, url, json=None, timeout=10):
+                # Faithful gateway responder (R2): assert the PUT targets the A.48 unified
+                # bounty-announcement endpoint for this channel/message and carries the
+                # structured wire payload — instead of accepting any URL/body and returning OK.
+                assert url == "http://gateway:7999/api/v1/announcements/bounty/channel/1234/message/9999"
+                assert json is not None
+                assert "loadout_response" in json and "metadata" in json
                 return FakeHttpxResponse()
 
         with (
@@ -4757,6 +4770,12 @@ class TestEditBountyAnnouncementCriminalIcon:
                 pass
 
             async def put(self, url, json=None, timeout=10):
+                # Faithful gateway responder (R2): assert the PUT targets the A.48 unified
+                # bounty-announcement endpoint for this channel/message and carries the
+                # structured wire payload — instead of accepting any URL/body and returning OK.
+                assert url == "http://gateway:7999/api/v1/announcements/bounty/channel/1234/message/9999"
+                assert json is not None
+                assert "loadout_response" in json and "metadata" in json
                 return FakeHttpxResponse()
 
         with (
@@ -4824,6 +4843,12 @@ class TestEditBountyAnnouncementCriminalIcon:
                 pass
 
             async def put(self, url, json=None, timeout=10):
+                # Faithful gateway responder (R2): assert the PUT targets the A.48 unified
+                # bounty-announcement endpoint for this channel/message and carries the
+                # structured wire payload — instead of accepting any URL/body and returning OK.
+                assert url == "http://gateway:7999/api/v1/announcements/bounty/channel/1234/message/9999"
+                assert json is not None
+                assert "loadout_response" in json and "metadata" in json
                 return FakeHttpxResponse()
 
         with (

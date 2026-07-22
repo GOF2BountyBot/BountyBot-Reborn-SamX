@@ -155,32 +155,15 @@ def named_thread_pool():
 # ===========================================================================
 
 
-class TestNoDefaultExecutorInSource:
-    """Static assertion: the touched function must not use the default executor."""
-
-    def test_no_run_in_executor_none_in_source(self):
-        """The source file must not contain run_in_executor(None, ...) in execute_pg_backup_job.
-
-        This proves the seam swap is in place and was not accidentally
-        reverted or left alongside the old call.
-        """
-        source_file = Path(_exec_mod.__file__)
-        source_text = source_file.read_text()
-
-        # Confirm the OLD pattern is gone everywhere in the file.
-        assert "run_in_executor(None," not in source_text, (
-            "Found run_in_executor(None, ...) in pg_backup_executor.py — "
-            "the default-executor call must be replaced by offload_io."
-        )
-
-    def test_offload_io_import_present(self):
-        """offload_io must be imported at the top of pg_backup_executor."""
-        source_file = Path(_exec_mod.__file__)
-        source_text = source_file.read_text()
-
-        assert "from utils.offload import offload_io" in source_text, (
-            "offload_io import not found in pg_backup_executor.py"
-        )
+# ===========================================================================
+# NOTE: class TestNoDefaultExecutorInSource (two source-text greps —
+# ``"run_in_executor(None," not in source`` and
+# ``"from utils.offload import offload_io" in source``) was removed here
+# (test true-up).  Both asserted on source text; the seam swap is proven
+# BEHAVIOURALLY below by TestOffloadIoSeamSwap (offload_io is awaited, not
+# loop.run_in_executor(None, ...)) and TestSharedThreadPoolDispatch (the dump
+# actually runs on the shared named thread pool, verified by thread name).
+# ===========================================================================
 
 
 # ===========================================================================

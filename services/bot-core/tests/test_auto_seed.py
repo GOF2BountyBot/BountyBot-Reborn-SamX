@@ -13,8 +13,11 @@ Strategy
   ``get_repository``, and ``load_data`` to keep tests fully unit-level.
 """
 
+import os
 import sys
 import types
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -37,29 +40,46 @@ if "shared" not in sys.modules:
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
 
+# Force src to the FRONT so `persist`/`utils` resolve to the app packages even
+# when this module is collected in isolation (tests/ carries a `services`
+# subpackage that shadows src/ when tests/ precedes src/).
+_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, _SRC)
+
+import pytest
+from persist.models.base import Base
+from persist.models.guild_config import GuildConfig
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_session_ctx(scalar_value=0) -> MagicMock:
-    """
-    Return a mock async context-manager for db_manager.get_session().
+@pytest.fixture
+async def sqlite_factory():
+    """Real SQLite engine + session factory with the (SQLite-compatible) GuildConfig table."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=[GuildConfig.__table__])
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
 
-    The mock session's execute() bypasses SQLAlchemy query building
-    entirely and returns a result with a configurable scalar.
-    """
-    result = MagicMock()
-    result.scalar.return_value = scalar_value
 
-    session = AsyncMock()
-    session.execute = AsyncMock(return_value=result)
+def _make_fake_db_manager(factory):
+    """MagicMock db_manager whose get_session() yields a real SQLite session."""
 
-    ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=session)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-    return ctx
+    @asynccontextmanager
+    async def _get():
+        async with factory() as session:
+            yield session
+
+    fake = MagicMock()
+    fake.get_session = MagicMock(side_effect=_get)
+    return fake
 
 
 def _make_repo() -> MagicMock:
@@ -74,61 +94,43 @@ def _make_repo() -> MagicMock:
 
 
 class TestTableIsEmpty:
-    """Tests for the ``table_is_empty`` helper."""
+    """Tests for the ``table_is_empty`` helper.
 
-    async def test_returns_true_when_count_is_zero(self):
-        """scalar()==0 → table is empty."""
+    These now run the REAL ``select(func.count()).select_from(repo._model)``
+    query against a real SQLite ``guild_configs`` table (with the real
+    GuildConfig ORM model as ``repo._model``), instead of patching SQLAlchemy's
+    ``select`` so a MagicMock model slips past ``select_from()`` validation.
+
+    NOTE (test true-up): the former ``test_treats_none_scalar_as_empty`` was
+    removed — it fabricated a ``scalar()==None`` result that a real ``COUNT(*)``
+    can never return (COUNT yields 0 for an empty table).  The ``(count or 0)``
+    guard's empty→True outcome is fully covered by the real empty-table test
+    below.
+    """
+
+    async def test_returns_true_when_table_empty(self, sqlite_factory):
+        """Empty guild_configs table → table_is_empty returns True (real COUNT(*)=0)."""
         from utils.auto_seeder import table_is_empty
 
-        repo = _make_repo()
-        ctx = _make_session_ctx(scalar_value=0)
-
-        # Patch both db_manager.get_session AND the SQLAlchemy select expression
-        # so the MagicMock model passes select_from() validation.
-        with (
-            patch("utils.auto_seeder.db_manager") as mock_mgr,
-            patch("utils.auto_seeder.select") as mock_select,
-        ):
-            mock_mgr.get_session.return_value = ctx
-            # Make select(...).select_from(...) return a sentinel so execute() accepts it
-            mock_select.return_value.select_from.return_value = MagicMock()
+        repo = SimpleNamespace(_model=GuildConfig)  # only ._model is read by the helper
+        with patch("utils.auto_seeder.db_manager", _make_fake_db_manager(sqlite_factory)):
             result = await table_is_empty(repo)
 
         assert result is True
 
-    async def test_returns_false_when_count_is_positive(self):
-        """scalar()>0 → table has rows."""
+    async def test_returns_false_when_table_has_rows(self, sqlite_factory):
+        """A seeded row → table_is_empty returns False (real COUNT(*)=1)."""
         from utils.auto_seeder import table_is_empty
 
-        repo = _make_repo()
-        ctx = _make_session_ctx(scalar_value=42)
+        async with sqlite_factory() as db:
+            db.add(GuildConfig(guild_id=9_700_000_001))
+            await db.commit()
 
-        with (
-            patch("utils.auto_seeder.db_manager") as mock_mgr,
-            patch("utils.auto_seeder.select") as mock_select,
-        ):
-            mock_mgr.get_session.return_value = ctx
-            mock_select.return_value.select_from.return_value = MagicMock()
+        repo = SimpleNamespace(_model=GuildConfig)
+        with patch("utils.auto_seeder.db_manager", _make_fake_db_manager(sqlite_factory)):
             result = await table_is_empty(repo)
 
         assert result is False
-
-    async def test_treats_none_scalar_as_empty(self):
-        """scalar()==None → treated as 0 (empty)."""
-        from utils.auto_seeder import table_is_empty
-
-        repo = _make_repo()
-        ctx = _make_session_ctx(scalar_value=None)
-
-        with (
-            patch("utils.auto_seeder.db_manager") as mock_mgr,
-            patch("utils.auto_seeder.select") as mock_select,
-        ):
-            mock_mgr.get_session.return_value = ctx
-            mock_select.return_value.select_from.return_value = MagicMock()
-            result = await table_is_empty(repo)
-
-        assert result is True
 
 
 # ---------------------------------------------------------------------------

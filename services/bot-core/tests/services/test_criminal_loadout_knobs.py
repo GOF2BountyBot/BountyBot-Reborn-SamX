@@ -9,15 +9,14 @@ Covers, for each of the 7 new per-guild tunables:
 
 Also asserts cluster-missile is now a HEAVY shop secondary (Thread 1 reclassify).
 
-Test rules followed: real deterministic objects preferred; at most one MagicMock per
-test (only as a lightweight stand-in for a GuildConfig row in resolve_constant tests).
+Test rules followed: real deterministic objects preferred; resolve_constant tests use a
+real GuildConfig row (unset override columns default None) rather than a MagicMock stand-in.
 Mirrors tests/services/test_game_constants_resolve.py style.
 """
 
-from unittest.mock import MagicMock
-
 import pytest
 from api.schemas.config_schema import GameConstantsOverridesMixin
+from persist.models.guild_config import GuildConfig
 from pydantic import ValidationError
 from services.game_constants import GameConstants, resolve_constant
 
@@ -92,14 +91,14 @@ def test_cluster_missile_is_heavy_secondary():
 
 
 def test_resolve_long_range_threshold_override_wins():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.long_range_threshold_m = 3000
     result = resolve_constant(cfg, "long_range_threshold_m", GameConstants.LONG_RANGE_THRESHOLD_M)
     assert result == 3000
 
 
 def test_resolve_long_range_threshold_none_falls_back():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.long_range_threshold_m = None
     result = resolve_constant(cfg, "long_range_threshold_m", GameConstants.LONG_RANGE_THRESHOLD_M)
     assert result == 2600
@@ -111,7 +110,7 @@ def test_resolve_long_range_threshold_no_config_falls_back():
 
 
 def test_resolve_criminal_long_range_pct_override_wins():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.criminal_long_range_pct = 0.75
     result = resolve_constant(cfg, "criminal_long_range_pct", GameConstants.CRIMINAL_LONG_RANGE_PCT)
     assert result == pytest.approx(0.75)
@@ -119,21 +118,21 @@ def test_resolve_criminal_long_range_pct_override_wins():
 
 def test_resolve_criminal_long_range_pct_zero_is_valid_override():
     """0.0 is a legitimate override (disable the long-range floor) — NOT a fallback."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.criminal_long_range_pct = 0.0
     result = resolve_constant(cfg, "criminal_long_range_pct", GameConstants.CRIMINAL_LONG_RANGE_PCT)
     assert result == pytest.approx(0.0)
 
 
 def test_resolve_primary_tl_band_weights_override_wins():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.primary_tl_band_weights = {"center": 50, "minus1": 30, "plus1": 20}
     result = resolve_constant(cfg, "primary_tl_band_weights", GameConstants.PRIMARY_TL_BAND_WEIGHTS)
     assert result == {"center": 50, "minus1": 30, "plus1": 20}
 
 
 def test_resolve_primary_tl_band_weights_none_falls_back():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.primary_tl_band_weights = None
     result = resolve_constant(cfg, "primary_tl_band_weights", GameConstants.PRIMARY_TL_BAND_WEIGHTS)
     assert result == {"center": 70, "minus1": 20, "plus1": 10}
@@ -150,7 +149,7 @@ def test_resolve_primary_tl_band_weights_none_falls_back():
 )
 def test_resolve_criminal_division_chance_override_wins(field, default):
     override = {"bronze": 10, "silver": 20, "gold": 30, "platinum": 40}
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     setattr(cfg, field, override)
     assert resolve_constant(cfg, field, default) == override
 
@@ -165,7 +164,7 @@ def test_resolve_criminal_division_chance_override_wins(field, default):
     ],
 )
 def test_resolve_criminal_division_chance_none_falls_back(field, default):
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     setattr(cfg, field, None)
     assert resolve_constant(cfg, field, default) == default
 
@@ -295,7 +294,7 @@ def test_schema_accepts_long_range_threshold_zero():
 
 def test_resolve_long_range_threshold_zero_is_valid_override():
     """0 override must be returned verbatim, NOT swallowed back to the default 2600."""
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.long_range_threshold_m = 0
     result = resolve_constant(cfg, "long_range_threshold_m", GameConstants.LONG_RANGE_THRESHOLD_M)
     assert result == 0
@@ -311,14 +310,14 @@ def test_criminal_exclude_emp_weapons_default_on():
 
 
 def test_resolve_exclude_emp_override_false_wins():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.criminal_exclude_emp_weapons = False
     result = resolve_constant(cfg, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS)
     assert result is False
 
 
 def test_resolve_exclude_emp_none_falls_back_to_true():
-    cfg = MagicMock()
+    cfg = GuildConfig(guild_id=1)
     cfg.criminal_exclude_emp_weapons = None
     result = resolve_constant(cfg, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS)
     assert result is True

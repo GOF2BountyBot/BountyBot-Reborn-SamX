@@ -74,23 +74,16 @@ _MINIMAL_PNG = (
 
 
 class TestNoDeprecationWarning:
-    """Verify the FastAPI app is NOT constructed with the deprecated default_response_class."""
+    """Verify the FastAPI app is NOT constructed with the deprecated default_response_class.
 
-    def test_main_py_does_not_import_orjsonresponse(self):
-        """main.py must NOT import ORJSONResponse (the deprecated approach has been removed)."""
-        src = _MAIN_PY.read_text(encoding="utf-8")
-        assert "ORJSONResponse" not in src, (
-            "main.py must not import ORJSONResponse — the deprecated default_response_class "
-            "approach has been removed in favour of FastAPI 0.136+ native serialization."
-        )
-
-    def test_main_py_does_not_set_default_response_class(self):
-        """main.py must NOT pass default_response_class=ORJSONResponse to FastAPI(...)."""
-        src = _MAIN_PY.read_text(encoding="utf-8")
-        assert "default_response_class=ORJSONResponse" not in src, (
-            "FastAPI(...) in create_app() must NOT include default_response_class=ORJSONResponse; "
-            "the native fast-path handles serialization without a custom class."
-        )
+    NOTE: two ``main.py`` source-substring greps were removed here (test true-up):
+    ``"ORJSONResponse" not in src`` and ``"default_response_class=ORJSONResponse"
+    not in src``.  They asserted on source text; the request-time behavioural
+    tests below (``test_no_fastapi_deprecation_warning_during_request`` and its
+    positive twin ``test_app_with_orjsonresponse_default_fires_deprecation_warning_on_request``)
+    prove the real contract: serving a request through the native app emits NO
+    FastAPIDeprecationWarning, while an ORJSONResponse-default app DOES.
+    """
 
     def _capture_fastapi_deprecation_warnings(self, app) -> list[str]:
         """Serve a request through *app* and return any FastAPI deprecation warning messages.
@@ -567,22 +560,10 @@ class TestHandlerAudit:
             "If the binary routes were removed or changed, update this assertion."
         )
 
-    def test_bounties_map_route_has_explicit_response_class(self):
-        """bounties.py /map route decorator must set response_class=Response explicitly.
-
-        An explicit response_class=Response on the decorator means FastAPI uses
-        Response for that route, preserving binary content-type and body.
-        """
-        src = (_ROUTERS_DIR / "bounties.py").read_text(encoding="utf-8")
-        assert "response_class=Response" in src, (
-            "bounties.py /map route must explicitly set response_class=Response "
-            "to preserve image/png content-type and binary body."
-        )
-
-    def test_systems_route_map_has_explicit_response_class(self):
-        """systems.py /route/map route decorator must set response_class=Response explicitly."""
-        src = (_ROUTERS_DIR / "systems.py").read_text(encoding="utf-8")
-        assert "response_class=Response" in src, (
-            "systems.py /route/map route must explicitly set response_class=Response "
-            "to preserve image/png content-type and binary body."
-        )
+    # NOTE: two source-substring greps were removed here (test true-up):
+    # ``"response_class=Response" in bounties.py`` and ``... in systems.py``.
+    # They asserted decorator source text; the behavioural map-route tests above
+    # (test_map_route_returns_image_png_content_type / _returns_binary_png_bytes /
+    # _body_matches_renderer_output) prove the real outcome the explicit
+    # response_class exists to guarantee: the /map routes return an image/png
+    # content-type with the exact binary renderer bytes.

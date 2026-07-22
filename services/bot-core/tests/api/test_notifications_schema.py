@@ -42,48 +42,33 @@ if "shared" not in sys.modules:
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_config(guild_id=12345, shop_announcements_role_id=99999):
-    """Build a minimal GuildConfig mock with shop_announcements_role_id."""
-    cfg = MagicMock()
-    cfg.guild_id = guild_id
-    cfg.admin_role_id = None
-    cfg.starting_credits = 0
-    cfg.sale_price_factor = 0.8
-    cfg.xp_thresholds = {"Silver": 1000, "Gold": 5000, "Platinum": 15000}
-    cfg.shop_config = {}
-    cfg.category_id = None
-    cfg.shop_channel_id = None
-    cfg.bronze_bounty_channel_id = None
-    cfg.silver_bounty_channel_id = None
-    cfg.gold_bounty_channel_id = None
-    cfg.platinum_bounty_channel_id = None
-    cfg.hunting_channel_id = None
-    cfg.discussion_channel_id = None
-    cfg.image_channel_id = None
-    cfg.bounty_hunter_role_id = None
-    cfg.bronze_role_id = None
-    cfg.silver_role_id = None
-    cfg.gold_role_id = None
-    cfg.platinum_role_id = None
-    cfg.shop_announcements_role_id = shop_announcements_role_id
-    cfg.bounty_max_per_tier = {"bronze": 3, "silver": 3, "gold": 3, "platinum": 3}
-    cfg.bounty_expiry_minutes = 480
-    cfg.bounty_spawn_interval_minutes = 60
-    cfg.next_spawn_check_at = None
-    cfg.created_at = MagicMock()
-    cfg.created_at.isoformat.return_value = "2026-01-01T00:00:00"
-    cfg.updated_at = MagicMock()
-    cfg.updated_at.isoformat.return_value = "2026-01-01T00:00:00"
-    cfg.ship_count_range = {"min": 3, "max": 5}
-    cfg.weapon_count_range = {"min": 3, "max": 5}
-    cfg.module_count_range = {"min": 3, "max": 5}
-    cfg.turret_count_range = {"min": 3, "max": 5}
-    cfg.ship_quantity_range = {"min": 1, "max": 1}
-    cfg.weapon_quantity_range = {"min": 2, "max": 4}
-    cfg.module_quantity_range = {"min": 2, "max": 4}
-    cfg.turret_quantity_range = {"min": 2, "max": 4}
-    cfg.tech_level_probabilities = {"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10}
-    return cfg
+def _make_real_config(guild_id=12345, shop_announcements_role_id=99999, **overrides):
+    """Build a REAL ``GuildConfig`` ORM instance (transient, no DB).
+
+    A real instance means ``get_config_summary`` reads genuine attributes — a
+    missing/renamed column raises instead of silently resolving to a truthy
+    MagicMock sub-attribute (which is exactly how a summary that read the wrong
+    field could have passed before). ``created_at``/``updated_at`` are set because
+    the summary calls ``.isoformat()`` on them; the game-setting columns are left
+    at their transient default (None) since the tests here only assert the
+    infrastructure role id.
+    """
+    from datetime import datetime
+
+    from persist.models.guild_config import GuildConfig
+
+    fields = dict(
+        guild_id=guild_id,
+        admin_role_id=None,
+        starting_credits=0,
+        sale_price_factor=0.8,
+        xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000},
+        shop_announcements_role_id=shop_announcements_role_id,
+        created_at=datetime(2026, 1, 1),
+        updated_at=datetime(2026, 1, 1),
+    )
+    fields.update(overrides)
+    return GuildConfig(**fields)
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +198,7 @@ class TestConfigRepositoryGetSummary:
         repo = ConfigRepository()
         mock_db = AsyncMock()
 
-        cfg = _make_mock_config(guild_id=12345, shop_announcements_role_id=99999)
+        cfg = _make_real_config(guild_id=12345, shop_announcements_role_id=99999)
 
         # Use async_generator pattern since get_by_guild_id is async
         async def _mock_get_by_guild_id(db, gid):
@@ -232,7 +217,7 @@ class TestConfigRepositoryGetSummary:
         repo = ConfigRepository()
         mock_db = AsyncMock()
 
-        cfg = _make_mock_config(guild_id=12345, shop_announcements_role_id=None)
+        cfg = _make_real_config(guild_id=12345, shop_announcements_role_id=None)
 
         async def _mock_get_by_guild_id(db, gid):
             return cfg
@@ -246,16 +231,48 @@ class TestConfigRepositoryGetSummary:
 class TestConfigRepositoryResetToDefaults:
     """ConfigRepository.reset_to_defaults must preserve shop_announcements_role_id."""
 
-    def test_reset_preserves_shop_announcements_role_id(self):
-        """reset_to_defaults source must list shop_announcements_role_id in _PRESERVED_FIELDS."""
-        import os
+    @pytest.mark.asyncio
+    async def test_reset_preserves_shop_announcements_role_id(self):
+        """reset_to_defaults must carry the existing shop_announcements_role_id onto
+        the freshly-defaulted config.
 
-        repo_path = os.path.join(_SRC_DIR, "persist", "repositories", "config_repository.py")
-        with open(repo_path) as f:
-            source = f.read()
-        assert "shop_announcements_role_id" in source, (
-            "shop_announcements_role_id must be in _PRESERVED_FIELDS in reset_to_defaults"
-        )
+        Exercises the REAL preserve→reapply logic on REAL GuildConfig instances
+        (the repo's own DB-touching methods — get_by_guild_id/remove/
+        create_default_config — are stubbed to return/accept the real objects, so
+        the behaviour under test is the field-preservation loop, not the source
+        text). Previously this only grep'd the source for the string, which would
+        pass even if the field appeared in a comment and reset_to_defaults never
+        ran.
+        """
+        from persist.repositories.config_repository import ConfigRepository
+
+        repo = ConfigRepository()
+        mock_db = AsyncMock()
+
+        # Existing config carries the infra role id we expect to survive a reset.
+        existing = _make_real_config(guild_id=12345, shop_announcements_role_id=99999, admin_role_id=4242)
+        # The "fresh default" the repo would build has the role cleared.
+        fresh_default = _make_real_config(guild_id=12345, shop_announcements_role_id=None)
+
+        async def _get_by_guild_id(db, gid):
+            return existing
+
+        async def _remove(db, obj, *, commit=True):
+            return None
+
+        async def _create_default_config(db, gid, *, commit=False):
+            return fresh_default
+
+        repo.get_by_guild_id = _get_by_guild_id
+        repo.remove = _remove
+        repo.create_default_config = _create_default_config
+
+        result = await repo.reset_to_defaults(mock_db, 12345)
+
+        # The infra role id (and admin role) were reapplied onto the fresh default.
+        assert result is fresh_default
+        assert result.shop_announcements_role_id == 99999
+        assert result.admin_role_id == 4242
 
 
 # ---------------------------------------------------------------------------

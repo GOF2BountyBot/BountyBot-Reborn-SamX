@@ -7,6 +7,7 @@ The about router uses a get_db dependency (which uses db_manager.get_session),
 not get_db_session. Tests override the get_db dependency directly.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,7 +21,14 @@ from services.game_constants import GameConstants
 
 
 def make_mock_object(**overrides):
-    """Create a mock game object with common attributes."""
+    """Create a game-object stand-in as a real ``SimpleNamespace``.
+
+    Deliberately NOT a ``MagicMock``: a SimpleNamespace only exposes attributes
+    that were actually set, so accessing an attribute the real ORM row lacks
+    raises ``AttributeError`` (surfacing schema drift) instead of silently
+    resolving to a truthy auto-attribute. This mirrors the real ORM columns the
+    about router reads via ``getattr(obj, ...)`` / direct access.
+    """
     defaults = dict(
         id=1,
         name="Test Object",
@@ -35,10 +43,7 @@ def make_mock_object(**overrides):
         extra_atts=None,
     )
     defaults.update(overrides)
-    obj = MagicMock()
-    for k, v in defaults.items():
-        setattr(obj, k, v)
-    return obj
+    return SimpleNamespace(**defaults)
 
 
 def make_mock_module(**overrides):
@@ -70,6 +75,7 @@ def make_mock_ship(**overrides):
     obj.norm_spec = "norm.png"
     obj.assets = ["asset1.png"]
     obj.save_due = False
+    obj.builtin_modules = []  # real ORM ships carry this; router reads obj.builtin_modules
     return obj
 
 
@@ -767,10 +773,7 @@ def make_mock_skinnable_ship(**overrides):
         compatible_skins={"urban-camo": "https://example.com/urban-camo.png"},
     )
     defaults.update(overrides)
-    obj = MagicMock()
-    for k, v in defaults.items():
-        setattr(obj, k, v)
-    return obj
+    return SimpleNamespace(**defaults)
 
 
 class TestGetShipRenderInfo:
@@ -1334,6 +1337,7 @@ class TestPrimaryTurretWeaponFields:
         """Turret weapon with no inner extra_atts: all three D-002 fields are null."""
         obj = make_mock_object(name="Bare Turret", type="TurretWeapon", extra_atts=None)
         obj.dps = 10.0
+        obj.automatic = True  # real TurretWeapon column the router reads unconditionally
         mock_repos["turret"].get_by_name = AsyncMock(return_value=obj)
 
         resp = client.get("/api/v1/about/object/name/Bare Turret")

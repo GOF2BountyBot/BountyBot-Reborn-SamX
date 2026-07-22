@@ -291,8 +291,11 @@ class TestScheduleJob:
         client.post("/api/v1/jobs", json=payload)
 
         mock_scheduler.add_job.assert_called_once()
-        call_kwargs = mock_scheduler.add_job.call_args
-        assert call_kwargs is not None
+        # Assert the one-time job actually uses the "date" trigger with a run_date,
+        # rather than merely that some call happened.
+        call = mock_scheduler.add_job.call_args
+        assert call.kwargs["trigger"] == "date"
+        assert "run_date" in call.kwargs and call.kwargs["run_date"] is not None
 
     # -----------------------------------------------------------------------
     # DEF-001: Client-supplied job_id pass-through
@@ -989,13 +992,8 @@ class TestDeleteGuildJobs:
         """Returns 503 when the scheduler is not available."""
         from fastapi.testclient import TestClient
 
-        app_no_scheduler = test_app.__class__()
-        app_no_scheduler.state.scheduler = None
-
-        # Remove state.scheduler entirely
-        del app_no_scheduler
-
-        # Use test_app but remove the scheduler
+        # Remove the scheduler from app.state so the dependency resolves to
+        # "unavailable" and the endpoint returns 503.
         test_app.state.scheduler = None
         c = TestClient(test_app, raise_server_exceptions=False)
         response = c.delete("/api/v1/jobs/guild/123")

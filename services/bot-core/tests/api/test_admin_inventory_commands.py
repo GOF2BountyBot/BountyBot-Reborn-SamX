@@ -17,6 +17,14 @@ from fastapi.testclient import TestClient
 
 
 def make_mock_player(**overrides):
+    """Build a REAL ``Player`` ORM instance (transient, no DB).
+
+    The admin give/remove endpoints only read real columns off the player
+    (``player.id`` etc.); a real instance removes the MagicMock auto-attribute
+    masking without needing a DB session.
+    """
+    from persist.models.player import Player
+
     defaults = dict(
         id=10,
         user_id=1,
@@ -35,22 +43,27 @@ def make_mock_player(**overrides):
         active_ship_id=None,
     )
     defaults.update(overrides)
-    player = MagicMock()
-    for k, v in defaults.items():
-        setattr(player, k, v)
-    return player
+    return Player(**defaults)
 
 
 def make_mock_user(**overrides):
-    defaults = dict(id=1, discord_id=111222333, username="TestUser")
+    """Build a REAL ``User`` ORM instance.
+
+    The router reads only ``user.id`` (via get_by_discord_id); the previous mock
+    carried fabricated ``discord_id``/``username`` columns that the real User
+    model does not have (its columns are id / discord_username / display_name).
+    """
+    from persist.models.user import User
+
+    defaults = dict(id=1, discord_username="TestUser", display_name="TestUser")
     defaults.update(overrides)
-    user = MagicMock()
-    for k, v in defaults.items():
-        setattr(user, k, v)
-    return user
+    return User(**defaults)
 
 
 def make_mock_player_ship(**overrides):
+    """Build a REAL ``PlayerShip`` ORM instance (transient, no DB)."""
+    from persist.models.player_ship import PlayerShip
+
     defaults = dict(
         id=42,
         player_id=10,
@@ -64,20 +77,16 @@ def make_mock_player_ship(**overrides):
         created_at=datetime(2026, 1, 1),
     )
     defaults.update(overrides)
-    ship = MagicMock()
-    for k, v in defaults.items():
-        setattr(ship, k, v)
-    return ship
+    return PlayerShip(**defaults)
 
 
 def make_mock_game_ship(**overrides):
-    """A game ship from ShipRepository (not PlayerShip)."""
+    """A REAL game ``Ship`` from ShipRepository (not PlayerShip); transient, no DB."""
+    from persist.models.ship import Ship
+
     defaults = dict(id=99, name="Sidewinder")
     defaults.update(overrides)
-    ship = MagicMock()
-    for k, v in defaults.items():
-        setattr(ship, k, v)
-    return ship
+    return Ship(**defaults)
 
 
 def _configure_db_mock(mock_get_db):

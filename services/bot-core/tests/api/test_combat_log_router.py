@@ -154,10 +154,27 @@ class TestListCombatLog:
         assert resp.status_code == 422
 
     def test_limit_default_25(self, client, mock_service):
+        """When no limit is supplied, the router forwards the documented default (25)."""
         resp = client.get("/api/v1/combat-log", params={"user_id": 100, "guild_id": 999})
         assert resp.status_code == 200
-        call_kwargs = mock_service.list_for_player.call_args
-        assert call_kwargs is not None
+        call = mock_service.list_for_player.call_args
+        assert call is not None
+        # Assert the actual value forwarded — this now fails if the default changes
+        # or the limit kwarg is dropped, unlike the previous is-not-None check.
+        assert call.kwargs["limit"] == 25
+        assert call.kwargs["user_id"] == 100
+        assert call.kwargs["guild_id"] == 999
+
+    def test_limit_forwarded_when_supplied(self, client, mock_service):
+        """An explicit in-range limit is forwarded verbatim to the service."""
+        resp = client.get("/api/v1/combat-log", params={"user_id": 100, "guild_id": 999, "limit": 10})
+        assert resp.status_code == 200
+        assert mock_service.list_for_player.call_args.kwargs["limit"] == 10
+
+    def test_limit_above_cap_returns_422(self, client, mock_service):
+        """The router rejects a limit above the Discord autocomplete cap (25)."""
+        resp = client.get("/api/v1/combat-log", params={"user_id": 100, "guild_id": 999, "limit": 26})
+        assert resp.status_code == 422
 
     def test_empty_list(self, client, mock_service):
         mock_service.list_for_player = AsyncMock(return_value=[])

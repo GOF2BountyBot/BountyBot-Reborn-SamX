@@ -22,8 +22,6 @@ Last updated: 2026-07-22 (TRUEUP dispositions: 03 accepted-gap, 04 non-testable,
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
 | TRUEUP-P1 | 🟠 | `LoadoutConsistencyService` evacuate destroys a legit second copy of a same-name item equipped on two ships | Latent item-loss; strict-xfail marker in `test_loadout_consistency_property.py`; root cause + fix options in `TEST_SUITE_TRUEUP_FOLLOWUPS.md` (R-bc-integration) |
-| TRUEUP-P2 | 🟠 | `guilds.py::create_role` uses nonexistent `status.HTTP_422` → AttributeError → 500 instead of 422 (both branches) | Tests assert current (500) behavior with pointer comments |
-| TRUEUP-P3 | 🟠 | `tags.py::create_forum_tag`/`update_tag` — same nonexistent `status.HTTP_422` defect class | See `TEST_SUITE_TRUEUP_FOLLOWUPS.md` (R-gw-api-1) |
 | B.67 | 🔵 | `duel_expire` executor has no bulk sweep mode — requires `duel_id` in payload; firing without one returns error and does nothing | Option A: add bulk mode when `duel_id` omitted (expire all past `expires_at`) in `bot-core/src/utils/executors/duel_expire_executor.py`. Option B: document the limitation. |
 
 ---
@@ -37,6 +35,8 @@ Fixed-in-code items are treated as closed. Live re-test is confirmatory only.
 | B.86 | 🟠 | Bounty 546 post-mortem: `/promote` mid-tier combat loss reset route to all-`-1`, player soft-locked on "No Bounty" until expiry | Fixed on branch `feat/promote-flow-correctness`: promote/demote ConfirmView flow + 24h tier-change cooldown + forfeit sentinel `-2` + strict same-tier shop + 20-sim combat preflight. Commits `8c6437b`..`b1448bd` |
 | B.85 | 🔵 | No distinct `WRONG_TIER` result for `/check` against a bounty outside player's tier | Won't-fix: bounty routes only live while the bounty is active, and `/promote` forfeit-scrub already clears tier-mismatched references |
 | TRUEUP-P4 | 🔵 | `module_repository.create_or_update` leaks camelCase keys (`builtIn`) into `extra_atts` alongside mapped snake_case columns | Won't-fix (2026-07-22): legacy holdover from an older key-mapping mismatch; impact is a spurious duplicate key in the JSON `extra_atts` column only — accepted. Fix sketch preserved in `TEST_SUITE_TRUEUP_FOLLOWUPS.md` (R-bc-repos) if ever revisited |
+| TRUEUP-P2 | 🟠 | `guilds.py::create_role` nonexistent `status.HTTP_422` → AttributeError → 500 instead of 422 | Fixed on branch `fix/http-422-constants` (PR #63): `HTTP_422_UNPROCESSABLE_CONTENT` at both sites; tests assert 422 + exact detail |
+| TRUEUP-P3 | 🟠 | `tags.py::create_forum_tag`/`update_tag` — same nonexistent `status.HTTP_422` defect class | Fixed on branch `fix/http-422-constants` (PR #63): both invalid-emoji branches now return 422 "Invalid emoji: …" |
 | B.87 | 🔵 | No credit refund for forfeited checks on `/promote` | Won't-fix (testing context): affected player already granted 1,000,000 cr quick-start |
 | B.80 | 🔵 | `/admin_give_item` `item_type` param removed | `adminCog.py:1732-1802` |
 | B.77 | 🟡 | A* heuristic → `0.0` constant (Dijkstra) | `pathfinding_service.py:59-65` |

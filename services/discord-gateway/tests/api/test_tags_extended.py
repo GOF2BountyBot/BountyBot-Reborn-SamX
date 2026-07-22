@@ -21,24 +21,38 @@ Uncovered lines targeted:
   tags.py 380-417       - delete: fallback edit paths
   tags.py 421-422       - delete: deleted=False → 500
   tags.py 432-434       - delete: outer exception handler
+
+Fidelity notes
+--------------
+No ``sys.modules["discord"]`` swap and no patches on ``resolve_bot``,
+``handle_discord_exception``, ``get_entity_or_404`` or ``ChannelConverter``.
+Mock channel/tag objects are ``spec=discord.ForumChannel`` /
+``spec=discord.ForumTag`` / ``spec=discord.TextChannel``, so
+``isinstance``/``hasattr`` checks are faithful to the installed discord.py
+(2.7.1), which has neither ``ForumTag.edit``/``.delete`` nor
+``ForumChannel.edit_tag``/``.delete_tag`` — so by default the router's real
+last-resort ``channel.edit(available_tags=...)`` fallback runs, exactly as
+production does. Tests that specifically target the "if the library exposes
+a nicer method" branches explicitly attach that method to the spec'd mock
+(spec restricts unset reads, not writes) to model a hypothetical richer
+discord.py variant, and say so in a comment.
 """
 
-import importlib
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
+import discord
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
 import tests.mocks.discord_mock_utils as discord_mock_utils
 
 DiscordMockUtils = discord_mock_utils.DiscordMockUtils
-
-_mock_utils = DiscordMockUtils()
+create_discord_not_found = discord_mock_utils.create_discord_not_found
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -62,48 +76,7 @@ _mock_bblogger.get_logger = _make_mock_logger
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
 
-_mock_discord = _mock_utils.create_mock_discord_module_with_factories()
-
-_mock_discord_ext = types.ModuleType("discord.ext")
-_mock_discord_ext.commands = types.ModuleType("discord.ext.commands")
-_mock_discord_ext.commands.Bot = MagicMock
-
-_mock_discord.ext = _mock_discord_ext
-
-sys.modules["discord"] = _mock_discord
-sys.modules["discord.ext"] = _mock_discord_ext
-sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-# ForumChannel type used for isinstance checks inside the router
-_MockForumChannel = type("ForumChannel", (), {})
-_mock_discord.ForumChannel = _MockForumChannel
-
-# TextChannel type for non-forum channel tests
-_MockTextChannel = type("TextChannel", (), {})
-_mock_discord.TextChannel = _MockTextChannel
-
-
-# ---------------------------------------------------------------------------
-# Per-test isolation fixture (same pattern as test_tags.py)
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _restore_real_discord():
-    """Re-assert real discord before each test and reload tags router."""
-    _cm = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
-    sys.modules["discord"] = _cm._REAL_DISCORD
-    sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
-    sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
-    import tests.mocks.discord_mock_utils as _dmu_mod
-
-    importlib.reload(_dmu_mod)
-    from api.routers import tags as _tags_mod
-
-    importlib.reload(_tags_mod)
-    yield
 
 
 # ---------------------------------------------------------------------------
@@ -111,110 +84,89 @@ def _restore_real_discord():
 # ---------------------------------------------------------------------------
 
 
-def create_mock_tag(tag_id=1234567890, channel_id=555555555, name="Test Tag", emoji=None):
-    tag = DiscordMockUtils.create_mock_forum_tag(tag_id=tag_id, name=name, emoji=emoji, channel_id=channel_id)
+def create_mock_tag(tag_id=1234567890, name="Test Tag", emoji=None):
+    """A real-spec'd mock ForumTag; no ``.edit``/``.delete`` by default (the
+    installed discord.py doesn't have them — attach explicitly to model a
+    hypothetical richer variant)."""
+    tag = MagicMock(spec=discord.ForumTag)
+    tag.id = tag_id
+    tag.name = name
+    tag.emoji = emoji
     tag.moderated = False
-    tag.edit = AsyncMock()
-    tag.delete = AsyncMock()
     return tag
 
 
 def create_mock_forum_channel(channel_id=555555555, guild_id=987654321, tags=None):
-    """Create a forum channel mock whose isinstance check succeeds."""
-    channel = MagicMock(spec=_MockForumChannel)
-    channel.__class__ = _MockForumChannel
+    """A real-spec'd mock ForumChannel whose ``edit``/``create_tag`` simulate
+    the real Discord API call in-memory (a genuine outbound-API boundary)."""
+    channel = MagicMock(spec=discord.ForumChannel)
     channel.id = channel_id
     channel.guild = MagicMock()
     channel.guild.id = guild_id
-    if tags is None:
-        tags = [create_mock_tag(1234567890, channel_id)]
-    channel.available_tags = tags
-    channel.edit = AsyncMock()
-    channel.create_tag = AsyncMock(return_value=create_mock_tag(1234567890, channel_id))
+    channel.available_tags = tags if tags is not None else [create_mock_tag(1234567890)]
+
+    async def _create_tag(name, emoji=None, **_kwargs):
+        new_id = max((t.id for t in channel.available_tags), default=0) + 1
+        new_tag = create_mock_tag(tag_id=new_id, name=name, emoji=emoji)
+        channel.available_tags.append(new_tag)
+        return new_tag
+
+    async def _edit(**kwargs):
+        if "available_tags" not in kwargs:
+            return
+        new_list = []
+        next_id = max((t.id for t in channel.available_tags if isinstance(t.id, int)), default=0) + 1
+        for item in kwargs["available_tags"]:
+            if hasattr(item, "moderated"):
+                # Already a ForumTag-like object (delete_tag's remaining list).
+                new_list.append(item)
+                continue
+            data = item if isinstance(item, dict) else item.to_dict()
+            tid = data.get("id")
+            existing = discord.utils.get(channel.available_tags, id=tid) if tid is not None else None
+            if existing is not None:
+                existing.name = data.get("name")
+                existing.emoji = data.get("emoji")
+                new_list.append(existing)
+            else:
+                # Discord assigns a real numeric id to newly-created tags; synthesize one.
+                if tid is None:
+                    tid, next_id = next_id, next_id + 1
+                new_list.append(create_mock_tag(tag_id=tid, name=data.get("name"), emoji=data.get("emoji")))
+        channel.available_tags = new_list
+
+    channel.edit = AsyncMock(side_effect=_edit)
+    channel.create_tag = AsyncMock(side_effect=_create_tag)
     return channel
 
 
 def create_mock_text_channel(channel_id=666666666, guild_id=987654321):
-    """Create a non-forum (text) channel mock."""
-    channel = MagicMock(spec=_MockTextChannel)
-    channel.__class__ = _MockTextChannel
+    """A real-spec'd mock TextChannel — genuinely fails the router's
+    ``isinstance(channel, discord.ForumChannel)`` check."""
+    channel = MagicMock(spec=discord.TextChannel)
     channel.id = channel_id
     channel.guild = MagicMock()
     channel.guild.id = guild_id
     return channel
 
 
-# ---------------------------------------------------------------------------
-# Shared tag/ForumTag payload factory
-# ---------------------------------------------------------------------------
+def _make_bot(guilds=None, get_channel=None, fetch_channel=None):
+    bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+    bot.guilds = guilds or []
+    if get_channel is not None:
+        bot.get_channel = get_channel
+    if fetch_channel is not None:
+        bot.fetch_channel = fetch_channel
+    return bot
 
 
-def _forum_tag_payload(tag_id=1234567890, channel_id=555555555, name="Test Tag", emoji=None):
-    from api.schemas.channel_schemas import ForumTag
+def _make_app(bot):
+    app = FastAPI()
+    app.state.bot = bot
+    from api.routers.tags import router
 
-    return ForumTag(id=tag_id, channel_id=channel_id, name=name, emoji=emoji)
-
-
-# ---------------------------------------------------------------------------
-# Fixture builder helper
-# ---------------------------------------------------------------------------
-
-
-def _build_app(mock_bot, get_entity_side_effect, utils_get_fn=None, emoji_in_payload=None):
-    """
-    Build a test FastAPI app with the tags router.
-
-    Parameters
-    ----------
-    mock_bot : mock bot
-    get_entity_side_effect : callable for get_entity_or_404
-    utils_get_fn : optional override for discord.utils.get
-    emoji_in_payload : if not None, the ForumTag payload will include this emoji
-    """
-    app = FastAPI(title="Discord Gateway Tags Extended Test")
-    app.state.bot = mock_bot
-
-    _tag_payload = _forum_tag_payload(emoji=emoji_in_payload)
-
-    with (
-        patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-        patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-        patch("api.routers.tags.ChannelConverter") as mock_converter,
-        patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-        patch("api.routers.tags.discord", _mock_discord),
-    ):
-
-        async def mock_resolve_bot(request):
-            return mock_bot
-
-        mock_resolve.side_effect = mock_resolve_bot
-        mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
-        mock_converter.forum_tag_to_payload.return_value = _tag_payload
-        mock_get_entity.side_effect = get_entity_side_effect
-
-        # Default discord.utils.get implementation
-        if utils_get_fn is None:
-
-            def _utils_get(iterable, **kwargs):
-                for item in iterable or []:
-                    match = True
-                    for k, v in kwargs.items():
-                        if getattr(item, k, None) != v:
-                            match = False
-                            break
-                    if match:
-                        return item
-                return None
-
-            _mock_discord.utils.get = _utils_get
-        else:
-            _mock_discord.utils.get = utils_get_fn
-
-        from api.routers.tags import router
-
-        app.include_router(router, prefix="/api/v1")
-
-        yield app
+    app.include_router(router, prefix="/api/v1")
+    return app
 
 
 # ---------------------------------------------------------------------------
@@ -223,133 +175,45 @@ def _build_app(mock_bot, get_entity_side_effect, utils_get_fn=None, emoji_in_pay
 
 
 class TestGetTagEmojiHandling:
-    """Cover get_tag emoji normalisation in dict and non-dict payload paths."""
+    """Cover get_tag emoji normalisation. ``ChannelConverter.forum_tag_to_payload`` always
+    returns a plain dict (see ``tag_to_dict``/``forum_tag_to_payload`` in src), so the real
+    converter naturally exercises the dict-payload emoji-normalisation branch (lines 76-82)."""
 
     def test_get_tag_with_emoji_dict_payload(self):
-        """When forum_tag_to_payload returns a dict with emoji, normalise_emoji runs (line 76-82)."""
-        mock_bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        mock_channel = create_mock_forum_channel()
-        mock_guild = MagicMock()
-        mock_guild.channels = [mock_channel]
-        mock_bot.guilds = [mock_guild]
+        """GET /tags/{tag_id} normalises a real emoji through the real converter/normalize_emoji."""
+        tag = create_mock_tag(1234567890, emoji="🎯")
+        channel = create_mock_forum_channel(555555555, tags=[tag])
+        guild = MagicMock()
+        guild.channels = [channel]
+        bot = _make_bot(guilds=[guild])
 
-        app = FastAPI()
-        app.state.bot = mock_bot
-
-        def _utils_get(iterable, **kwargs):
-            for item in iterable or []:
-                match = True
-                for k, v in kwargs.items():
-                    if getattr(item, k, None) != v:
-                        match = False
-                        break
-                if match:
-                    return item
-            return None
-
-        _mock_discord.utils.get = _utils_get
-
-        # Return a dict from forum_tag_to_payload (not a schema object)
-        _dict_payload = {
-            "id": 1234567890,
-            "channel_id": 555555555,
-            "name": "Test Tag",
-            "emoji": "🎯",
-        }
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.tags.ChannelConverter") as mock_converter,
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
-            patch("api.routers.tags.discord", _mock_discord),
-            patch("api.routers.tags.normalize_emoji", return_value="🎯"),
-        ):
-
-            async def resolve(req):
-                return mock_bot
-
-            mock_resolve.side_effect = resolve
-            mock_converter.forum_tag_to_payload.return_value = _dict_payload
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.get("/api/v1/tags/1234567890")
-            # The route should succeed; emoji normalisation was called
-            assert response.status_code == 200
-            assert response.json()["status"] == "success"
+        client = TestClient(_make_app(bot))
+        response = client.get("/api/v1/tags/1234567890")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["data"]["emoji"] == "🎯"
 
     def test_get_tag_not_found_in_any_guild(self):
         """GET /tags/{tag_id} returns 404 when no guild has the tag."""
-        mock_bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        mock_channel = create_mock_forum_channel()
-        mock_guild = MagicMock()
-        mock_guild.channels = [mock_channel]
-        mock_bot.guilds = [mock_guild]
+        channel = create_mock_forum_channel(555555555)
+        guild = MagicMock()
+        guild.channels = [channel]
+        bot = _make_bot(guilds=[guild])
 
-        def _utils_get_none(iterable, **kwargs):
-            return None  # tag not found in any channel
-
-        _mock_discord.utils.get = _utils_get_none
-
-        app = FastAPI()
-        app.state.bot = mock_bot
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.tags.ChannelConverter") as mock_converter,
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
-            patch("api.routers.tags.discord", _mock_discord),
-        ):
-
-            async def resolve(req):
-                return mock_bot
-
-            mock_resolve.side_effect = resolve
-            mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.get("/api/v1/tags/9999999999")
-            assert response.status_code == 404
-            assert "tag" in response.json()["detail"].lower()
+        client = TestClient(_make_app(bot))
+        response = client.get("/api/v1/tags/9999999999")
+        assert response.status_code == 404
+        assert "tag" in response.json()["detail"].lower()
 
     def test_get_tag_no_guilds(self):
         """GET /tags/{tag_id} returns 404 when bot has no guilds."""
-        mock_bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        mock_bot.guilds = []
+        bot = _make_bot(guilds=[])
 
-        app = FastAPI()
-        app.state.bot = mock_bot
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.tags.ChannelConverter"),
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
-            patch("api.routers.tags.discord", _mock_discord),
-        ):
-
-            async def resolve(req):
-                return mock_bot
-
-            mock_resolve.side_effect = resolve
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.get("/api/v1/tags/1234567890")
-            assert response.status_code == 404
-            assert "detail" in response.json()
+        client = TestClient(_make_app(bot))
+        response = client.get("/api/v1/tags/1234567890")
+        assert response.status_code == 404
+        assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -362,147 +226,81 @@ class TestCreateForumTagExtended:
 
     @pytest.fixture
     def mock_bot_with_text_channel(self):
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         text_ch = create_mock_text_channel(666666666)
-        bot.get_channel = MagicMock(return_value=text_ch)
-        bot.fetch_channel = AsyncMock(return_value=text_ch)
-        return bot
+
+        async def fetch_channel(cid):
+            if cid == text_ch.id:
+                return text_ch
+            raise create_discord_not_found()
+
+        return _make_bot(
+            get_channel=MagicMock(side_effect=lambda x: text_ch if x == text_ch.id else None),
+            fetch_channel=AsyncMock(side_effect=fetch_channel),
+        )
 
     @pytest.fixture
     def mock_bot_with_forum(self):
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         forum_ch = create_mock_forum_channel(555555555)
-        bot.get_channel = MagicMock(return_value=forum_ch)
-        bot.fetch_channel = AsyncMock(return_value=forum_ch)
-        return bot
 
-    def _make_app(self, mock_bot, channel_id=555555555):
-        app = FastAPI()
-        app.state.bot = mock_bot
+        async def fetch_channel(cid):
+            if cid == forum_ch.id:
+                return forum_ch
+            raise create_discord_not_found()
 
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            ch = get_fn(entity_id)
-            if ch is None:
-                raise HTTPException(status_code=404, detail=f"{entity_type} not found")
-            return ch
-
-        def _utils_get(iterable, **kwargs):
-            for item in iterable or []:
-                match = True
-                for k, v in kwargs.items():
-                    if getattr(item, k, None) != v:
-                        match = False
-                        break
-                if match:
-                    return item
-            return None
-
-        _mock_discord.utils.get = _utils_get
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-            patch("api.routers.tags.ChannelConverter") as mock_converter,
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.tags.discord", _mock_discord),
-        ):
-
-            async def resolve(req):
-                return mock_bot
-
-            mock_resolve.side_effect = resolve
-            mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
-            mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
-            mock_get_entity.side_effect = _get_entity
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            yield app
+        return _make_bot(
+            get_channel=MagicMock(side_effect=lambda x: forum_ch if x == forum_ch.id else None),
+            fetch_channel=AsyncMock(side_effect=fetch_channel),
+        )
 
     def test_create_tag_non_forum_channel_returns_400(self, mock_bot_with_text_channel):
-        """POST /channels/{channel_id}/tags on a non-forum channel returns 400."""
-        for app in self._make_app(mock_bot_with_text_channel, channel_id=666666666):
-            client = TestClient(app)
-            response = client.post("/api/v1/channels/666666666/tags", json={"name": "New Tag"})
-            assert response.status_code == 400
-            assert "forum" in response.json()["detail"].lower()
+        """POST /channels/{channel_id}/tags on a non-forum channel returns 400 (real isinstance check)."""
+        client = TestClient(_make_app(mock_bot_with_text_channel))
+        response = client.post("/api/v1/channels/666666666/tags", json={"name": "New Tag"})
+        assert response.status_code == 400
+        assert "forum" in response.json()["detail"].lower()
 
     def test_create_tag_with_valid_emoji(self, mock_bot_with_forum):
-        """POST /channels/{channel_id}/tags with emoji string works."""
-        for app in self._make_app(mock_bot_with_forum):
-            client = TestClient(app)
-            response = client.post("/api/v1/channels/555555555/tags", json={"name": "Emoji Tag", "emoji": "🚀"})
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        """POST /channels/{channel_id}/tags with emoji string works via the real create_tag call."""
+        client = TestClient(_make_app(mock_bot_with_forum))
+        response = client.post("/api/v1/channels/555555555/tags", json={"name": "Emoji Tag", "emoji": "🚀"})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["data"]["name"] == "Emoji Tag"
+        assert data["data"]["emoji"] == "🚀"
 
     def test_create_tag_without_emoji(self, mock_bot_with_forum):
         """POST /channels/{channel_id}/tags without emoji succeeds."""
-        for app in self._make_app(mock_bot_with_forum):
-            client = TestClient(app)
-            response = client.post("/api/v1/channels/555555555/tags", json={"name": "No Emoji Tag"})
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        client = TestClient(_make_app(mock_bot_with_forum))
+        response = client.post("/api/v1/channels/555555555/tags", json={"name": "No Emoji Tag"})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["data"]["name"] == "No Emoji Tag"
 
     def test_create_tag_attributeerror_fallback(self):
-        """POST creates tag via edit fallback when create_tag raises AttributeError."""
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        """POST creates tag via the real edit fallback when create_tag raises AttributeError."""
         forum_ch = create_mock_forum_channel(555555555)
-        # Make create_tag raise AttributeError to trigger fallback path
+        # Make create_tag raise AttributeError to trigger the real edit-based fallback
         forum_ch.create_tag = AsyncMock(side_effect=AttributeError("no create_tag"))
-        # After editing, simulate a tag appearing in available_tags with the right name
-        new_tag = create_mock_tag(2222222222, 555555555, name="Fallback Tag")
-        forum_ch.available_tags = [new_tag]
-        bot.get_channel = MagicMock(return_value=forum_ch)
-        bot.fetch_channel = AsyncMock(return_value=forum_ch)
 
-        app = FastAPI()
-        app.state.bot = bot
+        async def fetch_channel(cid):
+            if cid == forum_ch.id:
+                return forum_ch
+            raise create_discord_not_found()
 
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            ch = get_fn(entity_id)
-            if ch is None:
-                raise HTTPException(status_code=404, detail=f"{entity_type} not found")
-            return ch
+        bot = _make_bot(
+            get_channel=MagicMock(side_effect=lambda x: forum_ch if x == forum_ch.id else None),
+            fetch_channel=AsyncMock(side_effect=fetch_channel),
+        )
 
-        def _utils_get(iterable, **kwargs):
-            for item in iterable or []:
-                match = True
-                for k, v in kwargs.items():
-                    if getattr(item, k, None) != v:
-                        match = False
-                        break
-                if match:
-                    return item
-            return None
-
-        _mock_discord.utils.get = _utils_get
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.tags.ChannelConverter") as mock_converter,
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.tags.discord", _mock_discord),
-            patch("api.routers.tags.tags_to_edit_payload", return_value=[]),
-        ):
-
-            async def resolve(req):
-                return bot
-
-            mock_resolve.side_effect = resolve
-            mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
-            mock_get_entity.side_effect = _get_entity
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.post("/api/v1/channels/555555555/tags", json={"name": "Fallback Tag"})
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        client = TestClient(_make_app(bot))
+        response = client.post("/api/v1/channels/555555555/tags", json={"name": "Fallback Tag"})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["data"]["name"] == "Fallback Tag"
+        assert any(t.name == "Fallback Tag" for t in forum_ch.available_tags)
 
 
 # ---------------------------------------------------------------------------
@@ -511,113 +309,86 @@ class TestCreateForumTagExtended:
 
 
 class TestUpdateTagExtended:
-    """Cover update paths including emoji, fallback edit, re-fetch by name."""
+    """Cover update paths including emoji, tag.edit path, re-fetch by name."""
 
-    def _setup_bot_with_tag(self, tag_id=1234567890, has_edit=True, has_edit_tag=False):
-        """Build a bot with a forum channel containing a tag."""
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        tag = create_mock_tag(tag_id, 555555555, name="Original")
-        if not has_edit:
-            del tag.edit  # Remove edit to test fallback
+    def _setup_bot_with_tag(self, tag_id=1234567890, give_tag_edit=True, give_channel_edit_tag=False):
+        """Build a bot with a forum channel containing a tag.
+
+        ``give_tag_edit``/``give_channel_edit_tag`` explicitly attach methods
+        the real installed discord.py's ``ForumTag``/``ForumChannel`` don't
+        have, to model a hypothetical richer variant and exercise the
+        router's ``hasattr(tag, "edit")`` / ``hasattr(channel, "edit_tag")``
+        preferred branches. Leaving both False (the default reality) is
+        covered by ``test_tags.py``'s real last-resort-fallback path.
+        """
+        tag = create_mock_tag(tag_id, name="Original")
+        if give_tag_edit:
+
+            async def _tag_edit(**kwargs):
+                if "name" in kwargs:
+                    tag.name = kwargs["name"]
+                if "emoji" in kwargs:
+                    tag.emoji = kwargs["emoji"]
+
+            tag.edit = AsyncMock(side_effect=_tag_edit)
+
         forum_ch = create_mock_forum_channel(555555555, tags=[tag])
-        if not has_edit_tag:
-            # Ensure no edit_tag attribute on channel
-            if hasattr(forum_ch, "edit_tag"):
-                del forum_ch.edit_tag
-        else:
+        if give_channel_edit_tag:
             forum_ch.edit_tag = AsyncMock()
-        mock_guild = MagicMock()
-        mock_guild.channels = [forum_ch]
-        bot.guilds = [mock_guild]
-        bot.get_channel = MagicMock(return_value=forum_ch)
-        bot.fetch_channel = AsyncMock(return_value=forum_ch)
+
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot = _make_bot(guilds=[guild])
         return bot, forum_ch, tag
 
-    def _make_update_app(self, mock_bot):
-        app = FastAPI()
-        app.state.bot = mock_bot
-
-        def _utils_get(iterable, **kwargs):
-            for item in iterable or []:
-                match = True
-                for k, v in kwargs.items():
-                    if getattr(item, k, None) != v:
-                        match = False
-                        break
-                if match:
-                    return item
-            return None
-
-        _mock_discord.utils.get = _utils_get
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.tags.ChannelConverter") as mock_converter,
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
-            patch("api.routers.tags.discord", _mock_discord),
-        ):
-
-            async def resolve(req):
-                return mock_bot
-
-            mock_resolve.side_effect = resolve
-            mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            yield app
-
     def test_update_tag_with_emoji(self):
-        """PUT /tags/{tag_id} with emoji field triggers normalize_emoji."""
-        mock_bot, _forum_ch, _tag = self._setup_bot_with_tag()
-        for app in self._make_update_app(mock_bot):
-            client = TestClient(app)
-            response = client.put("/api/v1/tags/1234567890", json={"emoji": "🎯"})
-            assert response.status_code == 200
-            assert response.json()["status"] == "updated"
+        """PUT /tags/{tag_id} with emoji field triggers real normalize_emoji via tag.edit()."""
+        bot, _forum_ch, tag = self._setup_bot_with_tag()
+        client = TestClient(_make_app(bot))
+        response = client.put("/api/v1/tags/1234567890", json={"emoji": "🎯"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data["data"]["emoji"] == "🎯"
+        tag.edit.assert_awaited_once()
 
     def test_update_tag_with_name_and_emoji(self):
-        """PUT /tags/{tag_id} with name and emoji both updated."""
-        mock_bot, _, _ = self._setup_bot_with_tag()
-        for app in self._make_update_app(mock_bot):
-            client = TestClient(app)
-            response = client.put("/api/v1/tags/1234567890", json={"name": "New Name", "emoji": "🚀"})
-            assert response.status_code == 200
-            assert response.json()["status"] == "updated"
+        """PUT /tags/{tag_id} with name and emoji both updated for real."""
+        bot, _, _ = self._setup_bot_with_tag()
+        client = TestClient(_make_app(bot))
+        response = client.put("/api/v1/tags/1234567890", json={"name": "New Name", "emoji": "🚀"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data["data"]["name"] == "New Name"
+        assert data["data"]["emoji"] == "🚀"
 
     def test_update_tag_not_found_in_any_channel(self):
         """PUT /tags/{tag_id} returns 404 when tag doesn't exist."""
-        mock_bot, _, _ = self._setup_bot_with_tag()
-        for app in self._make_update_app(mock_bot):
-            client = TestClient(app)
-            response = client.put("/api/v1/tags/9999999999", json={"name": "Ghost"})
-            assert response.status_code == 404
-            assert "tag" in response.json()["detail"].lower()
+        bot, _, _ = self._setup_bot_with_tag()
+        client = TestClient(_make_app(bot))
+        response = client.put("/api/v1/tags/9999999999", json={"name": "Ghost"})
+        assert response.status_code == 404
+        assert "tag" in response.json()["detail"].lower()
 
     def test_update_tag_no_fields_is_noop(self):
         """PUT /tags/{tag_id} with empty body is accepted (no edit call)."""
-        mock_bot, _, _ = self._setup_bot_with_tag()
-        for app in self._make_update_app(mock_bot):
-            client = TestClient(app)
-            response = client.put("/api/v1/tags/1234567890", json={})
-            assert response.status_code == 200
-            assert response.json()["status"] == "updated"
+        bot, _, tag = self._setup_bot_with_tag()
+        client = TestClient(_make_app(bot))
+        response = client.put("/api/v1/tags/1234567890", json={})
+        assert response.status_code == 200
+        assert response.json()["status"] == "updated"
+        tag.edit.assert_not_awaited()
 
     def test_update_tag_with_edit_tag_on_channel(self):
-        """PUT /tags/{tag_id} calls channel.edit_tag when available on channel."""
-        mock_bot, _forum_ch, _tag = self._setup_bot_with_tag(has_edit_tag=True)
-        # tag.edit is the preferred path, so leave it intact so no errors occur.
-        # edit_tag is on the channel; the router checks tag.edit first (hasattr),
-        # finds it, and uses it — which is fine. This test ensures the endpoint
-        # still returns 200 when edit_tag also exists alongside tag.edit.
-        for app in self._make_update_app(mock_bot):
-            client = TestClient(app)
-            response = client.put("/api/v1/tags/1234567890", json={"name": "Via edit_tag"})
-            assert response.status_code == 200
-            assert response.json()["status"] == "updated"
+        """PUT /tags/{tag_id} prefers tag.edit() over channel.edit_tag() when both exist."""
+        bot, forum_ch, tag = self._setup_bot_with_tag(give_channel_edit_tag=True)
+        client = TestClient(_make_app(bot))
+        response = client.put("/api/v1/tags/1234567890", json={"name": "Via edit_tag"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "updated"
+        tag.edit.assert_awaited_once()
+        forum_ch.edit_tag.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -626,118 +397,75 @@ class TestUpdateTagExtended:
 
 
 class TestDeleteTagExtended:
-    """Cover deletion via delete_tag on channel, tag.delete, and fallback edit."""
-
-    def _make_delete_app(self, mock_bot):
-        app = FastAPI()
-        app.state.bot = mock_bot
-
-        def _utils_get(iterable, **kwargs):
-            for item in iterable or []:
-                match = True
-                for k, v in kwargs.items():
-                    if getattr(item, k, None) != v:
-                        match = False
-                        break
-                if match:
-                    return item
-            return None
-
-        _mock_discord.utils.get = _utils_get
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.tags.ChannelConverter") as mock_converter,
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
-            patch("api.routers.tags.discord", _mock_discord),
-        ):
-
-            async def resolve(req):
-                return mock_bot
-
-            mock_resolve.side_effect = resolve
-            mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            yield app
+    """Cover deletion via channel.delete_tag, tag.delete, and the real last-resort edit fallback."""
 
     def test_delete_tag_via_channel_delete_tag_method(self):
-        """DELETE /tags/{tag_id} uses channel.delete_tag when available (line 373-374)."""
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        tag = create_mock_tag(1234567890, 555555555)
-        forum_ch = create_mock_forum_channel(555555555, tags=[tag])
-        # Add delete_tag method so the preferred code path runs
-        forum_ch.delete_tag = AsyncMock()
-        mock_guild = MagicMock()
-        mock_guild.channels = [forum_ch]
-        bot.guilds = [mock_guild]
+        """DELETE /tags/{tag_id} uses channel.delete_tag when available (line 373-374).
 
-        for app in self._make_delete_app(bot):
-            client = TestClient(app)
-            response = client.delete("/api/v1/tags/1234567890")
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "deleted"
-            assert data["deleted"] is True
+        The installed discord.py's ForumChannel doesn't expose delete_tag;
+        it's attached explicitly here to model a hypothetical richer variant.
+        """
+        tag = create_mock_tag(1234567890)
+        forum_ch = create_mock_forum_channel(555555555, tags=[tag])
+        forum_ch.delete_tag = AsyncMock()
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot = _make_bot(guilds=[guild])
+
+        client = TestClient(_make_app(bot))
+        response = client.delete("/api/v1/tags/1234567890")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "deleted"
+        assert data["deleted"] is True
+        forum_ch.delete_tag.assert_awaited_once_with(tag)
 
     def test_delete_tag_via_tag_delete_method(self):
-        """DELETE /tags/{tag_id} falls back to tag.delete() when channel lacks delete_tag."""
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        tag = create_mock_tag(1234567890, 555555555)
+        """DELETE /tags/{tag_id} falls back to tag.delete() when channel lacks delete_tag.
+
+        The installed discord.py's ForumTag doesn't expose delete(); it's
+        attached explicitly here to model a hypothetical richer variant.
+        """
+        tag = create_mock_tag(1234567890)
         tag.delete = AsyncMock()
         forum_ch = create_mock_forum_channel(555555555, tags=[tag])
-        # Ensure no delete_tag on channel
-        if hasattr(forum_ch, "delete_tag"):
-            del forum_ch.delete_tag
-        mock_guild = MagicMock()
-        mock_guild.channels = [forum_ch]
-        bot.guilds = [mock_guild]
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot = _make_bot(guilds=[guild])
 
-        for app in self._make_delete_app(bot):
-            client = TestClient(app)
-            response = client.delete("/api/v1/tags/1234567890")
-            assert response.status_code == 200
-            assert response.json()["deleted"] is True
+        client = TestClient(_make_app(bot))
+        response = client.delete("/api/v1/tags/1234567890")
+        assert response.status_code == 200
+        assert response.json()["deleted"] is True
+        tag.delete.assert_awaited_once()
 
     def test_delete_tag_not_found_returns_404(self):
         """DELETE /tags/{tag_id} returns 404 when tag not in any channel."""
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         forum_ch = create_mock_forum_channel(555555555, tags=[])
-        mock_guild = MagicMock()
-        mock_guild.channels = [forum_ch]
-        bot.guilds = [mock_guild]
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot = _make_bot(guilds=[guild])
 
-        for app in self._make_delete_app(bot):
-            client = TestClient(app)
-            response = client.delete("/api/v1/tags/9999999999")
-            assert response.status_code == 404
-            assert "detail" in response.json()
+        client = TestClient(_make_app(bot))
+        response = client.delete("/api/v1/tags/9999999999")
+        assert response.status_code == 404
+        assert "detail" in response.json()
 
     def test_delete_tag_via_edit_fallback(self):
-        """DELETE falls back to channel.edit(available_tags=...) when no delete methods."""
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        tag = create_mock_tag(1234567890, 555555555)
-        # Remove delete from tag so edit fallback is taken
-        if hasattr(tag, "delete"):
-            del tag.delete
+        """DELETE falls back to the real channel.edit(available_tags=...) when no delete methods
+        exist — this is the default/faithful state of the installed discord.py (2.7.1)."""
+        tag = create_mock_tag(1234567890)
         forum_ch = create_mock_forum_channel(555555555, tags=[tag])
-        # Remove delete_tag from channel as well
-        if hasattr(forum_ch, "delete_tag"):
-            del forum_ch.delete_tag
-        forum_ch.edit = AsyncMock()
-        mock_guild = MagicMock()
-        mock_guild.channels = [forum_ch]
-        bot.guilds = [mock_guild]
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot = _make_bot(guilds=[guild])
 
-        for app in self._make_delete_app(bot):
-            client = TestClient(app)
-            response = client.delete("/api/v1/tags/1234567890")
-            assert response.status_code == 200
-            assert response.json()["deleted"] is True
+        client = TestClient(_make_app(bot))
+        response = client.delete("/api/v1/tags/1234567890")
+        assert response.status_code == 200
+        assert response.json()["deleted"] is True
+        forum_ch.edit.assert_awaited_once()
+        assert not any(t.id == 1234567890 for t in forum_ch.available_tags)
 
 
 # ---------------------------------------------------------------------------
@@ -750,109 +478,41 @@ class TestGetTagAcrossGuilds:
 
     def test_get_tag_found_in_second_guild(self):
         """GET /tags/{tag_id} finds the tag in the second guild."""
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        # First guild has no matching tag
-        forum_ch_1 = create_mock_forum_channel(555555551, tags=[create_mock_tag(1111111, 555555551)])
+        forum_ch_1 = create_mock_forum_channel(555555551, tags=[create_mock_tag(1111111)])
         guild_1 = MagicMock()
         guild_1.channels = [forum_ch_1]
-        # Second guild has the target tag
-        target_tag = create_mock_tag(1234567890, 555555552)
+
+        target_tag = create_mock_tag(1234567890)
         forum_ch_2 = create_mock_forum_channel(555555552, tags=[target_tag])
         guild_2 = MagicMock()
         guild_2.channels = [forum_ch_2]
-        bot.guilds = [guild_1, guild_2]
 
-        app = FastAPI()
-        app.state.bot = bot
+        bot = _make_bot(guilds=[guild_1, guild_2])
 
-        def _utils_get(iterable, **kwargs):
-            for item in iterable or []:
-                match = True
-                for k, v in kwargs.items():
-                    if getattr(item, k, None) != v:
-                        match = False
-                        break
-                if match:
-                    return item
-            return None
-
-        _mock_discord.utils.get = _utils_get
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.tags.ChannelConverter") as mock_converter,
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
-            patch("api.routers.tags.discord", _mock_discord),
-        ):
-
-            async def resolve(req):
-                return bot
-
-            mock_resolve.side_effect = resolve
-            mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.get("/api/v1/tags/1234567890")
-            assert response.status_code == 200
-            assert response.json()["status"] == "success"
+        client = TestClient(_make_app(bot))
+        response = client.get("/api/v1/tags/1234567890")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["data"]["channel_id"] == 555555552
 
     def test_get_tag_channel_not_forum_is_skipped(self):
-        """GET /tags/{tag_id} skips non-forum channels in the guild."""
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        # Only a text channel in this guild
+        """GET /tags/{tag_id} skips non-forum channels in the guild (real isinstance check)."""
         text_ch = create_mock_text_channel(666666666)
         guild_1 = MagicMock()
         guild_1.channels = [text_ch]
-        # A forum in second guild
-        target_tag = create_mock_tag(1234567890, 555555552)
+
+        target_tag = create_mock_tag(1234567890)
         forum_ch = create_mock_forum_channel(555555552, tags=[target_tag])
         guild_2 = MagicMock()
         guild_2.channels = [forum_ch]
-        bot.guilds = [guild_1, guild_2]
 
-        app = FastAPI()
-        app.state.bot = bot
+        bot = _make_bot(guilds=[guild_1, guild_2])
 
-        def _utils_get(iterable, **kwargs):
-            for item in iterable or []:
-                match = True
-                for k, v in kwargs.items():
-                    if getattr(item, k, None) != v:
-                        match = False
-                        break
-                if match:
-                    return item
-            return None
-
-        _mock_discord.utils.get = _utils_get
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.tags.ChannelConverter") as mock_converter,
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
-            patch("api.routers.tags.discord", _mock_discord),
-        ):
-
-            async def resolve(req):
-                return bot
-
-            mock_resolve.side_effect = resolve
-            mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.get("/api/v1/tags/1234567890")
-            assert response.status_code == 200
-            assert response.json()["status"] == "success"
+        client = TestClient(_make_app(bot))
+        response = client.get("/api/v1/tags/1234567890")
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -861,50 +521,17 @@ class TestGetTagAcrossGuilds:
 
 
 class TestTagRequestValidation:
-    """Validate request schema enforcement."""
+    """Validate request schema enforcement (pure FastAPI/pydantic — never reaches router logic)."""
 
     @pytest.fixture
     def app_and_client(self):
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         forum_ch = create_mock_forum_channel(555555555)
-        bot.get_channel = MagicMock(return_value=forum_ch)
-        bot.fetch_channel = AsyncMock(return_value=forum_ch)
-        bot.guilds = []
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        def _utils_get(iterable, **kwargs):
-            return None
-
-        _mock_discord.utils.get = _utils_get
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            ch = get_fn(entity_id)
-            if ch is None:
-                raise HTTPException(status_code=404, detail=f"{entity_type} not found")
-            return ch
-
-        with (
-            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.tags.ChannelConverter") as mock_converter,
-            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.tags.discord", _mock_discord),
-        ):
-
-            async def resolve(req):
-                return bot
-
-            mock_resolve.side_effect = resolve
-            mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
-            mock_get_entity.side_effect = _get_entity
-
-            from api.routers.tags import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            yield TestClient(app)
+        bot = _make_bot(
+            guilds=[],
+            get_channel=MagicMock(side_effect=lambda x: forum_ch if x == forum_ch.id else None),
+            fetch_channel=AsyncMock(side_effect=lambda x: forum_ch if x == forum_ch.id else create_discord_not_found()),
+        )
+        yield TestClient(_make_app(bot))
 
     def test_create_tag_missing_name_returns_422(self, app_and_client):
         """POST /channels/{id}/tags without 'name' field returns 422."""

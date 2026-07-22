@@ -21,21 +21,35 @@ Uncovered lines:
   685-705 (resolve target — channel target, channel not found)
   719-722 (resolve subject — member not in guild)
   729-735 (resolve subject — role not found)
+
+Fidelity notes
+--------------
+No ``sys.modules["discord"]`` swap and no patches on ``resolve_bot``,
+``handle_discord_exception`` or ``PermissionConverter`` (except in the
+"...exception_path" tests, where only ``resolve_bot`` is patched to raise so
+the real, unpatched ``handle_discord_exception`` maps it to a real 500).
+Target/subject mocks carry ``__class__ = discord.Role``/``discord.Member`` so
+the real ``PermissionConverter.overwrite_to_payload``'s ``isinstance``-based
+``type`` field is genuine. ``permissions_for()``/``overwrite.pair()`` remain
+faithful ``MagicMock(value=...)`` stand-ins for discord.py's own permission
+math, which is unit-tested separately (matching the audit's note) — a
+genuine "no live equivalent without a real gateway" boundary.
 """
 
-import importlib
 import os
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import tests.mocks.discord_mock_utils as discord_mock_utils
 
 DiscordMockUtils = discord_mock_utils.DiscordMockUtils
+create_discord_not_found = discord_mock_utils.create_discord_not_found
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -56,36 +70,7 @@ sys.modules["shared.bblogger"] = _mock_bblogger
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
-@pytest.fixture(autouse=True)
-def _restore_real_discord():
-    """Restore real discord and reload permissions router before each test."""
-    _cm = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
-    sys.modules["discord"] = _cm._REAL_DISCORD
-    sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
-    sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
-    import tests.mocks.discord_mock_utils as _dmu_mod
-
-    importlib.reload(_dmu_mod)
-    from api.routers import permissions as _perm_mod
-
-    importlib.reload(_perm_mod)
-    yield
-
-
-def _make_perm_payload():
-    from api.schemas.permission_schemas import PermissionOverwrite as PermSchema
-
-    return PermSchema(
-        id="1234567890:111111111",
-        channel_id=1234567890,
-        target_id=111111111,
-        type="role",
-        allow=8,
-        deny=0,
-    )
-
-
-def create_mock_channel(channel_id=1234567890):
+def create_mock_channel(channel_id=1234567890, guild=None):
     """Create mock channel with overwrites."""
     channel = MagicMock()
     channel.id = channel_id
@@ -93,11 +78,12 @@ def create_mock_channel(channel_id=1234567890):
     channel.overwrites = {}
     channel.set_permissions = AsyncMock()
     channel.permissions_for = MagicMock(return_value=MagicMock(value=8))
-    channel.guild = MagicMock()
-    channel.guild.id = 987654321
-    channel.guild.get_role = MagicMock(return_value=None)
-    channel.guild.get_member = MagicMock(return_value=None)
-    channel.guild.fetch_member = AsyncMock()
+    channel.guild = guild or MagicMock()
+    if guild is None:
+        channel.guild.id = 987654321
+        channel.guild.get_role = MagicMock(return_value=None)
+        channel.guild.get_member = MagicMock(return_value=None)
+        channel.guild.fetch_member = AsyncMock()
     return channel
 
 
@@ -106,10 +92,8 @@ def mock_bot():
     """Mock bot for permissions tests."""
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
 
-    _mock_target = MagicMock()
-    _mock_target.id = 111111111
-    _mock_target.name = "test-role"
-    _mock_target.permissions = MagicMock(value=0)
+    _mock_target = DiscordMockUtils.create_mock_role(role_id=111111111, name="test-role")
+    _mock_target.__class__ = discord.Role
 
     _mock_overwrite = MagicMock()
     _mock_overwrite.pair.return_value = (MagicMock(value=8), MagicMock(value=4))
@@ -117,21 +101,18 @@ def mock_bot():
     def get_channel(channel_id):
         if channel_id not in (1234567890, 111111111):
             return None
-        channel = create_mock_channel(channel_id)
+        channel = create_mock_channel(channel_id, guild=_mock_guild)
         channel.overwrites = {_mock_target: _mock_overwrite}
         channel.set_permissions = AsyncMock()
         return channel
 
     _mock_guild = MagicMock()
     _mock_guild.id = 987654321
-    _mock_role = MagicMock()
-    _mock_role.id = 123456789
-    _mock_role.name = "test-role"
-    _mock_role.permissions = MagicMock(value=8)
-    _mock_member = MagicMock()
-    _mock_member.id = 111111111
+    _mock_role = DiscordMockUtils.create_mock_role(role_id=123456789, name="test-role", guild=_mock_guild)
+    _mock_role.__class__ = discord.Role
+    _mock_member = DiscordMockUtils.create_mock_member(user_id=111111111, guild=_mock_guild)
+    _mock_member.__class__ = discord.Member
     _mock_member.display_name = "test-member"
-    _mock_member.guild = _mock_guild
     _mock_member.guild_permissions = MagicMock(value=8)
     _mock_member.roles = [_mock_role]
     _mock_guild.get_role = MagicMock(side_effect=lambda x: _mock_role if x == 123456789 else None)
@@ -140,12 +121,11 @@ def mock_bot():
     _mock_guild.me = _mock_member
     _mock_guild.roles = [_mock_role]
     _mock_guild.members = [_mock_member]
-    _mock_member.guild = _mock_guild
 
     async def fetch_channel_impl(channel_id):
         ch = get_channel(channel_id)
         if ch is None:
-            raise Exception(f"Channel {channel_id} not found")
+            raise create_discord_not_found(f"Channel {channel_id} not found")
         return ch
 
     bot.get_channel = get_channel
@@ -154,40 +134,23 @@ def mock_bot():
     bot.get_guild = MagicMock(return_value=_mock_guild)
     bot.fetch_guild = AsyncMock(return_value=_mock_guild)
     bot.get_user = MagicMock(return_value=None)
-    bot.fetch_user = AsyncMock(side_effect=Exception("User not found"))
+    bot.fetch_user = AsyncMock(side_effect=create_discord_not_found("User not found"))
 
     return bot
 
 
 @pytest.fixture
 def perm_ext_app(mock_bot):
-    """Create test app with patched permissions router dependencies."""
+    """Create test app with a real bot state (resolve_bot/handle_discord_exception/
+    PermissionConverter all real)."""
     app = FastAPI(title="Test")
     app.state.bot = mock_bot
 
-    with (
-        patch("api.routers.permissions.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-        patch("api.routers.permissions.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-        patch("api.routers.permissions.PermissionConverter") as mock_converter,
-    ):
+    from api.routers.permissions import router
 
-        async def _resolve(request):
-            return mock_bot
+    app.include_router(router, prefix="/api/v1")
 
-        mock_resolve.side_effect = _resolve
-
-        async def _handle(op, exc):
-            raise HTTPException(status_code=500, detail=f"Failed to {op}: {exc}")
-
-        mock_handle.side_effect = _handle
-
-        mock_converter.overwrite_to_payload.return_value = _make_perm_payload()
-
-        from api.routers.permissions import router
-
-        app.include_router(router, prefix="/api/v1")
-
-        yield app, mock_bot, mock_resolve, mock_handle, mock_converter
+    yield app, mock_bot
 
 
 @pytest.fixture
@@ -198,11 +161,13 @@ def ext_perm_client(perm_ext_app):
 
 
 class TestListPermissionsErrors:
-    """Test error paths for list permissions endpoints."""
+    """Test error paths for list permissions endpoints. Each patches only the specific pure
+    helper function (a single-purpose, narrowly-scoped mock) to force it to raise, letting the
+    real handle_discord_exception map the error to a genuine 500."""
 
     def test_list_all_permissions_exception(self, perm_ext_app):
         """list_all_permissions should return 500 on exception."""
-        app, _mock_bot, _mock_resolve, _mock_handle, *_ = perm_ext_app
+        app, _mock_bot = perm_ext_app
 
         with patch("api.routers.permissions.get_all_permissions", side_effect=RuntimeError("fail")):
             client = TestClient(app)
@@ -255,11 +220,12 @@ class TestGetPermissionOverwriteExtended:
     """Extended tests for GET /permissions/{permission_id}."""
 
     def test_get_overwrite_channel_from_fetch(self, perm_ext_app):
-        """get_permission_overwrite should fetch channel when not in cache."""
-        app, mock_bot, _mock_resolve, *_ = perm_ext_app
+        """get_permission_overwrite should fetch channel when not in cache; response reflects
+        the real, resolved target's id (not a hardcoded constant)."""
+        app, mock_bot = perm_ext_app
 
-        _mock_target = MagicMock()
-        _mock_target.id = 111111111
+        _mock_target = DiscordMockUtils.create_mock_role(role_id=111111111, name="fetched-role")
+        _mock_target.__class__ = discord.Role
         _mock_overwrite = MagicMock()
         _mock_overwrite.pair.return_value = (MagicMock(value=8), MagicMock(value=0))
 
@@ -273,14 +239,18 @@ class TestGetPermissionOverwriteExtended:
         client = TestClient(app)
         response = client.get("/api/v1/permissions/5555555555:111111111")
         assert response.status_code == 200
-        assert response.json()["status"] == "success"
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["data"]["target_id"] == 111111111
+        assert data["data"]["channel_id"] == 5555555555
+        assert data["data"]["allow"] == 8
 
     def test_get_overwrite_channel_fetch_fails_404(self, perm_ext_app):
-        """get_permission_overwrite should return 404 when channel fetch fails."""
-        app, mock_bot, *_ = perm_ext_app
+        """get_permission_overwrite should return 404 (real discord.NotFound) when channel fetch fails."""
+        app, mock_bot = perm_ext_app
 
         mock_bot.get_channel = MagicMock(return_value=None)
-        mock_bot.fetch_channel = AsyncMock(side_effect=Exception("Channel not found"))
+        mock_bot.fetch_channel = AsyncMock(side_effect=create_discord_not_found("Channel not found"))
 
         client = TestClient(app)
         response = client.get("/api/v1/permissions/9999999999:111111111")
@@ -288,29 +258,26 @@ class TestGetPermissionOverwriteExtended:
         assert "detail" in response.json()
 
     def test_get_overwrite_exception_path(self, perm_ext_app):
-        """get_permission_overwrite should return 500 on unexpected exception."""
-        app, _mock_bot, mock_resolve, _mock_handle, *_ = perm_ext_app
+        """get_permission_overwrite should map an unexpected error to a real 500."""
+        app, *_ = perm_ext_app
 
-        async def _resolve_fail(request):
-            raise RuntimeError("Unexpected")
-
-        mock_resolve.side_effect = _resolve_fail
-
-        client = TestClient(app)
-        response = client.get("/api/v1/permissions/1234567890:111111111")
-        assert response.status_code == 500
-        assert "detail" in response.json()
+        with patch("api.routers.permissions.resolve_bot", side_effect=RuntimeError("Unexpected")):
+            client = TestClient(app)
+            response = client.get("/api/v1/permissions/1234567890:111111111")
+            assert response.status_code == 500
+            assert "detail" in response.json()
 
 
 class TestUpdatePermissionOverwriteExtended:
     """Extended tests for PUT /permissions/{permission_id}."""
 
     def test_update_overwrite_target_from_fetch_member(self, perm_ext_app):
-        """update_permission_overwrite should fetch member when role and member not cached."""
-        app, _mock_bot, _mock_resolve, _mock_handle, *_ = perm_ext_app
+        """update_permission_overwrite should fetch member when role and member not cached;
+        response reflects the real fetched member's id."""
+        app, mock_bot = perm_ext_app
 
-        fetched_member = MagicMock()
-        fetched_member.id = 222222222
+        fetched_member = DiscordMockUtils.create_mock_member(user_id=222222222)
+        fetched_member.__class__ = discord.Member
 
         channel = create_mock_channel(1234567890)
         channel.guild.get_role = MagicMock(return_value=None)
@@ -322,16 +289,21 @@ class TestUpdatePermissionOverwriteExtended:
         client = TestClient(app)
         response = client.put("/api/v1/permissions/1234567890:222222222", json={"allow": 8, "deny": 0})
         assert response.status_code == 200
-        assert response.json()["status"] == "updated"
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data["data"]["target_id"] == 222222222
+        assert data["data"]["type"] == "member"
+        assert data["data"]["allow"] == 8
+        channel.set_permissions.assert_awaited_once()
 
     def test_update_overwrite_target_not_found_404(self, perm_ext_app):
-        """update_permission_overwrite should return 404 when target not found."""
-        app, mock_bot, _mock_resolve, _mock_handle, *_ = perm_ext_app
+        """update_permission_overwrite should return 404 (real discord.NotFound) when target not found."""
+        app, mock_bot = perm_ext_app
 
         channel = create_mock_channel(1234567890)
         channel.guild.get_role = MagicMock(return_value=None)
         channel.guild.get_member = MagicMock(return_value=None)
-        channel.guild.fetch_member = AsyncMock(side_effect=Exception("Member not found"))
+        channel.guild.fetch_member = AsyncMock(side_effect=create_discord_not_found("Member not found"))
 
         mock_bot.get_channel = MagicMock(return_value=channel)
 
@@ -341,31 +313,26 @@ class TestUpdatePermissionOverwriteExtended:
         assert "detail" in response.json()
 
     def test_update_overwrite_exception_path(self, perm_ext_app):
-        """update_permission_overwrite should return 500 on unexpected exception."""
-        app, _mock_bot, mock_resolve, _mock_handle, *_ = perm_ext_app
+        """update_permission_overwrite should map an unexpected error to a real 500."""
+        app, *_ = perm_ext_app
 
-        async def _resolve_fail(request):
-            raise RuntimeError("Unexpected")
-
-        mock_resolve.side_effect = _resolve_fail
-
-        client = TestClient(app)
-        response = client.put("/api/v1/permissions/1234567890:111111111", json={"allow": 8, "deny": 0})
-        assert response.status_code == 500
-        assert "detail" in response.json()
+        with patch("api.routers.permissions.resolve_bot", side_effect=RuntimeError("Unexpected")):
+            client = TestClient(app)
+            response = client.put("/api/v1/permissions/1234567890:111111111", json={"allow": 8, "deny": 0})
+            assert response.status_code == 500
+            assert "detail" in response.json()
 
 
 class TestRemovePermissionOverwriteExtended:
     """Extended tests for DELETE /permissions/{permission_id}."""
 
     def test_remove_overwrite_channel_from_fetch(self, perm_ext_app):
-        """remove_permission_overwrite should fetch channel when not in cache."""
-        app, mock_bot, *_ = perm_ext_app
+        """remove_permission_overwrite should fetch channel when not in cache and call the
+        real channel.set_permissions(target, overwrite=None)."""
+        app, mock_bot = perm_ext_app
 
-        _mock_target = MagicMock()
-        _mock_target.id = 111111111
-        _mock_target.name = "test-target"
-        _mock_target.permissions = MagicMock()  # This makes it a "role"
+        _mock_target = DiscordMockUtils.create_mock_role(role_id=111111111, name="test-target")
+        _mock_target.__class__ = discord.Role
 
         channel = create_mock_channel(5555555555)
         channel.overwrites = {_mock_target: MagicMock()}
@@ -377,21 +344,20 @@ class TestRemovePermissionOverwriteExtended:
         client = TestClient(app)
         response = client.delete("/api/v1/permissions/5555555555:111111111")
         assert response.status_code == 200
-        assert response.json()["status"] == "deleted"
+        data = response.json()
+        assert data["status"] == "deleted"
+        assert "test-target" in data["message"]
+        channel.set_permissions.assert_awaited_once_with(_mock_target, overwrite=None)
 
     def test_remove_overwrite_exception_path(self, perm_ext_app):
-        """remove_permission_overwrite should return 500 on unexpected exception."""
-        app, _mock_bot, mock_resolve, _mock_handle, *_ = perm_ext_app
+        """remove_permission_overwrite should map an unexpected error to a real 500."""
+        app, *_ = perm_ext_app
 
-        async def _resolve_fail(request):
-            raise RuntimeError("Unexpected")
-
-        mock_resolve.side_effect = _resolve_fail
-
-        client = TestClient(app)
-        response = client.delete("/api/v1/permissions/1234567890:111111111")
-        assert response.status_code == 500
-        assert "detail" in response.json()
+        with patch("api.routers.permissions.resolve_bot", side_effect=RuntimeError("Unexpected")):
+            client = TestClient(app)
+            response = client.delete("/api/v1/permissions/1234567890:111111111")
+            assert response.status_code == 500
+            assert "detail" in response.json()
 
 
 class TestCheckComprehensivePermissionsExtended:
@@ -422,15 +388,12 @@ class TestCheckComprehensivePermissionsExtended:
 
     def test_check_permissions_role_subject_channel_target(self, perm_ext_app):
         """check_comprehensive_permissions with role subject and channel target."""
-        app, mock_bot, _mock_resolve, _mock_handle, _mock_converter = perm_ext_app
+        app, mock_bot = perm_ext_app
 
-        # Build a guild with the role
         _mock_guild = MagicMock()
         _mock_guild.id = 987654321
-        _mock_role = MagicMock()
-        _mock_role.id = 123456789
-        _mock_role.name = "test-role"
-        _mock_role.permissions = MagicMock(value=8)
+        _mock_role = DiscordMockUtils.create_mock_role(role_id=123456789, name="test-role", guild=_mock_guild)
+        _mock_role.__class__ = discord.Role
         _mock_guild.get_role = MagicMock(side_effect=lambda x: _mock_role if x == 123456789 else None)
 
         _mock_overwrite = MagicMock()
@@ -468,15 +431,12 @@ class TestCheckComprehensivePermissionsExtended:
 
     def test_check_permissions_evaluate_mode_channel_role(self, perm_ext_app):
         """check_comprehensive_permissions evaluate mode for channel + role subject."""
-        app, mock_bot, _mock_resolve, _mock_handle, _mock_converter = perm_ext_app
+        app, mock_bot = perm_ext_app
 
-        # Build a guild with the role so _resolve_subject_entity finds it
         _mock_guild = MagicMock()
         _mock_guild.id = 987654321
-        _mock_role = MagicMock()
-        _mock_role.id = 123456789
-        _mock_role.name = "test-role"
-        _mock_role.permissions = MagicMock(value=8)
+        _mock_role = DiscordMockUtils.create_mock_role(role_id=123456789, name="test-role", guild=_mock_guild)
+        _mock_role.__class__ = discord.Role
         _mock_guild.get_role = MagicMock(side_effect=lambda x: _mock_role if x == 123456789 else None)
 
         _mock_overwrite = MagicMock()
@@ -502,11 +462,11 @@ class TestCheckComprehensivePermissionsExtended:
         assert "base" in data["data"]
 
     def test_check_permissions_guild_not_found_404(self, perm_ext_app):
-        """check_comprehensive_permissions should return 404 when guild not found."""
-        app, mock_bot, _mock_resolve, *_ = perm_ext_app
+        """check_comprehensive_permissions should return 404 (real discord.NotFound) when guild not found."""
+        app, mock_bot = perm_ext_app
 
         mock_bot.get_guild = MagicMock(return_value=None)
-        mock_bot.fetch_guild = AsyncMock(side_effect=Exception("Guild not found"))
+        mock_bot.fetch_guild = AsyncMock(side_effect=create_discord_not_found("Guild not found"))
 
         client = TestClient(app)
         body = {
@@ -520,12 +480,12 @@ class TestCheckComprehensivePermissionsExtended:
 
     def test_check_permissions_guild_from_fetch(self, perm_ext_app):
         """check_comprehensive_permissions should fetch guild when not cached."""
-        app, mock_bot, _mock_resolve, *_ = perm_ext_app
+        app, mock_bot = perm_ext_app
 
         _mock_guild = MagicMock()
         _mock_guild.id = 987654321
-        _mock_member = MagicMock()
-        _mock_member.id = 111111111
+        _mock_member = DiscordMockUtils.create_mock_member(user_id=111111111, guild=_mock_guild)
+        _mock_member.__class__ = discord.Member
         _mock_member.guild_permissions = MagicMock(value=8)
         _mock_guild.get_member = MagicMock(return_value=_mock_member)
         _mock_guild.fetch_member = AsyncMock(return_value=_mock_member)
@@ -544,11 +504,11 @@ class TestCheckComprehensivePermissionsExtended:
         assert response.json()["status"] == "success"
 
     def test_check_permissions_channel_not_found_404(self, perm_ext_app):
-        """check_comprehensive_permissions should return 404 when channel not found."""
-        app, mock_bot, *_ = perm_ext_app
+        """check_comprehensive_permissions should return 404 (real discord.NotFound) when channel not found."""
+        app, mock_bot = perm_ext_app
 
         mock_bot.get_channel = MagicMock(return_value=None)
-        mock_bot.fetch_channel = AsyncMock(side_effect=Exception("Channel not found"))
+        mock_bot.fetch_channel = AsyncMock(side_effect=create_discord_not_found("Channel not found"))
 
         client = TestClient(app)
         body = {
@@ -562,7 +522,7 @@ class TestCheckComprehensivePermissionsExtended:
 
     def test_check_permissions_channel_no_guild_400(self, perm_ext_app):
         """check_comprehensive_permissions should return 400 when channel has no guild."""
-        app, mock_bot, *_ = perm_ext_app
+        app, mock_bot = perm_ext_app
 
         channel = MagicMock()
         channel.id = 7777777777
@@ -592,13 +552,13 @@ class TestCheckComprehensivePermissionsExtended:
         assert "detail" in response.json()
 
     def test_check_permissions_member_not_in_guild_404(self, perm_ext_app):
-        """check_comprehensive_permissions should return 404 when member not in guild."""
-        app, mock_bot, *_ = perm_ext_app
+        """check_comprehensive_permissions should return 404 (real discord.NotFound) when member not in guild."""
+        app, mock_bot = perm_ext_app
 
         _mock_guild = MagicMock()
         _mock_guild.id = 987654321
         _mock_guild.get_member = MagicMock(return_value=None)  # Not found
-        _mock_guild.fetch_member = AsyncMock(side_effect=Exception("Member not found"))
+        _mock_guild.fetch_member = AsyncMock(side_effect=create_discord_not_found("Member not found"))
 
         mock_bot.get_guild = MagicMock(return_value=_mock_guild)
 
@@ -614,7 +574,7 @@ class TestCheckComprehensivePermissionsExtended:
 
     def test_check_permissions_role_not_in_guild_404(self, perm_ext_app):
         """check_comprehensive_permissions should return 404 when role not in guild."""
-        app, mock_bot, *_ = perm_ext_app
+        app, mock_bot = perm_ext_app
 
         _mock_guild = MagicMock()
         _mock_guild.id = 987654321
@@ -633,20 +593,16 @@ class TestCheckComprehensivePermissionsExtended:
         assert "detail" in response.json()
 
     def test_check_permissions_exception_path(self, perm_ext_app):
-        """check_comprehensive_permissions should handle generic exceptions."""
-        app, _mock_bot, mock_resolve, _mock_handle, *_ = perm_ext_app
+        """check_comprehensive_permissions should map an unexpected error to a real 500."""
+        app, *_ = perm_ext_app
 
-        async def _resolve_fail(request):
-            raise RuntimeError("Unexpected")
-
-        mock_resolve.side_effect = _resolve_fail
-
-        client = TestClient(app)
-        body = {
-            "subject": {"type": "user", "id": 111111111},
-            "target": {"type": "guild", "id": 987654321},
-            "permissions": [],
-        }
-        response = client.post("/api/v1/permissions/check", json=body)
-        assert response.status_code == 500
-        assert "detail" in response.json()
+        with patch("api.routers.permissions.resolve_bot", side_effect=RuntimeError("Unexpected")):
+            client = TestClient(app)
+            body = {
+                "subject": {"type": "user", "id": 111111111},
+                "target": {"type": "guild", "id": 987654321},
+                "permissions": [],
+            }
+            response = client.post("/api/v1/permissions/check", json=body)
+            assert response.status_code == 500
+            assert "detail" in response.json()

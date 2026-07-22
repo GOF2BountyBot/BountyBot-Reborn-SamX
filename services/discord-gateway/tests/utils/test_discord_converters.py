@@ -900,8 +900,8 @@ class TestMessageConverter:
             embeds=[],
         )
         mock_message.author.name = "TestUser"
-        mock_message.type = MagicMock()
-        mock_message.type.name = "default"
+        # No manual type override needed: the factory now defaults message.type
+        # to a real discord.MessageType.default (whose .name == "default").
 
         import utils.discord_converters as _dc_mod
 
@@ -918,21 +918,10 @@ class TestMessageConverter:
 
     def test_message_to_payload_converts_message_with_embed(self):
         """message_to_payload should convert message with embed correctly."""
-        # Create a mock embed that EmbedConverter can process
-        mock_field = MagicMock()
-        mock_field.name = "Field Name"
-        mock_field.value = "Field Value"
-        mock_field.inline = False
-
-        mock_embed = MagicMock()
-        mock_embed.title = "Test Embed"
-        mock_embed.description = "Test description"
-        mock_embed.color = None
-        mock_embed.fields = [mock_field]
-        mock_embed.footer = None
-        mock_embed.timestamp = None
-        mock_embed.thumbnail = None
-        mock_embed.image = None
+        # Use a real discord.Embed (constructible without a live client) so
+        # EmbedConverter processes a genuine embed, not a truthy MagicMock chain.
+        mock_embed = _real_discord.Embed(title="Test Embed", description="Test description")
+        mock_embed.add_field(name="Field Name", value="Field Value", inline=False)
 
         mock_message = DiscordMockUtils.create_mock_message(
             message_id=1234567890,
@@ -945,8 +934,6 @@ class TestMessageConverter:
             embeds=[mock_embed],
         )
         mock_message.author.name = "TestUser"
-        mock_message.type = MagicMock()
-        mock_message.type.name = "default"
 
         import utils.discord_converters as _dc_mod
 
@@ -977,12 +964,9 @@ class TestMessageConverter:
 
     def test_message_to_summary_converts_message_with_embed(self):
         """message_to_summary should convert message with embed correctly."""
-        mock_embed = MagicMock()
-        mock_embed.description = "Test description"
-        mock_embed.title = "Test title"
-        mock_embed.fields = [MagicMock(name="Field1", value="Value1")]
-        mock_embed.footer = MagicMock()
-        mock_embed.footer.text = "Footer text"
+        mock_embed = _real_discord.Embed(title="Test title", description="Test description")
+        mock_embed.add_field(name="Field1", value="Value1")
+        mock_embed.set_footer(text="Footer text")
 
         mock_message = DiscordMockUtils.create_mock_message(
             message_id=1234567890,
@@ -1001,16 +985,9 @@ class TestMessageConverter:
 
     def test_message_to_summary_falls_back_to_embed_fields(self):
         """message_to_summary should fall back to embed fields if no description/title."""
-        # Create field mock with proper name and value attributes
-        mock_field = MagicMock()
-        mock_field.name = "Field1"
-        mock_field.value = "Value1"
-
-        mock_embed = MagicMock()
-        mock_embed.description = None
-        mock_embed.title = None
-        mock_embed.fields = [mock_field]
-        mock_embed.footer = None
+        # Real embed with only a field (no title/description) → summary joins fields.
+        mock_embed = _real_discord.Embed()
+        mock_embed.add_field(name="Field1", value="Value1")
 
         mock_message = DiscordMockUtils.create_mock_message(
             message_id=1234567890,

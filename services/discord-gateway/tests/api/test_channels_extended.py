@@ -1,4 +1,31 @@
-"""Extended tests for the channels API endpoints — boosting coverage from 26% to 70%+."""
+"""Extended tests for the channels API endpoints — boosting coverage from 26% to 70%+.
+
+Fidelity notes (partial remediation — see FOLLOWUPS.md R-gw-api-0)
+--------------------------------------------------------------------
+This file no longer swaps ``sys.modules["discord"]``/``"discord.ext.commands"``
+with a hand-rolled fake module at collection time (that swap made
+``DiscordMockUtils.create_mock_bot()``'s ``MagicMock(spec=commands.Bot)`` a
+*different* Bot class from the one ``resolve_bot``'s ``isinstance`` check
+resolved against, which is what forced ``resolve_bot`` to stay patched
+everywhere in the first place).
+
+``_build_app`` (the fixture builder behind ``channels_app_and_mocks``/
+``channels_client``, used by the large majority of the classes below) no
+longer patches ``resolve_bot``, ``get_entity_or_404`` or
+``handle_discord_exception``: the mock bot is ``spec=commands.Bot``
+(``is_ready()==True``) and ``fetch_channel`` now raises a real
+``discord.NotFound`` on cache miss, so the real helpers run end-to-end
+(cache -> fetch -> real 404/generic-exception mapping).
+``ChannelConverter``/``PermissionConverter``/``EmbedConverter``/
+``validate_channel_type``/``create_permission_overwrite`` remain patched
+with canned return values in this file — full SYS-4 remediation (letting
+the real converters run against these already-real-attributed mock
+channels) is documented as a followup rather than attempted wholesale here,
+given the volume of per-test response-body assertions that key off the
+canned dicts. ``_build_app_with_discord_patch`` (the second builder, used by
+the isinstance/type-dispatch and generic-exception-handler test classes)
+still patches all of the above — same reasoning, documented as a followup.
+"""
 
 import os
 import sys
@@ -39,33 +66,16 @@ _mock_bblogger.get_logger = _make_mock_logger
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
 
-# Setup mock discord module with real exception classes so isinstance checks work.
-_mock_discord = DiscordMockUtils.create_mock_discord_module()
-
-_MockCategoryChannel = type("CategoryChannel", (), {})
-_MockTextChannel = type("TextChannel", (), {})
-_MockVoiceChannel = type("VoiceChannel", (), {})
-_MockForumChannel = type("ForumChannel", (), {})
-_MockThread = type("Thread", (), {})
-_MockEmbed = type("Embed", (), {})
-_MockPermissionOverwrite = type("PermissionOverwrite", (), {})
-
-_mock_discord.CategoryChannel = _MockCategoryChannel
-_mock_discord.TextChannel = _MockTextChannel
-_mock_discord.VoiceChannel = _MockVoiceChannel
-_mock_discord.ForumChannel = _MockForumChannel
-_mock_discord.Thread = _MockThread
-_mock_discord.Embed = _MockEmbed
-_mock_discord.PermissionOverwrite = _MockPermissionOverwrite
-
-_MockBot = type("Bot", (), {})
-_mock_discord_ext = types.ModuleType("discord.ext")
-_mock_discord_ext.commands = types.ModuleType("discord.ext.commands")
-_mock_discord_ext.commands.Bot = _MockBot
-
-sys.modules["discord"] = _mock_discord
-sys.modules["discord.ext"] = _mock_discord_ext
-sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
+# NOTE: this file previously swapped sys.modules["discord"]/"discord.ext.commands"
+# with a hand-rolled fake module at collection time. That swap made
+# DiscordMockUtils.create_mock_bot()'s `MagicMock(spec=commands.Bot)` (built
+# against whatever `discord.ext.commands` was real/cached at
+# discord_mock_utils.py's own import time) a *different* Bot class from the one
+# utils.discord_helpers.resolve_bot's `isinstance(bot, commands.Bot)` check
+# resolved against (the fake one) — resolve_bot would then always raise 500
+# "Bot instance invalid" once it was no longer patched away. Using the real
+# discord module throughout (no swap) keeps both references identical, which
+# is what let SYS-1 (unpatching resolve_bot below) become possible.
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
@@ -179,7 +189,11 @@ def create_mock_category(channel_id=1111111111):
 
 @pytest.fixture
 def mock_bot_extended():
-    """Bot that knows about text, voice, forum, and category channels."""
+    """Bot that knows about text, voice, forum, and category channels.
+
+    ``fetch_channel`` raises a real ``discord.NotFound`` on cache miss so the
+    real (unpatched) ``get_entity_or_404`` produces a genuine 404.
+    """
     text_ch = create_mock_text_channel(1234567890)
     voice_ch = create_mock_voice_channel(2222222222)
     forum_ch = create_mock_forum_channel(3333333333)
@@ -194,40 +208,35 @@ def mock_bot_extended():
 
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
     bot.get_channel = lambda cid: channels.get(cid)
-    bot.fetch_channel = AsyncMock(side_effect=lambda cid: channels.get(cid))
+
+    async def fetch_channel(cid):
+        found = channels.get(cid)
+        if found is None:
+            raise DiscordMockUtils.create_discord_not_found(f"Channel {cid} not found")
+        return found
+
+    bot.fetch_channel = AsyncMock(side_effect=fetch_channel)
     return bot
 
 
 def _build_app(mock_bot, channel_detail_override=None):
-    """Build a FastAPI test app with channels router and patched helpers."""
+    """Build a FastAPI test app with the channels router.
+
+    ``resolve_bot``/``get_entity_or_404`` are NOT patched — the real helpers
+    run against ``mock_bot`` (see fidelity notes at the top of this file).
+    """
     app = FastAPI(title="Channels Test")
     app.state.bot = mock_bot
 
     detail = channel_detail_override or _make_channel_detail_dict()
 
     with (
-        patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-        patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock) as mock_hde,
-        patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
         patch("api.routers.channels.ChannelConverter") as mock_cc,
         patch("api.routers.channels.PermissionConverter") as mock_pc,
         patch("api.routers.channels.validate_channel_type") as mock_vct,
         patch("api.routers.channels.EmbedConverter") as mock_ec,
         patch("api.routers.channels.create_permission_overwrite") as mock_cpo,
     ):
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            ch = mock_bot.get_channel(entity_id)
-            if ch is None:
-                raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-            return ch
-
-        async def _resolve_bot(request):
-            return mock_bot
-
-        mock_gea.side_effect = _get_entity
-        mock_rb.side_effect = _resolve_bot
-        mock_hde.return_value = None
         mock_cc.channel_to_detail.return_value = detail
         mock_cc.thread_to_summary.return_value = {}
         mock_cc.thread_to_detail.return_value = {
@@ -270,9 +279,6 @@ def _build_app(mock_bot, channel_detail_override=None):
         yield (
             app,
             {
-                "get_entity": mock_gea,
-                "handle_exception": mock_hde,
-                "resolve_bot": mock_rb,
                 "converter": mock_cc,
                 "perm_converter": mock_pc,
                 "validate_channel_type": mock_vct,
@@ -2044,7 +2050,7 @@ class TestDeleteChannelMessage:
         """DELETE message in non-existent channel should return 404."""
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = lambda cid: None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: None)
+        bot.fetch_channel = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found("Channel not found"))
 
         gen = _build_app(bot)
         app, _mocks = next(gen)

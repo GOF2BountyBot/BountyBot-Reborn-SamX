@@ -16,19 +16,33 @@ Uncovered lines targeted:
   guilds.py 306-333   - create_category endpoint
   guilds.py 356-371   - list_guild_roles: sort + exception handler
   guilds.py 386-464   - create_role: main path + retry logic
+
+Fidelity notes
+--------------
+No patches on ``resolve_bot``, ``get_entity_or_404``, ``handle_discord_exception``
+or ``GuildConverter``/``ChannelConverter``/``RoleConverter``/``UserConverter``
+anywhere in this file: every app is built via ``_build_client()``, which sets
+a real ``spec=commands.Bot`` bot on ``app.state`` and mounts the router
+unpatched. Real per-endpoint exceptions are driven by making the actual
+Discord-facing call (``bot.get_guild``, ``guild.create_role``, ...) raise —
+never by re-implementing the router's own error handling. The
+``asyncio.wait_for``/``asyncio.sleep``/``random.uniform`` patches in
+``TestCreateRoleRetryLogic`` remain: they are a genuine timing boundary
+(the real retry loop sleeps with exponential backoff) and the tests assert
+on the router's own real retry loop, not a reimplementation of it.
 """
 
-import os
 import sys
 import types
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from tests.mocks.discord_mock_utils import DiscordMockUtils
+from tests.mocks.discord_mock_utils import DiscordMockUtils, create_discord_not_found
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -46,13 +60,6 @@ _mock_bblogger.get_logger = _make_mock_logger
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
 
-# Use real discord (test_guilds.py pattern: evict + re-import)
-for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_commands"]:
-    sys.modules.pop(_mod, None)
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-import discord
 
 # ---------------------------------------------------------------------------
 # Helper factories
@@ -92,196 +99,120 @@ def _make_guild(
     return guild
 
 
-def _make_member(user_id=111111111):
-    return DiscordMockUtils.create_mock_member(
+def _make_member(user_id=111111111, guild=None):
+    member = DiscordMockUtils.create_mock_member(
         user_id=user_id,
-        guild_id=987654321,
+        guild=guild,
+        guild_id=guild.id if guild else 987654321,
         username="TestUser",
         discriminator="1234",
-        joined_at=datetime.now(),
+        joined_at=datetime(2024, 1, 1),
     )
+    member.__class__ = discord.Member
+    # Real discord.Member delegates undefined attribute access (avatar,
+    # created_at, public_flags, bot, system) to its underlying User via
+    # __getattr__; create_mock_member only sets these on member.user.
+    # UserConverter.user_to_payload(member) reads them straight off `member`,
+    # so mirror that delegation here to match real discord.py's behaviour.
+    member.avatar = member.user.avatar
+    member.created_at = member.user.created_at
+    member.public_flags = member.user.public_flags
+    member.bot = member.user.bot
+    member.system = member.user.system
+    return member
 
 
-def _member_schema(user_id=111111111):
-    from api.schemas.user_schemas import Member as MemberSchema
-    from api.schemas.user_schemas import User as UserSchema
-
-    user = UserSchema(
-        id=user_id,
-        username="TestUser",
-        discriminator="1234",
-        avatar=None,
-        bot=False,
-        system=False,
-        created_at="2024-01-01T00:00:00",
-        public_flags=0,
+def _make_role(role_id=222222222, name="Test Role", position=1, guild=None):
+    role = DiscordMockUtils.create_mock_role(
+        role_id=role_id, name=name, position=position, color_value=0x00FF00, guild=guild
     )
-    return MemberSchema(
-        user=user,
-        guild_id=987654321,
-        nick=None,
-        roles=[],
-        joined_at="2024-01-01T00:00:00",
-        premium_since=None,
-        deaf=False,
-        mute=False,
-        pending=False,
-        permissions=0,
-    )
-
-
-def _make_role(role_id=222222222, name="Test Role", position=1):
-    role = DiscordMockUtils.create_mock_role(role_id=role_id, name=name, position=position, color_value=0x00FF00)
+    role.__class__ = discord.Role
     return role
 
 
-def _guild_schema(guild_id=987654321):
-    from api.schemas.guild_schemas import Guild
-
-    return Guild(
-        id=guild_id,
-        name="Test Guild",
-        icon=None,
-        member_count=0,
-        owner_id=111111111,
-        description="Test",
-        created_at="2024-01-01T00:00:00",
-        features=[],
-        verification_level="none",
-        default_notifications="all_messages",
-        explicit_content_filter="disabled",
-        mfa_level="none",
-        premium_tier=0,
-        premium_subscription_count=0,
-        preferred_locale="en-US",
-        nsfw_level="default",
+def _make_channel(channel_id=1234567890, name="test-channel", position=0, guild=None):
+    channel = DiscordMockUtils.create_mock_text_channel(
+        channel_id=channel_id, name=name, position=position, guild=guild, guild_id=guild.id if guild else 987654321
     )
+    channel.__class__ = discord.TextChannel
+    return channel
 
 
-def _role_schema(role_id=222222222, position=1):
-    from api.schemas.role_schemas import Role
-
-    return Role(
-        id=role_id,
-        guild_id=987654321,
-        name="Test Role",
-        color=0x00FF00,
-        hoist=False,
-        position=position,
-        permissions=0,
-        managed=False,
-        mentionable=False,
-        created_at="2024-01-01T00:00:00",
+def _make_category(channel_id=1111111111, name="Test Category", position=0, guild=None):
+    category = DiscordMockUtils.create_mock_category_channel(
+        channel_id=channel_id, name=name, position=position, guild=guild, guild_id=guild.id if guild else 987654321
     )
+    category.__class__ = discord.CategoryChannel
+    return category
 
 
-def _channel_detail():
-    from api.schemas.channel_schemas import Channel
+def _build_bot(guild, user_id=123456789):
+    """Build a real ``spec=commands.Bot`` mock whose ``fetch_guild`` raises a
+    real ``discord.NotFound`` on cache miss, matching production's
+    cache -> fetch -> 404 behaviour."""
+    bot = DiscordMockUtils.create_mock_bot(user_id=user_id, username="TestBot")
 
-    return Channel(
-        id=1234567890,
-        name="test-channel",
-        type="text",
-        position=1,
-        guild_id=987654321,
-        created_at="2024-01-01T00:00:00",
-    )
+    def get_guild(guild_id):
+        return guild if guild_id == guild.id else None
 
+    async def fetch_guild(guild_id):
+        found = get_guild(guild_id)
+        if found is None:
+            raise create_discord_not_found(f"Guild {guild_id} not found")
+        return found
 
-def _category_detail():
-    from api.schemas.channel_schemas import Category
-
-    return Category(
-        id=1111111111,
-        name="Test Category",
-        position=1,
-        guild_id=987654321,
-        created_at="2024-01-01T00:00:00",
-    )
+    bot.get_guild = get_guild
+    bot.fetch_guild = AsyncMock(side_effect=fetch_guild)
+    bot.guilds = [guild]
+    return bot
 
 
-def _evict_discord_modules():
-    to_evict = [
-        k
-        for k in sys.modules
-        if k in ("api", "bot", "utils")
-        or k.startswith("api.")
-        or k.startswith("utils.")
-        or k.startswith("cogs.")
-        or k == "discord"
-        or k.startswith("discord.")
-    ]
-    for k in to_evict:
-        sys.modules.pop(k, None)
+def _build_client(guild=None, bot=None):
+    """Build a TestClient with the guilds router mounted against a real bot
+    state — no helper/converter patches."""
+    if bot is None:
+        bot = _build_bot(guild or _make_guild())
+
+    app = FastAPI()
+    app.state.bot = bot
+
+    from api.routers.guilds import router
+
+    app.include_router(router, prefix="/api/v1")
+
+    return TestClient(app), bot
 
 
 # ---------------------------------------------------------------------------
-# App builder fixture
+# Module-level fixtures: a guild with one category, one channel, one role,
+# one member so the "list X" tests exercise genuine real-converter output.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def mock_bot():
-    bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
     guild = _make_guild()
-
-    def get_guild(guild_id):
-        return guild if guild_id == 987654321 else None
-
-    bot.get_guild = get_guild
-    bot.fetch_guild = AsyncMock(side_effect=lambda x: get_guild(x))
-    bot.guilds = [guild]
-    return bot
+    category = _make_category(guild=guild)
+    channel = _make_channel(guild=guild)
+    role = _make_role(guild=guild)
+    member = _make_member(guild=guild)
+    guild.categories = [category]
+    guild.channels = [channel, category]
+    guild.roles = [role]
+    guild.members = [member]
+    return _build_bot(guild)
 
 
 @pytest.fixture
-def guilds_test_app(mock_bot):
-    _evict_discord_modules()
-
+def guilds_client(mock_bot):
     app = FastAPI()
     app.state.bot = mock_bot
 
-    with (
-        patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-        patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-        patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-        patch("api.routers.guilds.GuildConverter") as mock_gc,
-        patch("api.routers.guilds.ChannelConverter") as mock_cc,
-        patch("api.routers.guilds.RoleConverter") as mock_rc,
-        patch("api.routers.guilds.UserConverter") as mock_uc,
-    ):
+    from api.routers.guilds import router
 
-        async def _resolve(req):
-            return mock_bot
+    app.include_router(router, prefix="/api/v1")
 
-        async def _get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
-            guild = mock_bot.get_guild(entity_id)
-            if guild is None:
-                raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-            return guild
-
-        mock_resolve.side_effect = _resolve
-        mock_get_entity.side_effect = _get_entity_or_404
-        mock_handle.return_value = None
-
-        mock_gc.guild_to_summary.return_value = _guild_schema()
-        mock_gc.guild_to_detail.return_value = _guild_schema()
-        mock_cc.channel_to_summary.return_value = {"id": 1234567890, "name": "ch", "type": "text"}
-        mock_cc.category_to_detail.return_value = {"id": 1111111111, "name": "Cat"}
-        mock_cc.channel_to_detail.return_value = _channel_detail()
-        mock_rc.role_to_payload.return_value = _role_schema()
-        mock_uc.member_to_payload.return_value = _member_schema()
-
-        from api.routers.guilds import router
-
-        app.include_router(router, prefix="/api/v1")
-
-        yield app
-
-
-@pytest.fixture
-def guilds_client(guilds_test_app):
-    return TestClient(guilds_test_app)
+    return TestClient(app)
 
 
 # ---------------------------------------------------------------------------
@@ -292,84 +223,38 @@ def guilds_client(guilds_test_app):
 class TestListGuildMembersExtended:
     """Cover member listing with limit, chunked=False, and exception paths."""
 
-    def _build_app(self, guild):
-        _evict_discord_modules()
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-
-        def get_guild(gid):
-            return guild if gid == 987654321 else None
-
-        bot.get_guild = get_guild
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: get_guild(x))
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter") as mock_gc,
-            patch("api.routers.guilds.ChannelConverter") as mock_cc,
-            patch("api.routers.guilds.RoleConverter") as mock_rc,
-            patch("api.routers.guilds.UserConverter") as mock_uc,
-        ):
-
-            async def _resolve(req):
-                return bot
-
-            async def _get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
-                g = bot.get_guild(entity_id)
-                if g is None:
-                    raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-                return g
-
-            mock_resolve.side_effect = _resolve
-            mock_get_entity.side_effect = _get_entity_or_404
-            mock_handle.return_value = None
-            mock_gc.guild_to_summary.return_value = _guild_schema()
-            mock_gc.guild_to_detail.return_value = _guild_schema()
-            mock_cc.channel_to_summary.return_value = {}
-            mock_cc.channel_to_detail.return_value = _channel_detail()
-            mock_cc.category_to_detail.return_value = {}
-            mock_rc.role_to_payload.return_value = _role_schema()
-            mock_uc.member_to_payload.return_value = _member_schema()
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            yield TestClient(app)
-
     def test_list_members_with_chunked_false_triggers_chunk(self):
         """list_guild_members calls guild.chunk() when guild.chunked is False."""
-        guild = _make_guild(chunked=False, members=[_make_member()])
-        for client in self._build_app(guild):
-            response = client.get("/api/v1/guilds/987654321/members")
-            assert response.status_code == 200
-            assert response.json()["status"] == "success"
-            # guild.chunk should have been called
-            guild.chunk.assert_called_once_with(cache=True)
+        guild = _make_guild(chunked=False)
+        guild.members = [_make_member(guild=guild)]
+        client, _bot = _build_client(guild)
+
+        response = client.get("/api/v1/guilds/987654321/members")
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        guild.chunk.assert_called_once_with(cache=True)
 
     def test_list_members_limit_enforced(self):
         """list_guild_members stops at limit even when more members exist."""
-        members = [_make_member(i) for i in range(1, 6)]  # 5 members
-        guild = _make_guild(members=members)
-        for client in self._build_app(guild):
-            # Request with limit=2
-            response = client.get("/api/v1/guilds/987654321/members?limit=2")
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data["data"]) == 2
+        guild = _make_guild()
+        guild.members = [_make_member(i, guild=guild) for i in range(1, 6)]  # 5 members
+        client, _bot = _build_client(guild)
+
+        response = client.get("/api/v1/guilds/987654321/members?limit=2")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["data"]) == 2
+        assert data["data"][0]["user"]["id"] == 1
+        assert data["data"][1]["user"]["id"] == 2
 
     def test_list_members_empty_guild(self):
         """list_guild_members returns empty list for guild with no members."""
         guild = _make_guild(members=[])
-        for client in self._build_app(guild):
-            response = client.get("/api/v1/guilds/987654321/members")
-            assert response.status_code == 200
-            assert response.json()["data"] == []
+        client, _bot = _build_client(guild)
+
+        response = client.get("/api/v1/guilds/987654321/members")
+        assert response.status_code == 200
+        assert response.json()["data"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -380,122 +265,80 @@ class TestListGuildMembersExtended:
 class TestCreateChannel:
     """Cover POST /guilds/{guild_id}/channels."""
 
-    def _build_app_with_guild(self, guild):
-        _evict_discord_modules()
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-
-        def get_guild(gid):
-            return guild if gid == 987654321 else None
-
-        bot.get_guild = get_guild
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: get_guild(x))
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter") as mock_gc,
-            patch("api.routers.guilds.ChannelConverter") as mock_cc,
-            patch("api.routers.guilds.RoleConverter") as mock_rc,
-            patch("api.routers.guilds.UserConverter") as mock_uc,
-        ):
-
-            async def _resolve(req):
-                return bot
-
-            async def _get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
-                g = bot.get_guild(entity_id)
-                if g is None:
-                    raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-                return g
-
-            mock_resolve.side_effect = _resolve
-            mock_get_entity.side_effect = _get_entity_or_404
-            mock_gc.guild_to_summary.return_value = _guild_schema()
-            mock_gc.guild_to_detail.return_value = _guild_schema()
-            mock_cc.channel_to_summary.return_value = {}
-            mock_cc.channel_to_detail.return_value = _channel_detail()
-            mock_cc.category_to_detail.return_value = {}
-            mock_rc.role_to_payload.return_value = _role_schema()
-            mock_uc.member_to_payload.return_value = {}
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            yield TestClient(app)
-
     def test_create_text_channel_success(self):
-        """POST /guilds/{id}/channels creates a text channel."""
-        mock_channel = MagicMock()
-        mock_channel.name = "new-text-channel"
+        """POST /guilds/{id}/channels creates a text channel and real-serializes it."""
         guild = _make_guild()
-        guild.create_text_channel = AsyncMock(return_value=mock_channel)
+        new_channel = _make_channel(channel_id=5001, name="new-text-channel", guild=guild)
+        guild.create_text_channel = AsyncMock(return_value=new_channel)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/channels", json={"name": "new-text-channel", "type": "text"}
-            )
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        response = client.post("/api/v1/guilds/987654321/channels", json={"name": "new-text-channel", "type": "text"})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["data"]["id"] == 5001
+        assert data["data"]["name"] == "new-text-channel"
+        assert data["data"]["type"] == "text"
 
     def test_create_voice_channel_success(self):
-        """POST /guilds/{id}/channels creates a voice channel."""
-        mock_channel = MagicMock()
-        mock_channel.name = "voice-channel"
+        """POST /guilds/{id}/channels creates a voice channel and real-serializes it."""
         guild = _make_guild()
-        guild.create_voice_channel = AsyncMock(return_value=mock_channel)
+        new_channel = DiscordMockUtils.create_mock_voice_channel(
+            channel_id=5002, name="voice-channel", guild=guild, guild_id=guild.id
+        )
+        new_channel.__class__ = discord.VoiceChannel
+        guild.create_voice_channel = AsyncMock(return_value=new_channel)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/987654321/channels", json={"name": "voice-channel", "type": "voice"})
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        response = client.post("/api/v1/guilds/987654321/channels", json={"name": "voice-channel", "type": "voice"})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["data"]["id"] == 5002
+        assert data["data"]["type"] == "voice"
 
     def test_create_forum_channel_success(self):
-        """POST /guilds/{id}/channels creates a forum channel."""
-        mock_channel = MagicMock()
-        mock_channel.name = "forum-channel"
+        """POST /guilds/{id}/channels creates a forum channel and real-serializes it."""
         guild = _make_guild()
-        guild.create_forum = AsyncMock(return_value=mock_channel)
+        new_channel = DiscordMockUtils.create_mock_forum_channel(
+            channel_id=5003, name="forum-channel", guild=guild, guild_id=guild.id
+        )
+        new_channel.__class__ = discord.ForumChannel
+        guild.create_forum = AsyncMock(return_value=new_channel)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/987654321/channels", json={"name": "forum-channel", "type": "forum"})
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        response = client.post("/api/v1/guilds/987654321/channels", json={"name": "forum-channel", "type": "forum"})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["data"]["id"] == 5003
+        assert data["data"]["type"] == "forum"
 
     def test_create_channel_guild_not_found(self):
         """POST /guilds/{id}/channels returns 404 for unknown guild."""
-        guild = _make_guild()
-
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/9999999999/channels", json={"name": "test", "type": "text"})
-            assert response.status_code == 404
-            assert "detail" in response.json()
+        client, _bot = _build_client(_make_guild())
+        response = client.post("/api/v1/guilds/9999999999/channels", json={"name": "test", "type": "text"})
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_create_channel_missing_name_returns_422(self):
         """POST /guilds/{id}/channels without 'name' returns 422."""
-        guild = _make_guild()
-
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/987654321/channels", json={"type": "text"})
-            assert response.status_code == 422
-            assert "detail" in response.json()
+        client, _bot = _build_client(_make_guild())
+        response = client.post("/api/v1/guilds/987654321/channels", json={"type": "text"})
+        assert response.status_code == 422
+        assert "detail" in response.json()
 
     def test_create_channel_with_invalid_category(self):
         """POST /guilds/{id}/channels returns 404 when category_id doesn't exist."""
         guild = _make_guild()
         guild.get_channel = MagicMock(return_value=None)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/channels", json={"name": "test", "type": "text", "category_id": 9999999}
-            )
-            assert response.status_code == 404
-            assert "detail" in response.json()
+        response = client.post(
+            "/api/v1/guilds/987654321/channels", json={"name": "test", "type": "text", "category_id": 9999999}
+        )
+        assert response.status_code == 404
+        assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -506,96 +349,47 @@ class TestCreateChannel:
 class TestCreateCategory:
     """Cover POST /guilds/{guild_id}/categories."""
 
-    def _build_app_with_guild(self, guild):
-        _evict_discord_modules()
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-
-        def get_guild(gid):
-            return guild if gid == 987654321 else None
-
-        bot.get_guild = get_guild
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: get_guild(x))
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter") as mock_gc,
-            patch("api.routers.guilds.ChannelConverter") as mock_cc,
-            patch("api.routers.guilds.RoleConverter") as mock_rc,
-            patch("api.routers.guilds.UserConverter") as mock_uc,
-        ):
-
-            async def _resolve(req):
-                return bot
-
-            async def _get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
-                g = bot.get_guild(entity_id)
-                if g is None:
-                    raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-                return g
-
-            mock_resolve.side_effect = _resolve
-            mock_get_entity.side_effect = _get_entity_or_404
-            mock_gc.guild_to_summary.return_value = _guild_schema()
-            mock_gc.guild_to_detail.return_value = _guild_schema()
-            mock_cc.channel_to_summary.return_value = {}
-            mock_cc.channel_to_detail.return_value = _channel_detail()
-            mock_cc.category_to_detail.return_value = _category_detail()
-            mock_rc.role_to_payload.return_value = _role_schema()
-            mock_uc.member_to_payload.return_value = {}
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            yield TestClient(app)
-
     def test_create_category_success(self):
-        """POST /guilds/{id}/categories creates a category."""
-        mock_category = MagicMock()
-        mock_category.name = "New Category"
+        """POST /guilds/{id}/categories creates a category and real-serializes it."""
         guild = _make_guild()
-        guild.create_category_channel = AsyncMock(return_value=mock_category)
+        new_category = _make_category(channel_id=6001, name="New Category", guild=guild)
+        guild.create_category_channel = AsyncMock(return_value=new_category)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/987654321/categories", json={"name": "New Category"})
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        response = client.post("/api/v1/guilds/987654321/categories", json={"name": "New Category"})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["data"]["id"] == 6001
+        assert data["data"]["name"] == "New Category"
 
     def test_create_category_with_position(self):
         """POST /guilds/{id}/categories with position creates category at that position."""
-        mock_category = MagicMock()
-        mock_category.name = "Positioned"
         guild = _make_guild()
-        guild.create_category_channel = AsyncMock(return_value=mock_category)
+        new_category = _make_category(channel_id=6002, name="Positioned", position=5, guild=guild)
+        guild.create_category_channel = AsyncMock(return_value=new_category)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/987654321/categories", json={"name": "Positioned", "position": 5})
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        response = client.post("/api/v1/guilds/987654321/categories", json={"name": "Positioned", "position": 5})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["data"]["position"] == 5
+        guild.create_category_channel.assert_awaited_once_with(name="Positioned", position=5)
 
     def test_create_category_guild_not_found(self):
         """POST /guilds/{id}/categories returns 404 for unknown guild."""
-        guild = _make_guild()
-
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/9999999999/categories", json={"name": "Test Cat"})
-            assert response.status_code == 404
-            assert "detail" in response.json()
+        client, _bot = _build_client(_make_guild())
+        response = client.post("/api/v1/guilds/9999999999/categories", json={"name": "Test Cat"})
+        assert response.status_code == 404
+        assert "detail" in response.json()
 
     def test_create_category_missing_name_returns_422(self):
         """POST /guilds/{id}/categories without name returns 422."""
-        guild = _make_guild()
-
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/987654321/categories", json={})
-            assert response.status_code == 422
-            assert "detail" in response.json()
+        client, _bot = _build_client(_make_guild())
+        response = client.post("/api/v1/guilds/987654321/categories", json={})
+        assert response.status_code == 422
+        assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -606,176 +400,98 @@ class TestCreateCategory:
 class TestCreateRole:
     """Cover POST /guilds/{guild_id}/roles."""
 
-    def _build_app_with_guild(self, guild):
-        _evict_discord_modules()
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-
-        def get_guild(gid):
-            return guild if gid == 987654321 else None
-
-        bot.get_guild = get_guild
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: get_guild(x))
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter") as mock_gc,
-            patch("api.routers.guilds.ChannelConverter") as mock_cc,
-            patch("api.routers.guilds.RoleConverter") as mock_rc,
-            patch("api.routers.guilds.UserConverter") as mock_uc,
-        ):
-
-            async def _resolve(req):
-                return bot
-
-            async def _get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
-                g = bot.get_guild(entity_id)
-                if g is None:
-                    raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-                return g
-
-            mock_resolve.side_effect = _resolve
-            mock_get_entity.side_effect = _get_entity_or_404
-            mock_gc.guild_to_summary.return_value = _guild_schema()
-            mock_gc.guild_to_detail.return_value = _guild_schema()
-            mock_cc.channel_to_summary.return_value = {}
-            mock_cc.channel_to_detail.return_value = _channel_detail()
-            mock_cc.category_to_detail.return_value = {}
-            mock_rc.role_to_payload.return_value = _role_schema()
-            mock_uc.member_to_payload.return_value = {}
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            yield TestClient(app)
-
     def test_create_role_success(self):
-        """POST /guilds/{id}/roles creates a role."""
-        mock_role = MagicMock()
-        mock_role.name = "new-role"
+        """POST /guilds/{id}/roles creates a role and real-serializes it."""
         guild = _make_guild()
-        guild.create_role = AsyncMock(return_value=mock_role)
+        new_role = _make_role(role_id=7001, name="new-role", guild=guild)
+        guild.create_role = AsyncMock(return_value=new_role)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "new-role"})
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        response = client.post("/api/v1/guilds/987654321/roles", json={"name": "new-role"})
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["data"]["id"] == 7001
+        assert data["data"]["name"] == "new-role"
 
     def test_create_role_with_permissions(self):
-        """POST /guilds/{id}/roles with permissions bitmask creates role."""
-        mock_role = MagicMock()
-        mock_role.name = "perms-role"
+        """POST /guilds/{id}/roles with permissions bitmask creates role for real."""
         guild = _make_guild()
-        guild.create_role = AsyncMock(return_value=mock_role)
+        new_role = _make_role(role_id=7002, name="perms-role", guild=guild)
+        guild.create_role = AsyncMock(return_value=new_role)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "perms-role", "permissions": 8},  # 8 = Administrator
-            )
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        response = client.post(
+            "/api/v1/guilds/987654321/roles",
+            json={"name": "perms-role", "permissions": 8},  # 8 = Administrator
+        )
+        assert response.status_code == 201
+        assert response.json()["status"] == "created"
+        # Real discord.Permissions(8) was constructed and passed through.
+        kwargs = guild.create_role.call_args.kwargs
+        assert isinstance(kwargs["permissions"], discord.Permissions)
+        assert kwargs["permissions"].administrator is True
 
     def test_create_role_with_color(self):
-        """POST /guilds/{id}/roles with color creates colored role."""
-        mock_role = MagicMock()
-        mock_role.name = "colored-role"
+        """POST /guilds/{id}/roles with color creates colored role for real."""
         guild = _make_guild()
-        guild.create_role = AsyncMock(return_value=mock_role)
+        new_role = _make_role(role_id=7003, name="colored-role", guild=guild)
+        guild.create_role = AsyncMock(return_value=new_role)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "colored-role", "color": 0xFF5733})
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        response = client.post("/api/v1/guilds/987654321/roles", json={"name": "colored-role", "color": 0xFF5733})
+        assert response.status_code == 201
+        assert response.json()["status"] == "created"
+        kwargs = guild.create_role.call_args.kwargs
+        assert isinstance(kwargs["color"], discord.Color)
+        assert kwargs["color"].value == 0xFF5733
 
     def test_create_role_negative_permissions_returns_error(self):
-        """POST /guilds/{id}/roles with negative permissions returns server error."""
+        """POST /guilds/{id}/roles with negative permissions returns a deterministic 500.
+
+        NOTE (production bug, not fixed here per audit scope — see FOLLOWUPS.md
+        R-gw-api-0): the router does ``raise HTTPException(status_code=status.HTTP_422, ...)``
+        but ``fastapi.status`` has no ``HTTP_422`` attribute (only
+        ``HTTP_422_UNPROCESSABLE_CONTENT``), so this line always raises
+        ``AttributeError`` instead of returning 422. The outer generic
+        ``except Exception`` then maps that to a real 500 via
+        ``handle_discord_exception`` — the endpoint can never actually
+        return 422 for an invalid permissions bitmask.
+        """
         guild = _make_guild()
+        client, _bot = _build_client(guild)
 
-        # Build a dedicated app that returns 500 on handle_discord_exception
-        _evict_discord_modules()
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_guild = lambda gid: guild if gid == 987654321 else None
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: guild if x == 987654321 else None)
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter") as mock_gc,
-            patch("api.routers.guilds.ChannelConverter") as mock_cc,
-            patch("api.routers.guilds.RoleConverter") as mock_rc,
-            patch("api.routers.guilds.UserConverter") as mock_uc,
-        ):
-
-            async def _resolve(req):
-                return bot
-
-            async def _get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
-                g = bot.get_guild(entity_id)
-                if g is None:
-                    raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-                return g
-
-            mock_resolve.side_effect = _resolve
-            mock_get_entity.side_effect = _get_entity_or_404
-            # Make handle_discord_exception raise 500 (otherwise None return breaks validation)
-            mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
-            mock_gc.guild_to_summary.return_value = _guild_schema()
-            mock_gc.guild_to_detail.return_value = _guild_schema()
-            mock_cc.channel_to_summary.return_value = {}
-            mock_cc.channel_to_detail.return_value = _channel_detail()
-            mock_cc.category_to_detail.return_value = {}
-            mock_rc.role_to_payload.return_value = _role_schema()
-            mock_uc.member_to_payload.return_value = _member_schema()
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "bad-role", "permissions": -1})
-            # Negative permissions triggers an AttributeError (status.HTTP_422 is not defined)
-            # which is caught by outer except and routed to handle_discord_exception → 500
-            assert response.status_code in (422, 500, 503)
-            assert "detail" in response.json()
+        response = client.post("/api/v1/guilds/987654321/roles", json={"name": "bad-role", "permissions": -1})
+        assert response.status_code == 500
+        assert "detail" in response.json()
 
     def test_create_role_guild_not_found(self):
         """POST /guilds/{id}/roles returns 404 for unknown guild."""
-        guild = _make_guild()
-
-        for client in self._build_app_with_guild(guild):
-            response = client.post("/api/v1/guilds/9999999999/roles", json={"name": "Test Role"})
-            assert response.status_code == 404
-            assert "detail" in response.json()
+        client, _bot = _build_client(_make_guild())
+        response = client.post("/api/v1/guilds/9999999999/roles", json={"name": "Test Role"})
+        assert response.status_code == 404
+        assert "detail" in response.json()
 
     def test_create_role_with_hoist_and_mentionable(self):
-        """POST /guilds/{id}/roles creates hoisted, mentionable role."""
-        mock_role = MagicMock()
-        mock_role.name = "hoisted"
+        """POST /guilds/{id}/roles creates hoisted, mentionable role for real."""
         guild = _make_guild()
-        guild.create_role = AsyncMock(return_value=mock_role)
+        new_role = _make_role(role_id=7004, name="hoisted", guild=guild)
+        guild.create_role = AsyncMock(return_value=new_role)
+        client, _bot = _build_client(guild)
 
-        for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/roles", json={"name": "hoisted", "hoist": True, "mentionable": True}
-            )
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
+        response = client.post(
+            "/api/v1/guilds/987654321/roles", json={"name": "hoisted", "hoist": True, "mentionable": True}
+        )
+        assert response.status_code == 201
+        assert response.json()["status"] == "created"
+        kwargs = guild.create_role.call_args.kwargs
+        assert kwargs["name"] == "hoisted"
+        assert kwargs["hoist"] is True
+        assert kwargs["mentionable"] is True
 
 
 # ---------------------------------------------------------------------------
-# Tests: list_guild_roles with sorted output (lines 356-357)
+# Tests: list_guild_roles with sorted output
 # ---------------------------------------------------------------------------
 
 
@@ -783,13 +499,14 @@ class TestListGuildRolesExtended:
     """Cover role listing with sorted output."""
 
     def test_list_roles_sorted_by_position(self, guilds_client, mock_bot):
-        """GET /guilds/{id}/roles returns roles sorted by position (ascending)."""
-        # The guild in mock_bot has no roles, so we just test the sort
+        """GET /guilds/{id}/roles returns real-serialized roles sorted by position."""
         response = guilds_client.get("/api/v1/guilds/987654321/roles")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
-        assert isinstance(data["data"], list)
+        assert len(data["data"]) == 1
+        assert data["data"][0]["id"] == 222222222
+        assert data["data"][0]["name"] == "Test Role"
 
     def test_list_roles_not_found(self, guilds_client):
         """GET /guilds/{id}/roles returns 404 for unknown guild."""
@@ -807,12 +524,14 @@ class TestListGuildChannelsExtended:
     """Cover channel listing with category filtering."""
 
     def test_list_channels_excludes_categories(self, guilds_client, mock_bot):
-        """GET /guilds/{id}/channels excludes category channels from result."""
+        """GET /guilds/{id}/channels excludes category channels from the real result."""
         response = guilds_client.get("/api/v1/guilds/987654321/channels")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
-        assert isinstance(data["data"], list)
+        # mock_bot's guild has 1 text channel + 1 category; only the text channel survives.
+        assert [c["id"] for c in data["data"]] == [1234567890]
+        assert data["data"][0]["type"] == "text"
 
     def test_list_channels_not_found(self, guilds_client):
         """GET /guilds/{id}/channels returns 404 for unknown guild."""
@@ -830,65 +549,20 @@ class TestListCategoriesExtended:
     """Cover category listing."""
 
     def test_list_categories_with_real_categories(self):
-        """GET /guilds/{id}/categories returns sorted categories."""
-        _evict_discord_modules()
+        """GET /guilds/{id}/categories returns real-serialized categories sorted by position."""
+        guild = _make_guild()
+        cat1 = _make_category(channel_id=1001, name="Second", position=2, guild=guild)
+        cat2 = _make_category(channel_id=1002, name="First", position=1, guild=guild)
+        guild.categories = [cat1, cat2]
+        client, _bot = _build_client(guild)
 
-        cat1 = MagicMock()
-        cat1.id = 1001
-        cat1.position = 2
-        cat2 = MagicMock()
-        cat2.id = 1002
-        cat2.position = 1
-
-        guild = _make_guild(categories=[cat1, cat2])
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_guild = lambda gid: guild if gid == 987654321 else None
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: guild if x == 987654321 else None)
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter") as mock_gc,
-            patch("api.routers.guilds.ChannelConverter") as mock_cc,
-            patch("api.routers.guilds.RoleConverter") as mock_rc,
-            patch("api.routers.guilds.UserConverter") as mock_uc,
-        ):
-
-            async def _resolve(req):
-                return bot
-
-            async def _get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
-                g = bot.get_guild(entity_id)
-                if g is None:
-                    raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-                return g
-
-            mock_resolve.side_effect = _resolve
-            mock_get_entity.side_effect = _get_entity_or_404
-            mock_gc.guild_to_summary.return_value = _guild_schema()
-            mock_gc.guild_to_detail.return_value = _guild_schema()
-            mock_cc.channel_to_summary.return_value = {}
-            mock_cc.channel_to_detail.return_value = _channel_detail()
-            mock_cc.category_to_detail.return_value = _category_detail()
-            mock_rc.role_to_payload.return_value = _role_schema()
-            mock_uc.member_to_payload.return_value = {}
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.get("/api/v1/guilds/987654321/categories")
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "success"
-            assert isinstance(data["data"], list)
-            assert len(data["data"]) == 2
+        response = client.get("/api/v1/guilds/987654321/categories")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        # Sorted by position ascending: cat2 (1) before cat1 (2).
+        assert [c["id"] for c in data["data"]] == [1002, 1001]
+        assert [c["name"] for c in data["data"]] == ["First", "Second"]
 
     def test_list_categories_not_found(self, guilds_client):
         """GET /guilds/{id}/categories returns 404 for unknown guild."""
@@ -898,87 +572,14 @@ class TestListCategoriesExtended:
 
 
 # ---------------------------------------------------------------------------
-# Helper: build an app where resolve_bot raises a non-HTTP exception
-# or where handle_discord_exception raises HTTPException(500).
-# Used to cover ALL the broad-except handlers.
-# ---------------------------------------------------------------------------
-
-
-def _build_exception_app(
-    *,
-    resolve_raises=None,
-    get_entity_raises=None,
-    guild=None,
-):
-    """
-    Build a TestClient whose resolve_bot or get_entity_or_404 raises
-    a specific exception so we can exercise the broad-except handlers.
-
-    ``handle_discord_exception`` is wired to raise HTTPException(500)
-    to produce a clean HTTP response.
-    """
-    _evict_discord_modules()
-    bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-
-    _guild = guild or _make_guild()
-
-    def get_guild(gid):
-        return _guild if gid == 987654321 else None
-
-    bot.get_guild = get_guild
-    bot.fetch_guild = AsyncMock(side_effect=lambda x: get_guild(x))
-    bot.guilds = [_guild]
-
-    app = FastAPI()
-    app.state.bot = bot
-
-    with (
-        patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-        patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-        patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-        patch("api.routers.guilds.GuildConverter") as mock_gc,
-        patch("api.routers.guilds.ChannelConverter") as mock_cc,
-        patch("api.routers.guilds.RoleConverter") as mock_rc,
-        patch("api.routers.guilds.UserConverter") as mock_uc,
-    ):
-        if resolve_raises:
-            mock_resolve.side_effect = resolve_raises
-        else:
-            mock_resolve.side_effect = lambda req: bot
-
-        if get_entity_raises:
-            mock_get_entity.side_effect = get_entity_raises
-        else:
-
-            async def _get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
-                g = bot.get_guild(entity_id)
-                if g is None:
-                    raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-                return g
-
-            mock_get_entity.side_effect = _get_entity_or_404
-
-        # Make handle_discord_exception raise 500 so we get a proper HTTP response
-        mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
-
-        mock_gc.guild_to_summary.return_value = _guild_schema()
-        mock_gc.guild_to_detail.return_value = _guild_schema()
-        mock_cc.channel_to_summary.return_value = {"id": 1234567890, "name": "ch", "type": "text"}
-        mock_cc.channel_to_detail.return_value = _channel_detail()
-        mock_cc.category_to_detail.return_value = _category_detail()
-        mock_rc.role_to_payload.return_value = _role_schema()
-        mock_uc.member_to_payload.return_value = _member_schema()
-
-        from api.routers.guilds import router
-
-        app.include_router(router, prefix="/api/v1")
-
-        yield TestClient(app), mock_handle
-
-
-# ---------------------------------------------------------------------------
 # Tests: Exception handler coverage for every endpoint
 # Lines 67-71, 101-103, 146-148, 183-185, 252-254, 289-291, 331-333, 369-371
+#
+# Every case below drives a REAL non-Discord exception from an actual
+# Discord-facing call (bot.get_guild / guild.create_x) and lets the real
+# ``handle_discord_exception`` map it — no re-implementation of the router's
+# error handling, and assertions check the real mapped detail text rather
+# than "was the mock called".
 # ---------------------------------------------------------------------------
 
 
@@ -986,100 +587,88 @@ class TestExceptionHandlers:
     """Cover the broad except Exception handlers on every endpoint."""
 
     def test_list_guilds_unexpected_exception(self):
-        """list_guilds: non-HTTP exception triggers handle_discord_exception (lines 67-71)."""
-        for client, mock_handle in _build_exception_app(
-            resolve_raises=RuntimeError("boom"),
-        ):
+        """list_guilds: non-HTTP exception triggers handle_discord_exception (lines 67-71).
+
+        ``resolve_bot`` is patched here only because it's the one call that
+        happens before any Discord-facing mock exists to fail instead.
+        """
+        client, _bot = _build_client(_make_guild())
+        with patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve:
+            mock_resolve.side_effect = RuntimeError("boom")
             response = client.get("/api/v1/guilds")
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            mock_handle.assert_called_once()
-            assert "list guilds" in mock_handle.call_args[0][0]
+        assert response.status_code == 500
+        assert "list guilds" in response.json()["detail"].lower()
+        assert "boom" in response.json()["detail"]
 
     def test_get_guild_unexpected_exception(self):
         """get_guild: non-HTTP exception triggers handle_discord_exception (lines 101-103)."""
-        for client, mock_handle in _build_exception_app(
-            get_entity_raises=RuntimeError("boom"),
-        ):
-            response = client.get("/api/v1/guilds/987654321")
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            mock_handle.assert_called_once()
-            assert "get guild details" in mock_handle.call_args[0][0]
+        guild = _make_guild()
+        client, bot = _build_client(guild)
+        bot.get_guild = MagicMock(side_effect=RuntimeError("boom"))
+
+        response = client.get("/api/v1/guilds/987654321")
+        assert response.status_code == 500
+        assert "get guild details" in response.json()["detail"].lower()
 
     def test_list_guild_members_unexpected_exception(self):
         """list_guild_members: non-HTTP exception triggers handler (lines 146-148)."""
-        for client, mock_handle in _build_exception_app(
-            get_entity_raises=RuntimeError("boom"),
-        ):
-            response = client.get("/api/v1/guilds/987654321/members")
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            mock_handle.assert_called_once()
-            assert "list guild members" in mock_handle.call_args[0][0]
+        guild = _make_guild()
+        client, bot = _build_client(guild)
+        bot.get_guild = MagicMock(side_effect=RuntimeError("boom"))
+
+        response = client.get("/api/v1/guilds/987654321/members")
+        assert response.status_code == 500
+        assert "list guild members" in response.json()["detail"].lower()
 
     def test_list_guild_channels_unexpected_exception(self):
         """list_guild_channels: non-HTTP exception triggers handler (lines 183-185)."""
-        for client, mock_handle in _build_exception_app(
-            get_entity_raises=RuntimeError("boom"),
-        ):
-            response = client.get("/api/v1/guilds/987654321/channels")
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            mock_handle.assert_called_once()
-            assert "list guild channels" in mock_handle.call_args[0][0]
+        guild = _make_guild()
+        client, bot = _build_client(guild)
+        bot.get_guild = MagicMock(side_effect=RuntimeError("boom"))
+
+        response = client.get("/api/v1/guilds/987654321/channels")
+        assert response.status_code == 500
+        assert "list guild channels" in response.json()["detail"].lower()
 
     def test_create_channel_unexpected_exception(self):
         """create_channel: non-HTTP exception triggers handler (lines 252-254)."""
         guild = _make_guild()
         guild.create_text_channel = AsyncMock(side_effect=RuntimeError("boom"))
+        client, _bot = _build_client(guild)
 
-        for client, mock_handle in _build_exception_app(guild=guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/channels",
-                json={"name": "test", "type": "text"},
-            )
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            mock_handle.assert_called_once()
-            assert "create channel" in mock_handle.call_args[0][0]
+        response = client.post("/api/v1/guilds/987654321/channels", json={"name": "test", "type": "text"})
+        assert response.status_code == 500
+        assert "create channel" in response.json()["detail"].lower()
 
     def test_list_categories_unexpected_exception(self):
         """list_categories: non-HTTP exception triggers handler (lines 289-291)."""
-        for client, mock_handle in _build_exception_app(
-            get_entity_raises=RuntimeError("boom"),
-        ):
-            response = client.get("/api/v1/guilds/987654321/categories")
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            mock_handle.assert_called_once()
-            assert "list categories" in mock_handle.call_args[0][0]
+        guild = _make_guild()
+        client, bot = _build_client(guild)
+        bot.get_guild = MagicMock(side_effect=RuntimeError("boom"))
+
+        response = client.get("/api/v1/guilds/987654321/categories")
+        assert response.status_code == 500
+        assert "list categories" in response.json()["detail"].lower()
 
     def test_create_category_unexpected_exception(self):
         """create_category: non-HTTP exception triggers handler (lines 331-333)."""
         guild = _make_guild()
         guild.create_category_channel = AsyncMock(side_effect=RuntimeError("boom"))
+        client, _bot = _build_client(guild)
 
-        for client, mock_handle in _build_exception_app(guild=guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/categories",
-                json={"name": "Test Cat"},
-            )
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            mock_handle.assert_called_once()
-            assert "create category" in mock_handle.call_args[0][0]
+        response = client.post("/api/v1/guilds/987654321/categories", json={"name": "Test Cat"})
+        assert response.status_code == 500
+        assert "create category" in response.json()["detail"].lower()
 
     def test_list_guild_roles_unexpected_exception(self):
         """list_guild_roles: non-HTTP exception triggers handler (lines 369-371)."""
-        for client, mock_handle in _build_exception_app(
-            get_entity_raises=RuntimeError("boom"),
-        ):
-            response = client.get("/api/v1/guilds/987654321/roles")
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            mock_handle.assert_called_once()
-            assert "list guild roles" in mock_handle.call_args[0][0]
+        guild = _make_guild()
+        client, bot = _build_client(guild)
+        bot.get_guild = MagicMock(side_effect=RuntimeError("boom"))
+
+        response = client.get("/api/v1/guilds/987654321/roles")
+        assert response.status_code == 500
+        assert "list guild roles" in response.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -1091,67 +680,24 @@ class TestListChannelsWithData:
     """Cover the channel filtering loop body (lines 173-174)."""
 
     def test_list_channels_with_text_and_category_channels(self):
-        """Channels list excludes CategoryChannels and includes text channels."""
-        _evict_discord_modules()
-        import discord as _dc
+        """Channels list excludes CategoryChannels and real-serializes text/voice channels."""
+        guild = _make_guild()
+        text_ch = _make_channel(channel_id=1001, name="general", position=0, guild=guild)
+        voice_ch = DiscordMockUtils.create_mock_voice_channel(
+            channel_id=1002, name="voice", position=1, guild=guild, guild_id=guild.id
+        )
+        voice_ch.__class__ = discord.VoiceChannel
+        cat_ch = _make_category(channel_id=1003, name="Category", position=0, guild=guild)
+        guild.channels = [text_ch, voice_ch, cat_ch]
+        client, _bot = _build_client(guild)
 
-        text_ch = MagicMock(spec=_dc.TextChannel)
-        text_ch.position = 0
-        text_ch.name = "general"
-        text_ch.id = 1001
-
-        voice_ch = MagicMock(spec=_dc.VoiceChannel)
-        voice_ch.position = 1
-        voice_ch.name = "voice"
-        voice_ch.id = 1002
-
-        cat_ch = MagicMock(spec=_dc.CategoryChannel)
-        cat_ch.position = 0
-        cat_ch.name = "Category"
-        cat_ch.id = 1003
-
-        guild = _make_guild(channels=[text_ch, voice_ch, cat_ch])
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_guild = lambda gid: guild if gid == 987654321 else None
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: guild if x == 987654321 else None)
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter"),
-            patch("api.routers.guilds.ChannelConverter") as mock_cc,
-            patch("api.routers.guilds.RoleConverter"),
-            patch("api.routers.guilds.UserConverter"),
-        ):
-            mock_resolve.side_effect = lambda req: bot
-
-            async def _get(get_fn, fetch_fn, eid, etype):
-                g = bot.get_guild(eid)
-                if g is None:
-                    raise HTTPException(status_code=404, detail="not found")
-                return g
-
-            mock_get_entity.side_effect = _get
-            mock_cc.channel_to_summary.return_value = _channel_detail()
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.get("/api/v1/guilds/987654321/channels")
-            assert response.status_code == 200
-            data = response.json()
-            # CategoryChannel excluded, so only text_ch and voice_ch remain
-            assert len(data["data"]) == 2
-            # channel_to_summary should have been called twice (once per non-category channel)
-            assert mock_cc.channel_to_summary.call_count == 2
+        response = client.get("/api/v1/guilds/987654321/channels")
+        assert response.status_code == 200
+        data = response.json()
+        # CategoryChannel excluded (real isinstance check), text_ch and voice_ch remain,
+        # real-serialized (not fabricated) — sorted by position: text_ch(0) then voice_ch(1).
+        assert [c["id"] for c in data["data"]] == [1001, 1002]
+        assert [c["type"] for c in data["data"]] == ["text", "voice"]
 
 
 # ---------------------------------------------------------------------------
@@ -1163,67 +709,22 @@ class TestListRolesWithData:
     """Cover the role iteration loop body (lines 356-357)."""
 
     def test_list_roles_with_multiple_roles(self):
-        """Roles list iterates over each role and sorts by position."""
-        _evict_discord_modules()
+        """Roles list iterates over each role and sorts by position, real-serialized."""
+        guild = _make_guild()
+        role_a = _make_role(role_id=301, name="Admin", position=2, guild=guild)
+        role_b = _make_role(role_id=302, name="Member", position=1, guild=guild)
+        role_c = _make_role(role_id=303, name="Everyone", position=0, guild=guild)
+        guild.roles = [role_a, role_b, role_c]
+        client, _bot = _build_client(guild)
 
-        role_a = _make_role(role_id=301, name="Admin", position=2)
-        role_b = _make_role(role_id=302, name="Member", position=1)
-        role_c = _make_role(role_id=303, name="Everyone", position=0)
-
-        guild = _make_guild(roles=[role_a, role_b, role_c])
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_guild = lambda gid: guild if gid == 987654321 else None
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: guild if x == 987654321 else None)
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        # Track call order to verify each role is converted
-        call_positions = []
-
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter"),
-            patch("api.routers.guilds.ChannelConverter"),
-            patch("api.routers.guilds.RoleConverter") as mock_rc,
-            patch("api.routers.guilds.UserConverter"),
-        ):
-            mock_resolve.side_effect = lambda req: bot
-
-            async def _get(get_fn, fetch_fn, eid, etype):
-                g = bot.get_guild(eid)
-                if g is None:
-                    raise HTTPException(status_code=404, detail="not found")
-                return g
-
-            mock_get_entity.side_effect = _get
-
-            # Return distinct role schemas so sort is verifiable
-            def _role_payload_side_effect(role):
-                pos = role.position
-                call_positions.append(pos)
-                return _role_schema(role_id=role.id, position=pos)
-
-            mock_rc.role_to_payload.side_effect = _role_payload_side_effect
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app)
-            response = client.get("/api/v1/guilds/987654321/roles")
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data["data"]) == 3
-            # role_to_payload was called 3 times (once per role)
-            assert mock_rc.role_to_payload.call_count == 3
-            # Roles should be sorted by position (ascending)
-            positions = [r["position"] for r in data["data"]]
-            assert positions == sorted(positions)
+        response = client.get("/api/v1/guilds/987654321/roles")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["data"]) == 3
+        # Roles should be sorted by position (ascending) — real router sort, real converter output.
+        assert [r["id"] for r in data["data"]] == [303, 302, 301]
+        positions = [r["position"] for r in data["data"]]
+        assert positions == sorted(positions)
 
 
 # ---------------------------------------------------------------------------
@@ -1235,60 +736,26 @@ class TestCreateRolePermsBitmask:
     """Cover the perms.value != role_data.permissions branch (line 409)."""
 
     def test_create_role_permissions_bitmask_mismatch(self):
-        """Permissions value mismatch raises HTTP error (line 409)."""
-        _evict_discord_modules()
+        """Permissions value mismatch raises a deterministic 500.
 
+        Same underlying ``status.HTTP_422`` bug as
+        ``test_create_role_negative_permissions_returns_error`` above — see
+        FOLLOWUPS.md R-gw-api-0. ``discord.Permissions`` is patched here only
+        to force the mismatch branch itself (999 != 8); everything else is real.
+        """
         guild = _make_guild()
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_guild = lambda gid: guild if gid == 987654321 else None
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: guild if x == 987654321 else None)
-        bot.guilds = [guild]
+        client, _bot = _build_client(guild)
 
-        app = FastAPI()
-        app.state.bot = bot
+        mock_perms = MagicMock()
+        mock_perms.value = 999  # deliberately different from any input
 
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter"),
-            patch("api.routers.guilds.ChannelConverter") as mock_cc,
-            patch("api.routers.guilds.RoleConverter") as mock_rc,
-            patch("api.routers.guilds.UserConverter"),
-        ):
-            mock_resolve.side_effect = lambda req: bot
-
-            async def _get(get_fn, fetch_fn, eid, etype):
-                g = bot.get_guild(eid)
-                if g is None:
-                    raise HTTPException(status_code=404, detail="not found")
-                return g
-
-            mock_get_entity.side_effect = _get
-            mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
-            mock_cc.channel_to_detail.return_value = _channel_detail()
-            mock_rc.role_to_payload.return_value = _role_schema()
-
-            # Patch discord.Permissions in the router module so that
-            # Permissions(val).value != val  →  triggers line 409
-            mock_perms = MagicMock()
-            mock_perms.value = 999  # deliberately different from any input
-
-            with patch("api.routers.guilds.discord.Permissions", return_value=mock_perms):
-                from api.routers.guilds import router
-
-                app.include_router(router, prefix="/api/v1")
-
-                client = TestClient(app)
-                response = client.post(
-                    "/api/v1/guilds/987654321/roles",
-                    json={"name": "test-role", "permissions": 8},
-                )
-                # Line 409 raises HTTPException (status.HTTP_422 which is an AttributeError
-                # because status.HTTP_422 doesn't exist → caught by outer except → 500)
-                # OR if the code uses a valid status, it returns 422.
-                assert response.status_code in (422, 500)
-                assert "detail" in response.json()
+        with patch("api.routers.guilds.discord.Permissions", return_value=mock_perms):
+            response = client.post(
+                "/api/v1/guilds/987654321/roles",
+                json={"name": "test-role", "permissions": 8},
+            )
+        assert response.status_code == 500
+        assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -1297,289 +764,146 @@ class TestCreateRolePermsBitmask:
 
 
 class TestCreateRoleRetryLogic:
-    """Cover the timeout/retry paths in create_role (lines 435-459)."""
+    """Cover the timeout/retry paths in create_role (lines 435-459).
+
+    ``asyncio.wait_for``/``asyncio.sleep``/``random.uniform`` stay patched:
+    this is the router's own real retry loop under test, and waiting out
+    real exponential backoff would make the suite slow — a genuine timing
+    boundary, not a re-implementation of the loop's logic.
+    """
 
     @staticmethod
-    def _build_retry_app(guild):
-        """Build app for testing create_role retry logic.
-
-        Patches asyncio.wait_for as a transparent wrapper that just awaits
-        the coroutine (for discord.HTTPException tests) or can be overridden
-        to raise TimeoutError.  Patches asyncio.sleep and random.uniform to
-        avoid real delays.
-        """
-        _evict_discord_modules()
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_guild = lambda gid: guild if gid == 987654321 else None
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: guild if x == 987654321 else None)
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        async def _passthrough_wf(coro, *, timeout=None):
-            """Transparent wrapper: just await the coroutine."""
-            return await coro
-
-        with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-            patch("api.routers.guilds.GuildConverter"),
-            patch("api.routers.guilds.ChannelConverter") as mock_cc,
-            patch("api.routers.guilds.RoleConverter") as mock_rc,
-            patch("api.routers.guilds.UserConverter"),
-            patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
-            patch("api.routers.guilds.random.uniform", return_value=0.0),
-            patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough_wf) as mock_wf,
-        ):
-            mock_resolve.side_effect = lambda req: bot
-
-            async def _get(get_fn, fetch_fn, eid, etype):
-                g = bot.get_guild(eid)
-                if g is None:
-                    raise HTTPException(status_code=404, detail="not found")
-                return g
-
-            mock_get_entity.side_effect = _get
-            # Make handle_discord_exception raise 500 so we get a proper HTTP
-            # response when discord.HTTPException propagates to the outer handler
-            mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
-            mock_cc.channel_to_detail.return_value = _channel_detail()
-            mock_rc.role_to_payload.return_value = _role_schema()
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            # Expose guild, mock_sleep, and mock_wait_for for tests to configure
-            yield TestClient(app), guild, mock_sleep, mock_wf
+    def _build_retry_client(guild):
+        """Build a client with only the timing primitives patched."""
+        return _build_client(guild)
 
     def test_create_role_timeout_all_retries_exhausted(self):
         """All 3 attempts timeout → 503 (lines 435-446)."""
-
         guild = _make_guild()
 
-        for client, _guild_ref, mock_sleep, mock_wf in self._build_retry_app(guild):
-            # Override wait_for to raise TimeoutError
-            mock_wf.side_effect = TimeoutError("timed out")
+        async def _always_timeout(coro, *, timeout=None):
+            coro.close()  # avoid an "unawaited coroutine" warning on the discarded attempt
+            raise TimeoutError("timed out")
 
-            response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "timeout-role"},
-            )
-            assert response.status_code == 503
-            assert "timeout" in response.json()["detail"].lower()
-            # Should have tried 3 times
-            assert mock_wf.call_count == 3
-            # Sleep called between attempt 1→2 and 2→3 (2 times)
-            assert mock_sleep.call_count == 2
+        with (
+            patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("api.routers.guilds.random.uniform", return_value=0.0),
+            patch("api.routers.guilds.asyncio.wait_for", side_effect=_always_timeout) as mock_wf,
+        ):
+            client, _bot = self._build_retry_client(guild)
+            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "timeout-role"})
+
+        assert response.status_code == 503
+        assert "timeout" in response.json()["detail"].lower()
+        assert mock_wf.call_count == 3
+        assert mock_sleep.call_count == 2
 
     def test_create_role_timeout_then_success(self):
         """First attempt times out, second succeeds (lines 435-446 partial)."""
-
-        mock_role = MagicMock()
-        mock_role.name = "retry-role"
         guild = _make_guild()
+        new_role = _make_role(role_id=7005, name="retry-role", guild=guild)
+        guild.create_role = AsyncMock(return_value=new_role)
 
-        for client, _guild_ref, mock_sleep, mock_wf in self._build_retry_app(guild):
-            # First call raises TimeoutError, second returns mock role
-            mock_wf.side_effect = [TimeoutError("timed out"), mock_role]
+        calls = {"n": 0}
 
-            response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "retry-role"},
-            )
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
-            assert mock_wf.call_count == 2
-            # Sleep called once (between attempt 1 and 2)
-            assert mock_sleep.call_count == 1
+        async def _wf(coro, *, timeout=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                coro.close()  # avoid an "unawaited coroutine" warning on the discarded attempt
+                raise TimeoutError("timed out")
+            return await coro
+
+        with (
+            patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("api.routers.guilds.random.uniform", return_value=0.0),
+            patch("api.routers.guilds.asyncio.wait_for", side_effect=_wf) as mock_wf,
+        ):
+            client, _bot = self._build_retry_client(guild)
+            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "retry-role"})
+
+        assert response.status_code == 201
+        assert response.json()["status"] == "created"
+        assert mock_wf.call_count == 2
+        assert mock_sleep.call_count == 1
 
     def test_create_role_discord_http_5xx_retries(self):
         """discord.HTTPException with 5xx status retries (lines 447-456)."""
-        _evict_discord_modules()
-        import discord as _dc
-
         guild = _make_guild()
         fake_response = MagicMock()
         fake_response.status = 502
         fake_response.reason = "Bad Gateway"
-        http_exc = _dc.HTTPException(fake_response, "server error")
-        mock_role = MagicMock()
-        mock_role.name = "retry-5xx-role"
-        guild.create_role = AsyncMock(side_effect=[http_exc, mock_role])
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_guild = lambda gid: guild if gid == 987654321 else None
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: guild if x == 987654321 else None)
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
+        http_exc = discord.HTTPException(fake_response, "server error")
+        new_role = _make_role(role_id=7006, name="retry-5xx-role", guild=guild)
+        guild.create_role = AsyncMock(side_effect=[http_exc, new_role])
 
         async def _passthrough(coro, *, timeout=None):
             return await coro
 
         with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as m_get,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as m_handle,
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as m_resolve,
-            patch("api.routers.guilds.GuildConverter"),
-            patch("api.routers.guilds.ChannelConverter"),
-            patch("api.routers.guilds.RoleConverter") as m_rc,
-            patch("api.routers.guilds.UserConverter"),
             patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
             patch("api.routers.guilds.random.uniform", return_value=0.0),
             patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough),
         ):
-            m_resolve.side_effect = lambda req: bot
+            client, _bot = self._build_retry_client(guild)
+            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "retry-5xx-role"})
 
-            async def _get(gf, ff, eid, etype):
-                g = bot.get_guild(eid)
-                if g is None:
-                    raise HTTPException(status_code=404, detail="not found")
-                return g
-
-            m_get.side_effect = _get
-            m_handle.side_effect = HTTPException(status_code=500, detail="ISE")
-            m_rc.role_to_payload.return_value = _role_schema()
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app, raise_server_exceptions=False)
-            response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "retry-5xx-role"},
-            )
-            assert response.status_code == 201
-            assert response.json()["status"] == "created"
-            assert guild.create_role.call_count == 2
-            assert mock_sleep.call_count == 1
+        assert response.status_code == 201
+        assert response.json()["status"] == "created"
+        assert guild.create_role.call_count == 2
+        assert mock_sleep.call_count == 1
 
     def test_create_role_discord_http_4xx_no_retry(self):
         """discord.HTTPException with 4xx status does NOT retry (line 457)."""
-        _evict_discord_modules()
-        import discord as _dc
-
         guild = _make_guild()
         fake_response = MagicMock()
         fake_response.status = 403
         fake_response.reason = "Forbidden"
-        http_exc = _dc.HTTPException(fake_response, "forbidden")
+        http_exc = discord.HTTPException(fake_response, "forbidden")
         guild.create_role = AsyncMock(side_effect=http_exc)
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_guild = lambda gid: guild if gid == 987654321 else None
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: guild if x == 987654321 else None)
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
 
         async def _passthrough(coro, *, timeout=None):
             return await coro
 
         with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as m_get,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as m_handle,
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as m_resolve,
-            patch("api.routers.guilds.GuildConverter"),
-            patch("api.routers.guilds.ChannelConverter"),
-            patch("api.routers.guilds.RoleConverter") as m_rc,
-            patch("api.routers.guilds.UserConverter"),
             patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
             patch("api.routers.guilds.random.uniform", return_value=0.0),
             patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough),
         ):
-            m_resolve.side_effect = lambda req: bot
+            client, _bot = self._build_retry_client(guild)
+            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "forbidden-role"})
 
-            async def _get(gf, ff, eid, etype):
-                g = bot.get_guild(eid)
-                if g is None:
-                    raise HTTPException(status_code=404, detail="not found")
-                return g
-
-            m_get.side_effect = _get
-            m_handle.side_effect = HTTPException(status_code=500, detail="ISE")
-            m_rc.role_to_payload.return_value = _role_schema()
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app, raise_server_exceptions=False)
-            response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "forbidden-role"},
-            )
-            # 4xx is re-raised immediately → caught by outer except Exception →
-            # handle_discord_exception → HTTPException(500)
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            assert guild.create_role.call_count == 1
-            assert mock_sleep.call_count == 0
+        # 4xx is re-raised immediately → caught by outer except Exception →
+        # real handle_discord_exception, which maps a 403 discord.HTTPException
+        # straight through to a real HTTP 403 (not a generic 500).
+        assert response.status_code == 403
+        assert "permission" in response.json()["detail"].lower()
+        assert guild.create_role.call_count == 1
+        assert mock_sleep.call_count == 0
 
     def test_create_role_discord_http_5xx_all_retries_exhausted(self):
         """discord.HTTPException 5xx on all attempts re-raises on last (lines 452-457)."""
-        _evict_discord_modules()
-        import discord as _dc
-
         guild = _make_guild()
         fake_response = MagicMock()
         fake_response.status = 500
         fake_response.reason = "Internal Server Error"
-        http_exc = _dc.HTTPException(fake_response, "server error")
+        http_exc = discord.HTTPException(fake_response, "server error")
         guild.create_role = AsyncMock(side_effect=http_exc)
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_guild = lambda gid: guild if gid == 987654321 else None
-        bot.fetch_guild = AsyncMock(side_effect=lambda x: guild if x == 987654321 else None)
-        bot.guilds = [guild]
-
-        app = FastAPI()
-        app.state.bot = bot
 
         async def _passthrough(coro, *, timeout=None):
             return await coro
 
         with (
-            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as m_get,
-            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as m_handle,
-            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as m_resolve,
-            patch("api.routers.guilds.GuildConverter"),
-            patch("api.routers.guilds.ChannelConverter"),
-            patch("api.routers.guilds.RoleConverter") as m_rc,
-            patch("api.routers.guilds.UserConverter"),
             patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
             patch("api.routers.guilds.random.uniform", return_value=0.0),
             patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough),
         ):
-            m_resolve.side_effect = lambda req: bot
+            client, _bot = self._build_retry_client(guild)
+            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "5xx-exhausted-role"})
 
-            async def _get(gf, ff, eid, etype):
-                g = bot.get_guild(eid)
-                if g is None:
-                    raise HTTPException(status_code=404, detail="not found")
-                return g
-
-            m_get.side_effect = _get
-            m_handle.side_effect = HTTPException(status_code=500, detail="ISE")
-            m_rc.role_to_payload.return_value = _role_schema()
-
-            from api.routers.guilds import router
-
-            app.include_router(router, prefix="/api/v1")
-
-            client = TestClient(app, raise_server_exceptions=False)
-            response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "5xx-exhausted-role"},
-            )
-            # On the 3rd attempt, attempt == max_attempts so it raises (line 457)
-            assert response.status_code == 500
-            assert "detail" in response.json()
-            assert guild.create_role.call_count == 3
-            assert mock_sleep.call_count == 2
+        # On the 3rd attempt, attempt == max_attempts so it raises (line 457),
+        # and the real handle_discord_exception maps an unmapped-status
+        # discord.HTTPException to a real 502 (Bad Gateway), not a generic 500.
+        assert response.status_code == 502
+        assert "detail" in response.json()
+        assert guild.create_role.call_count == 3
+        assert mock_sleep.call_count == 2

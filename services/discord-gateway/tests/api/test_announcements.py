@@ -4,18 +4,33 @@ Covers:
 - POST /api/v1/announcements/bounty/channel/{channel_id}: success path, 404 channel
 - PUT  /api/v1/announcements/bounty/channel/{channel_id}/message/{message_id}: success, 404 message
 - The unified flow uses build_loadout_embed via _build_bounty_embed.
+
+Fidelity notes
+--------------
+No patches on ``resolve_bot``, ``get_entity_or_404``, ``handle_discord_exception``
+or ``MessageConverter``: the mock bot is ``spec=commands.Bot``
+(``is_ready()==True``) with a real channel/message graph, so the real helpers
+and the real ``MessageConverter.message_to_payload`` run end-to-end and the
+response bodies asserted below are genuine serialization output.
+``build_loadout_embed`` stays patched where a test needs to assert on its
+call args — it's the shared heavy embed-rendering cog function, a legitimate
+boundary — but several tests below (POST/PUT success, 404s) exercise the
+*real* ``build_loadout_embed`` too, exactly as the original suite did.
+``message.edit(embed=...)`` is given a real side effect that swaps
+``message.embeds`` (mirroring discord.py's in-place mutation), so the
+post-edit ``MessageConverter`` call reflects the *actually sent* embed.
 """
 
-import os
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from tests.mocks.discord_mock_utils import DiscordMockUtils
+from tests.mocks.discord_mock_utils import DiscordMockUtils, create_discord_not_found
 
 # ---------------------------------------------------------------------------
 # Mock shared.bblogger BEFORE importing application code
@@ -35,12 +50,6 @@ def _make_mock_logger(*_args, **_kwargs):
 _mock_bblogger.get_logger = _make_mock_logger
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
-
-# Force real discord (other test modules sometimes monkey-patch sys.modules["discord"])
-for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_commands"]:
-    sys.modules.pop(_mod, None)
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 # ---------------------------------------------------------------------------
@@ -97,108 +106,70 @@ def _make_request_payload():
     }
 
 
+def _make_message(message_id, channel, guild, author, embeds=None):
+    """Build a real-attribute mock message whose ``.edit(embed=...)`` mutates
+    ``.embeds`` in place — mirroring discord.py's real "edit replaces the
+    embed" behaviour — so a subsequent ``MessageConverter.message_to_payload``
+    call reflects the actually-sent embed."""
+    msg = DiscordMockUtils.create_mock_message(
+        message_id=message_id,
+        channel=channel,
+        guild=guild,
+        channel_id=channel.id,
+        guild_id=guild.id,
+        author=author,
+        embeds=embeds or [],
+    )
+
+    async def _edit(**kwargs):
+        if kwargs.get("embed") is not None:
+            msg.embeds = [kwargs["embed"]]
+
+    msg.edit = AsyncMock(side_effect=_edit)
+    return msg
+
+
 @pytest.fixture
 def mock_bot():
-    """Create a mock Discord bot with a sendable channel for ID 1234567890."""
+    """Create a mock Discord bot with a sendable channel for ID 1234567890.
+
+    ``fetch_channel`` raises a real ``discord.NotFound`` on cache miss so the
+    real ``get_entity_or_404`` chain produces a genuine 404. The channel is
+    memoized so test-time mutations (e.g. overriding ``fetch_message``) are
+    observable across the multiple calls inside the router invocation.
+    """
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+    guild = DiscordMockUtils.create_mock_guild(guild_id=987654321)
+    channel = DiscordMockUtils.create_mock_text_channel(channel_id=1234567890, guild=guild, guild_id=guild.id)
 
-    bot_user = MagicMock()
-    bot_user.id = 123456789
-
-    # Memoize the channel so test-time mutations (e.g. overriding fetch_message)
-    # are observable across the multiple calls inside the router invocation.
-    _channel_cache: dict[int, MagicMock] = {}
+    channel.send = AsyncMock(return_value=_make_message(4444444444, channel, guild, author=bot.user))
+    channel.fetch_message = AsyncMock(return_value=_make_message(5555555555, channel, guild, author=bot.user))
 
     def get_channel(channel_id):
-        if channel_id != 1234567890:
-            return None
-        if channel_id in _channel_cache:
-            return _channel_cache[channel_id]
-        channel = MagicMock()
-        channel.id = channel_id
-        channel.guild = MagicMock()
-        channel.guild.id = 987654321
-        channel.send = AsyncMock()
-        channel.fetch_message = AsyncMock()
-        # Configure the sent message
-        sent_message = MagicMock()
-        sent_message.id = 4444444444
-        sent_message.author = MagicMock()
-        sent_message.author.id = 123456789
-        sent_message.channel = channel
-        channel.send.return_value = sent_message
-        # Configure fetch_message to return a bot-authored message by default
-        fetched_message = MagicMock()
-        fetched_message.id = 5555555555
-        fetched_message.author = MagicMock()
-        fetched_message.author.id = 123456789
-        fetched_message.channel = channel
-        fetched_message.edit = AsyncMock()
-        channel.fetch_message.return_value = fetched_message
-        _channel_cache[channel_id] = channel
-        return channel
+        return channel if channel_id == channel.id else None
 
-    bot.user = bot_user
+    async def fetch_channel(channel_id):
+        found = get_channel(channel_id)
+        if found is None:
+            raise create_discord_not_found(f"Channel {channel_id} not found")
+        return found
+
     bot.get_channel = get_channel
-    bot.fetch_channel = AsyncMock(side_effect=lambda x: get_channel(x))
+    bot.fetch_channel = AsyncMock(side_effect=fetch_channel)
+    bot._graph = types.SimpleNamespace(guild=guild, channel=channel)
     return bot
 
 
 @pytest.fixture
 def announcements_test_app(mock_bot):
-    """FastAPI app with the announcements router mounted."""
-    # Evict cached source modules to ensure a clean import with real discord.
-    to_evict = [
-        k
-        for k in sys.modules
-        if k == "discord"
-        or k.startswith("discord.")
-        or k in ("api", "bot", "utils")
-        or k.startswith("api.")
-        or k.startswith("utils.")
-        or k.startswith("cogs.")
-    ]
-    for k in to_evict:
-        sys.modules.pop(k, None)
-
+    """FastAPI app with the announcements router mounted against a real bot state."""
     app = FastAPI(title="Discord Gateway API Test")
     app.state.bot = mock_bot
 
-    with (
-        patch("api.routers.announcements.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-        patch("api.routers.announcements.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-        patch("api.routers.announcements.MessageConverter") as mock_converter,
-        patch("api.routers.announcements.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-    ):
-        from fastapi import HTTPException
+    from api.routers.announcements import router  # pylint: disable=no-name-in-module
 
-        async def _resolve_bot(_req):
-            return mock_bot
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            channel = mock_bot.get_channel(entity_id)
-            if channel is None:
-                raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-            return channel
-
-        mock_resolve.side_effect = _resolve_bot
-        mock_get_entity.side_effect = _get_entity
-        mock_handle.return_value = None
-        mock_converter.message_to_payload.return_value = {
-            "id": 4444444444,
-            "channel_id": 1234567890,
-            "guild_id": 987654321,
-            "author_id": 123456789,
-            "content": None,
-            "timestamp": "2024-01-01T00:00:00",
-            "edited_timestamp": None,
-            "message_type": "default",
-        }
-
-        from api.routers.announcements import router  # pylint: disable=no-name-in-module
-
-        app.include_router(router, prefix="/api/v1")
-        yield app
+    app.include_router(router, prefix="/api/v1")
+    yield app
 
 
 @pytest.fixture
@@ -213,6 +184,7 @@ def announcements_client(announcements_test_app):
 
 class TestCreateBountyAnnouncement:
     def test_post_success_returns_201(self, announcements_client):
+        """The real build_loadout_embed + real MessageConverter run end-to-end."""
         payload = _make_request_payload()
         response = announcements_client.post(
             "/api/v1/announcements/bounty/channel/1234567890",
@@ -221,7 +193,9 @@ class TestCreateBountyAnnouncement:
         assert response.status_code == 201
         data = response.json()
         assert data["status"] == "created"
-        assert "data" in data
+        assert data["data"]["id"] == 4444444444
+        assert data["data"]["channel_id"] == 1234567890
+        assert data["data"]["author_id"] == 123456789
 
     def test_post_channel_not_found_returns_404(self, announcements_client):
         payload = _make_request_payload()
@@ -230,6 +204,7 @@ class TestCreateBountyAnnouncement:
             json=payload,
         )
         assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_post_invokes_build_loadout_embed_with_overrides(self, announcements_client, mock_bot):
         """The router should call build_loadout_embed with the metadata overrides."""
@@ -237,8 +212,6 @@ class TestCreateBountyAnnouncement:
 
         # Patch _build_bounty_embed to assert the args
         with patch("api.routers.announcements.build_loadout_embed") as mock_build:
-            import discord
-
             mock_build.return_value = discord.Embed(title="x")
             response = announcements_client.post(
                 "/api/v1/announcements/bounty/channel/1234567890",
@@ -270,6 +243,7 @@ class TestCreateBountyAnnouncement:
 
 class TestEditBountyAnnouncement:
     def test_put_success_returns_200(self, announcements_client):
+        """The real build_loadout_embed + real MessageConverter run end-to-end."""
         payload = _make_request_payload()
         response = announcements_client.put(
             "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
@@ -278,6 +252,7 @@ class TestEditBountyAnnouncement:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "updated"
+        assert data["data"]["id"] == 5555555555
 
     def test_put_channel_not_found_returns_404(self, announcements_client):
         payload = _make_request_payload()
@@ -286,13 +261,13 @@ class TestEditBountyAnnouncement:
             json=payload,
         )
         assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_put_message_not_found_returns_404(self, announcements_client, mock_bot):
         """When fetch_message raises NotFound, the router returns 404."""
-        import discord
 
         async def _raise_not_found(_message_id):
-            raise discord.NotFound(MagicMock(status=404), "not found")
+            raise create_discord_not_found("not found")
 
         # Configure the channel's fetch_message to raise NotFound
         mock_bot.get_channel(1234567890).fetch_message = AsyncMock(side_effect=_raise_not_found)
@@ -314,30 +289,17 @@ class TestEditBountyAnnouncement:
         carry forward the existing image URL when the caller passes image_url=None.
         """
         existing_image_url = "https://cdn.example.com/route_map_original.png"
+        guild, channel = mock_bot._graph.guild, mock_bot._graph.channel
 
-        # Build a fetched message whose embed has an image.
-        mock_image = MagicMock()
-        mock_image.url = existing_image_url
-
-        mock_embed = MagicMock()
-        mock_embed.image = mock_image
-
-        fetched_message = MagicMock()
-        fetched_message.id = 5555555555
-        fetched_message.author = MagicMock()
-        fetched_message.author.id = 123456789
-        fetched_message.embeds = [mock_embed]
-        fetched_message.edit = AsyncMock()
-
-        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+        existing_embed = DiscordMockUtils.create_mock_embed(image={"url": existing_image_url})
+        fetched_message = _make_message(5555555555, channel, guild, author=mock_bot.user, embeds=[existing_embed])
+        channel.fetch_message = AsyncMock(return_value=fetched_message)
 
         # Payload with image_url=None (state-transition edit)
         payload = _make_request_payload()
         payload["metadata"]["image_url"] = None
 
         with patch("api.routers.announcements.build_loadout_embed") as mock_build:
-            import discord
-
             mock_build.return_value = discord.Embed(title="test")
             response = announcements_client.put(
                 "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
@@ -360,28 +322,16 @@ class TestEditBountyAnnouncement:
         """
         existing_image_url = "https://cdn.example.com/old_route_map.png"
         new_image_url = "https://cdn.example.com/new_route_map.png"
+        guild, channel = mock_bot._graph.guild, mock_bot._graph.channel
 
-        mock_image = MagicMock()
-        mock_image.url = existing_image_url
-
-        mock_embed = MagicMock()
-        mock_embed.image = mock_image
-
-        fetched_message = MagicMock()
-        fetched_message.id = 5555555555
-        fetched_message.author = MagicMock()
-        fetched_message.author.id = 123456789
-        fetched_message.embeds = [mock_embed]
-        fetched_message.edit = AsyncMock()
-
-        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+        existing_embed = DiscordMockUtils.create_mock_embed(image={"url": existing_image_url})
+        fetched_message = _make_message(5555555555, channel, guild, author=mock_bot.user, embeds=[existing_embed])
+        channel.fetch_message = AsyncMock(return_value=fetched_message)
 
         payload = _make_request_payload()
         payload["metadata"]["image_url"] = new_image_url
 
         with patch("api.routers.announcements.build_loadout_embed") as mock_build:
-            import discord
-
             mock_build.return_value = discord.Embed(title="test")
             response = announcements_client.put(
                 "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
@@ -396,22 +346,16 @@ class TestEditBountyAnnouncement:
 
     def test_put_image_url_none_no_existing_image_renders_without_image(self, announcements_client, mock_bot):
         """B.13: PUT with image_url=None and no existing image renders embed without image (no error)."""
-        # Message with no embeds at all
-        fetched_message = MagicMock()
-        fetched_message.id = 5555555555
-        fetched_message.author = MagicMock()
-        fetched_message.author.id = 123456789
-        fetched_message.embeds = []
-        fetched_message.edit = AsyncMock()
+        guild, channel = mock_bot._graph.guild, mock_bot._graph.channel
 
-        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+        # Message with no embeds at all
+        fetched_message = _make_message(5555555555, channel, guild, author=mock_bot.user, embeds=[])
+        channel.fetch_message = AsyncMock(return_value=fetched_message)
 
         payload = _make_request_payload()
         payload["metadata"]["image_url"] = None
 
         with patch("api.routers.announcements.build_loadout_embed") as mock_build:
-            import discord
-
             mock_build.return_value = discord.Embed(title="test")
             response = announcements_client.put(
                 "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
@@ -448,17 +392,8 @@ class TestPayoutEmbed:
 
     def test_create_with_payout_fields_sends_single_embed(self, announcements_client, mock_bot):
         """POST with payout fields present sends a single embed (payout embed removed, Item B)."""
-        import discord
-
         payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)
-
-        channel = mock_bot.get_channel(1234567890)
-        channel.send = AsyncMock()
-        sent_message = MagicMock()
-        sent_message.id = 4444444444
-        sent_message.author = MagicMock()
-        sent_message.author.id = 123456789
-        channel.send.return_value = sent_message
+        channel = mock_bot._graph.channel
 
         with patch("api.routers.announcements.build_loadout_embed") as mock_build:
             mock_build.return_value = discord.Embed(title="Main Embed")
@@ -476,17 +411,8 @@ class TestPayoutEmbed:
 
     def test_create_without_payout_fields_sends_single_embed(self, announcements_client, mock_bot):
         """POST without payout fields sends a single embed."""
-        import discord
-
         payload = _make_request_payload()  # no payout fields → all None
-
-        channel = mock_bot.get_channel(1234567890)
-        channel.send = AsyncMock()
-        sent_message = MagicMock()
-        sent_message.id = 4444444444
-        sent_message.author = MagicMock()
-        sent_message.author.id = 123456789
-        channel.send.return_value = sent_message
+        channel = mock_bot._graph.channel
 
         with patch("api.routers.announcements.build_loadout_embed") as mock_build:
             mock_build.return_value = discord.Embed(title="Main Embed")
@@ -503,17 +429,11 @@ class TestPayoutEmbed:
 
     def test_edit_with_payout_fields_sends_single_embed(self, announcements_client, mock_bot):
         """PUT with payout fields present sends a single embed to message.edit (Item B)."""
-        import discord
-
         payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)
+        guild, channel = mock_bot._graph.guild, mock_bot._graph.channel
 
-        fetched_message = MagicMock()
-        fetched_message.id = 5555555555
-        fetched_message.author = MagicMock()
-        fetched_message.author.id = 123456789
-        fetched_message.embeds = []
-        fetched_message.edit = AsyncMock()
-        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+        fetched_message = _make_message(5555555555, channel, guild, author=mock_bot.user, embeds=[])
+        channel.fetch_message = AsyncMock(return_value=fetched_message)
 
         with patch("api.routers.announcements.build_loadout_embed") as mock_build:
             mock_build.return_value = discord.Embed(title="Main Embed")
@@ -544,19 +464,13 @@ class TestPayoutEmbedAdversarial:
         The payout embed was removed from the bounty board path in Item B.
         The captured flag only affects the main embed layout (suppresses loadout sections).
         """
-        import discord
-
         payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)
         payload["metadata"]["captured"] = True
         payload["metadata"]["image_url"] = ""  # empty-string sentinel = clear image
+        guild, channel = mock_bot._graph.guild, mock_bot._graph.channel
 
-        fetched_message = MagicMock()
-        fetched_message.id = 5555555555
-        fetched_message.author = MagicMock()
-        fetched_message.author.id = 123456789
-        fetched_message.embeds = []
-        fetched_message.edit = AsyncMock()
-        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+        fetched_message = _make_message(5555555555, channel, guild, author=mock_bot.user, embeds=[])
+        channel.fetch_message = AsyncMock(return_value=fetched_message)
 
         with patch("api.routers.announcements.build_loadout_embed") as mock_build:
             mock_build.return_value = discord.Embed(title="✅ Captured")
@@ -579,28 +493,17 @@ class TestPayoutEmbedAdversarial:
         before Item B), the image URL (route map) must be read from the first embed
         (embeds[0]). This verifies the image-preservation logic correctly targets embeds[0].
         """
-        import discord
-
         existing_image_url = "https://cdn.example.com/route_map.png"
-
-        mock_image = MagicMock()
-        mock_image.url = existing_image_url
+        guild, channel = mock_bot._graph.guild, mock_bot._graph.channel
 
         # Simulate an existing message with a two-embed layout (main + prior payout)
-        mock_main_embed = MagicMock()
-        mock_main_embed.image = mock_image
+        main_embed = DiscordMockUtils.create_mock_embed(image={"url": existing_image_url})
+        payout_embed = DiscordMockUtils.create_mock_embed()  # payout embed never has image
 
-        mock_payout_embed = MagicMock()
-        mock_payout_embed.image = MagicMock()
-        mock_payout_embed.image.url = None  # payout embed never has image
-
-        fetched_message = MagicMock()
-        fetched_message.id = 5555555555
-        fetched_message.author = MagicMock()
-        fetched_message.author.id = 123456789
-        fetched_message.embeds = [mock_main_embed, mock_payout_embed]
-        fetched_message.edit = AsyncMock()
-        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+        fetched_message = _make_message(
+            5555555555, channel, guild, author=mock_bot.user, embeds=[main_embed, payout_embed]
+        )
+        channel.fetch_message = AsyncMock(return_value=fetched_message)
 
         # image_url=None in payload → preservation logic runs, reads from embeds[0]
         payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)

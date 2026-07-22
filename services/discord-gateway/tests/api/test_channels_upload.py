@@ -2,20 +2,37 @@
 
 Tests the file upload endpoint added to the channels router.
 Written BEFORE the implementation (TDD).
+
+Fidelity notes
+--------------
+No ``sys.modules["discord"]`` swap. No patches on ``get_entity_or_404``,
+``handle_discord_exception`` or ``discord.File`` — the real ``resolve_bot``/
+``get_entity_or_404`` helpers run against a ``spec=commands.Bot`` mock, and a
+real ``discord.File`` is constructed from the uploaded bytes exactly as
+production does (it is a lazy wrapper — no network I/O happens until
+``channel.send`` actually consumes it, and that stays a mock since a
+live Discord channel can't be constructed in tests).
+
+``resolve_bot`` stays patched for exactly one scenario
+(``test_upload_file_bot_not_ready``): the real helper's not-ready branch
+waits up to 15s on ``bot.wait_until_ready()`` before timing out, which is a
+genuine process/timing boundary unsuitable for a fast unit test. The
+"invalid bot instance" 500 case is instead driven for real by giving
+``app.state.bot`` a non-``commands.Bot`` object.
 """
 
-import os
 import sys
 import types
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
-from tests.mocks.discord_mock_utils import DiscordMockUtils
+from tests.mocks.discord_mock_utils import DiscordMockUtils, create_discord_not_found
 
 # ---------------------------------------------------------------------------
 # Module-level mock setup (must happen before any src imports)
@@ -42,36 +59,6 @@ _mock_bblogger.get_logger = _make_mock_logger
 
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
-
-# Setup mock discord module with real exception classes so isinstance checks work.
-_mock_discord = DiscordMockUtils.create_mock_discord_module()
-
-_MockCategoryChannel = type("CategoryChannel", (), {})
-_MockTextChannel = type("TextChannel", (), {})
-_MockVoiceChannel = type("VoiceChannel", (), {})
-_MockForumChannel = type("ForumChannel", (), {})
-_MockThread = type("Thread", (), {})
-_MockEmbed = type("Embed", (), {})
-_MockFile = type("File", (), {})
-
-_mock_discord.CategoryChannel = _MockCategoryChannel
-_mock_discord.TextChannel = _MockTextChannel
-_mock_discord.VoiceChannel = _MockVoiceChannel
-_mock_discord.ForumChannel = _MockForumChannel
-_mock_discord.Thread = _MockThread
-_mock_discord.Embed = _MockEmbed
-_mock_discord.File = _MockFile
-
-_MockBot = type("Bot", (), {})
-_mock_discord_ext = types.ModuleType("discord.ext")
-_mock_discord_ext.commands = types.ModuleType("discord.ext.commands")
-_mock_discord_ext.commands.Bot = _MockBot
-
-sys.modules["discord"] = _mock_discord
-sys.modules["discord.ext"] = _mock_discord_ext
-sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
 # ---------------------------------------------------------------------------
@@ -126,83 +113,33 @@ def _make_channel_without_send(channel_id=5555555555):
 
 
 @contextmanager
-def _build_upload_app(
-    mock_bot,
-    resolve_bot_side_effect=None,
-    get_entity_side_effect=None,
-    handle_exception_side_effect=None,
-):
-    """Build a FastAPI test app with channels router and patched helpers."""
+def _build_upload_app(mock_bot, resolve_bot_side_effect=None):
+    """Build a FastAPI test app with the channels router and a real bot state.
+
+    ``resolve_bot`` is only patched when the caller explicitly supplies
+    ``resolve_bot_side_effect`` (the not-ready-timeout boundary case); every
+    other helper (``get_entity_or_404``, ``handle_discord_exception``,
+    ``discord.File``) runs for real.
+    """
     app = FastAPI(title="Upload Test")
     app.state.bot = mock_bot
 
-    # discord.File mock that accepts constructor args without error
-    mock_discord_file = MagicMock()
-    mock_discord_file.return_value = MagicMock()  # instance returned by discord.File(...)
-
-    # Build a mock discord module with File and other needed attrs
-    mock_discord_module = MagicMock()
-    mock_discord_module.File = mock_discord_file
-    mock_discord_module.CategoryChannel = _MockCategoryChannel
-    mock_discord_module.TextChannel = _MockTextChannel
-    mock_discord_module.VoiceChannel = _MockVoiceChannel
-    mock_discord_module.ForumChannel = _MockForumChannel
-
-    with (
-        patch("api.routers.channels.discord", mock_discord_module),
-        patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-        patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock) as mock_hde,
-        patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-        patch("api.routers.channels.ChannelConverter") as mock_cc,
-        patch("api.routers.channels.PermissionConverter"),
-        patch("api.routers.channels.validate_channel_type"),
-        patch("api.routers.channels.EmbedConverter"),
-        patch("api.routers.channels.create_permission_overwrite"),
-    ):
-        if resolve_bot_side_effect is not None:
+    if resolve_bot_side_effect is not None:
+        with patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb:
             mock_rb.side_effect = resolve_bot_side_effect
-        else:
 
-            async def _resolve(req):
-                return mock_bot
+            from api.routers.channels import router
 
-            mock_rb.side_effect = _resolve
+            app.include_router(router, prefix="/api/v1")
 
-        if get_entity_side_effect is not None:
-            mock_gea.side_effect = get_entity_side_effect
-        else:
+            yield app
+        return
 
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                ch = mock_bot.get_channel(entity_id)
-                if ch is None:
-                    raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-                return ch
+    from api.routers.channels import router
 
-            mock_gea.side_effect = _get_entity
+    app.include_router(router, prefix="/api/v1")
 
-        if handle_exception_side_effect is not None:
-            mock_hde.side_effect = handle_exception_side_effect
-        else:
-            mock_hde.return_value = None
-
-        mock_cc.channel_to_detail.return_value = {
-            "id": 1234567890,
-            "name": "bot-images",
-            "type": "text",
-            "position": 1,
-            "guild_id": 987654321,
-            "category_id": None,
-            "created_at": "2024-01-01T00:00:00",
-            "topic": None,
-            "nsfw": False,
-            "slowmode_delay": 0,
-        }
-
-        from api.routers.channels import router
-
-        app.include_router(router, prefix="/api/v1")
-
-        yield app
+    yield app
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +149,25 @@ def _build_upload_app(
 
 @pytest.fixture
 def mock_bot_with_channel():
-    """Bot with a text channel that can receive uploads."""
+    """Bot with a text channel that can receive uploads.
+
+    ``fetch_channel`` raises a real ``discord.NotFound`` on cache miss so the
+    real ``get_entity_or_404`` chain produces a genuine 404.
+    """
     channel = _make_mock_channel_with_send(channel_id=1234567890)
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-    bot.get_channel = lambda cid: channel if cid == 1234567890 else None
-    bot.fetch_channel = AsyncMock(side_effect=lambda cid: channel if cid == 1234567890 else None)
+
+    def get_channel(cid):
+        return channel if cid == 1234567890 else None
+
+    async def fetch_channel(cid):
+        found = get_channel(cid)
+        if found is None:
+            raise create_discord_not_found(f"Channel {cid} not found")
+        return found
+
+    bot.get_channel = get_channel
+    bot.fetch_channel = AsyncMock(side_effect=fetch_channel)
     return bot, channel
 
 
@@ -258,7 +209,7 @@ class TestUploadFileSuccess:
         assert data["data"]["size"] == 12345
 
     def test_upload_file_channel_called_with_discord_file(self, mock_bot_with_channel):
-        """channel.send should be called (file upload reaches Discord)."""
+        """channel.send should be called with a real discord.File wrapping the uploaded bytes."""
         mock_bot, mock_channel = mock_bot_with_channel
         mock_attachment = _make_mock_attachment()
         mock_message = _make_mock_message(message_id=777, attachments=[mock_attachment])
@@ -274,6 +225,9 @@ class TestUploadFileSuccess:
 
         assert resp.status_code == 201
         mock_channel.send.assert_called_once()
+        sent_file = mock_channel.send.call_args.kwargs["file"]
+        assert isinstance(sent_file, discord.File)
+        assert sent_file.filename == "test.png"
 
 
 # ---------------------------------------------------------------------------
@@ -303,9 +257,9 @@ class TestUploadFileDefaultFilename:
         assert resp.status_code == 201
         data = resp.json()
         assert data["status"] == "created"
-        # The endpoint receives default filename 'upload.png' and calls channel.send
-        # The response filename comes from the attachment mock (which we set to 'upload.png')
         assert data["data"]["filename"] == "upload.png"
+        # The real endpoint passed the default filename into a real discord.File.
+        assert mock_channel.send.call_args.kwargs["file"].filename == "upload.png"
 
     def test_upload_file_custom_filename_in_response(self, mock_bot_with_channel):
         """Filename from X-Filename header is passed to Discord and returned in the response."""
@@ -359,7 +313,7 @@ class TestUploadFileChannelNotFound:
     """POST to non-existent channel → 404."""
 
     def test_upload_file_channel_not_found(self, mock_bot_with_channel):
-        """POST to a non-existent channel_id should return 404."""
+        """POST to a non-existent channel_id should return a real 404 via get_entity_or_404."""
         mock_bot, _mock_channel = mock_bot_with_channel
 
         with _build_upload_app(mock_bot) as app:
@@ -371,6 +325,7 @@ class TestUploadFileChannelNotFound:
             )
 
         assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +366,12 @@ class TestUploadFileBotNotReady:
     """Bot not ready → 503."""
 
     def test_upload_file_bot_not_ready(self):
-        """POST when bot is not ready should return 503."""
+        """POST when bot is not ready should return 503.
+
+        ``resolve_bot`` is patched here only because the real not-ready
+        branch waits up to 15s on ``bot.wait_until_ready()`` before timing
+        out — a genuine timing boundary unsuitable for a fast unit test.
+        """
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
 
         async def _bot_not_ready(req):
@@ -429,21 +389,23 @@ class TestUploadFileBotNotReady:
         assert "not ready" in resp.json()["detail"].lower()
 
     def test_upload_file_bot_invalid_instance(self):
-        """POST when bot state is invalid should return 500."""
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        """POST when app.state.bot is not a commands.Bot should return 500 via the real resolve_bot check."""
+        app = FastAPI(title="Upload Test")
+        app.state.bot = MagicMock()  # not a commands.Bot instance — trips the real isinstance check
 
-        async def _bot_invalid(req):
-            raise HTTPException(status_code=500, detail="Bot instance invalid")
+        from api.routers.channels import router
 
-        with _build_upload_app(bot, resolve_bot_side_effect=_bot_invalid) as app:
-            client = TestClient(app)
-            resp = client.post(
-                "/api/v1/channels/1234567890/upload",
-                content=b"fake png",
-                headers={"Content-Type": "image/png"},
-            )
+        app.include_router(router, prefix="/api/v1")
+
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/channels/1234567890/upload",
+            content=b"fake png",
+            headers={"Content-Type": "image/png"},
+        )
 
         assert resp.status_code == 500
+        assert "bot instance invalid" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

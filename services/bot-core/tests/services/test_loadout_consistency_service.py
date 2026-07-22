@@ -337,13 +337,18 @@ class TestEquipOne:
     async def test_equip_one_boundary_exactly_one_cargo_allowed(self, svc, mock_db):
         """B.41 boundary: quantity == 1 — exactly one cargo copy available.
 
-        Regardless of how many are already equipped, quantity=1 means there IS
-        a cargo copy to consume and the equip must succeed.
+        With one copy already equipped on the TARGET ship (multi-slot), quantity=1
+        means there IS a cargo copy to consume and the equip must succeed.
+
+        Post TRUEUP-P1 (write-time I1 enforcement) the already-equipped copy must
+        live on the SAME ship as the target: I1 now forbids the same name on two
+        ships, so the pre-fix "Raccoon on ship_a AND ship_b, equip onto ship_c"
+        arrangement is itself rejected (see ``test_equip_one_rejects_name_...``).
+        The B.41 essence being asserted here is unchanged: quantity>0 gates the
+        equip, not the already-equipped count.
         """
-        ship_a = _make_player_ship(ship_id=1, player_id=1, weapons=["Raccoon"])
-        ship_b = _make_player_ship(ship_id=2, player_id=1, weapons=["Raccoon"])
-        ship_c = _make_player_ship(ship_id=3, player_id=1, weapons=[])
-        updated_ship_c = _make_player_ship(ship_id=3, player_id=1, weapons=["Raccoon"])
+        ship_c = _make_player_ship(ship_id=3, player_id=1, weapons=["Raccoon"])
+        updated_ship_c = _make_player_ship(ship_id=3, player_id=1, weapons=["Raccoon", "Raccoon"])
         static = _make_static_ship(max_primaries=4)
         inv = _make_inv_item("Raccoon", "primary_weapon", quantity=1)
 
@@ -351,11 +356,37 @@ class TestEquipOne:
         svc.ship_repo.get_by_name = AsyncMock(return_value=static)
         svc.item_repo.get_by_name = AsyncMock(return_value=_make_base_item("Raccoon", "PrimaryWeapon"))
         svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
-        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship_a, ship_b, ship_c])
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship_c])
 
         result = await svc.equip_one(mock_db, player_id=1, ship_id=3, item_name="Raccoon", equipment_type="weapons")
         assert result["success"] is True
         svc.inventory_repo.remove_item.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_equip_one_rejects_name_already_equipped_on_other_ship(self, svc, mock_db):
+        """TRUEUP-P1 (write-time I1): equipping a name already equipped on ANOTHER
+        of the player's ships is rejected — no inventory decrement, no slot append.
+
+        A player owning 2 cargo copies of one name must NOT be able to place one on
+        each of two ships (the state whose later evacuation destroyed a copy). The
+        second equip is rejected outright; the caller (router) maps it to HTTP 400.
+        """
+        target = _make_player_ship(ship_id=3, player_id=1, weapons=[])
+        other = _make_player_ship(ship_id=1, player_id=1, weapons=["Raccoon"])
+        static = _make_static_ship(max_primaries=4)  # free slot on the target
+        inv = _make_inv_item("Raccoon", "primary_weapon", quantity=1)  # a real cargo copy exists
+
+        svc.player_ship_repo.get_by_id = AsyncMock(return_value=target)
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+        svc.item_repo.get_by_name = AsyncMock(return_value=_make_base_item("Raccoon", "PrimaryWeapon"))
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[other, target])
+
+        with pytest.raises(ValueError, match="already equipped on another of your ships"):
+            await svc.equip_one(mock_db, player_id=1, ship_id=3, item_name="Raccoon", equipment_type="weapons")
+        # No mutation occurred — the guard fires before any write.
+        svc.inventory_repo.remove_item.assert_not_called()
+        svc.player_ship_repo.add_equipment.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

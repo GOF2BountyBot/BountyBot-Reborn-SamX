@@ -261,6 +261,32 @@ class LoadoutConsistencyService:
                 return 1
         return 0
 
+    async def _item_equipped_on_other_ship(
+        self, db: AsyncSession, *, player_id: int, exclude_ship_id: int, kind: str, item_name: str
+    ) -> int | None:
+        """Return the id of another of the player's ships that already has
+        ``item_name`` equipped in its ``kind`` slot, or ``None``.
+
+        Write-time I1 enforcement (TRUEUP-P1). ``equip_one`` uses this to reject
+        equipping a name that is already equipped on a DIFFERENT ship of the same
+        player. Without this guard a player who legitimately owns 2 cargo copies of
+        one name could equip one on each of two ships — the I1-violating state the
+        design forbids but the equip path historically permitted. Once that state
+        exists, evacuating/selling either ship fires the destructive anti-dup guard
+        (:meth:`_remove_one_slot_reference_from_other_ships`), which cannot tell a
+        legit second copy from a B.19 phantom dup and mints only ONE copy back,
+        silently destroying the other (total ownership 2 → 1). Enforcing I1 here
+        makes that state unreachable for legit copies in the first place; the
+        evacuate guard stays only to repair pre-existing/phantom-dup corruption.
+        """
+        all_ships = await self.player_ship_repo.get_player_ships(db, player_id)
+        for other in all_ships:
+            if other.id == exclude_ship_id:
+                continue
+            if item_name in self._get_slot(other, kind):
+                return other.id
+        return None
+
     async def _validate_module_equip_limit(self, db: AsyncSession, ship: PlayerShip, item_name: str) -> None:
         """Enforce ``GameConstants.MODULE_EQUIP_LIMITS`` for the module item.
 
@@ -416,6 +442,27 @@ class LoadoutConsistencyService:
             raise ValueError(
                 f"No available {equipment_type} slots on ship '{ship.ship_name}' "
                 f"({len(current_slot)}/{caps[equipment_type]} slots used)"
+            )
+
+        # 5b. I1 enforcement at write time (TRUEUP-P1): reject equipping a name
+        # already equipped on ANOTHER of this player's ships. This closes the
+        # latent item-loss bug where a legit second copy on a second ship would
+        # later be destroyed by evacuate's anti-dup guard (which cannot tell a
+        # legit copy from a B.19 phantom dup). Equipping additional copies of the
+        # same name on the SAME ship (multi-slot) is unaffected — the scan
+        # excludes this ship. Placed AFTER the slot-full guard so the swap flow
+        # (unequip-then-equip on a full ship) still short-circuits on slot-full.
+        other_ship_id = await self._item_equipped_on_other_ship(
+            db,
+            player_id=player_id,
+            exclude_ship_id=ship_id,
+            kind=equipment_type,
+            item_name=item_name,
+        )
+        if other_ship_id is not None:
+            raise ValueError(
+                f"'{item_name}' is already equipped on another of your ships (ship {other_ship_id}); "
+                f"an item name cannot be equipped on two ships at once. Unequip it there first."
             )
 
         # 6. MODULE_EQUIP_LIMITS enforcement

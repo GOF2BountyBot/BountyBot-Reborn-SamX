@@ -21,7 +21,7 @@ Last updated: 2026-07-22 (TRUEUP dispositions: 03 accepted-gap, 04 non-testable,
 
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
-| TRUEUP-P1 | 🟠 | `LoadoutConsistencyService` evacuate destroys a legit second copy of a same-name item equipped on two ships | Latent item-loss; strict-xfail marker in `test_loadout_consistency_property.py`; root cause + fix options in `TEST_SUITE_TRUEUP_FOLLOWUPS.md` (R-bc-integration) |
+| TRUEUP-P1-sweep | 🔵 | Legacy data audit: players who reached the two-ship-same-name state BEFORE the TRUEUP-P1 fix can still lose a copy on their next sell/transfer | The write-time guard only prevents NEW violations; consider a one-off `repair_player` sweep or read-only audit query to find/reconcile pre-fix rows |
 | TRUEUP-P2 | 🟠 | `guilds.py::create_role` uses nonexistent `status.HTTP_422` → AttributeError → 500 instead of 422 (both branches) | Tests assert current (500) behavior with pointer comments |
 | TRUEUP-P3 | 🟠 | `tags.py::create_forum_tag`/`update_tag` — same nonexistent `status.HTTP_422` defect class | See `TEST_SUITE_TRUEUP_FOLLOWUPS.md` (R-gw-api-1) |
 | B.67 | 🔵 | `duel_expire` executor has no bulk sweep mode — requires `duel_id` in payload; firing without one returns error and does nothing | Option A: add bulk mode when `duel_id` omitted (expire all past `expires_at`) in `bot-core/src/utils/executors/duel_expire_executor.py`. Option B: document the limitation. |

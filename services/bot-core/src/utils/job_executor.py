@@ -16,7 +16,6 @@ from utils.executors.duel_expire_executor import execute_duel_expire_job
 from utils.executors.pg_backup_executor import execute_pg_backup_job
 from utils.executors.shop_refresh_executor import execute_shop_refresh_job
 from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-from utils.executors.time_announcement_executor import execute_time_announcement_job
 
 flogger = get_logger("bot-job-executor")
 
@@ -40,11 +39,6 @@ class JobExecutor:
         flogger.trace(f"JobExecutor payload: job_id={job_id}, payload={payload}")
 
         try:
-            # 1) time-announcement jobs go to our executor
-            if payload.get("job_type") == "time_announcement":
-                flogger.debug(f"Dispatching time_announcement for job {job_id}")
-                return await execute_time_announcement_job(job_id, payload)
-
             # 2) shop-refresh jobs
             if payload.get("job_type") == "shop_refresh":
                 flogger.debug(f"Dispatching shop_refresh for job {job_id}")

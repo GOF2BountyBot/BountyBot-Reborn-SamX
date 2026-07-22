@@ -853,11 +853,11 @@ class TestListJobsGuildFilter:
         mock_scheduler.get_jobs.return_value = [
             make_mock_job(
                 job_id="job-no-guild",
-                args=["job-no-guild", {"job_type": "time_announcement"}],
+                args=["job-no-guild", {"job_type": "temperature_decay"}],
             ),
             make_mock_job(
                 job_id="job-with-guild",
-                args=["job-with-guild", {"job_type": "time_announcement", "guild_id": 55}],
+                args=["job-with-guild", {"job_type": "temperature_decay", "guild_id": 55}],
             ),
         ]
 

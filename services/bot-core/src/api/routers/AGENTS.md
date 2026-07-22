@@ -20,7 +20,7 @@ for _finder, name, _ispkg in pkgutil.iter_modules(routers.__path__):
 
 This means:
 - The `router` variable name must be exactly `router` (lowercase)
-- The scan is **not recursive**: a subpackage is only included if its `__init__.py` exposes a `router`. `announcements/__init__.py` does not, so the `APIRouter(prefix="/time")` defined in `announcements/time_announcement.py` is **not** mounted by auto-discovery (its tests build their own app and mount it manually)
+- The scan is **not recursive**: a subpackage is only included if its `__init__.py` exposes a `router`
 - Tags come from each router's own `APIRouter(tags=[...])` declaration — the module filename is only used for discovery logging
 
 ---

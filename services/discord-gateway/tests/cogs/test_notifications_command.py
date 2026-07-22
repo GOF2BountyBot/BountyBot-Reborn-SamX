@@ -187,6 +187,13 @@ class TestNotificationsBountyEnable:
         put_json = put_call[1].get("json", {})
         assert put_json.get("notification_type") == "bounty", f"Got: {put_json}"
         assert put_json.get("enabled") is True, f"Got: {put_json}"
+        # (c) the config lookup that resolves bronze_role_id must hit the guild config
+        # route — a regression pointing this at the wrong endpoint would still read a
+        # role id from the accept-anything AsyncMock and pass unnoticed otherwise.
+        cog.http_client.get.assert_awaited_once()
+        get_call = cog.http_client.get.call_args
+        get_url = get_call[0][0] if get_call[0] else get_call[1].get("url", "")
+        assert get_url.endswith(f"/config/guild/{interaction.guild_id}"), f"Expected guild config route, got: {get_url}"
 
     @pytest.mark.asyncio
     async def test_bounty_enable_skips_role_already_assigned(self, cog):

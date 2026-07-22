@@ -242,7 +242,13 @@ class TestInventoryCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
-        assert len(embed.fields) > 0
+        # the actual item data must round-trip into the embed, not just "some fields"
+        assert embed.title == "🎒 TestUser's Inventory"
+        assert "**Total Items:** 3" in embed.description
+        assert "Ships: 1 | Weapons: 1 | Modules: 1 | Turrets: 0" in embed.description
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Weapons (1)"] == "• LaserCannon \n"
+        assert fields_by_name["Modules (1)"] == "• ShieldModule x2\n"
 
     def test_inventory_requests_ships_included(self, mock_inventory_cog, make_mock_response):
         """/inventory opts in to ships on both the list and summary API calls."""
@@ -396,6 +402,59 @@ class TestInventoryCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
+
+
+# ---------------------------------------------------------------------------
+# /inventory URL+method contract (respx)
+# ---------------------------------------------------------------------------
+
+
+class TestInventoryCommandRespx:
+    """respx-backed URL+method contract test for /inventory happy path.
+
+    The rest of TestInventoryCommand fully mocks ``http_client`` and never asserts
+    the requested route, so a regression that points /inventory at the wrong
+    endpoint or verb would pass silently. This test wires a real httpx.AsyncClient
+    through respx so a wrong route/method 404s via respx's own "no matching route"
+    error instead of a permissive AsyncMock swallowing it.
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_inventory_happy_path_calls_correct_urls(self, mock_inventory_cog, request):
+        """/inventory must POST /players/ then GET the list+summary endpoints."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_inventory_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{self._BOT_API}/inventory/player/1").mock(
+                return_value=httpx.Response(200, json=[_make_inventory_item("LaserCannon", "weapon", 1)])
+            )
+            mock_router.get(f"{self._BOT_API}/inventory/player/1/summary").mock(
+                return_value=httpx.Response(200, json=_make_summary(total_items=1, weapon=1))
+            )
+
+            asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args.kwargs["embed"]
+        assert embed.fields[0].value == "• LaserCannon \n"
 
 
 # ---------------------------------------------------------------------------
@@ -670,7 +729,10 @@ class TestSearchCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
-        assert len(embed.fields) > 0
+        assert embed.title == "🔍 Search Results for 'Laser'"
+        assert embed.description == "Found 2 matching items"
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Weapons"] == "• **LaserCannon**\n• **LaserRifle** x3\n"
 
     def test_search_happy_path_multiple_types(self, mock_inventory_cog, make_mock_response):
         """search should group results by item type."""
@@ -693,6 +755,12 @@ class TestSearchCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert embed.description == "Found 3 matching items"
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Weapons"] == "• **LaserCannon**\n"
+        assert fields_by_name["Modules"] == "• **LaserShield** x2\n"
+        assert fields_by_name["Turrets"] == "• **LaserTurret**\n"
 
     def test_search_no_results(self, mock_inventory_cog, make_mock_response):
         """search should send ephemeral message when no items match."""
@@ -759,6 +827,8 @@ class TestSearchCommand:
         asyncio.run(mock_inventory_cog.search.callback(mock_inventory_cog, interaction, query="Laser"))
 
         interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args.kwargs["embed"]
+        assert embed.fields[0].value == "• **LaserCannon** x5\n"
 
     def test_search_quantity_equal_one(self, mock_inventory_cog, make_mock_response):
         """search should not display quantity text when quantity == 1."""
@@ -777,6 +847,8 @@ class TestSearchCommand:
         asyncio.run(mock_inventory_cog.search.callback(mock_inventory_cog, interaction, query="Laser"))
 
         interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args.kwargs["embed"]
+        assert embed.fields[0].value == "• **LaserCannon**\n"
 
     def test_search_http_status_error(self, mock_inventory_cog, make_mock_response):
         """search should handle HTTPStatusError gracefully."""
@@ -826,6 +898,50 @@ class TestSearchCommand:
 
 
 # ---------------------------------------------------------------------------
+# /search URL+method contract (respx)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchCommandRespx:
+    """respx-backed URL+method contract test for /search happy path."""
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_search_happy_path_calls_correct_urls(self, mock_inventory_cog, request):
+        """/search must POST /players/ then GET /inventory/player/{id}/search?q=<query>."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_inventory_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            search_route = mock_router.get(
+                url=f"{self._BOT_API}/inventory/player/1/search", params={"q": "Laser"}
+            ).mock(return_value=httpx.Response(200, json=[_make_inventory_item("LaserCannon", "weapon", 1)]))
+
+            asyncio.run(mock_inventory_cog.search.callback(mock_inventory_cog, interaction, query="Laser"))
+
+        assert search_route.called
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args.kwargs["embed"]
+        assert embed.fields[0].value == "• **LaserCannon**\n"
+
+
+# ---------------------------------------------------------------------------
 # /item command
 # ---------------------------------------------------------------------------
 
@@ -850,8 +966,14 @@ class TestItemCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
-        all_text = (embed.description or "") + " ".join(f.value for f in embed.fields if f.value)
-        assert "owned" in all_text.lower() or "inventory" in all_text.lower() or "1" in all_text
+        assert embed.title == "📦 LaserCannon"
+        import discord
+
+        assert embed.colour == discord.Colour.red()  # primary_weapon → red per _get_item_type_color
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Type"] == "Primary Weapon"
+        assert fields_by_name["Quantity Owned"] == "3"
+        assert fields_by_name["Status"] == "✅ Owned"
 
     def test_item_not_owned_quantity_zero(self, mock_inventory_cog, make_mock_response):
         """item should display 'Not Owned' status when quantity == 0."""
@@ -869,8 +991,9 @@ class TestItemCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
-        all_text = (embed.description or "") + " ".join(f.value for f in embed.fields if f.value)
-        assert "not owned" in all_text.lower() or "0" in all_text
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Quantity Owned"] == "0"
+        assert fields_by_name["Status"] == "❌ Not Owned"
 
     def test_item_player_not_found(self, mock_inventory_cog):
         """item should send ephemeral error when player not found."""
@@ -972,6 +1095,12 @@ class TestItemCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        import discord
+
+        assert embed.colour == discord.Colour.green()
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Type"] == "Ship"
 
     def test_item_with_module_type(self, mock_inventory_cog, make_mock_response):
         """item with module type should use blue color from _get_item_type_color."""
@@ -988,6 +1117,57 @@ class TestItemCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        import discord
+
+        assert embed.colour == discord.Colour.blue()
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Type"] == "Module"
+        assert fields_by_name["Quantity Owned"] == "2"
+
+
+# ---------------------------------------------------------------------------
+# /item URL+method contract (respx)
+# ---------------------------------------------------------------------------
+
+
+class TestItemCommandRespx:
+    """respx-backed URL+method contract test for /item happy path."""
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_item_happy_path_calls_correct_urls(self, mock_inventory_cog, request):
+        """/item must POST /players/ then GET /inventory/player/{id}/item/{name}/count."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_inventory_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{self._BOT_API}/inventory/player/1/item/LaserCannon/count").mock(
+                return_value=httpx.Response(200, json={"quantity": 3, "item_type": "primary_weapon"})
+            )
+
+            asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args.kwargs["embed"]
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Quantity Owned"] == "3"
 
 
 # ---------------------------------------------------------------------------
@@ -1124,6 +1304,13 @@ class TestEquipCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         assert call_kwargs.get("ephemeral", False), "/equip success response must be ephemeral"
+        embed = call_kwargs["embed"]
+        assert embed.title == "⚙️ Item Equipped"
+        assert "**NewCannon** has been equipped" in embed.description
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Ship"] == "Eagle"
+        assert fields_by_name["Slot"] == "Weapons"
+        assert "Weapons: OldLaser, NewCannon" in fields_by_name["Current Loadout"]
 
     def test_equip_ok_loadout_lists_equipped_secondaries(self, mock_inventory_cog, make_mock_response):
         """Current Loadout must include a Secondaries line listing equipped secondaries.

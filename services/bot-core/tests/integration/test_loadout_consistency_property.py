@@ -325,12 +325,13 @@ class _RealWorld:
             weights=[3, 3, 1, 1, 1, 2],
         )[0]
         if choice == "equip":
-            # Only equip a name NOT already equipped on ANY ship.  Equipping the
-            # same NAME onto a second ship creates an I1-violating state that the
-            # real service's evacuate anti-dup guard "repairs" destructively (it
-            # cannot tell a legit second copy from a phantom dup) — a distinct
-            # item-loss concern covered by ``test_evacuate_destroys_legit_...``
-            # below, kept out of the conservation sweep so I1/I2 stays well-defined.
+            # Only equip a name NOT already equipped on ANY ship.  Post TRUEUP-P1
+            # the service REJECTS equipping a name already equipped on another of
+            # the player's ships (write-time I1 enforcement in ``equip_one``), so
+            # the same-name-on-two-ships state can no longer arise — generating it
+            # here would only yield rejected no-ops.  That rejection, and the
+            # conservation it guarantees, is covered directly by
+            # ``test_equip_one_rejects_second_ship_copy_conserving_ownership`` below.
             equipped_names = {n for s in ships for a in _SLOT_ATTRS for n in s["slots"][a]}
             owned = [n for n, q in cargo.items() if q > 0 and n not in equipped_names]
             if not owned or not ships:
@@ -583,26 +584,23 @@ async def test_phantom_dup_is_repaired_by_repair_player_logic(db_session) -> Non
     assert invs == []
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Latent item-loss bug (logged in FOLLOWUPS.md, R-bc-integration): a player who "
-        "legitimately owns 2 copies of one item NAME and equips one on each of two ships "
-        "reaches a state equip_one never prevents; evacuating/selling one ship then fires "
-        "evacuate's anti-dup guard, which cannot tell a legit second copy from a phantom "
-        "dup and DESTROYS the other ship's copy (mints only one back). Total ownership "
-        "drops from 2 to 1. The DESIRED behaviour asserted here (both copies conserved) "
-        "fails against the shipped service."
-    ),
-    strict=True,
-)
-async def test_evacuate_destroys_legit_second_copy_of_same_name(db_session) -> None:
-    """Characterises the anti-dup-vs-legit-duplicate item-loss edge (see xfail reason).
+async def test_equip_one_rejects_second_ship_copy_conserving_ownership(db_session) -> None:
+    """TRUEUP-P1 regression — was the strict-xfail item-loss characterisation.
 
-    Owns 2 'Pulse Laser' (both equipped, one per ship), then evacuates the
-    non-active ship.  Conservation (owned == 2) SHOULD hold but does not — the
-    guard destroys the winning ship's copy.  Marked strict xfail so the day the
-    src is fixed (equip prevents the state, or the guard keys on provenance) this
-    turns green and flags the fix.
+    A player legitimately owns 2 copies of one item NAME (cargo qty 2). Equipping
+    one on ship A succeeds; equipping the second on ship B is now REJECTED at write
+    time (I1 enforced in ``equip_one``). The pre-fix path permitted the
+    same-name-on-two-ships state, which evacuating/selling either ship then
+    destroyed via the anti-dup guard (which cannot tell a legit copy from a B.19
+    phantom dup), dropping ownership 2 -> 1. With the write-time guard that state
+    can no longer arise for legit copies.
+
+    Asserts (1) the second equip raises the new error, and (2) NO copy is lost:
+    one stays equipped on ship A, one stays in cargo (conservation holds).
+
+    History (why this test exists): see FOLLOWUPS R-bc-integration — this was a
+    strict xfail documenting the latent bug; the fix turns the destructive
+    scenario into a clean rejection with full conservation.
     """
     from persist.models.player import Player
     from persist.models.user import User
@@ -620,24 +618,76 @@ async def test_evacuate_destroys_legit_second_copy_of_same_name(db_session) -> N
     world.player_id = pid
     world.expected["Pulse Laser"] = 2  # two legitimately-owned copies
 
-    # Two Betty ships; issue 2 Pulse Lasers to cargo, equip one on each ship.
+    # Two ships; issue 2 Pulse Lasers to cargo, equip one on ship A.
     async with db_session.begin():
         await svc.inventory_repo.add_item(db_session, pid, "primary_weapon", "Pulse Laser", 2, commit=False)
     active = await world.add_ship("Betty", active=True)
     other = await world.add_ship("Sidewinder", active=False)
     await world.apply(("equip", "Pulse Laser", "weapons", active))
-    await world.apply(("equip", "Pulse Laser", "weapons", other))
 
-    # Sanity: both copies equipped, cargo empty (arrange succeeded).
+    # Second equip onto ship B is REJECTED at write time (I1). The failing txn
+    # rolls back, so the cargo copy is NOT consumed and no slot reference is added.
+    with pytest.raises(ValueError, match="already equipped on another of your ships"):
+        async with db_session.begin():
+            await svc.equip_one(
+                db_session, player_id=pid, ship_id=other, item_name="Pulse Laser", equipment_type="weapons"
+            )
+
+    # Conservation: exactly one copy equipped (on ship A), one still in cargo.
     ships, cargo = await world._snapshot()
-    assert sum(s["slots"]["weapons"].count("Pulse Laser") for s in ships) == 2
-    assert cargo.get("Pulse Laser", 0) == 0
+    assert sum(s["slots"]["weapons"].count("Pulse Laser") for s in ships) == 1
+    assert cargo.get("Pulse Laser", 0) == 1
+    await world.assert_invariants("legit-dup rejected at equip")
 
-    # Evacuate the NON-active ship — the destructive anti-dup guard fires here.
+    # Selling/evacuating the (now empty) ship B is a clean no-op — nothing lost.
     await world._evacuate_and_remove(other)
+    await world.assert_invariants("post-evacuate empty ship B")
 
-    # DESIRED (xfail): both copies survive — one back in cargo, one still equipped.
-    await world.assert_invariants("legit-dup evacuate")
+
+async def test_move_item_between_ships_via_unequip_then_equip(db_session) -> None:
+    """TRUEUP-P1 companion: I1 forbids a name on two ships AT ONCE, but MOVING it
+    from ship A to ship B is fine — unequip from A (back to cargo), then equip on
+    B. Verifies the write-time guard does not block the legitimate relocation.
+    """
+    from persist.models.player import Player
+    from persist.models.user import User
+
+    svc = _catalog_service()
+    async with db_session.begin():
+        user = User(id=921_001, discord_username="move-item")
+        db_session.add(user)
+        await db_session.flush()
+        player = Player(user_id=user.id, guild_id=1, credits=0, tier="Bronze")
+        db_session.add(player)
+        await db_session.flush()
+        pid = player.id
+    world = _RealWorld(db_session, svc, pid)
+    world.player_id = pid
+    world.expected["Pulse Laser"] = 1  # a single legitimately-owned copy
+
+    async with db_session.begin():
+        await svc.inventory_repo.add_item(db_session, pid, "primary_weapon", "Pulse Laser", 1, commit=False)
+    ship_a = await world.add_ship("Betty", active=True)
+    ship_b = await world.add_ship("Sidewinder", active=False)
+
+    # Equip on A, then unequip back to cargo.
+    await world.apply(("equip", "Pulse Laser", "weapons", ship_a))
+    await world.apply(("unequip", "Pulse Laser", "weapons", ship_a))
+
+    # Now equip on B — the item is on NO other ship, so the guard allows it.
+    # Direct call (not world.apply) so a regression surfaces as a raised error.
+    async with db_session.begin():
+        await svc.equip_one(
+            db_session, player_id=pid, ship_id=ship_b, item_name="Pulse Laser", equipment_type="weapons"
+        )
+
+    ships, cargo = await world._snapshot()
+    b_slots = next(s["slots"]["weapons"] for s in ships if s["id"] == ship_b)
+    a_slots = next(s["slots"]["weapons"] for s in ships if s["id"] == ship_a)
+    assert b_slots == ["Pulse Laser"]
+    assert a_slots == []
+    assert cargo.get("Pulse Laser", 0) == 0
+    await world.assert_invariants("after relocation A->B")
 
 
 # ---------------------------------------------------------------------------

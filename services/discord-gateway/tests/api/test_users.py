@@ -1,21 +1,32 @@
-import importlib
-import os
+"""
+Tests for the users API endpoints.
+
+Fidelity notes
+--------------
+No ``sys.modules["discord"]`` swap and no patches on ``resolve_bot``,
+``handle_discord_exception`` or ``UserConverter``: the mock bot is
+``spec=commands.Bot`` with ``is_ready()==True``, and the mock user/member
+objects carry real-typed attributes (including a real ``discord.Permissions``
+for ``guild_permissions``) so the real ``UserConverter``/``has_guild_permission``
+produce genuine results whose ``id``/``allowed`` reflect the entity actually
+resolved, not a hardcoded constant.
+"""
+
 import sys
 import types
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
 import tests.mocks.discord_mock_utils as discord_mock_utils
 
 DiscordMockUtils = discord_mock_utils.DiscordMockUtils
-
-# Create module-level mock utilities
-_mock_utils = DiscordMockUtils()
+create_discord_not_found = discord_mock_utils.create_discord_not_found
 
 # Setup mock shared.bblogger module
 _mock_shared = types.ModuleType("shared")
@@ -41,84 +52,10 @@ _mock_bblogger.get_logger = MagicMock(side_effect=_make_mock_logger)
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
 
-# Setup mock discord module with discord_mock_utils
-# create_mock_discord_module() already wires real discord exception classes
-# (NotFound, Forbidden, HTTPException) so except clauses work correctly.
-_mock_discord = _mock_utils.create_mock_discord_module_with_factories()
 
-# Mock CategoryChannel, TextChannel, VoiceChannel, ForumChannel, ThreadChannel,
-# Thread, Embed, PermissionOverwrite, Guild, User, Member, Role, Message
-_mock_discord.CategoryChannel = MagicMock()
-_mock_discord.TextChannel = MagicMock()
-_mock_discord.VoiceChannel = MagicMock()
-_mock_discord.ForumChannel = MagicMock()
-_mock_discord.ThreadChannel = MagicMock()
-_mock_discord.Thread = MagicMock()
-_mock_discord.Embed = MagicMock()
-_mock_discord.PermissionOverwrite = MagicMock()
-_mock_discord.Guild = MagicMock()
-_mock_discord.User = MagicMock()
-_mock_discord.Member = MagicMock()
-_mock_discord.Role = MagicMock()
-_mock_discord.Message = MagicMock()
-
-# Mock discord.ext
-_mock_discord_ext = types.ModuleType("discord.ext")
-_mock_discord_ext.commands = types.ModuleType("discord.ext.commands")
-_mock_discord_ext.commands.Bot = MagicMock
-
-_mock_discord.ext = _mock_discord_ext
-
-sys.modules["discord"] = _mock_discord
-sys.modules["discord.ext"] = _mock_discord_ext
-sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
-
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-
-# ---------------------------------------------------------------------------
-# Per-test isolation fixture
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _restore_real_discord():
-    """
-    Re-assert the real discord module into sys.modules before each test
-    and reload api.routers.users so its ``discord`` reference is fresh.
-
-    When the full test suite runs, test_guilds.py evicts all discord modules
-    from sys.modules and re-imports real discord.  By the time test_users.py
-    fixtures execute, sys.modules["discord"] = real discord (not the hand-
-    rolled fake with real NotFound set up here).  The users.py router will
-    have been imported — or re-imported — with real discord, so
-    ``except discord.NotFound`` uses the real class.
-
-    We restore real discord and reload both discord_mock_utils (so its
-    module-level ``discord`` binding is refreshed) and api.routers.users
-    (so its ``discord`` binding is refreshed).  After reload, raising a real
-    ``discord.NotFound`` (via DiscordMockUtils.create_discord_not_found())
-    is properly caught by the router's ``except discord.NotFound`` clause.
-    """
-    _cm = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
-    sys.modules["discord"] = _cm._REAL_DISCORD
-    sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
-    sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
-    # Reload discord_mock_utils so create_discord_not_found() uses real discord
-    import tests.mocks.discord_mock_utils as _dmu_mod
-
-    importlib.reload(_dmu_mod)
-    # Force the users router to re-bind its 'discord' global to real discord
-    from api.routers import users as _users_mod
-
-    importlib.reload(_users_mod)
-    yield
-
-
-def create_mock_user(user_id=111111111):
+def create_mock_user(user_id=555000111):
     """Create a mock Discord user using discord_mock_utils."""
-    return _mock_utils.create_mock_user(
+    return DiscordMockUtils.create_mock_user(
         user_id=user_id,
         username="test-user",
         discriminator="1234",
@@ -130,48 +67,86 @@ def create_mock_user(user_id=111111111):
     )
 
 
+class _VoiceState:
+    """Minimal stand-in for discord.VoiceState: just the two fields the
+    converter reads (``deaf``/``mute``)."""
+
+    def __init__(self):
+        self.deaf = False
+        self.mute = False
+
+
 def create_mock_member(member_id=111111111, guild_id=987654321):
-    """Create a mock Discord member using discord_mock_utils."""
-    return _mock_utils.create_mock_member(
+    """Create a mock Discord member using discord_mock_utils, with a real edit() that mutates state."""
+    member = DiscordMockUtils.create_mock_member(
         user_id=member_id,
         guild_id=guild_id,
         username="test-user",
         discriminator="1234",
-        avatar=None,
-        bot=False,
-        system=False,
-        created_at=datetime(2024, 1, 1),
-        public_flags=0,
         display_name="test-member",
         nick=None,
         roles=[],
         joined_at=datetime(2024, 1, 1),
         premium_since=None,
         pending=False,
-        voice=None,
-        guild_permissions=MagicMock(value=0),
+        guild_permissions=discord.Permissions(0),
     )
+    member.__class__ = discord.Member
+    member.voice = _VoiceState()
+
+    async def _edit(**kwargs):
+        if "nick" in kwargs:
+            member.nick = kwargs["nick"]
+        if "mute" in kwargs:
+            member.voice.mute = kwargs["mute"]
+        if "deafen" in kwargs:
+            member.voice.deaf = kwargs["deafen"]
+        if "roles" in kwargs:
+            member.roles = kwargs["roles"]
+
+    member.edit = AsyncMock(side_effect=_edit)
+    return member
 
 
 @pytest.fixture
-def mock_bot():
-    """Create a mock Discord bot using discord_mock_utils."""
+def mock_member():
+    return create_mock_member(111111111, 987654321)
+
+
+@pytest.fixture
+def mock_bot(mock_member):
+    """Create a mock Discord bot using discord_mock_utils.
+
+    ``fetch_user``/``guild.fetch_member`` raise a real ``discord.NotFound``
+    on cache miss so the real cache-then-fetch resolution chain in each
+    router handler produces a genuine 404.
+    """
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
 
-    mock_member = create_mock_member(111111111, 987654321)
-    mock_member.edit = AsyncMock()
-    mock_guild = MagicMock()
-    mock_guild.id = 987654321
-    mock_guild.get_member = MagicMock(side_effect=lambda x: mock_member if x == 111111111 else None)
-    mock_guild.fetch_member = AsyncMock(
-        side_effect=lambda x: (
-            mock_member if x == 111111111 else (_ for _ in ()).throw(DiscordMockUtils.create_discord_not_found())
-        )
-    )
+    known_user = create_mock_user(555000111)
 
-    bot.guilds = [mock_guild]
-    bot.get_user = MagicMock(return_value=None)
-    bot.fetch_user = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found())
+    def get_user(user_id):
+        return known_user if user_id == known_user.id else None
+
+    async def fetch_user(user_id):
+        if user_id == known_user.id:
+            return known_user
+        raise create_discord_not_found(f"User {user_id} not found")
+
+    guild = MagicMock()
+    guild.id = mock_member.guild.id
+    guild.get_member = MagicMock(side_effect=lambda x: mock_member if x == mock_member.id else None)
+
+    async def fetch_member(user_id):
+        if user_id == mock_member.id:
+            return mock_member
+        raise create_discord_not_found(f"Member {user_id} not found")
+
+    guild.fetch_member = AsyncMock(side_effect=fetch_member)
+
+    bot.guilds = [guild]
+    bot.get_user = MagicMock(side_effect=get_user)
+    bot.fetch_user = AsyncMock(side_effect=fetch_user)
     bot.get_channel = MagicMock(return_value=None)
     bot.fetch_channel = AsyncMock(return_value=None)
 
@@ -180,59 +155,15 @@ def mock_bot():
 
 @pytest.fixture
 def users_test_app(mock_bot):
-    """Create a test FastAPI app with the users router and mocked dependencies."""
+    """Create a test FastAPI app with the users router and a real bot state."""
     app = FastAPI(title="Discord Gateway API Test")
     app.state.bot = mock_bot
 
-    with (
-        patch("api.routers.users.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-        patch("api.routers.users.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-        patch("api.routers.users.UserConverter") as mock_user_converter,
-    ):
+    from api.routers.users import router
 
-        async def mock_resolve_bot(request):
-            return mock_bot
+    app.include_router(router, prefix="/api/v1")
 
-        mock_resolve.side_effect = mock_resolve_bot
-        mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
-
-        # UserConverter.user_to_payload returns a User schema object
-        from api.schemas.user_schemas import User as UserSchema
-
-        _mock_user_payload = UserSchema(
-            id=111111111,
-            username="test-user",
-            discriminator="1234",
-            avatar=None,
-            bot=False,
-            system=False,
-            created_at="2024-01-01T00:00:00",
-            public_flags=0,
-        )
-        mock_user_converter.user_to_payload.return_value = _mock_user_payload
-
-        # UserConverter.member_to_payload returns a Member schema object
-        from api.schemas.user_schemas import Member as MemberSchema
-
-        _mock_member_payload = MemberSchema(
-            user=_mock_user_payload,
-            guild_id=987654321,
-            nick=None,
-            roles=[],
-            joined_at="2024-01-01T00:00:00",
-            premium_since=None,
-            deaf=False,
-            mute=False,
-            pending=False,
-            permissions=0,
-        )
-        mock_user_converter.member_to_payload.return_value = _mock_member_payload
-
-        from api.routers.users import router
-
-        app.include_router(router, prefix="/api/v1")
-
-        yield app
+    yield app
 
 
 @pytest.fixture
@@ -244,21 +175,32 @@ def users_client(users_test_app):
 class TestGetBotIdentity:
     """Tests for GET /users/@me endpoint."""
 
-    def test_get_bot_identity_returns_200(self, users_client):
-        """GET /users/@me should return 200 with bot user details."""
+    def test_get_bot_identity_returns_200(self, users_client, mock_bot):
+        """GET /users/@me should return 200 with the real bot user's serialized details."""
         response = users_client.get("/api/v1/users/@me")
         assert response.status_code == 200
 
         data = response.json()
         assert data["status"] == "success"
-        assert "data" in data
+        assert data["data"]["id"] == mock_bot.user.id
+        assert data["data"]["bot"] is True
 
 
 class TestGetUser:
     """Tests for GET /users/{user_id} endpoint."""
 
+    def test_get_user_returns_200(self, users_client):
+        """GET /users/{user_id} should return 200 with the real, cache-resolved user's details."""
+        response = users_client.get("/api/v1/users/555000111")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["data"]["id"] == 555000111
+        assert data["data"]["username"] == "test-user"
+
     def test_get_user_not_found_returns_404(self, users_client):
-        """GET /users/{user_id} should return 404 for non-existent user (bot.fetch_user raises NotFound)."""
+        """GET /users/{user_id} should return 404 (real discord.NotFound) for non-existent user."""
         response = users_client.get("/api/v1/users/999999999")
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -273,7 +215,7 @@ class TestGetMember:
     """Tests for GET /members/{member_id} endpoint."""
 
     def test_get_member_returns_200(self, users_client):
-        """GET /members/{member_id} should return 200 with member details."""
+        """GET /members/{member_id} should return 200 with the real, resolved member's details."""
         response = users_client.get("/api/v1/members/111111111")
         assert response.status_code == 200
 
@@ -284,7 +226,7 @@ class TestGetMember:
         assert data["data"]["guild_id"] == 987654321
 
     def test_get_member_not_found_returns_404(self, users_client):
-        """GET /members/{member_id} should return 404 for non-existent member."""
+        """GET /members/{member_id} should return 404 (real discord.NotFound) for non-existent member."""
         response = users_client.get("/api/v1/members/999999999")
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -294,7 +236,7 @@ class TestUpdateMember:
     """Tests for PUT /members/{member_id} endpoint."""
 
     def test_update_member_returns_200(self, users_client):
-        """PUT /members/{member_id} should return 200 with updated member."""
+        """PUT /members/{member_id} should return 200 with the real, mutated member's nick."""
         update_data = {
             "nick": "updated-nick",
         }
@@ -303,15 +245,17 @@ class TestUpdateMember:
 
         data = response.json()
         assert data["status"] == "updated"
-        assert "data" in data
         assert data["data"]["user"]["id"] == 111111111
+        assert data["data"]["nick"] == "updated-nick"
 
     def test_update_member_partial_returns_200(self, users_client):
-        """PUT /members/{member_id} should return 200 with partial updates."""
+        """PUT /members/{member_id} should return 200 with the real, mutated voice-state mute flag."""
         update_data = {"mute": True}
         response = users_client.put("/api/v1/members/111111111", json=update_data)
         assert response.status_code == 200
-        assert response.json()["status"] == "updated"
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data["data"]["mute"] is True
 
     def test_update_member_not_found_returns_404(self, users_client):
         """PUT /members/{member_id} should return 404 for non-existent member."""
@@ -324,15 +268,19 @@ class TestUpdateMember:
 class TestCheckMemberPermission:
     """Tests for GET /members/{member_id}/permissions/check endpoint."""
 
-    def test_check_member_permission_returns_200(self, users_client):
-        """GET /members/{member_id}/permissions/check should return 200."""
+    def test_check_member_permission_returns_200(self, users_client, mock_member):
+        """GET .../permissions/check should evaluate the real member.guild_permissions bitfield."""
+        mock_member.guild_permissions = discord.Permissions(ban_members=True)
         response = users_client.get("/api/v1/members/111111111/permissions/check?permission=BAN_MEMBERS")
         assert response.status_code == 200
 
         data = response.json()
         assert data["status"] == "success"
-        assert "data" in data
-        assert "allowed" in data["data"]
+        assert data["data"]["allowed"] is True
+
+        mock_member.guild_permissions = discord.Permissions(0)
+        response = users_client.get("/api/v1/members/111111111/permissions/check?permission=BAN_MEMBERS")
+        assert response.json()["data"]["allowed"] is False
 
     def test_check_member_permission_invalid_permission_returns_422(self, users_client):
         """GET /members/{member_id}/permissions/check should return 422 for unknown permission."""
@@ -341,22 +289,19 @@ class TestCheckMemberPermission:
 
 
 class TestErrorHandling:
-    """Tests for error handling in users endpoints."""
+    """Tests for error handling in users endpoints.
+
+    ``resolve_bot`` (a network/readiness boundary) is patched to raise a
+    generic error so the real, unpatched ``handle_discord_exception`` mapping
+    of an unrecognized exception to HTTP 500 is exercised end-to-end.
+    """
 
     def test_handle_discord_exception(self, users_client):
-        """Users endpoints should handle Discord exceptions gracefully."""
-        from fastapi import HTTPException as FastAPIHTTPException
-
-        with (
-            patch("api.routers.users.resolve_bot", side_effect=Exception("Test Discord error")),
-            patch(
-                "api.routers.users.handle_discord_exception",
-                side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error"),
-            ),
-        ):
+        """Users endpoints should map an unexpected error to a real 500 via handle_discord_exception."""
+        with patch("api.routers.users.resolve_bot", side_effect=RuntimeError("Test Discord error")):
             response = users_client.get("/api/v1/users/111111111")
             assert response.status_code == 500
-            assert "internal server error" in response.json()["detail"].lower()
+            assert "test discord error" in response.json()["detail"].lower()
 
 
 if __name__ == "__main__":

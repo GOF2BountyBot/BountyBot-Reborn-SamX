@@ -312,6 +312,20 @@ class DiscordMockUtils:
         mock_member.color = mock_member.colour
         mock_member.voice = None
 
+        # Real discord.Member delegates undefined attribute access (avatar,
+        # created_at, public_flags, bot, system) to its underlying User via
+        # __getattr__ — Member itself doesn't store these. Converters (e.g.
+        # UserConverter.user_to_payload, called from member_to_payload) read
+        # them straight off the Member object they're given, matching that
+        # real delegation. Mirror it here so any caller that skips
+        # user_to_payload's Member-specific branch and reads these directly
+        # off the mock gets the same values a real Member would expose.
+        mock_member.avatar = mock_user.avatar
+        mock_member.created_at = mock_user.created_at
+        mock_member.public_flags = mock_user.public_flags
+        mock_member.bot = mock_user.bot
+        mock_member.system = mock_user.system
+
         for key, value in kwargs.items():
             setattr(mock_member, key, value)
 

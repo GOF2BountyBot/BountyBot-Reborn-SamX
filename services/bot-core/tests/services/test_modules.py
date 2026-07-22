@@ -738,16 +738,14 @@ class TestBoosterDistancePush:
         distance_events = [e for e in results.combat_log if e.type == CombatEventType.distance]
         booster_push_events = [e for e in distance_events if e.data.get("cause") == "booster_push"]
         module_acts = _find_module_activations(results.combat_log, "booster")
-        # If booster activated, there should be booster push distance events
-        if module_acts:
-            assert len(booster_push_events) > 0, "Booster activated but no distance push events found"
-            # Verify push direction: distance INCREASES during boost
-            for ev in booster_push_events:
-                assert ev.data["to"] > ev.data["from"], f"Booster push should increase distance: {ev.data}"
-        else:
-            # If booster never activated (fight ended too quickly), test is vacuously true
-            # but we want to ensure no bogus booster push events exist
-            assert len(booster_push_events) == 0
+        # The booster is ready at tick 0 (see TestInitialModuleState) and c2 crosses
+        # its HP threshold on the first hit, so activation is deterministic here —
+        # assert it unconditionally rather than guarding the behaviour behind an `if`.
+        assert module_acts, "Booster must activate (c2 crosses its HP threshold on the first hit)"
+        assert len(booster_push_events) > 0, "Booster activated but no distance push events found"
+        # Verify push direction: distance INCREASES during boost
+        for ev in booster_push_events:
+            assert ev.data["to"] > ev.data["from"], f"Booster push should increase distance: {ev.data}"
 
     def test_booster_push_per_tick_formula(self):
         """push_delta = BASE_SHIP_SPEED_MPS × (effect_pct / 100) × (TICK_MS / 1000)."""
@@ -818,8 +816,9 @@ class TestBoosterDistancePush:
         resolver = TickResolver(seed=99)
         results = resolver.resolve(loadout_c1, loadout_c2, rng=random.Random(99))
         fire_events = [e for e in results.combat_log if e.type == CombatEventType.weapon_fire and e.actor == "Fighter"]
-        # C2 fires normally (its weapons are present)
-        assert len(fire_events) >= 0  # non-negative, always true
+        # C2 (the armed "Fighter" opponent) must actually fire — this anchors the
+        # test on a real behaviour rather than a tautology.
+        assert len(fire_events) > 0, "Armed opponent C2 must emit weapon_fire events"
         # C1 should still emit weapon_fire events when booster is active
         c1_fire_events = [
             e for e in results.combat_log if e.type == CombatEventType.weapon_fire and e.actor == loadout_c1.ship_name
@@ -1319,19 +1318,21 @@ class TestAccuracyLiteralReplacement:
         # Fight where c1 has thruster and we can measure the accuracy effect
         # via weapon_fire events (accuracy field in event data)
         thruster = _thruster_mod(effect_pct=40.0)
-        # Weapon with range beyond starting distance; fights starts at 5000m which is >> 750m
-        # so thruster is initially inactive. Once distance closes to < 750m, bonus kicks in.
-        # We just verify c1's pilot_primary_acc is different from a run without thruster.
+        # Fight starts at 5000m (>> 750m thruster window) so the thruster is initially
+        # inactive; once distance closes below 750m the bonus ramps in. Both ships are
+        # very tanky so the fight survives long enough for distance to close fully into
+        # thruster range (mirrors the builder-integration sibling below).
+        weapon = WeaponStats(name="Gun", dps=10.0, damage_per_shot=10, loading_speed_ms=100, range_m=5000.0)
         loadout_with = _loadout(
-            base_armour=500,
+            base_armour=50000,
             modules=[thruster],
-            weapons=[WeaponStats(name="Gun", dps=10.0, damage_per_shot=10, loading_speed_ms=100, range_m=5000.0)],
+            weapons=[weapon],
         )
         loadout_without = _loadout(
-            base_armour=500,
-            weapons=[WeaponStats(name="Gun", dps=10.0, damage_per_shot=10, loading_speed_ms=100, range_m=5000.0)],
+            base_armour=50000,
+            weapons=[weapon],
         )
-        loadout_c2 = _armed_loadout(base_armour=2000)
+        loadout_c2 = _armed_loadout(base_armour=20000)
 
         res_with = TickResolver(seed=1).resolve(loadout_with, loadout_c2, rng=random.Random(1))
         res_without = TickResolver(seed=1).resolve(loadout_without, loadout_c2, rng=random.Random(1))
@@ -1347,14 +1348,17 @@ class TestAccuracyLiteralReplacement:
 
         accs_with = _get_fire_acc(res_with.combat_log, loadout_with.ship_name)
         accs_without = _get_fire_acc(res_without.combat_log, loadout_without.ship_name)
-        # At close range, accuracy with thruster should generally be >= without
-        # At 300m (min_dist): ramp=1.0, bonus_pp = 40 × 0.10 × 1.0 = 4.0 pp = 0.04 extra
-        # At long range (5000m): ramp=0.0, no bonus, same as without
-        # We check that at least in some ticks the accuracy differs
-        # (they should differ when distance < 750m, be equal when >= 750m)
-        if accs_with and accs_without:
-            # Max accuracy with thruster should be higher than max without
-            assert max(accs_with) >= max(accs_without)
+        # Both weapons are in range from tick 0 (range_m=5000 == starting distance),
+        # so both runs MUST produce primary fires — assert non-vacuity explicitly.
+        assert accs_with, "thruster run produced no primary weapon_fire events"
+        assert accs_without, "control run produced no primary weapon_fire events"
+        # At 300m (min_dist): ramp=1.0, bonus_pp = 40 × 0.10 × 1.0 = 4.0 pp = 0.04 extra.
+        # The thruster must strictly raise peak accuracy at close range (a >= comparison
+        # would pass even if the thruster contributed nothing).
+        assert max(accs_with) > max(accs_without), (
+            f"Thruster must strictly increase close-range accuracy: "
+            f"with={max(accs_with)} vs without={max(accs_without)}"
+        )
 
     def test_cloak_active_in_resolver_overrides_accuracy(self):
         """When C2's cloak is active, C1's weapon_fire events show cloak accuracy."""
@@ -1376,23 +1380,24 @@ class TestAccuracyLiteralReplacement:
 
         results = resolver.resolve(loadout_c1_strong, loadout_c2, rng=always_hit_rng)
 
-        # Check if any module_activation for cloak happened
+        # Cloak is ready at tick 0 and c2 (armour 5000) crosses its HP threshold under
+        # c1's always-hit MegaGun within a few ticks, so activation is deterministic.
         cloak_acts = _find_module_activations(results.combat_log, "cloak")
-        if cloak_acts:
-            # After cloak activation, C1's weapon_fire accuracy should be cloak set value
-            cloak_tick = cloak_acts[0].tick
-            # Find c1 weapon_fire events after cloak activated
-            c1_fires_after_cloak = [
-                e
-                for e in results.combat_log
-                if e.type == CombatEventType.weapon_fire
-                and e.actor == loadout_c1_strong.ship_name
-                and e.tick > cloak_tick
-            ]
-            if c1_fires_after_cloak:
-                expected_acc = max(
-                    GameConstants.ACCURACY_CLAMP_MIN,
-                    min(GameConstants.ACCURACY_CLAMP_MAX, GameConstants.CLOAK_SET_VALUE),
-                )
-                # At least some fires after cloak should have reduced accuracy
-                assert any(abs(e.data["accuracy"] - expected_acc) < 1e-6 for e in c1_fires_after_cloak)
+        assert cloak_acts, "Cloak must activate (c2 crosses its HP threshold under MegaGun fire)"
+        # After cloak activation, C1's weapon_fire accuracy should be the cloak set value.
+        cloak_tick = cloak_acts[0].tick
+        # c2 has no weapons, so c1 survives and keeps firing after the cloak activates.
+        c1_fires_after_cloak = [
+            e
+            for e in results.combat_log
+            if e.type == CombatEventType.weapon_fire
+            and e.actor == loadout_c1_strong.ship_name
+            and e.tick > cloak_tick
+        ]
+        assert c1_fires_after_cloak, "C1 must keep firing after cloak activates"
+        expected_acc = max(
+            GameConstants.ACCURACY_CLAMP_MIN,
+            min(GameConstants.ACCURACY_CLAMP_MAX, GameConstants.CLOAK_SET_VALUE),
+        )
+        # At least some fires after cloak should show the forced cloak accuracy.
+        assert any(abs(e.data["accuracy"] - expected_acc) < 1e-6 for e in c1_fires_after_cloak)

@@ -37,9 +37,8 @@ if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
-import inspect
-
 import pytest
+from persist.models.player import Player
 from services.combat_models import (
     CombatEvent,
     CombatEventType,
@@ -133,23 +132,33 @@ async def _call_increment(
     c1_user_id: int | None = 1,
     c2_user_id: int | None = 2,
     guild_id: int = 99,
-) -> list[MagicMock]:
-    """Call _increment_player_stats and return [player1_mock, player2_mock] (or fewer if NPC)."""
+) -> list[Player]:
+    """Call _increment_player_stats and return [player1, player2] (or fewer if NPC).
+
+    Players are real Player model instances (int counters), so the attribution
+    logic runs against the true column types, not MagicMock auto-attributes.
+    """
     service = CombatService()
 
-    players: dict[int, MagicMock] = {}
+    players: dict[int, Player] = {}
     if c1_user_id is not None:
-        p1 = MagicMock()
-        p1.total_fights = 0
-        p1.total_nukes_fired = 0
-        p1.total_module_activations = 0
-        players[c1_user_id] = p1
+        players[c1_user_id] = Player(
+            user_id=c1_user_id,
+            guild_id=guild_id,
+            credits=0,
+            total_fights=0,
+            total_nukes_fired=0,
+            total_module_activations=0,
+        )
     if c2_user_id is not None:
-        p2 = MagicMock()
-        p2.total_fights = 0
-        p2.total_nukes_fired = 0
-        p2.total_module_activations = 0
-        players[c2_user_id] = p2
+        players[c2_user_id] = Player(
+            user_id=c2_user_id,
+            guild_id=guild_id,
+            credits=0,
+            total_fights=0,
+            total_nukes_fired=0,
+            total_module_activations=0,
+        )
 
     async def _mock_get(session, user_id, gid):
         return players.get(user_id)
@@ -570,25 +579,41 @@ class TestNoTimelineWalk:
     """_increment_player_stats does NOT iterate fight_results.combat_log for
     nukes_fired / module_activations. It reads from cb_block (the summary dict)."""
 
-    def test_increment_player_stats_source_is_summary_not_timeline(self):
-        """Inspect the source code of _increment_player_stats to verify:
-        1. No loop iterates fight_results.combat_log (no full timeline re-scan).
-        2. secondary_fired and module_activations are read from cb_block.
-        """
-        service = CombatService()
-        src = inspect.getsource(service._increment_player_stats)
+    @pytest.mark.asyncio
+    async def test_module_activations_read_from_summary_not_timeline(self):
+        """Behavioral proof (module counts): a combat_log packed with activation
+        events that DISAGREE with the summary must be ignored — the stat comes
+        from the summary block, not a timeline re-scan.
 
-        # Must read from secondary_fired (summary key)
-        assert "secondary_fired" in src, "_increment_player_stats must read 'secondary_fired' from the summary block"
-        # Must read module_activations from cb_block
-        assert "module_activations" in src, (
-            "_increment_player_stats must read 'module_activations' from the summary block"
+        The summary says C1 activated 3 modules; the timeline contains 7 module
+        activation events for C1. The written stat must be 3 (summary), not 7.
+        """
+        summary_says_3 = _summary(c1_nukes=0, c2_nukes=0, c1_mods={"cloak": 1, "booster": 2})
+
+        # Seven contradicting module-activation events in the timeline for "A".
+        contradicting_events = [
+            CombatEvent(
+                tick=t,
+                type=CombatEventType.module_activation,
+                actor="A",
+                target="A",
+                data={"module": "booster"},
+            )
+            for t in range(7)
+        ]
+
+        fr = _make_fight_results(
+            summary=summary_says_3,
+            combat_log=contradicting_events,
+            c1_user_id=1,
+            c2_user_id=2,
         )
-        # Must NOT iterate over fight_results.combat_log for these counts
-        # (the full-timeline scan used 'for ev in fight_results.combat_log')
-        assert "for ev in fight_results.combat_log" not in src, (
-            "_increment_player_stats must NOT iterate fight_results.combat_log "
-            "(full-timeline scan was deleted in P2-T4)"
+        p1, _p2 = await _call_increment(fr)
+
+        # Must read 3 from summary (1 cloak + 2 booster), NOT 7 from timeline scan.
+        assert p1.total_module_activations == 3, (
+            f"Must read module_activations=3 from summary, not 7 from timeline scan. "
+            f"Got {p1.total_module_activations}"
         )
 
     @pytest.mark.asyncio

@@ -9,6 +9,11 @@ Last updated: 2026-06-20 (PvC looting T1–T10 landed on `dev` + documented in T
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
 | DEF-S11-003 | 🔵 | 294 bare `assert_called_once()` patterns remain across test suites (51 files) | Verify none are the sole assertion in their test; delete or replace any that are |
+| TRUEUP-01 | 🔵 | Bulk happy-path cog tests (player/shop/ships/bounty/duel/about) still use the faithful-factory mock instead of per-test respx | Endpoint contracts ARE respx-locked by dedicated classes; full migration is mechanical, effort L — see `TEST_SUITE_TRUEUP_FOLLOWUPS.md` |
+| TRUEUP-02 | 🔵 | `test_channels_extended.py` (~74 tests) still patches converters with canned dicts in both app builders | Sibling files show the unpatched pattern; effort L |
+| TRUEUP-03 | 🔵 | `Ship`/`Module` ARRAY columns block SQLite round-trips (loadout_response fake session, modules builder integration) | Needs src-side ARRAY→JSON type variant or PG fixture |
+| TRUEUP-04 | 🔵 | Gateway `_autocomplete_health_probe` is a non-importable nested closure — untestable in place | Extract an importable helper + respx test |
+| TRUEUP-05 | 🔵 | `test_database.py` engine/session mocks could become a real SQLite engine | Audit rated faithful/low-risk; deprioritized |
 
 ---
 
@@ -16,6 +21,10 @@ Last updated: 2026-06-20 (PvC looting T1–T10 landed on `dev` + documented in T
 
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
+| TRUEUP-P1 | 🟠 | `LoadoutConsistencyService` evacuate destroys a legit second copy of a same-name item equipped on two ships | Latent item-loss; strict-xfail marker in `test_loadout_consistency_property.py`; root cause + fix options in `TEST_SUITE_TRUEUP_FOLLOWUPS.md` (R-bc-integration) |
+| TRUEUP-P2 | 🟠 | `guilds.py::create_role` uses nonexistent `status.HTTP_422` → AttributeError → 500 instead of 422 (both branches) | Tests assert current (500) behavior with pointer comments |
+| TRUEUP-P3 | 🟠 | `tags.py::create_forum_tag`/`update_tag` — same nonexistent `status.HTTP_422` defect class | See `TEST_SUITE_TRUEUP_FOLLOWUPS.md` (R-gw-api-1) |
+| TRUEUP-P4 | 🔵 | `module_repository.create_or_update` leaks camelCase keys (`builtIn`) into `extra_atts` alongside mapped snake_case columns | Spurious duplicate data for JSON-seeded modules; fix sketch in followups |
 | B.67 | 🔵 | `duel_expire` executor has no bulk sweep mode — requires `duel_id` in payload; firing without one returns error and does nothing | Option A: add bulk mode when `duel_id` omitted (expire all past `expires_at`) in `bot-core/src/utils/executors/duel_expire_executor.py`. Option B: document the limitation. |
 
 ---

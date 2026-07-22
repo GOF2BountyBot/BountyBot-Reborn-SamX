@@ -155,9 +155,7 @@ class TestCreateOrUpdate:
         """create_or_update updates reference_id on existing row when raw contains it."""
         await _seed(repo, db_session, message_type="bounty_announcement", reference_id=None)
 
-        await repo.create_or_update(
-            db_session, _raw(message_type="bounty_announcement", reference_id=99)
-        )
+        await repo.create_or_update(db_session, _raw(message_type="bounty_announcement", reference_id=99))
 
         fetched = await repo.get_by_composite_key(db_session, 111, 222, 333)
         assert fetched.reference_id == 99
@@ -244,10 +242,16 @@ class TestGetByType:
     async def test_get_by_type_orders_newest_first(self, repo, db_session):
         """Results are ordered by created_at descending."""
         old = await _seed(
-            repo, db_session, message_id=1, message_type="news",
+            repo,
+            db_session,
+            message_id=1,
+            message_type="news",
         )
         new = await _seed(
-            repo, db_session, message_id=2, message_type="news",
+            repo,
+            db_session,
+            message_id=2,
+            message_type="news",
         )
         # Force a deterministic ordering on created_at.
         old.created_at = datetime.now(UTC) - timedelta(hours=2)
@@ -383,9 +387,7 @@ class TestDeleteByCompositeKey:
 
 class TestGetByGuildTypeAndReference:
     async def test_returns_message_when_found(self, repo, db_session):
-        created = await _seed(
-            repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42
-        )
+        created = await _seed(repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42)
 
         result = await repo.get_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 42)
 
@@ -393,9 +395,7 @@ class TestGetByGuildTypeAndReference:
         assert result.id == created.id
 
     async def test_returns_none_when_not_found(self, repo, db_session):
-        await _seed(
-            repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42
-        )
+        await _seed(repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42)
 
         result = await repo.get_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 999)
 
@@ -403,9 +403,7 @@ class TestGetByGuildTypeAndReference:
 
     async def test_discriminates_on_guild_type_and_reference(self, repo, db_session):
         """A wrong guild, type, or reference_id all miss the seeded row."""
-        await _seed(
-            repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42
-        )
+        await _seed(repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42)
 
         assert await repo.get_by_guild_type_and_reference(db_session, 222, "bounty_announcement", 42) is None
         assert await repo.get_by_guild_type_and_reference(db_session, 111, "news", 42) is None
@@ -419,13 +417,9 @@ class TestGetByGuildTypeAndReference:
 
 class TestDeleteByGuildTypeAndReference:
     async def test_delete_returns_true_and_removes_matching_rows(self, repo, db_session):
-        await _seed(
-            repo, db_session, guild_id=111, message_id=1, message_type="bounty_announcement", reference_id=42
-        )
+        await _seed(repo, db_session, guild_id=111, message_id=1, message_type="bounty_announcement", reference_id=42)
         # An unrelated row that must survive.
-        await _seed(
-            repo, db_session, guild_id=111, message_id=2, message_type="bounty_announcement", reference_id=43
-        )
+        await _seed(repo, db_session, guild_id=111, message_id=2, message_type="bounty_announcement", reference_id=43)
 
         result = await repo.delete_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 42)
 
@@ -434,9 +428,7 @@ class TestDeleteByGuildTypeAndReference:
         assert await repo.get_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 43) is not None
 
     async def test_delete_returns_false_when_no_records_found(self, repo, db_session):
-        await _seed(
-            repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42
-        )
+        await _seed(repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42)
 
         result = await repo.delete_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 999)
 

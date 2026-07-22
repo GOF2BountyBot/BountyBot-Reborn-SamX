@@ -145,9 +145,7 @@ class TestGetPendingByPlayers:
         # Non-matches: swapped players, other guild, non-pending.
         await repo.create(db_session, _make_duel(challenger_id=200, target_id=100, guild_id=111))
         await repo.create(db_session, _make_duel(challenger_id=100, target_id=200, guild_id=222))
-        await repo.create(
-            db_session, _make_duel(challenger_id=100, target_id=200, guild_id=111, status="accepted")
-        )
+        await repo.create(db_session, _make_duel(challenger_id=100, target_id=200, guild_id=111, status="accepted"))
 
         result = await repo.get_pending_by_players(db_session, 100, 200, 111)
 
@@ -180,16 +178,10 @@ class TestUpdateStatus:
 class TestDeleteExpired:
     async def test_delete_expired_removes_only_expired_pending(self, repo, db_session):
         now = datetime.now(UTC)
-        expired = await repo.create(
-            db_session, _make_duel(status="pending", expires_at=now - timedelta(minutes=1))
-        )
+        expired = await repo.create(db_session, _make_duel(status="pending", expires_at=now - timedelta(minutes=1)))
         # Future-expiry pending, and an expired-but-accepted — both must survive.
-        future = await repo.create(
-            db_session, _make_duel(status="pending", expires_at=now + timedelta(minutes=5))
-        )
-        accepted = await repo.create(
-            db_session, _make_duel(status="accepted", expires_at=now - timedelta(minutes=1))
-        )
+        future = await repo.create(db_session, _make_duel(status="pending", expires_at=now + timedelta(minutes=5)))
+        accepted = await repo.create(db_session, _make_duel(status="accepted", expires_at=now - timedelta(minutes=1)))
 
         # SQLite drops tzinfo on read, so the ORM "evaluate" sync strategy would
         # compare naive (refreshed) values against tz-aware `now`. Expunging the
@@ -224,9 +216,7 @@ class TestGetActiveByGuild:
         # excluded: accepted, other guild, past expiry
         await repo.create(db_session, _make_duel(guild_id=111, status="accepted", expires_at=None))
         await repo.create(db_session, _make_duel(guild_id=222, status="pending", expires_at=None))
-        await repo.create(
-            db_session, _make_duel(guild_id=111, status="pending", expires_at=now - timedelta(minutes=1))
-        )
+        await repo.create(db_session, _make_duel(guild_id=111, status="pending", expires_at=now - timedelta(minutes=1)))
 
         result = await repo.get_active_by_guild(db_session, guild_id=111)
 
@@ -240,9 +230,7 @@ class TestGetActiveByGuild:
     async def test_get_active_by_guild_excludes_past_expiry_duels(self, repo, db_session):
         """B.14 sibling: a pending duel past its expires_at is excluded."""
         now = datetime.now(UTC)
-        await repo.create(
-            db_session, _make_duel(guild_id=111, status="pending", expires_at=now - timedelta(minutes=1))
-        )
+        await repo.create(db_session, _make_duel(guild_id=111, status="pending", expires_at=now - timedelta(minutes=1)))
 
         result = await repo.get_active_by_guild(db_session, guild_id=111)
 

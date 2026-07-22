@@ -167,12 +167,8 @@ class TestGetActiveByGuild:
         active = await repo.create(
             db_session, _make_bounty(guild_id=111, status="active", end_time=now + timedelta(hours=1))
         )
-        await repo.create(
-            db_session, _make_bounty(guild_id=111, status="expired", end_time=now + timedelta(hours=1))
-        )
-        await repo.create(
-            db_session, _make_bounty(guild_id=222, status="active", end_time=now + timedelta(hours=1))
-        )
+        await repo.create(db_session, _make_bounty(guild_id=111, status="expired", end_time=now + timedelta(hours=1)))
+        await repo.create(db_session, _make_bounty(guild_id=222, status="active", end_time=now + timedelta(hours=1)))
 
         result = await repo.get_active_by_guild(db_session, guild_id=111)
 
@@ -186,9 +182,7 @@ class TestGetActiveByGuild:
     async def test_get_active_by_guild_excludes_stale_active_bounties(self, repo, db_session):
         """B.14: a status='active' bounty whose end_time is in the PAST is excluded."""
         now = datetime.now(UTC)
-        await repo.create(
-            db_session, _make_bounty(guild_id=111, status="active", end_time=now - timedelta(hours=1))
-        )
+        await repo.create(db_session, _make_bounty(guild_id=111, status="active", end_time=now - timedelta(hours=1)))
 
         result = await repo.get_active_by_guild(db_session, guild_id=111)
 

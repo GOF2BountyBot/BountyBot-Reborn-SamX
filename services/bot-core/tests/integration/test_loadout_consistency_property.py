@@ -28,16 +28,19 @@ seed.
 TWO LEVELS OF COVERAGE IN THIS FILE
 ===========================================================================
 
-LEVEL 1 — Simulator-based property tests (``test_invariants_hold_*`` etc.)
-    Use the deterministic ``PlayerWorld`` in-memory simulator which mirrors
-    the ``LoadoutConsistencyService`` contract.  These tests verify the
-    CONTRACT (the state-machine semantics) under many action sequences.
-    They do NOT exercise the production service code — if the real service
-    drifts from the contract, the simulator tests still pass.  The existing
-    25 service-level unit tests and router integration tests serve as the
-    regression net for the production code.
+LEVEL 1 — Real-service property SWEEP (``test_invariants_hold_*`` etc.)
+    Drives the ACTUAL ``LoadoutConsistencyService`` through many random action
+    sequences against a real SQLite-in-memory session — ``player_ships`` and
+    ``player_inventories`` are genuine ORM writes and the invariants are re-read
+    from those rows after every action.  Each of the six design actions maps to
+    the real choke-point method it models (equip_one / unequip_one /
+    transfer_loadout_to_new_ship / evacuate_ship_loadout_to_inventory /
+    activate_ship), so a drift in the production overflow / reconcile / evacuate /
+    merge logic surfaces as a property failure (with a re-playable seed).  Only
+    the ARRAY-column static catalogs (item_repo / ship_repo) are mocked, keyed by
+    name and returning the real STI discriminator / real slot caps.
 
-LEVEL 2 — Real-service property tests (``test_real_service_*``)  [G.2]
+LEVEL 2 — Real-service unit property tests (``test_real_service_*``)  [G.2]
     These tests invoke the actual ``LoadoutConsistencyService`` against a
     real SQLite-in-memory session (using the ``db_session`` / ``async_engine``
     fixtures from ``tests/integration/conftest.py``).  They use real ORM
@@ -114,390 +117,527 @@ elif sys.path[0] != _src_dir:
     sys.path.insert(0, _src_dir)
 
 # Now the import will find src/services/ correctly.
+# ---------------------------------------------------------------------------
+# Level 1 — REAL-service property sweep (true-up).
+#
+# Previously this block ran the whole 150-case sweep against an in-memory
+# ``PlayerWorld`` simulator that re-implemented the service contract; the real
+# ``LoadoutConsistencyService`` was imported but NEVER called, so a drift in the
+# production overflow / reconcile / evacuate / merge logic passed silently.  The
+# sweep now drives the ACTUAL service against a real SQLite-in-memory session:
+# ``player_ships`` and ``player_inventories`` rows are genuine ORM writes, and the
+# invariants are re-derived by READING those rows back after every action.
+#
+# Only the static catalogs are mocked — ``item_repo`` (Item STI) and ``ship_repo``
+# (Ship slot caps) live in PostgreSQL ARRAY-column tables SQLite cannot host.  The
+# mocks are FAITHFUL: keyed by name, returning the real STI discriminator and the
+# real per-kind slot caps (not bare MagicMock chains).
+#
+# Each of the six design actions maps to the real choke-point method it models:
+#   equip         -> equip_one
+#   unequip       -> unequip_one
+#   buy_ship      -> transfer_loadout_to_new_ship (+ active flip)   [B.95 merge-overflow]
+#   sell_ship     -> evacuate_ship_loadout_to_inventory (+ row delete)
+#   transfer_ship -> evacuate_ship_loadout_to_inventory (+ row delete)
+#   set_active    -> activate_ship (reconcile caps + transfer old active)
+#
+# Every action runs inside its OWN ``async with db.begin()`` unit of work, so a
+# rejected action (real ``ValueError``) rolls the whole action back — invariant I3
+# (atomicity) is exercised for real instead of asserted elsewhere.  After every
+# action the invariants are checked straight from persisted rows:
+#   I1/I2 — for each item name: Σ(slot references across ALL ships) + cargo qty
+#           == the constant total issued (no duplication, no materialisation);
+#           every cargo row also has an issued provenance.
+#   I4    — every ship's per-kind slot count <= that ship's static cap.
+# A divergence in the real service surfaces here as a property failure carrying
+# the seed + action sequence that broke it (a re-playable regression seed).
+# ---------------------------------------------------------------------------
+from services.exceptions import InvalidItemTypeError
 from services.loadout_consistency_service import (
     LoadoutConsistencyService as _LoadoutConsistencyService,
 )
+from sqlalchemy import select
 
-# ---------------------------------------------------------------------------
-# Deterministic simulator that mirrors the LoadoutConsistencyService contract.
-#
-# This is the "ground truth" model — it implements the SAME contract that the
-# production service enforces.  If the production service drifts, the property
-# test would be the first place to surface it (because the property test
-# directly compares ledger conservation against the model's own behaviour).
-# ---------------------------------------------------------------------------
+# name -> slot kind (the STI discriminator + inventory type derive from the kind)
+_ITEM_KIND: dict[str, str] = {
+    "Pulse Laser": "weapons",
+    "Burst Laser": "weapons",
+    "Rail Gun": "weapons",
+    "Shield Booster": "modules",
+    "Cargo Bay": "modules",
+    "Beam Turret": "turrets",
+}
+
+# slot kind -> Item.type STI discriminator (what item_repo returns)
+_KIND_TO_STI: dict[str, str] = {
+    "weapons": "PrimaryWeapon",
+    "modules": "Module",  # generic module class — not in MODULE_EQUIP_LIMITS, so unlimited
+    "turrets": "TurretWeapon",
+}
+
+# slot kind -> concrete inventory item_type (matches equipment_service._INVENTORY_TYPE_MAP)
+_INV_TYPE: dict[str, str] = {
+    "weapons": "primary_weapon",
+    "modules": "module",
+    "turrets": "turret_weapon",
+}
+
+# ship name -> static per-kind slot caps (what ship_repo returns)
+_SHIP_CAPS: dict[str, dict[str, int]] = {
+    "Betty": {"weapons": 1, "modules": 3, "turrets": 0, "secondary_weapons": 0},
+    "Sidewinder": {"weapons": 2, "modules": 3, "turrets": 1, "secondary_weapons": 0},
+    "Hera": {"weapons": 2, "modules": 4, "turrets": 1, "secondary_weapons": 0},
+    "Terran": {"weapons": 2, "modules": 5, "turrets": 2, "secondary_weapons": 0},
+}
+_SHIP_NAMES = list(_SHIP_CAPS)
+_SLOT_ATTRS = ("weapons", "modules", "turrets", "secondary_weapons")
 
 
-class PlayerWorld:
-    """In-memory world for a single player.
+def _catalog_service():
+    """A real ``LoadoutConsistencyService`` with FAITHFUL catalog-keyed repo mocks.
 
-    Tracks:
-      - ships: list of dicts {id, slot caps, kind→list[name]}
-      - inventory: dict {name → quantity}
-      - active_ship_id
-      - ledger: ground-truth count per item name — incremented only by
-        buy/issue, decremented only by sell/transfer-out.
+    ``player_ship_repo`` / ``inventory_repo`` / ``player_repo`` are REAL (they hit
+    the live SQLite session); only the ARRAY-column static catalogs are mocked, and
+    those mocks return the real STI discriminator / real slot caps keyed by name.
+    """
+    from persist.repositories.inventory_repository import InventoryRepository
+    from persist.repositories.player_repository import PlayerRepository
+    from persist.repositories.player_ship_repository import PlayerShipRepository
+
+    async def _item_any(_db, name):
+        kind = _ITEM_KIND.get(name)
+        return None if kind is None else SimpleNamespace(name=name, type=_KIND_TO_STI[kind])
+
+    async def _item_by_name(_db, name, item_type=None):
+        kind = _ITEM_KIND.get(name)
+        return None if kind is None else SimpleNamespace(name=name, type=_KIND_TO_STI[kind])
+
+    async def _ship_by_name(_db, ship_name):
+        caps = _SHIP_CAPS.get(ship_name)
+        if caps is None:
+            return None
+        return SimpleNamespace(
+            name=ship_name,
+            max_primaries=caps["weapons"],
+            max_modules=caps["modules"],
+            max_turrets=caps["turrets"],
+            max_secondaries=caps["secondary_weapons"],
+        )
+
+    item_repo = AsyncMock()
+    item_repo.get_by_name_any_type = AsyncMock(side_effect=_item_any)
+    item_repo.get_by_name = AsyncMock(side_effect=_item_by_name)
+    ship_repo = AsyncMock()
+    ship_repo.get_by_name = AsyncMock(side_effect=_ship_by_name)
+
+    return _LoadoutConsistencyService(
+        player_ship_repo=PlayerShipRepository(),
+        inventory_repo=InventoryRepository(),
+        item_repo=item_repo,
+        ship_repo=ship_repo,
+        player_repo=PlayerRepository(),
+    )
+
+
+class _RealWorld:
+    """Drive real ``LoadoutConsistencyService`` mutations; read invariants from the DB.
+
+    ``expected`` is the ground-truth total-owned-per-item ledger: it changes ONLY
+    on the explicit ``issue`` (starter/buy/reward) path — never on equip / unequip /
+    ship buy / sell / transfer / activate, all of which merely RELOCATE ownership.
+    The conservation invariant is therefore ``slot_refs + cargo == expected`` for
+    every item name, at all times.
     """
 
-    def __init__(self, player_id: int) -> None:
+    def __init__(self, db, svc, player_id: int) -> None:
+        self.db = db
+        self.svc = svc
         self.player_id = player_id
-        self.ships: list[dict] = []
-        self.inventory: dict[str, int] = {}
-        self.active_ship_id: int | None = None
-        self.ledger: dict[str, int] = {}
-        self._next_ship_id = 1
+        self.expected: dict[str, int] = {}
 
-    # ---- introspection ----
+    # ---- seeding (ledger-changing) ----
 
-    def total_owned(self, name: str) -> int:
-        """Sum of slot references plus inventory quantity."""
-        slot_count = 0
-        for ship in self.ships:
-            for kind in ("weapons", "modules", "turrets", "secondary_weapons"):
-                slot_count += sum(1 for x in ship[kind] if x == name)
-        return slot_count + self.inventory.get(name, 0)
-
-    # ---- mutators (mirror LoadoutConsistencyService) ----
-
-    def issue_item(self, name: str, kind: str, qty: int = 1) -> None:
-        """Add to inventory + ledger (an explicit "buy" / "starter" / "reward")."""
-        self.inventory[name] = self.inventory.get(name, 0) + qty
-        self.ledger[name] = self.ledger.get(name, 0) + qty
-
-    def add_ship(self, kind: str, caps: dict[str, int]) -> int:
-        """Create a new ship with empty slots; returns its id."""
-        sid = self._next_ship_id
-        self._next_ship_id += 1
-        self.ships.append(
-            {
-                "id": sid,
-                "kind": kind,
-                "caps": dict(caps),
-                "weapons": [],
-                "modules": [],
-                "turrets": [],
-                "secondary_weapons": [],
-            }
-        )
-        if self.active_ship_id is None:
-            self.active_ship_id = sid
-        return sid
-
-    def _ship(self, sid: int) -> dict | None:
-        for s in self.ships:
-            if s["id"] == sid:
-                return s
-        return None
-
-    def equip(self, name: str, kind: str, sid: int) -> bool:
-        """Return True if the equip succeeded."""
-        ship = self._ship(sid)
-        if ship is None:
-            return False
-        if self.inventory.get(name, 0) <= 0:
-            return False
-        if len(ship[kind]) >= ship["caps"][kind]:
-            return False
-        # Decrement inventory, append to ship slot.
-        self.inventory[name] -= 1
-        if self.inventory[name] == 0:
-            del self.inventory[name]
-        ship[kind].append(name)
-        return True
-
-    def unequip(self, name: str, kind: str, sid: int) -> bool:
-        ship = self._ship(sid)
-        if ship is None:
-            return False
-        if name not in ship[kind]:
-            return False
-        ship[kind].remove(name)
-        self.inventory[name] = self.inventory.get(name, 0) + 1
-        return True
-
-    def buy_ship(self, kind: str, caps: dict[str, int]) -> int:
-        """Mirrors purchase_ship: clears old active ship's loadout into the new one
-        (fitting subset) + overflow to inventory."""
-        new_sid = self.add_ship(kind, caps)
-        new_ship = self._ship(new_sid)
-        if self.active_ship_id is not None and self.active_ship_id != new_sid:
-            old = self._ship(self.active_ship_id)
-            if old is not None:
-                for k in ("weapons", "modules", "turrets", "secondary_weapons"):
-                    src_items = list(old[k])
-                    cap = new_ship["caps"][k]
-                    fitting = src_items[:cap]
-                    overflow = src_items[cap:]
-                    new_ship[k] = list(fitting)
-                    old[k] = []  # B.19 fix: clear src
-                    for over in overflow:
-                        self.inventory[over] = self.inventory.get(over, 0) + 1
-        # Set new ship as active
-        self.active_ship_id = new_sid
-        return new_sid
-
-    def sell_ship(self, sid: int) -> bool:
-        """Decrements ledger by ship-name (we don't track ship names in ledger
-        so we just remove the ship and its loadout into inventory)."""
-        if sid == self.active_ship_id:
-            return False  # cannot sell active
-        ship = self._ship(sid)
-        if ship is None:
-            return False
-        # Evacuate equipped items to inventory
-        for k in ("weapons", "modules", "turrets", "secondary_weapons"):
-            for name in ship[k]:
-                self.inventory[name] = self.inventory.get(name, 0) + 1
-            ship[k] = []
-        # Remove ship
-        self.ships = [s for s in self.ships if s["id"] != sid]
-        return True
-
-    def transfer_ship_out(self, sid: int) -> bool:
-        """Ship + its remaining loadout leave the player; loadout returns to
-        sender's inventory (mirrors transfer_ship router behaviour)."""
-        if sid == self.active_ship_id:
-            return False
-        ship = self._ship(sid)
-        if ship is None:
-            return False
-        for k in ("weapons", "modules", "turrets", "secondary_weapons"):
-            for name in ship[k]:
-                self.inventory[name] = self.inventory.get(name, 0) + 1
-            ship[k] = []
-        self.ships = [s for s in self.ships if s["id"] != sid]
-        return True
-
-    def set_active(self, sid: int) -> bool:
-        """Mirrors reconcile_active_ship_slots + flag flip."""
-        ship = self._ship(sid)
-        if ship is None:
-            return False
-        # Reconcile against caps — overflow to inventory.
-        for k in ("weapons", "modules", "turrets", "secondary_weapons"):
-            cap = ship["caps"][k]
-            current = ship[k]
-            if len(current) > cap:
-                keep = current[:cap]
-                overflow = current[cap:]
-                ship[k] = keep
-                for over in overflow:
-                    self.inventory[over] = self.inventory.get(over, 0) + 1
-        self.active_ship_id = sid
-        return True
-
-    # ---- invariant checks ----
-
-    def assert_invariants(self) -> None:
-        # I1 (slot-reference count cannot exceed equipped balance):
-        # for each name, total slot references across all ships must equal
-        # ledger - inventory.  This is the precise statement of "a single
-        # named instance never appears in more than one slot reference"
-        # AS WELL AS "every slot reference has an inventory provenance".
-        for name, ledger_qty in self.ledger.items():
-            slot_count = 0
-            for ship in self.ships:
-                for k in ("weapons", "modules", "turrets", "secondary_weapons"):
-                    slot_count += ship[k].count(name)
-            inv_qty = self.inventory.get(name, 0)
-            assert slot_count + inv_qty == ledger_qty, (
-                f"I1/I2 violated: name='{name}' ledger={ledger_qty} slot_count={slot_count} inv_qty={inv_qty}"
+    async def issue(self, name: str, qty: int = 1) -> None:
+        # Upsert via the REAL inventory repo so a repeat issue of the same item
+        # increments the existing row (honouring uq_player_inventories_player_item)
+        # instead of colliding on the unique constraint.
+        async with self.db.begin():
+            await self.svc.inventory_repo.add_item(
+                self.db, self.player_id, _INV_TYPE[_ITEM_KIND[name]], name, qty, commit=False
             )
+        self.expected[name] = self.expected.get(name, 0) + qty
 
-        # I4: each ship's loadout fits its caps (after any reconciliation steps).
-        for ship in self.ships:
-            for k in ("weapons", "modules", "turrets", "secondary_weapons"):
-                assert len(ship[k]) <= ship["caps"][k], (
-                    f"I4 violated: ship {ship['id']} has {len(ship[k])} {k} but cap is {ship['caps'][k]}"
+    async def add_ship(self, ship_name: str, *, active: bool) -> int:
+        from persist.models.player_ship import PlayerShip
+
+        async with self.db.begin():
+            ship = PlayerShip(
+                player_id=self.player_id,
+                ship_name=ship_name,
+                is_active=active,
+                weapons=[],
+                modules=[],
+                turrets=[],
+                secondary_weapons=[],
+            )
+            self.db.add(ship)
+            await self.db.flush()
+            return ship.id
+
+    # ---- snapshot for action generation + invariant checks ----
+
+    async def _snapshot(self):
+        from persist.models.player_inventory import PlayerInventory
+        from persist.models.player_ship import PlayerShip
+
+        async with self.db.begin():
+            ships = (
+                (await self.db.execute(select(PlayerShip).where(PlayerShip.player_id == self.player_id)))
+                .scalars()
+                .all()
+            )
+            invs = (
+                (await self.db.execute(select(PlayerInventory).where(PlayerInventory.player_id == self.player_id)))
+                .scalars()
+                .all()
+            )
+            ship_state = [
+                {
+                    "id": s.id,
+                    "name": s.ship_name,
+                    "active": bool(s.is_active),
+                    "slots": {a: list(getattr(s, a) or []) for a in _SLOT_ATTRS},
+                }
+                for s in ships
+            ]
+            cargo: dict[str, int] = {}
+            for row in invs:
+                cargo[row.item_name] = cargo.get(row.item_name, 0) + row.quantity
+        return ship_state, cargo
+
+    # ---- action generation from real state ----
+
+    async def gen_action(self, rng) -> tuple:
+        ships, cargo = await self._snapshot()
+        active_id = next((s["id"] for s in ships if s["active"]), None)
+        choice = rng.choices(
+            ["equip", "unequip", "buy_ship", "sell_ship", "transfer_ship", "set_active"],
+            weights=[3, 3, 1, 1, 1, 2],
+        )[0]
+        if choice == "equip":
+            # Only equip a name NOT already equipped on ANY ship.  Equipping the
+            # same NAME onto a second ship creates an I1-violating state that the
+            # real service's evacuate anti-dup guard "repairs" destructively (it
+            # cannot tell a legit second copy from a phantom dup) — a distinct
+            # item-loss concern covered by ``test_evacuate_destroys_legit_...``
+            # below, kept out of the conservation sweep so I1/I2 stays well-defined.
+            equipped_names = {n for s in ships for a in _SLOT_ATTRS for n in s["slots"][a]}
+            owned = [n for n, q in cargo.items() if q > 0 and n not in equipped_names]
+            if not owned or not ships:
+                return ("noop",)
+            name = rng.choice(owned)
+            sid = rng.choice([s["id"] for s in ships])
+            return ("equip", name, _ITEM_KIND[name], sid)
+        if choice == "unequip":
+            equipped = [(n, a, s["id"]) for s in ships for a in _SLOT_ATTRS for n in s["slots"][a]]
+            if not equipped:
+                return ("noop",)
+            return ("unequip", *rng.choice(equipped))
+        if choice == "buy_ship":
+            return ("buy_ship", rng.choice(_SHIP_NAMES))
+        if choice in ("sell_ship", "transfer_ship"):
+            candidates = [s["id"] for s in ships if s["id"] != active_id]
+            if not candidates:
+                return ("noop",)
+            return (choice, rng.choice(candidates))
+        if choice == "set_active":
+            if not ships:
+                return ("noop",)
+            return ("set_active", rng.choice([s["id"] for s in ships]))
+        return ("noop",)
+
+    # ---- action application via the REAL service (each its own txn) ----
+
+    async def apply(self, action: tuple) -> None:
+        kind = action[0]
+        try:
+            if kind == "equip":
+                _, name, k, sid = action
+                async with self.db.begin():
+                    await self.svc.equip_one(
+                        self.db, player_id=self.player_id, ship_id=sid, item_name=name, equipment_type=k
+                    )
+            elif kind == "unequip":
+                _, name, k, sid = action
+                async with self.db.begin():
+                    await self.svc.unequip_one(
+                        self.db, player_id=self.player_id, ship_id=sid, item_name=name, equipment_type=k
+                    )
+            elif kind == "buy_ship":
+                await self._buy_ship(action[1])
+            elif kind in ("sell_ship", "transfer_ship"):
+                await self._evacuate_and_remove(action[1])
+            elif kind == "set_active":
+                async with self.db.begin():
+                    await self.svc.activate_ship(
+                        self.db, player_id=self.player_id, target_ship_id=action[1], player_repo=self.svc.player_repo
+                    )
+            # "noop" -> nothing
+        except (ValueError, InvalidItemTypeError):
+            # A rejected action's ``db.begin()`` already rolled back — mirrors the
+            # design contract that an invalid op is a no-op (the old simulator
+            # returned False).  Conservation must therefore still hold afterward.
+            pass
+
+    async def _buy_ship(self, ship_name: str) -> None:
+        from persist.models.player_ship import PlayerShip
+
+        async with self.db.begin():
+            active = (
+                (
+                    await self.db.execute(
+                        select(PlayerShip).where(PlayerShip.player_id == self.player_id, PlayerShip.is_active.is_(True))
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            new_ship = PlayerShip(
+                player_id=self.player_id,
+                ship_name=ship_name,
+                is_active=False,
+                weapons=[],
+                modules=[],
+                turrets=[],
+                secondary_weapons=[],
+            )
+            self.db.add(new_ship)
+            await self.db.flush()
+            await self.svc.transfer_loadout_to_new_ship(
+                self.db,
+                player_id=self.player_id,
+                src_ship=active,
+                dst_ship=new_ship,
+                slot_limits=_SHIP_CAPS[ship_name],
+            )
+            if active is not None:
+                active.is_active = False
+            new_ship.is_active = True
+
+    async def _evacuate_and_remove(self, ship_id: int) -> None:
+        from persist.models.player_ship import PlayerShip
+
+        async with self.db.begin():
+            ship = await self.db.get(PlayerShip, ship_id)
+            if ship is None or ship.is_active:
+                return  # cannot sell/transfer the active ship (design contract)
+            await self.svc.evacuate_ship_loadout_to_inventory(self.db, ship=ship)
+            await self.db.delete(ship)
+
+    # ---- invariants (read straight from persisted rows) ----
+
+    async def assert_invariants(self, ctx: str = "") -> None:
+        ships, cargo = await self._snapshot()
+        # I1/I2 — conservation: relocation never changes total ownership.
+        for name, total in self.expected.items():
+            slot_refs = sum(s["slots"][a].count(name) for s in ships for a in _SLOT_ATTRS)
+            owned = slot_refs + cargo.get(name, 0)
+            assert owned == total, (
+                f"I1/I2 [{ctx}] name={name!r}: slot_refs={slot_refs} + cargo={cargo.get(name, 0)} "
+                f"= {owned} != issued {total}"
+            )
+        # I2 — no materialisation: every cargo row has an issued provenance.
+        for name in cargo:
+            assert name in self.expected, f"I2 [{ctx}] phantom cargo row {name!r} with no provenance"
+        # I4 — every ship within its static slot caps.
+        for s in ships:
+            caps = _SHIP_CAPS[s["name"]]
+            for a in _SLOT_ATTRS:
+                assert len(s["slots"][a]) <= caps[a], (
+                    f"I4 [{ctx}] ship {s['name']!r} {a}={len(s['slots'][a])} > cap {caps[a]}"
                 )
 
-        # I2 (no orphan inventory references): every inventory key must be in
-        # the ledger.  An inventory entry without a ledger entry would imply
-        # something materialised from nothing.
-        for name in self.inventory:
-            assert name in self.ledger, f"I2 violated: '{name}' in inventory without ledger entry"
 
+async def _seed_real_world(db, seed: int) -> _RealWorld:
+    """Build a starting REAL world: a Player with a Betty active ship (Pulse Laser +
+    Shield Booster equipped), Micro-style extras in cargo — mirrors the starter
+    loadout contract, but every row is a genuine ORM write."""
+    from persist.models.player import Player
+    from persist.models.user import User
 
-# ---------------------------------------------------------------------------
-# Test catalog — a small fixed item set keeps action generation deterministic.
-# ---------------------------------------------------------------------------
+    svc = _catalog_service()
+    async with db.begin():
+        user = User(id=900_000 + seed, discord_username=f"prop-{seed}")
+        db.add(user)
+        await db.flush()
+        player = Player(user_id=user.id, guild_id=1, credits=0, tier="Bronze")
+        db.add(player)
+        await db.flush()
+        pid = player.id
 
-_ITEMS = [
-    ("Pulse Laser", "weapons"),
-    ("Burst Laser", "weapons"),
-    ("Rail Gun", "weapons"),
-    ("Shield Booster", "modules"),
-    ("Cargo Bay", "modules"),
-    ("Beam Turret", "turrets"),
-]
-
-_SHIP_KINDS = [
-    ("Betty", {"weapons": 1, "modules": 3, "turrets": 0, "secondary_weapons": 0}),
-    ("Sidewinder", {"weapons": 2, "modules": 3, "turrets": 1, "secondary_weapons": 0}),
-    ("Hera", {"weapons": 2, "modules": 4, "turrets": 1, "secondary_weapons": 0}),
-    ("Terran", {"weapons": 2, "modules": 5, "turrets": 2, "secondary_weapons": 0}),
-]
-
-
-def _seed_world(seed: int) -> PlayerWorld:
-    """Build a starting world: a Betty with Nirai equipped, Micro Gun in cargo
-    (mirrors the new _create_starter_loadout contract)."""
+    world = _RealWorld(db, svc, pid)
+    # Ledger-tracked starter issue.
+    await world.issue("Pulse Laser", 1)
+    await world.issue("Burst Laser", 1)
+    await world.issue("Shield Booster", 1)
+    await world.issue("Cargo Bay", 1)
+    await world.issue("Beam Turret", 1)
     rng = random.Random(seed)
-    w = PlayerWorld(player_id=1)
-    # Issue starter items via the issue path (ledger-tracked).
-    w.issue_item("Pulse Laser", "weapons", 1)
-    w.issue_item("Burst Laser", "weapons", 1)
-    w.issue_item("Shield Booster", "modules", 1)
-    w.issue_item("Cargo Bay", "modules", 1)
-    w.issue_item("Beam Turret", "turrets", 1)
-    # Random extras to vary state across seeds.
     for _ in range(rng.randint(0, 3)):
-        name, _kind = rng.choice(_ITEMS)
-        kind_for_item = next(k for n, k in _ITEMS if n == name)
-        w.issue_item(name, kind_for_item, 1)
-    # Create the starter ship (Betty) and equip the first weapon.
-    sid = w.add_ship(*_SHIP_KINDS[0])
-    w.equip("Pulse Laser", "weapons", sid)
-    w.equip("Shield Booster", "modules", sid)
-    return w
+        await world.issue(rng.choice(list(_ITEM_KIND)), 1)
 
-
-def _generate_action(rng: random.Random, world: PlayerWorld) -> tuple:
-    """Pick one of the 6 actions, biased toward feasible ones."""
-    choice = rng.choices(
-        ["equip", "unequip", "buy_ship", "sell_ship", "transfer_ship", "set_active"],
-        weights=[3, 3, 1, 1, 1, 2],
-    )[0]
-    if choice == "equip":
-        # Try to pick an item we own and an existing ship with available slot.
-        if not world.inventory:
-            return ("noop",)
-        name = rng.choice(list(world.inventory.keys()))
-        kind = next(k for n, k in _ITEMS if n == name)
-        if not world.ships:
-            return ("noop",)
-        ship = rng.choice(world.ships)
-        return ("equip", name, kind, ship["id"])
-    if choice == "unequip":
-        # Pick any equipped item from any ship.
-        candidates: list[tuple[str, str, int]] = []
-        for s in world.ships:
-            for k in ("weapons", "modules", "turrets", "secondary_weapons"):
-                for n in s[k]:
-                    candidates.append((n, k, s["id"]))
-        if not candidates:
-            return ("noop",)
-        return ("unequip", *rng.choice(candidates))
-    if choice == "buy_ship":
-        kind, caps = rng.choice(_SHIP_KINDS)
-        return ("buy_ship", kind, caps)
-    if choice == "sell_ship":
-        candidates = [s["id"] for s in world.ships if s["id"] != world.active_ship_id]
-        if not candidates:
-            return ("noop",)
-        return ("sell_ship", rng.choice(candidates))
-    if choice == "transfer_ship":
-        candidates = [s["id"] for s in world.ships if s["id"] != world.active_ship_id]
-        if not candidates:
-            return ("noop",)
-        return ("transfer_ship", rng.choice(candidates))
-    if choice == "set_active":
-        if not world.ships:
-            return ("noop",)
-        return ("set_active", rng.choice([s["id"] for s in world.ships]))
-    return ("noop",)
-
-
-def _apply(action: tuple, world: PlayerWorld) -> None:
-    if action[0] == "noop":
-        return
-    if action[0] == "equip":
-        _, name, kind, sid = action
-        world.equip(name, kind, sid)
-    elif action[0] == "unequip":
-        _, name, kind, sid = action
-        world.unequip(name, kind, sid)
-    elif action[0] == "buy_ship":
-        _, kind, caps = action
-        world.buy_ship(kind, caps)
-    elif action[0] == "sell_ship":
-        _, sid = action
-        world.sell_ship(sid)
-    elif action[0] == "transfer_ship":
-        _, sid = action
-        world.transfer_ship_out(sid)
-    elif action[0] == "set_active":
-        _, sid = action
-        world.set_active(sid)
+    sid = await world.add_ship("Betty", active=True)
+    async with db.begin():
+        await svc.player_repo.update_active_ship(db, pid, sid, commit=False)
+    # Equip the first weapon + a module via the REAL service.
+    await world.apply(("equip", "Pulse Laser", "weapons", sid))
+    await world.apply(("equip", "Shield Booster", "modules", sid))
+    return world
 
 
 # ---------------------------------------------------------------------------
-# Property tests
+# Property tests (Level 1) — now driving the REAL service
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("seed", list(range(50)))
 @pytest.mark.parametrize("length", [5, 10, 20])
-def test_invariants_hold_under_random_action_sequences(seed: int, length: int) -> None:
-    """50 seeds × 3 lengths = 150 generated cases.
+async def test_invariants_hold_under_random_action_sequences(db_session, seed: int, length: int) -> None:
+    """50 seeds x 3 lengths = 150 generated cases, each driven through the REAL
+    ``LoadoutConsistencyService`` against live SQLite rows.
 
-    For each, build a starter world, apply ``length`` random actions, and
-    verify all four invariants hold.  Failure prints the seed + sequence so
+    Build a starter world, apply ``length`` random actions (each a real service
+    call in its own transaction), and re-verify the conservation + cap invariants
+    from persisted rows after every step.  Failure prints the seed + sequence so
     the case can be re-played as a regression seed.
     """
     rng = random.Random(seed * 1000 + length)
-    world = _seed_world(seed)
+    world = await _seed_real_world(db_session, seed)
     sequence: list[tuple] = []
-    try:
-        world.assert_invariants()  # initial state should already be sound
-        for _ in range(length):
-            action = _generate_action(rng, world)
-            sequence.append(action)
-            _apply(action, world)
-            world.assert_invariants()
-    except AssertionError as exc:  # pragma: no cover — fires only on regression
-        raise AssertionError(f"seed={seed} length={length} sequence={sequence}: {exc}") from exc
+    await world.assert_invariants("initial")
+    for _ in range(length):
+        action = await world.gen_action(rng)
+        sequence.append(action)
+        await world.apply(action)
+        await world.assert_invariants(f"seed={seed} length={length} sequence={sequence}")
 
 
-def test_starter_world_satisfies_invariants() -> None:
-    """Sanity: the seeded starter world is invariant-correct out of the box."""
-    world = _seed_world(seed=0)
-    world.assert_invariants()
+async def test_starter_world_satisfies_invariants(db_session) -> None:
+    """Sanity: the seeded REAL starter world is invariant-correct out of the box."""
+    world = await _seed_real_world(db_session, seed=0)
+    await world.assert_invariants("starter")
 
 
-def test_phantom_dup_is_repaired_by_repair_player_logic() -> None:
-    """Simulate the empirical B.19 corrupt state and assert the deduplication
-    rules of ``LoadoutConsistencyService.repair_player`` would fix it.
-
-    Note: this is a logic-level check on the repair contract.  The migration
-    test (separate file) runs the same logic against a real DB.
+async def test_phantom_dup_is_repaired_by_repair_player_logic(db_session) -> None:
+    """The empirical B.19 corrupt state (3 real ships all referencing one module
+    with NO cargo provenance) is fixed by the REAL ``repair_player``: the reference
+    is kept on the active ship, dropped from the others, and NO inventory row is
+    minted (I2).  Previously this test re-implemented the dedup loop inline and
+    asserted its own result; it now drives the production method end to end.
     """
-    world = PlayerWorld(player_id=1)
-    # Manually craft a corrupt state: 3 ships all reference Phantom in modules
-    # (no inventory provenance — the bug condition).  Skip the issue_item path
-    # so the ledger stays at 0 — the repair rules state phantoms are kept on
-    # one ship and dropped from the others.
-    world.add_ship("Betty", _SHIP_KINDS[0][1])
-    world.add_ship("Hera", _SHIP_KINDS[2][1])
-    world.add_ship("Terran", _SHIP_KINDS[3][1])
-    for s in world.ships:
-        s["modules"] = ["Phantom"]
+    from persist.models.player import Player
+    from persist.models.player_inventory import PlayerInventory
+    from persist.models.player_ship import PlayerShip
+    from persist.models.user import User
 
-    # Apply the repair logic: keep on the active ship (id=1), drop from others.
-    seen: set[tuple[str, str]] = set()
-    for s in sorted(world.ships, key=lambda x: (x["id"] != world.active_ship_id, x["id"])):
-        for k in ("weapons", "modules", "turrets", "secondary_weapons"):
-            cleaned: list[str] = []
-            for name in s[k]:
-                key = (name, k)
-                if key not in seen:
-                    seen.add(key)
-                    cleaned.append(name)
-            s[k] = cleaned
+    svc = _catalog_service()
+    phantom = "Phantom Module"
 
-    # Post-repair: only one ship has Phantom; total slot references count is 1.
-    slot_count = sum(s["modules"].count("Phantom") for s in world.ships)
-    assert slot_count == 1
+    async with db_session.begin():
+        user = User(id=910_001, discord_username="phantom")
+        db_session.add(user)
+        await db_session.flush()
+        player = Player(user_id=user.id, guild_id=1, credits=0, tier="Bronze")
+        db_session.add(player)
+        await db_session.flush()
+        pid = player.id
+        for name, active in (("Betty", True), ("Hera", False), ("Terran", False)):
+            db_session.add(
+                PlayerShip(
+                    player_id=pid,
+                    ship_name=name,
+                    is_active=active,
+                    weapons=[],
+                    modules=[phantom],
+                    turrets=[],
+                    secondary_weapons=[],
+                )
+            )
+
+    async with db_session.begin():
+        result = await svc.repair_player(db_session, pid)
+
+    assert result["duplicates_removed"] == 2  # dropped from the two non-active ships
+    assert result["ships_modified"] == 2
+
+    async with db_session.begin():
+        ships = (await db_session.execute(select(PlayerShip).where(PlayerShip.player_id == pid))).scalars().all()
+        invs = (
+            (await db_session.execute(select(PlayerInventory).where(PlayerInventory.player_id == pid))).scalars().all()
+        )
+    # Exactly one surviving slot reference — on the active ship.
+    total_refs = sum(s.modules.count(phantom) for s in ships)
+    assert total_refs == 1
+    assert next(s for s in ships if s.is_active).modules == [phantom]
+    # repair_player must NOT materialise inventory (I2).
+    assert invs == []
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Latent item-loss bug (logged in FOLLOWUPS.md, R-bc-integration): a player who "
+        "legitimately owns 2 copies of one item NAME and equips one on each of two ships "
+        "reaches a state equip_one never prevents; evacuating/selling one ship then fires "
+        "evacuate's anti-dup guard, which cannot tell a legit second copy from a phantom "
+        "dup and DESTROYS the other ship's copy (mints only one back). Total ownership "
+        "drops from 2 to 1. The DESIRED behaviour asserted here (both copies conserved) "
+        "fails against the shipped service."
+    ),
+    strict=True,
+)
+async def test_evacuate_destroys_legit_second_copy_of_same_name(db_session) -> None:
+    """Characterises the anti-dup-vs-legit-duplicate item-loss edge (see xfail reason).
+
+    Owns 2 'Pulse Laser' (both equipped, one per ship), then evacuates the
+    non-active ship.  Conservation (owned == 2) SHOULD hold but does not — the
+    guard destroys the winning ship's copy.  Marked strict xfail so the day the
+    src is fixed (equip prevents the state, or the guard keys on provenance) this
+    turns green and flags the fix.
+    """
+    from persist.models.player import Player
+    from persist.models.user import User
+
+    svc = _catalog_service()
+    async with db_session.begin():
+        user = User(id=920_001, discord_username="dup-legit")
+        db_session.add(user)
+        await db_session.flush()
+        player = Player(user_id=user.id, guild_id=1, credits=0, tier="Bronze")
+        db_session.add(player)
+        await db_session.flush()
+        pid = player.id
+    world = _RealWorld(db_session, svc, pid)
+    world.player_id = pid
+    world.expected["Pulse Laser"] = 2  # two legitimately-owned copies
+
+    # Two Betty ships; issue 2 Pulse Lasers to cargo, equip one on each ship.
+    async with db_session.begin():
+        await svc.inventory_repo.add_item(db_session, pid, "primary_weapon", "Pulse Laser", 2, commit=False)
+    active = await world.add_ship("Betty", active=True)
+    other = await world.add_ship("Sidewinder", active=False)
+    await world.apply(("equip", "Pulse Laser", "weapons", active))
+    await world.apply(("equip", "Pulse Laser", "weapons", other))
+
+    # Sanity: both copies equipped, cargo empty (arrange succeeded).
+    ships, cargo = await world._snapshot()
+    assert sum(s["slots"]["weapons"].count("Pulse Laser") for s in ships) == 2
+    assert cargo.get("Pulse Laser", 0) == 0
+
+    # Evacuate the NON-active ship — the destructive anti-dup guard fires here.
+    await world._evacuate_and_remove(other)
+
+    # DESIRED (xfail): both copies survive — one back in cargo, one still equipped.
+    await world.assert_invariants("legit-dup evacuate")
 
 
 # ---------------------------------------------------------------------------

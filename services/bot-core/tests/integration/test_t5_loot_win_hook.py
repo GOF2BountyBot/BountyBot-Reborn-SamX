@@ -6,11 +6,18 @@ failure-isolated from (and non-atomic with) the bounty rewards/XP.
 
 Three layers:
 
-* **Trigger-exclusion** (``TestWinBranchTrigger``) — drives the real
-  ``_process_single_bounty_check`` with combat + reward deps stubbed and
-  ``_apply_loot_on_win`` replaced by a SPY, asserting loot fires on a proper
-  combat win ONLY (Bronze bonus win / Silver+ ``winner_side==1``) and NOT on the
-  bare capture, a loss, a stalemate, or the no-ship shortcut.
+* **Trigger-matrix** (``TestWinBranchTrigger``) — a FAST pure-branch-guard unit
+  test: it drives the real ``_process_single_bounty_check`` guard logic with the
+  combat + reward + repo boundary deliberately stubbed and ``_apply_loot_on_win``
+  replaced by a SPY, asserting the hook is reached on a proper combat win ONLY
+  (Bronze bonus win / Silver+ ``winner_side==1``) and NOT on the bare capture, a
+  loss, a stalemate, or the no-ship shortcut.  This is intentionally a
+  many-mock unit test (see ``_trigger_service`` — the whole combat/reward/repo
+  surround is stubbed so ONLY the branch guards run); it is NOT a DB test.  The
+  REAL DB/reward/live-loot-write interaction for the WIN and LOSS branches is
+  exercised end-to-end against live Postgres in
+  ``test_t10_loot_e2e.py::TestWinBranchTriggerLive`` (real Player+PlayerShip+
+  Bounty, mocking only ``fight_ships`` + ``roll_loot_success``).
 * **Loot routine** (``TestApplyLootOnWin``) — calls ``_apply_loot_on_win``
   directly against the seeded throwaway Postgres with a REAL LootService cache +
   REAL inventory write: tractor gate, M-1 cargo-full gate, §5.4 clamp
@@ -19,7 +26,14 @@ Three layers:
 * **Fold-in** (``TestTractorMapRekey``) — the M-5 tractor-map override re-key no
   longer drops a beam when two tiers share a default chance VALUE.
 
-Mock budget: ≤2 mocks per test, real objects preferred.
+Mock budget: the live-DB routine (``TestApplyLootOnWin``) and fold-in
+(``TestTractorMapRekey``) sections hold to ≤2 mocks per test with real objects
+preferred.  ``TestWinBranchTrigger`` is the deliberate exception: it is a
+pure-branch-guard unit test whose whole purpose is to isolate the trigger guards
+in ``_process_single_bounty_check`` from combat/reward/DB, so it stubs the full
+surrounding boundary (~10 stubs, itemised in ``_trigger_service``).  That is a
+process/logic-boundary isolation, not an entity fake — and the live counterpart
+(real DB/reward/loot) lives in ``test_t10_loot_e2e.py::TestWinBranchTriggerLive``.
 """
 
 from __future__ import annotations
@@ -176,13 +190,22 @@ def _fight(winner_side, is_stalemate=False):
 
 
 def _trigger_service():
-    """A BountyService with the win-branch surroundings stubbed and loot SPIED.
+    """A BountyService with the ENTIRE win-branch surrounding boundary stubbed and
+    loot SPIED — a pure branch-guard isolation harness (NOT a ≤2-mock DB test).
 
-    Stubs (repo/reward/combat boundary) so we exercise ONLY the trigger guards
-    in ``_process_single_bounty_check``; ``_apply_loot_on_win`` is replaced by an
-    AsyncMock spy so a call == "loot fired".  ``fight_ships`` is the second mock
-    when combat must run.  (≤2 mocks of interest per test — the rest are inert
-    plumbing stubs shared by the fixture.)
+    To exercise ONLY the trigger guards in ``_process_single_bounty_check``, this
+    stubs the whole combat/reward/repo boundary the guards sit inside:
+      - ``bounty_repo.get_by_id_for_update`` / ``bounty_repo.update``
+      - ``calc_rewards`` / ``distribute_rewards`` / ``_build_payout_breakdown``
+      - ``_award_combat_bonus`` / ``_reset_bounty_checks``
+      - ``combat_service.fight_ships`` + ``LoadoutBuilder.from_player`` /
+        ``from_criminal_ship`` + ``_serialize_fight_results`` (patched per-test in
+        ``_patch_combat_and_loadout``)
+    and replaces ``_apply_loot_on_win`` with an AsyncMock SPY so a call == "loot
+    hook reached".  These are process/logic-boundary stubs (no real DB touched),
+    which is why the file's ≤2-mock budget does not apply to this class; the
+    real DB/reward/loot-write path is covered live in
+    ``test_t10_loot_e2e.py::TestWinBranchTriggerLive``.
     """
     svc = BountyService()
     # Bounty lock returns a ready, active, correct-answer bounty carrying cargo.

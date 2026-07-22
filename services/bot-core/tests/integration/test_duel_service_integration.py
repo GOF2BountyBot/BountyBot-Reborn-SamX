@@ -477,7 +477,17 @@ class TestAcceptDuelIntegration:
 
     @pytest.mark.asyncio
     async def test_accept_duel_credits_transferred_cross_session(self, service):
-        """accept_duel transfers stakes credits from loser to winner — verified cross-session."""
+        """accept_duel transfers stakes credits from loser to winner — verified cross-session.
+
+        The combat is forced DECISIVE (challenger gets a one-shot weapon, target is
+        unarmed → target deals 0 damage and cannot win), so a REAL stakes transfer
+        actually occurs and is asserted directly.  A prior version gave BOTH players
+        empty loadouts → guaranteed stalemate → credits_transferred==0, and guarded
+        the transfer assertion behind ``if credits_moved > 0:``, so it never ran and
+        the test would pass even if the winner/loser mutation were broken.
+        """
+        from services.combat_models import ShipLoadout, WeaponStats
+
         engine, factory = await _fresh_engine_and_factory()
         try:
             async with factory() as session_a:
@@ -492,9 +502,19 @@ class TestAcceptDuelIntegration:
                 )
                 duel_id = duel.id
 
-                # 1 mock — LoadoutBuilder.from_player: ARRAY-column tables unavailable in SQLite
-                challenger_loadout = self._make_mock_loadout("Betty")
-                target_loadout = self._make_mock_loadout("Raptor")
+                # 1 mock — LoadoutBuilder.from_player: ARRAY-column tables unavailable in SQLite.
+                # Decisive: challenger one-shots (TickResolver reads damage_per_shot/
+                # loading_speed_ms/range_m, not legacy `dps`); target unarmed → 0 damage.
+                challenger_loadout = ShipLoadout(
+                    ship_name="Betty",
+                    base_armour=1000,
+                    weapons=[
+                        WeaponStats(
+                            name="SuperGun", dps=0.0, damage_per_shot=99999, loading_speed_ms=100, range_m=999999.0
+                        )
+                    ],
+                )
+                target_loadout = ShipLoadout(ship_name="Raptor", base_armour=10, weapons=[])
 
                 with patch(
                     "services.loadout_builder.LoadoutBuilder.from_player",
@@ -503,22 +523,18 @@ class TestAcceptDuelIntegration:
                     result = await service.accept_duel(session_a, duel_id=duel_id)
 
             stakes = 1000
-            credits_moved = result["credits_transferred"]
+            # A REAL decisive transfer must have occurred (challenger, side 1, wins).
+            assert result["credits_transferred"] == stakes
+            assert result["fight_results"].winner_side == 1
 
-            # Cross-session reload — verify credit conservation
+            # Cross-session reload — the exact transfer persisted, credits conserved.
             async with factory() as session_b:
                 ch_b = await session_b.get(Player, challenger_id)
                 tg_b = await session_b.get(Player, target_id)
-                assert ch_b is not None and tg_b is not None
-
-                total = ch_b.credits + tg_b.credits
-                # Total should be conserved (5000 + 5000 = 10000)
-                assert total == 10000, f"Total credits should be conserved at 10000; got {total}"
-
-                if credits_moved > 0:
-                    # If not stalemate, one player gained stakes, one lost stakes
-                    credits_diff = abs(ch_b.credits - tg_b.credits)
-                    assert credits_diff == stakes, f"Credit diff should equal stakes={stakes}; got diff={credits_diff}"
+                assert ch_b.credits == 5000 + stakes, "winner (challenger) should gain the stakes"
+                assert tg_b.credits == 5000 - stakes, "loser (target) should lose the stakes"
+                assert ch_b.credits + tg_b.credits == 10000, "total credits conserved"
+                assert ch_b.duel_wins == 1 and tg_b.duel_losses == 1
         finally:
             await engine.dispose()
 

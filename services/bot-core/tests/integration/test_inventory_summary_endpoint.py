@@ -77,13 +77,21 @@ async def _make_sqlite_session_factory():
 
 
 def _make_cm_patcher(module_path: str, db_session: AsyncSession):
-    """Patch get_db_session in the given module to yield the provided session."""
+    """Patch get_db_session in the given module to yield the provided session.
+
+    Uses ``side_effect`` (a factory) rather than ``return_value`` so EACH
+    ``get_db_session()`` call gets a FRESH @asynccontextmanager — mirroring the
+    gold-standard sibling (test_response_body_consistency.py).  With
+    ``return_value=_fake_get_db()`` a single already-created CM is injected and a
+    second call within the same request would raise RuntimeError (CM re-entry);
+    the factory keeps the fake faithful to the real per-call get_db_session.
+    """
 
     @asynccontextmanager
     async def _fake_get_db():
         yield db_session
 
-    return patch(module_path, return_value=_fake_get_db())
+    return patch(module_path, side_effect=_fake_get_db)
 
 
 # ---------------------------------------------------------------------------

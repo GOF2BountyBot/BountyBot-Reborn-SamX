@@ -201,6 +201,22 @@ def _evict_discord_modules():
         sys.modules.pop(k, None)
 
 
+_BOT_CORE_URL = "http://bot-core:8000/api/v1"
+
+
+def _with_real_http_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+    House pattern — see this file's own `TestShipsCommandRespx._with_real_client`
+    and test_adminCog.py's `_with_real_http_client`.
+    """
+    import httpx
+
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
+
+
 def _create_mock_interaction(user_id=111111111, guild_id=987654321):
     """Build a mock interaction with all needed attributes."""
     interaction = DiscordMockUtils.create_mock_interaction(
@@ -325,23 +341,36 @@ class TestCogUnload:
 
 
 class TestGetPlayerIdHelper:
-    """Tests for the _get_player_id helper method."""
+    """Tests for the _get_player_id helper method.
 
-    def test_get_player_id_success(self, mock_ships_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real POST /players/ URL.
+    """
+
+    def test_get_player_id_success(self, mock_ships_cog, request):
         """_get_player_id should return player ID on success."""
-        resp = make_mock_response({"id": 7})
-        mock_ships_cog.http_client.post = AsyncMock(return_value=resp)
+        import httpx
+        import respx
 
-        result = asyncio.run(mock_ships_cog._get_player_id(111111111, 987654321))
+        _with_real_http_client(mock_ships_cog, request)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 7}))
+            result = asyncio.run(mock_ships_cog._get_player_id(111111111, 987654321))
+
         assert result == 7
 
-    def test_get_player_id_api_error_returns_none(self, mock_ships_cog):
+    def test_get_player_id_api_error_returns_none(self, mock_ships_cog, request):
         """_get_player_id should return None on API error."""
         import httpx
+        import respx
 
-        mock_ships_cog.http_client.post = AsyncMock(side_effect=httpx.HTTPError("connection error"))
+        _with_real_http_client(mock_ships_cog, request)
 
-        result = asyncio.run(mock_ships_cog._get_player_id(111111111, 987654321))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=httpx.HTTPError("connection error"))
+            result = asyncio.run(mock_ships_cog._get_player_id(111111111, 987654321))
+
         assert result is None
 
     def test_get_player_id_calls_correct_url_and_method(self, mock_ships_cog, request):
@@ -371,179 +400,189 @@ class TestGetPlayerIdHelper:
 
 
 class TestShipsCommand:
-    """Tests for the /ships slash command."""
+    """Tests for the /ships slash command.
 
-    def test_ships_display_own_ships(self, mock_ships_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real POST /players/ and
+    GET /ships/player/{id} URLs.
+    """
+
+    def test_ships_display_own_ships(self, mock_ships_cog, request):
         """ships should display embed with user's ships."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [
-                _make_ship(1, "Eagle", is_active=True),
-                _make_ship(2, "Hawk", is_active=False),
-            ]
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(
+                return_value=httpx.Response(
+                    200, json=[_make_ship(1, "Eagle", is_active=True), _make_ship(2, "Hawk", is_active=False)]
+                )
+            )
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ships_summary_includes_secondary_count(self, mock_ships_cog, make_mock_response):
+    def test_ships_summary_includes_secondary_count(self, mock_ships_cog, request):
         """ships loadout summary must include the S: (secondary) count alongside W/M/T."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [
-                _make_ship(
-                    1,
-                    "Eagle",
-                    is_active=True,
-                    weapons=["Laser"],
-                    secondary_weapons=["Jet Rocket"],
-                    modules=["Cabin"],
-                    turrets=[],
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        _make_ship(
+                            1,
+                            "Eagle",
+                            is_active=True,
+                            weapons=["Laser"],
+                            secondary_weapons=["Jet Rocket"],
+                            modules=["Cabin"],
+                            turrets=[],
+                        )
+                    ],
                 )
-            ]
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+            )
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         field_values = " ".join(f.value for f in embed.fields)
         assert "W:1 | S:1 | M:1 | T:0" in field_values
 
-    def test_ships_no_ships_found(self, mock_ships_cog, make_mock_response):
+    def test_ships_no_ships_found(self, mock_ships_cog, request):
         """ships should send ephemeral message when player has no ships."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response([])
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(return_value=httpx.Response(200, json=[]))
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "no ships" in call_kwargs[0][0].lower()
 
-    def test_ships_player_not_found(self, mock_ships_cog):
+    def test_ships_player_not_found(self, mock_ships_cog, request):
         """ships should send ephemeral error when player not found."""
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        # _get_player_id will return None
-        mock_ships_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        # _get_player_id will return None; the cog never reaches GET /ships/player/.
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=RuntimeError("player error"))
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_ships_viewing_other_user(self, mock_ships_cog, make_mock_response):
+    def test_ships_viewing_other_user(self, mock_ships_cog, request):
         """ships should display ships for another user when provided."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction(user_id=111111111)
         other_user = DiscordMockUtils.create_mock_user(user_id=222222222, username="OtherUser")
         other_user.display_name = "OtherUser"
         other_user.display_avatar = MagicMock()
         other_user.display_avatar.url = "https://example.com/other-avatar.jpg"
 
-        player_resp = make_mock_response({"id": 2})
-        ships_resp = make_mock_response([_make_ship(3, "Falcon", is_active=True)])
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction, user=other_user))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/2").mock(
+                return_value=httpx.Response(200, json=[_make_ship(3, "Falcon", is_active=True)])
+            )
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction, user=other_user))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ships_more_than_10_shows_footer_with_count(self, mock_ships_cog, make_mock_response):
+    def test_ships_more_than_10_shows_footer_with_count(self, mock_ships_cog, request):
         """ships with >10 ships should show truncation footer."""
-        interaction = _create_mock_interaction()
+        import httpx
+        import respx
 
-        player_resp = make_mock_response({"id": 1})
+        _with_real_http_client(mock_ships_cog, request)
+        interaction = _create_mock_interaction()
 
         many_ships = [_make_ship(i, f"Ship{i}", is_active=(i == 1)) for i in range(1, 13)]
-        ships_resp = make_mock_response(many_ships)
 
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(return_value=httpx.Response(200, json=many_ships))
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
 
-    def test_ships_http_status_error(self, mock_ships_cog, make_mock_response):
+    def test_ships_http_status_error(self, mock_ships_cog, request):
         """ships should handle HTTPStatusError gracefully."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError(
-            "500 Error",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_ships_generic_exception(self, mock_ships_cog, make_mock_response):
+    def test_ships_generic_exception(self, mock_ships_cog, request):
         """ships should handle generic exceptions gracefully."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=RuntimeError("network error"))
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(side_effect=RuntimeError("network error"))
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_ships_with_nickname(self, mock_ships_cog, make_mock_response):
+    def test_ships_with_nickname(self, mock_ships_cog, request):
         """ships should display ship nickname when set."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [
-                _make_ship(1, "Eagle", is_active=True, nickname="StarHunter"),
-            ]
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(
+                return_value=httpx.Response(200, json=[_make_ship(1, "Eagle", is_active=True, nickname="StarHunter")])
+            )
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
 
@@ -681,137 +720,117 @@ class TestCogSetup:
 
 
 class TestShipCommand:
-    """Tests for the /ship slash command."""
+    """Tests for the /ship slash command.
 
-    def test_ship_success_active_with_nickname(self, mock_ships_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real GET /ships/{id},
+    POST /players/, and GET /ships/{id}/loadout URLs (three distinct routes,
+    so no `side_effect=[...]` list is needed the way the old shared-mock
+    responder required — each route gets its own real response).
+    """
+
+    def test_ship_success_active_with_nickname(self, mock_ships_cog, request):
         """ship should display detailed embed for an active ship with nickname."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        # Ship detail response
-        ship_resp = make_mock_response(
-            _make_ship(
-                ship_id=1,
-                ship_name="Eagle",
-                is_active=True,
-                nickname="StarHunter",
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(
+                return_value=httpx.Response(
+                    200, json=_make_ship(ship_id=1, ship_name="Eagle", is_active=True, nickname="StarHunter")
+                )
             )
-        )
-
-        # Player lookup
-        player_resp = make_mock_response({"id": 1})
-
-        # Loadout response
-        loadout_resp = make_mock_response(
-            _make_loadout(
-                weapons=["Laser", "Plasma"],
-                modules=["Shield"],
-                turrets=["Flak"],
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1/loadout").mock(
+                return_value=httpx.Response(
+                    200, json=_make_loadout(weapons=["Laser", "Plasma"], modules=["Shield"], turrets=["Flak"])
+                )
             )
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ship_success_inactive_no_nickname(self, mock_ships_cog, make_mock_response):
+    def test_ship_success_inactive_no_nickname(self, mock_ships_cog, request):
         """ship should display correct embed for inactive ship without nickname."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        ship_resp = make_mock_response(
-            _make_ship(
-                ship_id=2,
-                ship_name="Hawk",
-                is_active=False,
-                nickname=None,
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/2").mock(
+                return_value=httpx.Response(
+                    200, json=_make_ship(ship_id=2, ship_name="Hawk", is_active=False, nickname=None)
+                )
             )
-        )
-
-        player_resp = make_mock_response({"id": 1})
-
-        loadout_resp = make_mock_response(
-            _make_loadout(
-                weapons=[],
-                modules=[],
-                turrets=[],
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/2/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout(weapons=[], modules=[], turrets=[]))
             )
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="2"))
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="2"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ship_not_owned_by_user(self, mock_ships_cog, make_mock_response):
+    def test_ship_not_owned_by_user(self, mock_ships_cog, request):
         """ship should deny access when ship belongs to another player."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
         ship_data = _make_ship(ship_id=1)
         # Ship has player_id=1 but we'll return player_id=99 for the user
         ship_data["player_id"] = 99
-        ship_resp = make_mock_response(ship_data)
 
-        player_resp = make_mock_response({"id": 1})
-
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
+        # The ownership check fails before the loadout GET is ever reached.
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(return_value=httpx.Response(200, json=ship_data))
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert "don't own" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
-    def test_ship_http_status_error_404(self, mock_ships_cog):
+    def test_ship_http_status_error_404(self, mock_ships_cog, request):
         """ship should show 'not found' on 404 HTTPStatusError."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        error_response = MagicMock()
-        error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="999"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/999").mock(return_value=httpx.Response(404))
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="999"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert "not found" in call_args[0][0].lower()
         assert call_args[1].get("ephemeral", False)
 
-    def test_ship_http_status_error_500(self, mock_ships_cog):
+    def test_ship_http_status_error_500(self, mock_ships_cog, request):
         """ship should show API error on non-404 HTTPStatusError."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError(
-            "500 Server Error",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -822,87 +841,89 @@ class TestShipCommand:
         assert "bot-core" not in (embed.description or "")
         assert "http://" not in (embed.description or "")
 
-    def test_ship_generic_exception(self, mock_ships_cog):
+    def test_ship_generic_exception(self, mock_ships_cog, request):
         """ship should handle generic exceptions gracefully."""
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected"))
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(side_effect=RuntimeError("unexpected"))
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert "error occurred" in call_args[0][0].lower()
         assert call_args[1].get("ephemeral", False)
 
-    def test_ship_loadout_with_many_weapons(self, mock_ships_cog, make_mock_response):
+    def test_ship_loadout_with_many_weapons(self, mock_ships_cog, request):
         """ship should truncate weapons list when >10 items."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=True))
-        player_resp = make_mock_response({"id": 1})
-
         many_weapons = [f"Weapon{i}" for i in range(15)]
-        loadout_resp = make_mock_response(
-            _make_loadout(
-                weapons=many_weapons,
-                modules=[],
-                turrets=[],
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(
+                return_value=httpx.Response(200, json=_make_ship(ship_id=1, is_active=True))
             )
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout(weapons=many_weapons, modules=[], turrets=[]))
+            )
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ship_loadout_with_many_modules(self, mock_ships_cog, make_mock_response):
+    def test_ship_loadout_with_many_modules(self, mock_ships_cog, request):
         """ship should truncate modules list when >10 items."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=True))
-        player_resp = make_mock_response({"id": 1})
-
         many_modules = [f"Module{i}" for i in range(12)]
-        loadout_resp = make_mock_response(
-            _make_loadout(
-                weapons=["Laser"],
-                modules=many_modules,
-                turrets=[],
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(
+                return_value=httpx.Response(200, json=_make_ship(ship_id=1, is_active=True))
             )
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1/loadout").mock(
+                return_value=httpx.Response(
+                    200, json=_make_loadout(weapons=["Laser"], modules=many_modules, turrets=[])
+                )
+            )
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
 
-    def test_ship_loadout_with_many_turrets(self, mock_ships_cog, make_mock_response):
+    def test_ship_loadout_with_many_turrets(self, mock_ships_cog, request):
         """ship should truncate turrets list when >10 items."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=True))
-        player_resp = make_mock_response({"id": 1})
-
         many_turrets = [f"Turret{i}" for i in range(11)]
-        loadout_resp = make_mock_response(
-            _make_loadout(
-                weapons=[],
-                modules=[],
-                turrets=many_turrets,
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(
+                return_value=httpx.Response(200, json=_make_ship(ship_id=1, is_active=True))
             )
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout(weapons=[], modules=[], turrets=many_turrets))
+            )
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
 
@@ -958,26 +979,29 @@ class TestShipCommandRespx:
 
 
 class TestSetActiveCommand:
-    """Tests for the /setactive slash command."""
+    """Tests for the /setactive slash command.
 
-    def test_setactive_success(self, mock_ships_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real POST /players/ and
+    PUT /ships/{id}/set-active URLs.
+    """
+
+    def test_setactive_success(self, mock_ships_cog, request):
         """setactive should set ship as active and send success embed."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-        set_resp = make_mock_response(
-            {
-                "id": 5,
-                "ship_name": "Eagle",
-                "nickname": None,
-                "is_active": True,
-            }
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(return_value=set_resp)
-
-        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/5/set-active").mock(
+                return_value=httpx.Response(
+                    200, json={"id": 5, "ship_name": "Eagle", "nickname": None, "is_active": True}
+                )
+            )
+            asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
@@ -985,114 +1009,91 @@ class TestSetActiveCommand:
         assert "embed" in call_kwargs
         assert call_kwargs.get("ephemeral", False), "/setactive success response must be ephemeral"
 
-    def test_setactive_success_with_nickname(self, mock_ships_cog, make_mock_response):
+    def test_setactive_success_with_nickname(self, mock_ships_cog, request):
         """setactive should include nickname in success message when ship has one."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-        set_resp = make_mock_response(
-            {
-                "id": 5,
-                "ship_name": "Eagle",
-                "nickname": "StarHunter",
-                "is_active": True,
-            }
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(return_value=set_resp)
-
-        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/5/set-active").mock(
+                return_value=httpx.Response(
+                    200, json={"id": 5, "ship_name": "Eagle", "nickname": "StarHunter", "is_active": True}
+                )
+            )
+            asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_setactive_player_not_found(self, mock_ships_cog):
+    def test_setactive_player_not_found(self, mock_ships_cog, request):
         """setactive should send error when player is not found."""
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_ships_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
-
-        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(side_effect=RuntimeError("player error"))
+            asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert "Player not found" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
-    def test_setactive_http_status_error_400(self, mock_ships_cog, make_mock_response):
+    def test_setactive_http_status_error_400(self, mock_ships_cog, request):
         """setactive should show invalid ship on 400 HTTPStatusError."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-
-        error_response = MagicMock()
-        error_response.status_code = 400
-        http_error = httpx.HTTPStatusError(
-            "400 Bad Request",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/5/set-active").mock(return_value=httpx.Response(400))
+            asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert "Invalid ship" in call_args[0][0] or "don't own" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
-    def test_setactive_http_status_error_404(self, mock_ships_cog, make_mock_response):
+    def test_setactive_http_status_error_404(self, mock_ships_cog, request):
         """setactive should show 'not found' on 404 HTTPStatusError."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-
-        error_response = MagicMock()
-        error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=999))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/999/set-active").mock(return_value=httpx.Response(404))
+            asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=999))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert "not found" in call_args[0][0].lower()
         assert call_args[1].get("ephemeral", False)
 
-    def test_setactive_http_status_error_500(self, mock_ships_cog, make_mock_response):
+    def test_setactive_http_status_error_500(self, mock_ships_cog, request):
         """setactive should show API error on non-400/404 HTTPStatusError."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError(
-            "500 Server Error",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/5/set-active").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -1103,16 +1104,18 @@ class TestSetActiveCommand:
         assert "bot-core" not in (embed.description or "")
         assert "http://" not in (embed.description or "")
 
-    def test_setactive_generic_exception(self, mock_ships_cog, make_mock_response):
+    def test_setactive_generic_exception(self, mock_ships_cog, request):
         """setactive should handle generic exceptions gracefully."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(side_effect=RuntimeError("unexpected"))
-
-        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/5/set-active").mock(side_effect=RuntimeError("unexpected"))
+            asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -1186,59 +1189,57 @@ class TestSetActiveCommandRespx:
 
 
 class TestNicknameCommand:
-    """Tests for the /nickname slash command."""
+    """Tests for the /nickname slash command.
 
-    def test_nickname_success(self, mock_ships_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx, pinned to the real GET /ships/{id},
+    POST /players/, and PUT /ships/{id}/nickname URLs.
+    """
+
+    def test_nickname_success(self, mock_ships_cog, request):
         """nickname should update ship nickname and send success embed."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        # Ship ownership check
-        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=True))
-
-        # Player lookup
-        player_resp = make_mock_response({"id": 1})
-
-        # Nickname update
-        nick_resp = make_mock_response(
-            {
-                "id": 1,
-                "ship_name": "Eagle",
-                "nickname": "NewName",
-                "is_active": True,
-            }
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(return_value=nick_resp)
-
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="NewName"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(
+                return_value=httpx.Response(200, json=_make_ship(ship_id=1, is_active=True))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/1/nickname").mock(
+                return_value=httpx.Response(
+                    200, json={"id": 1, "ship_name": "Eagle", "nickname": "NewName", "is_active": True}
+                )
+            )
+            asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="NewName"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_nickname_success_inactive_ship(self, mock_ships_cog, make_mock_response):
+    def test_nickname_success_inactive_ship(self, mock_ships_cog, request):
         """nickname should show inactive status for inactive ships."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=False))
-        player_resp = make_mock_response({"id": 1})
-        nick_resp = make_mock_response(
-            {
-                "id": 1,
-                "ship_name": "Eagle",
-                "nickname": "MyShip",
-                "is_active": False,
-            }
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(return_value=nick_resp)
-
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="MyShip"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(
+                return_value=httpx.Response(200, json=_make_ship(ship_id=1, is_active=False))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/1/nickname").mock(
+                return_value=httpx.Response(
+                    200, json={"id": 1, "ship_name": "Eagle", "nickname": "MyShip", "is_active": False}
+                )
+            )
+            asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="MyShip"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1257,66 +1258,55 @@ class TestNicknameCommand:
         assert "50 characters" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
-    def test_nickname_not_owned(self, mock_ships_cog, make_mock_response):
+    def test_nickname_not_owned(self, mock_ships_cog, request):
         """nickname should deny access when ship belongs to another player."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
         ship_data = _make_ship(ship_id=1)
         ship_data["player_id"] = 99  # different from logged-in player
-        ship_resp = make_mock_response(ship_data)
 
-        player_resp = make_mock_response({"id": 1})
-
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(return_value=httpx.Response(200, json=ship_data))
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert "don't own" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
-    def test_nickname_http_status_error_404(self, mock_ships_cog):
+    def test_nickname_http_status_error_404(self, mock_ships_cog, request):
         """nickname should show 'not found' on 404 HTTPStatusError."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        error_response = MagicMock()
-        error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="999", nickname="Test"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/999").mock(return_value=httpx.Response(404))
+            asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="999", nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert "not found" in call_args[0][0].lower()
         assert call_args[1].get("ephemeral", False)
 
-    def test_nickname_http_status_error_500(self, mock_ships_cog):
+    def test_nickname_http_status_error_500(self, mock_ships_cog, request):
         """nickname should show API error on non-404 HTTPStatusError."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError(
-            "500 Server Error",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(return_value=httpx.Response(500))
+            asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -1327,13 +1317,16 @@ class TestNicknameCommand:
         assert "bot-core" not in (embed.description or "")
         assert "http://" not in (embed.description or "")
 
-    def test_nickname_generic_exception(self, mock_ships_cog):
+    def test_nickname_generic_exception(self, mock_ships_cog, request):
         """nickname should handle generic exceptions gracefully."""
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected"))
-
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/1").mock(side_effect=RuntimeError("unexpected"))
+            asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -1438,51 +1431,60 @@ class TestErrorHandlersAlreadyDone:
 
 
 class TestShipsCommandAdditionalBranches:
-    """Additional tests for /ships covering remaining branches."""
+    """Additional tests for /ships covering remaining branches.
 
-    def test_ships_with_null_weapons_modules_turrets(self, mock_ships_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx.
+    """
+
+    def test_ships_with_null_weapons_modules_turrets(self, mock_ships_cog, request):
         """ships should handle None weapons/modules/turrets gracefully."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Eagle",
-                    "is_active": True,
-                    "nickname": None,
-                    "weapons": None,
-                    "modules": None,
-                    "turrets": None,
-                    "created_at": "2024-01-01T00:00:00",
-                    "player_id": 1,
-                }
-            ]
-        )
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 1,
+                            "ship_name": "Eagle",
+                            "is_active": True,
+                            "nickname": None,
+                            "weapons": None,
+                            "modules": None,
+                            "turrets": None,
+                            "created_at": "2024-01-01T00:00:00",
+                            "player_id": 1,
+                        }
+                    ],
+                )
+            )
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ships_exactly_10_shows_standard_footer(self, mock_ships_cog, make_mock_response):
+    def test_ships_exactly_10_shows_standard_footer(self, mock_ships_cog, request):
         """ships with exactly 10 ships should show standard footer (not truncation)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-
         ten_ships = [_make_ship(i, f"Ship{i}", is_active=(i == 1)) for i in range(1, 11)]
-        ships_resp = make_mock_response(ten_ships)
 
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(return_value=httpx.Response(200, json=ten_ships))
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1495,43 +1497,53 @@ class TestShipsCommandAdditionalBranches:
 
 
 class TestShipsPermissionChecks:
-    """Tests verifying admin permission enforcement when viewing another user's ships."""
+    """Tests verifying admin permission enforcement when viewing another user's ships.
 
-    def test_ships_own_user_no_admin_check_needed(self, mock_ships_cog, make_mock_response):
+    TRUEUP-01 (R-gw-cogs-0 follow-up): migrated off `make_mock_response`/
+    accept-anything AsyncMock to respx.
+    """
+
+    def test_ships_own_user_no_admin_check_needed(self, mock_ships_cog, request):
         """Viewing own ships requires no admin permission — always succeeds."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction(user_id=111111111)
 
-        player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response([_make_ship(1, "Eagle", is_active=True)])
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        # No user= argument: viewing own ships — no admin check performed
-        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/1").mock(
+                return_value=httpx.Response(200, json=[_make_ship(1, "Eagle", is_active=True)])
+            )
+            # No user= argument: viewing own ships — no admin check performed
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ships_other_user_admin_allowed(self, mock_ships_cog, make_mock_response):
+    def test_ships_other_user_admin_allowed(self, mock_ships_cog, request):
         """Admin users can view another user's ships without error."""
-        from unittest.mock import patch
+        import httpx
+        import respx
 
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction(user_id=111111111)
         other_user = DiscordMockUtils.create_mock_user(user_id=222222222, username="OtherUser")
         other_user.display_name = "OtherUser"
         other_user.display_avatar = MagicMock()
         other_user.display_avatar.url = "https://example.com/other.jpg"
 
-        player_resp = make_mock_response({"id": 2})
-        ships_resp = make_mock_response([_make_ship(3, "Falcon", is_active=True)])
-
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
-
-        # Patch _check_is_admin to return True (user is admin)
-        with patch("cogs.adminCog._check_is_admin", new=AsyncMock(return_value=True)):
+        with (
+            respx.mock(assert_all_called=True) as mock_router,
+            # Patch _check_is_admin to return True (user is admin)
+            patch("cogs.adminCog._check_is_admin", new=AsyncMock(return_value=True)),
+        ):
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/player/2").mock(
+                return_value=httpx.Response(200, json=[_make_ship(3, "Falcon", is_active=True)])
+            )
             asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction, user=other_user))
 
         interaction.followup.send.assert_awaited_once()
@@ -1655,23 +1667,22 @@ class TestSetactiveInvalidShipId:
         assert call_args[1].get("ephemeral", False)
         assert "invalid" in call_args[0][0].lower()
 
-    def test_setactive_numeric_string_is_accepted(self, mock_ships_cog, make_mock_response):
+    def test_setactive_numeric_string_is_accepted(self, mock_ships_cog, request):
         """setactive should accept a numeric string like '5' (from autocomplete value)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = make_mock_response({"id": 1})
-        set_resp = make_mock_response(
-            {
-                "id": 5,
-                "ship_name": "Eagle",
-                "nickname": None,
-                "is_active": True,
-            }
-        )
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(return_value=set_resp)
-
-        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id="5"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/5/set-active").mock(
+                return_value=httpx.Response(
+                    200, json={"id": 5, "ship_name": "Eagle", "nickname": None, "is_active": True}
+                )
+            )
+            asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id="5"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1737,23 +1748,26 @@ class TestShipAutocomplete:
 class TestShipCommandStrParamHandling:
     """Tests for /ship — ship_id parameter is now str (was int)."""
 
-    def test_ship_accepts_numeric_string(self, mock_ships_cog, make_mock_response):
+    def test_ship_accepts_numeric_string(self, mock_ships_cog, request):
         """/ship with '42' (str) should call bot-core with /api/v1/ships/42."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        ship_resp = make_mock_response(_make_ship(ship_id=42, is_active=True))
-        player_resp = make_mock_response({"id": 1})
-        loadout_resp = make_mock_response(_make_loadout())
-
-        mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="42"))
-
-        # Verify the first GET hit /api/v1/ships/42 (int path)
-        first_get_call = mock_ships_cog.http_client.get.call_args_list[0]
-        url = first_get_call[0][0]
-        assert url.endswith("/ships/42"), f"expected .../ships/42, got {url}"
+        # respx only registers a route at /ships/42 (int path) — if the cog sent a
+        # differently-formatted URL (e.g. the raw "42" string mangled), this route
+        # simply would not match and the real client would raise, failing the test.
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/42").mock(
+                return_value=httpx.Response(200, json=_make_ship(ship_id=42, is_active=True))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{_BOT_CORE_URL}/ships/42/loadout").mock(
+                return_value=httpx.Response(200, json=_make_loadout())
+            )
+            asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="42"))
 
     def test_ship_rejects_non_numeric_string(self, mock_ships_cog):
         """/ship with non-numeric ship_id shows a friendly error and does not call API."""
@@ -1773,24 +1787,27 @@ class TestShipCommandStrParamHandling:
 class TestNicknameCommandStrParamHandling:
     """Tests for /nickname — ship_id parameter is now str (was int)."""
 
-    def test_nickname_accepts_numeric_string(self, mock_ships_cog, make_mock_response):
+    def test_nickname_accepts_numeric_string(self, mock_ships_cog, request):
         """/nickname with '42' (str) should call bot-core with /api/v1/ships/42."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_ships_cog, request)
         interaction = _create_mock_interaction()
 
-        ship_resp = make_mock_response(_make_ship(ship_id=42, is_active=True))
-        player_resp = make_mock_response({"id": 1})
-        nick_resp = make_mock_response({"id": 42, "ship_name": "Eagle", "nickname": "MyShip", "is_active": True})
-
-        mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
-        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(return_value=nick_resp)
-
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="42", nickname="MyShip"))
-
-        # Verify the ship lookup used the parsed int in the path
-        get_call = mock_ships_cog.http_client.get.call_args
-        url = get_call[0][0]
-        assert url.endswith("/ships/42")
+        # respx only registers a route at /ships/42 — verifies the ship lookup used
+        # the parsed int in the path, same guarantee as the old url.endswith() assert.
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_CORE_URL}/ships/42").mock(
+                return_value=httpx.Response(200, json=_make_ship(ship_id=42, is_active=True))
+            )
+            mock_router.post(f"{_BOT_CORE_URL}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{_BOT_CORE_URL}/ships/42/nickname").mock(
+                return_value=httpx.Response(
+                    200, json={"id": 42, "ship_name": "Eagle", "nickname": "MyShip", "is_active": True}
+                )
+            )
+            asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="42", nickname="MyShip"))
 
     def test_nickname_rejects_non_numeric_string(self, mock_ships_cog):
         """/nickname with non-numeric ship_id shows friendly error and no API call."""

@@ -1,24 +1,26 @@
-"""Unit tests for DiscordMessageRepository.
+"""Tests for DiscordMessageRepository.
 
-Mock-based tests (no SQLite/ARRAY columns involved).
-Covers all 8 methods:
-- create_or_update: create new + update existing
-- get_by_composite_key: found + not found
-- get_by_type: with guild_id, with channel_id, without filters
-- list_by_guild: returns list
-- list_by_channel: returns list
-- list_by_guild_and_channel: returns list
-- list_by_guild_and_type: returns list
-- delete_by_composite_key: found + not found
+Uses SQLite in-memory (aiosqlite) with the REAL DiscordMessage model — the
+model's cross-dialect ``UUIDType(binary=False)`` degrades to CHAR(36) on
+SQLite, so the table round-trips without PostgreSQL. This lets the filter
+queries (get_by_type / list_by_* / get_by_guild_type_and_reference) be
+exercised against real WHERE clauses instead of hard-coded mock returns.
+
+Only the DB-error rollback path keeps a mock session (a real SQLite commit
+cannot be forced to fail deterministically).
 """
 
 import os
 import sys
+from datetime import UTC, datetime, timedelta
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock
 
 # ---------------------------------------------------------------------------
-# Mock shared.bblogger and sqlalchemy_utils BEFORE any src imports
+# Mock shared.bblogger BEFORE any src imports.
+# NOTE: sqlalchemy_utils is intentionally NOT mocked here — the real package is
+# installed and provides a working UUIDType so the DiscordMessage table can be
+# created on SQLite.
 # ---------------------------------------------------------------------------
 _mock_shared = ModuleType("shared")
 _mock_shared.bblogger = MagicMock()
@@ -26,18 +28,35 @@ _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())
 sys.modules.setdefault("shared", _mock_shared)
 sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 
-_mock_sau = ModuleType("sqlalchemy_utils")
-_mock_sau.UUIDType = MagicMock()
-sys.modules.setdefault("sqlalchemy_utils", _mock_sau)
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.base import Base
+from persist.models.discord_message import DiscordMessage
 from persist.repositories.discord_message_repository import DiscordMessageRepository
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixtures — own SQLite engine (mirrors test_combat_log_repository.py)
 # ---------------------------------------------------------------------------
+
+_DM_TABLES = [DiscordMessage.__table__]
+
+
+@pytest.fixture
+async def async_engine():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_DM_TABLES)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(async_engine) -> AsyncSession:
+    factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        yield session
 
 
 @pytest.fixture
@@ -45,33 +64,22 @@ def repo() -> DiscordMessageRepository:
     return DiscordMessageRepository()
 
 
-@pytest.fixture
-def mock_db() -> AsyncMock:
-    db = AsyncMock()
-    db.add = MagicMock()
-    db.commit = AsyncMock()
-    db.refresh = AsyncMock()
-    db.execute = AsyncMock()
-    db.delete = AsyncMock()
-    return db
+def _raw(**overrides) -> dict:
+    """A minimal valid create_or_update payload (embed_payload is a Text column)."""
+    data = dict(
+        guild_id=111,
+        channel_id=222,
+        message_id=333,
+        embed_payload='{"title": "Hello"}',
+        message_type="announcement",
+    )
+    data.update(overrides)
+    return data
 
 
-def _make_one_or_none_result(value) -> MagicMock:
-    """Build a mock for result.scalars().one_or_none()."""
-    scalars_mock = MagicMock()
-    scalars_mock.one_or_none = MagicMock(return_value=value)
-    result_mock = MagicMock()
-    result_mock.scalars = MagicMock(return_value=scalars_mock)
-    return result_mock
-
-
-def _make_all_result(values: list) -> MagicMock:
-    """Build a mock for result.scalars().all()."""
-    scalars_mock = MagicMock()
-    scalars_mock.all = MagicMock(return_value=values)
-    result_mock = MagicMock()
-    result_mock.scalars = MagicMock(return_value=scalars_mock)
-    return result_mock
+async def _seed(repo, db_session, **overrides) -> DiscordMessage:
+    """Persist a DiscordMessage row via the repo and return it."""
+    return await repo.create_or_update(db_session, _raw(**overrides))
 
 
 # ---------------------------------------------------------------------------
@@ -82,146 +90,88 @@ def _make_all_result(values: list) -> MagicMock:
 class TestDiscordMessageRepositoryInit:
     def test_init_stores_discord_message_model(self, repo):
         """DiscordMessageRepository.__init__ must store DiscordMessage model."""
-        from persist.models.discord_message import DiscordMessage
-
         assert repo._model is DiscordMessage
 
 
 # ---------------------------------------------------------------------------
-# TestCreateOrUpdate
+# TestCreateOrUpdate — real round-trips
 # ---------------------------------------------------------------------------
 
 
 class TestCreateOrUpdate:
-    @pytest.mark.asyncio
-    async def test_create_new_message_when_not_found(self, repo, mock_db):
-        """create_or_update should create a new message when none exists."""
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+    async def test_create_new_message_when_not_found(self, repo, db_session):
+        """create_or_update inserts a new row when none exists, and it is retrievable."""
+        result = await repo.create_or_update(db_session, _raw(message_type="announcement"))
 
-        raw = {
-            "guild_id": 111,
-            "channel_id": 222,
-            "message_id": 333,
-            "embed_payload": {"title": "Hello"},
-            "message_type": "announcement",
-        }
-        result = await repo.create_or_update(mock_db, raw)
+        assert result.id is not None
+        fetched = await repo.get_by_composite_key(db_session, 111, 222, 333)
+        assert fetched is not None
+        assert fetched.id == result.id
+        assert fetched.message_type == "announcement"
+        assert fetched.embed_payload == '{"title": "Hello"}'
 
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once()
-        assert result is mock_db.refresh.call_args[0][0]
+    async def test_update_existing_message_when_found(self, repo, db_session):
+        """create_or_update updates the existing row (same PK) rather than inserting."""
+        created = await _seed(repo, db_session, message_type="announcement")
 
-    @pytest.mark.asyncio
-    async def test_update_existing_message_when_found(self, repo, mock_db):
-        """create_or_update should update an existing message when found."""
-        existing = MagicMock()
-        existing.id = 1
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
+        updated = await repo.create_or_update(
+            db_session, _raw(embed_payload='{"title": "Updated"}', message_type="news")
+        )
 
-        raw = {
-            "guild_id": 111,
-            "channel_id": 222,
-            "message_id": 333,
-            "embed_payload": {"title": "Updated"},
-            "message_type": "news",
-        }
-        result = await repo.create_or_update(mock_db, raw)
+        # Same primary key → an UPDATE, not a second INSERT.
+        assert updated.id == created.id
+        fetched = await repo.get_by_composite_key(db_session, 111, 222, 333)
+        assert fetched.embed_payload == '{"title": "Updated"}'
+        assert fetched.message_type == "news"
+        # Exactly one row for this composite key.
+        all_of_type = await repo.get_by_type(db_session, "news")
+        assert len([m for m in all_of_type if m.message_id == 333]) == 1
 
-        mock_db.add.assert_not_called()
-        assert result is existing
-        assert existing.embed_payload == {"title": "Updated"}
-        assert existing.message_type == "news"
-
-    @pytest.mark.asyncio
-    async def test_create_uses_default_message_type(self, repo, mock_db):
+    async def test_create_uses_default_message_type(self, repo, db_session):
         """create_or_update defaults message_type to 'general' when not provided."""
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+        raw = {"guild_id": 1, "channel_id": 2, "message_id": 3, "embed_payload": "{}"}
+        result = await repo.create_or_update(db_session, raw)
 
-        raw = {
-            "guild_id": 1,
-            "channel_id": 2,
-            "message_id": 3,
-            "embed_payload": {},
-        }
-        result = await repo.create_or_update(mock_db, raw)
+        fetched = await repo.get_by_composite_key(db_session, 1, 2, 3)
+        assert result.message_type == "general"
+        assert fetched.message_type == "general"
 
-        added = mock_db.add.call_args[0][0]
-        assert added.message_type == "general"
-        assert result is not None
+    async def test_create_sets_reference_id_when_provided(self, repo, db_session):
+        """create_or_update persists reference_id from raw dict when creating."""
+        await _seed(repo, db_session, message_type="bounty_announcement", reference_id=42)
 
-    @pytest.mark.asyncio
-    async def test_create_sets_reference_id_when_provided(self, repo, mock_db):
-        """create_or_update sets reference_id from raw dict when creating a new message."""
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+        fetched = await repo.get_by_composite_key(db_session, 111, 222, 333)
+        assert fetched.reference_id == 42
 
-        raw = {
-            "guild_id": 111,
-            "channel_id": 222,
-            "message_id": 333,
-            "embed_payload": {"title": "Bounty"},
-            "message_type": "bounty_announcement",
-            "reference_id": 42,
-        }
-        await repo.create_or_update(mock_db, raw)
+    async def test_create_reference_id_none_when_not_provided(self, repo, db_session):
+        """create_or_update leaves reference_id NULL when not in raw dict."""
+        raw = {"guild_id": 1, "channel_id": 2, "message_id": 3, "embed_payload": "{}"}
+        await repo.create_or_update(db_session, raw)
 
-        added = mock_db.add.call_args[0][0]
-        assert added.reference_id == 42
+        fetched = await repo.get_by_composite_key(db_session, 1, 2, 3)
+        assert fetched.reference_id is None
 
-    @pytest.mark.asyncio
-    async def test_create_reference_id_none_when_not_provided(self, repo, mock_db):
-        """create_or_update leaves reference_id as None when not in raw dict."""
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+    async def test_update_sets_reference_id_when_provided(self, repo, db_session):
+        """create_or_update updates reference_id on existing row when raw contains it."""
+        await _seed(repo, db_session, message_type="bounty_announcement", reference_id=None)
 
-        raw = {
-            "guild_id": 1,
-            "channel_id": 2,
-            "message_id": 3,
-            "embed_payload": {},
-        }
-        await repo.create_or_update(mock_db, raw)
+        await repo.create_or_update(
+            db_session, _raw(message_type="bounty_announcement", reference_id=99)
+        )
 
-        added = mock_db.add.call_args[0][0]
-        assert added.reference_id is None
+        fetched = await repo.get_by_composite_key(db_session, 111, 222, 333)
+        assert fetched.reference_id == 99
 
-    @pytest.mark.asyncio
-    async def test_update_sets_reference_id_when_provided(self, repo, mock_db):
-        """create_or_update updates reference_id on existing message when raw contains it."""
-        existing = MagicMock()
-        existing.id = 5
-        existing.reference_id = None
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
+    async def test_update_preserves_existing_reference_id_when_not_in_raw(self, repo, db_session):
+        """create_or_update preserves existing reference_id when raw omits it."""
+        await _seed(repo, db_session, message_type="bounty_announcement", reference_id=77)
 
-        raw = {
-            "guild_id": 111,
-            "channel_id": 222,
-            "message_id": 333,
-            "embed_payload": {"title": "Updated"},
-            "message_type": "bounty_announcement",
-            "reference_id": 99,
-        }
-        await repo.create_or_update(mock_db, raw)
+        # raw without reference_id
+        raw = {"guild_id": 111, "channel_id": 222, "message_id": 333, "embed_payload": '{"t": 1}'}
+        await repo.create_or_update(db_session, raw)
 
-        assert existing.reference_id == 99
-
-    @pytest.mark.asyncio
-    async def test_update_preserves_existing_reference_id_when_not_in_raw(self, repo, mock_db):
-        """create_or_update preserves existing reference_id when raw does not include it."""
-        existing = MagicMock()
-        existing.id = 5
-        existing.reference_id = 77
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
-
-        raw = {
-            "guild_id": 111,
-            "channel_id": 222,
-            "message_id": 333,
-            "embed_payload": {"title": "Updated"},
-        }
-        await repo.create_or_update(mock_db, raw)
-
-        # raw has no reference_id → existing value is preserved
-        assert existing.reference_id == 77
+        fetched = await repo.get_by_composite_key(db_session, 111, 222, 333)
+        assert fetched.reference_id == 77
 
 
 # ---------------------------------------------------------------------------
@@ -230,71 +180,88 @@ class TestCreateOrUpdate:
 
 
 class TestGetByCompositeKey:
-    @pytest.mark.asyncio
-    async def test_returns_message_when_found(self, repo, mock_db):
-        """get_by_composite_key should return a message when it exists."""
-        msg = MagicMock()
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(msg))
+    async def test_returns_message_when_found(self, repo, db_session):
+        created = await _seed(repo, db_session)
 
-        result = await repo.get_by_composite_key(mock_db, 1, 2, 3)
+        result = await repo.get_by_composite_key(db_session, 111, 222, 333)
 
-        assert result is msg
-        mock_db.execute.assert_awaited_once()
+        assert result is not None
+        assert result.id == created.id
 
-    @pytest.mark.asyncio
-    async def test_returns_none_when_not_found(self, repo, mock_db):
-        """get_by_composite_key should return None when message does not exist."""
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+    async def test_returns_none_when_not_found(self, repo, db_session):
+        await _seed(repo, db_session)  # a different key exists
 
-        result = await repo.get_by_composite_key(mock_db, 9, 9, 9)
+        result = await repo.get_by_composite_key(db_session, 9, 9, 9)
 
         assert result is None
 
+    async def test_composite_key_discriminates_on_each_component(self, repo, db_session):
+        """A row is only matched when all three of guild/channel/message match."""
+        await _seed(repo, db_session, guild_id=111, channel_id=222, message_id=333)
+
+        assert await repo.get_by_composite_key(db_session, 999, 222, 333) is None
+        assert await repo.get_by_composite_key(db_session, 111, 999, 333) is None
+        assert await repo.get_by_composite_key(db_session, 111, 222, 999) is None
+        assert await repo.get_by_composite_key(db_session, 111, 222, 333) is not None
+
 
 # ---------------------------------------------------------------------------
-# TestGetByType
+# TestGetByType — real filtering on message_type / guild_id / channel_id
 # ---------------------------------------------------------------------------
 
 
 class TestGetByType:
-    @pytest.mark.asyncio
-    async def test_get_by_type_without_filters(self, repo, mock_db):
-        """get_by_type should return all messages of the given type."""
-        msgs = [MagicMock(), MagicMock()]
-        mock_db.execute = AsyncMock(return_value=_make_all_result(msgs))
+    async def test_get_by_type_filters_by_type(self, repo, db_session):
+        """Only rows of the requested type are returned; other types excluded."""
+        await _seed(repo, db_session, message_id=1, message_type="news")
+        await _seed(repo, db_session, message_id=2, message_type="news")
+        await _seed(repo, db_session, message_id=3, message_type="announcement")
 
-        result = await repo.get_by_type(mock_db, "announcement")
+        result = await repo.get_by_type(db_session, "news")
 
-        assert result == msgs
-        mock_db.execute.assert_awaited_once()
+        assert {m.message_id for m in result} == {1, 2}
+        assert all(m.message_type == "news" for m in result)
 
-    @pytest.mark.asyncio
-    async def test_get_by_type_with_guild_id(self, repo, mock_db):
-        """get_by_type with guild_id should filter by guild."""
-        msgs = [MagicMock()]
-        mock_db.execute = AsyncMock(return_value=_make_all_result(msgs))
+    async def test_get_by_type_with_guild_id_filters_by_guild(self, repo, db_session):
+        """guild_id argument restricts results to that guild only."""
+        await _seed(repo, db_session, guild_id=42, message_id=1, message_type="news")
+        await _seed(repo, db_session, guild_id=99, message_id=2, message_type="news")
 
-        result = await repo.get_by_type(mock_db, "news", guild_id=42)
+        result = await repo.get_by_type(db_session, "news", guild_id=42)
 
-        assert result == msgs
-        mock_db.execute.assert_awaited_once()
+        assert {m.message_id for m in result} == {1}
+        assert all(m.guild_id == 42 for m in result)
 
-    @pytest.mark.asyncio
-    async def test_get_by_type_with_channel_id(self, repo, mock_db):
-        """get_by_type with channel_id should filter by channel."""
-        msgs = [MagicMock()]
-        mock_db.execute = AsyncMock(return_value=_make_all_result(msgs))
+    async def test_get_by_type_with_channel_id_filters_by_channel(self, repo, db_session):
+        """channel_id argument restricts results to that channel only."""
+        await _seed(repo, db_session, channel_id=500, message_id=1, message_type="news")
+        await _seed(repo, db_session, channel_id=600, message_id=2, message_type="news")
 
-        result = await repo.get_by_type(mock_db, "news", channel_id=99)
+        result = await repo.get_by_type(db_session, "news", channel_id=500)
 
-        assert result == msgs
+        assert {m.message_id for m in result} == {1}
 
-    @pytest.mark.asyncio
-    async def test_get_by_type_returns_empty_list(self, repo, mock_db):
-        """get_by_type should return an empty list when no results."""
-        mock_db.execute = AsyncMock(return_value=_make_all_result([]))
+    async def test_get_by_type_orders_newest_first(self, repo, db_session):
+        """Results are ordered by created_at descending."""
+        old = await _seed(
+            repo, db_session, message_id=1, message_type="news",
+        )
+        new = await _seed(
+            repo, db_session, message_id=2, message_type="news",
+        )
+        # Force a deterministic ordering on created_at.
+        old.created_at = datetime.now(UTC) - timedelta(hours=2)
+        new.created_at = datetime.now(UTC)
+        await db_session.commit()
 
-        result = await repo.get_by_type(mock_db, "nonexistent")
+        result = await repo.get_by_type(db_session, "news")
+        ids = [m.message_id for m in result]
+        assert ids.index(2) < ids.index(1)
+
+    async def test_get_by_type_returns_empty_list(self, repo, db_session):
+        await _seed(repo, db_session, message_type="news")
+
+        result = await repo.get_by_type(db_session, "nonexistent")
 
         assert result == []
 
@@ -305,23 +272,20 @@ class TestGetByType:
 
 
 class TestListByGuild:
-    @pytest.mark.asyncio
-    async def test_list_by_guild_returns_list(self, repo, mock_db):
-        """list_by_guild should return all messages for a guild."""
-        msgs = [MagicMock(), MagicMock(), MagicMock()]
-        mock_db.execute = AsyncMock(return_value=_make_all_result(msgs))
+    async def test_list_by_guild_returns_only_that_guild(self, repo, db_session):
+        await _seed(repo, db_session, guild_id=100, message_id=1)
+        await _seed(repo, db_session, guild_id=100, message_id=2)
+        await _seed(repo, db_session, guild_id=200, message_id=3)
 
-        result = await repo.list_by_guild(mock_db, guild_id=100)
+        result = await repo.list_by_guild(db_session, guild_id=100)
 
-        assert result == msgs
-        mock_db.execute.assert_awaited_once()
+        assert {m.message_id for m in result} == {1, 2}
+        assert all(m.guild_id == 100 for m in result)
 
-    @pytest.mark.asyncio
-    async def test_list_by_guild_returns_empty_list(self, repo, mock_db):
-        """list_by_guild should return empty list when no messages."""
-        mock_db.execute = AsyncMock(return_value=_make_all_result([]))
+    async def test_list_by_guild_returns_empty_list(self, repo, db_session):
+        await _seed(repo, db_session, guild_id=100)
 
-        result = await repo.list_by_guild(mock_db, guild_id=999)
+        result = await repo.list_by_guild(db_session, guild_id=999)
 
         assert result == []
 
@@ -332,23 +296,19 @@ class TestListByGuild:
 
 
 class TestListByChannel:
-    @pytest.mark.asyncio
-    async def test_list_by_channel_returns_list(self, repo, mock_db):
-        """list_by_channel should return messages for a guild+channel."""
-        msgs = [MagicMock()]
-        mock_db.execute = AsyncMock(return_value=_make_all_result(msgs))
+    async def test_list_by_channel_filters_guild_and_channel(self, repo, db_session):
+        await _seed(repo, db_session, guild_id=10, channel_id=20, message_id=1)
+        await _seed(repo, db_session, guild_id=10, channel_id=30, message_id=2)
+        await _seed(repo, db_session, guild_id=99, channel_id=20, message_id=3)
 
-        result = await repo.list_by_channel(mock_db, guild_id=10, channel_id=20)
+        result = await repo.list_by_channel(db_session, guild_id=10, channel_id=20)
 
-        assert result == msgs
-        mock_db.execute.assert_awaited_once()
+        assert {m.message_id for m in result} == {1}
 
-    @pytest.mark.asyncio
-    async def test_list_by_channel_returns_empty_list(self, repo, mock_db):
-        """list_by_channel should return empty list when none exist."""
-        mock_db.execute = AsyncMock(return_value=_make_all_result([]))
+    async def test_list_by_channel_returns_empty_list(self, repo, db_session):
+        await _seed(repo, db_session, guild_id=10, channel_id=20)
 
-        result = await repo.list_by_channel(mock_db, guild_id=1, channel_id=2)
+        result = await repo.list_by_channel(db_session, guild_id=1, channel_id=2)
 
         assert result == []
 
@@ -359,16 +319,14 @@ class TestListByChannel:
 
 
 class TestListByGuildAndChannel:
-    @pytest.mark.asyncio
-    async def test_list_by_guild_and_channel_returns_list(self, repo, mock_db):
-        """list_by_guild_and_channel should return messages for the pair."""
-        msgs = [MagicMock(), MagicMock()]
-        mock_db.execute = AsyncMock(return_value=_make_all_result(msgs))
+    async def test_list_by_guild_and_channel_filters_pair(self, repo, db_session):
+        await _seed(repo, db_session, guild_id=5, channel_id=6, message_id=1)
+        await _seed(repo, db_session, guild_id=5, channel_id=6, message_id=2)
+        await _seed(repo, db_session, guild_id=5, channel_id=7, message_id=3)
 
-        result = await repo.list_by_guild_and_channel(mock_db, guild_id=5, channel_id=6)
+        result = await repo.list_by_guild_and_channel(db_session, guild_id=5, channel_id=6)
 
-        assert result == msgs
-        mock_db.execute.assert_awaited_once()
+        assert {m.message_id for m in result} == {1, 2}
 
 
 # ---------------------------------------------------------------------------
@@ -377,23 +335,19 @@ class TestListByGuildAndChannel:
 
 
 class TestListByGuildAndType:
-    @pytest.mark.asyncio
-    async def test_list_by_guild_and_type_returns_list(self, repo, mock_db):
-        """list_by_guild_and_type delegates to get_by_type and returns list."""
-        msgs = [MagicMock()]
-        mock_db.execute = AsyncMock(return_value=_make_all_result(msgs))
+    async def test_list_by_guild_and_type_filters_guild_and_type(self, repo, db_session):
+        await _seed(repo, db_session, guild_id=7, message_id=1, message_type="alert")
+        await _seed(repo, db_session, guild_id=7, message_id=2, message_type="news")
+        await _seed(repo, db_session, guild_id=8, message_id=3, message_type="alert")
 
-        result = await repo.list_by_guild_and_type(mock_db, guild_id=7, message_type="alert")
+        result = await repo.list_by_guild_and_type(db_session, guild_id=7, message_type="alert")
 
-        assert result == msgs
-        mock_db.execute.assert_awaited_once()
+        assert {m.message_id for m in result} == {1}
 
-    @pytest.mark.asyncio
-    async def test_list_by_guild_and_type_returns_empty_list(self, repo, mock_db):
-        """list_by_guild_and_type returns empty list when none match."""
-        mock_db.execute = AsyncMock(return_value=_make_all_result([]))
+    async def test_list_by_guild_and_type_returns_empty_list(self, repo, db_session):
+        await _seed(repo, db_session, guild_id=7, message_type="alert")
 
-        result = await repo.list_by_guild_and_type(mock_db, guild_id=8, message_type="missing")
+        result = await repo.list_by_guild_and_type(db_session, guild_id=8, message_type="missing")
 
         assert result == []
 
@@ -404,28 +358,22 @@ class TestListByGuildAndType:
 
 
 class TestDeleteByCompositeKey:
-    @pytest.mark.asyncio
-    async def test_delete_returns_true_when_found(self, repo, mock_db):
-        """delete_by_composite_key returns True when message exists and is deleted."""
-        msg = MagicMock()
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(msg))
+    async def test_delete_returns_true_and_removes_row(self, repo, db_session):
+        await _seed(repo, db_session, guild_id=1, channel_id=2, message_id=3)
 
-        result = await repo.delete_by_composite_key(mock_db, 1, 2, 3)
+        result = await repo.delete_by_composite_key(db_session, 1, 2, 3)
 
         assert result is True
-        mock_db.delete.assert_awaited_once_with(msg)
-        mock_db.commit.assert_awaited_once()
+        assert await repo.get_by_composite_key(db_session, 1, 2, 3) is None
 
-    @pytest.mark.asyncio
-    async def test_delete_returns_false_when_not_found(self, repo, mock_db):
-        """delete_by_composite_key returns False when message does not exist."""
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+    async def test_delete_returns_false_when_not_found(self, repo, db_session):
+        await _seed(repo, db_session, guild_id=1, channel_id=2, message_id=3)
 
-        result = await repo.delete_by_composite_key(mock_db, 9, 9, 9)
+        result = await repo.delete_by_composite_key(db_session, 9, 9, 9)
 
         assert result is False
-        mock_db.delete.assert_not_called()
-        mock_db.commit.assert_not_called()
+        # The unrelated row is untouched.
+        assert await repo.get_by_composite_key(db_session, 1, 2, 3) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -433,44 +381,35 @@ class TestDeleteByCompositeKey:
 # ---------------------------------------------------------------------------
 
 
-def _make_first_result(value) -> MagicMock:
-    """Build a mock for result.scalars().first()."""
-    scalars_mock = MagicMock()
-    scalars_mock.first = MagicMock(return_value=value)
-    result_mock = MagicMock()
-    result_mock.scalars = MagicMock(return_value=scalars_mock)
-    return result_mock
-
-
-def _make_returning_result(row_ids: list) -> MagicMock:
-    """Build a mock for result.fetchall() (used by DELETE RETURNING)."""
-    result_mock = MagicMock()
-    result_mock.fetchall = MagicMock(return_value=row_ids)
-    return result_mock
-
-
 class TestGetByGuildTypeAndReference:
-    @pytest.mark.asyncio
-    async def test_returns_message_when_found(self, repo, mock_db):
-        """get_by_guild_type_and_reference returns the matching message when found."""
-        msg = MagicMock()
-        msg.id = "some-uuid"
-        mock_db.execute = AsyncMock(return_value=_make_first_result(msg))
+    async def test_returns_message_when_found(self, repo, db_session):
+        created = await _seed(
+            repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42
+        )
 
-        result = await repo.get_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 42)
+        result = await repo.get_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 42)
 
-        assert result is msg
-        mock_db.execute.assert_awaited_once()
+        assert result is not None
+        assert result.id == created.id
 
-    @pytest.mark.asyncio
-    async def test_returns_none_when_not_found(self, repo, mock_db):
-        """get_by_guild_type_and_reference returns None when no record matches."""
-        mock_db.execute = AsyncMock(return_value=_make_first_result(None))
+    async def test_returns_none_when_not_found(self, repo, db_session):
+        await _seed(
+            repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42
+        )
 
-        result = await repo.get_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 999)
+        result = await repo.get_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 999)
 
         assert result is None
-        mock_db.execute.assert_awaited_once()
+
+    async def test_discriminates_on_guild_type_and_reference(self, repo, db_session):
+        """A wrong guild, type, or reference_id all miss the seeded row."""
+        await _seed(
+            repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42
+        )
+
+        assert await repo.get_by_guild_type_and_reference(db_session, 222, "bounty_announcement", 42) is None
+        assert await repo.get_by_guild_type_and_reference(db_session, 111, "news", 42) is None
+        assert await repo.get_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 43) is None
 
 
 # ---------------------------------------------------------------------------
@@ -479,30 +418,40 @@ class TestGetByGuildTypeAndReference:
 
 
 class TestDeleteByGuildTypeAndReference:
-    @pytest.mark.asyncio
-    async def test_delete_returns_true_when_records_deleted(self, repo, mock_db):
-        """delete_by_guild_type_and_reference returns True when at least one record was deleted."""
-        mock_db.execute = AsyncMock(return_value=_make_returning_result([("uuid-1",)]))
+    async def test_delete_returns_true_and_removes_matching_rows(self, repo, db_session):
+        await _seed(
+            repo, db_session, guild_id=111, message_id=1, message_type="bounty_announcement", reference_id=42
+        )
+        # An unrelated row that must survive.
+        await _seed(
+            repo, db_session, guild_id=111, message_id=2, message_type="bounty_announcement", reference_id=43
+        )
 
-        result = await repo.delete_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 42)
+        result = await repo.delete_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 42)
 
         assert result is True
-        mock_db.commit.assert_awaited_once()
+        assert await repo.get_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 42) is None
+        assert await repo.get_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 43) is not None
 
-    @pytest.mark.asyncio
-    async def test_delete_returns_false_when_no_records_found(self, repo, mock_db):
-        """delete_by_guild_type_and_reference returns False when no records match."""
-        mock_db.execute = AsyncMock(return_value=_make_returning_result([]))
+    async def test_delete_returns_false_when_no_records_found(self, repo, db_session):
+        await _seed(
+            repo, db_session, guild_id=111, message_type="bounty_announcement", reference_id=42
+        )
 
-        result = await repo.delete_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 999)
+        result = await repo.delete_by_guild_type_and_reference(db_session, 111, "bounty_announcement", 999)
 
         assert result is False
-        mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_delete_rolls_back_and_raises_on_error(self, repo, mock_db):
-        """delete_by_guild_type_and_reference rolls back and re-raises on DB error."""
+    async def test_delete_rolls_back_and_raises_on_error(self, repo):
+        """On DB error the delete rolls back and re-raises.
+
+        Justified mock: a real SQLite session cannot be made to raise
+        deterministically inside execute(), so a mock session forces the error path.
+        """
+        mock_db = AsyncMock()
         mock_db.execute = AsyncMock(side_effect=RuntimeError("DB error"))
+        mock_db.rollback = AsyncMock()
 
         with pytest.raises(RuntimeError, match="DB error"):
             await repo.delete_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 42)

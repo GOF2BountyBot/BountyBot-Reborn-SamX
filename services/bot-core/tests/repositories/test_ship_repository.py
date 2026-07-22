@@ -11,7 +11,7 @@ Covers:
 
 import os
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -120,22 +120,36 @@ class TestShipRepositoryInit:
 class TestShipRepositoryCreateOrUpdate:
     @pytest.mark.asyncio
     async def test_create_new_ship_when_not_found(self, repo, mock_db):
-        """create_or_update should create a new Ship when none exists."""
+        """create_or_update should create a new Ship when none exists, mapping
+        camelCase JSON keys onto the real Ship constructor kwargs."""
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
 
-        raw = {"name": "Falcon", "builtIn": True}
-        result = await repo.create_or_update(mock_db, raw)
+        captured_kwargs = {}
 
+        class MockShip:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                for k, v in kwargs.items():
+                    object.__setattr__(self, k, v)
+
+        raw = {"name": "Falcon", "builtIn": True}
+        with patch("persist.repositories.ship_repository.Ship", MockShip):
+            result = await repo.create_or_update(mock_db, raw)
+
+        assert captured_kwargs["name"] == "Falcon"
+        assert captured_kwargs["built_in"] is True
         mock_db.add.assert_called_once()
         mock_db.commit.assert_awaited_once()
         mock_db.refresh.assert_awaited_once()
         assert result is mock_db.refresh.call_args[0][0]
+        assert result.name == "Falcon"
+        assert result.built_in is True
 
     @pytest.mark.asyncio
     async def test_update_existing_ship_when_found(self, repo, mock_db):
-        """create_or_update should update an existing Ship."""
-        existing = MagicMock()
-        existing.name = "Falcon"
+        """create_or_update should update an existing Ship's mapped attrs in place."""
+        existing = SimpleNamespace(id=1, name="Falcon", built_in=True)
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
 
         raw = {"name": "Falcon", "builtIn": False}
@@ -145,6 +159,8 @@ class TestShipRepositoryCreateOrUpdate:
         mock_db.commit.assert_awaited_once()
         mock_db.refresh.assert_awaited_once_with(existing)
         assert result is existing
+        assert existing.name == "Falcon"
+        assert existing.built_in is False
 
     @pytest.mark.asyncio
     async def test_maps_built_in_key_on_new_ship(self, repo, mock_db):

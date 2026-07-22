@@ -1,26 +1,44 @@
 """
 Migration tests for Package G B.19 — 0002_b19_repair_loadout_consistency.
 
-Builds an in-memory SQLite DB matching the empirical B.19 corrupt state
-observed in the recon (Betty/Hera/Terran with E2 Exoclad and Telta Quickscan
-duplicated across all three ships) and asserts the repair migration:
+These tests drive the REAL migration ``upgrade()`` against a live Postgres
+(the same rolled-back-transaction pattern proven by the 0015/0016/0017 suites),
+NOT an in-test reimplementation of the repair contract.  Postgres is required
+because the migration's dedup pass reads/writes the ``player_ships`` JSONB slot
+columns with ``CAST(:val AS json)`` and orders by ``is_active DESC`` — SQLite's
+JSON semantics and the empirical corrupt state differ enough that only the real
+engine exercises the shipped SQL faithfully.
+
+Builds the empirical B.19 corrupt state (Betty/Hera/Terran with E2 Exoclad and
+Telta Quickscan duplicated across all three ships) via raw inserts for a
+synthetic player, runs the real ``upgrade()`` through a thin op translator, and
+asserts the repair migration:
 
   - removes the duplicate slot references
   - keeps each (item_name, kind) on exactly one ship
   - preserves the active ship's references (active wins)
   - is idempotent (re-running on already-clean data is a no-op)
-  - down-migration is a no-op (per spec)
+  - down-migration is a real no-op (per spec) that does not alter data
+
+All DDL/DML runs inside a transaction that is ALWAYS rolled back, so the tests
+leave zero trace on the target database.
 """
 
+from __future__ import annotations
+
+import contextlib
+import importlib.util
 import json
+import os
 import sys
 import types
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 
 # ---------------------------------------------------------------------------
-# Module-level mocks (mirroring tests/services/test_player_service.py).
+# Module-level mocks (mirroring the other migration test modules).
 # ---------------------------------------------------------------------------
 if "shared" not in sys.modules:
     _mock_shared = types.ModuleType("shared")
@@ -35,155 +53,170 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
-import sqlalchemy as sa
-
 # ---------------------------------------------------------------------------
-# Test fixture: in-memory SQLite with a minimal player_ships schema.
+# Postgres connection — resolved from POSTGRES_* env vars.
 # ---------------------------------------------------------------------------
+from tests.pg_env import PG_SYNC_URL as _PG_SYNC_URL
+from tests.pg_env import pg_skip_reason
 
+_PG_SKIP = pg_skip_reason()
+pytestmark = pytest.mark.skipif(bool(_PG_SKIP), reason=_PG_SKIP or "")
 
-def _create_player_ships_table(engine: sa.engine.Engine) -> sa.Table:
-    """Create a minimal player_ships table with JSON columns.
+_TABLE = "player_ships"
 
-    SQLite does not have a native JSON type, but its JSON1 extension supports
-    JSON-shaped string storage.  The migration uses ``CAST(:val AS json)``
-    which SQLite tolerates.
-    """
-    metadata = sa.MetaData()
-    table = sa.Table(
-        "player_ships",
-        metadata,
-        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("player_id", sa.Integer, nullable=False),
-        sa.Column("ship_name", sa.String(100), nullable=False),
-        sa.Column("is_active", sa.Boolean, default=False),
-        sa.Column("weapons", sa.JSON),
-        sa.Column("modules", sa.JSON),
-        sa.Column("turrets", sa.JSON),
-        sa.Column("secondary_weapons", sa.JSON),
+# Synthetic ids well outside real game data to avoid collisions.  Ordering
+# matters to the migration (active first, then id ascending), so the ids are
+# chosen so that Hera < Terran.
+_TEST_PLAYER_ID = 990_000_001
+_BETTY_ID = 990_000_101  # active ship
+_HERA_ID = 990_000_102
+_TERRAN_ID = 990_000_103
+
+_SLOT_KINDS = ("weapons", "modules", "turrets", "secondary_weapons")
+
+_MIGRATION_PATH = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "src",
+        "persist",
+        "database",
+        "revisions",
+        "versions",
+        "0002_b19_repair_loadout_consistency.py",
     )
-    metadata.create_all(engine)
-    return table
+)
 
 
-def _seed_corrupt_state(engine: sa.engine.Engine, table: sa.Table) -> None:
-    """Insert the empirical B.19 corrupt state for player_id=1."""
-    with engine.begin() as conn:
-        conn.execute(
-            table.insert(),
-            [
-                {
-                    "id": 1,
-                    "player_id": 1,
-                    "ship_name": "Betty",
-                    "is_active": True,
-                    "weapons": ["Nirai Impulse EX 1"],
-                    "modules": ["E2 Exoclad", "Telta Quickscan"],
-                    "turrets": [],
-                    "secondary_weapons": None,
-                },
-                {
-                    "id": 5,
-                    "player_id": 1,
-                    "ship_name": "Hera",
-                    "is_active": False,
-                    "weapons": ["Micro Gun MK I", 'M6 A4 "Raccoon"'],
-                    "modules": ["E2 Exoclad", "Telta Quickscan"],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                },
-                {
-                    "id": 7,
-                    "player_id": 1,
-                    "ship_name": "Terran Battlecruiser",
-                    "is_active": False,
-                    "weapons": ["Micro Gun MK I", 'M6 A4 "Raccoon"'],
-                    "modules": ["E2 Exoclad", "Telta Quickscan"],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                },
-            ],
-        )
+def _load_migration_module():
+    """Load the real 0002 migration module via importlib (avoids Alembic env)."""
+    spec = importlib.util.spec_from_file_location("migration_0002_real", _MIGRATION_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def _run_repair_logic(engine: sa.engine.Engine) -> None:
-    """Execute the same repair pass that the Alembic migration runs.
+def _build_mock_op(conn: sa.engine.Connection) -> MagicMock:
+    """Build a MagicMock for alembic.op wired to a live sync connection.
 
-    We can't load the Alembic migration directly (it imports ``alembic.op``,
-    which requires an Alembic context).  Instead we re-implement the
-    documented contract here so the test exercises identical logic.
+    The 0002 migration only ever calls ``op.get_bind()`` and then issues raw
+    ``bind.execute(sa.text(...))`` statements itself, so the translator needs
+    only to return the live connection from ``get_bind()``.
     """
-    _SLOT_KINDS = ("weapons", "modules", "turrets", "secondary_weapons")
-    with engine.begin() as conn:
-        result = conn.execute(
-            sa.text(
-                "SELECT player_id, id, is_active, weapons, modules, turrets, secondary_weapons "
-                "FROM player_ships ORDER BY player_id ASC, is_active DESC, id ASC"
-            )
-        )
-        rows = result.fetchall()
-
-        rows_by_player: dict[int, list] = {}
-        for row in rows:
-            rows_by_player.setdefault(row[0], []).append(row)
-
-        for _player_id, player_rows in rows_by_player.items():
-            seen: dict[tuple[str, str], int] = {}
-            for row in player_rows:
-                ship_id = row[1]
-                slots = {
-                    "weapons": row[3],
-                    "modules": row[4],
-                    "turrets": row[5],
-                    "secondary_weapons": row[6],
-                }
-                set_pairs = []
-                params: dict[str, object] = {"sid": ship_id}
-                ship_modified = False
-                for kind in _SLOT_KINDS:
-                    raw = slots[kind]
-                    if raw is None:
-                        items = []
-                    elif isinstance(raw, list):
-                        items = list(raw)
-                    elif isinstance(raw, str):
-                        try:
-                            items = list(json.loads(raw))
-                        except (TypeError, ValueError):
-                            items = []
-                    else:
-                        items = []
-                    if not items:
-                        continue
-                    cleaned = []
-                    modified = False
-                    for name in items:
-                        key = (name, kind)
-                        if key not in seen:
-                            seen[key] = ship_id
-                            cleaned.append(name)
-                        else:
-                            modified = True
-                    if modified:
-                        set_pairs.append(f"{kind} = :{kind}")
-                        params[kind] = json.dumps(cleaned)
-                        ship_modified = True
-                if ship_modified:
-                    sql = f"UPDATE player_ships SET {', '.join(set_pairs)} WHERE id = :sid"
-                    conn.execute(sa.text(sql), params)
+    mock_op = MagicMock()
+    mock_op.get_bind.return_value = conn
+    return mock_op
 
 
-def _read_ship_slots(engine: sa.engine.Engine) -> dict[int, dict[str, list]]:
-    """Read back all ships' slot lists, normalising JSON-string→list."""
-    out: dict[int, dict[str, list]] = {}
+@contextlib.contextmanager
+def _rollback_conn(engine: sa.engine.Engine):
+    """Connection inside a transaction that is ALWAYS rolled back."""
     with engine.connect() as conn:
-        rows = conn.execute(
-            sa.text("SELECT id, weapons, modules, turrets, secondary_weapons FROM player_ships ORDER BY id")
-        ).fetchall()
+        trans = conn.begin()
+        try:
+            yield conn
+        finally:
+            if trans.is_active:
+                trans.rollback()
+
+
+def _disable_fk(conn: sa.engine.Connection) -> None:
+    conn.execute(sa.text("SET session_replication_role = 'replica'"))
+
+
+def _delete_test_rows(conn: sa.engine.Connection) -> None:
+    conn.execute(sa.text(f"DELETE FROM {_TABLE} WHERE player_id = :pid"), {"pid": _TEST_PLAYER_ID})
+
+
+def _insert_ship(
+    conn: sa.engine.Connection,
+    ship_id: int,
+    ship_name: str,
+    is_active: bool,
+    *,
+    weapons,
+    modules,
+    turrets,
+    secondary_weapons,
+) -> None:
+    """Raw-insert a player_ships row with JSONB slot columns.
+
+    Slot values are passed through ``CAST(:val AS jsonb)`` so we can hand in
+    JSON text (or NULL) for the JSONB columns without an ORM.
+    """
+    conn.execute(
+        sa.text(
+            f"INSERT INTO {_TABLE} "
+            "(id, player_id, ship_name, is_active, weapons, modules, turrets, secondary_weapons, created_at) "
+            "VALUES (:id, :pid, :name, :active, "
+            "CAST(:weapons AS jsonb), CAST(:modules AS jsonb), CAST(:turrets AS jsonb), "
+            "CAST(:secondary AS jsonb), NOW())"
+        ),
+        {
+            "id": ship_id,
+            "pid": _TEST_PLAYER_ID,
+            "name": ship_name,
+            "active": is_active,
+            "weapons": None if weapons is None else json.dumps(weapons),
+            "modules": None if modules is None else json.dumps(modules),
+            "turrets": None if turrets is None else json.dumps(turrets),
+            "secondary": None if secondary_weapons is None else json.dumps(secondary_weapons),
+        },
+    )
+
+
+def _seed_corrupt_state(conn: sa.engine.Connection) -> None:
+    """Insert the empirical B.19 corrupt state for the synthetic player.
+
+    Betty (active), Hera and Terran all carry the same E2 Exoclad + Telta
+    Quickscan modules; Hera and Terran share the same weapon pair.
+    """
+    _insert_ship(
+        conn,
+        _BETTY_ID,
+        "Betty",
+        True,
+        weapons=["Nirai Impulse EX 1"],
+        modules=["E2 Exoclad", "Telta Quickscan"],
+        turrets=[],
+        secondary_weapons=None,
+    )
+    _insert_ship(
+        conn,
+        _HERA_ID,
+        "Hera",
+        False,
+        weapons=["Micro Gun MK I", 'M6 A4 "Raccoon"'],
+        modules=["E2 Exoclad", "Telta Quickscan"],
+        turrets=[],
+        secondary_weapons=[],
+    )
+    _insert_ship(
+        conn,
+        _TERRAN_ID,
+        "Terran Battlecruiser",
+        False,
+        weapons=["Micro Gun MK I", 'M6 A4 "Raccoon"'],
+        modules=["E2 Exoclad", "Telta Quickscan"],
+        turrets=[],
+        secondary_weapons=[],
+    )
+
+
+def _read_ship_slots(conn: sa.engine.Connection) -> dict[int, dict[str, list]]:
+    """Read back the synthetic player's ships' slot lists, normalising to lists."""
+    rows = conn.execute(
+        sa.text(
+            f"SELECT id, weapons, modules, turrets, secondary_weapons FROM {_TABLE} "
+            "WHERE player_id = :pid ORDER BY id"
+        ),
+        {"pid": _TEST_PLAYER_ID},
+    ).fetchall()
+    out: dict[int, dict[str, list]] = {}
     for row in rows:
         sid = row[0]
         out[sid] = {}
-        for idx, kind in enumerate(("weapons", "modules", "turrets", "secondary_weapons"), start=1):
+        for idx, kind in enumerate(_SLOT_KINDS, start=1):
             raw = row[idx]
             if raw is None:
                 out[sid][kind] = []
@@ -199,148 +232,134 @@ def _read_ship_slots(engine: sa.engine.Engine) -> dict[int, dict[str, list]]:
     return out
 
 
+@pytest.fixture(scope="function")
+def pg_sync_engine():
+    """Synchronous Postgres engine for migration DDL/DML tests."""
+    engine = sa.create_engine(_PG_SYNC_URL, echo=False)
+    yield engine
+    engine.dispose()
+
+
 # ---------------------------------------------------------------------------
-# Tests
+# Tests — every case drives the REAL mod.upgrade()/mod.downgrade().
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def engine():
-    e = sa.create_engine("sqlite:///:memory:")
-    yield e
-    e.dispose()
-
-
-def test_repair_dedupes_b19_empirical_corrupt_state(engine):
+def test_repair_dedupes_b19_empirical_corrupt_state(pg_sync_engine):
     """The empirical B.19 corrupt state (Betty/Hera/Terran with duplicated
-    modules) is deduplicated so that each (name, kind) appears on exactly
-    one ship."""
-    table = _create_player_ships_table(engine)
-    _seed_corrupt_state(engine, table)
+    modules) is deduplicated by the real upgrade() so each (name, kind) appears
+    on exactly one ship."""
+    mod = _load_migration_module()
 
-    _run_repair_logic(engine)
+    with _rollback_conn(pg_sync_engine) as conn:
+        _disable_fk(conn)
+        _delete_test_rows(conn)
+        _seed_corrupt_state(conn)
 
-    slots = _read_ship_slots(engine)
-    # Active ship (Betty=1) keeps both modules.
-    assert slots[1]["modules"] == ["E2 Exoclad", "Telta Quickscan"]
-    # Hera and Terran lose their duplicates.
-    assert slots[5]["modules"] == []
-    assert slots[7]["modules"] == []
-    # Hera is the first non-active ship by id, so it keeps the weapons.
-    assert slots[5]["weapons"] == ["Micro Gun MK I", 'M6 A4 "Raccoon"']
+        mod.op = _build_mock_op(conn)
+        mod.upgrade()
+
+        slots = _read_ship_slots(conn)
+
+    # Active ship (Betty) keeps both modules.
+    assert slots[_BETTY_ID]["modules"] == ["E2 Exoclad", "Telta Quickscan"]
+    # Hera and Terran lose their duplicate modules.
+    assert slots[_HERA_ID]["modules"] == []
+    assert slots[_TERRAN_ID]["modules"] == []
+    # Hera is the first non-active ship by id, so it keeps the shared weapons.
+    assert slots[_HERA_ID]["weapons"] == ["Micro Gun MK I", 'M6 A4 "Raccoon"']
     # Terran's duplicates of Hera's weapons are removed.
-    assert slots[7]["weapons"] == []
+    assert slots[_TERRAN_ID]["weapons"] == []
+    # Betty's unique weapon is untouched.
+    assert slots[_BETTY_ID]["weapons"] == ["Nirai Impulse EX 1"]
 
 
-def test_repair_is_idempotent(engine):
-    """A second run on already-clean data does not mutate any rows."""
-    table = _create_player_ships_table(engine)
-    _seed_corrupt_state(engine, table)
-    _run_repair_logic(engine)
-    snapshot_a = _read_ship_slots(engine)
-    _run_repair_logic(engine)
-    snapshot_b = _read_ship_slots(engine)
+def test_repair_is_idempotent(pg_sync_engine):
+    """A second run of the real upgrade() on already-clean data does not mutate any rows."""
+    mod = _load_migration_module()
+
+    with _rollback_conn(pg_sync_engine) as conn:
+        _disable_fk(conn)
+        _delete_test_rows(conn)
+        _seed_corrupt_state(conn)
+
+        mod.op = _build_mock_op(conn)
+        mod.upgrade()
+        snapshot_a = _read_ship_slots(conn)
+        mod.upgrade()
+        snapshot_b = _read_ship_slots(conn)
+
     assert snapshot_a == snapshot_b
+    # Sanity: the first upgrade actually cleaned the duplicates (not a vacuous
+    # "no-op == no-op" comparison).
+    assert snapshot_a[_HERA_ID]["modules"] == []
+    assert snapshot_a[_BETTY_ID]["modules"] == ["E2 Exoclad", "Telta Quickscan"]
 
 
-def test_repair_preserves_unique_items(engine):
-    """An item that appears on exactly one ship is left alone."""
-    table = _create_player_ships_table(engine)
-    with engine.begin() as conn:
-        conn.execute(
-            table.insert(),
-            [
-                {
-                    "id": 1,
-                    "player_id": 1,
-                    "ship_name": "Betty",
-                    "is_active": True,
-                    "weapons": ["Pulse Laser"],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                },
-                {
-                    "id": 2,
-                    "player_id": 1,
-                    "ship_name": "Hera",
-                    "is_active": False,
-                    "weapons": ["Rail Gun"],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                },
-            ],
+def test_repair_preserves_unique_items(pg_sync_engine):
+    """An item that appears on exactly one ship is left alone by the real upgrade()."""
+    mod = _load_migration_module()
+
+    with _rollback_conn(pg_sync_engine) as conn:
+        _disable_fk(conn)
+        _delete_test_rows(conn)
+        _insert_ship(
+            conn,
+            _BETTY_ID,
+            "Betty",
+            True,
+            weapons=["Pulse Laser"],
+            modules=[],
+            turrets=[],
+            secondary_weapons=[],
         )
-    _run_repair_logic(engine)
-    slots = _read_ship_slots(engine)
-    assert slots[1]["weapons"] == ["Pulse Laser"]
-    assert slots[2]["weapons"] == ["Rail Gun"]
+        _insert_ship(
+            conn,
+            _HERA_ID,
+            "Hera",
+            False,
+            weapons=["Rail Gun"],
+            modules=[],
+            turrets=[],
+            secondary_weapons=[],
+        )
+
+        mod.op = _build_mock_op(conn)
+        mod.upgrade()
+
+        slots = _read_ship_slots(conn)
+
+    assert slots[_BETTY_ID]["weapons"] == ["Pulse Laser"]
+    assert slots[_HERA_ID]["weapons"] == ["Rail Gun"]
 
 
-def test_downgrade_after_upgrade_is_safe_noop(engine):
-    """G.5: The down-migration (downgrade()) is a no-op and does not raise.
+def test_downgrade_after_upgrade_is_safe_noop(pg_sync_engine):
+    """G.5: the real downgrade() is a no-op and does not alter the repaired data.
 
     The design spec says: 'Restoring [duplicate slot references] would re-introduce
-    the bug, so the down-migration is intentionally empty.'
-
-    This test verifies that:
-    1. ``upgrade()`` (simulated via _run_repair_logic) deduplicates correctly.
-    2. Calling ``downgrade()`` (the real migration module's function, which just
-       returns None) does NOT raise and does NOT re-introduce duplicates.
-
-    We import the downgrade function directly from the migration module. Unlike
-    upgrade(), downgrade() uses no Alembic op context, so it is safe to call
-    without an Alembic environment.
+    the bug, so the down-migration is intentionally empty.'  This verifies:
+      1. The real upgrade() deduplicates correctly.
+      2. The real downgrade() returns None and does NOT re-introduce duplicates.
     """
-    import importlib.util
-    import os
+    mod = _load_migration_module()
 
-    # Load the migration module directly (it imports alembic.op at module level,
-    # but only upgrade() calls op functions; downgrade() just does `return None`).
-    migration_path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "src",
-        "persist",
-        "database",
-        "revisions",
-        "versions",
-        "0002_b19_repair_loadout_consistency.py",
-    )
-    spec = importlib.util.spec_from_file_location("migration_0002", migration_path)
-    assert spec is not None, "Could not load migration module spec"
-    migration_mod = importlib.util.module_from_spec(spec)
+    with _rollback_conn(pg_sync_engine) as conn:
+        _disable_fk(conn)
+        _delete_test_rows(conn)
+        _seed_corrupt_state(conn)
 
-    # The migration imports 'alembic.op' at module level; mock it to avoid
-    # needing a real Alembic context for just the downgrade() call.
-    import sys
-    import types
+        mod.op = _build_mock_op(conn)
+        mod.upgrade()
+        snapshot_after_upgrade = _read_ship_slots(conn)
 
-    if "alembic" not in sys.modules:
-        _alembic_mod = types.ModuleType("alembic")
-        sys.modules["alembic"] = _alembic_mod
-    if "alembic.op" not in sys.modules:
-        _op_mod = types.ModuleType("alembic.op")
-        sys.modules["alembic.op"] = _op_mod
-        sys.modules["alembic"].op = _op_mod  # type: ignore[attr-defined]
+        # Upgrade worked: active ship kept its modules, non-active cleaned.
+        assert snapshot_after_upgrade[_BETTY_ID]["modules"] == ["E2 Exoclad", "Telta Quickscan"]
+        assert snapshot_after_upgrade[_HERA_ID]["modules"] == []
 
-    spec.loader.exec_module(migration_mod)  # type: ignore[union-attr]
+        # Real downgrade() — must return None and must not alter data.
+        result = mod.downgrade()
+        assert result is None
 
-    # Seed and run the upgrade.
-    table = _create_player_ships_table(engine)
-    _seed_corrupt_state(engine, table)
-    _run_repair_logic(engine)
-    snapshot_after_upgrade = _read_ship_slots(engine)
+        snapshot_after_downgrade = _read_ship_slots(conn)
 
-    # Verify the active ship kept its modules (upgrade worked).
-    assert snapshot_after_upgrade[1]["modules"] == ["E2 Exoclad", "Telta Quickscan"]
-    assert snapshot_after_upgrade[5]["modules"] == []
-
-    # Call downgrade() — must not raise and must not alter data.
-    result = migration_mod.downgrade()  # type: ignore[attr-defined]
-    assert result is None
-
-    snapshot_after_downgrade = _read_ship_slots(engine)
-    # Data is UNCHANGED (downgrade is a pure no-op — no duplicates re-introduced).
     assert snapshot_after_downgrade == snapshot_after_upgrade

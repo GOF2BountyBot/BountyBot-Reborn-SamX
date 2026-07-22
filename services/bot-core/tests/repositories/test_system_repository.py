@@ -9,7 +9,7 @@ Covers:
 
 import os
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -79,22 +79,35 @@ class TestSystemRepositoryInit:
 class TestSystemRepositoryCreateOrUpdate:
     @pytest.mark.asyncio
     async def test_create_new_system_when_not_found(self, repo, mock_db):
-        """create_or_update should create a new System when none exists."""
+        """create_or_update should create a new System, lowercasing JSON keys onto
+        the real System constructor kwargs."""
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
 
-        raw = {"name": "Sol", "faction": "Neutral"}
-        result = await repo.create_or_update(mock_db, raw)
+        captured_kwargs = {}
 
+        class MockSystem:
+            def __init__(self, **kwargs):
+                captured_kwargs.update(kwargs)
+                for k, v in kwargs.items():
+                    object.__setattr__(self, k, v)
+
+        raw = {"name": "Sol", "faction": "Neutral"}
+        with patch("persist.repositories.system_repository.System", MockSystem):
+            result = await repo.create_or_update(mock_db, raw)
+
+        assert captured_kwargs["name"] == "Sol"
+        assert captured_kwargs["faction"] == "Neutral"
         mock_db.add.assert_called_once()
         mock_db.commit.assert_awaited_once()
         mock_db.refresh.assert_awaited_once()
         assert result is mock_db.refresh.call_args[0][0]
+        assert result.name == "Sol"
+        assert result.faction == "Neutral"
 
     @pytest.mark.asyncio
     async def test_update_existing_system_when_found(self, repo, mock_db):
-        """create_or_update should update an existing System."""
-        existing = MagicMock()
-        existing.name = "Sol"
+        """create_or_update should update an existing System's lowercased attrs in place."""
+        existing = SimpleNamespace(id=1, name="Sol", faction="Neutral")
         mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
 
         raw = {"name": "Sol", "faction": "Alliance"}
@@ -104,6 +117,8 @@ class TestSystemRepositoryCreateOrUpdate:
         mock_db.commit.assert_awaited_once()
         mock_db.refresh.assert_awaited_once_with(existing)
         assert result is existing
+        assert existing.name == "Sol"
+        assert existing.faction == "Alliance"
 
     @pytest.mark.asyncio
     async def test_create_with_lowercase_key_mapping(self, repo, mock_db):
@@ -147,16 +162,6 @@ class TestSystemRepositoryCreateOrUpdate:
         await repo.create_or_update(mock_db, {"name": "Rigel"})
 
         mock_db.execute.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_add_not_called_on_update(self, repo, mock_db):
-        """db.add must NOT be called when updating an existing System."""
-        existing = MagicMock()
-        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
-
-        await repo.create_or_update(mock_db, {"name": "Sirius"})
-
-        mock_db.add.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_raises_value_error_when_name_missing(self, repo, mock_db):

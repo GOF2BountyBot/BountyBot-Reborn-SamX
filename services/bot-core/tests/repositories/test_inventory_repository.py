@@ -23,8 +23,10 @@ sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import pytest
+from persist.models.base import Base
 from persist.models.player_inventory import PlayerInventory
 from persist.repositories.inventory_repository import InventoryRepository
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -85,6 +87,32 @@ def mock_db() -> AsyncMock:
     db.get = AsyncMock()
     db.flush = AsyncMock()
     return db
+
+
+# ---------------------------------------------------------------------------
+# Real-SQLite fixtures (mock-true-up): back the DEF-A42-001 aggregation
+# regression test with genuine seeded rows instead of MagicMock(spec=PlayerInventory),
+# which would auto-mock any un-set attribute rather than reflecting real column
+# values read back from a database.
+# ---------------------------------------------------------------------------
+
+_INVENTORY_TABLES = [PlayerInventory.__table__]
+
+
+@pytest.fixture
+async def async_engine():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_INVENTORY_TABLES)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(async_engine) -> AsyncSession:
+    factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        yield session
 
 
 # ===================================================================
@@ -341,7 +369,7 @@ class TestGetInventorySummary:
             await repo.get_inventory_summary(mock_db, player_id=10)
 
     @pytest.mark.asyncio
-    async def test_get_inventory_summary_concrete_types_counted(self, repo, mock_db):
+    async def test_get_inventory_summary_concrete_types_counted(self, repo, db_session):
         """Regression guard (DEF-A42-001 / A.36): concrete item types are counted correctly.
 
         Post-A.36, player_inventories.item_type stores concrete types only.
@@ -350,17 +378,22 @@ class TestGetInventorySummary:
         This test was staged by the tester to expose the DEF-A42-001 bug where the
         summary dict used generic alias keys ('weapon', 'turret') and silently returned
         0 for all weapon and turret rows (which store 'primary_weapon', 'turret_weapon').
-        """
-        # Mock inventory rows with concrete types (as A.36 mandates)
-        items = [
-            _make_inventory(item_type="primary_weapon", item_name="Micro Gun MK I", quantity=2),
-            _make_inventory(item_type="turret_weapon", item_name="Raptor Turret", quantity=1),
-            _make_inventory(item_type="module", item_name="Nano Repair Kit", quantity=3),
-            _make_inventory(item_type="ship", item_name="Betty", quantity=1),
-        ]
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result(items))
 
-        summary = await repo.get_inventory_summary(mock_db, player_id=10)
+        Real-SQLite round trip (mock-true-up): seeded rows are genuine PlayerInventory
+        instances persisted and re-read via the repository, rather than
+        MagicMock(spec=PlayerInventory) rows whose un-set attributes auto-mock.
+        """
+        player_id = 10
+        rows = [
+            PlayerInventory(player_id=player_id, item_type="primary_weapon", item_name="Micro Gun MK I", quantity=2),
+            PlayerInventory(player_id=player_id, item_type="turret_weapon", item_name="Raptor Turret", quantity=1),
+            PlayerInventory(player_id=player_id, item_type="module", item_name="Nano Repair Kit", quantity=3),
+            PlayerInventory(player_id=player_id, item_type="ship", item_name="Betty", quantity=1),
+        ]
+        for row in rows:
+            await repo.add(db_session, row)
+
+        summary = await repo.get_inventory_summary(db_session, player_id=player_id)
 
         # Concrete type keys — not generic aliases
         assert summary["primary_weapon"] == 2, "primary_weapon must be counted (not under 'weapon')"

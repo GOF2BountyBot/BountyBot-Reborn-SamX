@@ -3,15 +3,24 @@
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 
 @pytest.fixture(scope="module")
 def make_mock_response():
-    """Factory fixture for creating consistent mock HTTP response objects.
+    """Factory fixture for creating **real** ``httpx.Response`` objects.
 
-    Returns a factory function that creates MagicMock objects configured
-    with .raise_for_status(), .json(), and .status_code attributes.
+    Returns a factory that builds a genuine ``httpx.Response`` with a real
+    ``httpx.Request`` attached.  Because it is a real response:
+
+    - ``.json()`` deserializes the encoded body (identical to the wire path).
+    - ``.raise_for_status()`` genuinely raises ``httpx.HTTPStatusError`` for any
+      4xx/5xx status — an accept-anything stub can no longer green-light a bug
+      that only surfaces when the real client raises on an error status.
+    - ``.status_code``, ``.text``, ``.content`` all behave like production.
+
+    The call signature ``factory(json_data, status_code=200)`` is unchanged.
 
     Usage in tests:
         def test_example(self, mock_cog, make_mock_response):
@@ -22,21 +31,19 @@ def make_mock_response():
             cog.http_client.get = AsyncMock(return_value=items_resp)
     """
 
-    def factory(json_data: Any, status_code: int = 200) -> MagicMock:
-        """Create a mock HTTP response.
+    def factory(json_data: Any, status_code: int = 200) -> httpx.Response:
+        """Create a real httpx.Response.
 
         Args:
-            json_data: Data to be returned by .json() method.
+            json_data: Data serialized into the JSON body (returned by .json()).
             status_code: HTTP status code (default: 200).
 
         Returns:
-            A MagicMock configured as an httpx response.
+            A real ``httpx.Response`` with a real ``httpx.Request`` attached so
+            ``raise_for_status()`` works and raises on status >= 400.
         """
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = json_data
-        resp.status_code = status_code
-        return resp
+        request = httpx.Request("GET", "http://bot-core.test/api/v1/resource")
+        return httpx.Response(status_code, json=json_data, request=request)
 
     return factory
 

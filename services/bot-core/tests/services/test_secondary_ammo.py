@@ -39,13 +39,13 @@ if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
+from persist.models.player_ship import PlayerShip
 from services.combat_models import (
     CombatEvent,
     CombatEventType,
     ShipLoadout,
     WeaponStats,
 )
-from persist.models.player_ship import PlayerShip
 from services.combat_resolver import TickResolver
 from services.game_constants import GameConstants
 from services.loadout_consistency_service import LoadoutConsistencyService
@@ -883,10 +883,9 @@ class TestShopPurchaseTopUp:
         )
         player = SimpleNamespace(id=42, credits=9999, tier="Bronze")
 
-        active_ship = MagicMock()
-        active_ship.id = 1
-        active_ship.secondary_weapons = ["Rocket"]
-        active_ship.secondary_ammo = {"Rocket": 3}
+        active_ship = PlayerShip(
+            id=1, player_id=42, ship_name="Betty", secondary_weapons=["Rocket"], secondary_ammo={"Rocket": 3}
+        )
 
         svc = ShopService.__new__(ShopService)
         svc.player_repo = AsyncMock()
@@ -935,10 +934,9 @@ class TestShopPurchaseTopUp:
         )
         player = SimpleNamespace(id=42, credits=9999, tier="Bronze")
 
-        active_ship = MagicMock()
-        active_ship.id = 1
-        active_ship.secondary_weapons = ["Rocket"]  # Missile NOT equipped
-        active_ship.secondary_ammo = {"Rocket": 3}
+        active_ship = PlayerShip(
+            id=1, player_id=42, ship_name="Betty", secondary_weapons=["Rocket"], secondary_ammo={"Rocket": 3}
+        )  # Missile NOT equipped
 
         svc = ShopService.__new__(ShopService)
         svc.player_repo = AsyncMock()
@@ -1714,10 +1712,9 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket1": 2})
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"Rocket1": 5}
-        mock_ship.secondary_weapons = ["Rocket1"]
+        mock_ship = PlayerShip(
+            id=1, player_id=100, ship_name="Betty", secondary_ammo={"Rocket1": 5}, secondary_weapons=["Rocket1"]
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -1750,10 +1747,13 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"RocketA": 3, "MissileB": 2})
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"RocketA": 10, "MissileB": 5}
-        mock_ship.secondary_weapons = ["RocketA", "MissileB"]
+        mock_ship = PlayerShip(
+            id=1,
+            player_id=100,
+            ship_name="Betty",
+            secondary_ammo={"RocketA": 10, "MissileB": 5},
+            secondary_weapons=["RocketA", "MissileB"],
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -1814,10 +1814,9 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         )
 
         mock_player = SimpleNamespace(id=42)
-        mock_ship = MagicMock()
-        mock_ship.id = 7
-        mock_ship.secondary_ammo = {"Rocket": 5}
-        mock_ship.secondary_weapons = ["Rocket"]
+        mock_ship = PlayerShip(
+            id=7, player_id=42, ship_name="Betty", secondary_ammo={"Rocket": 5}, secondary_weapons=["Rocket"]
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -1884,17 +1883,15 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
 
         # Side 1 player
         mock_player1 = SimpleNamespace(id=10)
-        mock_ship1 = MagicMock()
-        mock_ship1.id = 1
-        mock_ship1.secondary_ammo = {"Nuke": 5}
-        mock_ship1.secondary_weapons = ["Nuke"]
+        mock_ship1 = PlayerShip(
+            id=1, player_id=10, ship_name="Betty", secondary_ammo={"Nuke": 5}, secondary_weapons=["Nuke"]
+        )
 
         # Side 2 player
         mock_player2 = SimpleNamespace(id=20)
-        mock_ship2 = MagicMock()
-        mock_ship2.id = 2
-        mock_ship2.secondary_ammo = {"Nuke": 4}
-        mock_ship2.secondary_weapons = ["Nuke"]
+        mock_ship2 = PlayerShip(
+            id=2, player_id=20, ship_name="Betty", secondary_ammo={"Nuke": 4}, secondary_weapons=["Nuke"]
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -1938,10 +1935,9 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 10})
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"Rocket": 3}
-        mock_ship.secondary_weapons = ["Rocket"]
+        mock_ship = PlayerShip(
+            id=1, player_id=100, ship_name="Betty", secondary_ammo={"Rocket": 3}, secondary_weapons=["Rocket"]
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -1975,10 +1971,9 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 1})
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"Rocket": 0}
-        mock_ship.secondary_weapons = ["Rocket"]
+        mock_ship = PlayerShip(
+            id=1, player_id=100, ship_name="Betty", secondary_ammo={"Rocket": 0}, secondary_weapons=["Rocket"]
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -2014,11 +2009,10 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 2})
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
         # Ship has a secondary ammo dict; primary "BlasterGun" is NOT in secondary_ammo
-        mock_ship.secondary_ammo = {"Rocket": 5}
-        mock_ship.secondary_weapons = ["Rocket"]
+        mock_ship = PlayerShip(
+            id=1, player_id=100, ship_name="Betty", secondary_ammo={"Rocket": 5}, secondary_weapons=["Rocket"]
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -2051,10 +2045,9 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={})
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"Rocket": 5}
-        mock_ship.secondary_weapons = ["Rocket"]
+        mock_ship = PlayerShip(
+            id=1, player_id=100, ship_name="Betty", secondary_ammo={"Rocket": 5}, secondary_weapons=["Rocket"]
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -2094,10 +2087,9 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         assert fight_results.combat_log == [], "Precondition: combat_log must be empty for this test"
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"Nuke": 4}
-        mock_ship.secondary_weapons = ["Nuke"]
+        mock_ship = PlayerShip(
+            id=1, player_id=100, ship_name="Betty", secondary_ammo={"Nuke": 4}, secondary_weapons=["Nuke"]
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -2134,10 +2126,13 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         )
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"RocketA": 5, "MissileB": 7, "NukeC": 3}
-        mock_ship.secondary_weapons = ["RocketA", "MissileB", "NukeC"]
+        mock_ship = PlayerShip(
+            id=1,
+            player_id=100,
+            ship_name="Betty",
+            secondary_ammo={"RocketA": 5, "MissileB": 7, "NukeC": 3},
+            secondary_weapons=["RocketA", "MissileB", "NukeC"],
+        )
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()
@@ -2178,10 +2173,9 @@ class TestP2T5ConsumeSecondaryAmmoSummaryRead:
         fight_results = _make_fight_results_with_summary(secondary_rounds_by_weapon_slot1={"Rocket": 3})
 
         mock_player = SimpleNamespace(id=100)
-        mock_ship = MagicMock()
-        mock_ship.id = 1
-        mock_ship.secondary_ammo = {"Nuke": 2}  # Rocket absent
-        mock_ship.secondary_weapons = ["Nuke"]
+        mock_ship = PlayerShip(
+            id=1, player_id=100, ship_name="Betty", secondary_ammo={"Nuke": 2}, secondary_weapons=["Nuke"]
+        )  # Rocket absent
 
         mock_session = AsyncMock()
         mock_player_repo = AsyncMock()

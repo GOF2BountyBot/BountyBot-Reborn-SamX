@@ -150,8 +150,7 @@ def _make_config(
     return GuildConfig(
         guild_id=999,
         sale_price_factor=sale_price_factor,
-        tech_level_probabilities=tech_level_probabilities
-        or {"same_level": 0.7, "one_lower": 0.2, "two_lower": 0.1},
+        tech_level_probabilities=tech_level_probabilities or {"same_level": 0.7, "one_lower": 0.2, "two_lower": 0.1},
         xp_thresholds=xp_thresholds or {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
         ship_count_range={"min": 1, "max": 2},
         weapon_count_range={"min": 1, "max": 2},
@@ -1901,8 +1900,7 @@ def _real_config_from_maps(
     dq = default_qty if default_qty is not None else {"min": 1, "max": 1}
     return GuildConfig(
         guild_id=999,
-        tech_level_probabilities=tech_level_probabilities
-        or {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0},
+        tech_level_probabilities=tech_level_probabilities or {"same_level": 1.0, "one_lower": 0.0, "two_lower": 0.0},
         ship_count_range=count_map.get("ship", {"min": 0, "max": 0}),
         weapon_count_range=count_map.get("weapon", {"min": 0, "max": 0}),
         secondary_weapon_count_range=count_map.get("secondary_weapon", {"min": 0, "max": 0}),

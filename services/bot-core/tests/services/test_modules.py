@@ -1390,9 +1390,7 @@ class TestAccuracyLiteralReplacement:
         c1_fires_after_cloak = [
             e
             for e in results.combat_log
-            if e.type == CombatEventType.weapon_fire
-            and e.actor == loadout_c1_strong.ship_name
-            and e.tick > cloak_tick
+            if e.type == CombatEventType.weapon_fire and e.actor == loadout_c1_strong.ship_name and e.tick > cloak_tick
         ]
         assert c1_fires_after_cloak, "C1 must keep firing after cloak activates"
         expected_acc = max(

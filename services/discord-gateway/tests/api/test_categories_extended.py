@@ -12,21 +12,33 @@ Uncovered lines:
   214-215  (get_category_permissions — empty overwrites)
   224-226  (get_category_permissions — exception path)
   241-285  (update_category_permissions — all paths)
+
+Fidelity notes
+--------------
+No ``sys.modules["discord"]`` swap and no patches on ``resolve_bot``,
+``get_entity_or_404``, ``handle_discord_exception``, ``validate_channel_type``,
+``ChannelConverter``/``PermissionConverter`` or ``create_permission_overwrite``:
+the mock bot is ``spec=commands.Bot`` (``is_ready()==True``) so the real
+helpers run end-to-end, and mock categories/channels/roles/members carry
+real-typed attributes so the real converters produce genuine serialized
+bodies. "Unexpected exception" paths are exercised by making ``bot.get_channel``
+itself raise (a real boundary), not by re-implementing the router's own
+exception handling.
 """
 
-import importlib
-import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
+import discord
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import tests.mocks.discord_mock_utils as discord_mock_utils
 
 DiscordMockUtils = discord_mock_utils.DiscordMockUtils
+create_discord_not_found = discord_mock_utils.create_discord_not_found
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -44,208 +56,168 @@ _mock_bblogger.get_logger = _make_mock_logger
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
 
-_mock_discord_ext = types.ModuleType("discord.ext")
-_mock_discord_ext.commands = types.ModuleType("discord.ext.commands")
-_mock_discord_ext.commands.Bot = MagicMock
 
-sys.modules["discord.ext"] = _mock_discord_ext
-sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
+def _make_guild(guild_id=987654321, roles_by_id=None, members_by_id=None, fetch_member_result=None):
+    """Build a real-attribute mock guild with configurable role/member lookups."""
+    guild = DiscordMockUtils.create_mock_guild(guild_id=guild_id)
+    roles_by_id = roles_by_id or {}
+    members_by_id = members_by_id or {}
+    guild.get_role = MagicMock(side_effect=lambda rid: roles_by_id.get(rid))
+    guild.get_member = MagicMock(side_effect=lambda mid: members_by_id.get(mid))
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+    async def _fetch_member(mid):
+        if fetch_member_result is not None:
+            return fetch_member_result
+        raise create_discord_not_found(f"Member {mid} not found")
 
-
-@pytest.fixture(autouse=True)
-def _restore_real_discord():
-    """Restore real discord and reload categories router before each test."""
-    _cm = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
-    sys.modules["discord"] = _cm._REAL_DISCORD
-    sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
-    sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
-    import tests.mocks.discord_mock_utils as _dmu_mod
-
-    importlib.reload(_dmu_mod)
-    from api.routers import categories as _categories_mod
-
-    importlib.reload(_categories_mod)
-    yield
+    guild.fetch_member = AsyncMock(side_effect=_fetch_member)
+    return guild
 
 
-def create_mock_category(category_id=1111111111, name="Test Category"):
-    """Create a mock Discord category."""
-    category = MagicMock()
-    category.id = category_id
-    category.name = name
-    category.position = 1
+def create_mock_category(category_id=1111111111, name="Test Category", guild=None):
+    """Create a mock Discord category with real-typed attributes."""
+    guild = guild or _make_guild()
+    category = DiscordMockUtils.create_mock_category_channel(
+        channel_id=category_id, name=name, position=1, guild=guild, guild_id=guild.id
+    )
     category.nsfw = False
     category.channels = []
     category.overwrites = {}
-    category.type = MagicMock()
-    category.type.name = "category"
+    category.__class__ = discord.CategoryChannel
+
+    async def _edit(**kwargs):
+        if "name" in kwargs:
+            category.name = kwargs["name"]
+        if "position" in kwargs:
+            category.position = kwargs["position"]
+
     category.delete = AsyncMock()
-    category.edit = AsyncMock()
+    category.edit = AsyncMock(side_effect=_edit)
     category.set_permissions = AsyncMock()
-    category.guild = MagicMock()
-    category.guild.id = 987654321
-    category.guild.get_role = MagicMock(return_value=None)
-    category.guild.get_member = MagicMock(return_value=None)
-    category.guild.fetch_member = AsyncMock()
     return category
 
 
 @pytest.fixture
 def mock_bot():
-    """Create a mock bot."""
+    """Create a mock bot whose ``get_channel``/``fetch_channel`` back a single category.
+
+    Tests reassign ``mock_bot.get_channel``/``.channel`` (a mutable holder) to
+    swap in a differently-configured category or to simulate a lookup
+    failure — see ``_set_category`` / ``_raise_on_lookup`` helpers below.
+    """
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-    cat = create_mock_category()
-    bot.get_channel = MagicMock(side_effect=lambda x: cat if x == 1111111111 else None)
-    bot.fetch_channel = AsyncMock(side_effect=lambda x: cat if x == 1111111111 else None)
+    holder = {"category": create_mock_category()}
+
+    def get_channel(channel_id):
+        cat = holder["category"]
+        if channel_id == cat.id:
+            return cat
+        return None
+
+    async def fetch_channel(channel_id):
+        found = get_channel(channel_id)
+        if found is None:
+            raise create_discord_not_found(f"Channel {channel_id} not found")
+        return found
+
+    bot.get_channel = get_channel
+    bot.fetch_channel = AsyncMock(side_effect=fetch_channel)
+    bot._category_holder = holder  # test-only escape hatch to swap the backing category
     return bot
 
 
+def _set_category(mock_bot, category):
+    """Swap the category returned by ``mock_bot.get_channel``/``fetch_channel``."""
+    mock_bot._category_holder["category"] = category
+
+
+def _raise_on_lookup(mock_bot, exc):
+    """Make ``mock_bot.get_channel`` raise *exc* — exercises the router's real
+    generic-exception -> ``handle_discord_exception`` -> 500 mapping without
+    reimplementing it in the test."""
+
+    def _raise(_channel_id):
+        raise exc
+
+    mock_bot.get_channel = _raise
+
+
 @pytest.fixture
-def patched_categories_app(mock_bot):
-    """Create test app with patched categories router dependencies."""
+def categories_app(mock_bot):
+    """Create test app with a real bot state (no router patches)."""
     app = FastAPI(title="Test")
     app.state.bot = mock_bot
 
-    with (
-        patch("api.routers.categories.get_entity_or_404", new_callable=AsyncMock) as mock_get,
-        patch("api.routers.categories.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-        patch("api.routers.categories.validate_channel_type") as mock_validate,
-        patch("api.routers.categories.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-        patch("api.routers.categories.ChannelConverter") as mock_converter,
-        patch("api.routers.categories.PermissionConverter") as mock_perm_converter,
-        patch("api.routers.categories.create_permission_overwrite") as mock_create_overwrite,
-    ):
+    from api.routers.categories import router
 
-        async def _resolve(request):
-            return mock_bot
+    app.include_router(router, prefix="/api/v1")
 
-        mock_resolve.side_effect = _resolve
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            result = mock_bot.get_channel(entity_id)
-            if result is None:
-                raise HTTPException(status_code=404, detail=f"Channel {entity_id} not found")
-            return result
-
-        mock_get.side_effect = _get_entity
-
-        async def _handle_exc(op, exc):
-            raise HTTPException(status_code=500, detail=f"Failed to {op}: {exc}")
-
-        mock_handle.side_effect = _handle_exc
-        mock_validate.return_value = None
-
-        from api.schemas.channel_schemas import Category, Channel
-
-        _mock_cat_detail = Category(
-            id=1111111111,
-            guild_id=987654321,
-            name="Test Category",
-            position=1,
-            created_at="2024-01-01T00:00:00",
-        )
-        mock_converter.category_to_detail.return_value = _mock_cat_detail
-
-        _mock_channel = Channel(
-            id=999,
-            name="child-channel",
-            type="text",
-            position=1,
-            guild_id=987654321,
-            created_at="2024-01-01T00:00:00",
-        )
-        mock_converter.channel_to_summary.return_value = _mock_channel
-
-        from api.schemas.permission_schemas import PermissionOverwrite as PermSchema
-
-        _mock_perm_payload = PermSchema(
-            id="1111111111:222222222",
-            channel_id=1111111111,
-            target_id=222222222,
-            type="role",
-            allow=8,
-            deny=0,
-        )
-        mock_perm_converter.overwrite_to_payload.return_value = _mock_perm_payload
-
-        overwrite_obj = MagicMock()
-        mock_create_overwrite.return_value = overwrite_obj
-
-        from api.routers.categories import router
-
-        app.include_router(router, prefix="/api/v1")
-
-        yield app, mock_bot, mock_get, mock_handle, mock_validate, mock_converter, mock_perm_converter
+    yield app, mock_bot
 
 
 @pytest.fixture
-def ext_client(patched_categories_app):
+def ext_client(categories_app):
     """Test client for extended categories tests."""
-    app, *_ = patched_categories_app
+    app, _mock_bot = categories_app
     return TestClient(app)
 
 
 class TestUpdateCategoryErrors:
     """Test update_category error paths."""
 
-    def test_update_category_exception_raises_500(self, patched_categories_app):
-        """update_category should return 500 when unexpected exception occurs."""
-        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
-
-        async def _fail(get_fn, fetch_fn, entity_id, entity_type):
-            raise RuntimeError("Unexpected")
-
-        mock_get.side_effect = _fail
+    def test_update_category_exception_raises_500(self, categories_app):
+        """update_category should return 500 when bot.get_channel raises unexpectedly."""
+        app, mock_bot = categories_app
+        _raise_on_lookup(mock_bot, RuntimeError("Unexpected"))
 
         client = TestClient(app)
         response = client.put("/api/v1/categories/1111111111", json={"name": "New Name"})
         assert response.status_code == 500
+        assert "Unexpected" in response.json()["detail"]
 
 
 class TestDeleteCategoryWithCascade:
     """Test delete_category with cascade=True path."""
 
-    def test_delete_category_with_cascade_deletes_children(self, patched_categories_app):
-        """DELETE /categories/{id}?cascade=true should delete child channels."""
-        app, _mock_bot, *_ = patched_categories_app
+    def test_delete_category_with_cascade_deletes_children(self, categories_app):
+        """DELETE /categories/{id}?cascade=true should delete real child channels."""
+        app, mock_bot = categories_app
 
-        # Create category with child channels
-        child1 = MagicMock()
-        child1.position = 1
+        child1 = DiscordMockUtils.create_mock_text_channel(channel_id=201, name="c1", position=1)
         child1.delete = AsyncMock()
-        child2 = MagicMock()
-        child2.position = 2
+        child2 = DiscordMockUtils.create_mock_text_channel(channel_id=202, name="c2", position=2)
         child2.delete = AsyncMock()
 
         cat = create_mock_category()
         cat.channels = [child1, child2]
-        _mock_bot.get_channel = MagicMock(side_effect=lambda x: cat if x == 1111111111 else None)
+        _set_category(mock_bot, cat)
 
         client = TestClient(app)
         response = client.delete("/api/v1/categories/1111111111?cascade=true")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "deleted"
-        # Message should mention child channels
         assert "child channel" in data["message"].lower()
+        child1.delete.assert_awaited_once()
+        child2.delete.assert_awaited_once()
 
-    def test_delete_category_without_cascade(self, ext_client):
+    def test_delete_category_without_cascade(self, ext_client, mock_bot):
         """DELETE /categories/{id} without cascade should not delete children."""
+        child = DiscordMockUtils.create_mock_text_channel(channel_id=201, name="c1")
+        child.delete = AsyncMock()
+        cat = mock_bot._category_holder["category"]
+        cat.channels = [child]
+
         response = ext_client.delete("/api/v1/categories/1111111111")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "deleted"
+        child.delete.assert_not_called()
 
-    def test_delete_category_exception_raises_500(self, patched_categories_app):
-        """delete_category should return 500 when unexpected exception occurs."""
-        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
-
-        async def _fail(get_fn, fetch_fn, entity_id, entity_type):
-            raise RuntimeError("Unexpected error")
-
-        mock_get.side_effect = _fail
+    def test_delete_category_exception_raises_500(self, categories_app):
+        """delete_category should return 500 when bot.get_channel raises unexpectedly."""
+        app, mock_bot = categories_app
+        _raise_on_lookup(mock_bot, RuntimeError("Unexpected error"))
 
         client = TestClient(app)
         response = client.delete("/api/v1/categories/1111111111")
@@ -255,36 +227,29 @@ class TestDeleteCategoryWithCascade:
 class TestListCategoryChannelsExtended:
     """Extended tests for list_category_channels."""
 
-    def test_list_category_channels_with_children(self, patched_categories_app):
-        """list_category_channels should return channels sorted by position."""
-        app, _mock_bot, mock_get, _mock_handle, _mock_validate, _mock_converter, *_ = patched_categories_app
+    def test_list_category_channels_with_children(self, categories_app):
+        """list_category_channels should return real-serialized channels sorted by position."""
+        app, mock_bot = categories_app
 
-        child1 = MagicMock()
-        child1.position = 2
-        child2 = MagicMock()
-        child2.position = 1
+        child_high = DiscordMockUtils.create_mock_text_channel(channel_id=301, name="second", position=2)
+        child_low = DiscordMockUtils.create_mock_text_channel(channel_id=302, name="first", position=1)
 
         cat = create_mock_category()
-        cat.channels = [child1, child2]
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            return cat
-
-        mock_get.side_effect = _get_entity
-        # channel_to_summary already returns a proper Channel schema object from fixture
+        cat.channels = [child_high, child_low]
+        _set_category(mock_bot, cat)
 
         client = TestClient(app)
         response = client.get("/api/v1/categories/1111111111/channels")
         assert response.status_code == 200
+        data = response.json()["data"]
+        # Sorted by position: child_low (1) before child_high (2) — real router sort, real converter output.
+        assert [c["id"] for c in data] == [302, 301]
+        assert [c["name"] for c in data] == ["first", "second"]
 
-    def test_list_category_channels_exception_raises_500(self, patched_categories_app):
-        """list_category_channels should return 500 on unexpected exception."""
-        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
-
-        async def _fail(get_fn, fetch_fn, entity_id, entity_type):
-            raise RuntimeError("Unexpected error")
-
-        mock_get.side_effect = _fail
+    def test_list_category_channels_exception_raises_500(self, categories_app):
+        """list_category_channels should return 500 when bot.get_channel raises unexpectedly."""
+        app, mock_bot = categories_app
+        _raise_on_lookup(mock_bot, RuntimeError("Unexpected error"))
 
         client = TestClient(app)
         response = client.get("/api/v1/categories/1111111111/channels")
@@ -294,34 +259,44 @@ class TestListCategoryChannelsExtended:
 class TestGetCategoryPermissionsExtended:
     """Extended tests for get_category_permissions."""
 
-    def test_get_category_permissions_with_overwrites(self, patched_categories_app):
-        """get_category_permissions should return overwrites."""
-        app, _mock_bot, mock_get, *_ = patched_categories_app
+    def test_get_category_permissions_with_overwrites(self, categories_app):
+        """get_category_permissions should return a real-serialized overwrite."""
+        app, mock_bot = categories_app
 
-        target = MagicMock()
-        overwrite = MagicMock()
+        role = DiscordMockUtils.create_mock_role(role_id=222222222, name="mods")
+        role.__class__ = discord.Role
+        overwrite = DiscordMockUtils.create_mock_permission_overwrite(allow=8, deny=0)
         cat = create_mock_category()
-        cat.overwrites = {target: overwrite}
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            return cat
-
-        mock_get.side_effect = _get_entity
+        cat.overwrites = {role: overwrite}
+        _set_category(mock_bot, cat)
 
         client = TestClient(app)
         response = client.get("/api/v1/categories/1111111111/permissions")
         assert response.status_code == 200
         data = response.json()
-        assert len(data["data"]) == 1
+        assert data["data"] == [
+            {
+                "id": "1111111111:222222222",
+                "channel_id": 1111111111,
+                "target_id": 222222222,
+                "type": "role",
+                "allow": 8,
+                "deny": 0,
+            }
+        ]
 
-    def test_get_category_permissions_exception_raises_500(self, patched_categories_app):
-        """get_category_permissions should return 500 on unexpected exception."""
-        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
+    def test_get_category_permissions_empty(self, categories_app):
+        """get_category_permissions should return an empty list when there are no overwrites."""
+        app, _mock_bot = categories_app
+        client = TestClient(app)
+        response = client.get("/api/v1/categories/1111111111/permissions")
+        assert response.status_code == 200
+        assert response.json()["data"] == []
 
-        async def _fail(get_fn, fetch_fn, entity_id, entity_type):
-            raise RuntimeError("Unexpected error")
-
-        mock_get.side_effect = _fail
+    def test_get_category_permissions_exception_raises_500(self, categories_app):
+        """get_category_permissions should return 500 when bot.get_channel raises unexpectedly."""
+        app, mock_bot = categories_app
+        _raise_on_lookup(mock_bot, RuntimeError("Unexpected error"))
 
         client = TestClient(app)
         response = client.get("/api/v1/categories/1111111111/permissions")
@@ -331,23 +306,15 @@ class TestGetCategoryPermissionsExtended:
 class TestUpdateCategoryPermissions:
     """Tests for update_category_permissions endpoint."""
 
-    def test_update_category_permissions_with_role(self, patched_categories_app):
-        """update_category_permissions should update role permissions."""
-        app, _mock_bot, mock_get, *_ = patched_categories_app
+    def test_update_category_permissions_with_role(self, categories_app):
+        """update_category_permissions should apply real permission math to a resolved role."""
+        app, mock_bot = categories_app
 
-        role = MagicMock()
-        role.id = 333333333
-        cat = create_mock_category()
-        target = MagicMock()
-        target.id = 333333333
-        cat.overwrites = {target: MagicMock()}
-        cat.guild.get_role = MagicMock(return_value=role)
-        cat.set_permissions = AsyncMock()
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            return cat
-
-        mock_get.side_effect = _get_entity
+        role = DiscordMockUtils.create_mock_role(role_id=333333333, name="mods")
+        role.__class__ = discord.Role
+        guild = _make_guild(roles_by_id={333333333: role})
+        cat = create_mock_category(guild=guild)
+        _set_category(mock_bot, cat)
 
         client = TestClient(app)
         payload = {"overwrites": [{"target_id": 333333333, "type": "role", "allow": 8, "deny": 0}]}
@@ -355,97 +322,82 @@ class TestUpdateCategoryPermissions:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "updated"
+        # Real create_permission_overwrite() + real channel.set_permissions() call.
+        cat.set_permissions.assert_awaited_once()
+        called_target, kwargs = cat.set_permissions.call_args.args[0], cat.set_permissions.call_args.kwargs
+        assert called_target is role
+        assert isinstance(kwargs["overwrite"], discord.PermissionOverwrite)
+        allow, _deny = kwargs["overwrite"].pair()
+        # allow=8 == PERMISSION_FLAGS["ADMINISTRATOR"]["value"] (0x8)
+        assert allow.administrator is True
 
-    def test_update_category_permissions_role_not_found_skipped(self, patched_categories_app):
+    def test_update_category_permissions_role_not_found_skipped(self, categories_app):
         """update_category_permissions should skip missing roles."""
-        app, _mock_bot, mock_get, *_ = patched_categories_app
+        app, mock_bot = categories_app
 
-        cat = create_mock_category()
-        cat.overwrites = {}
-        cat.guild.get_role = MagicMock(return_value=None)  # Role not found
-        cat.set_permissions = AsyncMock()
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            return cat
-
-        mock_get.side_effect = _get_entity
+        guild = _make_guild(roles_by_id={})  # no roles resolve
+        cat = create_mock_category(guild=guild)
+        _set_category(mock_bot, cat)
 
         client = TestClient(app)
         payload = {"overwrites": [{"target_id": 999888777, "type": "role", "allow": 8, "deny": 0}]}
         response = client.put("/api/v1/categories/1111111111/permissions", json=payload)
         assert response.status_code == 200  # Skips missing roles but succeeds
+        cat.set_permissions.assert_not_called()
 
-    def test_update_category_permissions_member_from_cache(self, patched_categories_app):
-        """update_category_permissions should use cached member for member overwrites."""
-        app, _mock_bot, mock_get, *_ = patched_categories_app
+    def test_update_category_permissions_member_from_cache(self, categories_app):
+        """update_category_permissions should use the cached member for member overwrites."""
+        app, mock_bot = categories_app
 
-        member = MagicMock()
-        member.id = 111222333
-        cat = create_mock_category()
-        cat.overwrites = {}
-        cat.guild.get_member = MagicMock(return_value=member)  # Found in cache
-        cat.set_permissions = AsyncMock()
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            return cat
-
-        mock_get.side_effect = _get_entity
+        member = DiscordMockUtils.create_mock_member(user_id=111222333)
+        member.__class__ = discord.Member
+        guild = _make_guild(members_by_id={111222333: member})
+        cat = create_mock_category(guild=guild)
+        _set_category(mock_bot, cat)
 
         client = TestClient(app)
         payload = {"overwrites": [{"target_id": 111222333, "type": "member", "allow": 8, "deny": 0}]}
         response = client.put("/api/v1/categories/1111111111/permissions", json=payload)
         assert response.status_code == 200
+        cat.set_permissions.assert_awaited_once()
+        assert cat.set_permissions.call_args.args[0] is member
+        guild.fetch_member.assert_not_awaited()
 
-    def test_update_category_permissions_member_fetch_fallback(self, patched_categories_app):
-        """update_category_permissions should fetch member if not in cache."""
-        app, _mock_bot, mock_get, *_ = patched_categories_app
+    def test_update_category_permissions_member_fetch_fallback(self, categories_app):
+        """update_category_permissions should fetch the member from the API when not cached."""
+        app, mock_bot = categories_app
 
-        member = MagicMock()
-        member.id = 111222333
-        cat = create_mock_category()
-        cat.overwrites = {}
-        cat.guild.get_member = MagicMock(return_value=None)  # Not in cache
-        cat.guild.fetch_member = AsyncMock(return_value=member)
-        cat.set_permissions = AsyncMock()
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            return cat
-
-        mock_get.side_effect = _get_entity
+        member = DiscordMockUtils.create_mock_member(user_id=111222333)
+        member.__class__ = discord.Member
+        guild = _make_guild(members_by_id={}, fetch_member_result=member)
+        cat = create_mock_category(guild=guild)
+        _set_category(mock_bot, cat)
 
         client = TestClient(app)
         payload = {"overwrites": [{"target_id": 111222333, "type": "member", "allow": 8, "deny": 0}]}
         response = client.put("/api/v1/categories/1111111111/permissions", json=payload)
         assert response.status_code == 200
+        guild.fetch_member.assert_awaited_once_with(111222333)
+        cat.set_permissions.assert_awaited_once()
 
-    def test_update_category_permissions_member_not_found_skipped(self, patched_categories_app):
-        """update_category_permissions should skip if member not found."""
-        app, _mock_bot, mock_get, *_ = patched_categories_app
+    def test_update_category_permissions_member_not_found_skipped(self, categories_app):
+        """update_category_permissions should skip if the member cannot be resolved or fetched."""
+        app, mock_bot = categories_app
 
-        cat = create_mock_category()
-        cat.overwrites = {}
-        cat.guild.get_member = MagicMock(return_value=None)
-        cat.guild.fetch_member = AsyncMock(side_effect=Exception("Member not found"))
-        cat.set_permissions = AsyncMock()
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            return cat
-
-        mock_get.side_effect = _get_entity
+        guild = _make_guild(members_by_id={})  # get_member -> None, fetch_member -> real NotFound
+        cat = create_mock_category(guild=guild)
+        _set_category(mock_bot, cat)
 
         client = TestClient(app)
         payload = {"overwrites": [{"target_id": 999999999, "type": "member", "allow": 8, "deny": 0}]}
         response = client.put("/api/v1/categories/1111111111/permissions", json=payload)
         assert response.status_code == 200  # Skips missing members but succeeds
+        cat.set_permissions.assert_not_called()
 
-    def test_update_category_permissions_exception_raises_500(self, patched_categories_app):
-        """update_category_permissions should return 500 on unexpected exception."""
-        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
-
-        async def _fail(get_fn, fetch_fn, entity_id, entity_type):
-            raise RuntimeError("Unexpected error")
-
-        mock_get.side_effect = _fail
+    def test_update_category_permissions_exception_raises_500(self, categories_app):
+        """update_category_permissions should return 500 when bot.get_channel raises unexpectedly."""
+        app, mock_bot = categories_app
+        _raise_on_lookup(mock_bot, RuntimeError("Unexpected error"))
 
         client = TestClient(app)
         payload = {"overwrites": []}

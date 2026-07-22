@@ -3,26 +3,32 @@ Tests for the categories API endpoints.
 
 This module provides comprehensive test coverage for the categories router,
 including category listing, creation, updates, and management operations.
+
+Fidelity notes
+--------------
+No ``sys.modules["discord"]`` swap and no patches on ``resolve_bot``,
+``get_entity_or_404``, ``handle_discord_exception``, ``validate_channel_type``
+or ``ChannelConverter``/``PermissionConverter``: the mock bot is
+``spec=commands.Bot`` with ``is_ready()==True`` so the real helpers run
+end-to-end, and the mock category/channel objects carry real-typed
+attributes so the real converters produce genuine serialized bodies.
 """
 
-import importlib
-import os
 import sys
 import types
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord
 import pytest
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
 import tests.mocks.discord_mock_utils as discord_mock_utils
 
 DiscordMockUtils = discord_mock_utils.DiscordMockUtils
-
-# Create module-level mock utilities
-_mock_utils = DiscordMockUtils()
+create_discord_not_found = discord_mock_utils.create_discord_not_found
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -47,50 +53,6 @@ _mock_bblogger.get_logger = _make_mock_logger
 sys.modules["shared"] = _mock_shared
 sys.modules["shared.bblogger"] = _mock_bblogger
 
-# Setup mock discord module with discord_mock_utils
-# create_mock_discord_module() already wires real discord exception classes
-# (NotFound, Forbidden, HTTPException) so except clauses work correctly.
-_mock_discord = _mock_utils.create_mock_discord_module_with_factories()
-
-# Mock discord.ext with MagicMock Bot for module-level compatibility
-_mock_discord_ext = types.ModuleType("discord.ext")
-_mock_discord_ext.commands = types.ModuleType("discord.ext.commands")
-_mock_discord_ext.commands.Bot = MagicMock
-
-_mock_discord.ext = _mock_discord_ext
-
-sys.modules["discord"] = _mock_discord
-sys.modules["discord.ext"] = _mock_discord_ext
-sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-
-# ---------------------------------------------------------------------------
-# Per-test isolation fixture
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _restore_real_discord():
-    """
-    Re-assert the real discord module into sys.modules before each test
-    and reload api.routers.categories so its ``discord`` reference is fresh.
-    """
-    _cm = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
-    sys.modules["discord"] = _cm._REAL_DISCORD
-    sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
-    sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
-    # Reload discord_mock_utils so create_discord_not_found() uses real discord
-    import tests.mocks.discord_mock_utils as _dmu_mod
-
-    importlib.reload(_dmu_mod)
-    # Force the categories router to re-bind its 'discord' global to real discord
-    from api.routers import categories as _categories_mod
-
-    importlib.reload(_categories_mod)
-    yield
-
 
 def create_mock_category(
     category_id=1111111111, guild_id=987654321, name="Test Category", position=1, nsfw=False, created_at=None
@@ -101,91 +63,63 @@ def create_mock_category(
         name=name,
         position=position,
         guild_id=guild_id,
-        created_at=created_at or datetime.now(),
+        created_at=created_at or datetime(2024, 1, 1),
     )
     category.nsfw = nsfw
     category.channels = []
-    category.type = MagicMock()
-    category.type.name = "category"
     category.overwrites = {}
+    category.__class__ = discord.CategoryChannel
+
+    async def _edit(**kwargs):
+        if "name" in kwargs:
+            category.name = kwargs["name"]
+        if "position" in kwargs:
+            category.position = kwargs["position"]
+
     category.delete = AsyncMock()
-    category.edit = AsyncMock()
+    category.edit = AsyncMock(side_effect=_edit)
     return category
 
 
 @pytest.fixture
 def mock_bot():
-    """Create a mock Discord bot using DiscordMockUtils."""
+    """Create a mock Discord bot using DiscordMockUtils.
+
+    ``fetch_channel`` raises a real ``discord.NotFound`` on cache miss so the
+    real ``get_entity_or_404``/``handle_discord_exception`` chain produces a
+    genuine 404 (rather than the test hand-rolling its own 404 branch).
+    """
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+    category = create_mock_category()
 
     def get_channel(channel_id):
-        if channel_id == 1111111111:
-            return create_mock_category(channel_id)
+        if channel_id == category.id:
+            return category
         return None
 
+    async def fetch_channel(channel_id):
+        found = get_channel(channel_id)
+        if found is None:
+            raise create_discord_not_found(f"Channel {channel_id} not found")
+        return found
+
     bot.get_channel = get_channel
-    bot.fetch_channel = AsyncMock(side_effect=lambda x: get_channel(x))
+    bot.fetch_channel = AsyncMock(side_effect=fetch_channel)
 
     return bot
 
 
 @pytest.fixture
 def categories_test_app(mock_bot):
-    """Create a test FastAPI app with the categories router and mocked dependencies."""
+    """Create a test FastAPI app with the categories router and a real bot state."""
     app = FastAPI(title="Discord Gateway API Test")
-
     app.state.bot = mock_bot
 
-    with (
-        patch("api.routers.categories.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
-        patch("api.routers.categories.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
-        patch("api.routers.categories.validate_channel_type") as mock_validate,
-        patch("api.routers.categories.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-        patch("api.routers.categories.ChannelConverter") as mock_converter,
-    ):
+    from api.routers.categories import router
 
-        async def mock_get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
-            category = mock_bot.get_channel(entity_id)
-            if category is None:
-                from fastapi import HTTPException
+    app.include_router(router, prefix="/api/v1")
 
-                raise HTTPException(status_code=404, detail=f"Channel {entity_id} not found")
-            return category
-
-        async def mock_resolve_bot(request):
-            return mock_bot
-
-        mock_get_entity.side_effect = mock_get_entity_or_404
-        mock_resolve.side_effect = mock_resolve_bot
-
-        # handle_discord_exception raises HTTPException, never returns a value
-        async def mock_handle_discord_exception(operation, exc):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to {operation}: {exc}"
-            )
-
-        mock_handle.side_effect = mock_handle_discord_exception
-        mock_validate.return_value = None  # don't raise, pass validation
-
-        mock_converter.category_to_detail.return_value = {
-            "id": 1111111111,
-            "guild_id": 987654321,
-            "name": "Test Category",
-            "position": 1,
-            "nsfw": False,
-            "created_at": "2024-01-01T00:00:00",
-        }
-        mock_converter.channel_to_summary.return_value = {
-            "id": 1111111111,
-            "name": "test-channel",
-            "type": "text",
-        }
-
-        from api.routers.categories import router
-
-        app.include_router(router, prefix="/api/v1")
-
-        yield app  # patches stay active during tests
+    yield app
 
 
 @pytest.fixture
@@ -197,14 +131,20 @@ def categories_client(categories_test_app):
 class TestGetCategory:
     """Tests for GET /categories/{category_id} endpoint."""
 
-    def test_get_category_returns_200(self, categories_client, mock_bot):
-        """GET /categories/{category_id} should return 200 with category details."""
+    def test_get_category_returns_200(self, categories_client):
+        """GET /categories/{category_id} should return 200 with real serialized category details."""
         response = categories_client.get("/api/v1/categories/1111111111")
         assert response.status_code == 200
 
         data = response.json()
         assert data["status"] == "success"
-        assert "data" in data
+        assert data["data"] == {
+            "id": 1111111111,
+            "name": "Test Category",
+            "position": 1,
+            "guild_id": 987654321,
+            "created_at": "2024-01-01T00:00:00",
+        }
 
     def test_get_category_not_found_returns_404(self, categories_client):
         """GET /categories/{category_id} should return 404 for non-existent category."""
@@ -217,7 +157,7 @@ class TestUpdateCategory:
     """Tests for PUT /categories/{category_id} endpoint."""
 
     def test_update_category_success(self, categories_client):
-        """PUT /categories/{category_id} should update category successfully."""
+        """PUT /categories/{category_id} should update category successfully and re-serialize real state."""
         update_data = {"name": "Updated Category Name", "position": 2}
 
         response = categories_client.put("/api/v1/categories/1111111111", json=update_data)
@@ -225,7 +165,9 @@ class TestUpdateCategory:
 
         data = response.json()
         assert data["status"] == "updated"
-        assert "data" in data
+        # Real category.edit() applied the kwargs; the real converter re-serializes the mutated mock.
+        assert data["data"]["name"] == "Updated Category Name"
+        assert data["data"]["position"] == 2
 
     def test_update_category_not_found(self, categories_client):
         """PUT /categories/{category_id} should return 404 for non-existent category."""
@@ -258,15 +200,36 @@ class TestDeleteCategory:
 class TestGetCategoryChannels:
     """Tests for GET /categories/{category_id}/channels endpoint."""
 
-    def test_get_channels_success(self, categories_client):
-        """GET /categories/{category_id}/channels should return 200 with channel list."""
+    def test_get_channels_success(self, categories_client, mock_bot):
+        """GET /categories/{category_id}/channels should return 200 with a real serialized channel list."""
+        category = mock_bot.get_channel(1111111111)
+        child = DiscordMockUtils.create_mock_text_channel(
+            channel_id=222, name="general", position=0, guild_id=987654321
+        )
+        category.channels = [child]
+
         response = categories_client.get("/api/v1/categories/1111111111/channels")
         assert response.status_code == 200
 
         data = response.json()
         assert data["status"] == "success"
-        assert "data" in data
-        assert isinstance(data["data"], list)
+        assert data["data"] == [
+            {
+                "id": 222,
+                "name": "general",
+                "type": "text",
+                "position": 0,
+                "guild_id": 987654321,
+                "created_at": "2020-01-01T00:00:00",
+                "category_id": None,
+                "topic": None,
+                "nsfw": None,
+                "slowmode_delay": None,
+                "bitrate": None,
+                "user_limit": None,
+                "default_auto_archive_duration": None,
+            }
+        ]
 
     def test_get_channels_not_found(self, categories_client):
         """GET /categories/{category_id}/channels should return 404 for non-existent category."""
@@ -278,15 +241,29 @@ class TestGetCategoryChannels:
 class TestGetCategoryPermissions:
     """Tests for GET /categories/{category_id}/permissions endpoint."""
 
-    def test_get_permissions_success(self, categories_client):
-        """GET /categories/{category_id}/permissions should return 200 with permissions."""
+    def test_get_permissions_success(self, categories_client, mock_bot):
+        """GET /categories/{category_id}/permissions should return 200 with real serialized overwrites."""
+        category = mock_bot.get_channel(1111111111)
+        role = DiscordMockUtils.create_mock_role(role_id=42, guild_id=987654321, name="mods")
+        role.__class__ = discord.Role
+        overwrite = DiscordMockUtils.create_mock_permission_overwrite(allow=2048, deny=0)
+        category.overwrites = {role: overwrite}
+
         response = categories_client.get("/api/v1/categories/1111111111/permissions")
         assert response.status_code == 200
 
         data = response.json()
         assert data["status"] == "success"
-        assert "data" in data
-        assert isinstance(data["data"], list)
+        assert data["data"] == [
+            {
+                "id": "1111111111:42",
+                "channel_id": 1111111111,
+                "target_id": 42,
+                "type": "role",
+                "allow": 2048,
+                "deny": 0,
+            }
+        ]
 
     def test_get_permissions_not_found(self, categories_client):
         """GET /categories/{category_id}/permissions should return 404 for non-existent category."""
@@ -299,7 +276,8 @@ class TestErrorHandling:
     """Tests for error handling in categories endpoints."""
 
     def test_handle_discord_exception(self, categories_client):
-        """Categories endpoints should handle Discord exceptions gracefully."""
-        with patch("api.routers.categories.resolve_bot", side_effect=Exception("Test Discord error")):
+        """A non-Discord exception raised by resolve_bot maps, via the real handler, to exactly 500."""
+        with patch("api.routers.categories.resolve_bot", side_effect=RuntimeError("Test Discord error")):
             response = categories_client.get("/api/v1/categories/1111111111")
-            assert response.status_code in (500, 503)
+            assert response.status_code == 500
+            assert "Test Discord error" in response.json()["detail"]

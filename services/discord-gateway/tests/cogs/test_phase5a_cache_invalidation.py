@@ -286,6 +286,9 @@ class TestPlayerCogCacheInvalidation:
         mock_inv_player.assert_called_once_with(interaction.guild_id, interaction.user.id)
         mock_inv_inv.assert_called_once_with(interaction.guild_id, player_data["id"])
         mock_inv_ships.assert_called_once_with(interaction.guild_id, player_data["id"])
+        # the second POST (after the /players/ upsert) must be the /prestige route
+        prestige_call = mock_player_cog.http_client.post.call_args_list[1]
+        assert prestige_call.args[0].endswith(f"/players/{player_data['id']}/prestige")
 
     def test_promote_success_invalidates_player(self, mock_player_cog):
         """promote: after success, invalidates player cache."""
@@ -317,6 +320,9 @@ class TestPlayerCogCacheInvalidation:
             asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         mock_inv_player.assert_called_once_with(interaction.guild_id, interaction.user.id)
+        # promotion must PUT the /promote route for the resolved player, not /demote
+        mock_player_cog.http_client.put.assert_awaited_once()
+        assert mock_player_cog.http_client.put.call_args[0][0].endswith(f"/players/{player_data['id']}/promote")
 
     def test_demote_success_invalidates_player(self, mock_player_cog):
         """demote: after success, invalidates player cache."""
@@ -416,6 +422,9 @@ class TestShopCogCacheInvalidation:
         mock_inv_player.assert_called_once_with(interaction.guild_id, interaction.user.id)
         mock_inv_inv.assert_called_once_with(interaction.guild_id, player_data["id"])
         mock_inv_ships.assert_not_called()  # not a ship purchase
+        # non-ship purchases must hit /shops/purchase, not /shops/purchase-ship
+        purchase_call = mock_shop_cog.http_client.post.call_args_list[1]
+        assert purchase_call.args[0].endswith("/shops/purchase")
 
     def test_buy_ship_also_invalidates_ships(self, mock_shop_cog):
         """buy ship: also invalidates ships cache."""
@@ -447,6 +456,9 @@ class TestShopCogCacheInvalidation:
         mock_inv_player.assert_called_once_with(interaction.guild_id, interaction.user.id)
         mock_inv_inv.assert_called_once_with(interaction.guild_id, player_data["id"])
         mock_inv_ships.assert_called_once_with(interaction.guild_id, player_data["id"])
+        # ship purchases must hit /shops/purchase-ship, not the generic item route
+        purchase_call = mock_shop_cog.http_client.post.call_args_list[1]
+        assert purchase_call.args[0].endswith("/shops/purchase-ship")
 
     def test_sell_success_invalidates_player_and_inventory(self, mock_shop_cog):
         """sell: after success, invalidates player and inventory caches."""
@@ -467,6 +479,9 @@ class TestShopCogCacheInvalidation:
 
         mock_inv_player.assert_called_once_with(interaction.guild_id, interaction.user.id)
         mock_inv_inv.assert_called_once_with(interaction.guild_id, player_data["id"])
+        # non-ship item sale must hit /shops/sell, not /shops/sell-ship
+        sell_call = mock_shop_cog.http_client.post.call_args_list[1]
+        assert sell_call.args[0].endswith("/shops/sell")
 
     def test_buy_cache_invalidation_failure_does_not_fail_command(self, mock_shop_cog):
         """AC-ROB-3: buy cache invalidation failure must not abort command."""
@@ -597,6 +612,9 @@ class TestInventoryCogCacheInvalidation:
 
         mock_inv_inv.assert_called_once_with(interaction.guild_id, 1)
         mock_inv_ships.assert_called_once_with(interaction.guild_id, 1)
+        # status="ok" must take the direct-equip POST route, not equip-check twice
+        equip_call = mock_inventory_cog.http_client.post.call_args_list[2]
+        assert equip_call.args[0].endswith("/ships/10/equip")
 
     def test_unequip_success_invalidates_inventory_and_ships(self, mock_inventory_cog):
         """unequip (single item): after success, invalidates inventory and ships caches."""
@@ -680,6 +698,16 @@ class TestInventoryCogCacheInvalidation:
         assert (interaction.guild_id, source_player["id"]) in calls
         assert (interaction.guild_id, target_player["id"]) in calls
         mock_inv_ships.assert_not_called()
+        # the actual transfer must hit /inventory/transfer, not /players/transfer or /ships/transfer
+        transfer_call = mock_inventory_cog.http_client.post.call_args_list[2]
+        assert transfer_call.args[0].endswith("/inventory/transfer")
+        assert transfer_call.kwargs["json"] == {
+            "from_player_id": source_player["id"],
+            "to_player_id": target_player["id"],
+            "item_type": "primary_weapon",
+            "item_name": "Laser",
+            "quantity": 1,
+        }
 
     def test_give_credits_invalidates_both_players_player(self, mock_inventory_cog):
         """give credits: invalidates the player cache for BOTH giver and recipient.
@@ -722,6 +750,14 @@ class TestInventoryCogCacheInvalidation:
         calls = [call.args for call in mock_inv_player.call_args_list]
         assert (interaction.guild_id, interaction.user.id) in calls  # giver
         assert (interaction.guild_id, target.id) in calls  # recipient (the previously-missing side)
+        # credits transfer must hit /players/transfer with the right amount + player ids
+        transfer_call = mock_inventory_cog.http_client.post.call_args_list[2]
+        assert transfer_call.args[0].endswith("/players/transfer")
+        assert transfer_call.kwargs["json"] == {
+            "source_player_id": source_player["id"],
+            "target_player_id": target_player["id"],
+            "amount": 500,
+        }
 
     def test_equip_cache_invalidation_failure_does_not_fail_command(self, mock_inventory_cog):
         """AC-ROB-3: equip cache invalidation failure must not abort command."""

@@ -72,6 +72,25 @@ def _evict_discord_modules():
         sys.modules.pop(k, None)
 
 
+def _make_interaction():
+    """Build a spec'd interaction so a typo'd attribute access fails loudly.
+
+    `interaction.user.guild_permissions.administrator` is left as an
+    auto-vivified truthy MagicMock attribute (User/Member aren't spec'd here)
+    so `_check_is_admin` short-circuits True without an HTTP call, matching
+    the existing convention used across this file's happy-path tests.
+    """
+    import discord
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = AsyncMock()
+    interaction.followup = AsyncMock()
+    interaction.user = MagicMock()
+    interaction.user.id = 987654321
+    interaction.guild_id = 123456789
+    return interaction
+
+
 @pytest.fixture(scope="module")
 def mock_health_cog(mock_bot):
     """Create a mock healthCog instance."""
@@ -104,11 +123,10 @@ class TestHealthCommands:
     """Tests for healthCog commands."""
 
     def test_health_command(self, mock_health_cog):
-        """health command should respond with bot status."""
-        # Mock interaction
-        interaction = MagicMock()
-        interaction.response.defer = AsyncMock()
-        interaction.followup.send = AsyncMock()
+        """health command should render a healthy embed: green colour, check emoji, all sections."""
+        import discord
+
+        interaction = _make_interaction()
 
         # Mock API response
         mock_response = MagicMock()
@@ -144,15 +162,33 @@ class TestHealthCommands:
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
 
-    def test_health_command_api_error(self, mock_health_cog):
-        """health command should handle API errors gracefully."""
-        # Mock interaction
-        interaction = MagicMock()
-        interaction.response.defer = AsyncMock()
-        interaction.followup.send = AsyncMock()
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs["content"] == "✅"
+        assert call_kwargs["ephemeral"] is True
 
-        # Mock HTTP client with error
+        embed = call_kwargs["embed"]
+        assert isinstance(embed, discord.Embed)
+        assert embed.title == "BountyBot API Health - healthy"
+        assert embed.colour == discord.Colour.green()
+        assert "BountyBot" in embed.description
+        assert "1.0.0" in embed.description
+
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert fields_by_name["Environment"] == "env: test"
+        assert "db: ✅" in fields_by_name["Checks"]
+        assert "api: ✅" in fields_by_name["Checks"]
+        assert "**Status:** healthy" in fields_by_name["Database"]
+        assert "**Connectivity:** ✅" in fields_by_name["Database"]
+        assert "Size: 10" in fields_by_name["Database"]
+        assert "**Status:** healthy" in fields_by_name["Schema"]
+        assert "**Version Match:** ✅" in fields_by_name["Schema"]
+
+    def test_health_command_api_error(self, mock_health_cog):
+        """health command should render a red error embed on httpx.HTTPError."""
+        import discord
         import httpx
+
+        interaction = _make_interaction()
 
         mock_health_cog.http_client.get = AsyncMock(side_effect=httpx.HTTPError("API error"))
 
@@ -162,6 +198,18 @@ class TestHealthCommands:
         # Verify error handling
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
+
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs["content"] == "❌"
+        assert call_kwargs["ephemeral"] is True
+
+        embed = call_kwargs["embed"]
+        assert isinstance(embed, discord.Embed)
+        assert embed.title == "BountyBot API Health"
+        assert embed.colour == discord.Colour.red()
+        assert "Health check failed" in embed.description
+        assert "API error" in embed.description
+        assert embed.footer.text.startswith("Checked via")
 
 
 class TestPingCommand:
@@ -190,14 +238,11 @@ class TestErrorHandling:
     """Tests for error handling in healthCog."""
 
     def test_health_command_connection_error(self, mock_health_cog):
-        """health command should handle connection errors gracefully."""
-        # Mock interaction
-        interaction = MagicMock()
-        interaction.response.defer = AsyncMock()
-        interaction.followup.send = AsyncMock()
-
-        # Mock HTTP client with connection error
+        """health command should render a red error embed on connection failure."""
+        import discord
         import httpx
+
+        interaction = _make_interaction()
 
         mock_health_cog.http_client.get = AsyncMock(side_effect=httpx.HTTPError("Connection failed"))
 
@@ -207,6 +252,13 @@ class TestErrorHandling:
         # Verify error handling
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
+
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs["content"] == "❌"
+        embed = call_kwargs["embed"]
+        assert isinstance(embed, discord.Embed)
+        assert embed.colour == discord.Colour.red()
+        assert "Connection failed" in embed.description
 
 
 class TestCogUnload:
@@ -293,11 +345,10 @@ class TestHealthCommandUnhealthyStatus:
     """Tests for health command with unhealthy status."""
 
     def test_health_command_unhealthy_status(self, mock_health_cog):
-        """health command should display unhealthy status with red color."""
-        # Mock interaction
-        interaction = MagicMock()
-        interaction.response.defer = AsyncMock()
-        interaction.followup.send = AsyncMock()
+        """health command should display unhealthy status with red color and cross emoji."""
+        import discord
+
+        interaction = _make_interaction()
 
         # Mock API response with unhealthy status
         mock_response = MagicMock()
@@ -332,20 +383,36 @@ class TestHealthCommandUnhealthyStatus:
         # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
-        # Check that emoji indicates unhealthy status
-        call_args = interaction.followup.send.call_args
-        assert call_args is not None
+
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        # emoji/status/colour must reflect the non-"healthy" branch, not the happy path
+        assert call_kwargs["content"] == "❌"
+
+        embed = call_kwargs["embed"]
+        assert isinstance(embed, discord.Embed)
+        assert embed.title == "BountyBot API Health - degraded"
+        assert embed.colour == discord.Colour.red()
+
+        fields_by_name = {f.name: f.value for f in embed.fields}
+        assert "db: ❌" in fields_by_name["Checks"]
+        assert "**Status:** unhealthy" in fields_by_name["Database"]
+        assert "**Connectivity:** ❌" in fields_by_name["Database"]
+        assert "**Error:** Connection timeout" in fields_by_name["Database"]
+        assert "**Status:** unknown" in fields_by_name["Schema"]
+        assert "**Version Match:** ❌" in fields_by_name["Schema"]
+        assert "**Error:** Version mismatch" in fields_by_name["Schema"]
+        # empty "environment" dict must NOT add a field (falsy-guard branch)
+        assert "Environment" not in fields_by_name
 
 
 class TestHealthCommandEmptyFields:
     """Tests for health command with empty/missing fields."""
 
     def test_health_command_empty_environment(self, mock_health_cog):
-        """health command should handle empty environment dict."""
-        # Mock interaction
-        interaction = MagicMock()
-        interaction.response.defer = AsyncMock()
-        interaction.followup.send = AsyncMock()
+        """health command should omit fields entirely when their source dicts are empty."""
+        import discord
+
+        interaction = _make_interaction()
 
         # Mock API response with empty environment
         mock_response = MagicMock()
@@ -369,19 +436,26 @@ class TestHealthCommandEmptyFields:
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
 
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs["content"] == "✅"
+        embed = call_kwargs["embed"]
+        assert isinstance(embed, discord.Embed)
+        assert embed.colour == discord.Colour.green()
+        # every optional section is gated on a truthy dict, so all four are skipped
+        assert embed.fields == []
+
 
 class TestHealthCommandFollowupError:
     """Tests for health command error recovery."""
 
     def test_health_command_error_followup_exception_handled(self, mock_health_cog):
-        """health command error path should handle followup exceptions."""
-        # Mock interaction
-        interaction = MagicMock()
-        interaction.response.defer = AsyncMock()
-        interaction.followup.send = AsyncMock(side_effect=Exception("Followup failed"))
-
-        # Mock HTTP client with error to trigger error path
+        """health command error path should swallow a followup.send failure but still
+        have attempted to send the correct red error embed before it raised."""
+        import discord
         import httpx
+
+        interaction = _make_interaction()
+        interaction.followup.send = AsyncMock(side_effect=Exception("Followup failed"))
 
         mock_health_cog.http_client.get = AsyncMock(side_effect=httpx.HTTPError("API error"))
 
@@ -390,6 +464,15 @@ class TestHealthCommandFollowupError:
 
         # Verify response was attempted
         interaction.response.defer.assert_called_once()
+
+        # the call was made (and recorded) before the AsyncMock side_effect raised
+        interaction.followup.send.assert_called_once()
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs["content"] == "❌"
+        embed = call_kwargs["embed"]
+        assert isinstance(embed, discord.Embed)
+        assert embed.colour == discord.Colour.red()
+        assert "API error" in embed.description
 
 
 class TestCogSetup:

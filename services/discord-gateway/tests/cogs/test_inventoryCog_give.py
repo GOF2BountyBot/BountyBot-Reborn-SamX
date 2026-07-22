@@ -87,11 +87,17 @@ def _create_mock_member(user_id: int = 222222222, name: str = "TargetUser"):
 
 
 def _make_http_resp(status_code=200, json_data=None):
-    resp = MagicMock()
-    resp.status_code = status_code
-    resp.raise_for_status = MagicMock()
-    resp.json = MagicMock(return_value=json_data or {})
-    return resp
+    """Build a **real** httpx.Response so raise_for_status() genuinely raises on 4xx/5xx.
+
+    A MagicMock with a no-op raise_for_status would keep passing error-path tests
+    (test_give_*_transfer_error, _404_from_api, _active_ship_blocked) even if the cog
+    were refactored to rely on raise_for_status() instead of a manual status_code check —
+    the exact class of bug this audit exists to catch.
+    """
+    import httpx
+
+    request = httpx.Request("POST", "http://bot-core.test/api/v1/resource")
+    return httpx.Response(status_code, json=json_data or {}, request=request)
 
 
 # -------------------------------------------------------------------------

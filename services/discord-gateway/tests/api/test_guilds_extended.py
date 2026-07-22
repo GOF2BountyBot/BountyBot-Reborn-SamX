@@ -446,24 +446,20 @@ class TestCreateRole:
         assert isinstance(kwargs["color"], discord.Color)
         assert kwargs["color"].value == 0xFF5733
 
-    def test_create_role_negative_permissions_returns_error(self):
-        """POST /guilds/{id}/roles with negative permissions returns a deterministic 500.
+    def test_create_role_negative_permissions_returns_422(self):
+        """POST /guilds/{id}/roles with negative permissions returns 422.
 
-        NOTE (production bug, not fixed here per audit scope — see FOLLOWUPS.md
-        R-gw-api-0): the router does ``raise HTTPException(status_code=status.HTTP_422, ...)``
-        but ``fastapi.status`` has no ``HTTP_422`` attribute (only
-        ``HTTP_422_UNPROCESSABLE_CONTENT``), so this line always raises
-        ``AttributeError`` instead of returning 422. The outer generic
-        ``except Exception`` then maps that to a real 500 via
-        ``handle_discord_exception`` — the endpoint can never actually
-        return 422 for an invalid permissions bitmask.
+        History (TRUEUP-P2, fixed): this branch used the nonexistent
+        ``status.HTTP_422`` attribute, so it raised ``AttributeError`` and the
+        outer generic handler turned the intended 422 into a 500 — see
+        FOLLOWUPS.md R-gw-api-0. Now uses ``HTTP_422_UNPROCESSABLE_CONTENT``.
         """
         guild = _make_guild()
         client, _bot = _build_client(guild)
 
         response = client.post("/api/v1/guilds/987654321/roles", json={"name": "bad-role", "permissions": -1})
-        assert response.status_code == 500
-        assert "detail" in response.json()
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Invalid permissions bitmask"
 
     def test_create_role_guild_not_found(self):
         """POST /guilds/{id}/roles returns 404 for unknown guild."""
@@ -736,12 +732,11 @@ class TestCreateRolePermsBitmask:
     """Cover the perms.value != role_data.permissions branch (line 409)."""
 
     def test_create_role_permissions_bitmask_mismatch(self):
-        """Permissions value mismatch raises a deterministic 500.
+        """Permissions value mismatch returns the intended 422 (TRUEUP-P2 fixed).
 
-        Same underlying ``status.HTTP_422`` bug as
-        ``test_create_role_negative_permissions_returns_error`` above — see
-        FOLLOWUPS.md R-gw-api-0. ``discord.Permissions`` is patched here only
-        to force the mismatch branch itself (999 != 8); everything else is real.
+        ``discord.Permissions`` is patched here only to force the mismatch
+        branch itself (999 != 8 — unreachable with the real class, whose
+        ``__init__`` stores the input verbatim); everything else is real.
         """
         guild = _make_guild()
         client, _bot = _build_client(guild)
@@ -754,8 +749,8 @@ class TestCreateRolePermsBitmask:
                 "/api/v1/guilds/987654321/roles",
                 json={"name": "test-role", "permissions": 8},
             )
-        assert response.status_code == 500
-        assert "detail" in response.json()
+        assert response.status_code == 422
+        assert response.json()["detail"] == "Invalid permissions bitmask"
 
 
 # ---------------------------------------------------------------------------

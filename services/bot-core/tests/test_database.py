@@ -38,6 +38,52 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from persist.database.manager import DatabaseManager
 from persist.database.tablenames import TableNames
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import AsyncAdaptedQueuePool, StaticPool
+
+# ---------------------------------------------------------------------------
+# TRUEUP-05: real in-memory SQLite engine helper.
+#
+# A bare "sqlite+aiosqlite:///:memory:" URL defaults to SQLAlchemy's
+# StaticPool (a single persistent connection — needed because a fresh
+# connection to ":memory:" is a fresh, empty database). StaticPool does NOT
+# implement the QueuePool introspection API (.size()/.checkedin()/
+# .checkedout()/.overflow()/.status()) that DatabaseManager.get_health_info()
+# calls on self._engine.pool. Passing poolclass=AsyncAdaptedQueuePool gives a
+# real Pool object with that full API, matching what the production asyncpg
+# engine uses. Tests that need cross-connection persistence within a single
+# in-memory DB (the AC-7 auto-commit tests) use StaticPool instead — see
+# _real_sqlite_engine_shared() below.
+# ---------------------------------------------------------------------------
+
+
+def _real_sqlite_engine(pool_size: int = 5, max_overflow: int = 5):
+    """Real async SQLite engine with a real QueuePool-family pool object."""
+    return create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        poolclass=AsyncAdaptedQueuePool,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+    )
+
+
+def _real_sqlite_engine_shared():
+    """Real async SQLite engine backed by a single shared connection.
+
+    StaticPool keeps one physical connection alive for the engine's lifetime,
+    so data written via one checkout (one `get_session()`/`get_connection()`
+    call) is visible to a later checkout against the *same* engine — needed
+    to prove auto-commit/rollback actually persisted (or didn't), not just
+    that the mock method was called.
+    """
+    return create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+
 
 # ===========================================================================
 # DatabaseManager tests
@@ -96,53 +142,56 @@ class TestDatabaseManagerGetHealthInfo:
 
     @pytest.mark.asyncio
     async def test_get_health_info_healthy_when_engine_present(self):
-        """When a functioning engine is present, status must be 'healthy'."""
+        """When a functioning engine is present, status must be 'healthy'.
+
+        TRUEUP-05: real AsyncEngine + real QueuePool object — get_health_info()'s
+        pool.size()/.checkedin()/.checkedout()/.overflow()/.status() calls and its
+        `SELECT 1` connectivity probe all run against genuine SQLAlchemy/aiosqlite
+        code paths, not a hand-rolled stand-in for the Pool API.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        # Build a mock engine with a pool that answers all pool stat calls
-        mock_pool = MagicMock()
-        mock_pool.size = MagicMock(return_value=10)
-        mock_pool.checkedin = MagicMock(return_value=8)
-        mock_pool.checkedout = MagicMock(return_value=2)
-        mock_pool.overflow = MagicMock(return_value=0)
-        mock_pool.status = MagicMock(return_value="Pool size: 10  Connections in pool: 8")
+        mgr._engine = _real_sqlite_engine(pool_size=10, max_overflow=0)
+        try:
+            info = await mgr.get_health_info()
 
-        mock_conn = AsyncMock()
-        mock_conn.execute = AsyncMock()
-        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_conn.__aexit__ = AsyncMock(return_value=False)
-
-        mock_engine = MagicMock()
-        mock_engine.pool = mock_pool
-        mock_engine.connect = MagicMock(return_value=mock_conn)
-
-        mgr._engine = mock_engine
-
-        info = await mgr.get_health_info()
-
-        assert info["status"] == "healthy"
-        assert info["connectivity"] is True
+            assert info["status"] == "healthy"
+            assert info["connectivity"] is True
+            assert info["error"] is None
+            pool_stats = info["connection_pool"]
+            assert pool_stats["size"] == 10
+            assert isinstance(pool_stats["checked_in"], int)
+            assert isinstance(pool_stats["checked_out"], int)
+            assert isinstance(pool_stats["overflow"], int)
+            assert "Pool size" in pool_stats["status"]
+        finally:
+            await mgr._engine.dispose()
 
     @pytest.mark.asyncio
     async def test_get_health_info_unhealthy_on_exception(self):
-        """When the connection raises, status must be 'unhealthy'."""
+        """When the connection raises, status must be 'unhealthy'.
+
+        TRUEUP-05: real engine pointed at an unreachable SQLite file path (a
+        directory that does not exist) — aiosqlite genuinely fails to open the
+        database file and raises a real `sqlalchemy.exc.OperationalError`
+        ("unable to open database file"), exercising the except-branch for real
+        instead of an injected generic Exception.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_conn = AsyncMock()
-        mock_conn.execute = AsyncMock(side_effect=Exception("connection refused"))
-        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_conn.__aexit__ = AsyncMock(return_value=False)
-
-        mock_engine = MagicMock()
-        mock_engine.connect = MagicMock(return_value=mock_conn)
-        mgr._engine = mock_engine
+        mgr._engine = create_async_engine(
+            "sqlite+aiosqlite:////nonexistent_dir_trueup05/does_not_exist.db",
+            poolclass=AsyncAdaptedQueuePool,
+        )
 
         info = await mgr.get_health_info()
 
         assert info["status"] == "unhealthy"
         assert info["connectivity"] is False
+        assert info["error"] is not None
+        assert "unable to open database file" in info["error"]
 
 
 class TestDatabaseManagerGetConnection:
@@ -160,23 +209,26 @@ class TestDatabaseManagerGetConnection:
 
     @pytest.mark.asyncio
     async def test_get_connection_yields_connection_when_initialized(self):
-        """get_connection() must yield the connection from engine.connect()."""
+        """get_connection() must yield a real, usable connection from engine.connect().
+
+        TRUEUP-05: real engine — asserts on the real AsyncConnection type and
+        runs a genuine query through the yielded connection, rather than
+        asserting identity against a hand-built AsyncMock.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_conn = AsyncMock()
-        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_conn.__aexit__ = AsyncMock(return_value=False)
+        mgr._engine = _real_sqlite_engine()
+        try:
+            received = []
+            async with mgr.get_connection() as conn:
+                received.append(conn)
+                result = await conn.execute(text("SELECT 1 as n"))
+                assert result.scalar() == 1
 
-        mock_engine = MagicMock()
-        mock_engine.connect = MagicMock(return_value=mock_conn)
-        mgr._engine = mock_engine
-
-        received = []
-        async with mgr.get_connection() as conn:
-            received.append(conn)
-
-        assert received[0] is mock_conn
+            assert isinstance(received[0], AsyncConnection)
+        finally:
+            await mgr._engine.dispose()
 
 
 class TestDatabaseManagerGetSession:
@@ -192,20 +244,45 @@ class TestDatabaseManagerGetSession:
             async with mgr.get_session():
                 pass
 
+    @pytest.mark.asyncio
+    async def test_get_session_yields_real_session_when_initialized(self):
+        """get_session() must yield a real, usable AsyncSession from the session factory.
+
+        TRUEUP-05: real engine + real sessionmaker(class_=AsyncSession) — same
+        factory construction the production initialize() uses — rather than a
+        MagicMock session_factory standing in for it.
+        """
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        engine = _real_sqlite_engine()
+        mgr._engine = engine
+        mgr._session_factory = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+        try:
+            received = []
+            async with mgr.get_session() as session:
+                received.append(session)
+                result = await session.execute(text("SELECT 1 as n"))
+                assert result.scalar() == 1
+
+            assert isinstance(received[0], AsyncSession)
+        finally:
+            await engine.dispose()
+
 
 class TestDatabaseManagerShutdown:
     """Tests for DatabaseManager.shutdown()."""
 
     @pytest.mark.asyncio
     async def test_shutdown_clears_engine(self):
-        """shutdown() must set _engine to None."""
+        """shutdown() must set _engine to None.
+
+        TRUEUP-05: real engine, not a MagicMock with a bolted-on `.sync_engine`.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_sync_engine = MagicMock()
-        mock_engine = MagicMock()
-        mock_engine.sync_engine = mock_sync_engine
-        mgr._engine = mock_engine
+        mgr._engine = _real_sqlite_engine()
 
         await mgr.shutdown()
 
@@ -217,11 +294,9 @@ class TestDatabaseManagerShutdown:
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_sync_engine = MagicMock()
-        mock_engine = MagicMock()
-        mock_engine.sync_engine = mock_sync_engine
-        mgr._engine = mock_engine
-        mgr._session_factory = MagicMock()
+        engine = _real_sqlite_engine()
+        mgr._engine = engine
+        mgr._session_factory = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 
         await mgr.shutdown()
 
@@ -229,18 +304,23 @@ class TestDatabaseManagerShutdown:
 
     @pytest.mark.asyncio
     async def test_shutdown_calls_dispose(self):
-        """shutdown() must dispose the sync engine pool."""
+        """shutdown() must dispose the sync engine pool.
+
+        TRUEUP-05: real engine with its real `.sync_engine.dispose` bound
+        method wrapped (not replaced) via `wraps=` — the assertion proves
+        shutdown() actually invokes dispose(), while dispose() itself still
+        runs its genuine implementation (no accept-anything stand-in).
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_sync_engine = MagicMock()
-        mock_engine = MagicMock()
-        mock_engine.sync_engine = mock_sync_engine
-        mgr._engine = mock_engine
+        engine = _real_sqlite_engine()
+        mgr._engine = engine
 
-        await mgr.shutdown()
+        with patch.object(engine.sync_engine, "dispose", wraps=engine.sync_engine.dispose) as dispose_spy:
+            await mgr.shutdown()
 
-        mock_sync_engine.dispose.assert_called_once()
+        dispose_spy.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_shutdown_when_not_initialized_does_not_raise(self):
@@ -394,50 +474,75 @@ class TestDatabaseManagerInitialize:
 
     @pytest.mark.asyncio
     async def test_initialize_already_initialized_returns_early(self):
-        """If _engine is already set, initialize() should return immediately."""
+        """If _engine is already set, initialize() should return immediately.
+
+        TRUEUP-05: real engine standing in for "already initialized" — the
+        strengthened assertion (`is preexisting_engine`, not just `is not
+        None`) proves initialize() truly took the early-return branch and
+        did not replace it with a freshly created engine.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
-        mgr._engine = MagicMock()  # pretend already initialized
-
-        # Should not raise, should not create a new engine
-        await mgr.initialize()
-        # Engine should still be the same mock
-        assert mgr._engine is not None
+        preexisting_engine = _real_sqlite_engine()
+        mgr._engine = preexisting_engine  # pretend already initialized
+        try:
+            # Should not raise, should not create a new engine
+            await mgr.initialize()
+            assert mgr._engine is preexisting_engine
+        finally:
+            await preexisting_engine.dispose()
 
     @pytest.mark.asyncio
     async def test_initialize_failure_raises(self):
-        """If create_async_engine fails, initialize() should raise."""
+        """If create_async_engine fails, initialize() should raise.
+
+        TRUEUP-05: a genuinely invalid SQLAlchemy dialect+driver string
+        ("sqlite+doesnotexist") makes the real `create_async_engine()` raise
+        a real `NoSuchModuleError` at call time (dialect resolution happens
+        eagerly, before any I/O) — no need to mock the function itself to
+        force a failure.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
+        mgr._connection_string = "sqlite+doesnotexist:///:memory:"
 
-        with (
-            patch("persist.database.manager.create_async_engine", side_effect=Exception("engine fail")),
-            pytest.raises(Exception, match="engine fail"),
-        ):
+        with pytest.raises(Exception, match="Can't load plugin"):
             await mgr.initialize()
 
 
 class TestDatabaseManagerTestConnection:
-    """Tests for _test_connection() retry logic – lines 104-128."""
+    """Tests for _test_connection() retry logic – lines 104-128.
+
+    TRUEUP-05 scope note: the happy path below now runs against a real engine.
+    The three retry/backoff tests that follow are deliberately LEFT on
+    constructed AsyncMock connections — per the worker brief's carve-out
+    ("Keep tests that genuinely target ... logic as-is if a live engine can't
+    express them — justify in a comment"), there is no way to make a real
+    SQLite (or any real DB) connection fail transiently exactly N times then
+    recover on a controlled schedule; that requires deterministic failure
+    injection a live database cannot provide without infrastructure far
+    beyond a unit test's scope (e.g. killing/restarting a real Postgres mid-
+    test). The existing mocks are already "complete and true to the entity
+    they represent" (house rule 2): they model the real `async with
+    engine.connect() as conn: await conn.execute(...)` shape faithfully,
+    including realistic `OperationalError` instances, and exist purely to
+    control retry *timing/count*, not to fake a live-object contract.
+    """
 
     @pytest.mark.asyncio
     async def test_test_connection_success_first_attempt(self):
-        """Connection succeeds on first attempt."""
+        """Connection succeeds on first attempt.
+
+        TRUEUP-05: real engine — no mocks at all needed for the pure success path.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_conn = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalar.return_value = 1
-        mock_conn.execute = AsyncMock(return_value=mock_result)
-        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_conn.__aexit__ = AsyncMock(return_value=False)
-
-        mock_engine = MagicMock()
-        mock_engine.connect = MagicMock(return_value=mock_conn)
-        mgr._engine = mock_engine
-
-        await mgr._test_connection()
+        mgr._engine = _real_sqlite_engine()
+        try:
+            await mgr._test_connection()
+        finally:
+            await mgr._engine.dispose()
 
     @pytest.mark.asyncio
     async def test_test_connection_retries_on_operational_error(self):
@@ -521,27 +626,72 @@ class TestDatabaseManagerSessionErrorHandling:
 
     @pytest.mark.asyncio
     async def test_get_session_rolls_back_on_error(self):
-        """If an exception occurs inside the session context, rollback is called."""
+        """If an exception occurs inside the session context, rollback is called.
+
+        TRUEUP-05: real engine (StaticPool, single shared connection) + real
+        sessionmaker. A real INSERT is issued, then the block raises; the
+        instrumented (wraps=) real `rollback()` is asserted called, and the
+        shared-connection engine lets us prove the row was genuinely NOT
+        persisted afterwards — a stronger, end-to-end check than a call-count
+        assertion on a fully synthetic AsyncMock session.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_session = AsyncMock()
-        mock_session.rollback = AsyncMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        engine = _real_sqlite_engine_shared()
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE t (id INTEGER)"))
 
-        mock_factory = MagicMock(return_value=mock_session)
-        mgr._session_factory = mock_factory
+        real_factory = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+        created: list[AsyncSession] = []
 
-        with pytest.raises(ValueError, match="test error"):
-            async with mgr.get_session():
-                raise ValueError("test error")
+        def factory():
+            session = real_factory()
+            session.rollback = AsyncMock(wraps=session.rollback)
+            created.append(session)
+            return session
 
-        mock_session.rollback.assert_awaited_once()
+        mgr._session_factory = factory
+        try:
+            with pytest.raises(ValueError, match="test error"):
+                async with mgr.get_session() as db:
+                    await db.execute(text("INSERT INTO t VALUES (1)"))
+                    raise ValueError("test error")
+
+            created[0].rollback.assert_awaited_once()
+
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT COUNT(*) FROM t"))
+                assert result.scalar() == 0, "rolled-back INSERT must not be persisted"
+        finally:
+            await engine.dispose()
 
 
 class TestDatabaseManagerSessionAutoCommit:
-    """AC-7 tests: get_session() auto-commits on clean exit when a transaction is active."""
+    """AC-7 tests: get_session() auto-commits on clean exit when a transaction is active.
+
+    TRUEUP-05: all three tests use a real engine + real sessionmaker(class_=
+    AsyncSession) rather than a hand-built AsyncMock session. `commit`/
+    `rollback` are wrapped (not replaced) via `wraps=` on the real bound
+    method, so the interaction-count assertions (house rule: session hand-out
+    should run against the real engine where feasible) still run the genuine
+    SQLAlchemy commit/rollback implementation — persistence is verified
+    end-to-end via a shared-connection (StaticPool) engine, not just asserted
+    by mock call count.
+    """
+
+    @staticmethod
+    def _spied_session_factory(engine, created: list[AsyncSession]):
+        real_factory = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+        def factory():
+            session = real_factory()
+            session.commit = AsyncMock(wraps=session.commit)
+            session.rollback = AsyncMock(wraps=session.rollback)
+            created.append(session)
+            return session
+
+        return factory
 
     @pytest.mark.asyncio
     async def test_get_session_auto_commits_on_clean_exit_when_in_transaction(self):
@@ -549,22 +699,26 @@ class TestDatabaseManagerSessionAutoCommit:
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_session = AsyncMock()
-        mock_session.in_transaction = MagicMock(return_value=True)
-        mock_session.commit = AsyncMock()
-        mock_session.rollback = AsyncMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        engine = _real_sqlite_engine_shared()
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE t (id INTEGER)"))
 
-        mock_factory = MagicMock(return_value=mock_session)
-        mgr._session_factory = mock_factory
+        created: list[AsyncSession] = []
+        mgr._session_factory = self._spied_session_factory(engine, created)
+        try:
+            async with mgr.get_session() as db:
+                # Caller does not commit explicitly; AC-7 should auto-commit.
+                assert db is created[0]
+                await db.execute(text("INSERT INTO t VALUES (1)"))
 
-        async with mgr.get_session() as db:
-            # Caller does not commit explicitly; AC-7 should auto-commit.
-            assert db is mock_session
+            created[0].commit.assert_awaited_once()
+            created[0].rollback.assert_not_awaited()
 
-        mock_session.commit.assert_awaited_once()
-        mock_session.rollback.assert_not_awaited()
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT COUNT(*) FROM t"))
+                assert result.scalar() == 1, "auto-committed INSERT must be persisted"
+        finally:
+            await engine.dispose()
 
     @pytest.mark.asyncio
     async def test_get_session_does_not_double_commit_when_not_in_transaction(self):
@@ -572,45 +726,66 @@ class TestDatabaseManagerSessionAutoCommit:
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_session = AsyncMock()
-        mock_session.in_transaction = MagicMock(return_value=False)
-        mock_session.commit = AsyncMock()
-        mock_session.rollback = AsyncMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        engine = _real_sqlite_engine_shared()
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE t (id INTEGER)"))
 
-        mock_factory = MagicMock(return_value=mock_session)
-        mgr._session_factory = mock_factory
+        created: list[AsyncSession] = []
+        mgr._session_factory = self._spied_session_factory(engine, created)
+        try:
+            async with mgr.get_session() as db:
+                assert db is created[0]
+                await db.execute(text("INSERT INTO t VALUES (1)"))
+                await db.commit()  # caller commits explicitly; in_transaction() is False after this
 
-        async with mgr.get_session() as db:
-            assert db is mock_session
+            # In-transaction is False (caller committed) → no auto-commit
+            created[0].commit.assert_awaited_once()  # exactly the caller's explicit commit, not a second one
+            created[0].rollback.assert_not_awaited()
 
-        # In-transaction is False (caller committed) → no auto-commit
-        mock_session.commit.assert_not_awaited()
-        mock_session.rollback.assert_not_awaited()
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT COUNT(*) FROM t"))
+                assert result.scalar() == 1, "row must be committed exactly once, not duplicated"
+        finally:
+            await engine.dispose()
 
     @pytest.mark.asyncio
     async def test_get_session_rolls_back_when_auto_commit_fails(self):
-        """If the auto-commit itself fails, rollback is attempted before re-raising."""
+        """If the auto-commit itself fails, rollback is attempted before re-raising.
+
+        A real commit cannot be made to fail on demand without corrupting the
+        engine, so `commit` here is replaced (not wrapped) with a raising
+        AsyncMock — the one interaction in this class that genuinely needs a
+        synthetic failure, per house rule 3 (justified, single mock).
+        `rollback` remains real (wraps=) so the recovery path itself is proven
+        against genuine SQLAlchemy/aiosqlite behaviour.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_session = AsyncMock()
-        mock_session.in_transaction = MagicMock(return_value=True)
-        mock_session.commit = AsyncMock(side_effect=RuntimeError("commit fail"))
-        mock_session.rollback = AsyncMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        engine = _real_sqlite_engine_shared()
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE t (id INTEGER)"))
 
-        mock_factory = MagicMock(return_value=mock_session)
-        mgr._session_factory = mock_factory
+        real_factory = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+        created: list[AsyncSession] = []
 
-        with pytest.raises(RuntimeError, match="commit fail"):
-            async with mgr.get_session():
-                pass
+        def factory():
+            session = real_factory()
+            session.commit = AsyncMock(side_effect=RuntimeError("commit fail"))
+            session.rollback = AsyncMock(wraps=session.rollback)
+            created.append(session)
+            return session
 
-        mock_session.commit.assert_awaited_once()
-        mock_session.rollback.assert_awaited_once()
+        mgr._session_factory = factory
+        try:
+            with pytest.raises(RuntimeError, match="commit fail"):
+                async with mgr.get_session() as db:
+                    await db.execute(text("INSERT INTO t VALUES (1)"))
+
+            created[0].commit.assert_awaited_once()
+            created[0].rollback.assert_awaited_once()
+        finally:
+            await engine.dispose()
 
 
 class TestDatabaseManagerExecuteSql:
@@ -618,31 +793,60 @@ class TestDatabaseManagerExecuteSql:
 
     @pytest.mark.asyncio
     async def test_execute_sql_sqlalchemy_error(self):
-        """SQLAlchemyError is caught, logged, and re-raised."""
+        """SQLAlchemyError is caught, logged, and re-raised.
+
+        TRUEUP-05: real engine + genuinely invalid SQL ("no such table") —
+        aiosqlite/SQLAlchemy raise a real `OperationalError` (a `SQLAlchemyError`
+        subclass), so the except-branch in execute_sql() is exercised for real.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_conn = AsyncMock()
-        mock_conn.execute = AsyncMock(side_effect=SQLAlchemyError("sql fail"))
+        mgr._engine = _real_sqlite_engine()
+        try:
+            with pytest.raises(SQLAlchemyError, match="no such table"):
+                await mgr.execute_sql("SELECT * FROM nonexistent_table_xyz")
+        finally:
+            await mgr._engine.dispose()
 
-        mock_begin = AsyncMock()
-        mock_begin.__aenter__ = AsyncMock(return_value=None)
-        mock_begin.__aexit__ = AsyncMock(return_value=False)
-        mock_conn.begin = MagicMock(return_value=mock_begin)
+    @pytest.mark.asyncio
+    async def test_execute_sql_success_returns_result(self):
+        """Happy path: execute_sql() returns the real Result for valid SQL.
 
-        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_conn.__aexit__ = AsyncMock(return_value=False)
+        Added for TRUEUP-05 — the pre-existing suite only covered the error
+        path for this method; a live engine makes the success path cheap to
+        cover too.
+        """
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
 
-        mock_engine = MagicMock()
-        mock_engine.connect = MagicMock(return_value=mock_conn)
-        mgr._engine = mock_engine
-
-        with pytest.raises(SQLAlchemyError):
-            await mgr.execute_sql("SELECT 1")
+        mgr._engine = _real_sqlite_engine()
+        try:
+            result = await mgr.execute_sql("SELECT 1 as n")
+            assert result.scalar() == 1
+        finally:
+            await mgr._engine.dispose()
 
 
 class TestDatabaseManagerTableExists:
-    """Tests for table_exists() error path – lines 188-196."""
+    """Tests for table_exists() error path – lines 188-196.
+
+    TRUEUP-05 FINDING (documented in TEST_SUITE_TRUEUP_FOLLOWUPS.md, section
+    R-bc-db-manager): swapping the mocked `inspect()`/engine in this class for
+    a REAL async engine surfaced a genuine production bug — `table_exists()`
+    calls the *synchronous* `inspect(self._engine.sync_engine)` /
+    `inspector.has_table(...)` API directly from inside an `async def` method,
+    with no `conn.run_sync(...)` bridge. Against a real AsyncEngine (verified
+    against both a real aiosqlite engine AND the real asyncpg engine pointed
+    at the disposable postgres on 127.0.0.1:55432) this ALWAYS raises
+    `sqlalchemy.exc.MissingGreenlet` ("greenlet_spawn has not been called"),
+    which `table_exists()`'s `except SQLAlchemyError` catches and converts to
+    `return False`. In other words: `table_exists()` returns False
+    UNCONDITIONALLY today, regardless of whether the table actually exists.
+    Not fixed here (test-only branch) — see the follow-ups doc for the
+    suggested fix (`await self._engine.connect() as conn: await
+    conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table(...))`).
+    """
 
     @pytest.mark.asyncio
     async def test_table_exists_engine_none_returns_false(self):
@@ -655,52 +859,126 @@ class TestDatabaseManagerTableExists:
 
     @pytest.mark.asyncio
     async def test_table_exists_sqlalchemy_error_returns_false(self):
-        """When inspector raises SQLAlchemyError, returns False."""
+        """When inspector raises SQLAlchemyError, returns False.
+
+        TRUEUP-05: real engine — no need to inject a failure via
+        `patch("persist.database.manager.inspect", side_effect=...)`. The real
+        `inspect()`/`has_table()` call against a real AsyncEngine's
+        `.sync_engine` genuinely raises `MissingGreenlet` on its own (see the
+        class docstring finding above); this test only needed a real engine to
+        exercise the branch it names.
+        """
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        mock_engine = MagicMock()
-        mock_engine.sync_engine = MagicMock()
-        mgr._engine = mock_engine
-
-        with patch("persist.database.manager.inspect", side_effect=SQLAlchemyError("inspect fail")):
+        mgr._engine = _real_sqlite_engine()
+        try:
             result = await mgr.table_exists("some_table")
+            assert result is False
+        finally:
+            await mgr._engine.dispose()
 
-        assert result is False
+    @pytest.mark.asyncio
+    async def test_table_exists_returns_false_even_when_table_genuinely_exists(self):
+        """PRODUCTION BUG (see class docstring / R-bc-db-manager): table_exists()
+        returns False even for a table that was just created for real, because
+        the MissingGreenlet failure fires unconditionally, independent of
+        whether the table is actually present.
+        """
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        engine = _real_sqlite_engine()
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE genuinely_present (id INTEGER)"))
+        mgr._engine = engine
+        try:
+            result = await mgr.table_exists("genuinely_present")
+            assert result is False, (
+                "table_exists() is expected to (incorrectly) return False here — "
+                "see R-bc-db-manager in TEST_SUITE_TRUEUP_FOLLOWUPS.md"
+            )
+        finally:
+            await engine.dispose()
 
 
 class TestModuleLevelConvenienceFunctions:
-    """Tests for module-level convenience functions – lines 264, 268, 272, 276."""
+    """Tests for module-level convenience functions – lines 264, 268, 272, 276.
+
+    TRUEUP-05: a real (uninitialized-is-fine) `DatabaseManager` instance
+    swapped in for the module-level `db_manager` singleton, with `wraps=`
+    spies on the delegated-to method — proves the module function truly
+    calls through to the *same* DatabaseManager method and returns its real
+    result, rather than asserting against a MagicMock singleton that would
+    accept literally any attribute access.
+    """
 
     def test_get_db_connection_returns_context_manager(self):
         """get_db_connection() should delegate to db_manager.get_connection()."""
-        with patch("persist.database.manager.db_manager") as mock_mgr:
-            mock_mgr.get_connection = MagicMock(return_value="conn_ctx")
+        with patch("persist.database.manager.bblogger"):
+            real_mgr = DatabaseManager()
+        with (
+            patch("persist.database.manager.db_manager", real_mgr),
+            patch.object(real_mgr, "get_connection", wraps=real_mgr.get_connection) as spy,
+        ):
             result = get_db_connection()
-            assert result == "conn_ctx"
+        spy.assert_called_once()
+        # get_connection() is an @asynccontextmanager-wrapped generator function;
+        # calling (without entering) it returns the real context-manager object.
+        assert hasattr(result, "__aenter__") and hasattr(result, "__aexit__")
 
     def test_get_db_session_returns_context_manager(self):
         """get_db_session() should delegate to db_manager.get_session()."""
-        with patch("persist.database.manager.db_manager") as mock_mgr:
-            mock_mgr.get_session = MagicMock(return_value="session_ctx")
+        with patch("persist.database.manager.bblogger"):
+            real_mgr = DatabaseManager()
+        with (
+            patch("persist.database.manager.db_manager", real_mgr),
+            patch.object(real_mgr, "get_session", wraps=real_mgr.get_session) as spy,
+        ):
             result = get_db_session()
-            assert result == "session_ctx"
+        spy.assert_called_once()
+        assert hasattr(result, "__aenter__") and hasattr(result, "__aexit__")
 
     @pytest.mark.asyncio
     async def test_module_execute_sql_delegates(self):
-        """execute_sql() should delegate to db_manager.execute_sql()."""
-        with patch("persist.database.manager.db_manager") as mock_mgr:
-            mock_mgr.execute_sql = AsyncMock(return_value="result")
-            result = await module_execute_sql("SELECT 1")
-            assert result == "result"
+        """execute_sql() should delegate to db_manager.execute_sql() and return its real Result."""
+        with patch("persist.database.manager.bblogger"):
+            real_mgr = DatabaseManager()
+        real_mgr._engine = _real_sqlite_engine()
+        try:
+            with (
+                patch("persist.database.manager.db_manager", real_mgr),
+                patch.object(real_mgr, "execute_sql", wraps=real_mgr.execute_sql) as spy,
+            ):
+                result = await module_execute_sql("SELECT 1 as n")
+            spy.assert_awaited_once_with("SELECT 1 as n", None)
+            assert result.scalar() == 1
+        finally:
+            await real_mgr._engine.dispose()
 
     @pytest.mark.asyncio
     async def test_module_table_exists_delegates(self):
-        """table_exists() should delegate to db_manager.table_exists()."""
-        with patch("persist.database.manager.db_manager") as mock_mgr:
-            mock_mgr.table_exists = AsyncMock(return_value=True)
-            result = await module_table_exists("players")
-            assert result is True
+        """table_exists() should delegate to db_manager.table_exists() and return its real result.
+
+        Note: the real result is False here — see
+        TestDatabaseManagerTableExists / R-bc-db-manager above for the
+        genuine production defect this surfaces (table_exists() always
+        returns False against a real async engine due to a sync/async
+        bridging bug, independent of whether the table exists).
+        """
+        with patch("persist.database.manager.bblogger"):
+            real_mgr = DatabaseManager()
+        real_mgr._engine = _real_sqlite_engine()
+        try:
+            with (
+                patch("persist.database.manager.db_manager", real_mgr),
+                patch.object(real_mgr, "table_exists", wraps=real_mgr.table_exists) as spy,
+            ):
+                result = await module_table_exists("players")
+            spy.assert_awaited_once_with("players", None)
+            assert result is False
+        finally:
+            await real_mgr._engine.dispose()
 
 
 # ===========================================================================

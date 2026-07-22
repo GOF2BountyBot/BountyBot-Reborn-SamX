@@ -245,24 +245,17 @@ def test_simple_health_check_reraises_on_exception() -> None:
     assert response.status_code == 500
 
 
-def test_liveness_check_never_raises(client: TestClient) -> None:
-    """Liveness check only returns a dict and never raises in normal conditions."""
-    response = client.get("/api/v1/health/liveness")
-    assert response.status_code == 200
-    assert response.json()["status"] == "alive"
-
-
 def test_liveness_check_reraises_on_exception() -> None:
     """If liveness internals raise, the exception propagates (500)."""
     from unittest.mock import patch
 
-    # Patch dict literal creation to force an error inside the try block
+    # The endpoint calls flogger.debug twice: once on entry, once after building the
+    # result dict. Fail the second call so the failure happens deterministically inside
+    # the try block, after `result` is built but before it's returned.
     with (
         TestClient(app, raise_server_exceptions=False) as no_raise_client,
         patch("routers.health.flogger") as mock_log,
     ):
         mock_log.debug.side_effect = [None, RuntimeError("log broke")]
         response = no_raise_client.get("/api/v1/health/liveness")
-    # Either 200 (if the second debug call is after return) or 500 on exception
-    # The important thing is the endpoint is called and doesn't crash the server
-    assert response.status_code in (200, 500)
+    assert response.status_code == 500

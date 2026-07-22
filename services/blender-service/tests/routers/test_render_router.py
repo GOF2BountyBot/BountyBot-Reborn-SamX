@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,6 +24,7 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 from main import app
+from services.job_queue_service import JobQueueService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,26 +68,16 @@ def client() -> TestClient:
 
 
 @pytest.fixture()
-def mock_job_queue() -> MagicMock:
-    """Return a MagicMock for JobQueueService injected into app.state."""
-    from datetime import UTC, datetime
+def job_queue() -> JobQueueService:
+    """Return a real in-memory JobQueueService injected into app.state.
 
-    from services.job_queue_service import JobQueueService, JobStatus, RenderJob
-
-    mock_queue = MagicMock(spec=JobQueueService)
-    # Default job returned by create_job
-    fake_job = RenderJob(
-        job_id="abc12345",
-        status=JobStatus.QUEUED,
-        created_at=datetime.now(UTC),
-        model_path="/model/ship.obj",
-        res_x=1920,
-        res_y=1080,
-        num_samples=64,
-    )
-    mock_queue.create_job.return_value = fake_job
-    mock_queue.submit_job = AsyncMock()
-    return mock_queue
+    JobQueueService is a pure in-memory object with no external dependencies
+    (see services/test_job_queue_service.py for its own dedicated unit tests),
+    so there's nothing at this boundary that needs mocking. ``create_job`` /
+    ``submit_job`` run for real; only the actual Blender subprocess boundary
+    (``RenderService.render_ship``, patched per-test below) is mocked.
+    """
+    return JobQueueService()
 
 
 # ---------------------------------------------------------------------------
@@ -355,9 +346,9 @@ def test_render_unexpected_exception_returns_500(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_async_render_res_too_high_is_clamped(client: TestClient, mock_job_queue: MagicMock) -> None:
+def test_async_render_res_too_high_is_clamped(client: TestClient, job_queue: JobQueueService) -> None:
     """B.93: async endpoint clamps res_x above the configured max and still queues the job."""
-    app.state.job_queue = mock_job_queue
+    app.state.job_queue = job_queue
 
     with patch("routers.render.RenderService.render_ship", new_callable=AsyncMock):
         response = client.post(
@@ -371,9 +362,9 @@ def test_async_render_res_too_high_is_clamped(client: TestClient, mock_job_queue
     assert body["clamped"]["res_x"] == {"requested": 9999, "actual": 1920}
 
 
-def test_async_render_samples_too_low_is_clamped(client: TestClient, mock_job_queue: MagicMock) -> None:
+def test_async_render_samples_too_low_is_clamped(client: TestClient, job_queue: JobQueueService) -> None:
     """B.93: async endpoint clamps num_samples below the minimum and still queues the job."""
-    app.state.job_queue = mock_job_queue
+    app.state.job_queue = job_queue
 
     with patch("routers.render.RenderService.render_ship", new_callable=AsyncMock):
         response = client.post(
@@ -386,9 +377,9 @@ def test_async_render_samples_too_low_is_clamped(client: TestClient, mock_job_qu
     assert body["clamped"]["num_samples"] == {"requested": 0, "actual": 1}
 
 
-def test_async_render_in_bounds_reports_empty_clamped(client: TestClient, mock_job_queue: MagicMock) -> None:
+def test_async_render_in_bounds_reports_empty_clamped(client: TestClient, job_queue: JobQueueService) -> None:
     """B.93: an in-bounds async request reports an empty 'clamped' object."""
-    app.state.job_queue = mock_job_queue
+    app.state.job_queue = job_queue
 
     with patch("routers.render.RenderService.render_ship", new_callable=AsyncMock):
         response = client.post(
@@ -420,9 +411,9 @@ def test_async_render_missing_texture(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_async_render_success_returns_202(client: TestClient, mock_job_queue: MagicMock) -> None:
+def test_async_render_success_returns_202(client: TestClient, job_queue: JobQueueService) -> None:
     """A valid async render request should return HTTP 202 with job_id."""
-    app.state.job_queue = mock_job_queue
+    app.state.job_queue = job_queue
 
     with patch(
         "routers.render.RenderService.render_ship",
@@ -446,9 +437,9 @@ def test_async_render_success_returns_202(client: TestClient, mock_job_queue: Ma
     assert body["job_id"] in body["poll_url"]
 
 
-def test_async_render_success_poll_url_format(client: TestClient, mock_job_queue: MagicMock) -> None:
+def test_async_render_success_poll_url_format(client: TestClient, job_queue: JobQueueService) -> None:
     """The poll_url in async render response should reference /api/v1/jobs/{job_id}."""
-    app.state.job_queue = mock_job_queue
+    app.state.job_queue = job_queue
 
     with patch(
         "routers.render.RenderService.render_ship",
@@ -500,9 +491,9 @@ def test_render_output_read_failure_returns_500(tmp_path: Path, client: TestClie
     assert response.status_code == 500
 
 
-def test_async_render_texture_upload_failure_returns_400(client: TestClient, mock_job_queue: MagicMock) -> None:
+def test_async_render_texture_upload_failure_returns_400(client: TestClient, job_queue: JobQueueService) -> None:
     """When saving the uploaded texture to disk fails in async mode, return HTTP 400."""
-    app.state.job_queue = mock_job_queue
+    app.state.job_queue = job_queue
 
     with patch("pathlib.Path.write_bytes", side_effect=OSError("disk full")):
         response = client.post(

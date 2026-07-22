@@ -530,6 +530,10 @@ class TestAboutCommand:
             asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "Eagle"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
+        # Contract: the object-fetch GET hits the expected route for the resolved name —
+        # previously unasserted, so a wrong URL would have shipped green.
+        get_call = mock_about_cog.http_client.get.call_args
+        assert get_call.args[0].endswith("/about/object/name/Eagle")
         interaction.followup.send.assert_awaited_once()
 
     def test_about_object_not_found_404(self, mock_about_cog):

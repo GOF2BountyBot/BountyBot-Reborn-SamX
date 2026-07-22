@@ -1,28 +1,31 @@
-"""Unit tests for GenericRepository CRUD operations.
+"""Tests for GenericRepository CRUD operations.
 
-The shared.bblogger module is mocked via conftest.py (loaded by pytest before
-any import from the src tree). These tests cover:
-- list_all()         - returns all rows via scalars().all()
-- get_by_id()        - delegates to db.get()
-- get_by_name()      - queries by name filter, returns one_or_none()
-- get_by_alias()     - queries by alias relationship
-- add()              - calls db.add / commit / refresh, returns entity
-- remove()           - calls db.delete / commit
-- create_or_update() - raises NotImplementedError (base class contract)
+Read/query methods (list_all/get_by_id/get_by_name) run against a real
+in-memory SQLite engine over a real declarative `_FakeModel`, so the actual
+select/filter is exercised end-to-end instead of a mock hard-coding the rows.
+
+get_by_alias targets an ARRAY column (`_AliasModel.aliases`), which SQLite
+cannot round-trip, so its session is mocked — but the REAL
+`select(model).where(model.aliases.any(alias))` is built and asserted at the
+statement level (no more patching out `select`).
+
+add()/remove() ordering tests keep a mock session: observing the
+add→commit→refresh call order is exactly what a mock is for.
 """
 
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import String
+from sqlalchemy import ARRAY, String
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # ---------------------------------------------------------------------------
 # Ensure shared.bblogger is mocked BEFORE any src imports
-# (conftest.py does this project-wide, but we guard here too for safety)
 # ---------------------------------------------------------------------------
 if "shared" not in sys.modules:
     _mock_shared = types.ModuleType("shared")
@@ -37,8 +40,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 from persist.repositories.generic_repository import GenericRepository
 
 # ---------------------------------------------------------------------------
-# A real SQLAlchemy declarative model so select() coercion works correctly.
-# Declared at module level so the mapper is only registered once.
+# Real SQLAlchemy declarative models used only in these tests.
 # ---------------------------------------------------------------------------
 
 
@@ -47,7 +49,7 @@ class _TestBase(DeclarativeBase):
 
 
 class _FakeModel(_TestBase):
-    """Minimal SQLAlchemy model used only in these tests."""
+    """Minimal SQLite-compatible model (plain columns → real round-trips)."""
 
     __tablename__ = "__test_fake__"
 
@@ -59,13 +61,13 @@ class _FakeModel(_TestBase):
 
 
 class _AliasModel(_TestBase):
-    """SQLAlchemy model with an 'aliases' attribute for alias tests."""
+    """Model with a real ARRAY 'aliases' column (Postgres-only round-trip)."""
 
     __tablename__ = "__test_alias__"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(50), nullable=True)
-    # 'aliases' relationship is patched in tests; not declared as a real FK here.
+    aliases: Mapped[list] = mapped_column(ARRAY(String), nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +82,25 @@ def repo() -> GenericRepository:
 
 
 @pytest.fixture
+async def async_engine():
+    """Real SQLite engine with only the SQLite-compatible _FakeModel table."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(_TestBase.metadata.create_all, tables=[_FakeModel.__table__])
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(async_engine) -> AsyncSession:
+    factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        yield session
+
+
+@pytest.fixture
 def mock_session() -> AsyncMock:
-    """Return a fully mocked async SQLAlchemy session."""
+    """Mock async session — for order-of-operations and NotImplementedError tests."""
     session = AsyncMock()
     session.add = MagicMock()
     session.commit = AsyncMock()
@@ -103,243 +122,169 @@ def _make_scalars_result(rows) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# TestListAll
+# TestListAll — real round-trips
 # ---------------------------------------------------------------------------
 
 
 class TestListAll:
-    """Tests for GenericRepository.list_all()."""
+    async def test_list_all_returns_all_rows(self, repo, db_session):
+        db_session.add_all([_FakeModel(name="alpha"), _FakeModel(name="beta")])
+        await db_session.commit()
 
-    @pytest.mark.asyncio
-    async def test_list_all_returns_all_rows(self, repo, mock_session):
-        """list_all() should return every row returned by scalars().all()."""
-        entities = [_FakeModel(id=1, name="alpha"), _FakeModel(id=2, name="beta")]
-        mock_session.execute = AsyncMock(return_value=_make_scalars_result(entities))
+        result = await repo.list_all(db_session)
 
-        result = await repo.list_all(mock_session)
+        assert {r.name for r in result} == {"alpha", "beta"}
 
-        assert result == entities
-        mock_session.execute.assert_awaited_once()
+    async def test_list_all_returns_empty_list_when_no_rows(self, repo, db_session):
+        result = await repo.list_all(db_session)
 
-    @pytest.mark.asyncio
-    async def test_list_all_returns_empty_list_when_no_rows(self, repo, mock_session):
-        """list_all() should return an empty list when the table is empty."""
-        mock_session.execute = AsyncMock(return_value=_make_scalars_result([]))
+        assert list(result) == []
 
-        result = await repo.list_all(mock_session)
+    async def test_list_all_single_entity(self, repo, db_session):
+        solo = _FakeModel(name="solo")
+        db_session.add(solo)
+        await db_session.commit()
 
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_list_all_calls_execute_with_select(self, repo, mock_session):
-        """list_all() must call session.execute() exactly once."""
-        mock_session.execute = AsyncMock(return_value=_make_scalars_result([]))
-
-        await repo.list_all(mock_session)
-
-        mock_session.execute.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_list_all_single_entity(self, repo, mock_session):
-        """list_all() with one row in the DB returns a list of length 1."""
-        entity = _FakeModel(id=42, name="solo")
-        mock_session.execute = AsyncMock(return_value=_make_scalars_result([entity]))
-
-        result = await repo.list_all(mock_session)
+        result = await repo.list_all(db_session)
 
         assert len(result) == 1
-        assert result[0] is entity
+        assert result[0].name == "solo"
 
 
 # ---------------------------------------------------------------------------
-# TestGetById
+# TestGetById — real round-trips
 # ---------------------------------------------------------------------------
 
 
 class TestGetById:
-    """Tests for GenericRepository.get_by_id()."""
+    async def test_get_by_id_returns_entity_when_found(self, repo, db_session):
+        entity = _FakeModel(name="found")
+        db_session.add(entity)
+        await db_session.commit()
 
-    @pytest.mark.asyncio
-    async def test_get_by_id_returns_entity_when_found(self, repo, mock_session):
-        """get_by_id() should return the entity when it exists."""
-        entity = _FakeModel(id=7, name="found")
-        mock_session.get = AsyncMock(return_value=entity)
+        result = await repo.get_by_id(db_session, entity.id)
 
-        result = await repo.get_by_id(mock_session, 7)
+        assert result is not None
+        assert result.name == "found"
 
-        assert result is entity
-        mock_session.get.assert_awaited_once_with(_FakeModel, 7)
-
-    @pytest.mark.asyncio
-    async def test_get_by_id_returns_none_when_not_found(self, repo, mock_session):
-        """get_by_id() should return None when the entity does not exist."""
-        mock_session.get = AsyncMock(return_value=None)
-
-        result = await repo.get_by_id(mock_session, 999)
+    async def test_get_by_id_returns_none_when_not_found(self, repo, db_session):
+        result = await repo.get_by_id(db_session, 999)
 
         assert result is None
 
-    @pytest.mark.asyncio
-    async def test_get_by_id_passes_correct_model_class(self, repo, mock_session):
-        """get_by_id() must pass the correct model type to db.get()."""
-        mock_session.get = AsyncMock(return_value=None)
-
-        await repo.get_by_id(mock_session, 1)
-
-        args, _ = mock_session.get.call_args
-        assert args[0] is _FakeModel
-
-    @pytest.mark.asyncio
-    async def test_get_by_id_passes_correct_id(self, repo, mock_session):
-        """get_by_id() must pass the given ID to db.get()."""
-        mock_session.get = AsyncMock(return_value=None)
-        target_id = 123
-
-        await repo.get_by_id(mock_session, target_id)
-
-        args, _ = mock_session.get.call_args
-        assert args[1] == target_id
-
 
 # ---------------------------------------------------------------------------
-# TestGetByName
+# TestGetByName — real round-trips
 # ---------------------------------------------------------------------------
 
 
 class TestGetByName:
-    """Tests for GenericRepository.get_by_name()."""
+    async def test_get_by_name_returns_entity_when_found(self, repo, db_session):
+        db_session.add_all([_FakeModel(name="gamma"), _FakeModel(name="delta")])
+        await db_session.commit()
 
-    @pytest.mark.asyncio
-    async def test_get_by_name_returns_entity_when_found(self, repo, mock_session):
-        """get_by_name() should return the matching entity."""
-        entity = _FakeModel(id=3, name="gamma")
-        mock_session.execute = AsyncMock(return_value=_make_scalars_result([entity]))
+        result = await repo.get_by_name(db_session, "gamma")
 
-        result = await repo.get_by_name(mock_session, "gamma")
+        assert result is not None
+        assert result.name == "gamma"
 
-        assert result is entity
+    async def test_get_by_name_returns_none_when_not_found(self, repo, db_session):
+        db_session.add(_FakeModel(name="present"))
+        await db_session.commit()
 
-    @pytest.mark.asyncio
-    async def test_get_by_name_returns_none_when_not_found(self, repo, mock_session):
-        """get_by_name() should return None when no match exists."""
-        mock_session.execute = AsyncMock(return_value=_make_scalars_result([]))
-
-        result = await repo.get_by_name(mock_session, "missing")
+        result = await repo.get_by_name(db_session, "missing")
 
         assert result is None
 
-    @pytest.mark.asyncio
-    async def test_get_by_name_calls_execute_once(self, repo, mock_session):
-        """get_by_name() must call session.execute() exactly once."""
-        mock_session.execute = AsyncMock(return_value=_make_scalars_result([]))
+    async def test_get_by_name_discriminates(self, repo, db_session):
+        """The name filter genuinely selects the matching row, not just any row."""
+        db_session.add_all([_FakeModel(name="one"), _FakeModel(name="two")])
+        await db_session.commit()
 
-        await repo.get_by_name(mock_session, "anything")
-
-        mock_session.execute.assert_awaited_once()
+        assert (await repo.get_by_name(db_session, "two")).name == "two"
+        assert (await repo.get_by_name(db_session, "one")).name == "one"
 
 
 # ---------------------------------------------------------------------------
-# TestAdd
+# TestGetByNames — real round-trips
+# ---------------------------------------------------------------------------
+
+
+class TestGetByNames:
+    async def test_get_by_names_returns_matching_rows(self, repo, db_session):
+        db_session.add_all([_FakeModel(name="a"), _FakeModel(name="b"), _FakeModel(name="c")])
+        await db_session.commit()
+
+        result = await repo.get_by_names(db_session, ["a", "c", "missing"])
+
+        assert {r.name for r in result} == {"a", "c"}
+
+    async def test_get_by_names_empty_input_returns_empty(self, repo, db_session):
+        result = await repo.get_by_names(db_session, [])
+
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# TestAdd — real round-trip + justified ordering mock
 # ---------------------------------------------------------------------------
 
 
 class TestAdd:
-    """Tests for GenericRepository.add()."""
+    async def test_add_persists_and_returns_entity(self, repo, db_session):
+        entity = _FakeModel(name="new")
 
-    @pytest.mark.asyncio
-    async def test_add_calls_db_add(self, repo, mock_session):
-        """add() must call session.add() with the provided entity."""
-        entity = _FakeModel(id=10, name="new")
-
-        await repo.add(mock_session, entity)
-
-        mock_session.add.assert_called_once_with(entity)
-
-    @pytest.mark.asyncio
-    async def test_add_commits_transaction(self, repo, mock_session):
-        """add() must await session.commit()."""
-        entity = _FakeModel(id=11, name="commit_me")
-
-        await repo.add(mock_session, entity)
-
-        mock_session.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_add_refreshes_entity(self, repo, mock_session):
-        """add() must await session.refresh() so server-defaults are loaded."""
-        entity = _FakeModel(id=12, name="refresh_me")
-
-        await repo.add(mock_session, entity)
-
-        mock_session.refresh.assert_awaited_once_with(entity)
-
-    @pytest.mark.asyncio
-    async def test_add_returns_entity(self, repo, mock_session):
-        """add() must return the same entity passed to it."""
-        entity = _FakeModel(id=13, name="return_me")
-
-        result = await repo.add(mock_session, entity)
+        result = await repo.add(db_session, entity)
 
         assert result is entity
+        assert entity.id is not None
+        db_session.expunge_all()
+        fetched = await repo.get_by_id(db_session, entity.id)
+        assert fetched is not None
+        assert fetched.name == "new"
 
     @pytest.mark.asyncio
     async def test_add_order_of_operations(self, repo, mock_session):
-        """add() must call add -> commit -> refresh in that order."""
+        """add() must call add -> commit -> refresh in that order.
+
+        Justified mock: verifying call *ordering* is precisely what a spy session
+        is for; a real session cannot observe the intermediate sequence.
+        """
         call_order: list[str] = []
         mock_session.add = MagicMock(side_effect=lambda _: call_order.append("add"))
         mock_session.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
         mock_session.refresh = AsyncMock(side_effect=lambda _: call_order.append("refresh"))
 
-        entity = _FakeModel(id=14, name="order")
-        await repo.add(mock_session, entity)
+        await repo.add(mock_session, _FakeModel(name="order"))
 
         assert call_order == ["add", "commit", "refresh"]
 
 
 # ---------------------------------------------------------------------------
-# TestRemove
+# TestRemove — real round-trip + justified ordering mock
 # ---------------------------------------------------------------------------
 
 
 class TestRemove:
-    """Tests for GenericRepository.remove()."""
+    async def test_remove_deletes_row(self, repo, db_session):
+        entity = _FakeModel(name="delete_me")
+        db_session.add(entity)
+        await db_session.commit()
+        entity_id = entity.id
 
-    @pytest.mark.asyncio
-    async def test_remove_calls_db_delete(self, repo, mock_session):
-        """remove() must await session.delete() with the entity."""
-        entity = _FakeModel(id=20, name="delete_me")
-
-        await repo.remove(mock_session, entity)
-
-        mock_session.delete.assert_awaited_once_with(entity)
-
-    @pytest.mark.asyncio
-    async def test_remove_commits_transaction(self, repo, mock_session):
-        """remove() must await session.commit()."""
-        entity = _FakeModel(id=21, name="commit_delete")
-
-        await repo.remove(mock_session, entity)
-
-        mock_session.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_remove_returns_none(self, repo, mock_session):
-        """remove() must return None (no entity to return after deletion)."""
-        entity = _FakeModel(id=22, name="gone")
-
-        result = await repo.remove(mock_session, entity)
+        result = await repo.remove(db_session, entity)
 
         assert result is None
+        assert await repo.get_by_id(db_session, entity_id) is None
 
     @pytest.mark.asyncio
     async def test_remove_delete_before_commit(self, repo, mock_session):
-        """remove() must call delete before commit."""
+        """remove() must call delete before commit (justified ordering mock)."""
         call_order: list[str] = []
         mock_session.delete = AsyncMock(side_effect=lambda _: call_order.append("delete"))
         mock_session.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
-        entity = _FakeModel(id=23, name="order_check")
-        await repo.remove(mock_session, entity)
+        await repo.remove(mock_session, _FakeModel(name="order_check"))
 
         assert call_order == ["delete", "commit"]
 
@@ -350,8 +295,6 @@ class TestRemove:
 
 
 class TestCreateOrUpdate:
-    """Tests for GenericRepository.create_or_update() (base class raises)."""
-
     @pytest.mark.asyncio
     async def test_create_or_update_raises_not_implemented(self, repo, mock_session):
         """Base GenericRepository.create_or_update() must raise NotImplementedError."""
@@ -360,83 +303,57 @@ class TestCreateOrUpdate:
 
 
 # ---------------------------------------------------------------------------
-# TestGetByAlias
+# TestGetByAlias — real statement building (ARRAY blocks SQLite round-trip)
 # ---------------------------------------------------------------------------
 
 
 class TestGetByAlias:
-    """Tests for GenericRepository.get_by_alias().
+    """get_by_alias builds select(model).where(model.aliases.any(alias)).
 
-    get_by_alias() calls select(model).where(model.aliases.any(alias)).
-    We patch 'persist.repositories.generic_repository.select' so no real
-    SQLAlchemy query building happens, then let session.execute return our
-    controlled result.
+    ARRAY columns cannot round-trip on SQLite, so only the session is mocked;
+    the REAL select/where/any is built and asserted at the statement level
+    (the previous version patched out `select` entirely, testing only plumbing).
     """
 
     @pytest.fixture
     def alias_repo(self) -> GenericRepository:
-        """Repository wired to _AliasModel."""
         return GenericRepository(_AliasModel)
 
-    @pytest.fixture
-    def alias_session(self) -> AsyncMock:
+    def _capturing_session(self, rows) -> AsyncMock:
         session = AsyncMock()
-        session.execute = AsyncMock()
+        session.execute = AsyncMock(return_value=_make_scalars_result(rows))
         return session
 
     @pytest.mark.asyncio
-    async def test_get_by_alias_returns_entity_when_found(self, alias_repo, alias_session):
-        """get_by_alias() should return the matching entity."""
-        entity = _AliasModel(id=5, name="aliased")
-        alias_session.execute = AsyncMock(return_value=_make_scalars_result([entity]))
+    async def test_get_by_alias_returns_entity_when_found(self, alias_repo):
+        entity = _AliasModel(id=5, name="aliased", aliases=["some_alias"])
+        session = self._capturing_session([entity])
 
-        # Build mock select chain
-        mock_stmt = MagicMock()
-        mock_stmt.where = MagicMock(return_value=mock_stmt)
-        mock_select = MagicMock(return_value=mock_stmt)
-
-        # Give the model class an 'aliases' attribute
-        _AliasModel.aliases = MagicMock()
-        _AliasModel.aliases.any = MagicMock(return_value=MagicMock())
-
-        with patch("persist.repositories.generic_repository.select", mock_select):
-            result = await alias_repo.get_by_alias(alias_session, "some_alias")
+        result = await alias_repo.get_by_alias(session, "some_alias")
 
         assert result is entity
 
     @pytest.mark.asyncio
-    async def test_get_by_alias_returns_none_when_not_found(self, alias_repo, alias_session):
-        """get_by_alias() should return None when no match exists."""
-        alias_session.execute = AsyncMock(return_value=_make_scalars_result([]))
+    async def test_get_by_alias_returns_none_when_not_found(self, alias_repo):
+        session = self._capturing_session([])
 
-        mock_stmt = MagicMock()
-        mock_stmt.where = MagicMock(return_value=mock_stmt)
-        mock_select = MagicMock(return_value=mock_stmt)
-
-        _AliasModel.aliases = MagicMock()
-        _AliasModel.aliases.any = MagicMock(return_value=MagicMock())
-
-        with patch("persist.repositories.generic_repository.select", mock_select):
-            result = await alias_repo.get_by_alias(alias_session, "ghost_alias")
+        result = await alias_repo.get_by_alias(session, "ghost_alias")
 
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_by_alias_calls_execute_once(self, alias_repo, alias_session):
-        """get_by_alias() must call session.execute() exactly once."""
-        alias_session.execute = AsyncMock(return_value=_make_scalars_result([]))
+    async def test_get_by_alias_emits_any_on_aliases_column(self, alias_repo):
+        """The emitted statement must filter with `<alias> = ANY(aliases)`."""
+        session = self._capturing_session([])
 
-        mock_stmt = MagicMock()
-        mock_stmt.where = MagicMock(return_value=mock_stmt)
-        mock_select = MagicMock(return_value=mock_stmt)
+        await alias_repo.get_by_alias(session, "wanted")
 
-        _AliasModel.aliases = MagicMock()
-        _AliasModel.aliases.any = MagicMock(return_value=MagicMock())
-
-        with patch("persist.repositories.generic_repository.select", mock_select):
-            await alias_repo.get_by_alias(alias_session, "any")
-
-        alias_session.execute.assert_awaited_once()
+        session.execute.assert_awaited_once()
+        stmt = session.execute.call_args[0][0]
+        compiled = str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+        assert "aliases" in compiled
+        assert "ANY" in compiled.upper()
+        assert "wanted" in compiled
 
 
 # ---------------------------------------------------------------------------
@@ -445,14 +362,10 @@ class TestGetByAlias:
 
 
 class TestRepositoryInit:
-    """Tests for GenericRepository construction."""
-
     def test_init_stores_model_class(self):
-        """Constructor must store the model class for later queries."""
         local_repo = GenericRepository(_FakeModel)
         assert local_repo._model is _FakeModel
 
     def test_init_with_different_model(self):
-        """Constructor works with any SQLAlchemy model class."""
         local_repo = GenericRepository(_AliasModel)
         assert local_repo._model is _AliasModel

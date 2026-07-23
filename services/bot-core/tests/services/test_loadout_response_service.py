@@ -1234,10 +1234,21 @@ class TestBuildBountyLootCargo:
         }
 
     async def test_loot_renders_as_cargo_commodity_stack(self):
-        """A rolled commodity stack renders as a Cargo Hold item with name/type/quantity."""
+        """A rolled commodity stack renders as a Cargo Hold item with name/type/quantity.
+
+        Regression (criminal loot emoji): the criminal path must resolve the loot
+        commodity's emoji the same way the player cargo path does — ItemRepository
+        first, then CommodityRepository fallback (issue #34's sibling). It used to
+        omit the lookup entirely, so bounty posts and /criminal-loadout showed the
+        '•' placeholder while /loadout (post-capture) showed the emoji.
+        """
         cargo = {"item_type": "commodity", "item_name": "Booze", "quantity": 16}
         bounty = self._make_bounty(criminal_ship=self._ship_with_cargo(cargo))
         svc = _make_svc(bounty=bounty, criminal=None)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+        svc.commodity_repo = MagicMock()
+        svc.commodity_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(emoji="<:booze:1>"))
         db = _make_db_session(ship=_interceptor_ship())
 
         result = await svc.build_bounty_loadout(db, bounty_id=7)
@@ -1248,13 +1259,20 @@ class TestBuildBountyLootCargo:
         assert result.cargo[0].item_name == "Booze"
         assert result.cargo[0].item_type == "commodity"
         assert result.cargo[0].quantity == 16
+        assert result.cargo[0].emoji == "<:booze:1>"
         assert result.cargo_total_count == 16
+        svc.commodity_repo.get_by_name.assert_awaited_once_with(db, "Booze")
 
     async def test_loot_renders_as_cargo_qty_one_weapon(self):
         """A qty-1 equippable still renders (quantity always carried, even 1)."""
         cargo = {"item_type": "primary_weapon", "item_name": "AB-1 Retractor", "quantity": 1}
         bounty = self._make_bounty(criminal_ship=self._ship_with_cargo(cargo))
         svc = _make_svc(bounty=bounty, criminal=None)
+        # Equippable loot resolves via ItemRepository (no commodity fallback needed).
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(emoji="<:abretractor:1>"))
+        svc.commodity_repo = MagicMock()
+        svc.commodity_repo.get_by_name = AsyncMock(return_value=None)
         db = _make_db_session(ship=_interceptor_ship())
 
         result = await svc.build_bounty_loadout(db, bounty_id=7)
@@ -1263,7 +1281,9 @@ class TestBuildBountyLootCargo:
         assert len(result.cargo) == 1
         assert result.cargo[0].item_name == "AB-1 Retractor"
         assert result.cargo[0].quantity == 1
+        assert result.cargo[0].emoji == "<:abretractor:1>"
         assert result.cargo_total_count == 1
+        svc.commodity_repo.get_by_name.assert_not_awaited()
 
     async def test_legacy_no_cargo_key_yields_empty_cargo(self):
         """A bounty whose criminal_ship has NO 'cargo' key → empty cargo (graceful)."""
@@ -1323,6 +1343,10 @@ class TestBuildBountyLootCargo:
         cargo = {"item_name": "Ore Core", "quantity": 8}
         bounty = self._make_bounty(criminal_ship=self._ship_with_cargo(cargo))
         svc = _make_svc(bounty=bounty, criminal=None)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+        svc.commodity_repo = MagicMock()
+        svc.commodity_repo.get_by_name = AsyncMock(return_value=None)
         db = _make_db_session(ship=_interceptor_ship())
 
         result = await svc.build_bounty_loadout(db, bounty_id=7)
@@ -1332,4 +1356,5 @@ class TestBuildBountyLootCargo:
         assert result.cargo[0].item_name == "Ore Core"
         assert result.cargo[0].item_type == ""
         assert result.cargo[0].quantity == 8
+        assert result.cargo[0].emoji is None  # unknown item → no emoji, graceful
         assert result.cargo_total_count == 8

@@ -402,14 +402,7 @@ class LoadoutResponseService:
         cargo: list[CargoItem] = []
         total = 0
         for inv in inventory_items:
-            emoji = None
-            game_item = await self.item_repo.get_by_name(db, inv.item_name)
-            if game_item is None:
-                # ItemRepository only covers ships/weapons/modules; commodities
-                # live in their own table, so fall back to CommodityRepository.
-                game_item = await self.commodity_repo.get_by_name(db, inv.item_name)
-            if game_item:
-                emoji = game_item.emoji
+            emoji = await self._resolve_cargo_emoji(db, inv.item_name)
             cargo.append(
                 CargoItem(
                     item_name=inv.item_name,
@@ -420,6 +413,20 @@ class LoadoutResponseService:
             )
             total += inv.quantity
         return cargo, total
+
+    async def _resolve_cargo_emoji(self, db: AsyncSession, item_name: str) -> str | None:
+        """Resolve a cargo/loot item's emoji by name.
+
+        ItemRepository only covers ships/weapons/modules; commodities live in
+        their own table, so fall back to CommodityRepository (issue #34). Shared
+        by the player cargo path and the criminal loot path so the two can't
+        drift — the criminal path previously omitted this lookup entirely, so
+        bounty announcements and /criminal-loadout rendered loot without emoji.
+        """
+        game_item = await self.item_repo.get_by_name(db, item_name)
+        if game_item is None:
+            game_item = await self.commodity_repo.get_by_name(db, item_name)
+        return game_item.emoji if game_item else None
 
     # ------------------------------------------------------------------
     # Bounty path
@@ -580,6 +587,7 @@ class LoadoutResponseService:
                     item_name=loot_cargo.item_name,
                     item_type=loot_cargo.item_type,
                     quantity=loot_cargo.quantity,
+                    emoji=await self._resolve_cargo_emoji(db, loot_cargo.item_name),
                 )
             ]
             criminal_cargo_count = loot_cargo.quantity

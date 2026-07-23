@@ -85,19 +85,23 @@ from utils.autocomplete_helpers import (
 )
 
 # Player ID lookup via player_cache (returns None on any failure)
-player_id = await resolve_player_id(
-    http_client, api_base, user_id, guild_id, timeout=3.0
-)
+player_id = await resolve_player_id(http_client, api_base, user_id, guild_id, timeout=3.0)
 
 # Player-scoped ship choices; value=str(id), label uses 🟢 for active ship
 choices = await player_ships_autocomplete(
-    http_client, api_base, interaction, current,
+    http_client,
+    api_base,
+    interaction,
+    current,
     exclude_active=False,  # set True in flows that forbid active ship
 )
 
 # Player-scoped inventory choices; label formatted 'Name (Type) xN' (qty >1)
 choices = await player_inventory_autocomplete(
-    http_client, api_base, interaction, current,
+    http_client,
+    api_base,
+    interaction,
+    current,
     item_type_filter="weapon",  # optional; scope to a specific item_type
 )
 ```
@@ -125,11 +129,15 @@ Centralized permission checking and cooldown management for **prefix commands** 
 validator = CommandValidator()
 
 # Register a command with its permission requirements
-validator.register_command("my_command", "Description", {
-    "admin_only": True,    # requires is_admin() to pass
-    "dev_only": False,     # requires user in DEVELOPER_IDS env var
-    "required_roles": ["Moderator"]  # requires specific role names
-})
+validator.register_command(
+    "my_command",
+    "Description",
+    {
+        "admin_only": True,  # requires is_admin() to pass
+        "dev_only": False,  # requires user in DEVELOPER_IDS env var
+        "required_roles": ["Moderator"],  # requires specific role names
+    },
+)
 
 # Check permissions (returns True/False)
 allowed = validator.validate_permissions("my_command", user, guild)
@@ -147,11 +155,7 @@ handler = CommandHandler(bot)
 
 # Execute a command with full validation
 success = await handler.execute_command(
-    ctx,
-    command_name="my_command",
-    handler=my_handler_coroutine,
-    permissions={"admin_only": True},
-    cooldown_seconds=5
+    ctx, command_name="my_command", handler=my_handler_coroutine, permissions={"admin_only": True}, cooldown_seconds=5
 )
 ```
 
@@ -247,9 +251,9 @@ summary: MessageSummary = MessageConverter.message_to_summary(message)
 from utils.discord_converters import PermissionConverter
 
 overwrite_payload: PermissionOverwrite = PermissionConverter.overwrite_to_payload(
-    target,       # discord.Role or discord.Member
-    overwrite,    # discord.PermissionOverwrite
-    channel_id=123
+    target,  # discord.Role or discord.Member
+    overwrite,  # discord.PermissionOverwrite
+    channel_id=123,
 )
 # Result: { id, channel_id, target_id, type ("role"|"member"), allow (int), deny (int) }
 ```
@@ -279,10 +283,10 @@ bot = await resolve_bot(request)
 Cache-first entity resolution with automatic 404 on not found.
 ```python
 guild = await get_entity_or_404(
-    bot.get_guild,   # synchronous cache lookup (fast)
-    bot.fetch_guild, # async Discord API call (slow, used as fallback)
+    bot.get_guild,  # synchronous cache lookup (fast)
+    bot.fetch_guild,  # async Discord API call (slow, used as fallback)
     guild_id,
-    "guild"          # entity type name for error messages
+    "guild",  # entity type name for error messages
 )
 ```
 
@@ -303,12 +307,12 @@ except Exception as exc:
 #### `normalize_emoji(val) → str`
 Normalizes various emoji input formats into a canonical unicode emoji string.
 ```python
-normalize_emoji("📌")          # → "📌"
-normalize_emoji("1f4cc")       # → "📌" (hex codepoint)
-normalize_emoji("U+1F4CC")     # → "📌" (with prefix)
-normalize_emoji("1f3f7fe0f")   # → "🏷️" (concatenated hex)
-normalize_emoji("<:name:123>") # → "<:name:123>" (custom emoji)
-normalize_emoji(":name:")       # → "name" (short form)
+normalize_emoji("📌")  # → "📌"
+normalize_emoji("1f4cc")  # → "📌" (hex codepoint)
+normalize_emoji("U+1F4CC")  # → "📌" (with prefix)
+normalize_emoji("1f3f7fe0f")  # → "🏷️" (concatenated hex)
+normalize_emoji("<:name:123>")  # → "<:name:123>" (custom emoji)
+normalize_emoji(":name:")  # → "name" (short form)
 ```
 
 #### `tag_to_dict(tag, channel_id=None) → dict`
@@ -322,10 +326,7 @@ Handles Discord objects, dicts, mock objects, and any mapping via a defensive ex
 #### `tags_to_edit_payload(tags_iterable, updates=None) → list`
 Builds the `available_tags` payload for `ForumChannel.edit()`.
 ```python
-payload = tags_to_edit_payload(
-    existing_tags,
-    updates={123: {"name": "New Name", "emoji": "🆕"}}
-)
+payload = tags_to_edit_payload(existing_tags, updates={123: {"name": "New Name", "emoji": "🆕"}})
 ```
 
 #### Validation Helpers
@@ -360,7 +361,7 @@ payload = EmbedPayload(
     fields=[EmbedField(name="Field 1", value="Value 1", inline=True)],
     footer_text="Footer text",
     thumbnail_url="https://example.com/image.png",
-    timestamp=datetime.now()
+    timestamp=datetime.now(),
 )
 embed = EmbedConverter.payload_to_embed(payload)
 ```
@@ -427,14 +428,14 @@ from utils.permission_utils import PERMISSION_FLAGS
 PERMISSION_FLAGS["SEND_MESSAGES"] = {
     "value": 0x0000000000000800,
     "description": "Allows for sending messages in a channel...",
-    "channel_types": ["text", "voice", "stage"]
+    "channel_types": ["text", "voice", "stage"],
 }
 
 # Guild-only permissions have empty channel_types list:
 PERMISSION_FLAGS["BAN_MEMBERS"] = {
     "value": 0x0000000000000004,
     "description": "Allows banning members",
-    "channel_types": []
+    "channel_types": [],
 }
 ```
 
@@ -464,8 +465,8 @@ is_admin = has_administrator(permissions_value)
 # Apply overwrites to base permissions
 effective = calculate_effective_permissions(
     base_permissions=0x8000,  # base role permissions
-    allow_overwrites=0x800,   # channel allow overwrite
-    deny_overwrites=0x400,    # channel deny overwrite
+    allow_overwrites=0x800,  # channel allow overwrite
+    deny_overwrites=0x400,  # channel deny overwrite
 )
 # Note: Administrator permission bypasses overwrites entirely
 
@@ -495,18 +496,14 @@ from utils.permission_utils import (
 
 # Evaluate what permissions a member has in a guild
 granted, denied = evaluate_user_guild_permissions(
-    member=discord_member,
-    _guild=discord_guild,
-    requested_permissions=["SEND_MESSAGES", "BAN_MEMBERS"]
+    member=discord_member, _guild=discord_guild, requested_permissions=["SEND_MESSAGES", "BAN_MEMBERS"]
 )
 # granted → {"SEND_MESSAGES": PermissionSource(type="role", role_name="@everyone")}
 # denied → {"BAN_MEMBERS"}
 
 # Evaluate effective channel permissions with overwrites
 granted, denied = evaluate_user_channel_permissions(
-    member=discord_member,
-    channel=discord_channel,
-    requested_permissions=["SEND_MESSAGES"]
+    member=discord_member, channel=discord_channel, requested_permissions=["SEND_MESSAGES"]
 )
 
 # Quick boolean checks
@@ -517,9 +514,9 @@ can_ban = has_guild_permission(member, "BAN_MEMBERS")  # True/False
 ### `PermissionSource`
 Returned by evaluation functions to indicate **how** a permission was granted:
 ```python
-source.type       # "direct", "role", or "everyone"
+source.type  # "direct", "role", or "everyone"
 source.role_name  # role name if type == "role"
-source.role_id    # role ID if type == "role"
+source.role_id  # role ID if type == "role"
 ```
 
 ### Permission Listing Functions
@@ -531,7 +528,7 @@ from utils.permission_utils import (
     get_channel_permissions,
 )
 
-all_perms = get_all_permissions()    # all flags with metadata
+all_perms = get_all_permissions()  # all flags with metadata
 role_perms = get_role_permissions()  # all permissions (roles can have any)
 user_perms = get_user_permissions()  # channel-applicable permissions for user overwrites
 chan_perms = get_channel_permissions()  # text/voice channel permissions

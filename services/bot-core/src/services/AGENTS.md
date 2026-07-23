@@ -509,8 +509,13 @@ async def get_or_create_player(self, db: AsyncSession, discord_id: int, ...) -> 
 
 ```python
 await AuditService.log_action(
-    db, user_id=123, action="guild_reset", guild_id=456,
-    resource_type="guild", resource_id="456", details={"reason": "test"}
+    db,
+    user_id=123,
+    action="guild_reset",
+    guild_id=456,
+    resource_type="guild",
+    resource_id="456",
+    details={"reason": "test"},
 )
 ```
 
@@ -890,6 +895,7 @@ TemperatureService — consumed by executors (temperature_decay, bounty_spawn),
 2. **Instantiate repositories** in `__init__(self)`:
    ```python
    from persist.repositories.my_repo import MyRepository
+
 
    class MyService:
        def __init__(self):

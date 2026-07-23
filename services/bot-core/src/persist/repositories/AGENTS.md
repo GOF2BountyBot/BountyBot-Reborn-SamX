@@ -74,13 +74,12 @@ service re-read `player.credits + total_sell_value` and applied the addition twi
 ### Correct pattern (single-row update)
 
 ```python
-async def update_credits(self, db: AsyncSession, player_id: int, new_credits: int,
-                        *, commit: bool = True) -> Player:
+async def update_credits(self, db: AsyncSession, player_id: int, new_credits: int, *, commit: bool = True) -> Player:
     try:
         player = await self.get_by_id(db, player_id)
         if player is None:
             raise ValueError(f"Player {player_id} not found")
-        player.credits = new_credits           # ORM-tracked mutation
+        player.credits = new_credits  # ORM-tracked mutation
         if commit:
             await db.commit()
         else:
@@ -230,8 +229,7 @@ Used when reading-then-modifying credits to prevent TOCTOU race conditions:
 ```python
 async def get_by_id_for_update(self, db: AsyncSession, obj_id: int) -> Player | None:
     result = await db.execute(
-        select(Player).where(Player.id == obj_id)
-        .with_for_update().execution_options(populate_existing=True)
+        select(Player).where(Player.id == obj_id).with_for_update().execution_options(populate_existing=True)
     )
     return result.scalars().first()
 ```
@@ -411,6 +409,7 @@ display buckets on their side. The Discord cog uses these 4 display buckets:
    from persist.repositories.generic_repository import GenericRepository
 
    flogger = bblogger.get_logger("my-model-repository")
+
 
    class MyModelRepository(GenericRepository[MyModel]):
        def __init__(self):

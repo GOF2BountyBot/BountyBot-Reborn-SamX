@@ -167,7 +167,7 @@ import os
 import discord
 import httpx
 from cogs._shared.http_error_handler import report_api_error
-from cogs.adminCog import is_admin      # import if you need admin protection
+from cogs.adminCog import is_admin  # import if you need admin protection
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -277,14 +277,14 @@ Always handle these cases explicitly:
 
 ### Defer for async operations
 ```python
-await interaction.response.defer(thinking=True)       # public "thinking..." indicator
+await interaction.response.defer(thinking=True)  # public "thinking..." indicator
 await interaction.response.defer(thinking=True, ephemeral=True)  # private "thinking..."
 ```
 Always defer before any `await` calls to bot-core.
 
 ### Followup responses
 ```python
-await interaction.followup.send(embed=embed)             # public embed response
+await interaction.followup.send(embed=embed)  # public embed response
 await interaction.followup.send("message", ephemeral=True)  # private error message
 ```
 
@@ -316,7 +316,7 @@ class MyCog(commands.Cog):
         self.bot = bot
         self._items: list[str] = []
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        bot.loop.create_task(self._preload_data())   # schedule preload after bot is ready
+        bot.loop.create_task(self._preload_data())  # schedule preload after bot is ready
 
     async def _preload_data(self):
         await self.bot.wait_until_ready()
@@ -330,16 +330,13 @@ class MyCog(commands.Cog):
     async def item_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        return [
-            app_commands.Choice(name=name, value=name)
-            for name in self._items
-            if current.lower() in name.lower()
-        ][:25]  # Discord limit: 25 choices
+        return [app_commands.Choice(name=name, value=name) for name in self._items if current.lower() in name.lower()][
+            :25
+        ]  # Discord limit: 25 choices
 
     @app_commands.command(name="use_item")
     @app_commands.autocomplete(item=item_autocomplete)
-    async def use_item(self, interaction: discord.Interaction, item: str):
-        ...
+    async def use_item(self, interaction: discord.Interaction, item: str): ...
 ```
 
 **Preload error handling:** Always catch specific exceptions (`TimeoutException`, `HTTPStatusError`, `RequestError`) before the broad `Exception` fallback, to provide better logging.
@@ -353,11 +350,12 @@ Use the `is_admin()` decorator from `adminCog.py` to gate commands:
 ```python
 from cogs.adminCog import is_admin, _check_is_admin
 
+
 # Method 1: Decorator (standard for fully admin-gated commands)
 @app_commands.command(name="admin_action")
 @is_admin()
-async def admin_action(self, interaction: discord.Interaction):
-    ...
+async def admin_action(self, interaction: discord.Interaction): ...
+
 
 # Method 2: Runtime check (for conditional admin checks within a command)
 if user and user != interaction.user:
@@ -563,6 +561,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
+
 class TestMyCog:
     @pytest.fixture
     def bot(self):
@@ -574,6 +573,7 @@ class TestMyCog:
     @pytest.fixture
     def cog(self, bot):
         from cogs.myCog import MyCog
+
         return MyCog(bot)
 
     @pytest.fixture

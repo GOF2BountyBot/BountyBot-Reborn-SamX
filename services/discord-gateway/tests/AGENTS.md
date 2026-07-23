@@ -19,6 +19,7 @@ cog.http_client.get = AsyncMock(return_value=MagicMock(json=lambda: [...]))
 
 # CORRECT — use respx
 import httpx, respx
+
 with respx.mock(assert_all_called=True) as mock_router:
     mock_router.get("http://bot-core:8000/api/v1/about/categories/ship/objects").mock(
         return_value=httpx.Response(200, json=[{"name": "Eagle", "id": 1}])
@@ -64,6 +65,7 @@ def _with_real_client(self, cog, request):
     httpx.AsyncClient instances are leaked between tests.
     """
     import httpx
+
     cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
     request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
     return cog

@@ -227,6 +227,7 @@ Alembic's job.
 ```python
 from persist.database.tablenames import TableNames
 
+
 class Player(Base):
     __tablename__ = TableNames.Players.value  # → "players"
 ```
@@ -235,27 +236,27 @@ Current entries:
 
 ```python
 class TableNames(Enum):
-    Bounty          = "bounty"
-    Commodity       = "commodity"
-    CombatLog       = "combat_log"
-    Criminal        = "criminal"
-    DuelRequest     = "duel_requests"
-    DiscordMessage  = "discord_message"
-    GuildConfigs    = "guild_configs"
-    GuildShops      = "guild_shops"
-    Item            = "item"
-    Module          = "module"
+    Bounty = "bounty"
+    Commodity = "commodity"
+    CombatLog = "combat_log"
+    Criminal = "criminal"
+    DuelRequest = "duel_requests"
+    DiscordMessage = "discord_message"
+    GuildConfigs = "guild_configs"
+    GuildShops = "guild_shops"
+    Item = "item"
+    Module = "module"
     PlayerInventories = "player_inventories"
-    PlayerShips     = "player_ships"
-    Players         = "players"
-    PrimaryWeapon   = "primary_weapon"
+    PlayerShips = "player_ships"
+    Players = "players"
+    PrimaryWeapon = "primary_weapon"
     SecondaryWeapon = "secondary_weapon"
-    SchemaVersion   = "schema"
-    Ship            = "ship"
-    System          = "system"
-    TurretWeapon    = "turret_weapon"
-    Users           = "users"
-    Weapon          = "weapon"
+    SchemaVersion = "schema"
+    Ship = "ship"
+    System = "system"
+    TurretWeapon = "turret_weapon"
+    Users = "users"
+    Weapon = "weapon"
 ```
 
 Known exception: `AdminAuditLog` hardcodes `__tablename__ = "admin_audit_logs"`
@@ -346,16 +347,13 @@ shells out to `alembic.command.current`.
 from alembic import op
 import sqlalchemy as sa
 
+
 def upgrade():
-    op.add_column('players', sa.Column(
-        'new_field',
-        sa.String(50),
-        nullable=False,
-        server_default='default_value'
-    ))
+    op.add_column("players", sa.Column("new_field", sa.String(50), nullable=False, server_default="default_value"))
+
 
 def downgrade():
-    op.drop_column('players', 'new_field')
+    op.drop_column("players", "new_field")
 ```
 
 - `compare_server_default=True` and `compare_type=True` are set in `env.py`, so Alembic will detect server-default and column-type changes during autogeneration.

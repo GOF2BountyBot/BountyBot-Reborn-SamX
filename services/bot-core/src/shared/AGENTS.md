@@ -35,7 +35,8 @@ Tiny, dependency-free. Single public function:
 
 ```python
 from shared.bblogger import get_logger
-flogger = get_logger(__name__)   # returns a _SafeLogger (LoggerAdapter)
+
+flogger = get_logger(__name__)  # returns a _SafeLogger (LoggerAdapter)
 ```
 
 - Adds a custom `TRACE` level (numeric 5, below DEBUG) and a `.trace()` method.

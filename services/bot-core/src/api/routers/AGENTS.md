@@ -67,12 +67,14 @@ router = APIRouter(
     responses={
         404: {"description": "Not found"},
         500: {"description": "Internal server error"},
-    }
+    },
 )
+
 
 # Dependency injection
 async def get_my_service() -> MyService:
     return MyService()
+
 
 @router.get("/{resource_id}", response_model=MyResponse)
 async def get_resource(

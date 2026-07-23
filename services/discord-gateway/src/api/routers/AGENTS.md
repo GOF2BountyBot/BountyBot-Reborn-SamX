@@ -98,13 +98,13 @@ async def get_resource(resource_id: int, request: Request) -> SomeResponse:
     Endpoint docstring for developers.
     """
     bot = await resolve_bot(request)
-    
+
     try:
         entity = await get_entity_or_404(
-            bot.get_something,      # cache lookup function
-            bot.fetch_something,    # API fetch function  
+            bot.get_something,  # cache lookup function
+            bot.fetch_something,  # API fetch function
             resource_id,
-            "resource_type"         # used in error messages
+            "resource_type",  # used in error messages
         )
         return SomeConverter.entity_to_payload(entity)
     except HTTPException:
@@ -143,10 +143,10 @@ from utils.discord_helpers import get_entity_or_404
 
 # Try cache first, then fetch from Discord API
 guild = await get_entity_or_404(
-    bot.get_guild,    # synchronous cache lookup
+    bot.get_guild,  # synchronous cache lookup
     bot.fetch_guild,  # async Discord API call
     guild_id,
-    "guild"           # string used in error messages
+    "guild",  # string used in error messages
 )
 ```
 
@@ -210,6 +210,7 @@ All responses extend `BaseResponse` from `api/schemas/base_schemas.py`:
 ```python
 from api.schemas.base_schemas import BaseResponse
 
+
 class MyResponse(BaseResponse):
     # BaseResponse includes: status, timestamp
     data: MyData
@@ -268,7 +269,8 @@ Both raise `HTTP 400` if validation fails.
 3. **Add schemas** in `src/api/schemas/my_schemas.py` if needed:
    ```python
    from pydantic import BaseModel, ConfigDict
-   
+
+
    class MyResourceResponse(BaseModel):
        model_config = ConfigDict(from_attributes=True)
        id: int
@@ -292,6 +294,7 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock
 
+
 class TestMyRouter:
     @pytest.fixture
     def mock_bot(self):
@@ -303,6 +306,7 @@ class TestMyRouter:
     @pytest.fixture
     def client(self, mock_bot):
         from bot import create_app
+
         app = create_app()
         app.state.bot = mock_bot
         return TestClient(app)

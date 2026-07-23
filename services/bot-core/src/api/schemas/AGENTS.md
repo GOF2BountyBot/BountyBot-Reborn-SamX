@@ -13,6 +13,7 @@ All schemas in this directory use **Pydantic v2** exclusively. The following con
 ```python
 from pydantic import BaseModel, ConfigDict
 
+
 class MyResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)  # ← Pydantic v2
     # NOT:  class Config: orm_mode = True  (Pydantic v1 — BANNED)
@@ -23,16 +24,16 @@ class MyResponse(BaseModel):
 ### Serialization
 
 ```python
-data = my_schema_instance.model_dump()        # ← Pydantic v2
+data = my_schema_instance.model_dump()  # ← Pydantic v2
 # NOT:  my_schema_instance.dict()             (Pydantic v1 — BANNED)
 
-data = my_schema_instance.model_dump_json()   # JSON string
+data = my_schema_instance.model_dump_json()  # JSON string
 ```
 
 ### Validation
 
 ```python
-obj = MyRequest.model_validate(raw_dict)       # ← Pydantic v2
+obj = MyRequest.model_validate(raw_dict)  # ← Pydantic v2
 # NOT:  MyRequest.parse_obj(raw_dict)          (Pydantic v1 — BANNED)
 ```
 
@@ -41,10 +42,12 @@ obj = MyRequest.model_validate(raw_dict)       # ← Pydantic v2
 ```python
 from pydantic import Field
 
+
 # Real examples from players_schema.py:
 class UpdateCreditsRequest(BaseModel):
     credits: int = Field(ge=0, description="Credits must be non-negative")
     update_lifetime: bool = Field(default=True, description="Whether to update lifetime credits")
+
 
 class UpdateTierRequest(BaseModel):
     tier: str = Field(

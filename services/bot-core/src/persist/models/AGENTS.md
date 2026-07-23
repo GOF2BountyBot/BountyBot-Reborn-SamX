@@ -42,6 +42,7 @@ Base  (persist/models/base.py — DeclarativeBase)
 # base.py
 from sqlalchemy.orm import DeclarativeBase
 
+
 class Base(DeclarativeBase):
     pass
 ```
@@ -69,8 +70,8 @@ type: Mapped[str] = mapped_column(String)  # e.g. 'weapon', 'primary_weapon', 'm
 
 # In PrimaryWeapon:
 __mapper_args__ = {
-    'polymorphic_identity': 'primary_weapon',
-    'concrete': False,
+    "polymorphic_identity": "primary_weapon",
+    "concrete": False,
 }
 ```
 
@@ -104,9 +105,7 @@ discriminator column is involved for them).
 
 ```python
 # In User:
-players: Mapped[list["Player"]] = relationship(
-    "Player", back_populates="user", cascade="all, delete-orphan"
-)
+players: Mapped[list["Player"]] = relationship("Player", back_populates="user", cascade="all, delete-orphan")
 
 # In Player:
 user: Mapped["User"] = relationship("User", back_populates="players")
@@ -127,8 +126,7 @@ inventory: Mapped[list["PlayerInventory"]] = relationship(
 # Player has both a list of ships AND a pointer to the active one.
 # post_update=True resolves the circular FK insert order issue.
 ships: Mapped[list["PlayerShip"]] = relationship(
-    "PlayerShip", back_populates="player", cascade="all, delete-orphan",
-    foreign_keys="PlayerShip.player_id"
+    "PlayerShip", back_populates="player", cascade="all, delete-orphan", foreign_keys="PlayerShip.player_id"
 )
 active_ship: Mapped[Optional["PlayerShip"]] = relationship(
     "PlayerShip", foreign_keys=[active_ship_id], post_update=True
@@ -195,6 +193,7 @@ This ensures all SQLAlchemy model classes are registered with the mapper before 
    from sqlalchemy.orm import Mapped, mapped_column
    from persist.database.tablenames import TableNames
    from persist.models.base import Base
+
 
    class MyNewModel(Base):
        __tablename__ = TableNames.MyNewModel.value

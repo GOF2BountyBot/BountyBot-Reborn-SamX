@@ -41,6 +41,7 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
     from persist.database.manager import db_manager
     from persist.repositories.bounty_repository import BountyRepository
     from services.bounty_service import BountyService
+
     ...
 ```
 
@@ -330,6 +331,7 @@ deferred-import section.
    from shared.bblogger import get_logger
 
    flogger = get_logger("my-job-executor")
+
 
    async def execute_my_job(job_id: str, payload: dict) -> dict:
        # Deferred imports

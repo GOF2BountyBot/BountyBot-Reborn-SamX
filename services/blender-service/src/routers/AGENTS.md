@@ -52,10 +52,11 @@ from fastapi import APIRouter, Request
 
 router = APIRouter(prefix="/my-prefix")
 
+
 @router.get("/endpoint")
 async def my_endpoint(request: Request):
-    render_config = request.app.state.render_config   # RenderConfigService
-    job_queue = request.app.state.job_queue           # JobQueueService
+    render_config = request.app.state.render_config  # RenderConfigService
+    job_queue = request.app.state.job_queue  # JobQueueService
     ...
 ```
 
@@ -138,6 +139,7 @@ Render and texture endpoints use `UploadFile` + `Form` fields (not JSON body):
 ```python
 from fastapi import APIRouter, File, Form, UploadFile
 
+
 @router.post("/endpoint")
 async def my_endpoint(
     image: UploadFile = File(..., description="PNG image"),
@@ -192,6 +194,7 @@ Use `bblogger` with a consistent logger name:
 
 ```python
 from shared import bblogger
+
 flogger = bblogger.get_logger("blender-<router-name>-api-router")
 ```
 
@@ -256,6 +259,7 @@ Always include identifying context (job IDs, file paths, sizes) in log messages.
    """
    Brief module docstring.
    """
+
    from fastapi import APIRouter, Request
    from shared import bblogger
 
@@ -268,6 +272,7 @@ Always include identifying context (job IDs, file paths, sizes) in log messages.
            400: {"description": "Bad request"},
        },
    )
+
 
    @router.get("/endpoint", summary="Short description")
    async def my_endpoint(request: Request) -> dict:

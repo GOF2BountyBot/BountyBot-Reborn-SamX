@@ -1,6 +1,6 @@
 """Extended tests for the channels API endpoints — boosting coverage from 26% to 70%+.
 
-Fidelity notes (partial remediation — see FOLLOWUPS.md R-gw-api-0)
+Fidelity notes (SYS-4 remediation — part 1 of 2, see FOLLOWUPS.md R-gw-api-0)
 --------------------------------------------------------------------
 This file no longer swaps ``sys.modules["discord"]``/``"discord.ext.commands"``
 with a hand-rolled fake module at collection time (that swap made
@@ -10,21 +10,27 @@ resolved against, which is what forced ``resolve_bot`` to stay patched
 everywhere in the first place).
 
 ``_build_app`` (the fixture builder behind ``channels_app_and_mocks``/
-``channels_client``, used by the large majority of the classes below) no
-longer patches ``resolve_bot``, ``get_entity_or_404`` or
-``handle_discord_exception``: the mock bot is ``spec=commands.Bot``
-(``is_ready()==True``) and ``fetch_channel`` now raises a real
-``discord.NotFound`` on cache miss, so the real helpers run end-to-end
-(cache -> fetch -> real 404/generic-exception mapping).
-``ChannelConverter``/``PermissionConverter``/``EmbedConverter``/
-``validate_channel_type``/``create_permission_overwrite`` remain patched
-with canned return values in this file — full SYS-4 remediation (letting
-the real converters run against these already-real-attributed mock
-channels) is documented as a followup rather than attempted wholesale here,
-given the volume of per-test response-body assertions that key off the
-canned dicts. ``_build_app_with_discord_patch`` (the second builder, used by
-the isinstance/type-dispatch and generic-exception-handler test classes)
-still patches all of the above — same reasoning, documented as a followup.
+``channels_client``, used by ``TestGetChannelExtended`` through
+``TestMoveChannelToCategory`` below) mounts the real channels router against a
+mock bot with NOTHING patched: ``resolve_bot``, ``get_entity_or_404``,
+``handle_discord_exception``, ``ChannelConverter``, ``PermissionConverter``,
+``validate_channel_type``, ``EmbedConverter`` and ``create_permission_overwrite``
+all run for real. Mock channel/role/thread/tag objects are built via
+``DiscordMockUtils`` factories and given real discord.py types
+(``channel.__class__ = discord.TextChannel`` etc — the standard mock idiom also
+used in ``test_guilds_extended.py``/``test_messages_extended.py``) so the
+router's ``isinstance`` type-dispatch runs against the genuine classes, and
+``channel.edit()`` mutates the mock's own attributes (mirroring discord.py's
+real edit semantics) so a post-edit re-fetch/converter call reflects the
+actually-applied change. Response bodies are asserted against values
+re-derived from the real converter's field derivation
+(``_expected_channel_detail``) or against the specific fields that matter,
+never against canned dicts.
+
+``_build_app_with_discord_patch`` (the second builder, used by the
+isinstance/type-dispatch and generic-exception-handler test classes further
+down) still patches all of the above — that remains a separate follow-up
+(part 2 of this remediation), noted here only for context.
 """
 
 import os
@@ -33,6 +39,7 @@ import types
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -105,6 +112,58 @@ def _make_channel_detail_dict(
     }
 
 
+def _expected_channel_detail(channel) -> dict:
+    """Independently re-derive the dict ``ChannelConverter.channel_to_detail`` should
+    produce for *channel*, from the mock's own attributes.
+
+    Used to assert against the REAL converter's output (which now runs
+    unpatched — see module fidelity notes above) without re-invoking the
+    production code under test.
+    """
+    position = getattr(channel, "position", None)
+    try:
+        position = 0 if position is None else int(position)
+    except (TypeError, ValueError):
+        position = 0
+    created_at = getattr(channel, "created_at", None)
+    return {
+        "id": channel.id,
+        "name": channel.name,
+        "type": getattr(getattr(channel, "type", None), "name", None),
+        "position": position,
+        "guild_id": getattr(getattr(channel, "guild", None), "id", None),
+        "category_id": getattr(channel, "category_id", None),
+        "created_at": created_at.isoformat() if created_at is not None else "",
+        "topic": getattr(channel, "topic", None),
+        "nsfw": getattr(channel, "nsfw", False),
+        "slowmode_delay": getattr(channel, "slowmode_delay", None),
+        "bitrate": getattr(channel, "bitrate", None),
+        "user_limit": getattr(channel, "user_limit", None),
+        "default_auto_archive_duration": getattr(channel, "default_auto_archive_duration", None),
+    }
+
+
+def _wire_real_edit(channel):
+    """Attach an ``edit()`` that mutates *channel*'s own attributes (mirroring
+    discord.py's real edit semantics) instead of a no-op AsyncMock, so a
+    post-edit re-fetch/converter call reflects the actually-applied change —
+    the same pattern ``test_messages_extended.py`` uses for ``message.edit``.
+
+    ``category`` is special-cased since production passes a CategoryChannel
+    object as the kwarg but ``Channel.category_id`` on the model is a plain id.
+    """
+
+    async def _edit(**kwargs):
+        for key, value in kwargs.items():
+            if key == "category":
+                channel.category_id = value.id if value is not None else None
+            else:
+                setattr(channel, key, value)
+
+    channel.edit = AsyncMock(side_effect=_edit)
+    return channel
+
+
 def create_mock_text_channel(channel_id=1234567890):
     ch = DiscordMockUtils.create_mock_channel(
         channel_id=channel_id,
@@ -113,6 +172,7 @@ def create_mock_text_channel(channel_id=1234567890):
         position=1,
         guild_id=987654321,
     )
+    ch.__class__ = discord.TextChannel
     ch.category_id = None
     ch.topic = "Test topic"
     ch.nsfw = False
@@ -120,7 +180,7 @@ def create_mock_text_channel(channel_id=1234567890):
     ch.overwrites = {}
     ch.threads = []
     ch.available_tags = []
-    ch.edit = AsyncMock()
+    _wire_real_edit(ch)
     ch.delete = AsyncMock()
     ch.set_permissions = AsyncMock()
     ch.send = AsyncMock()
@@ -141,11 +201,12 @@ def create_mock_voice_channel(channel_id=2222222222):
         position=2,
         guild_id=987654321,
     )
+    ch.__class__ = discord.VoiceChannel
     ch.category_id = None
     ch.bitrate = 64000
     ch.user_limit = 0
     ch.overwrites = {}
-    ch.edit = AsyncMock()
+    _wire_real_edit(ch)
     ch.delete = AsyncMock()
     return ch
 
@@ -157,6 +218,7 @@ def create_mock_forum_channel(channel_id=3333333333):
         position=3,
         guild_id=987654321,
     )
+    ch.__class__ = discord.ForumChannel
     ch.category_id = None
     ch.topic = "Forum topic"
     ch.nsfw = False
@@ -164,7 +226,7 @@ def create_mock_forum_channel(channel_id=3333333333):
     ch.overwrites = {}
     ch.threads = []
     ch.available_tags = []
-    ch.edit = AsyncMock()
+    _wire_real_edit(ch)
     ch.delete = AsyncMock()
     ch.set_permissions = AsyncMock()
     ch.create_thread = AsyncMock()
@@ -178,6 +240,7 @@ def create_mock_category(channel_id=1111111111):
         position=0,
         guild_id=987654321,
     )
+    cat.__class__ = discord.CategoryChannel
     cat.edit = AsyncMock()
     return cat
 
@@ -192,7 +255,10 @@ def mock_bot_extended():
     """Bot that knows about text, voice, forum, and category channels.
 
     ``fetch_channel`` raises a real ``discord.NotFound`` on cache miss so the
-    real (unpatched) ``get_entity_or_404`` produces a genuine 404.
+    real (unpatched) ``get_entity_or_404`` produces a genuine 404. The channel
+    map is stashed on ``bot._channels`` (mirroring the ``bot._graph``
+    convention in ``test_messages_extended.py``) so tests can reach the exact
+    mock instances the router operates on to build expected assertions.
     """
     text_ch = create_mock_text_channel(1234567890)
     voice_ch = create_mock_voice_channel(2222222222)
@@ -216,76 +282,26 @@ def mock_bot_extended():
         return found
 
     bot.fetch_channel = AsyncMock(side_effect=fetch_channel)
+    bot._channels = channels
     return bot
 
 
-def _build_app(mock_bot, channel_detail_override=None):
+def _build_app(mock_bot):
     """Build a FastAPI test app with the channels router.
 
-    ``resolve_bot``/``get_entity_or_404`` are NOT patched — the real helpers
-    run against ``mock_bot`` (see fidelity notes at the top of this file).
+    Nothing is patched: ``resolve_bot``, ``get_entity_or_404``,
+    ``handle_discord_exception``, ``ChannelConverter``, ``PermissionConverter``,
+    ``validate_channel_type``, ``EmbedConverter`` and ``create_permission_overwrite``
+    all run for real against ``mock_bot`` (see module fidelity notes above).
     """
     app = FastAPI(title="Channels Test")
     app.state.bot = mock_bot
 
-    detail = channel_detail_override or _make_channel_detail_dict()
+    import api.routers.channels as channels_module
 
-    with (
-        patch("api.routers.channels.ChannelConverter") as mock_cc,
-        patch("api.routers.channels.PermissionConverter") as mock_pc,
-        patch("api.routers.channels.validate_channel_type") as mock_vct,
-        patch("api.routers.channels.EmbedConverter") as mock_ec,
-        patch("api.routers.channels.create_permission_overwrite") as mock_cpo,
-    ):
-        mock_cc.channel_to_detail.return_value = detail
-        mock_cc.thread_to_summary.return_value = {}
-        mock_cc.thread_to_detail.return_value = {
-            "id": 9999,
-            "name": "test-thread",
-            "channel_id": 3333333333,
-            "guild_id": 987654321,
-            "owner_id": 111,
-            "archived": False,
-            "locked": False,
-            "message_count": 0,
-            "member_count": 1,
-            "default_auto_archive_duration": 1440,
-            "created_at": "2024-01-01T00:00:00",
-            "last_message_id": None,
-        }
-        mock_cc.forum_tag_to_payload.return_value = {
-            "id": 1,
-            "channel_id": 3333333333,
-            "name": "tag1",
-            "emoji": None,
-        }
-        mock_cc.overwrite_to_payload = MagicMock(return_value={})
-        mock_pc.overwrite_to_payload.return_value = {
-            "id": "3333333333:111",
-            "channel_id": 3333333333,
-            "target_id": 111,
-            "type": "role",
-            "allow": 0,
-            "deny": 0,
-        }
-        mock_vct.return_value = None  # no exception by default
-        mock_ec.payload_to_embed.return_value = MagicMock()
-        mock_cpo.return_value = MagicMock()
+    app.include_router(channels_module.router, prefix="/api/v1")
 
-        import api.routers.channels as channels_module
-
-        app.include_router(channels_module.router, prefix="/api/v1")
-
-        yield (
-            app,
-            {
-                "converter": mock_cc,
-                "perm_converter": mock_pc,
-                "validate_channel_type": mock_vct,
-                "embed_converter": mock_ec,
-                "create_perm_overwrite": mock_cpo,
-            },
-        )
+    yield (app, {})
 
 
 @pytest.fixture
@@ -295,9 +311,14 @@ def channels_app_and_mocks(mock_bot_extended):
 
 
 @pytest.fixture
-def channels_client(channels_app_and_mocks):
+def channels_client(channels_app_and_mocks, mock_bot_extended):
     app, _ = channels_app_and_mocks
-    return TestClient(app)
+    client = TestClient(app)
+    # Expose the exact mock channel instances the router operates on so tests
+    # can build expected-response assertions from them (mirrors bot._graph in
+    # test_messages_extended.py).
+    client.channels = mock_bot_extended._channels
+    return client
 
 
 # ---------------------------------------------------------------------------
@@ -309,12 +330,12 @@ class TestGetChannelExtended:
     """Extended tests for GET /channels/{channel_id}."""
 
     def test_get_text_channel_success(self, channels_client):
-        """Should return 200 for a text channel."""
+        """Should return 200 with the real converter's output for a text channel."""
         resp = channels_client.get("/api/v1/channels/1234567890")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
-        assert "data" in data
+        assert data["data"] == _expected_channel_detail(channels_client.channels[1234567890])
 
     def test_get_channel_not_found(self, channels_client):
         """Should return 404 for unknown channel."""
@@ -323,16 +344,20 @@ class TestGetChannelExtended:
         assert "detail" in resp.json()
 
     def test_get_voice_channel_success(self, channels_client):
-        """Should return 200 for a voice channel."""
+        """Should return 200 with the real converter's output for a voice channel."""
         resp = channels_client.get("/api/v1/channels/2222222222")
         assert resp.status_code == 200
-        assert resp.json()["status"] == "success"
+        data = resp.json()
+        assert data["status"] == "success"
+        assert data["data"] == _expected_channel_detail(channels_client.channels[2222222222])
 
     def test_get_forum_channel_success(self, channels_client):
-        """Should return 200 for a forum channel (not category)."""
+        """Should return 200 with the real converter's output for a forum channel (not category)."""
         resp = channels_client.get("/api/v1/channels/3333333333")
         assert resp.status_code == 200
-        assert resp.json()["status"] == "success"
+        data = resp.json()
+        assert data["status"] == "success"
+        assert data["data"] == _expected_channel_detail(channels_client.channels[3333333333])
 
 
 # ---------------------------------------------------------------------------
@@ -343,65 +368,11 @@ class TestGetChannelExtended:
 class TestGetChannelCategoryRejection:
     """GET /channels/{channel_id} should reject category channels (400)."""
 
-    def test_get_category_channel_returns_400(self, mock_bot_extended):
-        """Channel that is a CategoryChannel (isinstance passes) should return 400.
-
-        We patch the 'discord' module inside the router so that
-        isinstance(channel, discord.CategoryChannel) evaluates to True for our
-        mock category channel.
-        """
-
-        # Create a category channel mock
-        category_ch = create_mock_category(1111111111)
-
-        # Create a custom category class that our mock is an instance of,
-        # then patch discord.CategoryChannel inside the router to that class.
-        CategoryClass = type("CategoryChannel", (), {})
-        category_ch.__class__ = CategoryClass
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: category_ch if cid == 1111111111 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: category_ch if cid == 1111111111 else None)
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        # Patch discord.CategoryChannel in the router to be our CategoryClass
-        mock_discord_for_router = MagicMock()
-        mock_discord_for_router.CategoryChannel = CategoryClass
-        mock_discord_for_router.TextChannel = type("TextChannel", (), {})
-        mock_discord_for_router.VoiceChannel = type("VoiceChannel", (), {})
-        mock_discord_for_router.ForumChannel = type("ForumChannel", (), {})
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter"),
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter"),
-            patch("api.routers.channels.create_permission_overwrite"),
-            patch("api.routers.channels.discord", mock_discord_for_router),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return category_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            resp = client.get("/api/v1/channels/1111111111")
-            assert resp.status_code == 400
-            assert "category" in resp.json()["detail"].lower()
+    def test_get_category_channel_returns_400(self, channels_client):
+        """A channel that is a real discord.CategoryChannel (isinstance passes) should return 400."""
+        resp = channels_client.get("/api/v1/channels/1111111111")
+        assert resp.status_code == 400
+        assert "category" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -413,12 +384,17 @@ class TestUpdateChannel:
     """Tests for PUT /channels/{channel_id}."""
 
     def test_update_channel_name(self, channels_client):
-        """PUT with new name should return 200."""
+        """PUT with new name should return 200 with the real (post-edit) converted body."""
         payload = {"name": "new-name"}
         resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "updated"
+
+        text_ch = channels_client.channels[1234567890]
+        text_ch.edit.assert_awaited_once_with(name="new-name")
+        assert data["data"] == _expected_channel_detail(text_ch)
+        assert data["data"]["name"] == "new-name"
 
     def test_update_channel_not_found(self, channels_client):
         """PUT for unknown channel should return 404."""
@@ -428,81 +404,47 @@ class TestUpdateChannel:
         assert "detail" in resp.json()
 
     def test_update_channel_position(self, channels_client):
-        """PUT with position change should return 200."""
+        """PUT with position change should return 200 with the updated position."""
         payload = {"position": 5}
         resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
-        assert resp.json()["status"] == "updated"
+        data = resp.json()
+        assert data["status"] == "updated"
+        assert data["data"]["position"] == 5
 
     def test_update_channel_topic_nsfw_slowmode(self, channels_client):
-        """PUT with topic, nsfw, slowmode should return 200."""
+        """PUT with topic, nsfw, slowmode should return 200 with the updated fields."""
         payload = {"topic": "new topic", "nsfw": True, "slowmode_delay": 10}
         resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
-        assert resp.json()["status"] == "updated"
+        data = resp.json()
+        assert data["status"] == "updated"
+        assert data["data"]["topic"] == "new topic"
+        assert data["data"]["nsfw"] is True
+        assert data["data"]["slowmode_delay"] == 10
 
-    def test_update_channel_empty_payload_no_edit(self, channels_client, channels_app_and_mocks):
-        """PUT with empty payload (no fields) should still return 200 (no edit call needed)."""
-        payload = {}
-        resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
+    def test_update_channel_empty_payload_no_edit(self, channels_client):
+        """PUT with empty payload (no fields) should still return 200 without calling edit()."""
+        resp = channels_client.put("/api/v1/channels/1234567890", json={})
         assert resp.status_code == 200
         assert resp.json()["status"] == "updated"
+        channels_client.channels[1234567890].edit.assert_not_awaited()
 
     def test_update_voice_channel_bitrate(self, channels_client):
-        """PUT with bitrate/user_limit on voice channel should return 200."""
+        """PUT with bitrate/user_limit on voice channel should return 200 with the updated fields."""
         payload = {"bitrate": 96000, "user_limit": 10}
         resp = channels_client.put("/api/v1/channels/2222222222", json=payload)
         assert resp.status_code == 200
-        assert resp.json()["status"] == "updated"
+        data = resp.json()
+        assert data["status"] == "updated"
+        assert data["data"]["bitrate"] == 96000
+        assert data["data"]["user_limit"] == 10
 
-    def test_update_category_returns_400(self, mock_bot_extended):
+    def test_update_category_returns_400(self, channels_client):
         """PUT on a category channel should return 400."""
-        CategoryClass = type("CategoryChannel", (), {})
-        category_ch = create_mock_category(1111111111)
-        category_ch.__class__ = CategoryClass
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: category_ch if cid == 1111111111 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: category_ch if cid == 1111111111 else None)
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        mock_discord_for_router = MagicMock()
-        mock_discord_for_router.CategoryChannel = CategoryClass
-        mock_discord_for_router.TextChannel = type("TextChannel", (), {})
-        mock_discord_for_router.VoiceChannel = type("VoiceChannel", (), {})
-        mock_discord_for_router.ForumChannel = type("ForumChannel", (), {})
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter"),
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter"),
-            patch("api.routers.channels.create_permission_overwrite"),
-            patch("api.routers.channels.discord", mock_discord_for_router),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return category_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            resp = client.put("/api/v1/channels/1111111111", json={"name": "x"})
-            assert resp.status_code == 400
-            assert "detail" in resp.json()
+        resp = channels_client.put("/api/v1/channels/1111111111", json={"name": "x"})
+        assert resp.status_code == 400
+        assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -514,12 +456,15 @@ class TestDeleteChannel:
     """Tests for DELETE /channels/{channel_id}."""
 
     def test_delete_channel_success(self, channels_client):
-        """DELETE an existing channel should return 200."""
+        """DELETE an existing text channel should return 200 and call channel.delete()."""
+        text_ch = channels_client.channels[1234567890]
         resp = channels_client.delete("/api/v1/channels/1234567890")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "deleted"
         assert data["deleted"] is True
+        assert data["message"] == "Text channel test-channel deleted"
+        text_ch.delete.assert_awaited_once()
 
     def test_delete_channel_not_found(self, channels_client):
         """DELETE on non-existent channel should return 404."""
@@ -528,11 +473,14 @@ class TestDeleteChannel:
         assert "detail" in resp.json()
 
     def test_delete_voice_channel_success(self, channels_client):
-        """DELETE a voice channel should return 200."""
+        """DELETE a voice channel should return 200 and call channel.delete()."""
+        voice_ch = channels_client.channels[2222222222]
         resp = channels_client.delete("/api/v1/channels/2222222222")
         assert resp.status_code == 200
         data = resp.json()
         assert data["deleted"] is True
+        assert data["message"] == "Voice channel test-voice deleted"
+        voice_ch.delete.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -544,12 +492,12 @@ class TestListChannelMessages:
     """Tests for GET /channels/{channel_id}/messages."""
 
     def test_list_messages_success(self, channels_client):
-        """GET channel messages should return 200 with list."""
+        """GET channel messages should return 200 with an (empty) list."""
         resp = channels_client.get("/api/v1/channels/1234567890/messages")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
-        assert isinstance(data["data"], list)
+        assert data["data"] == []
 
     def test_list_messages_not_found(self, channels_client):
         """GET messages for non-existent channel should return 404."""
@@ -578,10 +526,10 @@ class TestListChannelMessages:
 class TestCreateChannelMessage:
     """Tests for POST /channels/{channel_id}/messages."""
 
-    def test_create_message_success(self, channels_client, channels_app_and_mocks):
-        """POST a message to a channel should return 201."""
-        _app_unused, _mocks_unused = channels_app_and_mocks
-        # The channel's send() is AsyncMock; set up a return value
+    def test_create_message_success(self, channels_client):
+        """POST a message to a channel should return 201 with the real converted message data."""
+        text_ch = channels_client.channels[1234567890]
+
         mock_msg = MagicMock()
         mock_msg.id = 9876543210
         mock_msg.author = MagicMock()
@@ -590,52 +538,25 @@ class TestCreateChannelMessage:
         mock_msg.edited_at = None
         mock_msg.type = MagicMock()
         mock_msg.type.name = "general"
-
-        # Get the text channel and patch its send
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.guild = MagicMock()
-        text_ch.guild.id = 987654321
         text_ch.send = AsyncMock(return_value=mock_msg)
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
+        payload = {"content": {"title": "Hello", "description": "World"}}
+        resp = channels_client.post("/api/v1/channels/1234567890/messages", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["status"] == "created"
+        assert data["data"]["id"] == 9876543210
+        assert data["data"]["channel_id"] == 1234567890
+        assert data["data"]["guild_id"] == 987654321
+        assert data["data"]["author_id"] == 123456789
+        assert data["data"]["content"]["title"] == "Hello"
+        assert data["data"]["content"]["description"] == "World"
 
-        new_app = FastAPI()
-        new_app.state.bot = bot
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter") as mock_cc,
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter") as mock_ec,
-            patch("api.routers.channels.create_permission_overwrite"),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return text_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-            mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
-            mock_ec.payload_to_embed.return_value = MagicMock()
-
-            import api.routers.channels as channels_module
-
-            new_app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(new_app)
-            payload = {"content": {"title": "Hello", "description": "World"}}
-            resp = client.post("/api/v1/channels/1234567890/messages", json=payload)
-            assert resp.status_code == 201
-            data = resp.json()
-            assert data["status"] == "created"
+        text_ch.send.assert_awaited_once()
+        sent_embed = text_ch.send.call_args.kwargs["embed"]
+        assert isinstance(sent_embed, discord.Embed)
+        assert sent_embed.title == "Hello"
+        assert sent_embed.description == "World"
 
     def test_create_message_channel_not_found(self, channels_client):
         """POST message to non-existent channel should return 404."""
@@ -668,61 +589,25 @@ class TestGetChannelPermissions:
         assert resp.status_code == 404
         assert "detail" in resp.json()
 
-    def test_get_permissions_with_overwrites(self, mock_bot_extended):
-        """GET permissions on channel with overwrites should return them."""
-        text_ch = create_mock_text_channel(1234567890)
-        mock_role = MagicMock()
-        mock_role.id = 555
-        mock_overwrite = MagicMock()
-        text_ch.overwrites = {mock_role: mock_overwrite}
+    def test_get_permissions_with_overwrites(self, channels_client):
+        """GET permissions on channel with overwrites should return the real converted payload."""
+        text_ch = channels_client.channels[1234567890]
+        role = DiscordMockUtils.create_mock_role(role_id=555, name="Test Role", guild=text_ch.guild)
+        role.__class__ = discord.Role
+        overwrite = DiscordMockUtils.create_mock_permission_overwrite(allow=1024, deny=2048)
+        text_ch.overwrites = {role: overwrite}
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        overwrite_payload = {
-            "id": "1234567890:555",
-            "channel_id": 1234567890,
-            "target_id": 555,
-            "type": "role",
-            "allow": 0,
-            "deny": 0,
-        }
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter") as mock_cc,
-            patch("api.routers.channels.PermissionConverter") as mock_pc,
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter"),
-            patch("api.routers.channels.create_permission_overwrite"),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return text_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-            mock_pc.overwrite_to_payload.return_value = overwrite_payload
-            mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            resp = client.get("/api/v1/channels/1234567890/permissions")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert len(data["data"]) == 1
+        resp = channels_client.get("/api/v1/channels/1234567890/permissions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["data"]) == 1
+        payload = data["data"][0]
+        assert payload["id"] == "1234567890:555"
+        assert payload["channel_id"] == 1234567890
+        assert payload["target_id"] == 555
+        assert payload["type"] == "role"
+        assert payload["allow"] == 1024
+        assert payload["deny"] == 2048
 
 
 # ---------------------------------------------------------------------------
@@ -748,103 +633,38 @@ class TestUpdateChannelPermissions:
         assert resp.status_code == 404
         assert "detail" in resp.json()
 
-    def test_update_permissions_with_role_overwrite(self, mock_bot_extended):
-        """PUT with role overwrite should apply permissions."""
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.overwrites = {}
-        mock_role = MagicMock()
-        mock_role.id = 777
-        text_ch.guild.get_role = MagicMock(return_value=mock_role)
-        text_ch.guild.get_member = MagicMock(return_value=None)
-        text_ch.guild.fetch_member = AsyncMock(return_value=None)
-        text_ch.set_permissions = AsyncMock()
+    def test_update_permissions_with_role_overwrite(self, channels_client):
+        """PUT with role overwrite should call channel.set_permissions with a real overwrite."""
+        text_ch = channels_client.channels[1234567890]
+        role = DiscordMockUtils.create_mock_role(role_id=777, name="Test Role", guild=text_ch.guild)
+        role.__class__ = discord.Role
+        text_ch.guild.get_role = MagicMock(return_value=role)
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
+        allow_value = discord.Permissions(view_channel=True).value
+        payload = {"overwrites": [{"target_id": 777, "type": "role", "allow": allow_value, "deny": 0}]}
+        resp = channels_client.put("/api/v1/channels/1234567890/permissions", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
 
-        app = FastAPI()
-        app.state.bot = bot
+        text_ch.set_permissions.assert_awaited_once()
+        call_args = text_ch.set_permissions.call_args
+        assert call_args.args[0] is role
+        sent_overwrite = call_args.kwargs["overwrite"]
+        allow, deny = sent_overwrite.pair()
+        assert allow.value == allow_value
+        assert deny.value == 0
 
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter") as mock_cc,
-            patch("api.routers.channels.PermissionConverter") as mock_pc,
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter"),
-            patch("api.routers.channels.create_permission_overwrite") as mock_cpo,
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return text_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-            mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
-            mock_pc.overwrite_to_payload.return_value = {}
-            mock_cpo.return_value = MagicMock()
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            payload = {"overwrites": [{"target_id": 777, "type": "role", "allow": 0, "deny": 0}]}
-            resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "updated"
-
-    def test_update_permissions_member_not_found_skip(self, mock_bot_extended):
+    def test_update_permissions_member_not_found_skip(self, channels_client):
         """PUT with member overwrite where member doesn't exist should skip gracefully."""
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.overwrites = {}
-        text_ch.guild.get_role = MagicMock(return_value=None)
+        text_ch = channels_client.channels[1234567890]
         text_ch.guild.get_member = MagicMock(return_value=None)
-        text_ch.guild.fetch_member = AsyncMock(side_effect=Exception("not found"))
-        text_ch.set_permissions = AsyncMock()
+        text_ch.guild.fetch_member = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found("not found"))
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter") as mock_cc,
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter"),
-            patch("api.routers.channels.create_permission_overwrite"),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return text_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-            mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            payload = {"overwrites": [{"target_id": 888, "type": "member", "allow": 0, "deny": 0}]}
-            resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "updated"
+        payload = {"overwrites": [{"target_id": 888, "type": "member", "allow": 0, "deny": 0}]}
+        resp = channels_client.put("/api/v1/channels/1234567890/permissions", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
+        text_ch.set_permissions.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -867,74 +687,31 @@ class TestListForumThreads:
         assert resp.status_code == 404
         assert "detail" in resp.json()
 
-    def test_list_threads_on_forum_success(self, mock_bot_extended):
-        """GET threads on a forum channel should return 200 with thread list."""
-        ForumClass = type("ForumChannel", (), {})
-        forum_ch = create_mock_forum_channel(3333333333)
-        forum_ch.__class__ = ForumClass
-        mock_thread = MagicMock()
-        forum_ch.threads = [mock_thread]
+    def test_list_threads_on_forum_success(self, channels_client):
+        """GET threads on a forum channel should return 200 with the real converted thread list."""
+        forum_ch = channels_client.channels[3333333333]
+        thread = DiscordMockUtils.create_mock_thread(
+            thread_id=9999,
+            name="t",
+            guild=forum_ch.guild,
+            guild_id=forum_ch.guild.id,
+            parent=forum_ch,
+            parent_id=forum_ch.id,
+            owner_id=111,
+        )
+        forum_ch.threads = [thread]
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: forum_ch if cid == 3333333333 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: forum_ch if cid == 3333333333 else None)
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        mock_discord_for_router = MagicMock()
-        mock_discord_for_router.CategoryChannel = type("CategoryChannel", (), {})
-        mock_discord_for_router.TextChannel = type("TextChannel", (), {})
-        mock_discord_for_router.VoiceChannel = type("VoiceChannel", (), {})
-        mock_discord_for_router.ForumChannel = ForumClass
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter") as mock_cc,
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter"),
-            patch("api.routers.channels.create_permission_overwrite"),
-            patch("api.routers.channels.discord", mock_discord_for_router),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return forum_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-
-            thread_summary = {
-                "id": 9999,
-                "name": "t",
-                "channel_id": 3333333333,
-                "guild_id": 987654321,
-                "owner_id": 111,
-                "archived": False,
-                "locked": False,
-                "message_count": 0,
-                "member_count": 1,
-                "default_auto_archive_duration": 1440,
-                "created_at": "2024-01-01T00:00:00",
-                "last_message_id": None,
-            }
-            mock_cc.thread_to_summary.return_value = thread_summary
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            resp = client.get("/api/v1/channels/3333333333/threads")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["status"] == "success"
-            assert len(data["data"]) == 1
+        resp = channels_client.get("/api/v1/channels/3333333333/threads")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "success"
+        assert len(data["data"]) == 1
+        entry = data["data"][0]
+        assert entry["id"] == 9999
+        assert entry["name"] == "t"
+        assert entry["channel_id"] == 3333333333
+        assert entry["guild_id"] == 987654321
+        assert entry["owner_id"] == 111
 
 
 # ---------------------------------------------------------------------------
@@ -959,78 +736,43 @@ class TestCreateForumThread:
         assert resp.status_code == 404
         assert "detail" in resp.json()
 
-    def test_create_thread_on_forum_success(self):
-        """POST thread on a forum channel should return 201."""
-        ForumClass = type("ForumChannel", (), {})
-        forum_ch = create_mock_forum_channel(3333333333)
-        forum_ch.__class__ = ForumClass
+    def test_create_thread_on_forum_success(self, channels_client):
+        """POST thread on a forum channel should return 201 with the real converted thread data."""
+        forum_ch = channels_client.channels[3333333333]
 
-        mock_thread_obj = MagicMock()
-        mock_thread_obj.name = "my-thread"
-        # create_thread returns the thread directly (no .thread attr)
-        forum_ch.create_thread = AsyncMock(return_value=mock_thread_obj)
+        async def _create_thread(**kwargs):
+            thread = DiscordMockUtils.create_mock_thread(
+                thread_id=9999,
+                name=kwargs["name"],
+                guild=forum_ch.guild,
+                guild_id=forum_ch.guild.id,
+                parent=forum_ch,
+                parent_id=forum_ch.id,
+                owner_id=123456789,
+                auto_archive_duration=kwargs.get("auto_archive_duration") or 1440,
+            )
+            # Real discord.py's plain Thread return (as opposed to a
+            # ThreadWithMessage tuple) has no nested `.thread` attribute.
+            # Speccing it means the router's `getattr(result, "thread",
+            # result)` unwrap correctly falls through to `result` itself,
+            # instead of silently returning an auto-vivified child MagicMock
+            # (a plain MagicMock() would resolve `.thread` to a new mock
+            # rather than raising AttributeError, since it doesn't spec-check).
+            thread.mock_add_spec(discord.Thread)
+            return thread
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: forum_ch if cid == 3333333333 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: forum_ch if cid == 3333333333 else None)
+        forum_ch.create_thread = AsyncMock(side_effect=_create_thread)
 
-        app = FastAPI()
-        app.state.bot = bot
-
-        thread_detail = {
-            "id": 9999,
-            "name": "my-thread",
-            "channel_id": 3333333333,
-            "guild_id": 987654321,
-            "owner_id": 111,
-            "archived": False,
-            "locked": False,
-            "message_count": 0,
-            "member_count": 1,
-            "default_auto_archive_duration": 1440,
-            "created_at": "2024-01-01T00:00:00",
-            "last_message_id": None,
-        }
-
-        mock_discord_for_router = MagicMock()
-        mock_discord_for_router.CategoryChannel = type("CategoryChannel", (), {})
-        mock_discord_for_router.TextChannel = type("TextChannel", (), {})
-        mock_discord_for_router.VoiceChannel = type("VoiceChannel", (), {})
-        mock_discord_for_router.ForumChannel = ForumClass
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter") as mock_cc,
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter") as mock_ec,
-            patch("api.routers.channels.create_permission_overwrite"),
-            patch("api.routers.channels.discord", mock_discord_for_router),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return forum_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-            mock_cc.thread_to_detail.return_value = thread_detail
-            mock_ec.payload_to_embed.return_value = None
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            payload = {"name": "my-thread"}
-            resp = client.post("/api/v1/channels/3333333333/threads", json=payload)
-            assert resp.status_code == 201
-            data = resp.json()
-            assert data["status"] == "created"
+        payload = {"name": "my-thread"}
+        resp = channels_client.post("/api/v1/channels/3333333333/threads", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["status"] == "created"
+        assert data["data"]["id"] == 9999
+        assert data["data"]["name"] == "my-thread"
+        assert data["data"]["channel_id"] == 3333333333
+        assert data["data"]["guild_id"] == 987654321
+        assert data["data"]["owner_id"] == 123456789
 
 
 # ---------------------------------------------------------------------------
@@ -1053,116 +795,23 @@ class TestListForumTags:
         assert resp.status_code == 404
         assert "detail" in resp.json()
 
-    def test_list_tags_on_forum_success(self):
-        """GET tags on a forum channel should return 200 with tag list."""
-        ForumClass = type("ForumChannel", (), {})
-        forum_ch = create_mock_forum_channel(3333333333)
-        forum_ch.__class__ = ForumClass
-        mock_tag = MagicMock()
-        mock_tag.id = 1
-        mock_tag.name = "combat"
-        forum_ch.available_tags = [mock_tag]
+    def test_list_tags_on_forum_success(self, channels_client):
+        """GET tags on a forum channel should return 200 with the real converted tag list."""
+        forum_ch = channels_client.channels[3333333333]
+        tag = DiscordMockUtils.create_mock_forum_tag(tag_id=1, name="combat", channel_id=3333333333)
+        forum_ch.available_tags = [tag]
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: forum_ch if cid == 3333333333 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: forum_ch if cid == 3333333333 else None)
+        resp = channels_client.get("/api/v1/channels/3333333333/tags")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "success"
+        assert data["data"] == [{"id": 1, "channel_id": 3333333333, "name": "combat", "emoji": None}]
 
-        app = FastAPI()
-        app.state.bot = bot
-
-        mock_discord_for_router = MagicMock()
-        mock_discord_for_router.CategoryChannel = type("CategoryChannel", (), {})
-        mock_discord_for_router.TextChannel = type("TextChannel", (), {})
-        mock_discord_for_router.VoiceChannel = type("VoiceChannel", (), {})
-        mock_discord_for_router.ForumChannel = ForumClass
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter") as mock_cc,
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter"),
-            patch("api.routers.channels.create_permission_overwrite"),
-            patch("api.routers.channels.discord", mock_discord_for_router),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return forum_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-            mock_cc.forum_tag_to_payload.return_value = {
-                "id": 1,
-                "channel_id": 3333333333,
-                "name": "combat",
-                "emoji": None,
-            }
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            resp = client.get("/api/v1/channels/3333333333/tags")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["status"] == "success"
-            assert len(data["data"]) == 1
-
-    def test_list_tags_empty_forum(self):
+    def test_list_tags_empty_forum(self, channels_client):
         """GET tags on forum with no tags returns empty list."""
-        ForumClass = type("ForumChannel", (), {})
-        forum_ch = create_mock_forum_channel(3333333333)
-        forum_ch.__class__ = ForumClass
-        forum_ch.available_tags = []
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: forum_ch if cid == 3333333333 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: forum_ch if cid == 3333333333 else None)
-
-        app = FastAPI()
-        app.state.bot = bot
-
-        mock_discord_for_router = MagicMock()
-        mock_discord_for_router.CategoryChannel = type("CategoryChannel", (), {})
-        mock_discord_for_router.TextChannel = type("TextChannel", (), {})
-        mock_discord_for_router.VoiceChannel = type("VoiceChannel", (), {})
-        mock_discord_for_router.ForumChannel = ForumClass
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock),
-            patch("api.routers.channels.ChannelConverter"),
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter"),
-            patch("api.routers.channels.create_permission_overwrite"),
-            patch("api.routers.channels.discord", mock_discord_for_router),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return forum_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            resp = client.get("/api/v1/channels/3333333333/tags")
-            assert resp.status_code == 200
-            assert resp.json()["data"] == []
+        resp = channels_client.get("/api/v1/channels/3333333333/tags")
+        assert resp.status_code == 200
+        assert resp.json()["data"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -1174,11 +823,16 @@ class TestMoveChannelToCategory:
     """Tests for PUT /channels/{channel_id}/category/{category_id}."""
 
     def test_move_channel_to_category_success(self, channels_client):
-        """PUT move channel to category should return 200."""
+        """PUT move channel to category should return 200 and call channel.edit(category=...)."""
+        text_ch = channels_client.channels[1234567890]
+        category = channels_client.channels[1111111111]
+
         resp = channels_client.put("/api/v1/channels/1234567890/category/1111111111")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "moved"
+        assert data["message"] == "Channel test-channel moved to category Test Category"
+        text_ch.edit.assert_awaited_once_with(category=category)
 
     def test_move_channel_not_found(self, channels_client):
         """PUT move non-existent channel should return 404."""

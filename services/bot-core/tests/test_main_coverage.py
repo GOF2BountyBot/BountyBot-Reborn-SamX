@@ -418,9 +418,7 @@ class TestLifespan:
 
             async with factory() as verify_db:
                 rows = (await verify_db.execute(_select(Bounty.status))).all()
-            assert rows and all(r[0] == "expired" for r in rows), (
-                f"Stale bounty must be marked expired, got {rows!r}"
-            )
+            assert rows and all(r[0] == "expired" for r in rows), f"Stale bounty must be marked expired, got {rows!r}"
         finally:
             await engine.dispose()
 

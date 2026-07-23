@@ -207,8 +207,7 @@ def _read_ship_slots(conn: sa.engine.Connection) -> dict[int, dict[str, list]]:
     """Read back the synthetic player's ships' slot lists, normalising to lists."""
     rows = conn.execute(
         sa.text(
-            f"SELECT id, weapons, modules, turrets, secondary_weapons FROM {_TABLE} "
-            "WHERE player_id = :pid ORDER BY id"
+            f"SELECT id, weapons, modules, turrets, secondary_weapons FROM {_TABLE} WHERE player_id = :pid ORDER BY id"
         ),
         {"pid": _TEST_PLAYER_ID},
     ).fetchall()

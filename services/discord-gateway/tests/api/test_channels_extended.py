@@ -27,21 +27,24 @@ re-derived from the real converter's field derivation
 (``_expected_channel_detail``) or against the specific fields that matter,
 never against canned dicts.
 
-``_build_app_with_discord_patch`` (the second builder, used by the
-isinstance/type-dispatch and generic-exception-handler test classes further
-down) still patches all of the above — that remains a separate follow-up
-(part 2 of this remediation), noted here only for context.
+``_build_app_with_discord_patch`` (SYS-4 remediation part 2) has been removed:
+the isinstance/type-dispatch and generic-exception-handler test classes below
+(``TestGenericExceptionHandlers`` through ``TestMoveChannelCategoryIntoCategory``)
+now reuse ``_build_app``/``channels_client`` — nothing is patched there either.
+Error-path tests trigger a real error (e.g. a plain ``RuntimeError`` raised out
+of ``bot.get_channel``, or a real ``discord.NotFound``) and assert against the
+REAL ``handle_discord_exception``'s response, not a canned one.
 """
 
 import os
 import sys
 import types
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import discord
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
@@ -89,27 +92,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 # ---------------------------------------------------------------------------
 # Channel factory helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_channel_detail_dict(
-    channel_id=1234567890,
-    name="test-channel",
-    ctype="text",
-    guild_id=987654321,
-    category_id=None,
-):
-    return {
-        "id": channel_id,
-        "name": name,
-        "type": ctype,
-        "position": 1,
-        "guild_id": guild_id,
-        "category_id": category_id,
-        "created_at": "2024-01-01T00:00:00",
-        "topic": "Test topic",
-        "nsfw": False,
-        "slowmode_delay": 0,
-    }
 
 
 def _expected_channel_detail(channel) -> dict:
@@ -855,115 +837,6 @@ class TestMoveChannelToCategory:
 # ===========================================================================
 
 
-def _build_app_with_discord_patch(mock_bot, discord_overrides=None, channel_detail=None):
-    """Build a FastAPI app patching both helpers AND the discord module for isinstance checks."""
-    app = FastAPI(title="Channels Coverage Test")
-    app.state.bot = mock_bot
-
-    detail = channel_detail or _make_channel_detail_dict()
-
-    # Build a mock discord module with proper class types
-    mock_discord_for_router = MagicMock()
-    CategoryClass = type("CategoryChannel", (), {})
-    TextClass = type("TextChannel", (), {})
-    VoiceClass = type("VoiceChannel", (), {})
-    ForumClass = type("ForumChannel", (), {})
-
-    mock_discord_for_router.CategoryChannel = CategoryClass
-    mock_discord_for_router.TextChannel = TextClass
-    mock_discord_for_router.VoiceChannel = VoiceClass
-    mock_discord_for_router.ForumChannel = ForumClass
-
-    if discord_overrides:
-        for k, v in discord_overrides.items():
-            setattr(mock_discord_for_router, k, v)
-
-    with (
-        patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-        patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock) as mock_hde,
-        patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-        patch("api.routers.channels.ChannelConverter") as mock_cc,
-        patch("api.routers.channels.PermissionConverter") as mock_pc,
-        patch("api.routers.channels.validate_channel_type") as mock_vct,
-        patch("api.routers.channels.EmbedConverter") as mock_ec,
-        patch("api.routers.channels.create_permission_overwrite") as mock_cpo,
-        patch("api.routers.channels.discord", mock_discord_for_router),
-    ):
-
-        async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-            ch = mock_bot.get_channel(entity_id)
-            if ch is None:
-                raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
-            return ch
-
-        async def _resolve_bot(request):
-            return mock_bot
-
-        mock_gea.side_effect = _get_entity
-        mock_rb.side_effect = _resolve_bot
-        # handle_discord_exception should raise an HTTPException (like the real one)
-        mock_hde.side_effect = HTTPException(status_code=500, detail="Internal error")
-        mock_cc.channel_to_detail.return_value = detail
-        mock_cc.thread_to_summary.return_value = {
-            "id": 9999,
-            "name": "t",
-            "channel_id": 3333333333,
-            "guild_id": 987654321,
-            "owner_id": 111,
-            "archived": False,
-            "locked": False,
-            "message_count": 0,
-            "member_count": 1,
-            "default_auto_archive_duration": 1440,
-            "created_at": "2024-01-01T00:00:00",
-            "last_message_id": None,
-        }
-        mock_cc.thread_to_detail.return_value = {
-            "id": 9999,
-            "name": "test-thread",
-            "channel_id": 3333333333,
-            "guild_id": 987654321,
-            "owner_id": 111,
-            "archived": False,
-            "locked": False,
-            "message_count": 0,
-            "member_count": 1,
-            "default_auto_archive_duration": 1440,
-            "created_at": "2024-01-01T00:00:00",
-            "last_message_id": None,
-        }
-        mock_cc.forum_tag_to_payload.return_value = {
-            "id": 1,
-            "channel_id": 3333333333,
-            "name": "tag1",
-            "emoji": None,
-        }
-        mock_cc.overwrite_to_payload = MagicMock(return_value={})
-        mock_pc.overwrite_to_payload.return_value = {}
-        mock_vct.return_value = None
-        mock_ec.payload_to_embed.return_value = MagicMock()
-        mock_cpo.return_value = MagicMock()
-
-        import api.routers.channels as channels_module
-
-        app.include_router(channels_module.router, prefix="/api/v1")
-
-        yield (
-            app,
-            {
-                "get_entity": mock_gea,
-                "handle_exception": mock_hde,
-                "resolve_bot": mock_rb,
-                "converter": mock_cc,
-                "perm_converter": mock_pc,
-                "validate_channel_type": mock_vct,
-                "embed_converter": mock_ec,
-                "create_perm_overwrite": mock_cpo,
-                "discord_module": mock_discord_for_router,
-            },
-        )
-
-
 # ---------------------------------------------------------------------------
 # Generic exception handler tests (lines 73-75, 159-161, 192-194,
 # 230-232, 293-295, 325-327, 380-382, 413-415, 474-476, 507-509, 551-553)
@@ -971,146 +844,133 @@ def _build_app_with_discord_patch(mock_bot, discord_overrides=None, channel_deta
 
 
 class TestGenericExceptionHandlers:
-    """Tests that trigger the generic except Exception handler in each endpoint."""
+    """Tests that trigger the generic ``except Exception`` handler in each
+    endpoint and verify the REAL (unpatched) ``handle_discord_exception``'s
+    500 fallback — not a canned/patched one.
 
-    def _make_app_with_failing_entity(self):
-        """Build app where get_entity_or_404 raises a generic Exception."""
+    ``bot.get_channel`` raises a plain ``RuntimeError`` (not a
+    ``discord.*`` exception). ``get_entity_or_404`` doesn't catch
+    exceptions raised by its ``get_func`` argument (only by ``fetch_func``),
+    so the RuntimeError propagates straight to each endpoint's
+    ``except Exception as exc: await handle_discord_exception(operation, exc)``
+    — the real generic-500 branch (``discord.NotFound``/``Forbidden``/
+    ``HTTPException`` aren't matched, so it falls through to
+    ``f"Failed to {operation}: {exc}"``).
+    """
+
+    def _client_with_failing_get_channel(self):
+        """Real (unpatched) app whose bot.get_channel always raises."""
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: None
 
-        app = FastAPI(title="Exception Handler Test")
-        app.state.bot = bot
+        def _raise(cid):
+            raise RuntimeError("unexpected discord failure")
 
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock) as mock_hde,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.ChannelConverter") as mock_cc,
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter"),
-            patch("api.routers.channels.create_permission_overwrite"),
-            patch("api.routers.channels.discord", MagicMock()),
-        ):
-
-            async def _resolve(req):
-                return bot
-
-            mock_rb.side_effect = _resolve
-            # get_entity raises a RuntimeError (not HTTPException)
-            mock_gea.side_effect = RuntimeError("unexpected discord failure")
-            # handle_discord_exception raises HTTPException (like real impl)
-            mock_hde.side_effect = HTTPException(status_code=500, detail="Internal error")
-
-            mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            yield TestClient(app), mock_hde
+        bot.get_channel = _raise
+        gen = _build_app(bot)
+        app, _ = next(gen)
+        return TestClient(app)
 
     def test_get_channel_generic_exception(self):
-        """Lines 73-75: generic exception in get_channel triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 73-75: generic exception in get_channel triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         resp = client.get("/api/v1/channels/1234567890")
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "get channel details" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "get channel details" in detail
+        assert "unexpected discord failure" in detail
 
     def test_update_channel_generic_exception(self):
-        """Lines 159-161: generic exception in update_channel triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 159-161: generic exception in update_channel triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         resp = client.put("/api/v1/channels/1234567890", json={"name": "x"})
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "update channel" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "update channel" in detail
+        assert "unexpected discord failure" in detail
 
     def test_delete_channel_generic_exception(self):
-        """Lines 192-194: generic exception in delete_channel triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 192-194: generic exception in delete_channel triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         resp = client.delete("/api/v1/channels/1234567890")
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "delete channel" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "delete channel" in detail
+        assert "unexpected discord failure" in detail
 
     def test_list_messages_generic_exception(self):
-        """Lines 230-232: generic exception in list_channel_messages triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 230-232: generic exception in list_channel_messages triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         resp = client.get("/api/v1/channels/1234567890/messages")
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "list channel messages" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "list channel messages" in detail
+        assert "unexpected discord failure" in detail
 
     def test_create_message_generic_exception(self):
-        """Lines 293-295: generic exception in create_channel_message triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 293-295: generic exception in create_channel_message triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         payload = {"content": {"title": "Hello"}}
         resp = client.post("/api/v1/channels/1234567890/messages", json=payload)
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "create channel message" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "create channel message" in detail
+        assert "unexpected discord failure" in detail
 
     def test_get_permissions_generic_exception(self):
-        """Lines 325-327: generic exception in get_channel_permissions triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 325-327: generic exception in get_channel_permissions triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         resp = client.get("/api/v1/channels/1234567890/permissions")
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "get channel permissions" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "get channel permissions" in detail
+        assert "unexpected discord failure" in detail
 
     def test_update_permissions_generic_exception(self):
-        """Lines 380-382: generic exception in update_channel_permissions triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 380-382: generic exception in update_channel_permissions triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         payload = {"overwrites": []}
         resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "update channel permissions" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "update channel permissions" in detail
+        assert "unexpected discord failure" in detail
 
     def test_list_threads_generic_exception(self):
-        """Lines 413-415: generic exception in list_threads triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 413-415: generic exception in list_threads triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         resp = client.get("/api/v1/channels/1234567890/threads")
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "list threads" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "list threads" in detail
+        assert "unexpected discord failure" in detail
 
     def test_create_thread_generic_exception(self):
-        """Lines 474-476: generic exception in create_thread triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 474-476: generic exception in create_thread triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         payload = {"name": "my-thread"}
         resp = client.post("/api/v1/channels/1234567890/threads", json=payload)
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "create thread" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "create thread" in detail
+        assert "unexpected discord failure" in detail
 
     def test_list_tags_generic_exception(self):
-        """Lines 507-509: generic exception in list_forum_tags triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 507-509: generic exception in list_forum_tags triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         resp = client.get("/api/v1/channels/1234567890/tags")
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "list forum tags" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "list forum tags" in detail
+        assert "unexpected discord failure" in detail
 
     def test_move_channel_generic_exception(self):
-        """Lines 551-553: generic exception in move_channel_to_category triggers handle_discord_exception."""
-        gen = self._make_app_with_failing_entity()
-        client, mock_hde = next(gen)
+        """Lines 551-553: generic exception in move_channel_to_category triggers the real handle_discord_exception."""
+        client = self._client_with_failing_get_channel()
         resp = client.put("/api/v1/channels/1234567890/category/1111111111")
         assert resp.status_code == 500
-        assert "detail" in resp.json()
-        assert "move channel to category" in mock_hde.call_args[0][0]
+        detail = resp.json()["detail"]
+        assert "move channel to category" in detail
+        assert "unexpected discord failure" in detail
 
 
 # ---------------------------------------------------------------------------
@@ -1119,105 +979,56 @@ class TestGenericExceptionHandlers:
 
 
 class TestUpdateChannelCategoryResolution:
-    """Tests for update_channel category_id resolution logic."""
+    """Tests for update_channel category_id resolution logic.
 
-    def test_update_channel_category_id_zero_removes_category(self):
+    Reuses ``channels_client`` (real router, real isinstance dispatch); only
+    ``guild.get_channel`` is stubbed per test to control what category_id
+    resolves to (1 mock: the stub return value, or a sibling real channel
+    from the fixture for the "wrong type" case).
+    """
+
+    def test_update_channel_category_id_zero_removes_category(self, channels_client):
         """Lines 104-105, 120-121: category_id=0 should set category=None in kwargs."""
-        TextClass = type("TextChannel", (), {})
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.__class__ = TextClass
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(bot, discord_overrides={"TextChannel": TextClass})
-        app, _mocks = next(gen)
-        client = TestClient(app)
+        text_ch = channels_client.channels[1234567890]
 
         payload = {"category_id": 0}
-        resp = client.put("/api/v1/channels/1234567890", json=payload)
+        resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "updated"
-        # Verify that channel.edit was called with category=None
-        text_ch.edit.assert_called_once()
-        call_kwargs = text_ch.edit.call_args[1]
-        assert "category" in call_kwargs
-        assert call_kwargs["category"] is None
+        text_ch.edit.assert_awaited_once_with(category=None)
 
-    def test_update_channel_category_id_valid(self):
+    def test_update_channel_category_id_valid(self, channels_client):
         """Lines 107-108: category_id points to a valid CategoryChannel."""
-        TextClass = type("TextChannel", (), {})
-        CategoryClass = type("CategoryChannel", (), {})
-
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.__class__ = TextClass
-
-        cat_ch = create_mock_category(1111111111)
-        cat_ch.__class__ = CategoryClass
-
+        text_ch = channels_client.channels[1234567890]
+        cat_ch = channels_client.channels[1111111111]
         text_ch.guild.get_channel = MagicMock(return_value=cat_ch)
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(
-            bot,
-            discord_overrides={"TextChannel": TextClass, "CategoryChannel": CategoryClass},
-        )
-        app, _mocks = next(gen)
-        client = TestClient(app)
-
         payload = {"category_id": 1111111111, "name": "moved"}
-        resp = client.put("/api/v1/channels/1234567890", json=payload)
+        resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "updated"
-        text_ch.edit.assert_called_once()
-        call_kwargs = text_ch.edit.call_args[1]
-        assert call_kwargs["category"] is cat_ch
-        assert call_kwargs["name"] == "moved"
+        text_ch.edit.assert_awaited_once_with(category=cat_ch, name="moved")
 
-    def test_update_channel_category_id_not_found(self):
+    def test_update_channel_category_id_not_found(self, channels_client):
         """Lines 108-112: category_id points to a non-category channel → 404."""
-        TextClass = type("TextChannel", (), {})
-
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.__class__ = TextClass
-        # guild.get_channel returns something that is NOT a CategoryChannel
-        text_ch.guild.get_channel = MagicMock(return_value=MagicMock())
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(bot, discord_overrides={"TextChannel": TextClass})
-        app, _mocks = next(gen)
-        client = TestClient(app)
+        text_ch = channels_client.channels[1234567890]
+        # A real channel that is NOT a CategoryChannel (a sibling voice channel
+        # from the fixture) — exercises the real isinstance check faithfully,
+        # no synthetic/bare mock needed.
+        text_ch.guild.get_channel = MagicMock(return_value=channels_client.channels[2222222222])
 
         payload = {"category_id": 9999}
-        resp = client.put("/api/v1/channels/1234567890", json=payload)
+        resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 404
         assert "Category" in resp.json()["detail"]
 
-    def test_update_channel_category_id_returns_none(self):
+    def test_update_channel_category_id_returns_none(self, channels_client):
         """Lines 108-112: guild.get_channel returns None for category_id → 404."""
-        TextClass = type("TextChannel", (), {})
-
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.__class__ = TextClass
+        text_ch = channels_client.channels[1234567890]
         text_ch.guild.get_channel = MagicMock(return_value=None)
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(bot, discord_overrides={"TextChannel": TextClass})
-        app, _mocks = next(gen)
-        client = TestClient(app)
-
         payload = {"category_id": 9999}
-        resp = client.put("/api/v1/channels/1234567890", json=payload)
+        resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 404
         assert "Category" in resp.json()["detail"]
 
@@ -1228,77 +1039,41 @@ class TestUpdateChannelCategoryResolution:
 
 
 class TestUpdateChannelTypeSpecificFields:
-    """Tests for type-specific field handling in update_channel."""
+    """Tests for type-specific field handling in update_channel.
 
-    def test_update_text_channel_topic_nsfw_slowmode(self):
+    Reuses ``channels_client``'s real text/voice/forum channels and the real
+    router's isinstance-based type dispatch — no mocks beyond the fixture.
+    """
+
+    def test_update_text_channel_topic_nsfw_slowmode(self, channels_client):
         """Lines 125-130: TextChannel-specific fields (topic, nsfw, slowmode_delay)."""
-        TextClass = type("TextChannel", (), {})
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.__class__ = TextClass
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(bot, discord_overrides={"TextChannel": TextClass})
-        app, _mocks = next(gen)
-        client = TestClient(app)
+        text_ch = channels_client.channels[1234567890]
 
         payload = {"topic": "new topic", "nsfw": True, "slowmode_delay": 5}
-        resp = client.put("/api/v1/channels/1234567890", json=payload)
+        resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "updated"
-        text_ch.edit.assert_called_once()
-        kw = text_ch.edit.call_args[1]
-        assert kw["topic"] == "new topic"
-        assert kw["nsfw"] is True
-        assert kw["slowmode_delay"] == 5
+        text_ch.edit.assert_awaited_once_with(topic="new topic", nsfw=True, slowmode_delay=5)
 
-    def test_update_voice_channel_bitrate_user_limit(self):
+    def test_update_voice_channel_bitrate_user_limit(self, channels_client):
         """Lines 132-135: VoiceChannel-specific fields (bitrate, user_limit)."""
-        VoiceClass = type("VoiceChannel", (), {})
-        voice_ch = create_mock_voice_channel(2222222222)
-        voice_ch.__class__ = VoiceClass
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: voice_ch if cid == 2222222222 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: voice_ch if cid == 2222222222 else None)
-
-        gen = _build_app_with_discord_patch(bot, discord_overrides={"VoiceChannel": VoiceClass})
-        app, _mocks = next(gen)
-        client = TestClient(app)
+        voice_ch = channels_client.channels[2222222222]
 
         payload = {"bitrate": 96000, "user_limit": 10}
-        resp = client.put("/api/v1/channels/2222222222", json=payload)
+        resp = channels_client.put("/api/v1/channels/2222222222", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "updated"
-        voice_ch.edit.assert_called_once()
-        kw = voice_ch.edit.call_args[1]
-        assert kw["bitrate"] == 96000
-        assert kw["user_limit"] == 10
+        voice_ch.edit.assert_awaited_once_with(bitrate=96000, user_limit=10)
 
-    def test_update_forum_channel_topic_auto_archive(self):
+    def test_update_forum_channel_topic_auto_archive(self, channels_client):
         """Lines 137-140: ForumChannel-specific fields (topic, default_auto_archive_duration)."""
-        ForumClass = type("ForumChannel", (), {})
-        forum_ch = create_mock_forum_channel(3333333333)
-        forum_ch.__class__ = ForumClass
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: forum_ch if cid == 3333333333 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: forum_ch if cid == 3333333333 else None)
-
-        gen = _build_app_with_discord_patch(bot, discord_overrides={"ForumChannel": ForumClass})
-        app, _mocks = next(gen)
-        client = TestClient(app)
+        forum_ch = channels_client.channels[3333333333]
 
         payload = {"topic": "new forum topic", "default_auto_archive_duration": 4320}
-        resp = client.put("/api/v1/channels/3333333333", json=payload)
+        resp = channels_client.put("/api/v1/channels/3333333333", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "updated"
-        forum_ch.edit.assert_called_once()
-        kw = forum_ch.edit.call_args[1]
-        assert kw["topic"] == "new forum topic"
-        assert kw["default_auto_archive_duration"] == 4320
+        forum_ch.edit.assert_awaited_once_with(topic="new forum topic", default_auto_archive_duration=4320)
 
 
 # ---------------------------------------------------------------------------
@@ -1309,21 +1084,11 @@ class TestUpdateChannelTypeSpecificFields:
 class TestListMessagesNoHistory:
     """Test list_channel_messages on a channel without history attribute."""
 
-    def test_channel_without_history_returns_400(self):
+    def test_channel_without_history_returns_400(self, channels_client):
         """Line 215: channel without 'history' attr raises 400."""
-        ch = create_mock_text_channel(1234567890)
-        # Remove the history attribute
-        del ch.history
+        del channels_client.channels[1234567890].history
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(bot)
-        app, _mocks = next(gen)
-        client = TestClient(app)
-
-        resp = client.get("/api/v1/channels/1234567890/messages")
+        resp = channels_client.get("/api/v1/channels/1234567890/messages")
         assert resp.status_code == 400
         assert "cannot contain messages" in resp.json()["detail"].lower()
 
@@ -1336,22 +1101,12 @@ class TestListMessagesNoHistory:
 class TestCreateMessageNoSend:
     """Test create_channel_message on a channel without send method."""
 
-    def test_channel_without_send_returns_400(self):
+    def test_channel_without_send_returns_400(self, channels_client):
         """Line 251: channel without 'send' attr raises 400."""
-        ch = create_mock_text_channel(1234567890)
-        # Remove the send attribute
-        del ch.send
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(bot)
-        app, _mocks = next(gen)
-        client = TestClient(app)
+        del channels_client.channels[1234567890].send
 
         payload = {"content": {"title": "Hello"}}
-        resp = client.post("/api/v1/channels/1234567890/messages", json=payload)
+        resp = channels_client.post("/api/v1/channels/1234567890/messages", json=payload)
         assert resp.status_code == 400
         assert "cannot receive messages" in resp.json()["detail"].lower()
 
@@ -1364,12 +1119,14 @@ class TestCreateMessageNoSend:
 class TestCreateMessageTypeErrorFallback:
     """Test create_channel_message when channel.send raises TypeError."""
 
-    def test_send_type_error_fallback(self):
+    def test_send_type_error_fallback(self, channels_client):
         """Lines 260-264: channel.send raises TypeError → fallback send + reply."""
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.guild = MagicMock()
-        text_ch.guild.id = 987654321
+        text_ch = channels_client.channels[1234567890]
 
+        # discord.Message isn't constructible client-side (needs live gateway
+        # state) — a MagicMock with the fields the router/converter reads is
+        # the standard stand-in used throughout this file (e.g.
+        # TestCreateChannelMessage.test_create_message_success above).
         mock_msg = MagicMock()
         mock_msg.id = 9876543210
         mock_msg.author = MagicMock()
@@ -1383,95 +1140,33 @@ class TestCreateMessageTypeErrorFallback:
         # First call raises TypeError, second call succeeds (fallback)
         text_ch.send = AsyncMock(side_effect=[TypeError("no embed arg"), mock_msg])
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(bot)
-        app, _mocks = next(gen)
-        client = TestClient(app)
-
         payload = {"content": {"title": "Hello", "description": "World"}}
-        resp = client.post("/api/v1/channels/1234567890/messages", json=payload)
+        resp = channels_client.post("/api/v1/channels/1234567890/messages", json=payload)
         assert resp.status_code == 201
         data = resp.json()
         assert data["status"] == "created"
-        # Verify fallback send was called (second call, no embed)
+        assert data["data"]["id"] == 9876543210
+        # Verify fallback send was called (second call, no embed) followed by
+        # a reply carrying the embed the plain send() couldn't take.
         assert text_ch.send.call_count == 2
+        mock_msg.reply.assert_awaited_once()
+        sent_embed = mock_msg.reply.call_args.kwargs["embed"]
+        assert sent_embed.title == "Hello"
+        assert sent_embed.description == "World"
 
 
 # ---------------------------------------------------------------------------
-# Create message: content serialization fallback (lines 269-271)
+# NOTE: the former ``TestCreateMessageContentFallback`` (lines 269-271:
+# payload.content.model_dump() exception fallback) was deleted here. Once
+# unpatched, its own docstring admitted it couldn't reach the except branch
+# (EmbedPayload always has a working model_dump()) and its "success" path was
+# an exact duplicate of TestCreateChannelMessage.test_create_message_success
+# in the first half of this file (same channel, same payload shape, same
+# assertions). The genuinely-uncovered except-branch behaviour would need a
+# payload.content whose .model_dump() raises, which isn't reachable through
+# the public API with a valid EmbedPayload — left uncovered rather than
+# faked.
 # ---------------------------------------------------------------------------
-
-
-class TestCreateMessageContentFallback:
-    """Test create_channel_message when payload.content.model_dump raises."""
-
-    def test_content_model_dump_exception_fallback(self):
-        """Lines 269-271: payload.content.model_dump() fails → fallback to getattr."""
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.guild = MagicMock()
-        text_ch.guild.id = 987654321
-
-        mock_msg = MagicMock()
-        mock_msg.id = 9876543210
-        mock_msg.author = MagicMock()
-        mock_msg.author.id = 123456789
-        mock_msg.created_at = datetime(2024, 1, 1)
-        mock_msg.edited_at = None
-        mock_msg.type = MagicMock()
-        mock_msg.type.name = "general"
-        text_ch.send = AsyncMock(return_value=mock_msg)
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        app = FastAPI(title="Content Fallback Test")
-        app.state.bot = bot
-
-        with (
-            patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea,
-            patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock) as mock_hde,
-            patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb,
-            patch("api.routers.channels.ChannelConverter") as mock_cc,
-            patch("api.routers.channels.PermissionConverter"),
-            patch("api.routers.channels.validate_channel_type"),
-            patch("api.routers.channels.EmbedConverter") as mock_ec,
-            patch("api.routers.channels.create_permission_overwrite"),
-            patch("api.routers.channels.discord", MagicMock()),
-        ):
-
-            async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
-                return text_ch
-
-            async def _resolve(req):
-                return bot
-
-            mock_gea.side_effect = _get_entity
-            mock_rb.side_effect = _resolve
-            mock_hde.side_effect = HTTPException(status_code=500, detail="err")
-            mock_ec.payload_to_embed.return_value = MagicMock()
-            mock_cc.channel_to_detail.return_value = _make_channel_detail_dict()
-
-            import api.routers.channels as channels_module
-
-            app.include_router(channels_module.router, prefix="/api/v1")
-
-            client = TestClient(app)
-            # The EmbedPayload Pydantic model does have model_dump, but the router
-            # code wraps it in a try/except. We still exercise lines 267-268 (try path).
-            # To exercise lines 269-271 (except path), we need model_dump to raise.
-            # But since the payload goes through Pydantic validation, we can't easily
-            # make model_dump fail on the actual EmbedPayload. The test still exercises
-            # the try block (line 268), and we verify the message is created.
-            payload = {"content": {"title": "Hello", "description": "World"}}
-            resp = client.post("/api/v1/channels/1234567890/messages", json=payload)
-            assert resp.status_code == 201
-            data = resp.json()
-            assert data["status"] == "created"
-            assert data["data"]["id"] == 9876543210
 
 
 # ---------------------------------------------------------------------------
@@ -1483,54 +1178,35 @@ class TestCreateMessageContentFallback:
 class TestUpdatePermissionsEdgeCases:
     """Tests for edge cases in update_channel_permissions."""
 
-    def test_update_permissions_clears_existing_overwrites(self):
+    def test_update_permissions_clears_existing_overwrites(self, channels_client):
         """Line 352: existing overwrites are cleared before applying new ones."""
-        text_ch = create_mock_text_channel(1234567890)
-        mock_target = MagicMock()
-        mock_target.id = 555
-        mock_overwrite = MagicMock()
-        text_ch.overwrites = {mock_target: mock_overwrite}
-        text_ch.set_permissions = AsyncMock()
+        text_ch = channels_client.channels[1234567890]
+        role = DiscordMockUtils.create_mock_role(role_id=555, name="Test Role", guild=text_ch.guild)
+        role.__class__ = discord.Role
+        overwrite = DiscordMockUtils.create_mock_permission_overwrite(allow=1024, deny=0)
+        text_ch.overwrites = {role: overwrite}
         text_ch.guild.get_role = MagicMock(return_value=None)
         text_ch.guild.get_member = MagicMock(return_value=None)
-        text_ch.guild.fetch_member = AsyncMock(side_effect=Exception("not found"))
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(bot)
-        app, _mocks = next(gen)
-        client = TestClient(app)
+        text_ch.guild.fetch_member = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found("not found"))
 
         payload = {"overwrites": []}
-        resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
+        resp = channels_client.put("/api/v1/channels/1234567890/permissions", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "updated"
         # set_permissions should have been called to clear the existing overwrite
-        text_ch.set_permissions.assert_called_once_with(mock_target, overwrite=None)
+        text_ch.set_permissions.assert_awaited_once_with(role, overwrite=None)
 
-    def test_update_permissions_role_not_found_skips(self):
+    def test_update_permissions_role_not_found_skips(self, channels_client):
         """Lines 361-362: role not found during permission update → skip with warning."""
-        text_ch = create_mock_text_channel(1234567890)
-        text_ch.overwrites = {}
-        text_ch.set_permissions = AsyncMock()
+        text_ch = channels_client.channels[1234567890]
         text_ch.guild.get_role = MagicMock(return_value=None)
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
-
-        gen = _build_app_with_discord_patch(bot)
-        app, _mocks = next(gen)
-        client = TestClient(app)
-
         payload = {"overwrites": [{"target_id": 9999, "type": "role", "allow": 8, "deny": 0}]}
-        resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
+        resp = channels_client.put("/api/v1/channels/1234567890/permissions", json=payload)
         assert resp.status_code == 200
         assert resp.json()["status"] == "updated"
         # set_permissions should NOT have been called (role was skipped)
-        text_ch.set_permissions.assert_not_called()
+        text_ch.set_permissions.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1541,37 +1217,57 @@ class TestUpdatePermissionsEdgeCases:
 class TestCreateThreadTypeErrorFallback:
     """Test create_thread when create_thread raises TypeError."""
 
-    def test_create_thread_type_error_fallback(self):
+    def test_create_thread_type_error_fallback(self, channels_client):
         """Lines 448-455: create_thread raises TypeError → fallback without embed, then send embed."""
-        ForumClass = type("ForumChannel", (), {})
-        forum_ch = create_mock_forum_channel(3333333333)
-        forum_ch.__class__ = ForumClass
+        forum_ch = channels_client.channels[3333333333]
 
-        mock_thread_obj = MagicMock()
-        mock_thread_obj.name = "my-thread"
-        mock_thread_obj.send = AsyncMock()
+        created_threads = []
 
-        # First call raises TypeError, second call (without embed) succeeds
-        forum_ch.create_thread = AsyncMock(side_effect=[TypeError("no embed arg"), mock_thread_obj])
+        async def _create_thread(**kwargs):
+            if not created_threads:
+                # First call includes `embed=` — raises TypeError, mirroring a
+                # discord.py version whose create_thread() predates the embed
+                # kwarg (the router's fallback branch under test).
+                created_threads.append(None)
+                raise TypeError("no embed arg")
+            # Second call (fallback, no embed kwarg) succeeds. mock_add_spec
+            # makes getattr(thread, "thread", thread) correctly fall through
+            # to the thread itself (see the identical pattern/comment in
+            # TestCreateForumThread.test_create_thread_on_forum_success
+            # above — a bare MagicMock would auto-vivify a `.thread` child
+            # instead of raising AttributeError).
+            thread = DiscordMockUtils.create_mock_thread(
+                thread_id=9999,
+                name=kwargs["name"],
+                guild=forum_ch.guild,
+                guild_id=forum_ch.guild.id,
+                parent=forum_ch,
+                parent_id=forum_ch.id,
+                owner_id=123456789,
+            )
+            thread.send = AsyncMock()
+            thread.mock_add_spec(discord.Thread)
+            created_threads.append(thread)
+            return thread
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: forum_ch if cid == 3333333333 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: forum_ch if cid == 3333333333 else None)
-
-        gen = _build_app_with_discord_patch(bot, discord_overrides={"ForumChannel": ForumClass})
-        app, _mocks = next(gen)
-        client = TestClient(app)
+        forum_ch.create_thread = AsyncMock(side_effect=_create_thread)
 
         # Provide initial_message to trigger the embed path
         payload = {"name": "my-thread", "initial_message": {"title": "Hello"}}
-        resp = client.post("/api/v1/channels/3333333333/threads", json=payload)
+        resp = channels_client.post("/api/v1/channels/3333333333/threads", json=payload)
         assert resp.status_code == 201
         data = resp.json()
         assert data["status"] == "created"
+        assert data["data"]["id"] == 9999
+        assert data["data"]["name"] == "my-thread"
+        assert data["data"]["channel_id"] == 3333333333
         # Verify fallback: create_thread called twice
         assert forum_ch.create_thread.call_count == 2
-        # Verify the follow-up send with embed was called
-        mock_thread_obj.send.assert_called_once()
+        # Verify the follow-up send with embed was called on the thread
+        # returned by the fallback call.
+        created_threads[1].send.assert_awaited_once()
+        sent_embed = created_threads[1].send.call_args.kwargs["embed"]
+        assert sent_embed.title == "Hello"
 
 
 # ---------------------------------------------------------------------------
@@ -1582,30 +1278,21 @@ class TestCreateThreadTypeErrorFallback:
 class TestCreateThreadNoneResult:
     """Test create_thread when the result.thread is None."""
 
-    def test_create_thread_returns_none_thread(self):
+    def test_create_thread_returns_none_thread(self, channels_client):
         """Line 460: thread_obj is None → 500 error."""
-        ForumClass = type("ForumChannel", (), {})
-        forum_ch = create_mock_forum_channel(3333333333)
-        forum_ch.__class__ = ForumClass
+        forum_ch = channels_client.channels[3333333333]
 
-        # create_thread returns an object whose .thread attr is None
+        # Models the (unexpected) case where discord.py's create_thread()
+        # returns a ThreadWithMessage-shaped result whose .thread is None.
+        # A real ThreadWithMessage isn't independently constructible client
+        # side, so a MagicMock with just the one attribute the router reads
+        # (`.thread`) is the minimal stand-in.
         mock_result = MagicMock()
         mock_result.thread = None
-        # Also ensure getattr(result, "thread", result) returns None
-        # We need to be careful: getattr(mock_result, "thread", mock_result) returns
-        # mock_result.thread which is None. Then thread_obj = None → raise.
         forum_ch.create_thread = AsyncMock(return_value=mock_result)
 
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: forum_ch if cid == 3333333333 else None
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: forum_ch if cid == 3333333333 else None)
-
-        gen = _build_app_with_discord_patch(bot, discord_overrides={"ForumChannel": ForumClass})
-        app, _mocks = next(gen)
-        client = TestClient(app)
-
         payload = {"name": "my-thread"}
-        resp = client.post("/api/v1/channels/3333333333/threads", json=payload)
+        resp = channels_client.post("/api/v1/channels/3333333333/threads", json=payload)
         assert resp.status_code == 500
         assert "Thread creation failed" in resp.json()["detail"]
 
@@ -1618,25 +1305,16 @@ class TestCreateThreadNoneResult:
 class TestMoveChannelCategoryIntoCategory:
     """Test move_channel_to_category when source is a category."""
 
-    def test_move_category_into_category_returns_400(self):
+    def test_move_category_into_category_returns_400(self, channels_client):
         """Line 536: moving a CategoryChannel into another category raises 400."""
-        CategoryClass = type("CategoryChannel", (), {})
+        cat1 = channels_client.channels[1111111111]
+        # A second real category, added to the fixture's bot._channels map
+        # (a fresh id — 2222222222/3333333333/1111111111 are already taken by
+        # the fixture's voice/forum/category channels).
+        cat2 = create_mock_category(4444444444)
+        channels_client.channels[4444444444] = cat2
 
-        cat1 = create_mock_category(1111111111)
-        cat1.__class__ = CategoryClass
-
-        cat2 = create_mock_category(2222222222)
-        cat2.__class__ = CategoryClass
-
-        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
-        bot.get_channel = lambda cid: {1111111111: cat1, 2222222222: cat2}.get(cid)
-        bot.fetch_channel = AsyncMock(side_effect=lambda cid: {1111111111: cat1, 2222222222: cat2}.get(cid))
-
-        gen = _build_app_with_discord_patch(bot, discord_overrides={"CategoryChannel": CategoryClass})
-        app, _mocks = next(gen)
-        client = TestClient(app)
-
-        resp = client.put("/api/v1/channels/1111111111/category/2222222222")
+        resp = channels_client.put(f"/api/v1/channels/{cat1.id}/category/4444444444")
         assert resp.status_code == 400
         assert "Cannot move category" in resp.json()["detail"]
 

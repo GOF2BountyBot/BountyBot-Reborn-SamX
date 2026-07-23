@@ -61,9 +61,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 def _create_mock_role(role_id=123456789):
-    role = DiscordMockUtils.create_mock_role(
-        role_id=role_id, guild_id=987654321, name="test-role", permissions=8
-    )
+    role = DiscordMockUtils.create_mock_role(role_id=role_id, guild_id=987654321, name="test-role", permissions=8)
     role.__class__ = discord.Role
     role.edit = AsyncMock()
     role.delete = AsyncMock()

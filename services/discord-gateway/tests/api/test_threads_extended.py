@@ -1176,8 +1176,9 @@ class TestUpdateThreadTagsNameEmojiMatching:
         tags_data.tags = [tag_input]
         mock_request = MagicMock()
 
-        with self._direct_call_ctx(bot), patch(
-            "api.routers.threads.normalize_emoji", side_effect=ValueError("bad emoji")
+        with (
+            self._direct_call_ctx(bot),
+            patch("api.routers.threads.normalize_emoji", side_effect=ValueError("bad emoji")),
         ):
             from api.routers.threads import update_thread_tags
 

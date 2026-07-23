@@ -623,7 +623,8 @@ class TestMainBlock:
         }
 
         with patch("uvicorn.run") as mock_run:
-            exec(compile(block_body, main_module.__file__, "exec"), ns)
+            # Executing the guard block is the point of this test.
+            exec(compile(block_body, main_module.__file__, "exec"), ns)  # pylint: disable=exec-used
 
         mock_run.assert_called_once()
         call = mock_run.call_args

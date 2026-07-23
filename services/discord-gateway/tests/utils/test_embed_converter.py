@@ -370,8 +370,8 @@ class TestEmbedConverter:
         # Should have original 3 fields + 1 spacer (after the 2nd field)
         assert len(result.fields) == 4
         # Spacer should have zero-width characters and be at index 2
-        assert result.fields[2].name == "​"
-        assert result.fields[2].value == "​"
+        assert result.fields[2].name == "\u200b"
+        assert result.fields[2].value == "\u200b"
         assert result.fields[2].inline is True
 
     def test_payload_to_grid_embed_handles_few_fields(self, mock_embed_payload):

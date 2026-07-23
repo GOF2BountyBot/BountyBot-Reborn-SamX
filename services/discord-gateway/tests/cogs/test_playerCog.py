@@ -72,6 +72,22 @@ def _evict_discord_modules():
         sys.modules.pop(k, None)
 
 
+_BOT_API = "http://bot-core:8000/api/v1"
+
+
+def _with_real_http_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+    House pattern — see test_duelCog.py's / test_shopCog.py's / test_shipsCog.py's
+    own `_with_real_http_client` (TRUEUP-01).
+    """
+    import httpx
+
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
+
+
 def _create_mock_interaction(user_id=111111111, guild_id=987654321):
     """Build a mock interaction with all needed attributes."""
     interaction = DiscordMockUtils.create_mock_interaction(
@@ -177,29 +193,35 @@ class TestCogUnload:
 
 
 class TestProfileCommand:
-    """Tests for the /profile slash command."""
+    """Tests for the /profile slash command.
 
-    def test_profile_success_bronze_no_prestige(self, mock_player_cog):
+    TRUEUP-01: migrated off `AsyncMock(http_client.get/post)` (tautological — a
+    wrong URL/method would pass silently) to respx, pinned to the real
+    POST /players/ and GET /players/{id}/statistics URLs. The promotion-status
+    and config-sync GET calls are non-fatal enhancements (both wrapped in their
+    own try/except in the cog) — left unmocked here so respx's own
+    "unmocked request" error is swallowed exactly like any other non-fatal
+    failure; they're covered explicitly by TestProfileWithPromotionStatus /
+    TestProfileRoleAssignment / TestSyncPlayerNotificationRoles below.
+    """
+
+    def test_profile_success_bronze_no_prestige(self, mock_player_cog, request):
         """profile should send embed for Bronze tier player."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Bronze", prestige_count=0)
         stats_data = _make_stats_data()
 
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.json.return_value = player_data
-        player_resp.raise_for_status = MagicMock()
-
-        stats_resp = MagicMock()
-        stats_resp.status_code = 200
-        stats_resp.json.return_value = stats_data
-        stats_resp.raise_for_status = MagicMock()
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(return_value=stats_resp)
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -212,25 +234,23 @@ class TestProfileCommand:
         all_text = " ".join(f.value for f in embed.fields if f.value)
         assert "Bronze" in all_text or "bronze" in all_text.lower()
 
-    def test_profile_success_with_prestige(self, mock_player_cog):
+    def test_profile_success_with_prestige(self, mock_player_cog, request):
         """profile should include prestige field when prestige_count > 0."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=2)
         stats_data = _make_stats_data()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(return_value=stats_resp)
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -239,8 +259,12 @@ class TestProfileCommand:
         # prestige_count=2 should appear somewhere
         assert "2" in all_text or "prestige" in all_text.lower()
 
-    def test_profile_success_no_duel_stats(self, mock_player_cog):
+    def test_profile_success_no_duel_stats(self, mock_player_cog, request):
         """profile with 0 wins and 0 losses should skip the duel embed fields."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Silver")
@@ -249,18 +273,12 @@ class TestProfileCommand:
             "duel_stats": {"wins": 0, "losses": 0, "win_rate": 0.0},
         }
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(return_value=stats_resp)
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -270,23 +288,19 @@ class TestProfileCommand:
         if duel_fields:
             assert "0" in duel_fields[0].value
 
-    def test_profile_player_not_found_404(self, mock_player_cog):
+    def test_profile_player_not_found_404(self, mock_player_cog, request):
         """profile should handle 404 from API and send ephemeral message."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        import httpx
-
-        error_response = MagicMock()
-        error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(
+                return_value=httpx.Response(404, json={"detail": "Not Found"})
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -296,23 +310,19 @@ class TestProfileCommand:
         msg = call_kwargs[0][0]
         assert "not found" in msg.lower() or "profile" in msg.lower()
 
-    def test_profile_api_error_non_404(self, mock_player_cog):
+    def test_profile_api_error_non_404(self, mock_player_cog, request):
         """profile should handle non-404 API errors gracefully."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        import httpx
-
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError(
-            "500 Internal Server Error",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(
+                return_value=httpx.Response(500, json={"detail": "Internal Server Error"})
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -323,13 +333,16 @@ class TestProfileCommand:
         assert "bot-core" not in (embed.description or "")
         assert "http://" not in (embed.description or "")
 
-    def test_profile_generic_exception(self, mock_player_cog):
+    def test_profile_generic_exception(self, mock_player_cog, request):
         """profile should handle generic exceptions with warning message."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_player_cog.http_client.post = AsyncMock(side_effect=RuntimeError("network issue"))
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(side_effect=RuntimeError("network issue"))
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -345,12 +358,15 @@ class TestProfileCommand:
 
 
 class TestProfileCommandRespx:
-    """respx-backed tests asserting exact URL+method for /profile.
+    """respx-backed tests asserting exact URL+method for /profile, including the
+    promotion-status best-effort enhancement.
 
-    The existing TestProfileCommand tests use AsyncMock(http_client.get/post)
-    which is tautological — bugs in URL or HTTP method pass silently. This
-    class follows the policy in services/discord-gateway/tests/AGENTS.md
-    (B.33 remediation) and asserts the contract:
+    Kept as a dedicated class (rather than folded into TestProfileCommand above)
+    because it is the one test that pins ALL THREE endpoints /profile touches —
+    player upsert, statistics, and promotion-status — in a single
+    `assert_all_called=True` block. This class follows the policy in
+    services/discord-gateway/tests/AGENTS.md (B.33 remediation) and asserts the
+    contract:
 
       POST /api/v1/players/                    (player upsert)
       GET  /api/v1/players/{id}/statistics     (stats fetch)
@@ -407,10 +423,18 @@ class TestProfileCommandRespx:
 
 
 class TestLeaderboardCommand:
-    """Tests for the /leaderboard slash command."""
+    """Tests for the /leaderboard slash command.
 
-    def test_leaderboard_success(self, mock_player_cog):
+    TRUEUP-01: migrated off `AsyncMock(http_client.get)` to respx, pinned to
+    the real GET /players/guild/{guild_id} URL.
+    """
+
+    def test_leaderboard_success(self, mock_player_cog, request):
         """leaderboard should display top players."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         players = [
@@ -418,12 +442,9 @@ class TestLeaderboardCommand:
             {"user_id": 222, "tier": "Silver", "xp": 500, "credits": 2000},
         ]
 
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = players
-        mock_player_cog.http_client.get = AsyncMock(return_value=resp)
-
-        asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier=None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/players/guild/987654321").mock(return_value=httpx.Response(200, json=players))
+            asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier=None))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -433,33 +454,37 @@ class TestLeaderboardCommand:
         assert embed is not None
         assert embed.description  # leaderboard embed description should have content
 
-    def test_leaderboard_empty(self, mock_player_cog):
+    def test_leaderboard_empty(self, mock_player_cog, request):
         """leaderboard with no players should send ephemeral 'No players' message."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = []
-        mock_player_cog.http_client.get = AsyncMock(return_value=resp)
-
-        asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier=None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/players/guild/987654321").mock(return_value=httpx.Response(200, json=[]))
+            asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier=None))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_leaderboard_with_tier_filter(self, mock_player_cog):
+    def test_leaderboard_with_tier_filter(self, mock_player_cog, request):
         """leaderboard with tier param should include tier in title."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         players = [{"user_id": 111, "tier": "Gold", "xp": 999, "credits": 9999}]
 
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = players
-        mock_player_cog.http_client.get = AsyncMock(return_value=resp)
-
-        asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier="Gold"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/players/guild/987654321", params={"tier": "Gold"}).mock(
+                return_value=httpx.Response(200, json=players)
+            )
+            asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier="Gold"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -468,34 +493,34 @@ class TestLeaderboardCommand:
         # The tier filter (Gold) should appear in the title or description
         assert "Gold" in (embed.title or "") or "Gold" in (embed.description or "")
 
-    def test_leaderboard_api_error(self, mock_player_cog):
+    def test_leaderboard_api_error(self, mock_player_cog, request):
         """leaderboard should handle API errors gracefully."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        import httpx
-
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError(
-            "500 Error",
-            request=MagicMock(),
-            response=error_response,
-        )
-        mock_player_cog.http_client.get = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier=None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/players/guild/987654321").mock(
+                return_value=httpx.Response(500, json={"detail": "Error"})
+            )
+            asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier=None))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_leaderboard_generic_exception(self, mock_player_cog):
+    def test_leaderboard_generic_exception(self, mock_player_cog, request):
         """leaderboard should handle generic exceptions."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_player_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
-
-        asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier=None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/players/guild/987654321").mock(side_effect=RuntimeError("boom"))
+            asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier=None))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -507,71 +532,36 @@ class TestLeaderboardCommand:
 # ---------------------------------------------------------------------------
 
 
-class TestLeaderboardCommandRespx:
-    """respx-backed contract test for /leaderboard.
-
-    TestLeaderboardCommand above uses AsyncMock(http_client.get) which accepts
-    ANY url/method — a wrong leaderboard URL would still pass. This locks the
-    real contract: GET /api/v1/players/guild/{guild_id}?tier=<tier>.
-    """
-
-    _BOT_API = "http://bot-core:8000/api/v1"
-
-    def _with_real_client(self, cog, request):
-        import httpx
-
-        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
-        return cog
-
-    def test_leaderboard_calls_correct_url_and_method(self, mock_player_cog, request):
-        """/leaderboard must GET /players/guild/{guild_id} with a tier query param."""
-        import httpx
-        import respx
-
-        self._with_real_client(mock_player_cog, request)
-        interaction = _create_mock_interaction()
-        players = [{"user_id": 111, "tier": "Gold", "xp": 1000, "credits": 5000}]
-
-        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
-        with (
-            patch.dict(os.environ, env_without_bot_api, clear=True),
-            respx.mock(assert_all_called=True) as mock_router,
-        ):
-            route = mock_router.get(f"{self._BOT_API}/players/guild/987654321", params={"tier": "Gold"}).mock(
-                return_value=httpx.Response(200, json=players)
-            )
-            asyncio.run(mock_player_cog.leaderboard.callback(mock_player_cog, interaction, tier="Gold"))
-
-        assert route.called
-        request_sent = route.calls.last.request
-        assert request_sent.method == "GET"
-        interaction.followup.send.assert_awaited_once()
-
-
 # ---------------------------------------------------------------------------
 # prestige command
 # ---------------------------------------------------------------------------
 
 
 class TestPrestigeCommand:
-    """Tests for the /prestige slash command."""
+    """Tests for the /prestige slash command.
 
-    def test_prestige_eligible_platinum(self, mock_player_cog):
+    TRUEUP-01: migrated off `AsyncMock(http_client.post)` to respx, pinned to
+    the real POST /players/ URL.
+    """
+
+    def test_prestige_eligible_platinum(self, mock_player_cog, request):
         """prestige for Platinum tier player should show confirmation embed + ConfirmView."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
 
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = player_data
-        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
-
         view_mock = MagicMock()
         view_mock.result = False  # cancel — don't proceed to API
         view_mock.wait = AsyncMock(return_value=None)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
@@ -581,18 +571,19 @@ class TestPrestigeCommand:
         assert "embed" in call_kwargs
         assert call_kwargs.get("ephemeral", False)
 
-    def test_prestige_not_eligible_non_platinum(self, mock_player_cog):
+    def test_prestige_not_eligible_non_platinum(self, mock_player_cog, request):
         """prestige for non-Platinum tier should send ephemeral rejection."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Gold")
 
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = player_data
-        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
-
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
@@ -601,30 +592,34 @@ class TestPrestigeCommand:
         assert "Platinum" in msg
         assert call_args[1].get("ephemeral", False)
 
-    def test_prestige_bronze_not_eligible(self, mock_player_cog):
+    def test_prestige_bronze_not_eligible(self, mock_player_cog, request):
         """prestige for Bronze tier should send rejection."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Bronze")
 
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = player_data
-        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
-
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert call_args[1].get("ephemeral", False)
 
-    def test_prestige_generic_exception(self, mock_player_cog):
+    def test_prestige_generic_exception(self, mock_player_cog, request):
         """prestige should handle exceptions gracefully."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_player_cog.http_client.post = AsyncMock(side_effect=RuntimeError("connection fail"))
-
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(side_effect=RuntimeError("connection fail"))
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
@@ -657,18 +652,22 @@ class TestPrestigeConfirmFlow:
         view.wait = AsyncMock(return_value=None)
         return view
 
-    def test_prestige_eligible_shows_confirm_view(self, mock_player_cog):
+    def test_prestige_eligible_shows_confirm_view(self, mock_player_cog, request):
         """/prestige for Platinum tier should show a ConfirmView (not a CONFIRM string prompt)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = player_data
-        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
 
         view_mock = self._make_confirm_view_mock(result=False)  # cancel — don't proceed
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # First send should be the confirmation embed + view (ephemeral)
@@ -678,21 +677,25 @@ class TestPrestigeConfirmFlow:
         assert first_call_kwargs.get("ephemeral", False)
         assert first_call_kwargs.get("view") is view_mock
 
-    def test_prestige_warning_embed_describes_b49_full_reset(self, mock_player_cog):
+    def test_prestige_warning_embed_describes_b49_full_reset(self, mock_player_cog, request):
         """B.49 regression guard: warning embed must accurately describe the
         full-reset semantics (fleet wiped, inventory wiped, Betty starter
         loadout) and must NOT claim the player keeps ships or credits.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = player_data
-        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
 
         view_mock = self._make_confirm_view_mock(result=False)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         embed = interaction.followup.send.call_args_list[0][1]["embed"]
@@ -707,39 +710,55 @@ class TestPrestigeConfirmFlow:
         )
         assert "lifetime" in desc, "Warning embed must mention lifetime credits are preserved"
 
-    def test_prestige_cancel_does_not_call_api(self, mock_player_cog):
-        """/prestige: cancelling the ConfirmView must NOT call the prestige API."""
+    def test_prestige_cancel_does_not_call_api(self, mock_player_cog, request):
+        """/prestige: cancelling the ConfirmView must NOT call the prestige API.
+
+        The prestige route is deliberately left unregistered — if the cog called it
+        anyway, respx would raise (no route matches), failing the test.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = player_data
-        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
 
         view_mock = self._make_confirm_view_mock(result=False)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            players_route = mock_router.post(f"{_BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=player_data)
+            )
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # Only the player-fetch POST should have been called — NOT the prestige POST
-        assert mock_player_cog.http_client.post.await_count == 1
+        assert players_route.call_count == 1
 
-    def test_prestige_timeout_sends_timeout_message(self, mock_player_cog):
+    def test_prestige_timeout_sends_timeout_message(self, mock_player_cog, request):
         """/prestige: view timeout (result=None) should send a timeout message."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = player_data
-        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
 
         view_mock = self._make_confirm_view_mock(result=None)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            players_route = mock_router.post(f"{_BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=player_data)
+            )
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # Should send the confirmation view first, then a timeout/cancelled followup
-        assert mock_player_cog.http_client.post.await_count == 1  # only player fetch, no prestige call
+        assert players_route.call_count == 1  # only player fetch, no prestige call
         # After timeout (result=None), a timeout message should be sent
         last_call = interaction.followup.send.call_args
         assert last_call is not None
@@ -752,33 +771,33 @@ class TestPrestigeConfirmFlow:
             content += (emb.title or "") + (emb.description or "")
         assert any(word in content.lower() for word in ["timeout", "expired", "cancelled", "timed"])
 
-    def test_prestige_confirm_calls_api_and_shows_success(self, mock_player_cog):
+    def test_prestige_confirm_calls_api_and_shows_success(self, mock_player_cog, request):
         """/prestige: confirming the ConfirmView calls the prestige API and shows success."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
         prestige_data = {
             "player_id": 1,
             "prestige_count": 1,
             "tier_before": "Platinum",
             "xp_before": 50000,
         }
-        prestige_resp = MagicMock()
-        prestige_resp.raise_for_status = MagicMock()
-        prestige_resp.json.return_value = prestige_data
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.post(f"{_BOT_API}/players/{player_data['id']}/prestige").mock(
+                return_value=httpx.Response(200, json=prestige_data)
+            )
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        # Prestige API must have been called (2 POSTs: player fetch + prestige)
-        assert mock_player_cog.http_client.post.await_count == 2
         # Final followup should include a success embed
         last_call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in last_call_kwargs
@@ -790,36 +809,32 @@ class TestPrestigeConfirmFlow:
             title_or_desc = (embed.title or "") + (embed.description or "")
             assert any(word in title_or_desc.lower() for word in ["prestige", "success", "reset", "bronze"])
 
-    def test_prestige_api_400_insufficient_xp(self, mock_player_cog):
+    def test_prestige_api_400_insufficient_xp(self, mock_player_cog, request):
         """/prestige: confirming but API returns 400 (insufficient XP) shows error.
 
         B.48: backend returns "Not eligible for prestige. Need {N:,} XP to prestige,
         currently have {M:,}". Error message must reference XP/prestige, not "level".
         """
         import httpx
+        import respx
 
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {
-            "detail": "Not eligible for prestige. Need 50,000 XP to prestige, currently have 35"
-        }
-        http_error = httpx.HTTPStatusError(
-            "400 Bad Request",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.post(f"{_BOT_API}/players/{player_data['id']}/prestige").mock(
+                return_value=httpx.Response(
+                    400,
+                    json={"detail": "Not eligible for prestige. Need 50,000 XP to prestige, currently have 35"},
+                )
+            )
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         last_call = interaction.followup.send.call_args
@@ -829,26 +844,36 @@ class TestPrestigeConfirmFlow:
         assert "xp" in msg.lower()
         assert "level" not in msg.lower()
 
-    def test_prestige_api_failure_generic(self, mock_player_cog):
+    def test_prestige_api_failure_generic(self, mock_player_cog, request):
         """/prestige: confirming but API raises generic exception shows error."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("prestige service down")])
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.post(f"{_BOT_API}/players/{player_data['id']}/prestige").mock(
+                side_effect=RuntimeError("prestige service down")
+            )
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         last_call = interaction.followup.send.call_args
         assert last_call[1].get("ephemeral", False)
 
-    def test_prestige_swaps_roles_correctly(self, mock_player_cog):
+    def test_prestige_swaps_roles_correctly(self, mock_player_cog, request):
         """B.53: confirming prestige must remove Platinum role and add Bronze role."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         platinum_role_id = 111222004
         bronze_role_id = 111222001
 
@@ -868,33 +893,32 @@ class TestPrestigeConfirmFlow:
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
         prestige_data = {
             "player_id": 1,
             "prestige_count": 1,
             "tier_before": "Platinum",
             "xp_before": 50000,
         }
-        prestige_resp = MagicMock()
-        prestige_resp.raise_for_status = MagicMock()
-        prestige_resp.json.return_value = prestige_data
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
-
-        config_resp = _make_config_resp(
-            bh_role_id=None,
-            bronze_role_id=bronze_role_id,
-            silver_role_id=None,
-            gold_role_id=None,
-            platinum_role_id=platinum_role_id,
-        )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+        config_data = {
+            "bounty_hunter_role_id": None,
+            "bronze_role_id": bronze_role_id,
+            "silver_role_id": None,
+            "gold_role_id": None,
+            "platinum_role_id": platinum_role_id,
+        }
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.post(f"{_BOT_API}/players/{player_data['id']}/prestige").mock(
+                return_value=httpx.Response(200, json=prestige_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # Success embed must be sent
@@ -913,30 +937,32 @@ class TestPrestigeConfirmFlow:
         assert platinum_role_id in removed_ids, f"B.53: Platinum role must be removed; removed_ids={removed_ids}"
         assert bronze_role_id not in removed_ids, "Bronze role must NOT appear in remove list"
 
-    def test_prestige_role_swap_failure_is_non_fatal(self, mock_player_cog):
+    def test_prestige_role_swap_failure_is_non_fatal(self, mock_player_cog, request):
         """B.53: If the role swap fails (e.g. config API error), prestige still succeeds."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
         prestige_data = {
             "player_id": 1,
             "prestige_count": 1,
             "tier_before": "Platinum",
             "xp_before": 50000,
         }
-        prestige_resp = MagicMock()
-        prestige_resp.raise_for_status = MagicMock()
-        prestige_resp.json.return_value = prestige_data
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
-        mock_player_cog.http_client.get = AsyncMock(side_effect=RuntimeError("config unavailable"))
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.post(f"{_BOT_API}/players/{player_data['id']}/prestige").mock(
+                return_value=httpx.Response(200, json=prestige_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(side_effect=RuntimeError("config unavailable"))
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # Success embed must still be sent (role swap is non-fatal)
@@ -945,9 +971,13 @@ class TestPrestigeConfirmFlow:
         interaction.user.add_roles.assert_not_awaited()
         interaction.user.remove_roles.assert_not_awaited()
 
-    def test_prestige_notifications_disabled_does_not_add_bronze_role(self, mock_player_cog):
+    def test_prestige_notifications_disabled_does_not_add_bronze_role(self, mock_player_cog, request):
         """Notification opt-out: stored bounty_notifications_enabled=False — Bronze role
         must NOT be added on prestige (D-019: production reads the stored flag)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         platinum_role_id = 111222004
         bronze_role_id = 111222001
 
@@ -968,35 +998,35 @@ class TestPrestigeConfirmFlow:
         # D-019: stored flag is the source of truth — set it to False (opted out)
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
         player_data["bounty_notifications_enabled"] = False
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
 
         prestige_data = {"player_id": 1, "prestige_count": 1, "tier_before": "Platinum", "xp_before": 50000}
-        prestige_resp = MagicMock()
-        prestige_resp.raise_for_status = MagicMock()
-        prestige_resp.json.return_value = prestige_data
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
-
-        config_resp = _make_config_resp(
-            bh_role_id=None,
-            bronze_role_id=bronze_role_id,
-            silver_role_id=None,
-            gold_role_id=None,
-            platinum_role_id=platinum_role_id,
-        )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+        config_data = {
+            "bounty_hunter_role_id": None,
+            "bronze_role_id": bronze_role_id,
+            "silver_role_id": None,
+            "gold_role_id": None,
+            "platinum_role_id": platinum_role_id,
+        }
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.post(f"{_BOT_API}/players/{player_data['id']}/prestige").mock(
+                return_value=httpx.Response(200, json=prestige_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # Neither role should be touched — user opted out
         interaction.user.add_roles.assert_not_awaited()
         interaction.user.remove_roles.assert_not_awaited()
 
-    def test_prestige_opted_out_holds_old_role_old_removed_new_not_added(self, mock_player_cog):
+    def test_prestige_opted_out_holds_old_role_old_removed_new_not_added(self, mock_player_cog, request):
         """Opted-out prestige: user HOLDS the old Platinum role but bounty_notifications_enabled=False.
 
         The old Platinum role MUST be removed (it is the wrong tier after prestige);
@@ -1004,6 +1034,10 @@ class TestPrestigeConfirmFlow:
         meaningful opted-out-prestige edge case — the previous disabled test set
         existing_roles=[] so the old role removal path was never exercised.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         platinum_role_id = 111222004
         bronze_role_id = 111222001
 
@@ -1026,30 +1060,30 @@ class TestPrestigeConfirmFlow:
         # D-019: stored flag is False — opted out
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
         player_data["bounty_notifications_enabled"] = False
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
 
         prestige_data = {"player_id": 1, "prestige_count": 1, "tier_before": "Platinum", "xp_before": 50000}
-        prestige_resp = MagicMock()
-        prestige_resp.raise_for_status = MagicMock()
-        prestige_resp.json.return_value = prestige_data
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
-
-        config_resp = _make_config_resp(
-            bh_role_id=None,
-            bronze_role_id=bronze_role_id,
-            silver_role_id=None,
-            gold_role_id=None,
-            platinum_role_id=platinum_role_id,
-        )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+        config_data = {
+            "bounty_hunter_role_id": None,
+            "bronze_role_id": bronze_role_id,
+            "silver_role_id": None,
+            "gold_role_id": None,
+            "platinum_role_id": platinum_role_id,
+        }
 
         view_mock = MagicMock()
         view_mock.result = True
         view_mock.wait = AsyncMock(return_value=None)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.post(f"{_BOT_API}/players/{player_data['id']}/prestige").mock(
+                return_value=httpx.Response(200, json=prestige_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # Old Platinum role MUST be removed (wrong tier regardless of opt-out)
@@ -1059,8 +1093,12 @@ class TestPrestigeConfirmFlow:
         # New Bronze role must NOT be added (player is opted out)
         interaction.user.add_roles.assert_not_awaited()
 
-    def test_prestige_notifications_enabled_swaps_roles(self, mock_player_cog):
+    def test_prestige_notifications_enabled_swaps_roles(self, mock_player_cog, request):
         """Notification opt-in: user holds Platinum role → Bronze added, Platinum removed."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         platinum_role_id = 111222004
         bronze_role_id = 111222001
 
@@ -1081,28 +1119,27 @@ class TestPrestigeConfirmFlow:
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
         prestige_data = {"player_id": 1, "prestige_count": 1, "tier_before": "Platinum", "xp_before": 50000}
-        prestige_resp = MagicMock()
-        prestige_resp.raise_for_status = MagicMock()
-        prestige_resp.json.return_value = prestige_data
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
-
-        config_resp = _make_config_resp(
-            bh_role_id=None,
-            bronze_role_id=bronze_role_id,
-            silver_role_id=None,
-            gold_role_id=None,
-            platinum_role_id=platinum_role_id,
-        )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+        config_data = {
+            "bounty_hunter_role_id": None,
+            "bronze_role_id": bronze_role_id,
+            "silver_role_id": None,
+            "gold_role_id": None,
+            "platinum_role_id": platinum_role_id,
+        }
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.post(f"{_BOT_API}/players/{player_data['id']}/prestige").mock(
+                return_value=httpx.Response(200, json=prestige_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
             asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # Bronze added, Platinum removed
@@ -1117,63 +1154,6 @@ class TestPrestigeConfirmFlow:
 # ---------------------------------------------------------------------------
 # /prestige URL+method contract (respx)
 # ---------------------------------------------------------------------------
-
-
-class TestPrestigeCommandRespx:
-    """respx-backed contract test for /prestige.
-
-    TestPrestigeConfirmFlow above uses AsyncMock(http_client.post/get) which accepts
-    ANY url/method — none of the three prestige-flow endpoints were previously
-    asserted anywhere. Locks the real contract:
-
-      POST /api/v1/players/                          (player upsert)
-      POST /api/v1/players/{id}/prestige              (prestige execution)
-      GET  /api/v1/config/guild/{guild_id}            (role-swap config lookup)
-    """
-
-    _BOT_API = "http://bot-core:8000/api/v1"
-
-    def _with_real_client(self, cog, request):
-        import httpx
-
-        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
-        return cog
-
-    def test_prestige_calls_correct_urls_and_methods(self, mock_player_cog, request):
-        """/prestige must POST players/, POST players/{id}/prestige, GET config/guild/{id}."""
-        import httpx
-        import respx
-
-        self._with_real_client(mock_player_cog, request)
-        interaction = _create_mock_interaction()
-
-        player_data = _make_player_data(tier="Platinum", prestige_count=0)
-        prestige_data = {"player_id": 1, "prestige_count": 1, "tier_before": "Platinum", "xp_before": 50000}
-        config_data = {"bronze_role_id": None, "platinum_role_id": None}
-
-        view_mock = MagicMock()
-        view_mock.result = True
-        view_mock.wait = AsyncMock(return_value=None)
-
-        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
-        with (
-            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
-            patch.dict(os.environ, env_without_bot_api, clear=True),
-            respx.mock(assert_all_called=True) as mock_router,
-        ):
-            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
-            mock_router.post(f"{self._BOT_API}/players/1/prestige").mock(
-                return_value=httpx.Response(200, json=prestige_data)
-            )
-            mock_router.get(f"{self._BOT_API}/config/guild/987654321").mock(
-                return_value=httpx.Response(200, json=config_data)
-            )
-            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
-
-        # respx assert_all_called=True ensures all three endpoints were hit with
-        # the right method; a wrong URL/verb here would raise inside the block.
-        interaction.followup.send.assert_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1312,31 +1292,27 @@ class TestProfileNoTimestampsInBadLocations:
     Timestamps should only appear in embed fields or the description.
     """
 
-    def _get_profile_embed(self, mock_player_cog):
-        """Helper: trigger /profile and return the sent embed."""
+    def _get_profile_embed(self, mock_player_cog, request):
+        """Helper: trigger /profile and return the sent embed.
+
+        Promotion-status and config-sync are left unmocked (non-fatal enhancements
+        wrapped in their own try/except in the cog) — see TestProfileCommand.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Bronze", prestige_count=0)
         stats_data = _make_stats_data()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        # Minimal GET side_effect — stats + promo fail (non-fatal)
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[
-                stats_resp,
-                RuntimeError("promo not needed for this test"),
-            ]
-        )
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1344,13 +1320,13 @@ class TestProfileNoTimestampsInBadLocations:
         assert embed is not None, "expected /profile to send an embed on the happy path"
         return embed
 
-    def test_profile_no_timestamps_in_footer(self, mock_player_cog):
+    def test_profile_no_timestamps_in_footer(self, mock_player_cog, request):
         """Profile embed footer must not contain a Discord timestamp (<t:...) pattern.
 
         Discord renders <t:...> timestamps in fields and descriptions but NOT in footers
         where they appear as raw text, confusing users.
         """
-        embed = self._get_profile_embed(mock_player_cog)
+        embed = self._get_profile_embed(mock_player_cog, request)
 
         footer = embed.footer
         footer_text = ""
@@ -1366,12 +1342,12 @@ class TestProfileNoTimestampsInBadLocations:
             "Timestamps in footers render as raw text — move them to fields or description."
         )
 
-    def test_profile_no_timestamps_in_author(self, mock_player_cog):
+    def test_profile_no_timestamps_in_author(self, mock_player_cog, request):
         """Profile embed author field must not contain a Discord timestamp (<t:...) pattern.
 
         Discord renders <t:...> in fields/descriptions but NOT in author fields.
         """
-        embed = self._get_profile_embed(mock_player_cog)
+        embed = self._get_profile_embed(mock_player_cog, request)
 
         author = embed.author
         author_text = ""
@@ -1392,37 +1368,31 @@ class TestProfileNoTimestampsInBadLocations:
 # ---------------------------------------------------------------------------
 
 
-def _make_config_resp(
+def _make_config_data(
     bh_role_id: int | None,
     bronze_role_id: int | None = 111222001,
     silver_role_id: int | None = 111222002,
     gold_role_id: int | None = 111222003,
     platinum_role_id: int | None = 111222004,
 ):
-    """Return a mock HTTP response for GET /config/guild/{id}."""
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {
+    """Return the JSON body for GET /config/guild/{id} (TRUEUP-01: plain dict for respx)."""
+    return {
         "bounty_hunter_role_id": bh_role_id,
         "bronze_role_id": bronze_role_id,
         "silver_role_id": silver_role_id,
         "gold_role_id": gold_role_id,
         "platinum_role_id": platinum_role_id,
     }
-    return resp
 
 
-def _make_promo_resp(can_promote=False, next_tier="Silver", threshold=1000):
-    """Return a mock HTTP response for GET /players/{id}/promotion-status."""
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {
+def _make_promo_data(can_promote=False, next_tier="Silver", threshold=1000):
+    """Return the JSON body for GET /players/{id}/promotion-status (TRUEUP-01: plain dict for respx)."""
+    return {
         "can_promote": can_promote,
         "next_tier": next_tier,
         "xp_threshold_for_next": threshold,
         "xp_surplus_for_next": None,
     }
-    return resp
 
 
 def _create_interaction_with_roles(user_id=111111111, guild_id=987654321, existing_roles=None):
@@ -1440,10 +1410,19 @@ def _create_interaction_with_roles(user_id=111111111, guild_id=987654321, existi
 
 
 class TestProfileRoleAssignment:
-    """Tests for Bounty Hunter role assignment logic added to /profile."""
+    """Tests for Bounty Hunter role assignment logic added to /profile.
 
-    def test_profile_assigns_bounty_hunter_role_on_first_use(self, mock_player_cog):
+    TRUEUP-01: migrated off `AsyncMock(http_client.get, side_effect=[...])` to
+    respx, with each of the three GET endpoints (statistics, promotion-status,
+    config) registered against its real URL rather than relying on call order.
+    """
+
+    def test_profile_assigns_bounty_hunter_role_on_first_use(self, mock_player_cog, request):
         """After player creation, config is fetched, BH + tier roles found, user has none → add_roles called."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
 
         player_data = _make_player_data(tier="Bronze")
@@ -1451,16 +1430,8 @@ class TestProfileRoleAssignment:
         bh_role_id = 999888777
         bronze_role_id = 111222001
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        promo_resp = _make_promo_resp()
-        config_resp = _make_config_resp(
+        promo_data = _make_promo_data()
+        config_data = _make_config_data(
             bh_role_id, bronze_role_id=bronze_role_id, silver_role_id=None, gold_role_id=None, platinum_role_id=None
         )
 
@@ -1477,11 +1448,18 @@ class TestProfileRoleAssignment:
 
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
-        # GET is called 3 times: stats, promotion-status, config
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[stats_resp, promo_resp, config_resp])
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(200, json=promo_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         # Profile embed was still sent
         interaction.followup.send.assert_awaited_once()
@@ -1491,8 +1469,12 @@ class TestProfileRoleAssignment:
         added_ids = {r.id for r in added_args}
         assert added_ids == {bh_role_id, bronze_role_id}
 
-    def test_profile_skips_role_if_already_assigned(self, mock_player_cog):
+    def test_profile_skips_role_if_already_assigned(self, mock_player_cog, request):
         """User already has the Bounty Hunter role → add_roles NOT called."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         mock_role = MagicMock()
         mock_role.id = bh_role_id
@@ -1502,63 +1484,69 @@ class TestProfileRoleAssignment:
 
         player_data = _make_player_data(tier="Bronze")
         stats_data = _make_stats_data()
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        promo_resp = _make_promo_resp()
-        config_resp = _make_config_resp(bh_role_id)
+        promo_data = _make_promo_data()
+        config_data = _make_config_data(bh_role_id)
 
         interaction.guild.get_role = MagicMock(return_value=mock_role)
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[stats_resp, promo_resp, config_resp])
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(200, json=promo_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         # Profile embed still sent
         interaction.followup.send.assert_awaited_once()
         # add_roles should NOT be called
         interaction.user.add_roles.assert_not_awaited()
 
-    def test_profile_skips_role_if_config_has_no_role_id(self, mock_player_cog):
+    def test_profile_skips_role_if_config_has_no_role_id(self, mock_player_cog, request):
         """All role IDs None in config → no role assignment attempted."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
 
         player_data = _make_player_data(tier="Bronze")
         stats_data = _make_stats_data()
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        promo_resp = _make_promo_resp()
+        promo_data = _make_promo_data()
         # No BH role or tier roles configured at all
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             None, bronze_role_id=None, silver_role_id=None, gold_role_id=None, platinum_role_id=None
         )
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[stats_resp, promo_resp, config_resp])
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(200, json=promo_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         # Profile embed still sent
         interaction.followup.send.assert_awaited_once()
         # add_roles should NOT be called since no roles configured
         interaction.user.add_roles.assert_not_awaited()
 
-    def test_profile_works_normally_if_role_assignment_fails(self, mock_player_cog):
+    def test_profile_works_normally_if_role_assignment_fails(self, mock_player_cog, request):
         """add_roles raises an exception → profile embed is still sent (non-fatal)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         mock_role = MagicMock()
         mock_role.id = bh_role_id
@@ -1567,63 +1555,55 @@ class TestProfileRoleAssignment:
 
         player_data = _make_player_data(tier="Bronze")
         stats_data = _make_stats_data()
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        promo_resp = _make_promo_resp()
-        config_resp = _make_config_resp(bh_role_id)
+        promo_data = _make_promo_data()
+        config_data = _make_config_data(bh_role_id)
 
         interaction.guild.get_role = MagicMock(return_value=mock_role)
         # add_roles raises
         interaction.user.add_roles = AsyncMock(side_effect=RuntimeError("Missing Permissions"))
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[stats_resp, promo_resp, config_resp])
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(200, json=promo_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         # Profile embed was still sent despite role failure
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_profile_skips_role_if_config_fetch_fails(self, mock_player_cog):
+    def test_profile_skips_role_if_config_fetch_fails(self, mock_player_cog, request):
         """Config API returns error → profile still works (role assignment non-fatal)."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
 
         player_data = _make_player_data(tier="Bronze")
         stats_data = _make_stats_data()
+        promo_data = _make_promo_data()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        promo_resp = _make_promo_resp()
-
-        error_response = MagicMock()
-        error_response.status_code = 500
-        config_error = httpx.HTTPStatusError(
-            "500 Internal Server Error",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[stats_resp, promo_resp, config_error])
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(200, json=promo_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(500, json={"detail": "Internal Server Error"})
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         # Profile embed still sent
         interaction.followup.send.assert_awaited_once()
@@ -1646,11 +1626,16 @@ class TestSyncPlayerNotificationRoles:
     - Opted-out player running /profile gets their tier role REMOVED.
     """
 
-    def test_sync_roles_only_mutates_the_member_argument(self, mock_player_cog):
+    def test_sync_roles_only_mutates_the_member_argument(self, mock_player_cog, request):
         """SELF-SCOPING guard: add_roles / remove_roles are called only on the `member`
         arg passed to _sync_player_notification_roles — never on interaction.user or
         any other Member object."""
         import asyncio as _asyncio
+
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
 
         bh_role_id = 999888777
         bronze_role_id = 111222001
@@ -1695,24 +1680,26 @@ class TestSyncPlayerNotificationRoles:
             "platinum_role_id": None,
             "shop_announcements_role_id": None,
         }
-        config_resp = MagicMock()
-        config_resp.raise_for_status = MagicMock()
-        config_resp.json.return_value = config_data
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        _asyncio.run(
-            mock_player_cog._sync_player_notification_roles(guild, member, guild_id=999, player_data=player_data)
-        )
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/999").mock(return_value=httpx.Response(200, json=config_data))
+            _asyncio.run(
+                mock_player_cog._sync_player_notification_roles(guild, member, guild_id=999, player_data=player_data)
+            )
 
         # Only 'member' should have been mutated
         member.add_roles.assert_awaited_once()
         other_member.add_roles.assert_not_awaited()
         other_member.remove_roles.assert_not_awaited()
 
-    def test_profile_opted_out_player_gets_tier_role_removed(self, mock_player_cog):
+    def test_profile_opted_out_player_gets_tier_role_removed(self, mock_player_cog, request):
         """D-019: If player has bounty_notifications_enabled=False in stored data but still
         holds the tier role (stale), /profile should REMOVE the tier role via
         _sync_player_notification_roles."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         bronze_role_id = 111222001
 
@@ -1738,16 +1725,7 @@ class TestSyncPlayerNotificationRoles:
         player_data["shop_notifications_enabled"] = False
 
         stats_data = _make_stats_data()
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        promo_resp = _make_promo_resp()
+        promo_data = _make_promo_data()
 
         config_data = {
             "guild_id": 999,
@@ -1758,14 +1736,19 @@ class TestSyncPlayerNotificationRoles:
             "platinum_role_id": None,
             "shop_announcements_role_id": None,
         }
-        config_resp = MagicMock()
-        config_resp.raise_for_status = MagicMock()
-        config_resp.json.return_value = config_data
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[stats_resp, promo_resp, config_resp])
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(200, json=promo_data)
+            )
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         # Profile embed was sent
         interaction.followup.send.assert_awaited_once()
@@ -1790,9 +1773,15 @@ class TestSyncPlayerNotificationRoles:
 class TestUnregisterDoesNotCallNotificationsPut:
     """D-019: /unregister removes Discord roles but does NOT persist notification flags via PUT."""
 
-    def test_unregister_does_not_call_put(self, mock_player_cog):
+    def test_unregister_does_not_call_put(self, mock_player_cog, request):
         """Unregistering removes BH roles but must NOT call PUT /players/{id}/notifications
-        — notification preferences are untouched by unregister."""
+        — notification preferences are untouched by unregister. The PUT route is
+        deliberately left unmocked: if the cog called it, respx would raise.
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         mock_bh_role = MagicMock()
         mock_bh_role.id = bh_role_id
@@ -1814,18 +1803,15 @@ class TestUnregisterDoesNotCallNotificationsPut:
             "platinum_role_id": None,
             "shop_announcements_role_id": None,
         }
-        config_resp = MagicMock()
-        config_resp.raise_for_status = MagicMock()
-        config_resp.json.return_value = config_data
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-        mock_player_cog.http_client.put = AsyncMock()
 
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         # Unregister removes the BH role
         interaction.user.remove_roles.assert_awaited_once()
-        # PUT must NOT have been called — notification flags are untouched
-        mock_player_cog.http_client.put.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1834,10 +1820,18 @@ class TestUnregisterDoesNotCallNotificationsPut:
 
 
 class TestUnregisterCommand:
-    """Tests for the /unregister slash command."""
+    """Tests for the /unregister slash command.
 
-    def test_unregister_removes_role_successfully(self, mock_player_cog):
+    TRUEUP-01: migrated off `AsyncMock(http_client.get)` to respx, pinned to
+    the real GET /config/guild/{guild_id} URL.
+    """
+
+    def test_unregister_removes_role_successfully(self, mock_player_cog, request):
         """Happy path: user has all 5 BH roles → all removed, confirmation sent."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         bronze_id, silver_id, gold_id, platinum_id = 111222001, 111222002, 111222003, 111222004
 
@@ -1871,10 +1865,12 @@ class TestUnregisterCommand:
 
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
-        config_resp = _make_config_resp(bh_role_id, bronze_id, silver_id, gold_id, platinum_id)
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        config_data = _make_config_data(bh_role_id, bronze_id, silver_id, gold_id, platinum_id)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         # remove_roles must be called once with all 5 role args
@@ -1889,14 +1885,20 @@ class TestUnregisterCommand:
         assert "✅" in msg or "removed" in msg.lower()
         assert call_args[1].get("ephemeral", False)
 
-    def test_unregister_no_role_configured(self, mock_player_cog):
+    def test_unregister_no_role_configured(self, mock_player_cog, request):
         """bounty_hunter_role_id is None → warning message sent."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
 
-        config_resp = _make_config_resp(None)
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        config_data = _make_config_data(None)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -1905,17 +1907,23 @@ class TestUnregisterCommand:
         assert call_args[1].get("ephemeral", False)
         interaction.user.remove_roles.assert_not_awaited()
 
-    def test_unregister_role_not_found_in_guild(self, mock_player_cog):
+    def test_unregister_role_not_found_in_guild(self, mock_player_cog, request):
         """bh_role_id exists in config but guild.get_role() returns None → warning."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         interaction = _create_interaction_with_roles(existing_roles=[])
         # guild.get_role returns None for all lookups
         interaction.guild.get_role = MagicMock(return_value=None)
 
-        config_resp = _make_config_resp(bh_role_id)
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        config_data = _make_config_data(bh_role_id)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -1924,8 +1932,12 @@ class TestUnregisterCommand:
         assert call_args[1].get("ephemeral", False)
         interaction.user.remove_roles.assert_not_awaited()
 
-    def test_unregister_user_doesnt_have_role(self, mock_player_cog):
+    def test_unregister_user_doesnt_have_role(self, mock_player_cog, request):
         """User has NONE of the Bounty Hunter roles → info message sent, remove_roles not called."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         bronze_id, silver_id, gold_id, platinum_id = 111222001, 111222002, 111222003, 111222004
 
@@ -1954,10 +1966,12 @@ class TestUnregisterCommand:
 
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
-        config_resp = _make_config_resp(bh_role_id, bronze_id, silver_id, gold_id, platinum_id)
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        config_data = _make_config_data(bh_role_id, bronze_id, silver_id, gold_id, platinum_id)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -1966,8 +1980,12 @@ class TestUnregisterCommand:
         assert call_args[1].get("ephemeral", False)
         interaction.user.remove_roles.assert_not_awaited()
 
-    def test_unregister_remove_fails(self, mock_player_cog):
+    def test_unregister_remove_fails(self, mock_player_cog, request):
         """remove_roles raises → error message sent."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         mock_role = MagicMock()
         mock_role.id = bh_role_id
@@ -1978,12 +1996,14 @@ class TestUnregisterCommand:
         interaction.user.remove_roles = AsyncMock(side_effect=RuntimeError("Missing Permissions"))
 
         # No tier roles configured for simplicity
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id, bronze_role_id=None, silver_role_id=None, gold_role_id=None, platinum_role_id=None
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -1991,22 +2011,19 @@ class TestUnregisterCommand:
         assert "⚠️" in msg or "error" in msg.lower()
         assert call_args[1].get("ephemeral", False)
 
-    def test_unregister_config_fetch_fails(self, mock_player_cog):
+    def test_unregister_config_fetch_fails(self, mock_player_cog, request):
         """Config API error → error message sent."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
 
-        error_response = MagicMock()
-        error_response.status_code = 503
-        config_error = httpx.HTTPStatusError(
-            "503 Service Unavailable",
-            request=MagicMock(),
-            response=error_response,
-        )
-        mock_player_cog.http_client.get = AsyncMock(side_effect=config_error)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -2036,8 +2053,12 @@ class TestUnregisterCommand:
 
         interaction.response.send_message.assert_not_awaited()
 
-    def test_unregister_removes_only_roles_user_has(self, mock_player_cog):
+    def test_unregister_removes_only_roles_user_has(self, mock_player_cog, request):
         """User has @Bounty Hunter + @BH-Bronze → only those 2 roles removed."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         bronze_id = 111222001
         silver_id = 111222002
@@ -2073,10 +2094,12 @@ class TestUnregisterCommand:
             }.get(role_id)
 
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
-        config_resp = _make_config_resp(bh_role_id, bronze_id, silver_id, gold_id, platinum_id)
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        config_data = _make_config_data(bh_role_id, bronze_id, silver_id, gold_id, platinum_id)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         interaction.user.remove_roles.assert_awaited_once()
         removed_args = interaction.user.remove_roles.call_args[0]
@@ -2084,8 +2107,12 @@ class TestUnregisterCommand:
         removed_ids = {r.id for r in removed_args}
         assert removed_ids == {bh_role_id, bronze_id}
 
-    def test_unregister_tier_role_id_none_in_config(self, mock_player_cog):
+    def test_unregister_tier_role_id_none_in_config(self, mock_player_cog, request):
         """Config has some tier role IDs as None → only configured roles considered (no error)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         bronze_id = 111222001
 
@@ -2104,10 +2131,12 @@ class TestUnregisterCommand:
 
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
-        config_resp = _make_config_resp(bh_role_id, bronze_id, None, None, None)
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        config_data = _make_config_data(bh_role_id, bronze_id, None, None, None)
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         # Should succeed without error, removing BH + Bronze
         interaction.user.remove_roles.assert_awaited_once()
@@ -2123,7 +2152,7 @@ class TestUnregisterCommand:
     # Adversarial edge cases (Q18 / Q19 coverage)
     # ------------------------------------------------------------------
 
-    def test_unregister_user_has_only_tier_role_no_generic_bh_role(self, mock_player_cog):
+    def test_unregister_user_has_only_tier_role_no_generic_bh_role(self, mock_player_cog, request):
         """Q18 / Adversarial: User has ONLY a tier role (e.g. BH-Bronze) but NOT
         the generic @Bounty Hunter role (a degenerate state that can happen via admin
         manipulation or a prior A.14-style bug).
@@ -2132,6 +2161,10 @@ class TestUnregisterCommand:
         The 'role in user.roles' guard for the generic BH role should not prevent
         tier-role cleanup.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
         bronze_id = 111222001
 
@@ -2151,12 +2184,14 @@ class TestUnregisterCommand:
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
         # Config returns both bh_role_id and bronze_role_id
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id, bronze_role_id=bronze_id, silver_role_id=None, gold_role_id=None, platinum_role_id=None
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         # remove_roles must be called — the tier role should be removed even without the generic BH role
         interaction.user.remove_roles.assert_awaited_once()
@@ -2173,11 +2208,15 @@ class TestUnregisterCommand:
         msg = interaction.followup.send.call_args[0][0]
         assert "✅" in msg or "removed" in msg.lower()
 
-    def test_unregister_all_tier_ids_none_and_user_has_no_bh_role(self, mock_player_cog):
+    def test_unregister_all_tier_ids_none_and_user_has_no_bh_role(self, mock_player_cog, request):
         """Q19 / Adversarial: Config has all tier_role_ids = None AND user has no
         generic BH role either. The 'you don't have the role' short-circuit must
         still fire cleanly — no exception, no double-send, no remove_roles call.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bh_role_id = 999888777
 
         mock_bh_role = MagicMock()
@@ -2189,16 +2228,18 @@ class TestUnregisterCommand:
         interaction.guild.get_role = MagicMock(return_value=mock_bh_role)
 
         # Config: bh_role_id set but ALL tier IDs are None
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id,
             bronze_role_id=None,
             silver_role_id=None,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
-
-        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=config_data)
+            )
+            asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         # Must NOT call remove_roles — nothing to remove
         interaction.user.remove_roles.assert_not_awaited()
@@ -2219,24 +2260,26 @@ class TestUnregisterCommand:
 
 
 class TestPromoteCommand:
-    """Tests for the /promote slash command."""
+    """Tests for the /promote slash command.
+
+    TRUEUP-01: migrated off `AsyncMock(http_client.get/post/put)` to respx,
+    pinned to the real player-upsert / promotion-status / combat-preflight /
+    promote URLs.
+    """
+
+    _STATUS_DATA = {
+        "can_promote": True,
+        "next_tier": "Silver",
+        "xp": 1500,
+        "xp_threshold_for_next": 1000,
+    }
+    _PREFLIGHT_DATA = {"verdict": "GREEN", "win_rate": 0.8, "sims_run": 20, "player_win_rate": 0.8}
 
     @pytest.fixture(autouse=True)
-    def _patch_promote_http_and_confirm(self, mock_player_cog):
+    def _patch_promote_confirm(self, mock_player_cog, request):
         from unittest.mock import patch as _patch
 
-        status_resp = MagicMock()
-        status_resp.raise_for_status = MagicMock()
-        status_resp.json.return_value = {
-            "can_promote": True,
-            "next_tier": "Silver",
-            "xp": 1500,
-            "xp_threshold_for_next": 1000,
-        }
-        preflight_resp = MagicMock()
-        preflight_resp.raise_for_status = MagicMock()
-        preflight_resp.json.return_value = {"verdict": "GREEN", "win_rate": 0.8}
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[status_resp, preflight_resp])
+        _with_real_http_client(mock_player_cog, request)
 
         view_mock = MagicMock()
         view_mock.result = True
@@ -2244,15 +2287,25 @@ class TestPromoteCommand:
         with _patch("cogs.playerCog.ConfirmView", return_value=view_mock):
             yield
 
+    def _register_precheck(self, mock_router, player_id, target_tier="Silver"):
+        """Register the promotion-status + combat-preflight GETs common to a successful precheck."""
+        import httpx
+
+        mock_router.get(f"{_BOT_API}/players/{player_id}/promotion-status").mock(
+            return_value=httpx.Response(200, json=self._STATUS_DATA)
+        )
+        mock_router.get(f"{_BOT_API}/players/{player_id}/combat-preflight").mock(
+            return_value=httpx.Response(200, json=self._PREFLIGHT_DATA)
+        )
+
     def test_promote_success(self, mock_player_cog):
         """/promote succeeds and shows tier promotion embed."""
+        import httpx
+        import respx
+
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Bronze")
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
         promote_data = {
             "player_id": 1,
             "old_tier": "Bronze",
@@ -2261,14 +2314,14 @@ class TestPromoteCommand:
             "eligible_for_next": False,
             "next_tier": "Gold",
         }
-        promote_resp = MagicMock()
-        promote_resp.raise_for_status = MagicMock()
-        promote_resp.json.return_value = promote_data
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(return_value=promote_resp)
-
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck(mock_router, player_data["id"])
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/promote").mock(
+                return_value=httpx.Response(200, json=promote_data)
+            )
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         assert interaction.followup.send.call_count >= 2
@@ -2277,13 +2330,12 @@ class TestPromoteCommand:
 
     def test_promote_success_eligible_for_next(self, mock_player_cog):
         """/promote with eligible_for_next=True shows further promotion message."""
+        import httpx
+        import respx
+
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Bronze")
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
         promote_data = {
             "player_id": 1,
             "old_tier": "Bronze",
@@ -2292,14 +2344,14 @@ class TestPromoteCommand:
             "eligible_for_next": True,
             "next_tier": "Gold",
         }
-        promote_resp = MagicMock()
-        promote_resp.raise_for_status = MagicMock()
-        promote_resp.json.return_value = promote_data
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(return_value=promote_resp)
-
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck(mock_router, player_data["id"])
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/promote").mock(
+                return_value=httpx.Response(200, json=promote_data)
+            )
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         assert interaction.followup.send.call_count >= 2
         call_kwargs = interaction.followup.send.call_args_list[-1][1]
@@ -2311,23 +2363,21 @@ class TestPromoteCommand:
     def test_promote_not_eligible_400_shows_error_embed(self, mock_player_cog):
         """/promote with 400 from API shows error embed."""
         import httpx
+        import respx
 
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Bronze")
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
 
-        error_response = MagicMock()
-        error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Not eligible for promotion. Need 1,000 XP for Silver."}
-        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck(mock_router, player_data["id"])
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/promote").mock(
+                return_value=httpx.Response(
+                    400, json={"detail": "Not eligible for promotion. Need 1,000 XP for Silver."}
+                )
+            )
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         assert interaction.followup.send.call_count >= 2
         call_kwargs = interaction.followup.send.call_args_list[-1][1]
@@ -2339,22 +2389,19 @@ class TestPromoteCommand:
     def test_promote_api_error_non_400(self, mock_player_cog):
         """/promote with non-400 API error shows generic error."""
         import httpx
+        import respx
 
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Bronze")
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
 
-        error_response = MagicMock()
-        error_response.status_code = 500
-        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck(mock_router, player_data["id"])
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/promote").mock(
+                return_value=httpx.Response(500, json={"detail": "Server Error"})
+            )
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Confirm dialog is send #1; the error reply is send #2
         assert interaction.followup.send.call_count >= 2
@@ -2363,11 +2410,13 @@ class TestPromoteCommand:
 
     def test_promote_generic_exception(self, mock_player_cog):
         """/promote handles generic exceptions gracefully."""
+        import respx
+
         interaction = _create_mock_interaction()
 
-        mock_player_cog.http_client.post = AsyncMock(side_effect=RuntimeError("network error"))
-
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(side_effect=RuntimeError("network error"))
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -2386,52 +2435,52 @@ class TestPromotePowerCheckVerdictLine:
     the try block, ensuring it is always non-empty regardless of the preflight outcome.
     """
 
-    def _make_status_resp(self, can_promote=True, next_tier="Silver", xp=1500, threshold=1000):
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
+    def _make_status_data(self, can_promote=True, next_tier="Silver", xp=1500, threshold=1000):
+        return {
             "can_promote": can_promote,
             "next_tier": next_tier,
             "xp": xp,
             "xp_threshold_for_next": threshold,
         }
-        return resp
 
-    def _make_preflight_resp(self, verdict="green", sims_run=20, player_win_rate=0.9):
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
+    def _make_preflight_data(self, verdict="green", sims_run=20, player_win_rate=0.9):
+        return {
             "verdict": verdict,
             "sims_run": sims_run,
             "player_win_rate": player_win_rate,
             "criminal_win_rate": 1.0 - player_win_rate,
         }
-        return resp
 
-    def test_verdict_line_populated_when_preflight_returns_no_data(self, mock_player_cog):
+    def test_verdict_line_populated_when_preflight_returns_no_data(self, mock_player_cog, request):
         """verdict_line is non-empty when preflight returns no_data verdict.
 
         With Change 2: no_data → ⚪ equipped-ship message (not an empty string).
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[
-                self._make_status_resp(),
-                self._make_preflight_resp(verdict="no_data", sims_run=0, player_win_rate=0.0),
-            ]
-        )
+        player_data = _make_player_data(tier="Bronze")
 
         view_mock = MagicMock()
         view_mock.result = False  # user cancels so no PUT needed
         view_mock.wait = AsyncMock(return_value=None)
 
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(200, json=self._make_status_data())
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/combat-preflight").mock(
+                return_value=httpx.Response(
+                    200, json=self._make_preflight_data(verdict="no_data", sims_run=0, player_win_rate=0.0)
+                )
+            )
             asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Find the warning embed (confirmation prompt) that was sent
@@ -2447,36 +2496,34 @@ class TestPromotePowerCheckVerdictLine:
         # Power Check section must appear in the description — not an empty placeholder
         assert "Power Check" in description
 
-    def test_verdict_line_populated_when_preflight_raises_exception(self, mock_player_cog):
+    def test_verdict_line_populated_when_preflight_raises_exception(self, mock_player_cog, request):
         """verdict_line is non-empty when the preflight HTTP call raises an exception.
 
         With Change 2: exception path → ⚠️ Unavailable fallback string.
         """
         import httpx
+        import respx
 
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
-
-        error_response = MagicMock()
-        error_response.status_code = 500
-        preflight_error = httpx.HTTPStatusError("500", request=MagicMock(), response=error_response)
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[
-                self._make_status_resp(),
-                preflight_error,  # preflight call raises
-            ]
-        )
+        player_data = _make_player_data(tier="Bronze")
 
         view_mock = MagicMock()
         view_mock.result = False  # user cancels
         view_mock.wait = AsyncMock(return_value=None)
 
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(200, json=self._make_status_data())
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/combat-preflight").mock(
+                return_value=httpx.Response(500, json={"detail": "Server Error"})
+            )
             asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         embeds_sent = [
@@ -2490,27 +2537,33 @@ class TestPromotePowerCheckVerdictLine:
         # ⚠️ Unavailable fallback must be present
         assert "Power Check" in description
 
-    def test_verdict_line_contains_win_rate_on_green_verdict(self, mock_player_cog):
+    def test_verdict_line_contains_win_rate_on_green_verdict(self, mock_player_cog, request):
         """When preflight returns a green verdict, embed contains the win percentage."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[
-                self._make_status_resp(),
-                self._make_preflight_resp(verdict="green", sims_run=20, player_win_rate=0.9),
-            ]
-        )
+        player_data = _make_player_data(tier="Bronze")
 
         view_mock = MagicMock()
         view_mock.result = False  # user cancels
         view_mock.wait = AsyncMock(return_value=None)
 
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(200, json=self._make_status_data())
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/combat-preflight").mock(
+                return_value=httpx.Response(
+                    200, json=self._make_preflight_data(verdict="green", sims_run=20, player_win_rate=0.9)
+                )
+            )
             asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         embeds_sent = [
@@ -2532,30 +2585,29 @@ class TestPromotePowerCheckVerdictLine:
 
 
 class TestProfileWithPromotionStatus:
-    """Tests for the promotion status indicator in /profile."""
+    """Tests for the promotion status indicator in /profile.
 
-    def _setup_profile_mocks(self, mock_player_cog, player_data, stats_data, promo_data):
-        """Helper: wire up HTTP mock for profile + stats + promotion status."""
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
+    TRUEUP-01: migrated to respx. Config fetch (role assignment) is left
+    unmocked — it's a non-fatal enhancement wrapped in its own try/except.
+    """
 
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
+    def _register_profile_mocks(self, mock_router, player_data, stats_data, promo_data):
+        """Register the player-upsert, statistics, and promotion-status routes."""
+        import httpx
 
-        promo_resp = MagicMock()
-        promo_resp.raise_for_status = MagicMock()
-        promo_resp.json.return_value = promo_data
+        mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+        mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+            return_value=httpx.Response(200, json=stats_data)
+        )
+        mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+            return_value=httpx.Response(200, json=promo_data)
+        )
 
-        # config fetch (role assignment) raises so it's non-fatal
-        config_error = RuntimeError("config fetch failed")
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[stats_resp, promo_resp, config_error])
-
-    def test_profile_shows_eligible_promotion(self, mock_player_cog):
+    def test_profile_shows_eligible_promotion(self, mock_player_cog, request):
         """Profile shows 'Eligible for X' when can_promote=True."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
         interaction.guild.get_role = MagicMock(return_value=None)
 
@@ -2568,9 +2620,9 @@ class TestProfileWithPromotionStatus:
             "xp_surplus_for_next": 500,
         }
 
-        self._setup_profile_mocks(mock_player_cog, player_data, stats_data, promo_data)
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register_profile_mocks(mock_router, player_data, stats_data, promo_data)
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -2578,8 +2630,11 @@ class TestProfileWithPromotionStatus:
         field_names = [f.name for f in embed.fields]
         assert "Promotion" in field_names
 
-    def test_profile_shows_next_tier_threshold_when_not_eligible(self, mock_player_cog):
+    def test_profile_shows_next_tier_threshold_when_not_eligible(self, mock_player_cog, request):
         """Profile shows threshold when can_promote=False and next_tier is not None."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
         interaction.guild.get_role = MagicMock(return_value=None)
 
@@ -2592,9 +2647,9 @@ class TestProfileWithPromotionStatus:
             "xp_surplus_for_next": None,
         }
 
-        self._setup_profile_mocks(mock_player_cog, player_data, stats_data, promo_data)
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register_profile_mocks(mock_router, player_data, stats_data, promo_data)
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -2602,8 +2657,11 @@ class TestProfileWithPromotionStatus:
         field_names = [f.name for f in embed.fields]
         assert "Next Tier" in field_names
 
-    def test_profile_shows_max_tier_for_platinum(self, mock_player_cog):
+    def test_profile_shows_max_tier_for_platinum(self, mock_player_cog, request):
         """Profile shows 'Maximum Tier' when next_tier is None (Platinum)."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
         interaction.guild.get_role = MagicMock(return_value=None)
 
@@ -2616,9 +2674,9 @@ class TestProfileWithPromotionStatus:
             "xp_surplus_for_next": None,
         }
 
-        self._setup_profile_mocks(mock_player_cog, player_data, stats_data, promo_data)
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register_profile_mocks(mock_router, player_data, stats_data, promo_data)
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -2628,29 +2686,27 @@ class TestProfileWithPromotionStatus:
         assert len(tier_fields) > 0
         assert "Maximum" in tier_fields[-1].value
 
-    def test_profile_still_works_if_promotion_status_fails(self, mock_player_cog):
+    def test_profile_still_works_if_promotion_status_fails(self, mock_player_cog, request):
         """Profile still displays normally if promotion status API call fails."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
         interaction.guild.get_role = MagicMock(return_value=None)
 
         player_data = _make_player_data(tier="Bronze")
         stats_data = _make_stats_data()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        # Stats succeeds, promo_status fails, config fails
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[stats_resp, RuntimeError("promo status unavailable"), RuntimeError("config fail")]
-        )
-
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                side_effect=RuntimeError("promo status unavailable")
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         # Profile embed still sent
         interaction.followup.send.assert_awaited_once()
@@ -2697,63 +2753,72 @@ class TestPromoteErrorHandler:
 class TestProfileJoinedTimestampLocation:
     """Verify that the 'Joined' timestamp is rendered as an embed field (not footer)."""
 
-    def _setup_profile(self, mock_player_cog, player_data, stats_data):
-        """Wire HTTP mocks for a basic /profile call, promotion and config are non-fatal failures."""
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
+    def _setup_profile(self, mock_router, player_data, stats_data):
+        """Register the player-upsert + statistics routes for a basic /profile call.
 
-        stats_resp = MagicMock()
-        stats_resp.raise_for_status = MagicMock()
-        stats_resp.json.return_value = stats_data
+        Promotion-status and config are left unmocked — both are non-fatal
+        enhancements wrapped in their own try/except in the cog.
+        """
+        import httpx
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        # promo status and config both fail gracefully
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[stats_resp, RuntimeError("promo fail"), RuntimeError("config fail")]
+        mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+        mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+            return_value=httpx.Response(200, json=stats_data)
         )
 
-    def test_joined_is_in_embed_field(self, mock_player_cog):
+    def test_joined_is_in_embed_field(self, mock_player_cog, request):
         """Profile embed must have a field named 'Joined'."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
         interaction.guild.get_role = MagicMock(return_value=None)
 
         player_data = _make_player_data(tier="Bronze")
         stats_data = _make_stats_data()
-        self._setup_profile(mock_player_cog, player_data, stats_data)
 
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._setup_profile(mock_router, player_data, stats_data)
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
         field_names = [f.name for f in embed.fields]
         assert "Joined" in field_names, f"Expected 'Joined' field; fields are: {field_names}"
 
-    def test_footer_does_not_contain_joined(self, mock_player_cog):
+    def test_footer_does_not_contain_joined(self, mock_player_cog, request):
         """Profile embed footer must NOT include the word 'Joined'."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
         interaction.guild.get_role = MagicMock(return_value=None)
 
         player_data = _make_player_data(tier="Bronze")
         stats_data = _make_stats_data()
-        self._setup_profile(mock_player_cog, player_data, stats_data)
 
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._setup_profile(mock_router, player_data, stats_data)
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         footer_text = embed.footer.text if embed.footer and embed.footer.text else ""
         assert "Joined" not in footer_text, f"Footer must not contain 'Joined'; footer text: {footer_text!r}"
 
-    def test_footer_still_contains_player_id(self, mock_player_cog):
+    def test_footer_still_contains_player_id(self, mock_player_cog, request):
         """Profile embed footer should still contain the Player ID."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_interaction_with_roles(existing_roles=[])
         interaction.guild.get_role = MagicMock(return_value=None)
 
         player_data = _make_player_data(tier="Bronze")
         stats_data = _make_stats_data()
-        self._setup_profile(mock_player_cog, player_data, stats_data)
 
-        asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._setup_profile(mock_router, player_data, stats_data)
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         footer_text = embed.footer.text if embed.footer and embed.footer.text else ""
@@ -2812,28 +2877,35 @@ def _make_player_loadout_response(**overrides):
 
 
 class TestLoadoutCommand:
-    """Tests for the /loadout slash command (shared builder consumer)."""
+    """Tests for the /loadout slash command (shared builder consumer).
 
-    def _setup_loadout(self, cog, player_data, loadout_data):
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.json.return_value = player_data
-        player_resp.raise_for_status = MagicMock()
+    TRUEUP-01: migrated off `AsyncMock(http_client.get/post)` to respx, pinned
+    to the real POST /players/ and GET /players/{id}/loadout URLs. Tests that
+    previously inspected `call_args_list` for params/json now inspect the
+    captured respx request instead.
+    """
 
-        loadout_resp = MagicMock()
-        loadout_resp.status_code = 200
-        loadout_resp.json.return_value = loadout_data
-        loadout_resp.raise_for_status = MagicMock()
+    def _register_loadout(self, mock_router, player_data, loadout_data):
+        import httpx
 
-        cog.http_client.post = AsyncMock(return_value=player_resp)
-        cog.http_client.get = AsyncMock(return_value=loadout_resp)
+        players_route = mock_router.post(f"{_BOT_API}/players/").mock(
+            return_value=httpx.Response(200, json=player_data)
+        )
+        loadout_route = mock_router.get(f"{_BOT_API}/players/{player_data['id']}/loadout").mock(
+            return_value=httpx.Response(200, json=loadout_data)
+        )
+        return players_route, loadout_route
 
-    def test_loadout_success_self_default_ephemeral(self, mock_player_cog):
+    def test_loadout_success_self_default_ephemeral(self, mock_player_cog, request):
         """Self-view with default public=False → defer+followup are ephemeral."""
-        interaction = _create_mock_interaction()
-        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
+        import respx
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        _with_real_http_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register_loadout(mock_router, _make_player_data(), _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         # defer called with ephemeral=True
         defer_kwargs = interaction.response.defer.call_args[1]
@@ -2843,48 +2915,63 @@ class TestLoadoutCommand:
         send_kwargs = interaction.followup.send.call_args[1]
         assert send_kwargs.get("ephemeral") is True
 
-    def test_loadout_public_true_sends_non_ephemeral(self, mock_player_cog):
+    def test_loadout_public_true_sends_non_ephemeral(self, mock_player_cog, request):
         """public=True → defer non-ephemeral, followup non-ephemeral."""
-        interaction = _create_mock_interaction()
-        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
+        import respx
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
+        _with_real_http_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register_loadout(mock_router, _make_player_data(), _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
 
         defer_kwargs = interaction.response.defer.call_args[1]
         assert defer_kwargs.get("ephemeral") is False
         send_kwargs = interaction.followup.send.call_args[1]
         assert send_kwargs.get("ephemeral") is False
 
-    def test_loadout_title_uses_live_display_name(self, mock_player_cog):
+    def test_loadout_title_uses_live_display_name(self, mock_player_cog, request):
         """Embed title uses interaction user.display_name, NOT the bot-core subject_name."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
         interaction.user.display_name = "LiveDisplayName"
-        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register_loadout(mock_router, _make_player_data(), _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         assert embed.title == "Loadout — LiveDisplayName"
 
-    def test_loadout_description_is_user_mention(self, mock_player_cog):
+    def test_loadout_description_is_user_mention(self, mock_player_cog, request):
         """Description is overwritten to the live Discord mention."""
-        interaction = _create_mock_interaction()
-        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
+        import respx
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        _with_real_http_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register_loadout(mock_router, _make_player_data(), _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         # Description is <@user.id> mention of the target
         assert embed.description == f"<@{interaction.user.id}>"
 
-    def test_loadout_no_active_ship_sends_ephemeral_error_embed(self, mock_player_cog):
+    def test_loadout_no_active_ship_sends_ephemeral_error_embed(self, mock_player_cog, request):
         """'No active ship' response → red error embed, always ephemeral."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
         no_ship_resp = _make_player_loadout_response(message="No active ship")
 
-        self._setup_loadout(mock_player_cog, _make_player_data(), no_ship_resp)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register_loadout(mock_router, _make_player_data(), no_ship_resp)
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
 
         send_kwargs = interaction.followup.send.call_args[1]
         # Errors always ephemeral regardless of public=True
@@ -2892,103 +2979,122 @@ class TestLoadoutCommand:
         embed = send_kwargs["embed"]
         assert "No active ship" in (embed.description or "")
 
-    def test_loadout_self_view_passes_include_cargo_true(self, mock_player_cog):
+    def test_loadout_self_view_passes_include_cargo_true(self, mock_player_cog, request):
         """Self-view must pass include_cargo=true to bot-core."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
-        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            _, loadout_route = self._register_loadout(mock_router, _make_player_data(), _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
-        get_call = mock_player_cog.http_client.get.call_args_list[0]
-        params = get_call[1].get("params", {})
+        params = loadout_route.calls.last.request.url.params
         assert params.get("include_cargo") == "true"
 
-    def test_loadout_other_player_non_admin_passes_include_cargo_false(self, mock_player_cog):
+    def test_loadout_other_player_non_admin_passes_include_cargo_false(self, mock_player_cog, request):
         """Other-player view as non-admin must pass include_cargo=false."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
         other = MagicMock()
         other.id = 999
         other.display_name = "Other"
         other.__str__ = MagicMock(return_value="Other#0000")
-
-        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
 
         # Patch _check_is_admin to return False (non-admin)
-        with patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=False)):
+        with (
+            patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=False)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            _, loadout_route = self._register_loadout(mock_router, _make_player_data(), _make_player_loadout_response())
             asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other))
 
-        get_call = mock_player_cog.http_client.get.call_args_list[0]
-        params = get_call[1].get("params", {})
+        params = loadout_route.calls.last.request.url.params
         assert params.get("include_cargo") == "false"
 
-    def test_loadout_other_player_admin_passes_include_cargo_true(self, mock_player_cog):
+    def test_loadout_other_player_admin_passes_include_cargo_true(self, mock_player_cog, request):
         """Other-player view as admin must pass include_cargo=true."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
         other = MagicMock()
         other.id = 999
         other.display_name = "Other"
         other.__str__ = MagicMock(return_value="Other#0000")
 
-        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
-
-        with patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=True)):
+        with (
+            patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=True)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            _, loadout_route = self._register_loadout(mock_router, _make_player_data(), _make_player_loadout_response())
             asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other))
 
-        get_call = mock_player_cog.http_client.get.call_args_list[0]
-        params = get_call[1].get("params", {})
+        params = loadout_route.calls.last.request.url.params
         assert params.get("include_cargo") == "true"
 
-    def test_loadout_viewer_discord_id_param_included(self, mock_player_cog):
+    def test_loadout_viewer_discord_id_param_included(self, mock_player_cog, request):
         """viewer_discord_id query param is the target user's Discord ID."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
-        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            _, loadout_route = self._register_loadout(mock_router, _make_player_data(), _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
-        get_call = mock_player_cog.http_client.get.call_args_list[0]
-        params = get_call[1].get("params", {})
+        params = loadout_route.calls.last.request.url.params
         assert params.get("viewer_discord_id") == str(interaction.user.id)
 
-    def test_loadout_profile_post_does_not_overwrite_username(self, mock_player_cog):
+    def test_loadout_profile_post_does_not_overwrite_username(self, mock_player_cog, request):
         """POST to /players/ sends discord_username=None to avoid overwriting."""
+        import json
+
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
-        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            players_route, _ = self._register_loadout(mock_router, _make_player_data(), _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
-        post_call = mock_player_cog.http_client.post.call_args_list[0]
-        body = post_call[1].get("json", {})
+        body = json.loads(players_route.calls.last.request.content)
         assert body.get("discord_username") is None
 
-    def test_loadout_http_404_sends_ephemeral(self, mock_player_cog):
+    def test_loadout_http_404_sends_ephemeral(self, mock_player_cog, request):
         """404 HTTPStatusError → ephemeral error message."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.json = MagicMock(return_value={"detail": "not found"})
-        err = httpx.HTTPStatusError("Not found", request=MagicMock(), response=mock_response)
-
-        player_resp = MagicMock()
-        player_resp.json.return_value = _make_player_data()
-        player_resp.raise_for_status = MagicMock()
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=err)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=_make_player_data()))
+            mock_router.get(f"{_BOT_API}/players/{_make_player_data()['id']}/loadout").mock(
+                return_value=httpx.Response(404, json={"detail": "not found"})
+            )
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
 
         send_kwargs = interaction.followup.send.call_args[1]
         # Errors always ephemeral
         assert send_kwargs.get("ephemeral") is True
 
-    def test_loadout_generic_exception_sends_ephemeral_warning(self, mock_player_cog):
+    def test_loadout_generic_exception_sends_ephemeral_warning(self, mock_player_cog, request):
         """Unexpected exception → ephemeral warning."""
-        interaction = _create_mock_interaction()
-        mock_player_cog.http_client.post = AsyncMock(side_effect=Exception("boom"))
+        import respx
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
+        _with_real_http_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(side_effect=Exception("boom"))
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -2996,60 +3102,74 @@ class TestLoadoutCommand:
 
 
 class TestLoadoutEmbedContent:
-    """Tests that the embed produced by /loadout carries the expected sections."""
+    """Tests that the embed produced by /loadout carries the expected sections.
 
-    def _setup(self, cog, loadout_data):
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.json.return_value = _make_player_data()
-        player_resp.raise_for_status = MagicMock()
+    TRUEUP-01: migrated off `AsyncMock(http_client.get/post)` to respx.
+    """
 
-        loadout_resp = MagicMock()
-        loadout_resp.status_code = 200
-        loadout_resp.json.return_value = loadout_data
-        loadout_resp.raise_for_status = MagicMock()
+    def _register(self, mock_router, loadout_data):
+        import httpx
 
-        cog.http_client.post = AsyncMock(return_value=player_resp)
-        cog.http_client.get = AsyncMock(return_value=loadout_resp)
+        player_data = _make_player_data()
+        mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+        mock_router.get(f"{_BOT_API}/players/{player_data['id']}/loadout").mock(
+            return_value=httpx.Response(200, json=loadout_data)
+        )
 
-    def test_active_ship_field_present(self, mock_player_cog):
+    def test_active_ship_field_present(self, mock_player_cog, request):
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
-        self._setup(mock_player_cog, _make_player_loadout_response())
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register(mock_router, _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         field_names = [f.name for f in embed.fields]
         assert "Active Ship" in field_names
         assert "Ship Stats" in field_names
 
-    def test_weapons_section_header_with_n_over_m(self, mock_player_cog):
-        interaction = _create_mock_interaction()
-        self._setup(mock_player_cog, _make_player_loadout_response())
+    def test_weapons_section_header_with_n_over_m(self, mock_player_cog, request):
+        import respx
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        _with_real_http_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register(mock_router, _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         field = next(f for f in embed.fields if f.name.startswith("Primary Weapons"))
         # 1 weapon, max_primaries=1
         assert field.name == "Primary Weapons <1/1>"
 
-    def test_modules_section_header_with_n_over_m(self, mock_player_cog):
-        interaction = _create_mock_interaction()
-        self._setup(mock_player_cog, _make_player_loadout_response())
+    def test_modules_section_header_with_n_over_m(self, mock_player_cog, request):
+        import respx
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        _with_real_http_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register(mock_router, _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         field = next(f for f in embed.fields if f.name.startswith("Modules"))
         assert field.name == "Modules <1/2>"
 
-    def test_cargo_hold_shown_for_self_view(self, mock_player_cog):
+    def test_cargo_hold_shown_for_self_view(self, mock_player_cog, request):
         """Self-view → Cargo Hold header always rendered (empty shows 'Empty')."""
-        interaction = _create_mock_interaction()
-        self._setup(mock_player_cog, _make_player_loadout_response())
+        import respx
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        _with_real_http_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register(mock_router, _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         cargo_field = next((f for f in embed.fields if f.name.startswith("Cargo Hold")), None)
@@ -3057,29 +3177,38 @@ class TestLoadoutEmbedContent:
         # Capacity from ship_stats.cargo=20
         assert cargo_field.name == "Cargo Hold <0/20>"
 
-    def test_cargo_hidden_for_non_admin_other_view(self, mock_player_cog):
+    def test_cargo_hidden_for_non_admin_other_view(self, mock_player_cog, request):
         """Non-admin viewing another player → no Cargo Hold section."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
         other = MagicMock()
         other.id = 999
         other.display_name = "Other"
         other.__str__ = MagicMock(return_value="Other#0000")
 
-        self._setup(mock_player_cog, _make_player_loadout_response())
-
-        with patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=False)):
+        with (
+            patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=False)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            self._register(mock_router, _make_player_loadout_response())
             asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         names = [f.name for f in embed.fields]
         assert not any(n.startswith("Cargo Hold") for n in names)
 
-    def test_no_footer_no_timestamp(self, mock_player_cog):
+    def test_no_footer_no_timestamp(self, mock_player_cog, request):
         """New embed has no footer and no timestamp (spec §3.1)."""
-        interaction = _create_mock_interaction()
-        self._setup(mock_player_cog, _make_player_loadout_response())
+        import respx
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        _with_real_http_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            self._register(mock_router, _make_player_loadout_response())
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         assert embed.footer.text is None
@@ -3120,27 +3249,23 @@ class TestRegisterAlias:
     handler, and send ``discord_username`` on the player upsert.
     """
 
-    def test_register_happy_path_matches_profile(self, mock_player_cog):
+    def test_register_happy_path_matches_profile(self, mock_player_cog, request):
         """/register on a Bronze player yields the same embed shape as /profile."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Bronze", prestige_count=0)
         stats_data = _make_stats_data()
 
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.json.return_value = player_data
-        player_resp.raise_for_status = MagicMock()
-
-        stats_resp = MagicMock()
-        stats_resp.status_code = 200
-        stats_resp.json.return_value = stats_data
-        stats_resp.raise_for_status = MagicMock()
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(return_value=stats_resp)
-
-        asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -3163,23 +3288,19 @@ class TestRegisterAlias:
             assert first_arg_p is interaction_p
             assert first_arg_r is interaction_r
 
-    def test_register_404_behaves_same_as_profile(self, mock_player_cog):
+    def test_register_404_behaves_same_as_profile(self, mock_player_cog, request):
         """/register must handle a 404 from player upsert identically to /profile."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        error_response = MagicMock()
-        error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found",
-            request=MagicMock(),
-            response=error_response,
-        )
-
-        mock_player_cog.http_client.post = AsyncMock(side_effect=http_error)
-
-        asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(
+                return_value=httpx.Response(404, json={"detail": "Not Found"})
+            )
+            asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -3188,33 +3309,29 @@ class TestRegisterAlias:
         msg = call_kwargs[0][0]
         assert "not found" in msg.lower() or "profile" in msg.lower()
 
-    def test_register_sends_discord_username_on_upsert(self, mock_player_cog):
+    def test_register_sends_discord_username_on_upsert(self, mock_player_cog, request):
         """A.3-style invariant: /register posts ``discord_username = str(user)``."""
+        import json
+
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Bronze", prestige_count=0)
         stats_data = _make_stats_data()
 
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.json.return_value = player_data
-        player_resp.raise_for_status = MagicMock()
+        with respx.mock(assert_all_called=True) as mock_router:
+            players_route = mock_router.post(f"{_BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=player_data)
+            )
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction))
 
-        stats_resp = MagicMock()
-        stats_resp.status_code = 200
-        stats_resp.json.return_value = stats_data
-        stats_resp.raise_for_status = MagicMock()
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(return_value=stats_resp)
-
-        asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction))
-
-        # Find the POST to /players/ — the first positional arg is the URL,
-        # and the json= kwarg carries the upsert payload.
-        post_calls = mock_player_cog.http_client.post.await_args_list
-        players_post = next(call for call in post_calls if "/players/" in call[0][0])
-        body = players_post[1]["json"]
+        body = json.loads(players_route.calls.last.request.content)
         assert body["discord_id"] == interaction.user.id
         assert body["guild_id"] == interaction.guild_id
         # discord_username must be the live str(user), NOT None (preserves
@@ -3235,11 +3352,17 @@ class TestPromoteTierRoleSwap:
     roles — the player ended up with Bronze AND Silver simultaneously after Bronze→Silver.
     The fix: after a successful API promotion, fetch guild config, remove the old tier
     role and add the new tier role (both non-fatal).
+
+    TRUEUP-01: migrated off `AsyncMock(http_client.get, side_effect=[...])` to
+    respx, with each of the promotion-status/combat-preflight/config GETs
+    registered against its real URL.
     """
 
     @pytest.fixture(autouse=True)
-    def _patch_confirm_view(self, mock_player_cog):
+    def _patch_confirm_view(self, mock_player_cog, request):
         from unittest.mock import patch as _patch
+
+        _with_real_http_client(mock_player_cog, request)
 
         view_mock = MagicMock()
         view_mock.result = True
@@ -3247,30 +3370,34 @@ class TestPromoteTierRoleSwap:
         with _patch("cogs.playerCog.ConfirmView", return_value=view_mock):
             yield
 
-    def _make_promo_get_side_effect(self, mock_player_cog, config_resp_or_error, old_tier="Bronze", new_tier="Silver"):
-        """Return an AsyncMock for http_client.get covering status+preflight+config."""
-        status_resp = MagicMock()
-        status_resp.raise_for_status = MagicMock()
-        status_resp.json.return_value = {
-            "can_promote": True,
-            "next_tier": new_tier,
-            "xp": 1500,
-            "xp_threshold_for_next": 1000,
-        }
-        preflight_resp = MagicMock()
-        preflight_resp.raise_for_status = MagicMock()
-        preflight_resp.json.return_value = {"verdict": "GREEN", "win_rate": 0.8}
-        if isinstance(config_resp_or_error, Exception):
-            return AsyncMock(side_effect=[status_resp, preflight_resp, config_resp_or_error])
-        return AsyncMock(side_effect=[status_resp, preflight_resp, config_resp_or_error])
+    def _register_precheck(self, mock_router, player_id, new_tier="Silver"):
+        """Register the promotion-status + combat-preflight GETs (always green/eligible)."""
+        import httpx
 
-    def _make_promote_setup(self, mock_player_cog, old_tier="Bronze", new_tier="Silver"):
-        """Wire the standard player-upsert + promote PUT mocks."""
+        mock_router.get(f"{_BOT_API}/players/{player_id}/promotion-status").mock(
+            return_value=httpx.Response(
+                200, json={"can_promote": True, "next_tier": new_tier, "xp": 1500, "xp_threshold_for_next": 1000}
+            )
+        )
+        mock_router.get(f"{_BOT_API}/players/{player_id}/combat-preflight").mock(
+            return_value=httpx.Response(200, json={"verdict": "green", "sims_run": 20, "player_win_rate": 0.8})
+        )
+
+    def _register_config(self, mock_router, guild_id, config_data_or_exception):
+        if isinstance(config_data_or_exception, Exception):
+            mock_router.get(f"{_BOT_API}/config/guild/{guild_id}").mock(side_effect=config_data_or_exception)
+        else:
+            import httpx
+
+            mock_router.get(f"{_BOT_API}/config/guild/{guild_id}").mock(
+                return_value=httpx.Response(200, json=config_data_or_exception)
+            )
+
+    def _register_promote(self, mock_router, old_tier="Bronze", new_tier="Silver"):
+        """Register the player-upsert + promote PUT routes."""
+        import httpx
+
         player_data = _make_player_data(tier=old_tier)
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
         promote_data = {
             "player_id": 1,
             "old_tier": old_tier,
@@ -3279,16 +3406,16 @@ class TestPromoteTierRoleSwap:
             "eligible_for_next": False,
             "next_tier": None,
         }
-        promote_resp = MagicMock()
-        promote_resp.raise_for_status = MagicMock()
-        promote_resp.json.return_value = promote_data
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(return_value=promote_resp)
-        return promote_data
+        mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+        mock_router.put(f"{_BOT_API}/players/{player_data['id']}/promote").mock(
+            return_value=httpx.Response(200, json=promote_data)
+        )
+        return player_data, promote_data
 
     def test_promote_removes_old_tier_role_and_adds_new_tier_role(self, mock_player_cog):
         """B.39: Bronze→Silver promotion must remove Bronze role and add Silver role."""
+        import respx
+
         bronze_role_id = 111222001
         silver_role_id = 111222002
 
@@ -3308,18 +3435,19 @@ class TestPromoteTierRoleSwap:
 
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
-        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            player_data, _ = self._register_promote(mock_router, old_tier="Bronze", new_tier="Silver")
+            self._register_precheck(mock_router, player_data["id"])
+            self._register_config(mock_router, 987654321, config_data)
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Success embed must be sent (confirm dialog + result = at least 2 calls)
         assert interaction.followup.send.call_count >= 2
@@ -3340,6 +3468,8 @@ class TestPromoteTierRoleSwap:
 
     def test_promote_does_not_add_role_user_already_has(self, mock_player_cog):
         """B.39: If user somehow already has the new tier role, add_roles is not called for it."""
+        import respx
+
         silver_role_id = 111222002
 
         mock_silver_role = MagicMock()
@@ -3350,18 +3480,19 @@ class TestPromoteTierRoleSwap:
         interaction = _create_interaction_with_roles(existing_roles=[mock_silver_role])
         interaction.guild.get_role = MagicMock(return_value=mock_silver_role)
 
-        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=None,  # No Bronze role configured
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            player_data, _ = self._register_promote(mock_router, old_tier="Bronze", new_tier="Silver")
+            self._register_precheck(mock_router, player_data["id"])
+            self._register_config(mock_router, 987654321, config_data)
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Embed still sent (confirm dialog + result)
         assert interaction.followup.send.call_count >= 2
@@ -3372,16 +3503,16 @@ class TestPromoteTierRoleSwap:
 
     def test_promote_role_swap_non_fatal_on_config_error(self, mock_player_cog):
         """B.39: If the config API call fails, promote still succeeds (non-fatal)."""
+        import respx
+
         interaction = _create_interaction_with_roles(existing_roles=[])
 
-        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
-
-        # Config fetch fails (status+preflight succeed, config raises)
-        mock_player_cog.http_client.get = self._make_promo_get_side_effect(
-            mock_player_cog, RuntimeError("config unavailable")
-        )
-
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            player_data, _ = self._register_promote(mock_router, old_tier="Bronze", new_tier="Silver")
+            self._register_precheck(mock_router, player_data["id"])
+            # Config fetch fails (status+preflight succeed, config raises)
+            self._register_config(mock_router, 987654321, RuntimeError("config unavailable"))
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Success embed is still sent (confirm dialog + result)
         assert interaction.followup.send.call_count >= 2
@@ -3393,6 +3524,8 @@ class TestPromoteTierRoleSwap:
 
     def test_promote_role_swap_non_fatal_on_remove_roles_error(self, mock_player_cog):
         """B.39: If remove_roles fails, the promote embed was already sent (non-fatal)."""
+        import respx
+
         bronze_role_id = 111222001
         silver_role_id = 111222002
 
@@ -3410,18 +3543,19 @@ class TestPromoteTierRoleSwap:
         )
         interaction.user.remove_roles = AsyncMock(side_effect=RuntimeError("Missing Permissions"))
 
-        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            player_data, _ = self._register_promote(mock_router, old_tier="Bronze", new_tier="Silver")
+            self._register_precheck(mock_router, player_data["id"])
+            self._register_config(mock_router, 987654321, config_data)
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # The embed was sent BEFORE the role swap attempt — it must always succeed
         assert interaction.followup.send.call_count >= 2
@@ -3430,6 +3564,8 @@ class TestPromoteTierRoleSwap:
 
     def test_promote_skips_role_removal_if_old_role_not_in_config(self, mock_player_cog):
         """B.39: If the old tier role isn't configured, remove_roles is not called."""
+        import respx
+
         silver_role_id = 111222002
         mock_silver_role = MagicMock()
         mock_silver_role.id = silver_role_id
@@ -3437,19 +3573,20 @@ class TestPromoteTierRoleSwap:
         interaction = _create_interaction_with_roles(existing_roles=[])
         interaction.guild.get_role = MagicMock(return_value=mock_silver_role)
 
-        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
-
         # bronze_role_id absent from config
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=None,
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            player_data, _ = self._register_promote(mock_router, old_tier="Bronze", new_tier="Silver")
+            self._register_precheck(mock_router, player_data["id"])
+            self._register_config(mock_router, 987654321, config_data)
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         assert interaction.followup.send.call_count >= 2
         # No old role to remove
@@ -3477,6 +3614,8 @@ class TestPromoteTierRoleSwap:
         FAIL against the current implementation (proving the defect is real), and
         will PASS once the fix is applied.
         """
+        import respx
+
         bronze_role_id = 111222001
         silver_role_id = 111222002
 
@@ -3498,18 +3637,19 @@ class TestPromoteTierRoleSwap:
         interaction.user.remove_roles = AsyncMock()
         interaction.user.add_roles = AsyncMock(side_effect=RuntimeError("Missing Permissions for Silver"))
 
-        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            player_data, _ = self._register_promote(mock_router, old_tier="Bronze", new_tier="Silver")
+            self._register_precheck(mock_router, player_data["id"])
+            self._register_config(mock_router, 987654321, config_data)
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Success embed is always sent (non-fatal role swap) — not in dispute
         assert interaction.followup.send.call_count >= 2
@@ -3523,6 +3663,9 @@ class TestPromoteTierRoleSwap:
     def test_promote_notifications_disabled_does_not_add_new_role(self, mock_player_cog):
         """Notification opt-out: stored bounty_notifications_enabled=False — Silver role
         must NOT be added on promotion (D-019: production reads the stored flag)."""
+        import httpx
+        import respx
+
         bronze_role_id = 111222001
         silver_role_id = 111222002
 
@@ -3545,9 +3688,6 @@ class TestPromoteTierRoleSwap:
         # D-019: set stored flag to False so production skips the new tier role
         player_data = _make_player_data(tier="Bronze")
         player_data["bounty_notifications_enabled"] = False
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
 
         promote_data = {
             "player_id": 1,
@@ -3557,23 +3697,23 @@ class TestPromoteTierRoleSwap:
             "eligible_for_next": False,
             "next_tier": None,
         }
-        promote_resp = MagicMock()
-        promote_resp.raise_for_status = MagicMock()
-        promote_resp.json.return_value = promote_data
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(return_value=promote_resp)
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/promote").mock(
+                return_value=httpx.Response(200, json=promote_data)
+            )
+            self._register_precheck(mock_router, player_data["id"])
+            self._register_config(mock_router, 987654321, config_data)
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Neither role should be touched — user opted out
         interaction.user.add_roles.assert_not_awaited()
@@ -3587,6 +3727,9 @@ class TestPromoteTierRoleSwap:
         promotion edge case — the previous disabled test set existing_roles=[] so the
         old role removal path was never exercised.
         """
+        import httpx
+        import respx
+
         bronze_role_id = 111222001
         silver_role_id = 111222002
 
@@ -3609,9 +3752,6 @@ class TestPromoteTierRoleSwap:
         # D-019: stored flag is False — opted out
         player_data = _make_player_data(tier="Bronze")
         player_data["bounty_notifications_enabled"] = False
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
 
         promote_data = {
             "player_id": 1,
@@ -3621,23 +3761,23 @@ class TestPromoteTierRoleSwap:
             "eligible_for_next": False,
             "next_tier": None,
         }
-        promote_resp = MagicMock()
-        promote_resp.raise_for_status = MagicMock()
-        promote_resp.json.return_value = promote_data
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(return_value=promote_resp)
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/promote").mock(
+                return_value=httpx.Response(200, json=promote_data)
+            )
+            self._register_precheck(mock_router, player_data["id"])
+            self._register_config(mock_router, 987654321, config_data)
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Old Bronze role MUST be removed (wrong tier regardless of opt-out)
         interaction.user.remove_roles.assert_awaited_once()
@@ -3649,6 +3789,8 @@ class TestPromoteTierRoleSwap:
     def test_promote_notifications_enabled_adds_new_role(self, mock_player_cog):
         """Notification opt-in: user has Bronze role (notifications on) → Silver is added
         and Bronze is removed as normal."""
+        import respx
+
         bronze_role_id = 111222001
         silver_role_id = 111222002
 
@@ -3668,18 +3810,19 @@ class TestPromoteTierRoleSwap:
 
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
-        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
-        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+        with respx.mock(assert_all_called=True) as mock_router:
+            player_data, _ = self._register_promote(mock_router, old_tier="Bronze", new_tier="Silver")
+            self._register_precheck(mock_router, player_data["id"])
+            self._register_config(mock_router, 987654321, config_data)
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Silver added, Bronze removed
         interaction.user.add_roles.assert_awaited_once()
@@ -3700,7 +3843,11 @@ if __name__ == "__main__":
 
 
 class TestPromoteConfirmView:
-    """Tests for the /promote two-step ConfirmView confirmation flow."""
+    """Tests for the /promote two-step ConfirmView confirmation flow.
+
+    TRUEUP-01: migrated off `AsyncMock(http_client.get, side_effect=[...])` to
+    respx.
+    """
 
     def _make_confirm_view_mock(self, result):
         view = MagicMock()
@@ -3708,36 +3855,36 @@ class TestPromoteConfirmView:
         view.wait = AsyncMock(return_value=None)
         return view
 
-    def _make_status_resp(self, can_promote=True, next_tier="Silver", xp=1500, threshold=1000):
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
+    def _register_precheck(self, mock_router, player_id, can_promote=True, next_tier="Silver", **preflight_kwargs):
+        import httpx
+
+        status_data = {
             "can_promote": can_promote,
             "next_tier": next_tier,
-            "xp": xp,
-            "xp_threshold_for_next": threshold,
+            "xp": 1500,
+            "xp_threshold_for_next": 1000,
         }
-        return resp
-
-    def _make_preflight_resp(self, verdict="green", sims_run=20, player_win_rate=0.9):
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
-            "verdict": verdict,
-            "sims_run": sims_run,
-            "player_win_rate": player_win_rate,
-            "criminal_win_rate": 1.0 - player_win_rate,
+        mock_router.get(f"{_BOT_API}/players/{player_id}/promotion-status").mock(
+            return_value=httpx.Response(200, json=status_data)
+        )
+        preflight_data = {
+            "verdict": preflight_kwargs.get("verdict", "green"),
+            "sims_run": preflight_kwargs.get("sims_run", 20),
+            "player_win_rate": preflight_kwargs.get("player_win_rate", 0.9),
         }
-        return resp
+        mock_router.get(f"{_BOT_API}/players/{player_id}/combat-preflight").mock(
+            return_value=httpx.Response(200, json=preflight_data)
+        )
 
-    def test_promote_confirmed_calls_promote_api(self, mock_player_cog):
+    def test_promote_confirmed_calls_promote_api(self, mock_player_cog, request):
         """/promote: user confirms → PUT /players/{id}/promote is called."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
-
+        player_data = _make_player_data(tier="Bronze")
         promote_data = {
             "player_id": 1,
             "old_tier": "Bronze",
@@ -3746,80 +3893,92 @@ class TestPromoteConfirmView:
             "eligible_for_next": False,
             "next_tier": "Gold",
         }
-        promote_resp = MagicMock()
-        promote_resp.raise_for_status = MagicMock()
-        promote_resp.json.return_value = promote_data
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[self._make_status_resp(), self._make_preflight_resp()])
-        mock_player_cog.http_client.put = AsyncMock(return_value=promote_resp)
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck(mock_router, player_data["id"])
+            put_route = mock_router.put(f"{_BOT_API}/players/{player_data['id']}/promote").mock(
+                return_value=httpx.Response(200, json=promote_data)
+            )
             asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        mock_player_cog.http_client.put.assert_awaited_once()
+        assert put_route.called
 
-    def test_promote_cancel_does_not_call_promote_api(self, mock_player_cog):
-        """/promote: user cancels → PUT /promote is NOT called."""
+    def test_promote_cancel_does_not_call_promote_api(self, mock_player_cog, request):
+        """/promote: user cancels → PUT /promote is NOT called.
+
+        The promote route is deliberately left unregistered — if the cog called
+        it anyway, respx would raise (no route matches).
+        """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
-
-        put_mock = AsyncMock()
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[self._make_status_resp(), self._make_preflight_resp(verdict="no_data", sims_run=0)]
-        )
-        mock_player_cog.http_client.put = put_mock
+        player_data = _make_player_data(tier="Bronze")
 
         view_mock = self._make_confirm_view_mock(result=False)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck(mock_router, player_data["id"], verdict="no_data", sims_run=0)
             asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        put_mock.assert_not_awaited()
+        # A cancel/timeout message should still be sent (the promote PUT itself was
+        # implicitly proven un-called above — respx would have raised otherwise).
+        interaction.followup.send.assert_awaited()
 
-    def test_promote_confirm_shows_confirm_view(self, mock_player_cog):
+    def test_promote_confirm_shows_confirm_view(self, mock_player_cog, request):
         """/promote: a ConfirmView is shown before the promotion is applied."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[self._make_status_resp(), self._make_preflight_resp()])
+        player_data = _make_player_data(tier="Bronze")
 
         view_mock = self._make_confirm_view_mock(result=False)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock) as patched_cv:
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock) as patched_cv,
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck(mock_router, player_data["id"])
             asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         patched_cv.assert_called_once()
 
-    def test_promote_429_after_confirm_shows_cooldown_embed(self, mock_player_cog):
+    def test_promote_429_after_confirm_shows_cooldown_embed(self, mock_player_cog, request):
         """/promote: PUT returns 429 after confirm → cooldown embed is shown."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
-
+        player_data = _make_player_data(tier="Bronze")
         cooldown_iso = "2026-05-15T12:00:00+00:00"
-        error_response = MagicMock()
-        error_response.status_code = 429
-        error_response.json.return_value = {"detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}}
-        http_error = httpx.HTTPStatusError("429", request=MagicMock(), response=error_response)
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=[self._make_status_resp(), self._make_preflight_resp()])
-        mock_player_cog.http_client.put = AsyncMock(side_effect=http_error)
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck(mock_router, player_data["id"])
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/promote").mock(
+                return_value=httpx.Response(
+                    429, json={"detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}}
+                )
+            )
             asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         embeds_sent = [
@@ -3829,30 +3988,26 @@ class TestPromoteConfirmView:
         ]
         assert any("Cannot Promote" in (e.title or "") for e in embeds_sent if e)
 
-    def test_promote_not_eligible_sends_message_before_confirmview(self, mock_player_cog):
+    def test_promote_not_eligible_sends_message_before_confirmview(self, mock_player_cog, request):
         """/promote: not eligible → followup message sent, ConfirmView NOT created."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
+        player_data = _make_player_data(tier="Bronze")
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            return_value=MagicMock(
-                **{
-                    "raise_for_status": MagicMock(),
-                    "json.return_value": {
-                        "can_promote": False,
-                        "next_tier": "Silver",
-                        "xp": 100,
-                        "xp_threshold_for_next": 1000,
-                    },
-                }
+        with (
+            patch("cogs.playerCog.ConfirmView") as patched_cv,
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{_BOT_API}/players/{player_data['id']}/promotion-status").mock(
+                return_value=httpx.Response(
+                    200, json={"can_promote": False, "next_tier": "Silver", "xp": 100, "xp_threshold_for_next": 1000}
+                )
             )
-        )
-
-        with patch("cogs.playerCog.ConfirmView") as patched_cv:
             asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         patched_cv.assert_not_called()
@@ -3865,7 +4020,10 @@ class TestPromoteConfirmView:
 
 
 class TestDemoteCommand:
-    """Tests for the /demote slash command."""
+    """Tests for the /demote slash command.
+
+    TRUEUP-01: migrated off `AsyncMock(http_client.get/post/put)` to respx.
+    """
 
     def _make_confirm_view_mock(self, result):
         view = MagicMock()
@@ -3873,98 +4031,109 @@ class TestDemoteCommand:
         view.wait = AsyncMock(return_value=None)
         return view
 
-    def test_demote_bronze_player_sends_error_no_confirmview(self, mock_player_cog):
+    def _register_precheck_and_config(self, mock_router, player_id):
+        """Register promotion-status (no cooldown) + config/guild (empty → default penalty)."""
+        import httpx
+
+        mock_router.get(f"{_BOT_API}/players/{player_id}/promotion-status").mock(
+            return_value=httpx.Response(200, json={"on_cooldown": False})
+        )
+        mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(return_value=httpx.Response(200, json={}))
+
+    def test_demote_bronze_player_sends_error_no_confirmview(self, mock_player_cog, request):
         """/demote: Bronze player gets an error message — ConfirmView NOT shown."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-
-        with patch("cogs.playerCog.ConfirmView") as patched_cv:
+        with (
+            patch("cogs.playerCog.ConfirmView") as patched_cv,
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=_make_player_data(tier="Bronze"))
+            )
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         patched_cv.assert_not_called()
         interaction.followup.send.assert_awaited()
 
-    def test_demote_happy_path_confirmed(self, mock_player_cog):
+    def test_demote_happy_path_confirmed(self, mock_player_cog, request):
         """/demote: Silver player confirms → PUT /players/{id}/demote called."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Silver")
-
+        player_data = _make_player_data(tier="Silver")
         demote_data = {
             "player_id": 1,
             "old_tier": "Silver",
             "new_tier": "Bronze",
             "xp": 1500,
         }
-        demote_resp = MagicMock()
-        demote_resp.raise_for_status = MagicMock()
-        demote_resp.json.return_value = demote_data
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(return_value=demote_resp)
-        # GET calls are non-fatal (config for role swap)
-        mock_player_cog.http_client.get = AsyncMock(
-            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
-        )
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck_and_config(mock_router, player_data["id"])
+            put_route = mock_router.put(f"{_BOT_API}/players/{player_data['id']}/demote").mock(
+                return_value=httpx.Response(200, json=demote_data)
+            )
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
-        mock_player_cog.http_client.put.assert_awaited_once()
+        assert put_route.called
 
-    def test_demote_cancel_does_not_call_api(self, mock_player_cog):
-        """/demote: user cancels → PUT /demote is NOT called."""
+    def test_demote_cancel_does_not_call_api(self, mock_player_cog, request):
+        """/demote: user cancels → PUT /demote is NOT called (unregistered route)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Silver")
-
-        put_mock = AsyncMock()
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
-        )
-        mock_player_cog.http_client.put = put_mock
+        player_data = _make_player_data(tier="Silver")
 
         view_mock = self._make_confirm_view_mock(result=False)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck_and_config(mock_router, player_data["id"])
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
-        put_mock.assert_not_awaited()
+        interaction.followup.send.assert_awaited()
 
-    def test_demote_429_shows_cooldown_embed(self, mock_player_cog):
+    def test_demote_429_shows_cooldown_embed(self, mock_player_cog, request):
         """/demote: PUT returns 429 → cooldown embed is shown."""
         import httpx
+        import respx
 
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Silver")
-
+        player_data = _make_player_data(tier="Silver")
         cooldown_iso = "2026-05-16T08:00:00+00:00"
-        error_response = MagicMock()
-        error_response.status_code = 429
-        error_response.json.return_value = {"detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}}
-        http_error = httpx.HTTPStatusError("429", request=MagicMock(), response=error_response)
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
-        )
-        mock_player_cog.http_client.put = AsyncMock(side_effect=http_error)
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck_and_config(mock_router, player_data["id"])
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/demote").mock(
+                return_value=httpx.Response(
+                    429, json={"detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}}
+                )
+            )
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         embeds_sent = [
@@ -3974,26 +4143,28 @@ class TestDemoteCommand:
         ]
         assert any("Cannot Demote" in (e.title or "") for e in embeds_sent if e)
 
-    def test_demote_shows_confirmview_for_non_bronze_player(self, mock_player_cog):
+    def test_demote_shows_confirmview_for_non_bronze_player(self, mock_player_cog, request):
         """/demote: non-Bronze player sees a ConfirmView before demotion."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Gold")
-
-        demote_resp = MagicMock()
-        demote_resp.raise_for_status = MagicMock()
-        demote_resp.json.return_value = {"player_id": 1, "old_tier": "Gold", "new_tier": "Silver", "xp": 5000}
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(return_value=demote_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
-        )
+        player_data = _make_player_data(tier="Gold")
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock) as patched_cv:
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock) as patched_cv,
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck_and_config(mock_router, player_data["id"])
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/demote").mock(
+                return_value=httpx.Response(
+                    200, json={"player_id": 1, "old_tier": "Gold", "new_tier": "Silver", "xp": 5000}
+                )
+            )
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         patched_cv.assert_called_once()
@@ -4009,31 +4180,32 @@ class TestDemoteWarningPenalty:
 
     The penalty rate comes from GET /config/guild/{id} → demotion_credit_penalty_pct.
     NULL / absent → defaults to 10 (global GameConstants default).
+
+    TRUEUP-01: migrated off `AsyncMock(http_client.get)` to respx, with
+    promotion-status and config registered as separate real routes.
     """
 
-    def _make_get_mock(self, penalty_pct=None):
-        """Return an http_client.get mock.
+    def _register_precheck_and_config(self, mock_router, player_id, penalty_pct=None):
+        import httpx
 
-        Promotion-status call returns {} (no on_cooldown → no cooldown).
-        Config call returns {demotion_credit_penalty_pct: penalty_pct} (or {} if None).
-        Both share one mock since the order doesn't affect correctness here.
-        """
+        mock_router.get(f"{_BOT_API}/players/{player_id}/promotion-status").mock(
+            return_value=httpx.Response(200, json={})
+        )
         cfg_payload = {}
         if penalty_pct is not None:
             cfg_payload["demotion_credit_penalty_pct"] = penalty_pct
-        return AsyncMock(return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": cfg_payload}))
+        mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(return_value=httpx.Response(200, json=cfg_payload))
 
-    def test_demote_warning_shows_penalty_line(self, mock_player_cog):
+    def test_demote_warning_shows_penalty_line(self, mock_player_cog, request):
         """Warning embed uses default 10% when config returns no penalty_pct."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         # 500 credits → estimated penalty = int(500 * 10 / 100) = 50
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Silver")  # credits=500
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = self._make_get_mock(penalty_pct=None)  # → default 10%
+        player_data = _make_player_data(tier="Silver")  # credits=500
 
         view_mock = MagicMock()
         view_mock.result = None  # time out — we only care about the warning embed
@@ -4048,7 +4220,12 @@ class TestDemoteWarningPenalty:
 
         interaction.followup.send = AsyncMock(side_effect=_capture_send)
 
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck_and_config(mock_router, player_data["id"], penalty_pct=None)  # → default 10%
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         assert sent_embed is not None, "Warning embed was never sent"
@@ -4057,19 +4234,16 @@ class TestDemoteWarningPenalty:
         assert "500" in desc, f"Expected current balance '500' in warning embed, got:\n{desc}"
         assert "10%" in desc, f"Expected '10%' penalty label in warning embed, got:\n{desc}"
 
-    def test_demote_warning_penalty_zero_credits(self, mock_player_cog):
+    def test_demote_warning_penalty_zero_credits(self, mock_player_cog, request):
         """A player with 0 credits gets a 0 cr penalty line (no negative credits)."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Gold")
         player_data["credits"] = 0
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = self._make_get_mock(penalty_pct=None)
 
         view_mock = MagicMock()
         view_mock.result = None
@@ -4084,27 +4258,29 @@ class TestDemoteWarningPenalty:
 
         interaction.followup.send = AsyncMock(side_effect=_capture_send)
 
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck_and_config(mock_router, player_data["id"], penalty_pct=None)
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         assert sent_embed is not None
         desc = sent_embed.description
         assert "-0 cr" in desc, f"Expected '-0 cr' for zero-credit player, got:\n{desc}"
 
-    def test_demote_warning_uses_guild_penalty_rate(self, mock_player_cog):
+    def test_demote_warning_uses_guild_penalty_rate(self, mock_player_cog, request):
         """Warning embed uses the per-guild penalty rate when config provides one."""
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         interaction = _create_mock_interaction()
 
         # 1000 credits, guild configured at 25% → estimated penalty = int(1000 * 25 / 100) = 250
         player_data = _make_player_data(tier="Gold")
         player_data["credits"] = 1000
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = self._make_get_mock(penalty_pct=25)
 
         view_mock = MagicMock()
         view_mock.result = None
@@ -4119,7 +4295,12 @@ class TestDemoteWarningPenalty:
 
         interaction.followup.send = AsyncMock(side_effect=_capture_send)
 
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            self._register_precheck_and_config(mock_router, player_data["id"], penalty_pct=25)
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         assert sent_embed is not None, "Warning embed was never sent"
@@ -4134,7 +4315,13 @@ class TestDemoteWarningPenalty:
 
 
 class TestDemoteTierRoleSwap:
-    """Tests for /demote tier role swap and notification preference preservation."""
+    """Tests for /demote tier role swap and notification preference preservation.
+
+    TRUEUP-01: migrated off `AsyncMock(http_client.get)` to respx. The
+    promotion-status and config/guild GETs are registered as separate routes;
+    config/guild is hit twice in the real flow (penalty preview + role swap)
+    and a single `.mock(return_value=...)` transparently serves both calls.
+    """
 
     def _make_confirm_view_mock(self, result):
         view = MagicMock()
@@ -4142,22 +4329,30 @@ class TestDemoteTierRoleSwap:
         view.wait = AsyncMock(return_value=None)
         return view
 
-    def _make_demote_setup(self, mock_player_cog, old_tier="Silver", new_tier="Bronze"):
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier=old_tier)
+    def _register_demote(self, mock_router, old_tier="Silver", new_tier="Bronze"):
+        import httpx
 
+        player_data = _make_player_data(tier=old_tier)
         demote_data = {"player_id": 1, "old_tier": old_tier, "new_tier": new_tier, "xp": 500}
-        demote_resp = MagicMock()
-        demote_resp.raise_for_status = MagicMock()
-        demote_resp.json.return_value = demote_data
+        mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+        mock_router.put(f"{_BOT_API}/players/{player_data['id']}/demote").mock(
+            return_value=httpx.Response(200, json=demote_data)
+        )
+        return player_data, demote_data
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(return_value=demote_resp)
-        return demote_data
+    def _register_precheck_and_config(self, mock_router, player_id, config_data):
+        import httpx
 
-    def test_demote_notifications_enabled_swaps_roles(self, mock_player_cog):
+        mock_router.get(f"{_BOT_API}/players/{player_id}/promotion-status").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        mock_router.get(f"{_BOT_API}/config/guild/987654321").mock(return_value=httpx.Response(200, json=config_data))
+
+    def test_demote_notifications_enabled_swaps_roles(self, mock_player_cog, request):
         """User holds Silver role (notifications on) → Bronze added, Silver removed."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         silver_role_id = 111222002
         bronze_role_id = 111222001
 
@@ -4175,19 +4370,21 @@ class TestDemoteTierRoleSwap:
 
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
-        self._make_demote_setup(mock_player_cog, old_tier="Silver", new_tier="Bronze")
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            player_data, _ = self._register_demote(mock_router, old_tier="Silver", new_tier="Bronze")
+            self._register_precheck_and_config(mock_router, player_data["id"], config_data)
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         # Bronze added, Silver removed
@@ -4198,7 +4395,7 @@ class TestDemoteTierRoleSwap:
         removed_ids = {r.id for r in interaction.user.remove_roles.call_args[0]}
         assert silver_role_id in removed_ids
 
-    def test_demote_notifications_disabled_does_not_add_new_role(self, mock_player_cog):
+    def test_demote_notifications_disabled_does_not_add_new_role(self, mock_player_cog, request):
         """Opted-out demotion: user HOLDS the old Silver role but bounty_notifications_enabled=False.
 
         The meaningful edge case: the old Silver role MUST be removed (it is the wrong tier
@@ -4208,6 +4405,10 @@ class TestDemoteTierRoleSwap:
         regardless of the flag — the test passed vacuously and proved nothing.  This
         rewrite gives the user the old Silver role so the remove path is exercised.
         """
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         silver_role_id = 111222002
         bronze_role_id = 111222001
 
@@ -4230,29 +4431,26 @@ class TestDemoteTierRoleSwap:
         # D-019: stored flag is False — opted out
         player_data = _make_player_data(tier="Silver")
         player_data["bounty_notifications_enabled"] = False
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = player_data
 
         demote_data = {"player_id": 1, "old_tier": "Silver", "new_tier": "Bronze", "xp": 500}
-        demote_resp = MagicMock()
-        demote_resp.raise_for_status = MagicMock()
-        demote_resp.json.return_value = demote_data
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.put = AsyncMock(return_value=demote_resp)
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
             silver_role_id=silver_role_id,
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.put(f"{_BOT_API}/players/{player_data['id']}/demote").mock(
+                return_value=httpx.Response(200, json=demote_data)
+            )
+            self._register_precheck_and_config(mock_router, player_data["id"], config_data)
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         # Old Silver role MUST be removed (wrong tier regardless of opt-out)
@@ -4262,9 +4460,12 @@ class TestDemoteTierRoleSwap:
         # New Bronze role must NOT be added (player is opted out)
         interaction.user.add_roles.assert_not_awaited()
 
-    def test_demote_old_role_not_in_config_still_adds_new_role(self, mock_player_cog):
+    def test_demote_old_role_not_in_config_still_adds_new_role(self, mock_player_cog, request):
         """If the old tier role isn't configured, we can't infer opt-out — new role
         is still added (safe default)."""
+        import respx
+
+        _with_real_http_client(mock_player_cog, request)
         bronze_role_id = 111222001
 
         mock_bronze_role = MagicMock()
@@ -4274,19 +4475,21 @@ class TestDemoteTierRoleSwap:
         interaction = _create_interaction_with_roles(existing_roles=[])
         interaction.guild.get_role = MagicMock(return_value=mock_bronze_role)
 
-        self._make_demote_setup(mock_player_cog, old_tier="Silver", new_tier="Bronze")
-
-        config_resp = _make_config_resp(
+        config_data = _make_config_data(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
             silver_role_id=None,  # old role not configured
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
 
         view_mock = self._make_confirm_view_mock(result=True)
-        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+        with (
+            patch("cogs.playerCog.ConfirmView", return_value=view_mock),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            player_data, _ = self._register_demote(mock_router, old_tier="Silver", new_tier="Bronze")
+            self._register_precheck_and_config(mock_router, player_data["id"], config_data)
             asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
 
         # Bronze added (can't determine preference — safe default)

@@ -483,9 +483,9 @@ passing — see R-bc-db-manager above. Gate: `tests/test_database.py` 66 passed,
 with the mandatory `POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=55432 ...` overrides) 5562 passed,
 5 skipped, 1 xfailed. Ruff clean.
 
-**TRUEUP-01 (discord-gateway cog respx migration): 5 of 6 files COMPLETE** (`test_aboutCog.py`,
-`test_duelCog.py`, `test_shipsCog.py`, `test_shopCog.py`, `test_bountyCog.py`); `test_playerCog.py`
-not attempted (see below). All migrated files use the same house pattern: a module-level
+**TRUEUP-01 (discord-gateway cog respx migration): 6 of 6 files COMPLETE** (`test_aboutCog.py`,
+`test_duelCog.py`, `test_shipsCog.py`, `test_shopCog.py`, `test_bountyCog.py`, `test_playerCog.py`).
+All migrated files use the same house pattern: a module-level
 `_with_real_http_client(cog, request)` helper (mirroring `test_adminCog.py`'s), a real
 `httpx.AsyncClient` swapped onto `cog.http_client`, and `respx.mock(assert_all_called=True)`
 routes pinned to the real bot-core URL/verb/query-params, returning real `httpx.Response`
@@ -544,19 +544,26 @@ and the shared `make_mock_response` fixture in the files below.
   of which involves `self.http_client` at all (out of scope for an HTTP-mock migration). File
   fully green: 282/282.
 
-**NOT completed, for time — `test_playerCog.py`** (~150 tests across ~21 classes: e.g.
-`TestProfileCommand`, `TestLeaderboardCommand`, `TestPrestigeCommand`,
-`TestPrestigeConfirmFlow`, `TestProfileRoleAssignment`, `TestUnregisterCommand`,
-`TestPromoteCommand`, `TestPromoteTierRoleSwap`, `TestPromoteConfirmView`, `TestDemoteCommand`,
-`TestDemoteTierRoleSwap`, `TestLoadoutCommand`, `TestRegisterAlias`, etc.) — the largest file
-and, per the coordinator's own "smallest/highest-value first" ordering, the explicitly
-lowest-priority item; still on inline `MagicMock()` response construction (this file has no
-shared `make_mock_response` fixture at all — every one of the ~150 tests hand-builds its own
-mock inline). Several commands here (`promote`/`demote`/`prestige`) chain up to 4 sequential
-endpoints per test (`POST /players/` → `GET .../promotion-status` → `PUT .../promote` or
-`.../demote` → `GET /config/guild/{id}` for role sync), making this the most complex
-remaining migration surface in the whole cog suite — effort L, consistent with the R-gw-cogs-2
-report's own estimate ("effort L to fully migrate all ~150 tests in this 4200-line file").
+- **`test_playerCog.py`** (last file, completed): all mocked-`http_client` tests across
+  `TestProfileCommand`, `TestLeaderboardCommand`, `TestPrestigeCommand`,
+  `TestPrestigeConfirmFlow`, `TestProfileNoTimestampsInBadLocations`, `TestProfileRoleAssignment`,
+  `TestSyncPlayerNotificationRoles`, `TestUnregisterDoesNotCallNotificationsPut`,
+  `TestUnregisterCommand`, `TestPromoteCommand`, `TestPromotePowerCheckVerdictLine`,
+  `TestProfileWithPromotionStatus`, `TestProfileJoinedTimestampLocation`, `TestLoadoutCommand`,
+  `TestLoadoutEmbedContent`, `TestRegisterAlias`, `TestPromoteTierRoleSwap`,
+  `TestPromoteConfirmView`, `TestDemoteCommand`, `TestDemoteWarningPenalty`, and
+  `TestDemoteTierRoleSwap` migrated to the house respx pattern — each promotion-status /
+  combat-preflight / config-guild / player-upsert / role-mutation endpoint registered against
+  its real URL rather than relying on `AsyncMock(side_effect=[...])` call ordering. The
+  now-redundant hand-rolled `TestProfileCommandRespx`/`TestLeaderboardCommandRespx`/
+  `TestPrestigeCommandRespx` URL-contract classes were folded into the main test classes (their
+  unique assertions preserved) rather than kept as parallel duplicate coverage.
+  `TestFormatTierChangeCooldownMessage` (a pure-function unit test of an `httpx.HTTPStatusError`
+  formatter, never touching `self.http_client`) and `TestErrorHandlers`/`TestCogSetup`/discord.py
+  error-handler tests were left as-is — out of scope for an HTTP-mock migration. Discord role
+  boundaries (`guild.get_role`/`add_roles`/`remove_roles`) remain `MagicMock`/`AsyncMock` per
+  house rule 1 exception noted in-file (`TestPrestigeConfirmFlow`'s docstring) — no live Discord
+  gateway connection is available in a unit test. File fully green: 132/132.
 Recommend a follow-up pass starting with `TestProfileCommand`/`TestLeaderboardCommand`/
 `TestPrestigeCommand` (single- or dual-endpoint flows, and each already has a proven
 `*Respx` reference class in-file to mirror), then the promote/demote families last.

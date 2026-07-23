@@ -5,7 +5,7 @@ fastapi-sqlalchemy==0.2.1
 #fastapi-healthcheck-sqlalchemy
 uvicorn[standard]==0.51.0
 hypercorn[uvloop]==0.18.0
-aiohttp[speedups]==3.14.2
+aiohttp[speedups]==3.14.3
 SQLAlchemy[asyncio]==2.0.51
 sqlalchemy-utils==0.42.1
 # Used for syncronous database operations in some parts of the codebase like migration of data

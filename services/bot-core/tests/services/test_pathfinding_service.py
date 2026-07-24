@@ -668,16 +668,14 @@ class TestB77KnownBadCase:
 # ===========================================================================
 
 
-class TestB78WahNorrIsolation:
-    """B.78 regression: Wah'Norr must be completely isolated in the graph.
+class TestWahNorrConnectivity:
+    """Issue #52: Wah'Norr is reconnected to K'Ontrr and Ni'Mrrod (reverses B.78).
 
     We build the relevant Vossk subgraph using the exact seed-file adjacency
-    data and verify that:
-    1. Wah'Norr has no neighbours (empty adjacency list).
-    2. No other system can reach Wah'Norr.
-    3. Wah'Norr cannot reach any other system.
-    4. K'Ontrr does NOT list Wah'Norr as a neighbour.
-    5. Ni'Mrrod does NOT list Wah'Norr as a neighbour.
+    data and verify that the edges are bidirectional and routable:
+    1. Wah'Norr lists K'Ontrr and Ni'Mrrod as neighbours.
+    2. K'Ontrr and Ni'Mrrod list Wah'Norr back.
+    3. Wah'Norr can reach, and be reached from, both.
     """
 
     @staticmethod
@@ -685,88 +683,42 @@ class TestB78WahNorrIsolation:
         """Build the relevant Vossk subgraph from seed-file data."""
         return _build_graph_service(
             {
-                # Wah'Norr — isolated after B.78 fix
-                "Wah'Norr": ((1155, 717), []),
-                # K'Ontrr neighbours (post-B.78: no Wah'Norr)
-                "K'Ontrr": ((965, 1010), ["S'Kolptorr", "Ni'Mrrod", "Me'Enkk"]),
-                # Ni'Mrrod neighbours (post-B.78: no Wah'Norr)
-                "Ni'Mrrod": ((1124, 1082), ["K'Ontrr", "Me'Enkk"]),
+                # Wah'Norr — reconnected per issue #52
+                "Wah'Norr": ((1155, 717), ["K'Ontrr", "Ni'Mrrod"]),
+                "K'Ontrr": ((965, 1010), ["S'Kolptorr", "Ni'Mrrod", "Me'Enkk", "Wah'Norr"]),
+                "Ni'Mrrod": ((1124, 1082), ["K'Ontrr", "Me'Enkk", "Wah'Norr"]),
                 # Supporting nodes to make the graph connected
                 "S'Kolptorr": ((800, 900), ["K'Ontrr"]),
                 "Me'Enkk": ((1000, 1150), ["K'Ontrr", "Ni'Mrrod"]),
             }
         )
 
-    def test_wahnorr_has_no_neighbours(self) -> None:
-        """B.78: Wah'Norr must have zero neighbours in the graph."""
+    def test_wahnorr_neighbours(self) -> None:
+        """Wah'Norr must list K'Ontrr and Ni'Mrrod as neighbours."""
         graph = self._vossk_subgraph()
         neighbours = graph.get_neighbours("Wah'Norr")
-        assert neighbours == [], f"Wah'Norr should have no neighbours, got: {neighbours}"
+        assert set(neighbours) == {"K'Ontrr", "Ni'Mrrod"}, f"got: {neighbours}"
 
-    def test_wahnorr_unreachable_from_kontrr(self) -> None:
-        """B.78: No path should exist from K'Ontrr to Wah'Norr."""
-        graph = self._vossk_subgraph()
-        svc = PathfindingService(graph)
-        result = svc.make_route("K'Ontrr", "Wah'Norr")
-        assert result is PathfindingError.NO_ROUTE_FOUND, (
-            f"B.78: K'Ontrr → Wah'Norr should be NO_ROUTE_FOUND, got {result!r}"
-        )
+    def test_kontrr_neighbours_include_wahnorr(self) -> None:
+        """K'Ontrr's neighbour list must contain Wah'Norr (bidirectional edge)."""
+        assert "Wah'Norr" in self._vossk_subgraph().get_neighbours("K'Ontrr")
 
-    def test_wahnorr_unreachable_from_nimrrod(self) -> None:
-        """B.78: No path should exist from Ni'Mrrod to Wah'Norr."""
-        graph = self._vossk_subgraph()
-        svc = PathfindingService(graph)
-        result = svc.make_route("Ni'Mrrod", "Wah'Norr")
-        assert result is PathfindingError.NO_ROUTE_FOUND, (
-            f"B.78: Ni'Mrrod → Wah'Norr should be NO_ROUTE_FOUND, got {result!r}"
-        )
+    def test_nimrrod_neighbours_include_wahnorr(self) -> None:
+        """Ni'Mrrod's neighbour list must contain Wah'Norr (bidirectional edge)."""
+        assert "Wah'Norr" in self._vossk_subgraph().get_neighbours("Ni'Mrrod")
 
-    def test_wahnorr_cannot_reach_kontrr(self) -> None:
-        """B.78: No path should exist from Wah'Norr to K'Ontrr."""
+    def test_kontrr_reaches_wahnorr(self) -> None:
+        """K'Ontrr → Wah'Norr is a 1-hop route."""
         graph = self._vossk_subgraph()
-        svc = PathfindingService(graph)
-        result = svc.make_route("Wah'Norr", "K'Ontrr")
-        assert result is PathfindingError.NO_ROUTE_FOUND, (
-            f"B.78: Wah'Norr → K'Ontrr should be NO_ROUTE_FOUND, got {result!r}"
-        )
+        result = PathfindingService(graph).make_route("K'Ontrr", "Wah'Norr")
+        assert result == ["K'Ontrr", "Wah'Norr"], f"got {result!r}"
+        _assert_route_valid(result, graph)
 
-    def test_wahnorr_cannot_reach_nimrrod(self) -> None:
-        """B.78: No path should exist from Wah'Norr to Ni'Mrrod."""
+    def test_wahnorr_reaches_nimrrod(self) -> None:
+        """Wah'Norr → Ni'Mrrod is a 1-hop route."""
         graph = self._vossk_subgraph()
-        svc = PathfindingService(graph)
-        result = svc.make_route("Wah'Norr", "Ni'Mrrod")
-        assert result is PathfindingError.NO_ROUTE_FOUND, (
-            f"B.78: Wah'Norr → Ni'Mrrod should be NO_ROUTE_FOUND, got {result!r}"
-        )
-
-    def test_wahnorr_self_route_only(self) -> None:
-        """Wah'Norr → Wah'Norr is trivially valid (same system)."""
-        graph = self._vossk_subgraph()
-        svc = PathfindingService(graph)
-        result = svc.make_route("Wah'Norr", "Wah'Norr")
-        assert result == ["Wah'Norr"]
-
-    def test_kontrr_neighbours_do_not_include_wahnorr(self) -> None:
-        """B.78: K'Ontrr's neighbour list must NOT contain Wah'Norr."""
-        graph = self._vossk_subgraph()
-        neighbours = graph.get_neighbours("K'Ontrr")
-        assert "Wah'Norr" not in neighbours, f"B.78: K'Ontrr neighbours should not include Wah'Norr; got {neighbours}"
-
-    def test_nimrrod_neighbours_do_not_include_wahnorr(self) -> None:
-        """B.78: Ni'Mrrod's neighbour list must NOT contain Wah'Norr."""
-        graph = self._vossk_subgraph()
-        neighbours = graph.get_neighbours("Ni'Mrrod")
-        assert "Wah'Norr" not in neighbours, f"B.78: Ni'Mrrod neighbours should not include Wah'Norr; got {neighbours}"
-
-    def test_kontrr_to_nimrrod_still_connected(self) -> None:
-        """B.78: After isolating Wah'Norr, K'Ontrr → Ni'Mrrod must still be reachable."""
-        graph = self._vossk_subgraph()
-        svc = PathfindingService(graph)
-        result = svc.make_route("K'Ontrr", "Ni'Mrrod")
-        assert isinstance(result, list), f"K'Ontrr → Ni'Mrrod should be reachable, got {result!r}"
-        assert result[0] == "K'Ontrr"
-        assert result[-1] == "Ni'Mrrod"
-        assert len(result) == 2, f"K'Ontrr → Ni'Mrrod should be 1 hop, got {len(result)}: {result}"
+        result = PathfindingService(graph).make_route("Wah'Norr", "Ni'Mrrod")
+        assert result == ["Wah'Norr", "Ni'Mrrod"], f"got {result!r}"
         _assert_route_valid(result, graph)
 
 

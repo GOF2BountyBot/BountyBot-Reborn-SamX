@@ -8,7 +8,10 @@
     ],
     "faction": "vossk",
     "name": "Wah'Norr",
-    "neighbours": [],
+    "neighbours": [
+        "K'Ontrr",
+        "Ni'Mrrod"
+    ],
     "security": 3,
     "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Wah'Norr"
 }

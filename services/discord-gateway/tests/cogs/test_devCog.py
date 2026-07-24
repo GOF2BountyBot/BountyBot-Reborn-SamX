@@ -114,6 +114,10 @@ def mock_dev_cog(mock_bot, monkeypatch):
     import cogs.devCog as _dev_module
 
     cog = _dev_module.DevCog(mock_bot)
+    # Neutralize the post-load cache reload by default so load_data tests stay focused
+    # on load behavior; the wiring (that load_data awaits it) is covered by a dedicated
+    # test, and _reload_all_caches itself is tested directly.
+    cog._followup_reload = AsyncMock()
 
     # Bypass the super-admin gate for all tests in this file that don't
     # explicitly test the gate.  Tests that need the gate patched for
@@ -318,8 +322,74 @@ class TestLoadDataCommand:
         assert call_args[0].startswith("❌ "), f"expected the error branch, got: {call_args[0]!r}"
         assert call_kwargs.get("ephemeral") is True
 
+    def test_load_data_success_triggers_cache_reload(self, mock_dev_cog, request):
+        """A successful load must ALWAYS run the post-load cache reload (issue: stale caches)."""
+        _with_real_client(mock_dev_cog, request)
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
 
-class TestReloadAutocompleteCommand:
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_API_BASE}/data/ships").mock(return_value=httpx.Response(200, json=["a", "b"]))
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
+
+        mock_dev_cog._followup_reload.assert_awaited_once_with(interaction)
+
+    def test_load_data_api_error_skips_cache_reload(self, mock_dev_cog, request):
+        """A failed load must NOT run the cache reload (nothing changed to invalidate)."""
+        _with_real_client(mock_dev_cog, request)
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{_API_BASE}/data/ships").mock(return_value=httpx.Response(500, json={"detail": "x"}))
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
+
+        mock_dev_cog._followup_reload.assert_not_awaited()
+
+
+class TestReloadAllCaches:
+    """_reload_all_caches must refresh STATIC game-data caches, not just per-guild dynamic ones."""
+
+    def test_rebuilds_bot_core_system_graph_and_clears_static_caches(self, mock_dev_cog, request, monkeypatch):
+        """It POSTs /systems/reload-graph (bot-core graph rebuild) and clears static autocomplete caches."""
+        _with_real_client(mock_dev_cog, request)
+        # No guilds → the per-guild warm waves are empty no-ops; keep the test focused on statics.
+        mock_dev_cog.bot.guilds = []
+
+        # A static autocomplete cache we can assert was cleared.
+        systems_cache = MagicMock()
+        bounty_cog = MagicMock()
+        bounty_cog._systems_cache = systems_cache
+        mock_dev_cog.bot.get_cog = MagicMock(return_value=bounty_cog)
+
+        # _reload_all_caches lazily imports utils.autocomplete_warm, which pulls in
+        # bot-core-only deps not present in the gateway test env — inject a stub so the
+        # import resolves to no-op warmers (guilds=[] means they're never called anyway).
+        import sys
+        import types as _types
+
+        fake_warm = _types.ModuleType("utils.autocomplete_warm")
+        for fn in (
+            "refresh_jobs_cache",
+            "warm_guild_bounty_cache",
+            "warm_guild_duel_caches",
+            "warm_guild_players",
+            "warm_guild_shop_cache",
+        ):
+            setattr(fake_warm, fn, AsyncMock())
+        monkeypatch.setitem(sys.modules, "utils.autocomplete_warm", fake_warm)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            graph_route = mock_router.post(f"{_API_BASE}/systems/reload-graph").mock(
+                return_value=httpx.Response(200, json={"status": "reloaded", "systems": 34})
+            )
+            lines = asyncio.run(mock_dev_cog._reload_all_caches())
+
+        assert graph_route.called, "must trigger the bot-core system-graph rebuild"
+        systems_cache.clear.assert_called()  # static autocomplete catalog cleared
+        assert any("System graph rebuilt: ✅" in ln and "34" in ln for ln in lines), lines
     """Tests for reload_autocomplete command."""
 
     def test_reload_autocomplete_success(self, mock_dev_cog):

@@ -69,6 +69,27 @@ def _get_map_renderer(request: Request):
     return renderer
 
 
+@router.post("/reload-graph")
+async def reload_system_graph(
+    db: AsyncSession = Depends(get_db),
+    graph_service=Depends(_get_system_graph),
+) -> dict:
+    """Reset and rebuild the in-memory system graph from current DB rows.
+
+    The graph is a load-once cache built at startup, so a game-data reload
+    (e.g. /load_data system) updates the DB but leaves this cache stale —
+    routing then ignores the new adjacency until a restart. This forces a
+    rebuild. The rendered-route PNG cache is also dropped, since cached maps
+    go stale when system coordinates or edges change.
+    """
+    graph_service.reset()
+    await graph_service.load_graph(db)
+    _route_map_cache.clear()
+    count = len(graph_service.get_all_systems())
+    flogger.info(f"System graph reloaded from DB: {count} systems; route-map cache cleared")
+    return {"status": "reloaded", "systems": count}
+
+
 @router.get("/route")
 async def find_route(
     start: str,

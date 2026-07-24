@@ -119,6 +119,8 @@ class DevCog(commands.Cog):
                 body = body[:max_len] + "... (truncated)"
 
             await interaction.followup.send(f"{header}\n```{body}```")
+            # A data load mutates DB game data; ALWAYS refresh caches so nothing is stale.
+            await self._followup_reload(interaction)
             return
 
         # single-category path
@@ -130,6 +132,8 @@ class DevCog(commands.Cog):
             await interaction.followup.send(
                 f"✅ Data load complete for **{category}**: {count} file{'s' if count != 1 else ''} processed."
             )
+            # A data load mutates DB game data; ALWAYS refresh caches so nothing is stale.
+            await self._followup_reload(interaction)
         except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -245,7 +249,9 @@ class DevCog(commands.Cog):
 
         Unlike /reload_autocomplete (which clears and leaves caches empty for lazy-fill),
         this command actively re-populates every cache before responding, so all data is
-        hot and current the moment the command completes.
+        hot and current the moment the command completes. Covers per-guild dynamic caches
+        AND static game-data caches (systems/items/ships catalogs + the bot-core system
+        graph) — see _reload_all_caches.
 
         Gated to DEVELOPERS env var only.
         """
@@ -256,6 +262,18 @@ class DevCog(commands.Cog):
             )
             return
 
+        lines = await self._reload_all_caches()
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+    async def _reload_all_caches(self) -> list[str]:
+        """Clear + re-warm every cache: static game data AND per-guild dynamic state.
+
+        Static game-data caches (systems/items/ships autocomplete catalogs and the
+        bot-core system graph) mirror DB rows that /load_data mutates, so they go
+        stale after a reload. This rebuilds them alongside the dynamic per-guild
+        caches, which is why /load_data runs it on completion — a data reload never
+        needs a bot restart. Returns human-readable status lines.
+        """
         from utils.autocomplete_warm import (
             refresh_jobs_cache,
             warm_guild_bounty_cache,
@@ -267,13 +285,38 @@ class DevCog(commands.Cog):
         t_start = time.monotonic()
         guilds = self.bot.guilds
         guild_count = len(guilds)
-        flogger.info(f"/force_reload_caches: starting full cache reload across {guild_count} guild(s)")
+        flogger.info(f"cache reload: starting full reload across {guild_count} guild(s)")
 
-        # Step 1 — clear everything
+        # Step 0 — STATIC game-data caches. Clear the static autocomplete catalogs
+        # (they self-heal lazily on the next keystroke) and force the bot-core system
+        # graph — a load-once cache — to rebuild from the freshly-loaded DB rows.
+        for cog_name, attr in [
+            ("BountyCog", "_systems_cache"),
+            ("AdminCog", "_item_catalog"),
+            ("AdminCog", "_ship_catalog"),
+            ("AboutCog", "_categories_cache"),
+            ("AboutCog", "_objects_cache"),
+            ("SkinsCog", "_ship_skins"),
+        ]:
+            cog = self.bot.get_cog(cog_name)
+            if cog and hasattr(cog, attr):
+                with contextlib.suppress(Exception):
+                    getattr(cog, attr).clear()
+
+        try:
+            resp = await self.http_client.post(f"{api_base}/systems/reload-graph", timeout=20)
+            resp.raise_for_status()
+            n = (resp.json() or {}).get("systems", "?")
+            graph_line = f"System graph rebuilt: ✅ ({n} systems)"
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"cache reload: system-graph rebuild failed: {e}")
+            graph_line = "System graph rebuilt: ⚠️ failed"
+
+        # Step 1 — clear dynamic shared + per-cog caches
         try:
             autocomplete_state.clear_all()
         except Exception:  # pylint: disable=broad-exception-caught
-            flogger.warning("/force_reload_caches: clear_all() failed (non-fatal)")
+            flogger.warning("cache reload: autocomplete_state.clear_all() failed (non-fatal)")
 
         for cog_name, attr in [
             ("ShopCog", "_shop_cache"),
@@ -322,13 +365,28 @@ class DevCog(commands.Cog):
         lines = [
             f"✅ Full cache reload complete in **{elapsed:.1f}s**",
             f"Guilds: **{guild_count}**",
+            graph_line,
+            "Static autocomplete caches (systems/items/ships): ✅ cleared",
             f"Shop + bounty warm: {'✅' if not wave0_errors else f'⚠️ {wave0_errors} error(s)'}",
             f"Player + loadout warm: {'✅' if not wave1_errors else f'⚠️ {wave1_errors} error(s)'}",
             f"Duel cache warm: {'✅' if not wave1b_errors else f'⚠️ {wave1b_errors} error(s)'}",
             f"Job cache: {'✅' if jobs_ok else '⚠️ failed'}",
         ]
-        flogger.info(f"/force_reload_caches: done in {elapsed:.1f}s — {guild_count} guild(s)")
-        await interaction.followup.send("\n".join(lines), ephemeral=True)
+        flogger.info(f"cache reload: done in {elapsed:.1f}s — {guild_count} guild(s)")
+        return lines
+
+    async def _followup_reload(self, interaction: discord.Interaction) -> None:
+        """Run a full cache reload after a data load and report it as a follow-up.
+
+        Failures are surfaced but never mask the (already-sent) load-success reply.
+        """
+        try:
+            lines = await self._reload_all_caches()
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"load_data: post-load cache reload failed: {e}")
+            await interaction.followup.send(f"⚠️ Data loaded, but cache reload failed: {e}", ephemeral=True)
+            return
+        await interaction.followup.send("🔄 **Cache refresh after load**\n" + "\n".join(lines), ephemeral=True)
 
     @force_reload_caches.error
     async def force_reload_caches_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):

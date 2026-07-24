@@ -201,3 +201,26 @@ class TestFindRoute:
         assert data["route"] == ["A", "B", "C", "D", "E"]
         assert data["hops"] == len(data["route"]) - 1
         assert data["hops"] == 4
+
+
+class TestReloadGraph:
+    """POST /api/v1/systems/reload-graph — force the load-once graph cache to rebuild."""
+
+    def test_reload_resets_reloads_and_clears_route_cache(self, client, test_app):
+        """Resets the graph, reloads from DB, drops the rendered-route cache, reports count."""
+        from api.routers import systems as systems_mod
+
+        graph = test_app.state.system_graph
+        graph.reset = MagicMock()
+        graph.load_graph = AsyncMock()
+        graph.get_all_systems = MagicMock(return_value=list(_SYSTEMS.values()))
+        # Seed the route-map cache so we can prove it is cleared.
+        systems_mod._route_map_cache[("A", "E")] = b"stale-png"
+
+        response = client.post("/api/v1/systems/reload-graph")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "reloaded", "systems": len(_SYSTEMS)}
+        graph.reset.assert_called_once()
+        graph.load_graph.assert_awaited_once()
+        assert len(systems_mod._route_map_cache) == 0, "rendered-route cache must be dropped on reload"

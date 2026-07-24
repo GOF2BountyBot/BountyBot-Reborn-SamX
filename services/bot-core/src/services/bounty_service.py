@@ -73,6 +73,22 @@ async def _resolve_combat_label(db, player, user_repo=None) -> str:
     return f"Player {getattr(player, 'id', '?')}"
 
 
+def _bronze_combat_bonus_fraction(prestige_count: int) -> float:
+    """Prestige-scaled fraction of the base reward paid as the Bronze combat bonus.
+
+    fraction = min(CAP, BASE + PER_PRESTIGE × prestige_count)  (issue #51)
+    Defaults: 40% at 0★, +10%/★, capped at 100% (reached at 6★).
+
+    Module-level (not a method) so the /bounties/combat-bonus router can call it
+    without routing through a possibly-mocked service instance.
+    """
+    gc = GameConstants
+    return min(
+        gc.BRONZE_COMBAT_BONUS_CAP,
+        gc.BRONZE_COMBAT_BONUS_BASE_MULT + gc.BRONZE_COMBAT_BONUS_PER_PRESTIGE * max(0, prestige_count),
+    )
+
+
 def _extract_weapon_combat_fields(item) -> dict:
     """Extract combat fields from a weapon ORM object's extra_atts.
 
@@ -485,7 +501,7 @@ class CheckResponse:  # pylint: disable=too-many-instance-attributes
     combat_result: dict | None = None  # FightResults serialized as dict
     # Bronze-specific fields
     bonus_won: bool = False  # True if bronze player won the optional combat bonus
-    total_reward: int | None = None  # Final reward earned (may be 2x for bronze win)
+    total_reward: int | None = None  # Final reward earned (base + prestige-scaled bonus for bronze win)
     criminal_ship: dict | None = None  # Criminal ship data; returned for bronze so cog can offer bonus
     # Payout breakdown (populated on CORRECT/capture outcomes so the cog can render the full embed)
     reward_per_sys: int | None = None
@@ -1239,17 +1255,16 @@ class BountyService:
         flogger.info(f"Bounty {bounty.id}: checks reset after combat loss. New answer: {bounty.answer!r}")
 
     async def _award_combat_bonus(self, db: AsyncSession, player_id: int, bonus_credits: int) -> None:
-        """Award a combat bonus to a bronze-division player.
+        """Persist an already-computed Bronze combat bonus to a player.
 
-        Called when a Bronze player wins the optional post-capture combat.
-        Awards ``bonus_credits`` (equal to the full winner payout) to the player,
-        effectively doubling their total payout.  Also awards XP proportional to
-        the bonus credits via ``BOUNTY_REWARD_TO_XP_GAIN_MULT``.
+        ``bonus_credits`` is the final (prestige-scaled — issue #51) bonus the
+        caller decided on; this helper just applies it plus proportional XP via
+        ``BOUNTY_REWARD_TO_XP_GAIN_MULT``, then commits.
 
         Args:
             db:            Async database session.
             player_id:     ID of the player to award.
-            bonus_credits: Credits to add (should equal the full winner payout).
+            bonus_credits: Final bonus credits to add.
         """
         player = await self.player_repo.get_by_id(db, player_id)
         if player is None:
@@ -1265,7 +1280,7 @@ class BountyService:
         # call site invokes _apply_loot_on_win immediately after this returns; the
         # loot routine's first get_by_id_for_update would otherwise AUTOFLUSH these
         # pending credit/XP deltas into its transaction, and a loot-write failure's
-        # rollback would silently undo the 2x combat bonus + XP (§7.6 / §5.5 C-3b).
+        # rollback would silently undo the combat bonus + XP (§7.6 / §5.5 C-3b).
         # Committing here guarantees the loot txn has nothing of ours left pending,
         # so its rollback can only ever undo the loot write itself.
         await db.flush()
@@ -2279,12 +2294,13 @@ class BountyService:
                     )
                     # P2-T8b: player is always combatant1 (loadout1 / side-1).
                     # winner_side==1 → player won; winner_side==2 → criminal won.
-                    # Stalemate counts as a loss — no 2× bonus (spec §9 PvC draw semantics).
+                    # Stalemate counts as a loss — no combat bonus (spec §9 PvC draw semantics).
                     combat_player_won = fight_results.winner_side == 1
                     if combat_player_won:
                         bonus_won = True
-                        total_reward = winner_reward * 2
-                        await self._award_combat_bonus(db, player_id, winner_reward)
+                        bonus_credits = int(winner_reward * _bronze_combat_bonus_fraction(player.prestige_count))
+                        await self._award_combat_bonus(db, player_id, bonus_credits)
+                        total_reward = winner_reward + bonus_credits
                         # T5 LOOT HOOK (Bronze) — fires ONLY on the bonus-fight WIN,
                         # never on the bare auto-capture and never on a loss/draw/
                         # no-ship (this block is inside `if not _no_ship:` and gated
@@ -2299,7 +2315,7 @@ class BountyService:
                             cfg=cfg,
                         )
 
-                bonus_msg = " (2x combat bonus!)" if bonus_won else ""
+                bonus_msg = " (combat bonus!)" if bonus_won else ""
                 return (
                     CheckResponse(
                         result=CheckResult.CORRECT,

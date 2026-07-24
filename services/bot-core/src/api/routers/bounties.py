@@ -291,14 +291,15 @@ async def combat_bonus(
 ):
     """Run optional post-capture combat for a Bronze-division player.
 
-    Called when a Bronze player wants to attempt the 2x bonus duel after
+    Called when a Bronze player wants to attempt the bonus duel after
     their bounty was auto-captured. The criminal ship data is provided by
     the caller (from the capture response's ``criminal_ship`` field).
 
-    Win → awards ``base_reward`` additional credits (total becomes 2x).
+    Win → awards a prestige-scaled fraction of ``base_reward`` as bonus credits
+    (issue #51: 40% at 0★ up to 100% at 6★).
     Lose → no penalty (player keeps the base reward already awarded).
     """
-    from services.bounty_service import _serialize_fight_results
+    from services.bounty_service import _bronze_combat_bonus_fraction, _serialize_fight_results
     from services.combat_service import CombatService
     from services.game_constants import GameConstants, resolve_constant
     from services.loadout_builder import LoadoutBuilder
@@ -347,17 +348,17 @@ async def combat_bonus(
 
             # P2-T8b: player is always combatant1 (loadout1 / side-1).
             # winner_side==1 → player won; winner_side==2 → criminal won.
-            # Stalemate counts as a loss — no 2× bonus (spec §9 PvC draw semantics).
+            # Stalemate counts as a loss — no combat bonus (spec §9 PvC draw semantics).
             won = fight_results.winner_side == 1
             bonus_credits = 0
 
             if won:
-                await service._award_combat_bonus(db, request.player_id, request.base_reward)
-                bonus_credits = request.base_reward
+                bonus_credits = int(request.base_reward * _bronze_combat_bonus_fraction(player.prestige_count))
+                await service._award_combat_bonus(db, request.player_id, bonus_credits)
 
             combat_dict = _serialize_fight_results(fight_results) or {}
             if won:
-                msg = f"Combat victory! +{bonus_credits:,}cr bonus (2x total)!"
+                msg = f"Combat victory! +{bonus_credits:,}cr combat bonus!"
             elif fight_results.is_stalemate:
                 msg = "Stalemate — no bonus. You keep the base reward."
             else:

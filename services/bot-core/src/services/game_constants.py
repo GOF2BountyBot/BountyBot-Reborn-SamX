@@ -114,6 +114,18 @@ class GameConstants:
     }
 
     # ------------------------------------------------------------------
+    # Bronze combat-bonus multiplier (issue #51)
+    # The optional post-capture duel a Bronze player can attempt awards a bonus
+    # equal to (winner_reward × fraction) on a win, where the fraction scales
+    # with the player's prestige_count:
+    #     fraction = min(CAP, BASE + PER_PRESTIGE × prestige_count)
+    # Defaults give 40% at 0★, +10%/★, capped at 100% (reached at 6★).
+    # Env overrides: BOUNTYBOT_BRONZE_COMBAT_BONUS_{BASE_MULT,PER_PRESTIGE,CAP}.
+    BRONZE_COMBAT_BONUS_BASE_MULT: float = 0.40
+    BRONZE_COMBAT_BONUS_PER_PRESTIGE: float = 0.10
+    BRONZE_COMBAT_BONUS_CAP: float = 1.00
+
+    # ------------------------------------------------------------------
     # Ship Price Thresholds (10 entries; index 0 == TL1)
     # ------------------------------------------------------------------
 
@@ -700,6 +712,11 @@ class GameConstants:
 
         # Bounty winner reserve factor
         cls.BOUNTY_WINNER_RESERVE_FACTOR = _track_float("BOUNTY_WINNER_RESERVE_FACTOR", 0.25)
+
+        # Bronze combat-bonus multiplier (issue #51)
+        cls.BRONZE_COMBAT_BONUS_BASE_MULT = _track_float("BRONZE_COMBAT_BONUS_BASE_MULT", 0.40)
+        cls.BRONZE_COMBAT_BONUS_PER_PRESTIGE = _track_float("BRONZE_COMBAT_BONUS_PER_PRESTIGE", 0.10)
+        cls.BRONZE_COMBAT_BONUS_CAP = _track_float("BRONZE_COMBAT_BONUS_CAP", 1.00)
 
         def _track_int_list(key: str, default: list[int]) -> list[int]:
             val = cls._env_int_list(key, default)

@@ -1510,10 +1510,12 @@ class TestCombatBonusEndpoint:
         mock_combat.fight_ships = AsyncMock(return_value=mock_fight)
         mock_combat_cls.return_value = mock_combat
 
-        # Mock player in DB
+        # Mock player in DB. prestige_count=6 → full 100% bonus (issue #51), so the
+        # awarded bonus equals base_reward and the existing assertions hold.
         mock_player = MagicMock()
         mock_player.credits = 1000
         mock_player.lifetime_credits = 5000
+        mock_player.prestige_count = 6
         mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=mock_player)
 
         response = combat_client.post(
@@ -1529,7 +1531,7 @@ class TestCombatBonusEndpoint:
         data = response.json()
         assert data["won"] is True
         assert data["bonus_credits"] == 500
-        assert "2x" in data["message"] or "bonus" in data["message"].lower()
+        assert "bonus" in data["message"].lower()
         assert "combat_result" in data
 
     @patch("api.routers.bounties.get_db_session")
@@ -1818,6 +1820,7 @@ class TestCombatBonusAdversarial:
         mock_player = MagicMock()
         mock_player.credits = 1000
         mock_player.lifetime_credits = 5000
+        mock_player.prestige_count = 0
         mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=mock_player)
         mock_bounty_service._award_combat_bonus = AsyncMock()
 
@@ -1842,10 +1845,11 @@ class TestCombatBonusAdversarial:
     def test_combat_bonus_win_calls_award_combat_bonus(
         self, mock_combat_cls, mock_lb_cls, mock_get_db, adv_client, mock_bounty_service
     ):
-        """B.58: On a win, _award_combat_bonus is called with (db, player_id, base_reward).
+        """B.58 / issue #51: On a win, _award_combat_bonus is called with
+        (db, player_id, prestige_scaled_bonus).
 
-        Verifies the delegation to BountyService._award_combat_bonus introduced
-        in B.58, ensuring the correct arguments are forwarded.
+        Verifies the delegation to BountyService._award_combat_bonus and that the
+        router applies the prestige-scaled fraction before forwarding.
         """
         from types import SimpleNamespace
 
@@ -1874,9 +1878,11 @@ class TestCombatBonusAdversarial:
         mock_combat.fight_ships = AsyncMock(return_value=mock_fight)
         mock_combat_cls.return_value = mock_combat
 
+        # prestige_count=0 → 40% bonus (issue #51): 750 × 0.40 = 300 forwarded to _award_combat_bonus.
         mock_player = MagicMock()
         mock_player.credits = 1000
         mock_player.lifetime_credits = 5000
+        mock_player.prestige_count = 0
         mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=mock_player)
         mock_bounty_service._award_combat_bonus = AsyncMock()
 
@@ -1892,11 +1898,11 @@ class TestCombatBonusAdversarial:
         assert response.status_code == 200
         data = response.json()
         assert data["won"] is True
-        assert data["bonus_credits"] == 750
+        assert data["bonus_credits"] == 300
 
-        # Verify _award_combat_bonus was called with player_id=42 and base_reward=750
+        # Verify _award_combat_bonus was called with player_id=42 and the prestige-scaled bonus (300).
         mock_bounty_service._award_combat_bonus.assert_awaited_once()
         call_args = mock_bounty_service._award_combat_bonus.call_args
-        # Positional: (db, player_id, base_reward) — skip db (arg 0), check player_id and base_reward
+        # Positional: (db, player_id, bonus_credits) — skip db (arg 0), check player_id and scaled bonus.
         assert call_args.args[1] == 42, f"Expected player_id=42, got {call_args.args[1]}"
-        assert call_args.args[2] == 750, f"Expected base_reward=750, got {call_args.args[2]}"
+        assert call_args.args[2] == 300, f"Expected scaled bonus=300, got {call_args.args[2]}"

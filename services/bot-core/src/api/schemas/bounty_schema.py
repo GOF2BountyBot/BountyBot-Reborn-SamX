@@ -218,7 +218,7 @@ class BountyCheckOutcome(BaseModel):
     combat_won: bool | None = None  # True/False when combat occurred, None otherwise
     # Bronze-specific fields
     bonus_won: bool = False  # True if bronze player won the optional combat bonus
-    total_reward: int | None = None  # Final reward (may be 2x for bronze combat win)
+    total_reward: int | None = None  # Final reward (base + prestige-scaled bonus for bronze combat win)
     criminal_ship: dict | None = None  # Criminal ship data; returned for bronze so cog can offer bonus duel
     # Payout breakdown (populated on capture outcomes so the cog can render the full embed)
     reward_per_sys: int | None = None
@@ -282,7 +282,7 @@ class CombatBonusRequest(BaseModel):
     """Request body for POST /bounties/combat-bonus (Bronze division only)."""
 
     player_id: int
-    base_reward: int = Field(ge=0, description="Base bounty reward to double on combat win")
+    base_reward: int = Field(ge=0, description="Base bounty reward the prestige-scaled combat bonus is computed from")
     criminal_ship: dict  # The criminal's ship/loadout data to fight against
 
 
@@ -290,7 +290,7 @@ class CombatBonusResponse(BaseModel):
     """Response for POST /bounties/combat-bonus."""
 
     won: bool
-    bonus_credits: int  # 0 if lost, base_reward if won (total payout becomes 2x)
+    bonus_credits: int  # 0 if lost, else prestige-scaled bonus added to the base reward (issue #51)
     combat_result: dict
     message: str
 

@@ -1567,6 +1567,7 @@ def _make_player(
     classic_mode: bool = False,
     bounty_cooldown_end=None,
     active_ship=None,
+    prestige_count: int = 0,
 ) -> SimpleNamespace:
     """Return a Player-like SimpleNamespace.
 
@@ -1580,6 +1581,7 @@ def _make_player(
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
         active_ship=active_ship,
+        prestige_count=prestige_count,  # issue #51: bronze combat-bonus scaling
     )
 
 
@@ -3668,6 +3670,7 @@ def _make_player_with_tier(
     classic_mode: bool = False,
     bounty_cooldown_end=None,
     active_ship=None,
+    prestige_count: int = 0,
 ) -> SimpleNamespace:
     """Return a Player-like SimpleNamespace with an active_ship but no active_ship_id.
 
@@ -3681,6 +3684,7 @@ def _make_player_with_tier(
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
         active_ship=active_ship,
+        prestige_count=prestige_count,  # issue #51: bronze combat-bonus scaling
     )
 
 
@@ -3718,7 +3722,7 @@ async def test_check_bounty_bronze_auto_capture_returns_correct(service, mock_db
 
 @pytest.mark.asyncio
 async def test_check_bounty_bronze_with_ship_bonus_won(service, mock_db):
-    """Bronze player with ship wins combat → bonus_won=True, total_reward=2x base."""
+    """Bronze player with ship wins combat → bonus_won=True, total_reward = base + prestige-scaled bonus."""
     from services.bounty_service import RewardInfo
     from services.combat_models import ShipLoadout
 
@@ -3763,10 +3767,11 @@ async def test_check_bounty_bronze_with_ship_bonus_won(service, mock_db):
     assert result.result == CheckResult.CORRECT
     assert result.combat_won is True
     assert result.bonus_won is True
-    assert result.total_reward == 1000  # 500 * 2
+    # issue #51: bonus is prestige-scaled. prestige_count=0 → 40% of 500 = 200; total = 500 + 200.
+    assert result.total_reward == 700
     assert result.reward == 500
-    # Bonus was awarded
-    service._award_combat_bonus.assert_awaited_once_with(mock_db, 1, 500)
+    # Bonus was awarded (prestige-scaled amount, not the full base)
+    service._award_combat_bonus.assert_awaited_once_with(mock_db, 1, 200)
 
 
 @pytest.mark.asyncio

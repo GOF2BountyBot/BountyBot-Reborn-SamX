@@ -2597,8 +2597,8 @@ class TestBuildCheckEmbedNewResultTypes:
         )
         assert embed.color.value == TIER_COLORS["bronze"]
 
-    def test_captured_bonus_won_shows_2x_reward(self):
-        """'captured' with bonus_won=True should show total_reward with '2×' label."""
+    def test_captured_bonus_won_shows_combat_bonus_label(self):
+        """'captured' with bonus_won=True should show total_reward with the 'combat bonus' label."""
         embed = self._call(
             {
                 "result": "captured",
@@ -2611,7 +2611,7 @@ class TestBuildCheckEmbedNewResultTypes:
         )
         payout_field = next(f for f in embed.fields if "Payout" in f.name or "Reward" in f.name)
         assert "1,000" in payout_field.value
-        assert "2×" in payout_field.value
+        assert "combat bonus" in payout_field.value
 
     def test_captured_no_bonus_shows_base_reward_only(self):
         """'captured' with bonus_won=False should show reward without 2× label."""
@@ -2950,8 +2950,8 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
         assert "1,500" in payout_field.value
         assert "2×" not in payout_field.value
 
-    def test_correct_combat_won_true_with_bonus_shows_doubled_reward(self):
-        """result='correct' + combat_won=True + bonus_won=True → shows total_reward with 2× label."""
+    def test_correct_combat_won_true_with_bonus_shows_combat_bonus_label(self):
+        """result='correct' + combat_won=True + bonus_won=True → shows total_reward with 'combat bonus' label."""
         embed = self._call(
             {
                 "result": "correct",
@@ -2964,7 +2964,7 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
         )
         payout_field = next(f for f in embed.fields if "Payout" in f.name or "Reward" in f.name)
         assert "1,000" in payout_field.value
-        assert "2×" in payout_field.value
+        assert "combat bonus" in payout_field.value
 
     def test_correct_combat_won_true_with_combat_result_shows_summary(self):
         """result='correct' + combat_won=True + combat_result → shows Combat Summary field."""
@@ -4084,7 +4084,7 @@ class TestSummarizeOutcomeLine:
         self.cog = mock_bounty_cog
 
     def test_correct_capture_with_bonus(self):
-        """correct + bonus_won=True returns '2× combat bonus!' label."""
+        """correct + bonus_won=True returns 'combat bonus!' label."""
         outcome = {
             "result": "correct",
             "criminal_name": "Pirate Bob",
@@ -4095,7 +4095,7 @@ class TestSummarizeOutcomeLine:
         }
         title, value = self.cog._summarize_outcome_line(outcome)
         assert "Pirate Bob" in title
-        assert "2× combat bonus" in value
+        assert "combat bonus" in value
 
     def test_correct_capture_without_bonus(self):
         """correct + combat_won=True + no bonus returns reward line without 2×."""
@@ -4928,8 +4928,8 @@ class TestBuildCaptureEmbedRedesign:
         has_payout = any("Payout" in n or "Reward" in n for n in field_names)
         assert has_payout, f"Expected fallback payout field, got: {field_names}"
 
-    def test_capture_embed_empty_breakdown_with_bonus_shows_2x(self):
-        """Fallback with bonus_won=True must still show 2× label."""
+    def test_capture_embed_empty_breakdown_with_bonus_shows_combat_bonus(self):
+        """Fallback with bonus_won=True must still show the 'combat bonus' label."""
         data = {
             "criminal_name": "Viper",
             "reward": 500,
@@ -4939,8 +4939,8 @@ class TestBuildCaptureEmbedRedesign:
         }
         embed = self.cog._build_capture_embed(data)
         all_field_values = " ".join(f.value or "" for f in embed.fields)
-        assert "2×" in all_field_values or "2x" in all_field_values, (
-            "2× bonus label must appear in fallback embed when bonus_won=True"
+        assert "combat bonus" in all_field_values, (
+            "combat bonus label must appear in fallback embed when bonus_won=True"
         )
 
     # -----------------------------------------------------------------------
@@ -5820,7 +5820,7 @@ class TestBuildMultiCheckEmbedLootLine:
         assert "Tractored 12x Booze." in f.value
 
     def test_bonus_capture_field_gets_loot_line(self):
-        """Bonus (2×) capture row also carries its loot line."""
+        """Bonus capture row also carries its loot line."""
         outcomes = [
             {
                 "result": "correct",
@@ -5836,7 +5836,7 @@ class TestBuildMultiCheckEmbedLootLine:
         embed = self.cog._build_multi_check_embed("Sol", outcomes)
         f = self._capture_field(embed, "BonusCrim")
         assert f is not None
-        assert "2× combat bonus!" in f.value
+        assert "combat bonus!" in f.value
         assert "Tractored 8x Ore." in f.value
 
     def test_mixed_outcomes_loot_present_and_absent(self):

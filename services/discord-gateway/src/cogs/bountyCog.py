@@ -451,7 +451,7 @@ class BountyCog(commands.Cog):
             if bonus_won:
                 return (
                     f"{title_prefix} — Captured!",
-                    f"💰 **{total_reward:,}** credits (2× combat bonus!){loot_suffix}",
+                    f"💰 **{total_reward:,}** credits (combat bonus!){loot_suffix}",
                 )
             return (
                 f"{title_prefix} — Captured!",
@@ -861,20 +861,21 @@ class BountyCog(commands.Cog):
                 role = entry.get("role", "")
                 amount = entry.get("amount", 0)
                 lines.append(f"{icon} {name} — {role} — {amount:,} cr")
-            # Bronze combat bonus is awarded AFTER the breakdown is computed (it equals the
-            # winner's capture claim, doubling their payout), so it never appears as a breakdown
-            # entry. Append it as its own line — otherwise a won bonus silently vanishes whenever
-            # a breakdown exists (which, for bronze, is always). Must NOT be an `elif` below.
+            # Bronze combat bonus is awarded AFTER the breakdown is computed, so it never
+            # appears as a breakdown entry. Append it as its own line — otherwise a won bonus
+            # silently vanishes whenever a breakdown exists (which, for bronze, is always).
+            # Must NOT be an `elif` below. The bonus is prestige-scaled (issue #51), so derive
+            # it as total_reward − winner_reward rather than assuming it equals the full claim.
             if bonus_won:
                 claim = next((e for e in breakdown if e.get("role") == "capture claim"), None)
-                bonus_amount = claim.get("amount", 0) if claim else (total_reward // 2)
+                bonus_amount = total_reward - (claim.get("amount", 0) if claim else reward)
                 bonus_name = (claim or {}).get("player_display_name") or winner_name
                 lines.append(f"💥 {bonus_name} — combat bonus — {bonus_amount:,} cr")
             embed.add_field(name="💰 Payout Breakdown", value="\n".join(lines), inline=False)
         elif bonus_won:
             embed.add_field(
                 name="💰 Total Payout",
-                value=f"**{total_reward:,} cr** (2× combat bonus!)",
+                value=f"**{total_reward:,} cr** (combat bonus!)",
                 inline=False,
             )
         else:

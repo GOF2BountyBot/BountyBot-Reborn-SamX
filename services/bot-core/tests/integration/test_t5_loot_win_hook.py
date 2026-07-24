@@ -235,7 +235,7 @@ def _trigger_service():
     return svc, bounty
 
 
-def _player(*, classic_mode=False, has_ship=True):
+def _player(*, classic_mode=False, has_ship=True, prestige_count=0):
     return SimpleNamespace(
         id=7,
         user_id=_TEST_USER,
@@ -243,6 +243,7 @@ def _player(*, classic_mode=False, has_ship=True):
         classic_mode=classic_mode,
         active_ship_id=99 if has_ship else None,
         display_name="Tester",
+        prestige_count=prestige_count,  # issue #51: bronze combat-bonus scaling
     )
 
 

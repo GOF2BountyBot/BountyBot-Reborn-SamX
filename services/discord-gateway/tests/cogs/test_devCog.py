@@ -390,6 +390,9 @@ class TestReloadAllCaches:
         assert graph_route.called, "must trigger the bot-core system-graph rebuild"
         systems_cache.clear.assert_called()  # static autocomplete catalog cleared
         assert any("System graph rebuilt: ✅" in ln and "34" in ln for ln in lines), lines
+
+
+class TestReloadAutocompleteCommand:
     """Tests for reload_autocomplete command."""
 
     def test_reload_autocomplete_success(self, mock_dev_cog):

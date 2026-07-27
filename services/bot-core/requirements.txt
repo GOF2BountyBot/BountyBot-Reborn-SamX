@@ -1,4 +1,4 @@
-fastapi[standard]==0.139.2
+fastapi[standard]==0.140.7
 fastapi-health==0.4.0
 fastapi-sqlalchemy==0.2.1
 #fastapi-healthcheck
@@ -31,7 +31,7 @@ pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-mock==3.15.1
-faker==40.35.0
+faker==40.36.0
 aiosqlite==0.22.1
 pytest-timeout==2.4.0
 respx==0.23.1

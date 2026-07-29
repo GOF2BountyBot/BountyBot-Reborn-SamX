@@ -1,4 +1,4 @@
-fastapi[standard]==0.140.7
+fastapi[standard]==0.140.13
 fastapi-health==0.4.0
 fastapi-sqlalchemy==0.2.1
 #fastapi-healthcheck

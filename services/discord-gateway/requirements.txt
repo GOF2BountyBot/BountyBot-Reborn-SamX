@@ -3,9 +3,9 @@ audioop-lts==0.2.2  # audioop removed in Python 3.13; discord.py voice depends o
 httpx==0.28.1
 idna==3.18  # CVE-2026-45409: bypass of CVE-2024-3651 fix; transitive dep of httpx/aiohttp
 aiohttp[speedups]==3.14.3
-fastapi==0.140.13
+fastapi==0.141.1
 python-multipart==0.0.32  # required by FastAPI for UploadFile / multipart form parsing (used by /channels/{id}/upload-batch)
-uvicorn[standard]==0.51.0
+uvicorn[standard]==0.52.0
 rapidfuzz==3.14.5
 apscheduler==3.11.3
 orjson==3.11.9

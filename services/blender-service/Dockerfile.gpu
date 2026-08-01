@@ -91,6 +91,25 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
     # so the fix lands deterministically regardless of base-image apt snapshot / layer
     # caching — same pattern as the libnghttp2-14 pin in the bot-core/gateway images.
     && apt-get install -y --only-upgrade perl perl-base perl-modules-5.38 \
+    # Same deterministic-upgrade pattern for the noble packages Trivy flagged on
+    # this image (alerts #1036–#1060, all medium, all with fixes in noble-security).
+    # These land as transitive deps of the installs above (wget/git/curl/
+    # software-properties-common) and of the CUDA base, so their versions would
+    # otherwise float with whatever apt snapshot the cached layer was built from.
+    #   wget            CVE-2026-58469/58470/58471/58472 → 1.21.4-1ubuntu4.3,
+    #                   CVE-2026-15146                   → 1.21.4-1ubuntu4.4
+    #   krb5 libs       CVE-2026-11850/40355/40356       → 1.20.1-6ubuntu2.7
+    #   PAM libs        CVE-2026-54411                   → 1.5.3-5ubuntu5.6
+    #   libsqlite3-0    CVE-2026-50812/50813             → 3.45.1-1ubuntu2.7
+    #   tar             CVE-2026-5704                    → 1.35+dfsg-3ubuntu0.4
+    #   python3-httplib2 CVE-2026-59939                  → 0.20.4-3ubuntu0.1
+    && apt-get install -y --only-upgrade \
+        wget \
+        libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0 \
+        libpam-modules libpam-modules-bin libpam-runtime libpam0g \
+        libsqlite3-0 \
+        tar \
+        python3-httplib2 \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

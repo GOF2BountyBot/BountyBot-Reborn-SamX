@@ -1,0 +1,57 @@
+name: Resync dev after merge to main
+
+# Rebase-and-merge rewrites dev's commits onto main with new SHAs and drops any
+# merge commits, so immediately after a dev → main merge the two branches hold
+# identical FILES but different HISTORY — GitHub then reports dev as both ahead
+# and behind. This resets dev back onto main so the next dev → main PR proposes
+# only genuinely new work.
+#
+# Safety: we only reset when dev's tree is byte-identical to main's. If anyone
+# pushed real work to dev between the merge and this run, the trees differ and
+# we skip rather than force-push over it. --force-with-lease pins the expected
+# dev SHA as a second guard against a push landing mid-run.
+#
+# Pushes made with GITHUB_TOKEN do not trigger workflows, so this cannot loop.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: resync-dev
+  cancel-in-progress: false
+
+jobs:
+  resync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Reset dev to main (only if content matches)
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main dev
+
+          MAIN=$(git rev-parse origin/main)
+          DEV=$(git rev-parse origin/dev)
+
+          if [ "${MAIN}" = "${DEV}" ]; then
+            echo "dev already at main (${MAIN:0:7}) — nothing to do."
+            exit 0
+          fi
+
+          if [ "$(git rev-parse origin/main^{tree})" != "$(git rev-parse origin/dev^{tree})" ]; then
+            echo "::warning::dev has content main does not (new work pushed since the merge?) — skipping resync."
+            echo "  main ${MAIN:0:7}  dev ${DEV:0:7}"
+            git --no-pager diff --stat origin/main origin/dev
+            exit 0
+          fi
+
+          echo "Trees match — resetting dev ${DEV:0:7} → main ${MAIN:0:7}"
+          git push --force-with-lease="refs/heads/dev:${DEV}" origin "${MAIN}:refs/heads/dev"

@@ -34,7 +34,14 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
     # Fixed in 5.8.1-1+deb13u1 (trixie security). liblzma5 is a transitive dep
     # (git, dpkg, python's lzma module); upgrade explicitly so the fix is
     # pulled regardless of base-image snapshot date.
-    && apt-get install -y --only-upgrade libnghttp2-14 libssh2-1t64 liblzma5 \
+    # CVE-2025-59375, CVE-2026-24515/25210/32776/32777/32778/41080/45186/50219/
+    # 56131/56132/56403–56412: 21 libexpat1 CVEs (4 HIGH — integer overflows in
+    # storeAtts/addBinding/copyString/XML_ParseBuffer reachable as arbitrary code
+    # execution, plus use-after-free and assorted parser DoS). Fixed in
+    # 2.8.2-1~deb13u1 (trixie security); the base image ships 2.7.1-2. libexpat1
+    # is a transitive dep (python3's pyexpat, dpkg, git) — upgrade explicitly so
+    # the fix is pulled regardless of base-image snapshot date.
+    && apt-get install -y --only-upgrade libnghttp2-14 libssh2-1t64 liblzma5 libexpat1 \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

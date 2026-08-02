@@ -251,6 +251,22 @@ RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
 # Catalog installed packages (useful for debugging)
 RUN /opt/venv/bin/pip freeze
 
+# ── venv pip purge (alerts #1124–#1126) ─────────────────────────────────────
+# pip 26.2 ships pip/_vendor/bom.cdx.json — a CycloneDX SBOM of its vendored
+# dependencies — which Trivy reads and reports against: msgpack 1.1.2
+# (GHSA-6v7p-g79w-8964, HIGH) and setuptools 70.3.0 (CVE-2025-47273 HIGH,
+# CVE-2026-59890). Neither is fixable by upgrading pip — the vendored copies
+# only move when pip re-vendors them. Every install is complete by this point
+# and nothing at runtime invokes pip, so drop it; same reasoning as the
+# system-pip purge above.
+RUN rm -rf /opt/venv/lib/python*/site-packages/pip \
+           /opt/venv/lib/python*/site-packages/pip-*.dist-info \
+           /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.* && \
+    if ls /opt/venv/lib/python*/site-packages/pip-*.dist-info >/dev/null 2>&1; then \
+        echo "ERROR: venv pip dist-info still present"; exit 1; \
+    fi && \
+    /opt/venv/bin/python -c 'import sys; print("venv python OK:", sys.version.split()[0])'
+
 # Purge build-only packages now that all C extensions have been compiled.
 # linux-libc-dev (kernel headers) is pulled in by build-essential and is not
 # needed at runtime; removing it eliminates Trivy kernel CVE alerts that have

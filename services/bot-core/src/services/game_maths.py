@@ -82,6 +82,24 @@ def pick_random_item_tl(shop_tl: int) -> int:
     return GameConstants.MAX_TECH_LEVEL
 
 
+def enemy_tech_level_band(division: str, division_max_tl: dict[str, int]) -> tuple[int, int]:
+    """Return every TL an automatically spawned enemy can use for a division.
+
+    Enemy generation samples :func:`pick_random_item_tl` around the division's
+    centre and then caps the result at ``division_max_tl``.  Deriving the band
+    from that same probability kernel keeps shop tiers aligned with the actual
+    enemies players encounter, including per-guild cap overrides.
+    """
+    center = GameConstants.DIVISION_TL_CENTERS.get(division.lower(), 5)
+    cap = division_max_tl.get(division.lower(), GameConstants.MAX_TECH_LEVEL)
+    possible_levels = [
+        min(tech_level, cap)
+        for tech_level in range(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL + 1)
+        if _tl_weight(tech_level, center) > 0
+    ]
+    return min(possible_levels), max(possible_levels)
+
+
 def reward_per_sys_check(tech_level: int, loadout_value: int) -> int:
     """Calculate the bounty credit reward for each system checked.
 

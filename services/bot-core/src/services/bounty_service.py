@@ -1839,13 +1839,12 @@ class BountyService:
 
         # Step 2: Determine tech level
         if tech_level is None:
-            # Division TL centers: bronze=1, silver=3, gold=6, platinum=8
-            division_tl_map = {"bronze": 1, "silver": 3, "gold": 6, "platinum": 8}
-            center_tl = division_tl_map.get(division, 5)
+            division_key = division.lower()
+            center_tl = GameConstants.DIVISION_TL_CENTERS.get(division_key, 5)
             tech_level = pick_random_item_tl(center_tl)
             # Enforce per-division TL cap so new players are never overwhelmed
             _division_max_tl = resolve_constant(cfg, "division_max_tl", GameConstants.DIVISION_MAX_TL)
-            max_tl = _division_max_tl.get(division, 10)
+            max_tl = _division_max_tl.get(division_key, GameConstants.MAX_TECH_LEVEL)
             tech_level = min(tech_level, max_tl)
 
         # Step 3: Generate route (≥ min_route_systems, optionally with waypoints)

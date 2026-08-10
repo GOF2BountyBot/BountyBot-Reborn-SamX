@@ -2,6 +2,7 @@
 Unit tests for the game_maths module.
 
 Covers:
+- enemy_tech_level_band - actual possible enemy TLs by division
 - pick_random_item_tl  - probability distribution correctness
 - reward_per_sys_check - legacy reward formula
 - ship_tech_level_for_value - price-threshold classification
@@ -16,10 +17,37 @@ from collections import Counter
 import pytest
 from services.game_constants import GameConstants
 from services.game_maths import (
+    enemy_tech_level_band,
     pick_random_item_tl,
     reward_per_sys_check,
     ship_tech_level_for_value,
 )
+
+# ---------------------------------------------------------------------------
+# TestEnemyTechLevelBand
+# ---------------------------------------------------------------------------
+
+
+class TestEnemyTechLevelBand:
+    """Tests for the enemy range shared by bounties and shops."""
+
+    @pytest.mark.parametrize(
+        ("division", "expected"),
+        [
+            ("bronze", (1, 2)),
+            ("silver", (1, 4)),
+            ("gold", (4, 7)),
+            ("platinum", (6, 10)),
+        ],
+    )
+    def test_matches_the_bounty_picker_support_and_tier_cap(self, division: str, expected: tuple[int, int]) -> None:
+        assert enemy_tech_level_band(division, GameConstants.DIVISION_MAX_TL) == expected
+
+    def test_applies_per_guild_enemy_cap_override(self) -> None:
+        caps = {"bronze": 2, "silver": 4, "gold": 5, "platinum": 10}
+
+        assert enemy_tech_level_band("gold", caps) == (4, 5)
+
 
 # ---------------------------------------------------------------------------
 # TestPickRandomItemTL

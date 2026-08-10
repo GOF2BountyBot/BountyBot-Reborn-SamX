@@ -59,6 +59,16 @@ class GameConstants:
     MIN_TECH_LEVEL: int = 1
     MAX_TECH_LEVEL: int = 10
 
+    # Centres passed to pick_random_item_tl() when spawning enemies for a
+    # division.  Keep this alongside DIVISION_MAX_TL so every system that
+    # presents tier-appropriate tech levels can use the same source of truth.
+    DIVISION_TL_CENTERS: dict[str, int] = {
+        "bronze": 1,
+        "silver": 3,
+        "gold": 6,
+        "platinum": 8,
+    }
+
     # Maximum tech level for criminal loadouts per division.
     # Bronze is capped low to ensure new players with Betty can compete.
     DIVISION_MAX_TL: dict[str, int] = {

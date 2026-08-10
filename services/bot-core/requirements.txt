@@ -12,9 +12,9 @@ sqlalchemy-utils==0.42.1
 psycopg2-binary==2.9.12
 # Used for asyncronous database operations in most of the app runtime environment
 asyncpg==0.31.0
-alembic==1.18.5
+alembic==1.19.0
 pydantic==2.13.4
-pydantic-settings==2.14.2  # GHSA-4xgf-cpjx-pc3j: symlink traversal outside secrets_dir; transitive via fastapi[standard]
+pydantic-settings==2.15.0  # GHSA-4xgf-cpjx-pc3j: symlink traversal outside secrets_dir; transitive via fastapi[standard]
 httpx==0.28.1
 idna==3.18  # CVE-2026-45409: bypass of CVE-2024-3651 fix; transitive dep of httpx/requests
 # Scheduling library

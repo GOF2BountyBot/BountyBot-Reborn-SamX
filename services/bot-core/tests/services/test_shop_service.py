@@ -975,37 +975,52 @@ class TestSelectItemTechLevel:
 
 
 class TestSelectShopTechLevel:
-    """Tests for ShopService's tier-banded batch-TL draw."""
+    """Tests for ShopService's two-bucket batch-TL draw."""
 
-    def test_gold_band_matches_gold_enemy_tech_levels(self):
+    def test_banded_bucket_uses_the_shared_division_draw(self):
+        """Below the weight, the TL comes from the tier's criminal distribution."""
         svc = ShopService.__new__(ShopService)
 
-        # Gold enemies are drawn around TL6 with the existing ±2 probability
-        # support, then capped at the division maximum of TL7.
-        assert svc._get_shop_tech_level_band("Gold") == (4, 7)
+        with (
+            patch("services.shop_service.random.random", return_value=0.0),
+            patch("services.shop_service.pick_division_tech_level", return_value=6) as picker,
+        ):
+            assert svc._select_shop_tech_level("Gold") == 6
 
-    def test_shop_band_honours_the_enemy_tier_cap_override(self):
+        picker.assert_called_once_with("Gold", GameConstants.DIVISION_MAX_TL)
+
+    def test_unbanded_bucket_spans_every_tech_level(self):
+        """Above the weight, the TL is uniform over the full range."""
+        svc = ShopService.__new__(ShopService)
+
+        with patch("services.shop_service.random.random", return_value=0.99):
+            drawn = {svc._select_shop_tech_level("Bronze") for _ in range(400)}
+
+        # Bronze's band caps at TL2, so anything above it proves the wide bucket ran.
+        assert max(drawn) > 2
+        assert drawn <= set(range(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL + 1))
+
+    def test_weight_of_zero_is_purely_random(self):
+        """SHOP_BANDED_TL_WEIGHT=0 restores the pre-banding behaviour."""
         svc = ShopService.__new__(ShopService)
         config = _make_config()
-        config.division_max_tl = {"bronze": 2, "silver": 4, "gold": 5, "platinum": 10}
+        config.shop_banded_tl_weight = 0.0
 
-        assert svc._get_shop_tech_level_band("Gold", config) == (4, 5)
+        with patch("services.shop_service.pick_division_tech_level") as picker:
+            drawn = {svc._select_shop_tech_level("Bronze", config) for _ in range(400)}
 
-    def test_gold_spillover_weights_favour_adjacent_over_distant_level(self):
-        """A TL3 Gold shop is possible, but less likely than TL4-7 shops."""
+        picker.assert_not_called()
+        assert max(drawn) > 2
+
+    def test_weight_of_one_is_always_banded(self):
+        """SHOP_BANDED_TL_WEIGHT=1 tier-matches every refresh."""
         svc = ShopService.__new__(ShopService)
+        config = _make_config()
+        config.shop_banded_tl_weight = 1.0
 
-        with patch("services.shop_service.random.choices", return_value=[5]) as choices:
-            result = svc._select_shop_tech_level("Gold")
+        drawn = {svc._select_shop_tech_level("Bronze", config) for _ in range(400)}
 
-        assert result == 5
-        levels = list(choices.call_args.args[0])
-        weights = list(choices.call_args.kwargs["weights"])
-        weight_for = dict(zip(levels, weights, strict=True))
-        assert weight_for[4] == weight_for[5] == weight_for[6] == weight_for[7] == 100
-        assert weight_for[3] == weight_for[8] == 12
-        assert weight_for[2] == weight_for[9] == 2
-        assert weight_for[4] > weight_for[3] > weight_for[2]
+        assert drawn <= {1, 2}
 
 
 # ===========================================================================
@@ -1132,6 +1147,18 @@ class TestGetRandomItemByTechLevel:
         result = await service._get_random_item_by_tech_level(mock_db, "ship", 1)
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_steps_down_when_no_ship_at_requested_tech_level(self, service, mock_db, mock_ship_repo):
+        """A sparse TL steps down to the next ship below, like the module draw."""
+        tl1_ship = _make_ship_static(name="Viper", value=50_000)
+        tl6_ship = _make_ship_static(name="Hammerhead", value=1_000_001)
+        mock_ship_repo.list_all = AsyncMock(return_value=[tl1_ship, tl6_ship])
+
+        # Nothing at TL5 → steps down to the TL1 Viper, never up to the TL6 Hammerhead.
+        result = await service._get_random_item_by_tech_level(mock_db, "ship", 5)
+
+        assert result == "Viper"
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_items_at_tech_level(self, service, mock_db, mock_primary_weapon_repo):

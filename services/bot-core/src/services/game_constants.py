@@ -62,6 +62,11 @@ class GameConstants:
     # Centres passed to pick_random_item_tl() when spawning enemies for a
     # division.  Keep this alongside DIVISION_MAX_TL so every system that
     # presents tier-appropriate tech levels can use the same source of truth.
+    #
+    # Issue #70 note: this and DIVISION_MAX_TL are dict-shaped (JSON) constants.
+    # If the per-guild override audit lands, both are candidates for flattening
+    # into scalar per-division knobs (DIVISION_TL_CENTER_BRONZE, ...) so each is
+    # a plain int column rather than free-form JSON.  Not done here.
     DIVISION_TL_CENTERS: dict[str, int] = {
         "bronze": 1,
         "silver": 3,
@@ -348,6 +353,16 @@ class GameConstants:
         }
     )
     SHOP_COMBAT_MODULE_PROB: float = 0.75
+
+    # Probability (0.0-1.0) that a shop refresh draws its batch TL from the
+    # tier's division band instead of uniformly across every TL.
+    #   0.0 -> purely random, the pre-banding behaviour
+    #   1.0 -> every refresh is tier-matched
+    # The unbanded pool is a superset of the band, so the observed rate of
+    # tier-matched shops always runs above this value.
+    # Deliberately a scalar float (not a per-division dict) so the issue #70
+    # per-guild override audit can add it as a plain nullable column.
+    SHOP_BANDED_TL_WEIGHT: float = 0.7
 
     # ------------------------------------------------------------------
     # Shop Rank Counts
@@ -701,6 +716,7 @@ class GameConstants:
         cls.SHOP_SECONDARY_QTY_SCALER_HEAVY = _track_int("SHOP_SECONDARY_QTY_SCALER_HEAVY", 5)
         cls.SHOP_SECONDARY_QTY_SCALER_STANDARD = _track_int("SHOP_SECONDARY_QTY_SCALER_STANDARD", 10)
         cls.SHOP_COMBAT_MODULE_PROB = _track_float("SHOP_COMBAT_MODULE_PROB", 0.75)
+        cls.SHOP_BANDED_TL_WEIGHT = _track_float("SHOP_BANDED_TL_WEIGHT", 0.7)
 
         # Duels
         cls.DUEL_LOG_MAX_LENGTH = _track_int("DUEL_LOG_MAX_LENGTH", 10)

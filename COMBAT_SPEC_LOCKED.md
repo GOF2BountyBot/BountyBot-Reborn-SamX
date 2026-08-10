@@ -926,6 +926,8 @@ Tier shops auto-refresh their stock on a timer (`shop_refresh_executor` → `Sho
 
 ### 16.1 Tech-level ceiling raised 9 → 10
 
+> **Superseded in part by §16.6 (2026-08).** The batch TL is no longer a flat `randint` — it is a two-bucket draw governed by `SHOP_BANDED_TL_WEIGHT`. The `[1, 10]` **range** below is unchanged and still reachable; only the **distribution** within it changed.
+
 `MAX_TECH_LEVEL` is **10**. `refresh_shop` rolls the batch tech level as `random.randint(MIN_TECH_LEVEL, MAX_TECH_LEVEL)` (= `[1, 10]`) and `force_tech_level` (the `/admin_refresh_shop` override) accepts `1..10`. Previously the shop ceiling was capped at 9, so TL10 gear — the **best armour and shields** (`T'yol`, `Particle Shield`, `Fluxed Matter Shield`) — could **never** appear in any shop, even though platinum-division criminals already field it. The downward TL band that fans each item below the batch TL (§16.3) is unchanged.
 
 ### 16.2 Module buckets — junk removed, combat vs filler split
@@ -956,6 +958,26 @@ The per-item downward fan (`_select_item_tech_level`, weights **0.7 / 0.2 / 0.1*
 ### 16.5 Configuration
 
 `SHOP_COMBAT_MODULE_PROB` is the single tunable introduced here — listed in Appendix A. It is a `GameConstants` float (default **0.75**) with a `BOUNTYBOT_SHOP_COMBAT_MODULE_PROB` env override and a per-guild `guild_configs.shop_combat_module_prob` column added by **migration `0023_shop_combat_module_prob`** (additive, nullable; `NULL` ⇒ the `GameConstants` default). It is exposed for live tuning via the admin config override API (PUT/GET/reset, `[0.0, 1.0]`-validated). The bucket-membership frozensets are **structural game data, not tunables** — they are not per-guild-overridable and are guarded by the import-time disjoint+coverage assertion. The TL ceiling (§16.1) is governed by the existing `MAX_TECH_LEVEL` constant.
+
+### 16.6 Batch TL banding — two-bucket draw (2026-08, PR #80)
+
+Amends §16.1. The batch TL was uniform over `[1, 10]` regardless of tier, so a Bronze shop could stock TL10 gear its players cannot fly while a Platinum shop stocked Bettys. `refresh_shop` now delegates to `ShopService._select_shop_tech_level(tier, config)`, which picks **one of two buckets** and then draws a TL from it:
+
+| | Bucket | Drawn how | Chance |
+|---|---|---|---|
+| **1** | The tier's division band | `game_maths.pick_division_tech_level(tier, division_max_tl)` — the identical draw `spawn_bounty` uses for that division's criminals: the §16.4 kernel centred on `DIVISION_TL_CENTERS[tier]`, capped at `DIVISION_MAX_TL[tier]` | `SHOP_BANDED_TL_WEIGHT` |
+| **2** | Every valid TL | `random.randint(MIN_TECH_LEVEL, MAX_TECH_LEVEL)` — the pre-amendment §16.1 behaviour | `1 − SHOP_BANDED_TL_WEIGHT` |
+
+**Locked properties:**
+
+- `SHOP_BANDED_TL_WEIGHT = 0.0` reproduces §16.1 exactly; `1.0` tier-matches every refresh. Both endpoints are supported configurations, not degenerate cases.
+- Bucket 2 is a **superset** of bucket 1, so the observed share of tier-matched shops always exceeds the configured weight. Intended.
+- Bucket 2 is **not** a fallback. It is the only route by which a low tier reaches item classes the catalog stocks solely at high TL — turrets exist at TL 5/6/9 only, so at weight `1.0` a Bronze shop can never stock one. It also preserves the reward for players who save credits.
+- `force_tech_level` (admin refresh) bypasses both buckets, unchanged.
+- Bucket 1 shares **one function** with criminal spawning rather than restating the band. A future change to division centres or caps moves criminals and shops together by construction; there is no second copy to drift.
+- Ships have no catalog `tech_level` column — their TL is derived from price via `ship_tech_level_for_value` (§16.3's step-down now applies to the ship branch too, matching modules).
+
+**Configuration:** `SHOP_BANDED_TL_WEIGHT`, `GameConstants` float, default **0.7**, env `BOUNTYBOT_SHOP_BANDED_TL_WEIGHT`, resolved per refresh via `resolve_constant(config, "shop_banded_tl_weight", …)`. **No migration ships with this amendment** — the per-guild column required by §0.1 is deferred to the issue #70 override audit; until it exists, `resolve_constant` falls through to the `GameConstants` default and the knob is env/global only.
 
 ---
 
@@ -1013,6 +1035,7 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 | `LOOT_BAND3_QTY_MIN` / `LOOT_BAND3_QTY_MODE` / `LOOT_BAND3_QTY_MAX` | **10 / 16 / 22** | §15.5 (Band-3 triangular, mean 16) |
 | `LOOT_COMMODITY_SELL_FRACTION` | **1.0** | §15.8 (commodity sink payout = `Item.value` × qty × this) |
 | `SHOP_COMBAT_MODULE_PROB` | **0.75** | §16.3 (shop module draw: P(combat bucket); filler = 1 − this) |
+| `SHOP_BANDED_TL_WEIGHT` | **0.7** | §16.6 (shop batch TL: P(tier-banded bucket); full-range = 1 − this). Env/global only until the issue #70 per-guild column lands. |
 
 > `LOOT_DROP_CHANCE` is intentionally **not** in this table — it is a **fixed** 100 % constant (no env, no per-guild column, no migration), per §15.4 / §15.9.
 

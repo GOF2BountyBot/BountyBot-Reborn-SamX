@@ -700,6 +700,7 @@ Key constant groups:
 
 Module-level functions only (no class):
 - `pick_random_item_tl(shop_tl)` — TL probability kernel
+- `pick_division_tech_level(division, division_max_tl)` — the kernel centred on `DIVISION_TL_CENTERS[division]` then capped at `division_max_tl`; **single source of truth** for "what TL does this tier produce", shared by `spawn_bounty` (criminal TL) and `refresh_shop` (banded batch TL). Case-insensitive on `division` because shop tiers arrive capitalised (`"Gold"`) while divisions are stored lowercase.
 - `reward_per_sys_check(tech_level, loadout_value)` — bounty reward formula
 - `ship_tech_level_for_value(value)` — TL classification
 
@@ -760,7 +761,18 @@ Uses: `PlayerRepository`, `UserRepository`, `ConfigRepository`
 ### shop_service.py — `ShopService`
 
 Multi-tier shop system (`VALID_TIERS = Bronze/Silver/Gold/Platinum`):
-- `refresh_shop(db, guild_id, tier, force_tech_level=None)` — regenerates a tier's stock (`SHOP_DEFAULT_*_NUM` items per category); called by `shop_refresh_executor`. The batch draws a `shop_tech_level` over `[MIN_TECH_LEVEL, MAX_TECH_LEVEL]` = **`[1, 10]`** (TL ceiling raised 9→10 so TL10 armour/shields can finally spawn — `force_tech_level` also accepts 1..10); each item then gets its own drawn TL (`_select_item_tech_level`, unchanged 0.7/0.2/0.1 over T/T−1/T−2), and the **shop row stores that per-item TL** (ships: value-derived via `game_maths.ship_tech_level_for_value`; modules: the actual catalog TL **after step-down** via `_get_item_tech_level`) — NOT the batch TL. The returned `refresh_details` dict still carries the batch `tech_level`. See **"Shop module-bucket draw"** below + `COMBAT_SPEC_LOCKED.md §16`.
+- `refresh_shop(db, guild_id, tier, force_tech_level=None)` — regenerates a tier's stock (`SHOP_DEFAULT_*_NUM` items per category); called by `shop_refresh_executor`. The batch `shop_tech_level` comes from `_select_shop_tech_level` (two-bucket draw — see **"Shop banded TL draw"** below); `force_tech_level` bypasses it entirely and still accepts 1..10 (TL ceiling raised 9→10 so TL10 armour/shields can spawn). Each item then gets its own drawn TL (`_select_item_tech_level`, unchanged 0.7/0.2/0.1 over T/T−1/T−2), and the **shop row stores that per-item TL** (ships: value-derived via `game_maths.ship_tech_level_for_value`; modules: the actual catalog TL **after step-down** via `_get_item_tech_level`) — NOT the batch TL. The returned `refresh_details` dict still carries the batch `tech_level`. See **"Shop module-bucket draw"** below + `COMBAT_SPEC_LOCKED.md §16`.
+
+#### Shop banded TL draw (2026-08, PR #80)
+
+`_select_shop_tech_level(tier, config)` picks the batch TL from one of two buckets:
+
+1. With probability `SHOP_BANDED_TL_WEIGHT` (float, default **0.7**; env `BOUNTYBOT_SHOP_BANDED_TL_WEIGHT`, per-guild via `resolve_constant("shop_banded_tl_weight", …)`) → `game_maths.pick_division_tech_level(tier, division_max_tl)` — **the same draw `spawn_bounty` uses for that division's criminals**, so stock matches the enemies players actually face in the tier.
+2. Otherwise → `random.randint(MIN_TECH_LEVEL, MAX_TECH_LEVEL)`, the pre-banding behaviour. This branch is deliberate, not a fallback: it keeps a rare out-of-tier shop reachable for players who save credits, and it is the only way low tiers ever see item classes the catalog stocks solely at high TL (turrets exist only at TL 5/6/9).
+
+`0.0` reproduces the old purely-random shop exactly; `1.0` tier-matches every refresh. Bucket 2 is a **superset** of bucket 1, so the observed rate of tier-matched shops always runs above the configured weight — intended, not a rounding bug. `force_tech_level` (admin refresh) bypasses both buckets.
+
+No migration ships with this — `resolve_constant` falls through to the `GameConstants` default until a `guild_configs.shop_banded_tl_weight` column exists (see issue #70, the per-guild override audit). `SHOP_BANDED_TL_WEIGHT` is a scalar float precisely so that column is a plain nullable `Float`; the dict-shaped `DIVISION_TL_CENTERS` / `DIVISION_MAX_TL` it reads through are the JSON-typed constants #70 would want flattened into per-division scalars first.
 
 #### Shop module-bucket draw (rebalance, 2026-06-20) — CANONICAL: `COMBAT_SPEC_LOCKED.md §16`
 The `module` branch of `_get_random_item_by_tech_level` no longer draws uniformly across a TL. The 21 module types are partitioned into three **disjoint** frozensets in `game_constants.py` (import-time `assert` enforces disjoint + covers-all-21):

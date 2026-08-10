@@ -672,6 +672,20 @@ class TestRefreshShop:
         assert "refresh_time" in result
 
     @pytest.mark.asyncio
+    async def test_refresh_uses_tier_weighted_tech_level_when_not_forced(
+        self, service, mock_db, mock_config_repo, mock_shop_repo
+    ):
+        """Normal refreshes delegate TL choice to the tier-aware weighted draw."""
+        mock_config_repo.get_by_guild_id.return_value = _make_config()
+        service._select_shop_tech_level = MagicMock(return_value=6)
+        service._get_random_item_by_tech_level = AsyncMock(return_value=None)
+
+        result = await service.refresh_shop(mock_db, guild_id=999, tier="Gold")
+
+        assert result["tech_level"] == 6
+        service._select_shop_tech_level.assert_called_once_with("Gold", mock_config_repo.get_by_guild_id.return_value)
+
+    @pytest.mark.asyncio
     async def test_rows_carry_item_tech_level_not_batch(self, service, mock_db, mock_config_repo, mock_shop_repo):
         """Shop rows store the ITEM's drawn tech level; the batch TL stays in refresh_details only.
 
@@ -956,6 +970,45 @@ class TestSelectItemTechLevel:
 
 
 # ===========================================================================
+# Tests: tier-aware shop tech-level selection
+# ===========================================================================
+
+
+class TestSelectShopTechLevel:
+    """Tests for ShopService's tier-banded batch-TL draw."""
+
+    def test_gold_band_matches_gold_enemy_tech_levels(self):
+        svc = ShopService.__new__(ShopService)
+
+        # Gold enemies are drawn around TL6 with the existing ±2 probability
+        # support, then capped at the division maximum of TL7.
+        assert svc._get_shop_tech_level_band("Gold") == (4, 7)
+
+    def test_shop_band_honours_the_enemy_tier_cap_override(self):
+        svc = ShopService.__new__(ShopService)
+        config = _make_config()
+        config.division_max_tl = {"bronze": 2, "silver": 4, "gold": 5, "platinum": 10}
+
+        assert svc._get_shop_tech_level_band("Gold", config) == (4, 5)
+
+    def test_gold_spillover_weights_favour_adjacent_over_distant_level(self):
+        """A TL3 Gold shop is possible, but less likely than TL4-7 shops."""
+        svc = ShopService.__new__(ShopService)
+
+        with patch("services.shop_service.random.choices", return_value=[5]) as choices:
+            result = svc._select_shop_tech_level("Gold")
+
+        assert result == 5
+        levels = list(choices.call_args.args[0])
+        weights = list(choices.call_args.kwargs["weights"])
+        weight_for = dict(zip(levels, weights, strict=True))
+        assert weight_for[4] == weight_for[5] == weight_for[6] == weight_for[7] == 100
+        assert weight_for[3] == weight_for[8] == 12
+        assert weight_for[2] == weight_for[9] == 2
+        assert weight_for[4] > weight_for[3] > weight_for[2]
+
+
+# ===========================================================================
 # Tests: _check_and_refresh_shop
 # ===========================================================================
 
@@ -1058,14 +1111,27 @@ class TestGetRandomItemByTechLevel:
         assert result == "Dual Turret"
 
     @pytest.mark.asyncio
-    async def test_returns_ship_name_weighted_by_spawn_rate(self, service, mock_db, mock_ship_repo):
-        """Returns a ship name; ships are selected by shop_spawn_rate weight."""
-        ship = _make_db_item("Viper", shop_spawn_rate=2.5)
-        mock_ship_repo.list_all = AsyncMock(return_value=[ship])
+    async def test_returns_tl_matching_ship_name_weighted_by_spawn_rate(self, service, mock_db, mock_ship_repo):
+        """Ships are filtered by price-derived TL before their spawn-rate draw."""
+        low_tl_ship = _make_ship_static(name="Viper", value=50_000)
+        low_tl_ship.shop_spawn_rate = 2.5
+        high_tl_ship = _make_ship_static(name="Hammerhead", value=1_000_001)
+        high_tl_ship.shop_spawn_rate = 99.0
+        mock_ship_repo.list_all = AsyncMock(return_value=[low_tl_ship, high_tl_ship])
 
         result = await service._get_random_item_by_tech_level(mock_db, "ship", 1)
 
         assert result == "Viper"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_ship_matches_requested_tech_level(self, service, mock_db, mock_ship_repo):
+        """A high-TL ship must not leak into a low-TL shop draw."""
+        high_tl_ship = _make_ship_static(name="Hammerhead", value=1_000_001)
+        mock_ship_repo.list_all = AsyncMock(return_value=[high_tl_ship])
+
+        result = await service._get_random_item_by_tech_level(mock_db, "ship", 1)
+
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_items_at_tech_level(self, service, mock_db, mock_primary_weapon_repo):

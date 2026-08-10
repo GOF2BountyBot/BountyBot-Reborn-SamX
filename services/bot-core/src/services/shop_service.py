@@ -34,7 +34,7 @@ from services.bounty_service import get_secondary_subtype
 from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants, resolve_constant
-from services.game_maths import ship_tech_level_for_value
+from services.game_maths import enemy_tech_level_band, ship_tech_level_for_value
 
 flogger = bblogger.get_logger("shop-service")
 
@@ -721,11 +721,12 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # Clear existing shop items for this tier
             await self.shop_repo.clear_shop_tier(db, guild_id, tier)
 
-            # Determine tech level
+            # Tier shops normally stock the same TL band as the enemies players
+            # face in that tier.  A small, distance-weighted spillover keeps a
+            # refresh from feeling mechanically fixed without regularly placing
+            # wildly inappropriate stock in a shop.
             shop_tech_level = (
-                force_tech_level
-                if force_tech_level
-                else random.randint(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL)
+                force_tech_level if force_tech_level is not None else self._select_shop_tech_level(tier, config)
             )
 
             # Resolve per-guild combat/filler module-draw probability once for the whole refresh.
@@ -866,6 +867,32 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         shop_level = tier_levels.get(shop_tier, 1)
         return player_level == shop_level
 
+    def _get_shop_tech_level_band(self, tier: str, config=None) -> tuple[int, int]:
+        """Return the actual random-TL support for enemies in this shop tier."""
+        division_max_tl = resolve_constant(config, "division_max_tl", GameConstants.DIVISION_MAX_TL)
+        return enemy_tech_level_band(tier.lower(), division_max_tl)
+
+    def _select_shop_tech_level(self, tier: str, config=None) -> int:
+        """Draw a shop TL, strongly favouring the tier's normal band.
+
+        In-band levels carry weight 100.  Levels one and two steps outside the
+        band carry weights 12 and 2 respectively, so an adjacent surprise is
+        possible but far more likely than a distant one.
+        """
+        min_tl, max_tl = self._get_shop_tech_level_band(tier, config)
+        candidates = range(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL + 1)
+
+        def _weight(tech_level: int) -> int:
+            if min_tl <= tech_level <= max_tl:
+                return 100
+            distance = min(abs(tech_level - min_tl), abs(tech_level - max_tl))
+            return {1: 12, 2: 2}.get(distance, 0)
+
+        weighted_candidates = [(tech_level, _weight(tech_level)) for tech_level in candidates]
+        eligible_levels = [tech_level for tech_level, weight in weighted_candidates if weight]
+        weights = [weight for _, weight in weighted_candidates if weight]
+        return random.choices(eligible_levels, weights=weights, k=1)[0]
+
     def _select_item_tech_level(self, shop_tech_level: int, probabilities: dict[str, float]) -> int:
         """Select item tech level based on shop tech level and probability distribution."""
         same_level_prob = probabilities.get("same_level", 0.7)
@@ -905,8 +932,22 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             )
             if not all_ships:
                 return None
-            weights = [(s.shop_spawn_rate if s.shop_spawn_rate is not None else 1.0) for s in all_ships]
-            chosen = random.choices(all_ships, weights=weights, k=1)[0]
+
+            # Ships have no catalog tech_level column.  Apply the same exact-TL
+            # selection used by weapons and turrets, deriving their TL from price.
+            eligible_ships = [
+                ship
+                for ship in all_ships
+                if isinstance(getattr(ship, "value", None), int) and ship_tech_level_for_value(ship.value) == tech_level
+            ]
+            if not eligible_ships:
+                return None
+
+            weights = [
+                ship.shop_spawn_rate if isinstance(getattr(ship, "shop_spawn_rate", None), (int, float)) else 1.0
+                for ship in eligible_ships
+            ]
+            chosen = random.choices(eligible_ships, weights=weights, k=1)[0]
             return chosen.name
 
         if item_type in ("weapon", "primary_weapon"):

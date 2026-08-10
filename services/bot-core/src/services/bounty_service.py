@@ -35,7 +35,7 @@ from services.combat_models import DEFERRED_SECONDARY_SUBTYPES, ShipLoadout
 from services.combat_service import CombatService
 from services.game_constants import GameConstants, resolve_constant
 from services.game_maths import (
-    pick_random_item_tl,
+    pick_division_tech_level,
     reward_per_sys_check,
     ship_tech_level_for_value,
 )
@@ -1808,7 +1808,7 @@ class BountyService:
 
         Orchestrates the full bounty generation:
         1. Select criminal (exclude active ones)
-        2. Determine tech level (if not provided, use pick_random_item_tl)
+        2. Determine tech level (if not provided, use pick_division_tech_level)
         3. Generate route via A* pathfinding (≥ min_route_systems, via _generate_route)
         4. Select answer (random system from route)
         5. Generate criminal loadout
@@ -1839,13 +1839,9 @@ class BountyService:
 
         # Step 2: Determine tech level
         if tech_level is None:
-            division_key = division.lower()
-            center_tl = GameConstants.DIVISION_TL_CENTERS.get(division_key, 5)
-            tech_level = pick_random_item_tl(center_tl)
-            # Enforce per-division TL cap so new players are never overwhelmed
+            # Shared with the shop-refresh batch TL — see pick_division_tech_level.
             _division_max_tl = resolve_constant(cfg, "division_max_tl", GameConstants.DIVISION_MAX_TL)
-            max_tl = _division_max_tl.get(division_key, GameConstants.MAX_TECH_LEVEL)
-            tech_level = min(tech_level, max_tl)
+            tech_level = pick_division_tech_level(division, _division_max_tl)
 
         # Step 3: Generate route (≥ min_route_systems, optionally with waypoints)
         await self.graph_service.load_graph(db)

@@ -13,40 +13,50 @@ vestigial level/division progression system.
 
 import random
 from collections import Counter
+from unittest.mock import patch
 
 import pytest
 from services.game_constants import GameConstants
 from services.game_maths import (
-    enemy_tech_level_band,
+    pick_division_tech_level,
     pick_random_item_tl,
     reward_per_sys_check,
     ship_tech_level_for_value,
 )
 
 # ---------------------------------------------------------------------------
-# TestEnemyTechLevelBand
+# TestPickDivisionTechLevel
 # ---------------------------------------------------------------------------
 
 
-class TestEnemyTechLevelBand:
-    """Tests for the enemy range shared by bounties and shops."""
+class TestPickDivisionTechLevel:
+    """Tests for the division TL draw shared by bounty spawns and shop refreshes."""
 
     @pytest.mark.parametrize(
         ("division", "expected"),
         [
-            ("bronze", (1, 2)),
-            ("silver", (1, 4)),
-            ("gold", (4, 7)),
-            ("platinum", (6, 10)),
+            ("bronze", {1, 2}),
+            ("silver", {1, 2, 3, 4}),
+            ("gold", {4, 5, 6, 7}),
+            ("platinum", {6, 7, 8, 9, 10}),
         ],
     )
-    def test_matches_the_bounty_picker_support_and_tier_cap(self, division: str, expected: tuple[int, int]) -> None:
-        assert enemy_tech_level_band(division, GameConstants.DIVISION_MAX_TL) == expected
+    def test_stays_within_the_division_support_and_cap(self, division: str, expected: set[int]) -> None:
+        drawn = {pick_division_tech_level(division, GameConstants.DIVISION_MAX_TL) for _ in range(400)}
 
-    def test_applies_per_guild_enemy_cap_override(self) -> None:
+        assert drawn <= expected
+
+    def test_applies_per_guild_cap_override(self) -> None:
         caps = {"bronze": 2, "silver": 4, "gold": 5, "platinum": 10}
 
-        assert enemy_tech_level_band("gold", caps) == (4, 5)
+        assert all(pick_division_tech_level("gold", caps) <= 5 for _ in range(200))
+
+    def test_tier_name_case_is_ignored(self) -> None:
+        """Shop tiers arrive capitalised ("Gold"); divisions are stored lowercase."""
+        with patch("services.game_maths.pick_random_item_tl", return_value=6) as picker:
+            assert pick_division_tech_level("Gold", GameConstants.DIVISION_MAX_TL) == 6
+
+        picker.assert_called_once_with(6)  # gold centre, not the unknown-division default of 5
 
 
 # ---------------------------------------------------------------------------

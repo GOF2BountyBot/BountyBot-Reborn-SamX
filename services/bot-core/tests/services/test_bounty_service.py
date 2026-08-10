@@ -1320,7 +1320,7 @@ async def test_spawn_bounty_uses_provided_tech_level(spawn_service, mock_db):
     spawn_service.bounty_repo.create = capture_create
 
     with (
-        patch("services.bounty_service.pick_random_item_tl") as mock_pick_tl,
+        patch("services.game_maths.pick_random_item_tl") as mock_pick_tl,
         patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
     ):
         await spawn_service.spawn_bounty(mock_db, guild_id=1, division="gold", tech_level=7)
@@ -1342,7 +1342,7 @@ async def test_spawn_bounty_auto_selects_tech_level(spawn_service, mock_db):
     spawn_service.bounty_repo.create = AsyncMock(return_value=created)
 
     with (
-        patch("services.bounty_service.pick_random_item_tl", return_value=5) as mock_pick_tl,
+        patch("services.game_maths.pick_random_item_tl", return_value=5) as mock_pick_tl,
         patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
     ):
         result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="silver", tech_level=None)
@@ -1362,7 +1362,7 @@ async def test_spawn_bounty_bronze_center_tl_is_1(spawn_service, mock_db):
     spawn_service.bounty_repo.create = AsyncMock(return_value=created)
 
     with (
-        patch("services.bounty_service.pick_random_item_tl", return_value=1) as mock_pick_tl,
+        patch("services.game_maths.pick_random_item_tl", return_value=1) as mock_pick_tl,
         patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
     ):
         result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=None)
@@ -1383,7 +1383,7 @@ async def test_spawn_bounty_division_tl_map_center_values(spawn_service, mock_db
 
     for division, expected_center in [("silver", 3), ("gold", 6), ("platinum", 8)]:
         with (
-            patch("services.bounty_service.pick_random_item_tl", return_value=expected_center) as mock_pick_tl,
+            patch("services.game_maths.pick_random_item_tl", return_value=expected_center) as mock_pick_tl,
             patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
         ):
             result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division=division, tech_level=None)
@@ -1410,7 +1410,7 @@ async def test_spawn_bounty_bronze_tl_capped_at_2(spawn_service, mock_db):
 
     # Simulate the random picker returning 4 (above bronze cap of 2)
     with (
-        patch("services.bounty_service.pick_random_item_tl", return_value=4),
+        patch("services.game_maths.pick_random_item_tl", return_value=4),
         patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
     ):
         result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=None)
@@ -1439,7 +1439,7 @@ async def test_spawn_bounty_silver_tl_capped_at_4(spawn_service, mock_db):
 
     # Simulate the random picker returning 7 (above silver cap of 4)
     with (
-        patch("services.bounty_service.pick_random_item_tl", return_value=7),
+        patch("services.game_maths.pick_random_item_tl", return_value=7),
         patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
     ):
         result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="silver", tech_level=None)
@@ -1468,7 +1468,7 @@ async def test_spawn_bounty_gold_tl_capped_at_7(spawn_service, mock_db):
 
     # Simulate the random picker returning 10 (above gold cap of 7)
     with (
-        patch("services.bounty_service.pick_random_item_tl", return_value=10),
+        patch("services.game_maths.pick_random_item_tl", return_value=10),
         patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
     ):
         result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="gold", tech_level=None)

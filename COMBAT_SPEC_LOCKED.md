@@ -959,16 +959,18 @@ The per-item downward fan (`_select_item_tech_level`, weights **0.7 / 0.2 / 0.1*
 
 `SHOP_COMBAT_MODULE_PROB` is the single tunable introduced here — listed in Appendix A. It is a `GameConstants` float (default **0.75**) with a `BOUNTYBOT_SHOP_COMBAT_MODULE_PROB` env override and a per-guild `guild_configs.shop_combat_module_prob` column added by **migration `0023_shop_combat_module_prob`** (additive, nullable; `NULL` ⇒ the `GameConstants` default). It is exposed for live tuning via the admin config override API (PUT/GET/reset, `[0.0, 1.0]`-validated). The bucket-membership frozensets are **structural game data, not tunables** — they are not per-guild-overridable and are guarded by the import-time disjoint+coverage assertion. The TL ceiling (§16.1) is governed by the existing `MAX_TECH_LEVEL` constant.
 
-### 16.6 Batch TL banding — two-bucket draw (2026-08, PR #80)
+### 16.6 Batch TL banding — two-bucket draw (2026-08)
 
-Amends §16.1. The batch TL was uniform over `[1, 10]` regardless of tier, so a Bronze shop could stock TL10 gear its players cannot fly while a Platinum shop stocked Bettys. `refresh_shop` now delegates to `ShopService._select_shop_tech_level(tier, config)`, which picks **one of two buckets** and then draws a TL from it:
+Amends §16.1, and is locked as of the change that shipped it — the approach was proposed in discussion beforehand but was not a pre-agreed spec; this section is the first written statement of it.
+
+The batch TL was uniform over `[1, 10]` regardless of tier, so a Bronze shop could stock TL10 gear its players cannot fly while a Platinum shop stocked Bettys. `refresh_shop` now delegates to `ShopService._select_shop_tech_level(tier, config)`, which picks **one of two buckets** and then draws a TL from it:
 
 | | Bucket | Drawn how | Chance |
 |---|---|---|---|
 | **1** | The tier's division band | `game_maths.pick_division_tech_level(tier, division_max_tl)` — the identical draw `spawn_bounty` uses for that division's criminals: the §16.4 kernel centred on `DIVISION_TL_CENTERS[tier]`, capped at `DIVISION_MAX_TL[tier]` | `SHOP_BANDED_TL_WEIGHT` |
 | **2** | Every valid TL | `random.randint(MIN_TECH_LEVEL, MAX_TECH_LEVEL)` — the pre-amendment §16.1 behaviour | `1 − SHOP_BANDED_TL_WEIGHT` |
 
-**Locked properties:**
+**Properties:**
 
 - `SHOP_BANDED_TL_WEIGHT = 0.0` reproduces §16.1 exactly; `1.0` tier-matches every refresh. Both endpoints are supported configurations, not degenerate cases.
 - Bucket 2 is a **superset** of bucket 1, so the observed share of tier-matched shops always exceeds the configured weight. Intended.

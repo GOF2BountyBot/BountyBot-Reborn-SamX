@@ -763,7 +763,7 @@ Uses: `PlayerRepository`, `UserRepository`, `ConfigRepository`
 Multi-tier shop system (`VALID_TIERS = Bronze/Silver/Gold/Platinum`):
 - `refresh_shop(db, guild_id, tier, force_tech_level=None)` — regenerates a tier's stock (`SHOP_DEFAULT_*_NUM` items per category); called by `shop_refresh_executor`. The batch `shop_tech_level` comes from `_select_shop_tech_level` (two-bucket draw — see **"Shop banded TL draw"** below); `force_tech_level` bypasses it entirely and still accepts 1..10 (TL ceiling raised 9→10 so TL10 armour/shields can spawn). Each item then gets its own drawn TL (`_select_item_tech_level`, unchanged 0.7/0.2/0.1 over T/T−1/T−2), and the **shop row stores that per-item TL** (ships: value-derived via `game_maths.ship_tech_level_for_value`; modules: the actual catalog TL **after step-down** via `_get_item_tech_level`) — NOT the batch TL. The returned `refresh_details` dict still carries the batch `tech_level`. See **"Shop module-bucket draw"** below + `COMBAT_SPEC_LOCKED.md §16`.
 
-#### Shop banded TL draw (2026-08, PR #80)
+#### Shop banded TL draw (2026-08)
 
 `_select_shop_tech_level(tier, config)` picks the batch TL from one of two buckets:
 

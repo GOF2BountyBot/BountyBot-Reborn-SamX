@@ -97,6 +97,71 @@ def pick_division_tech_level(division: str, division_max_tl: dict[str, int]) -> 
     return min(pick_random_item_tl(center), cap)
 
 
+def pick_shop_tech_level(
+    band_lo: int,
+    band_hi: int,
+    banded_weight: float,
+    uptier_decay: float,
+    downtier_decay: float,
+) -> int:
+    """Draw a shop's batch tech level from one of two mutually-exclusive buckets.
+
+    With probability *banded_weight* the TL is drawn **uniformly** from the
+    tier's in-band range ``[band_lo, band_hi]`` (the guaranteed tier-matched
+    fraction).  Otherwise it is drawn from the **out-of-band taper**: levels
+    outside the band, weighted by exponential decay from each edge —
+    ``uptier_decay`` per step above ``band_hi`` and ``downtier_decay`` per step
+    below ``band_lo``.  The level immediately adjacent to an edge gets full
+    weight (decay**0); each further step multiplies by the decay.  A gentle
+    ``uptier_decay`` keeps higher-TL shops reachable (up-gearing) while a steep
+    ``downtier_decay`` suppresses off-tier junk below the band.
+
+    Args:
+        band_lo:        Inclusive lower edge of the in-band range (>= MIN).
+        band_hi:        Inclusive upper edge of the in-band range (<= MAX).
+        banded_weight:  Probability [0, 1] of drawing from the in-band bucket.
+        uptier_decay:   Per-step decay [0, 1) for levels above ``band_hi``.
+        downtier_decay: Per-step decay [0, 1) for levels below ``band_lo``.
+
+    Returns:
+        A tech level in ``[MIN_TECH_LEVEL, MAX_TECH_LEVEL]``.
+    """
+    lo = max(GameConstants.MIN_TECH_LEVEL, min(band_lo, GameConstants.MAX_TECH_LEVEL))
+    hi = max(lo, min(band_hi, GameConstants.MAX_TECH_LEVEL))
+
+    # In-band bucket: uniform over [lo, hi].
+    if random.random() < banded_weight:
+        return random.randint(lo, hi)
+
+    # Out-of-band bucket: exponential taper away from each band edge.
+    up = max(0.0, min(uptier_decay, 1.0))
+    down = max(0.0, min(downtier_decay, 1.0))
+    tl_range = range(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL + 1)
+    raw_probs = []
+    for tl in tl_range:
+        if tl < lo:
+            raw_probs.append(down ** (lo - tl - 1))
+        elif tl > hi:
+            raw_probs.append(up ** (tl - hi - 1))
+        else:
+            raw_probs.append(0.0)  # in-band levels belong to the other bucket
+
+    total = sum(raw_probs)
+    if total == 0:
+        # No reachable out-of-band level (band spans the whole range, or both
+        # decays are 0 with no adjacent level) — fall back to a band edge.
+        return hi
+
+    probs = [p / total for p in raw_probs]
+    rand_val = random.random()
+    cumulative = 0.0
+    for i, p in enumerate(probs):
+        cumulative += p
+        if rand_val <= cumulative:
+            return i + GameConstants.MIN_TECH_LEVEL
+    return GameConstants.MAX_TECH_LEVEL  # floating-point safety fallback
+
+
 def reward_per_sys_check(tech_level: int, loadout_value: int) -> int:
     """Calculate the bounty credit reward for each system checked.
 

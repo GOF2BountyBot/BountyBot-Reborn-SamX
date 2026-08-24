@@ -977,50 +977,52 @@ class TestSelectItemTechLevel:
 class TestSelectShopTechLevel:
     """Tests for ShopService's two-bucket batch-TL draw."""
 
-    def test_banded_bucket_uses_the_shared_division_draw(self):
-        """Below the weight, the TL comes from the tier's criminal distribution."""
+    def test_banded_bucket_draws_uniformly_within_the_band(self):
+        """Below the weight, the TL is uniform over the tier's in-band range."""
         svc = ShopService.__new__(ShopService)
 
-        with (
-            patch("services.shop_service.random.random", return_value=0.0),
-            patch("services.shop_service.pick_division_tech_level", return_value=6) as picker,
-        ):
-            assert svc._select_shop_tech_level("Gold") == 6
+        # Force the in-band bucket (bucket-select draw < weight).
+        with patch("services.game_maths.random.random", return_value=0.0):
+            drawn = {svc._select_shop_tech_level("Gold") for _ in range(400)}
 
-        picker.assert_called_once_with("Gold", GameConstants.DIVISION_MAX_TL)
+        # Gold's band is [4, 7]: every in-band draw lands there, nothing outside.
+        assert drawn == {4, 5, 6, 7}
 
-    def test_unbanded_bucket_spans_every_tech_level(self):
-        """Above the weight, the TL is uniform over the full range."""
+    def test_unbanded_bucket_is_out_of_band_only(self):
+        """Above the weight, the TL comes from the taper — outside the band only."""
         svc = ShopService.__new__(ShopService)
+        config = _make_config()
+        config.shop_banded_tl_weight = 0.0  # force the out-of-band bucket
 
-        with patch("services.shop_service.random.random", return_value=0.99):
-            drawn = {svc._select_shop_tech_level("Bronze") for _ in range(400)}
+        drawn = {svc._select_shop_tech_level("Bronze", config) for _ in range(400)}
 
-        # Bronze's band caps at TL2, so anything above it proves the wide bucket ran.
+        # Bronze's band is [1, 2]; the buckets are mutually exclusive, so the
+        # taper never yields an in-band level and always exceeds the band top.
+        assert 1 not in drawn and 2 not in drawn
+        assert min(drawn) >= 3
         assert max(drawn) > 2
-        assert drawn <= set(range(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL + 1))
 
-    def test_weight_of_zero_is_purely_random(self):
-        """SHOP_BANDED_TL_WEIGHT=0 restores the pre-banding behaviour."""
+    def test_weight_of_zero_is_purely_out_of_band(self):
+        """SHOP_BANDED_TL_WEIGHT=0 draws entirely from the out-of-band taper."""
         svc = ShopService.__new__(ShopService)
         config = _make_config()
         config.shop_banded_tl_weight = 0.0
 
-        with patch("services.shop_service.pick_division_tech_level") as picker:
-            drawn = {svc._select_shop_tech_level("Bronze", config) for _ in range(400)}
+        drawn = {svc._select_shop_tech_level("Bronze", config) for _ in range(400)}
 
-        picker.assert_not_called()
+        assert drawn <= set(range(3, GameConstants.MAX_TECH_LEVEL + 1))
         assert max(drawn) > 2
 
     def test_weight_of_one_is_always_banded(self):
-        """SHOP_BANDED_TL_WEIGHT=1 tier-matches every refresh."""
+        """SHOP_BANDED_TL_WEIGHT=1 tier-matches every refresh (uniform in-band)."""
         svc = ShopService.__new__(ShopService)
         config = _make_config()
         config.shop_banded_tl_weight = 1.0
 
         drawn = {svc._select_shop_tech_level("Bronze", config) for _ in range(400)}
 
-        assert drawn <= {1, 2}
+        # Bronze band [1, 2]: both edges appear, nothing else.
+        assert drawn == {1, 2}
 
 
 # ===========================================================================

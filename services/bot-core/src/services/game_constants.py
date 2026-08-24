@@ -355,14 +355,39 @@ class GameConstants:
     SHOP_COMBAT_MODULE_PROB: float = 0.75
 
     # Probability (0.0-1.0) that a shop refresh draws its batch TL from the
-    # tier's division band instead of uniformly across every TL.
-    #   0.0 -> purely random, the pre-banding behaviour
+    # tier's in-band range (uniform over [LO, HI]) instead of the out-of-band
+    # taper. This is the *guaranteed* tier-matched fraction.
+    #   0.0 -> never in-band (all draws come from the out-of-band taper)
     #   1.0 -> every refresh is tier-matched
-    # The unbanded pool is a superset of the band, so the observed rate of
-    # tier-matched shops always runs above this value.
+    # The two buckets are mutually exclusive (the taper covers only TLs OUTSIDE
+    # [LO, HI]), so this value is the exact in-band rate, not a lower bound.
     # Deliberately a scalar float (not a per-division dict) so the issue #70
     # per-guild override audit can add it as a plain nullable column.
     SHOP_BANDED_TL_WEIGHT: float = 0.7
+
+    # Per-tier in-band TL range for shop batch draws [LO, HI] (inclusive).
+    # The banded bucket draws uniformly within [LO, HI]; the out-of-band bucket
+    # tapers exponentially away from these edges (see SHOP_*TIER_TL_DECAY).
+    # Flat scalars (not a dict) so each maps to a plain nullable column under the
+    # issue #70 per-guild override refactor; mirrors where the criminal TL bands
+    # are headed. Kept self-contained (own HI, not reused from DIVISION_MAX_TL).
+    SHOP_TL_BAND_LO_BRONZE: int = 1
+    SHOP_TL_BAND_HI_BRONZE: int = 2
+    SHOP_TL_BAND_LO_SILVER: int = 1
+    SHOP_TL_BAND_HI_SILVER: int = 4
+    SHOP_TL_BAND_LO_GOLD: int = 4
+    SHOP_TL_BAND_HI_GOLD: int = 7
+    SHOP_TL_BAND_LO_PLATINUM: int = 7
+    SHOP_TL_BAND_HI_PLATINUM: int = 10
+
+    # Out-of-band taper decay factors (0.0-1.0) for the shop batch TL draw.
+    # Each step away from the band edge multiplies the weight by the decay:
+    # the level just above HI gets full weight, the next UPTIER*full, etc.
+    # (likewise below LO with DOWNTIER). Smaller = steeper falloff = rarer.
+    # UPTIER is gentle (players up-gear toward the next tier); DOWNTIER is steep
+    # (suppress off-tier junk below the band).
+    SHOP_UPTIER_TL_DECAY: float = 0.6
+    SHOP_DOWNTIER_TL_DECAY: float = 0.45
 
     # ------------------------------------------------------------------
     # Shop Rank Counts
@@ -717,6 +742,16 @@ class GameConstants:
         cls.SHOP_SECONDARY_QTY_SCALER_STANDARD = _track_int("SHOP_SECONDARY_QTY_SCALER_STANDARD", 10)
         cls.SHOP_COMBAT_MODULE_PROB = _track_float("SHOP_COMBAT_MODULE_PROB", 0.75)
         cls.SHOP_BANDED_TL_WEIGHT = _track_float("SHOP_BANDED_TL_WEIGHT", 0.7)
+        cls.SHOP_TL_BAND_LO_BRONZE = _track_int("SHOP_TL_BAND_LO_BRONZE", 1)
+        cls.SHOP_TL_BAND_HI_BRONZE = _track_int("SHOP_TL_BAND_HI_BRONZE", 2)
+        cls.SHOP_TL_BAND_LO_SILVER = _track_int("SHOP_TL_BAND_LO_SILVER", 1)
+        cls.SHOP_TL_BAND_HI_SILVER = _track_int("SHOP_TL_BAND_HI_SILVER", 4)
+        cls.SHOP_TL_BAND_LO_GOLD = _track_int("SHOP_TL_BAND_LO_GOLD", 4)
+        cls.SHOP_TL_BAND_HI_GOLD = _track_int("SHOP_TL_BAND_HI_GOLD", 7)
+        cls.SHOP_TL_BAND_LO_PLATINUM = _track_int("SHOP_TL_BAND_LO_PLATINUM", 7)
+        cls.SHOP_TL_BAND_HI_PLATINUM = _track_int("SHOP_TL_BAND_HI_PLATINUM", 10)
+        cls.SHOP_UPTIER_TL_DECAY = _track_float("SHOP_UPTIER_TL_DECAY", 0.6)
+        cls.SHOP_DOWNTIER_TL_DECAY = _track_float("SHOP_DOWNTIER_TL_DECAY", 0.45)
 
         # Duels
         cls.DUEL_LOG_MAX_LENGTH = _track_int("DUEL_LOG_MAX_LENGTH", 10)

@@ -878,10 +878,14 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         """
         key = tier.upper()
         band_lo = resolve_constant(
-            config, f"shop_tl_band_lo_{tier.lower()}", getattr(GameConstants, f"SHOP_TL_BAND_LO_{key}", GameConstants.MIN_TECH_LEVEL)
+            config,
+            f"shop_tl_band_lo_{tier.lower()}",
+            getattr(GameConstants, f"SHOP_TL_BAND_LO_{key}", GameConstants.MIN_TECH_LEVEL),
         )
         band_hi = resolve_constant(
-            config, f"shop_tl_band_hi_{tier.lower()}", getattr(GameConstants, f"SHOP_TL_BAND_HI_{key}", GameConstants.MAX_TECH_LEVEL)
+            config,
+            f"shop_tl_band_hi_{tier.lower()}",
+            getattr(GameConstants, f"SHOP_TL_BAND_HI_{key}", GameConstants.MAX_TECH_LEVEL),
         )
         banded_weight = resolve_constant(config, "shop_banded_tl_weight", GameConstants.SHOP_BANDED_TL_WEIGHT)
         uptier_decay = resolve_constant(config, "shop_uptier_tl_decay", GameConstants.SHOP_UPTIER_TL_DECAY)

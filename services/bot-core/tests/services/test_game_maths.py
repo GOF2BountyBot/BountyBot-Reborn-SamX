@@ -11,6 +11,7 @@ B.48: ``calculate_user_level`` and its tests were removed alongside the
 vestigial level/division progression system.
 """
 
+import itertools
 import random
 from collections import Counter
 from unittest.mock import patch
@@ -112,9 +113,7 @@ class TestPickShopTechLevel:
         for tl in range(1, 11):
             observed = 100.0 * counts.get(tl, 0) / n
             expected = self._EXPECTED_PCT[tier][tl - 1]
-            assert abs(observed - expected) <= 3.0, (
-                f"{tier} TL{tl}: observed {observed:.1f}% vs expected {expected}%"
-            )
+            assert abs(observed - expected) <= 3.0, f"{tier} TL{tl}: observed {observed:.1f}% vs expected {expected}%"
 
     @pytest.mark.parametrize(
         ("tier", "band"),
@@ -133,7 +132,7 @@ class TestPickShopTechLevel:
         counts = self._sample("bronze", 60000)
         # Bronze band tops at 2; TL3 > TL4 > ... monotonically down the up-tail.
         tail = [counts.get(tl, 0) for tl in range(3, 11)]
-        assert all(earlier >= later for earlier, later in zip(tail, tail[1:])), tail
+        assert all(earlier >= later for earlier, later in itertools.pairwise(tail)), tail
 
     def test_weight_one_is_pure_in_band_uniform(self) -> None:
         random.seed(3)

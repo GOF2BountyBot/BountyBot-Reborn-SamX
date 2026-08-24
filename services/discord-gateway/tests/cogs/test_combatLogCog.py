@@ -252,6 +252,33 @@ class TestBattleAutocomplete:
         choices = await cog.battle_autocomplete(interaction, current="")
         assert choices == []
 
+    async def test_all_autocomplete_sends_no_duel_type(self, cog):
+        """/combat-log (all) cold-fills without a duel_type param (issue #86)."""
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response([_make_list_item(row_id=1)]))
+        await cog.battle_autocomplete(_create_interaction(), current="")
+        params = cog.http_client.get.call_args.kwargs.get("params", {})
+        assert "duel_type" not in params
+
+    async def test_pvp_autocomplete_sends_duel_type_pvp(self, cog):
+        """/combat-log-pvp cold-fills with duel_type=pvp."""
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response([_make_list_item(row_id=1)]))
+        await cog.pvp_battle_autocomplete(_create_interaction(), current="")
+        assert cog.http_client.get.call_args.kwargs["params"]["duel_type"] == "pvp"
+
+    async def test_bounty_autocomplete_sends_duel_type_bounty(self, cog):
+        """/combat-log-bounty cold-fills with duel_type=bounty."""
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response([_make_list_item(row_id=1)]))
+        await cog.bounty_battle_autocomplete(_create_interaction(), current="")
+        assert cog.http_client.get.call_args.kwargs["params"]["duel_type"] == "bounty"
+
+    async def test_pvp_and_all_caches_are_independent(self, cog):
+        """The pvp variant is a distinct cache key from the all variant."""
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response([_make_list_item(row_id=1)]))
+        await cog.battle_autocomplete(_create_interaction(), current="")
+        await cog.pvp_battle_autocomplete(_create_interaction(), current="")
+        # Two distinct keys → two cold-fills (a shared key would have peeked the 2nd).
+        assert cog.http_client.get.call_count == 2
+
     async def test_ordinal_in_label(self, cog):
         """Ordinal appears in choice label when > 1 fight with same opponent."""
         items = [
@@ -715,6 +742,56 @@ class TestCombatLogCommand:
         # Should gracefully show 0 for missing fields
         assert "Secondaries: 0" in value, f"Expected 'Secondaries: 0' for legacy row; got:\n{value}"
         assert "Modules: 0" in value, f"Expected 'Modules: 0' for legacy row; got:\n{value}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: /combat-log-pvp and /combat-log-bounty commands (issue #86)
+# ---------------------------------------------------------------------------
+
+
+class TestSplitCombatLogCommands:
+    """The two split commands share /combat-log's detail path — the battle id is
+    already type-scoped by their autocomplete, so the fetch is identical."""
+
+    async def test_pvp_command_hits_detail_endpoint(self, cog):
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_make_detail()))
+        interaction = _create_interaction()
+
+        await cog.combat_log_pvp.callback(cog, interaction, battle=7)
+
+        get_call = cog.http_client.get.call_args
+        assert get_call.args[0].endswith("/combat-log/7")
+        assert get_call.kwargs.get("params", {}).get("user_id") == interaction.user.id
+        assert "embed" in interaction.followup.send.call_args.kwargs
+
+    async def test_bounty_command_hits_detail_endpoint(self, cog):
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_make_detail()))
+        interaction = _create_interaction()
+
+        await cog.combat_log_bounty.callback(cog, interaction, battle=8)
+
+        get_call = cog.http_client.get.call_args
+        assert get_call.args[0].endswith("/combat-log/8")
+        assert "embed" in interaction.followup.send.call_args.kwargs
+
+    async def test_pvp_command_public_flag(self, cog):
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_make_detail()))
+        interaction = _create_interaction()
+
+        await cog.combat_log_pvp.callback(cog, interaction, battle=7, public=True)
+
+        assert interaction.response.defer.call_args.kwargs.get("ephemeral") is False
+        assert interaction.followup.send.call_args.kwargs.get("ephemeral") is False
+
+    async def test_bounty_command_404(self, cog):
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response({}, status_code=404))
+        interaction = _create_interaction()
+
+        await cog.combat_log_bounty.callback(cog, interaction, battle=9999)
+
+        args = interaction.followup.send.call_args
+        text = args.args[0] if args.args else args.kwargs.get("content", "")
+        assert "not found" in text.lower() or "not a combatant" in text.lower()
 
 
 # ---------------------------------------------------------------------------

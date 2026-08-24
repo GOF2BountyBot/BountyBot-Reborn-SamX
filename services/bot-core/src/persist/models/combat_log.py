@@ -37,7 +37,8 @@ class CombatLog(Base):
     # Full event-tick timeline + summary (§12). Generic JSON — never queried internally.
     data: Mapped[dict] = mapped_column(_JSONB, nullable=False)
 
-    # Retention key (§12 / Appendix A: COMBAT_LOG_RETENTION_HOURS = 72)
+    # Retention key (§12 / issue #86: pruned per-context — bounty
+    # COMBAT_LOG_BOUNTY_RETENTION_HOURS=48h, duel COMBAT_LOG_PVP_RETENTION_HOURS=8760h)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )

@@ -161,6 +161,47 @@ async def test_delete_older_than(repo, db_session):
 
 
 # ---------------------------------------------------------------------------
+# Test: context filtering (issue #86) — list_for_player + delete_older_than
+# ---------------------------------------------------------------------------
+
+
+async def test_list_for_player_filters_by_context(repo, db_session):
+    """contexts= restricts the result to the given battle types."""
+    uid = 555000222
+    duel = _make_log(context="duel", combatant1_user_id=uid, combatant2_user_id=123)
+    pvc = _make_log(context="bounty_pvc", combatant1_user_id=uid, combatant2_user_id=None)
+    bonus = _make_log(context="bounty_bonus", combatant1_user_id=uid, combatant2_user_id=None)
+    for row in (duel, pvc, bonus):
+        await repo.add(db_session, row)
+
+    pvp = await repo.list_for_player(db_session, uid, contexts=("duel",))
+    assert {r.context for r in pvp} == {"duel"}
+
+    bounty = await repo.list_for_player(db_session, uid, contexts=("bounty_pvc", "bounty_bonus"))
+    assert {r.context for r in bounty} == {"bounty_pvc", "bounty_bonus"}
+
+    all_rows = await repo.list_for_player(db_session, uid)  # contexts=None → everything
+    assert {r.context for r in all_rows} == {"duel", "bounty_pvc", "bounty_bonus"}
+
+
+async def test_delete_older_than_filters_by_context(repo, db_session):
+    """contexts= only deletes matching-context rows; others survive even if older."""
+    cutoff = datetime.now(UTC)
+    old_duel = _make_log(context="duel", created_at=cutoff - timedelta(hours=100))
+    old_bounty = _make_log(
+        context="bounty_pvc", combatant2_user_id=None, created_at=cutoff - timedelta(hours=100)
+    )
+    saved_duel = await repo.add(db_session, old_duel)
+    saved_bounty = await repo.add(db_session, old_bounty)
+
+    deleted = await repo.delete_older_than(db_session, cutoff, contexts=("bounty_pvc", "bounty_bonus"))
+    assert deleted == 1
+    # Old bounty row pruned; old duel row untouched (different context).
+    assert await repo.get_by_id(db_session, saved_bounty.id) is None
+    assert await repo.get_by_id(db_session, saved_duel.id) is not None
+
+
+# ---------------------------------------------------------------------------
 # Test: NPC invariant — both NULL user_ids raises ValueError
 # ---------------------------------------------------------------------------
 

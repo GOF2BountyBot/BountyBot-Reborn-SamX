@@ -85,6 +85,8 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "duel-cancel": "Dueling",
     # Combat
     "combat-log": "Combat",
+    "combat-log-pvp": "Combat",
+    "combat-log-bounty": "Combat",
     # Game Data
     "about": "Game Data",
     "list_category": "Game Data",

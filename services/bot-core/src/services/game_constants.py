@@ -612,8 +612,11 @@ class GameConstants:
     # PvC damage reduction — Keith T. Maxwell bonus (§3)
     PVC_DAMAGE_REDUCTION: float = 0.33
 
-    # Combat log retention (§12)
-    COMBAT_LOG_RETENTION_HOURS: int = 72
+    # Combat log retention (§12) — scoped per battle type (issue #86).
+    # Bounty (PvC) logs are transient; PvP (duel) logs are kept far longer.
+    # PvP window of 0 = never prune (permanent) — the disk-bounded default is 1 year.
+    COMBAT_LOG_BOUNTY_RETENTION_HOURS: int = 48
+    COMBAT_LOG_PVP_RETENTION_HOURS: int = 8760
 
     # CI-21: layer_depleted re-emit fraction (latch clears when layer recovers ≥ this fraction of max).
     # Override via: BOUNTYBOT_COMBAT_LAYER_REEMIT_FRACTION=0.25
@@ -816,7 +819,8 @@ class GameConstants:
         cls.NUKE_CR_OVERSHOOT_M = _track_int("NUKE_CR_OVERSHOOT_M", 400)
         cls.NUKE_STACK_FALLOFF = _track_float("NUKE_STACK_FALLOFF", 0.5)
         cls.PVC_DAMAGE_REDUCTION = _track_float("PVC_DAMAGE_REDUCTION", 0.33)
-        cls.COMBAT_LOG_RETENTION_HOURS = _track_int("COMBAT_LOG_RETENTION_HOURS", 72)
+        cls.COMBAT_LOG_BOUNTY_RETENTION_HOURS = _track_int("COMBAT_LOG_BOUNTY_RETENTION_HOURS", 48)
+        cls.COMBAT_LOG_PVP_RETENTION_HOURS = _track_int("COMBAT_LOG_PVP_RETENTION_HOURS", 8760)
         cls.COMBAT_LAYER_REEMIT_FRACTION = _track_float("COMBAT_LAYER_REEMIT_FRACTION", 0.25)
 
         # Combat log recap denoising knobs (Phase 1 + 2 + 3)

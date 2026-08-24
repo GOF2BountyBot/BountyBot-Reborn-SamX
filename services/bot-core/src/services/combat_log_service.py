@@ -37,6 +37,13 @@ flogger = bblogger.get_logger("combat-log-service")
 
 _VALID_CONTEXTS: frozenset[str] = frozenset({"duel", "bounty_pvc", "bounty_bonus"})
 
+# Maps the /combat-log-pvp | /combat-log-bounty filter to the underlying contexts.
+# None (the unfiltered /combat-log) means "all contexts".
+_DUEL_TYPE_CONTEXTS: dict[str, tuple[str, ...]] = {
+    "pvp": ("duel",),
+    "bounty": ("bounty_pvc", "bounty_bonus"),
+}
+
 
 class _SubpathAdapter:
     """Thin adapter: makes a sub-path Row namedtuple duck-type like CombatLog for _pov_outcome.
@@ -250,6 +257,7 @@ class CombatLogService:
         user_id: int,
         guild_id: int,
         limit: int = 25,
+        duel_type: str | None = None,
     ) -> list[dict]:
         """Return lightweight fight summaries for a player in a guild.
 
@@ -261,8 +269,13 @@ class CombatLogService:
         (most-recent = highest ordinal within the day-opponent group).
 
         NPC fights are included (opponent_name = the NPC ship name, outcome from user's POV).
+
+        duel_type filters by battle type: "pvp" → duels only, "bounty" → bounty fights only,
+        None → all contexts. Filtering is applied in the DB query so the ``limit`` cap yields
+        that many rows of the requested type (a mixed cap would starve the rarer type).
         """
-        rows = await self._repo.list_for_player(db, user_id, limit=limit, guild_id=guild_id)
+        contexts = _DUEL_TYPE_CONTEXTS.get(duel_type) if duel_type is not None else None
+        rows = await self._repo.list_for_player(db, user_id, limit=limit, guild_id=guild_id, contexts=contexts)
 
         result: list[dict] = []
         for row in rows:
@@ -400,8 +413,8 @@ class CombatLogService:
         Called when sub.key_events is None (written before P4-T7a) OR sub.recurring
         is None (written before v3 recap redesign). Loads the full row (including
         timeline) and re-runs the full recap pipeline so the output is identical to
-        what a freshly-written row would produce. 72h retention means legacy rows
-        self-heal in 3 days without any backfill.
+        what a freshly-written row would produce. Combat-log retention (bounty 48h,
+        PvP 1 year) means legacy rows self-heal within the window without any backfill.
         """
         row = await self._repo.get_by_id(db, battle_id)
         if row is None:

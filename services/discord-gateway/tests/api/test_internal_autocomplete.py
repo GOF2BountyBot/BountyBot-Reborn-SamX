@@ -753,7 +753,9 @@ def _bot_with_combatlog(cog):
 
 class TestCombatLogCacheInvalidate:
     def test_valid_auth_drops_key_returns_204(self, mock_combatlog_cog):
-        mock_combatlog_cog._combatlog_cache.set((_GUILD_ID, _USER_ID), [{"id": 1}])
+        # issue #86: the cache is context-keyed; the route drops all three variants.
+        for dt in (None, "pvp", "bounty"):
+            mock_combatlog_cog._combatlog_cache.set((_GUILD_ID, _USER_ID, dt), [{"id": 1}])
         with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
             app = _make_app_with_bot(_bot_with_combatlog(mock_combatlog_cog))
             client = TestClient(app, raise_server_exceptions=True)
@@ -762,7 +764,8 @@ class TestCombatLogCacheInvalidate:
                 headers={"X-Internal-Auth": _VALID_TOKEN},
             )
         assert resp.status_code == 204, resp.text
-        assert mock_combatlog_cog._combatlog_cache.peek((_GUILD_ID, _USER_ID)) is None
+        for dt in (None, "pvp", "bounty"):
+            assert mock_combatlog_cog._combatlog_cache.peek((_GUILD_ID, _USER_ID, dt)) is None
 
     def test_wrong_auth_returns_401(self, mock_combatlog_cog):
         with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
@@ -788,8 +791,9 @@ class TestCombatLogCacheInvalidate:
         assert resp.status_code == 204
 
     def test_invalidate_only_other_keys_untouched(self, mock_combatlog_cog):
-        other_key = (_GUILD_ID, 111111111)
-        mock_combatlog_cog._combatlog_cache.set((_GUILD_ID, _USER_ID), [{"id": 1}])
+        other_key = (_GUILD_ID, 111111111, None)  # different user — must survive
+        for dt in (None, "pvp", "bounty"):
+            mock_combatlog_cog._combatlog_cache.set((_GUILD_ID, _USER_ID, dt), [{"id": 1}])
         mock_combatlog_cog._combatlog_cache.set(other_key, [{"id": 2}])
         with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
             app = _make_app_with_bot(_bot_with_combatlog(mock_combatlog_cog))
@@ -798,5 +802,6 @@ class TestCombatLogCacheInvalidate:
                 f"/api/v1/internal/autocomplete/combatlog-cache/{_GUILD_ID}/{_USER_ID}",
                 headers={"X-Internal-Auth": _VALID_TOKEN},
             )
-        assert mock_combatlog_cog._combatlog_cache.peek((_GUILD_ID, _USER_ID)) is None
+        for dt in (None, "pvp", "bounty"):
+            assert mock_combatlog_cog._combatlog_cache.peek((_GUILD_ID, _USER_ID, dt)) is None
         assert mock_combatlog_cog._combatlog_cache.peek(other_key) == [{"id": 2}]

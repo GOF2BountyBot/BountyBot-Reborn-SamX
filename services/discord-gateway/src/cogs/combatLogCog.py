@@ -1,8 +1,13 @@
-"""combatLogCog — /combat-log and /admin_combat_log Discord commands with autocomplete.
+"""combatLogCog — /combat-log[-pvp|-bounty] and /admin_combat_log commands with autocomplete.
 
 The /combat-log command lets a player look up their past battles.
 Autocomplete is populated exclusively with the invoking user's fights in the
 current guild, newest-first (cap 25 — Discord's autocomplete limit).
+
+/combat-log-pvp and /combat-log-bounty (issue #86) are type-scoped variants:
+identical detail rendering, but their autocomplete lists only duels or only
+bounty fights respectively. The type is part of the autocomplete cache key
+(not a client-side filter) so each list yields a full 25 rows of its own type.
 
 /combat-log accepts an optional ``public`` flag (default False): the same
 embed is posted publicly instead of ephemerally; errors stay ephemeral.
@@ -94,11 +99,16 @@ class CombatLogCog(commands.Cog):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         # Per-user combat-log autocomplete cache (the flagship per-user case).
-        # Key = (guild_id, discord_user_id). High key cardinality (every user who
-        # ever fought) → LRU max_entries is MANDATORY. Short TTL is a dead-man
-        # switch: even if a bot-core invalidate push is ever missed, a stale list
-        # self-corrects within the TTL window (combat-log is a read-only history).
-        self._combatlog_cache: AutocompleteCache[tuple[int, int], list[dict]] = AutocompleteCache(
+        # Key = (guild_id, discord_user_id, duel_type) where duel_type ∈
+        # {None, "pvp", "bounty"} — None backs /combat-log (all fights), the other
+        # two back /combat-log-pvp and /combat-log-bounty. The type is part of the
+        # key (not a client-side filter) so each command's 25-row cap yields 25 of
+        # its own type — a mixed cache would let frequent 48h bounty rows crowd out
+        # the rarer 1-year duels. High key cardinality (every user who ever fought)
+        # → LRU max_entries is MANDATORY. Short TTL is a dead-man switch: even if a
+        # bot-core invalidate push is ever missed, a stale list self-corrects within
+        # the TTL window (combat-log is a read-only history).
+        self._combatlog_cache: AutocompleteCache[tuple[int, int, str | None], list[dict]] = AutocompleteCache(
             ttl_seconds=float(os.getenv("AUTOCOMPLETE_COMBATLOG_TTL_SECONDS", "120")),
             refresh_fn=self._fetch_combat_log,
             name="combatlog",
@@ -109,16 +119,20 @@ class CombatLogCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
-    async def _fetch_combat_log(self, key: tuple[int, int]) -> list[dict]:
+    async def _fetch_combat_log(self, key: tuple[int, int, str | None]) -> list[dict]:
         """Refresh one user's recent fights from bot-core. Called by _combatlog_cache.
 
         Pre-computes ``_norm`` (lowercased choice label) at fill time so the hot
         autocomplete path performs only a pure substring check per keystroke.
+        ``duel_type`` (None|"pvp"|"bounty") scopes the fetch server-side.
         """
-        guild_id, user_id = key
+        guild_id, user_id, duel_type = key
+        params: dict = {"user_id": user_id, "guild_id": guild_id, "limit": 25}
+        if duel_type is not None:
+            params["duel_type"] = duel_type
         resp = await self.http_client.get(
             f"{api_base}/combat-log",
-            params={"user_id": user_id, "guild_id": guild_id, "limit": 25},
+            params=params,
             timeout=3.0,
         )
         resp.raise_for_status()
@@ -131,15 +145,19 @@ class CombatLogCog(commands.Cog):
     # Autocomplete
     # ------------------------------------------------------------------
 
-    async def _battle_choices(self, guild_id: int, user_id: int, current: str) -> list[app_commands.Choice[int]]:
+    async def _battle_choices(
+        self, guild_id: int, user_id: int, current: str, duel_type: str | None = None
+    ) -> list[app_commands.Choice[int]]:
         """Build battle autocomplete choices for one player's recent fights.
 
-        Served from the per-user ``_combatlog_cache`` (key = (guild_id, discord_user_id)).
-        On a peek miss, a single 1.0s cold-fill populates the cache (the listing
-        endpoint keys on the player's Discord id directly — single gate, well within
-        the 3s autocomplete budget). Values are battle IDs (int).
+        Served from the per-user ``_combatlog_cache`` (key = (guild_id,
+        discord_user_id, duel_type)). ``duel_type`` (None|"pvp"|"bounty") scopes
+        the list to a battle type. On a peek miss, a single 1.0s cold-fill
+        populates the cache (the listing endpoint keys on the player's Discord id
+        directly — single gate, well within the 3s autocomplete budget). Values
+        are battle IDs (int).
         """
-        key = (guild_id, user_id)
+        key = (guild_id, user_id, duel_type)
         items = self._combatlog_cache.peek(key)
         if items is None:
             items = await self._combatlog_cache.get_with_timeout(key, timeout=1.0)
@@ -157,12 +175,36 @@ class CombatLogCog(commands.Cog):
     async def battle_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[int]]:
-        """Populate /combat-log battle param with the invoker's recent fights."""
+        """Populate /combat-log battle param with the invoker's recent fights (all types)."""
         try:
             guild_id = interaction.guild_id
             if guild_id is None:
                 return []
             return await self._battle_choices(guild_id, interaction.user.id, current)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def pvp_battle_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[int]]:
+        """Populate /combat-log-pvp battle param with the invoker's recent duels."""
+        try:
+            guild_id = interaction.guild_id
+            if guild_id is None:
+                return []
+            return await self._battle_choices(guild_id, interaction.user.id, current, duel_type="pvp")
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def bounty_battle_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[int]]:
+        """Populate /combat-log-bounty battle param with the invoker's recent bounty fights."""
+        try:
+            guild_id = interaction.guild_id
+            if guild_id is None:
+                return []
+            return await self._battle_choices(guild_id, interaction.user.id, current, duel_type="bounty")
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -193,18 +235,20 @@ class CombatLogCog(commands.Cog):
     # /combat-log <battle>
     # ------------------------------------------------------------------
 
-    @app_commands.command(name="combat-log", description="Review the details of a past battle")
-    @app_commands.describe(
-        battle="Select a battle from your history",
-        public="Make the response visible to everyone (default: False — only you see it)",
-    )
-    @app_commands.autocomplete(battle=battle_autocomplete)
-    async def combat_log(self, interaction: discord.Interaction, battle: int, public: bool = False):
-        """Show the after-action report for a past battle."""
+    async def _show_battle(
+        self, interaction: discord.Interaction, battle: int, public: bool, *, command: str
+    ) -> None:
+        """Fetch and render one battle's after-action report.
+
+        Shared body for /combat-log, /combat-log-pvp and /combat-log-bounty — the
+        detail fetch is identical regardless of type (the battle id is already
+        scoped by whichever command's autocomplete produced it). ``command`` is
+        only used for log lines.
+        """
         # Errors always stay ephemeral regardless of `public`; success follows `public`.
         await interaction.response.defer(thinking=True, ephemeral=not public)
         flogger.info(
-            f"/combat-log invoked: guild={interaction.guild_id} user={interaction.user.id}"
+            f"{command} invoked: guild={interaction.guild_id} user={interaction.user.id}"
             f" battle={battle} public={public}"
         )
 
@@ -228,22 +272,52 @@ class CombatLogCog(commands.Cog):
             embed = self._build_detail_embed(data, interaction.user)
             await interaction.followup.send(embed=embed, ephemeral=not public)
             flogger.info(
-                f"/combat-log success: guild={interaction.guild_id} user={interaction.user.id}"
+                f"{command} success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" battle={battle} public={public}"
             )
 
         except httpx.HTTPStatusError as exc:
             flogger.error(
-                f"/combat-log API error: guild={interaction.guild_id} user={interaction.user.id}"
+                f"{command} API error: guild={interaction.guild_id} user={interaction.user.id}"
                 f" battle={battle} status={exc.response.status_code}"
             )
             await interaction.followup.send("⚠️ An error occurred while fetching the battle report.", ephemeral=True)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.error(
-                f"/combat-log error: guild={interaction.guild_id} user={interaction.user.id}"
+                f"{command} error: guild={interaction.guild_id} user={interaction.user.id}"
                 f" battle={battle} error={exc}"
             )
             await interaction.followup.send("⚠️ An error occurred while fetching the battle report.", ephemeral=True)
+
+    @app_commands.command(name="combat-log", description="Review the details of a past battle")
+    @app_commands.describe(
+        battle="Select a battle from your history",
+        public="Make the response visible to everyone (default: False — only you see it)",
+    )
+    @app_commands.autocomplete(battle=battle_autocomplete)
+    async def combat_log(self, interaction: discord.Interaction, battle: int, public: bool = False):
+        """Show the after-action report for a past battle (any type)."""
+        await self._show_battle(interaction, battle, public, command="/combat-log")
+
+    @app_commands.command(name="combat-log-pvp", description="Review the details of a past PvP duel")
+    @app_commands.describe(
+        battle="Select a duel from your history",
+        public="Make the response visible to everyone (default: False — only you see it)",
+    )
+    @app_commands.autocomplete(battle=pvp_battle_autocomplete)
+    async def combat_log_pvp(self, interaction: discord.Interaction, battle: int, public: bool = False):
+        """Show the after-action report for a past PvP duel."""
+        await self._show_battle(interaction, battle, public, command="/combat-log-pvp")
+
+    @app_commands.command(name="combat-log-bounty", description="Review the details of a past bounty fight")
+    @app_commands.describe(
+        battle="Select a bounty fight from your history",
+        public="Make the response visible to everyone (default: False — only you see it)",
+    )
+    @app_commands.autocomplete(battle=bounty_battle_autocomplete)
+    async def combat_log_bounty(self, interaction: discord.Interaction, battle: int, public: bool = False):
+        """Show the after-action report for a past bounty (PvC) fight."""
+        await self._show_battle(interaction, battle, public, command="/combat-log-bounty")
 
     # ------------------------------------------------------------------
     # /admin_combat_log <user> <battle>

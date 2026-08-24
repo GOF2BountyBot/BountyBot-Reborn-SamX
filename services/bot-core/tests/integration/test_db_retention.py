@@ -100,16 +100,18 @@ def _make_audit(
     )
 
 
-def _make_combat_log(*, created_at: datetime | None = None) -> CombatLog:
+def _make_combat_log(*, created_at: datetime | None = None, context: str = "duel") -> CombatLog:
     """Build a minimal CombatLog ORM row for the SQLite retention test."""
     now = datetime.now(UTC)
+    # Bounty (NPC) fights have a NULL combatant2_user_id; duels have both.
+    c2_user_id = None if context in ("bounty_pvc", "bounty_bonus") else 200
     return CombatLog(
         guild_id=1,
-        context="duel",
+        context=context,
         combatant1_name="A",
         combatant2_name="B",
         combatant1_user_id=100,
-        combatant2_user_id=200,
+        combatant2_user_id=c2_user_id,
         winner_name="A",
         is_stalemate=False,
         data={"schema_version": 1},
@@ -288,6 +290,96 @@ async def test_executor_deletes_across_all_three_tables(db_session, async_engine
     assert len(duels) == 1 and duels[0].status == "pending"
     assert len(audits) == 1
     assert len(combat_logs) == 1  # only the recent combat log survives
+
+
+async def test_combat_log_retention_scoped_by_context(db_session, async_engine):
+    """issue #86: bounty logs prune at 48h; duel logs survive until the 1-year PvP window."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    now = datetime.now(UTC)
+
+    # Bounty logs: one past 48h (pruned), one bonus past 48h (pruned), one under (kept).
+    db_session.add(_make_combat_log(context="bounty_pvc", created_at=now - timedelta(hours=60)))
+    db_session.add(_make_combat_log(context="bounty_bonus", created_at=now - timedelta(hours=60)))
+    db_session.add(_make_combat_log(context="bounty_pvc", created_at=now - timedelta(hours=24)))
+    # Duels: 60h old survives (well inside 1yr — the key new behavior), 400d old pruned,
+    # 1d old survives.
+    db_session.add(_make_combat_log(context="duel", created_at=now - timedelta(hours=60)))
+    db_session.add(_make_combat_log(context="duel", created_at=now - timedelta(days=400)))
+    db_session.add(_make_combat_log(context="duel", created_at=now - timedelta(days=1)))
+    await db_session.commit()
+
+    session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def _fake_get_session():
+        async with session_factory() as session:
+            yield session
+
+    fake_db_manager = MagicMock()
+    fake_db_manager.get_session = _fake_get_session
+
+    from unittest.mock import patch
+
+    from utils.executors.db_retention_executor import execute_db_retention_job
+
+    with patch("persist.database.manager.db_manager", fake_db_manager):
+        result = await execute_db_retention_job("test-job", {"job_type": "db_retention"})
+
+    assert result["status"] == "success"
+    assert result["combat_logs_bounty_deleted"] == 2
+    assert result["combat_logs_pvp_deleted"] == 1
+    assert result["combat_logs_deleted"] == 3
+
+    async with session_factory() as fresh:
+        survivors = (await fresh.execute(select(CombatLog))).scalars().all()
+    # 1 recent bounty + 60h duel + 1d duel = 3 survivors; the 60h duel is the proof
+    # bounty-window pruning does NOT touch duels.
+    contexts = sorted(r.context for r in survivors)
+    assert contexts == ["bounty_pvc", "duel", "duel"]
+
+
+async def test_combat_log_pvp_retention_zero_is_permanent(db_session, async_engine):
+    """COMBAT_LOG_PVP_RETENTION_HOURS=0 disables duel pruning entirely."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from services.game_constants import GameConstants
+
+    now = datetime.now(UTC)
+    # An ancient duel that WOULD be pruned under the 1yr window.
+    db_session.add(_make_combat_log(context="duel", created_at=now - timedelta(days=3650)))
+    # A stale bounty that must still prune regardless of the PvP setting.
+    db_session.add(_make_combat_log(context="bounty_pvc", created_at=now - timedelta(hours=60)))
+    await db_session.commit()
+
+    session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def _fake_get_session():
+        async with session_factory() as session:
+            yield session
+
+    fake_db_manager = MagicMock()
+    fake_db_manager.get_session = _fake_get_session
+
+    from unittest.mock import patch
+
+    from utils.executors.db_retention_executor import execute_db_retention_job
+
+    with (
+        patch("persist.database.manager.db_manager", fake_db_manager),
+        patch.object(GameConstants, "COMBAT_LOG_PVP_RETENTION_HOURS", 0),
+    ):
+        result = await execute_db_retention_job("test-job", {"job_type": "db_retention"})
+
+    assert result["status"] == "success"
+    assert result["combat_logs_pvp_deleted"] == 0  # PvP pass skipped
+    assert result["combat_logs_bounty_deleted"] == 1
+
+    async with session_factory() as fresh:
+        survivors = (await fresh.execute(select(CombatLog))).scalars().all()
+    # The 10-year-old duel survives (permanent); the stale bounty is gone.
+    assert [r.context for r in survivors] == ["duel"]
 
 
 async def test_executor_returns_success_when_one_pass_fails(db_session, async_engine):

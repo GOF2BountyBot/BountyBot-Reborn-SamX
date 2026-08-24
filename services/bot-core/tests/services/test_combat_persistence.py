@@ -388,7 +388,12 @@ class TestDbRetentionExecutorCombatLogPass:
 
     @pytest.mark.asyncio
     async def test_return_dict_includes_combat_logs_deleted(self):
-        """Return dict has 'combat_logs_deleted' key."""
+        """Return dict has 'combat_logs_deleted' key.
+
+        issue #86: the combat-log pass now runs two context-scoped sub-deletes
+        (bounty + PvP), so the mocked delete_older_than (return_value=3) fires
+        twice → total 6, split 3/3 across the per-type keys.
+        """
         # Mock all four repo calls so no real DB is needed.
         with (
             patch("persist.database.manager.db_manager") as mock_manager,
@@ -419,5 +424,7 @@ class TestDbRetentionExecutorCombatLogPass:
             result = await execute_db_retention_job("test-job", {})
 
         assert "combat_logs_deleted" in result, "Return dict must include 'combat_logs_deleted'"
-        assert result["combat_logs_deleted"] == 3
+        assert result["combat_logs_deleted"] == 6  # bounty sub-pass (3) + pvp sub-pass (3)
+        assert result["combat_logs_bounty_deleted"] == 3
+        assert result["combat_logs_pvp_deleted"] == 3
         assert result["status"] == "success"

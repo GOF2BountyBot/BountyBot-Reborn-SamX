@@ -36,6 +36,11 @@ async def list_combat_log(
     user_id: int = Query(..., description="Discord user ID of the requesting player"),
     guild_id: int = Query(..., description="Guild to scope the search to"),
     limit: int = Query(25, ge=1, le=25, description="Max results (Discord autocomplete cap)"),
+    duel_type: str | None = Query(
+        None,
+        pattern="^(pvp|bounty)$",
+        description="Filter by battle type: 'pvp' (duels) or 'bounty'. Omit for all contexts.",
+    ),
     service: CombatLogService = Depends(get_combat_log_service),
 ):
     """Return the most recent fights for a player in a guild.
@@ -43,12 +48,15 @@ async def list_combat_log(
     Results are ordered newest-first.  Each item carries the opponent name,
     the invoker's POV outcome (won/lost/stalemate), and a disambiguation ordinal
     for same-opponent same-day collisions.  Used to populate the /combat-log
-    Discord autocomplete.
+    Discord autocomplete.  ``duel_type`` scopes the list to PvP or bounty fights
+    (backs /combat-log-pvp and /combat-log-bounty).
     """
-    flogger.info(f"GET /combat-log list: user_id={user_id} guild_id={guild_id} limit={limit}")
+    flogger.info(f"GET /combat-log list: user_id={user_id} guild_id={guild_id} limit={limit} duel_type={duel_type}")
     async with get_db_session() as db:
         try:
-            items = await service.list_for_player(db, user_id=user_id, guild_id=guild_id, limit=limit)
+            items = await service.list_for_player(
+                db, user_id=user_id, guild_id=guild_id, limit=limit, duel_type=duel_type
+            )
             flogger.debug(f"GET /combat-log list: found {len(items)} items for user_id={user_id}")
             return [CombatLogListItem(**item) for item in items]
         except Exception as exc:

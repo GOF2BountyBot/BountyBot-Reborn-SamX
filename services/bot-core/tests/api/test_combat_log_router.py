@@ -182,6 +182,28 @@ class TestListCombatLog:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    def test_duel_type_forwarded(self, client, mock_service):
+        """duel_type is plumbed through to the service (issue #86)."""
+        for dt in ("pvp", "bounty"):
+            resp = client.get(
+                "/api/v1/combat-log", params={"user_id": 100, "guild_id": 999, "duel_type": dt}
+            )
+            assert resp.status_code == 200
+            assert mock_service.list_for_player.call_args.kwargs["duel_type"] == dt
+
+    def test_duel_type_defaults_to_none(self, client, mock_service):
+        """Omitting duel_type forwards None (unfiltered /combat-log behavior)."""
+        resp = client.get("/api/v1/combat-log", params={"user_id": 100, "guild_id": 999})
+        assert resp.status_code == 200
+        assert mock_service.list_for_player.call_args.kwargs["duel_type"] is None
+
+    def test_invalid_duel_type_returns_422(self, client):
+        """An unrecognized duel_type is rejected by the pattern constraint."""
+        resp = client.get(
+            "/api/v1/combat-log", params={"user_id": 100, "guild_id": 999, "duel_type": "nonsense"}
+        )
+        assert resp.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # Tests: GET /api/v1/combat-log/{id}

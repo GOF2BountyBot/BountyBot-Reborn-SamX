@@ -109,7 +109,7 @@ class TestCombatLogCache:
         assert res[0].value == 1
 
     def test_warm_peek_zero_refresh(self, combatlog_cog):
-        key = (987654321, 111)
+        key = (987654321, 111, None)  # issue #86: /combat-log uses the None (all) variant
         combatlog_cog._combatlog_cache.set(key, [_combat_item(1, "Foo")])
         calls = {"n": 0}
 
@@ -123,7 +123,7 @@ class TestCombatLogCache:
         assert calls["n"] == 0  # warm peek never awaited refresh_fn
 
     def test_invalidate_drops_user_key_then_coldfills(self, combatlog_cog):
-        key = (987654321, 111)
+        key = (987654321, 111, None)  # issue #86: /combat-log uses the None (all) variant
         combatlog_cog._combatlog_cache.set(key, [_combat_item(1, "Old")])
         combatlog_cog._combatlog_cache.invalidate(key)
         assert combatlog_cog._combatlog_cache.peek(key) is None

@@ -216,8 +216,11 @@ async def invalidate_combatlog_cache(
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    cog._combatlog_cache.invalidate((guild_id, user_id))
-    flogger.info(f"invalidate_combatlog_cache: dropped key for guild={guild_id} user={user_id}")
+    # Drop all three per-user variants (all / pvp / bounty) — a fight of either
+    # type can change what any of the three lists should show.
+    for duel_type in (None, "pvp", "bounty"):
+        cog._combatlog_cache.invalidate((guild_id, user_id, duel_type))
+    flogger.info(f"invalidate_combatlog_cache: dropped keys for guild={guild_id} user={user_id}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

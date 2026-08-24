@@ -460,7 +460,9 @@ async def warm_guild_combatlog_caches(bot, guild_id: int) -> None:
         async def _warm_user(user_id: int) -> None:
             async with sem:
                 try:
-                    await cog._combatlog_cache.get((guild_id, user_id))
+                    # Warm the "all" variant only; /combat-log-pvp and
+                    # /combat-log-bounty cold-fill on first use within the 1s budget.
+                    await cog._combatlog_cache.get((guild_id, user_id, None))
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     flogger.warning(
                         f"warm_guild_combatlog_caches({guild_id}): warm failed "

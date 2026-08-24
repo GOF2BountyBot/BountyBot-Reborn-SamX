@@ -688,6 +688,22 @@ class TestListForPlayer:
         assert items[0]["opponent_name"] == "Vossk Soldier"
         assert items[0]["outcome"] == "won"
 
+    async def test_duel_type_maps_to_repo_contexts(self):
+        """duel_type is translated to the repo's contexts= filter (issue #86)."""
+        svc = CombatLogService()
+        mock_repo = AsyncMock()
+        mock_repo.list_for_player = AsyncMock(return_value=[])
+        svc._repo = mock_repo
+
+        await svc.list_for_player(MagicMock(), user_id=1, guild_id=2, duel_type="pvp")
+        assert mock_repo.list_for_player.call_args.kwargs["contexts"] == ("duel",)
+
+        await svc.list_for_player(MagicMock(), user_id=1, guild_id=2, duel_type="bounty")
+        assert mock_repo.list_for_player.call_args.kwargs["contexts"] == ("bounty_pvc", "bounty_bonus")
+
+        await svc.list_for_player(MagicMock(), user_id=1, guild_id=2)  # default: all
+        assert mock_repo.list_for_player.call_args.kwargs["contexts"] is None
+
     async def test_npc_fight_not_seen_by_other_user(self):
         """A user who is NOT a combatant gets empty list from repo (repo-level enforcement)."""
         svc = CombatLogService()

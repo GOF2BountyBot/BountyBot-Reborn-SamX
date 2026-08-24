@@ -101,7 +101,9 @@ class TestConstantDefaults:
 
     def test_pvc_and_retention(self):
         assert pytest.approx(0.33) == GameConstants.PVC_DAMAGE_REDUCTION
-        assert GameConstants.COMBAT_LOG_RETENTION_HOURS == 72
+        # issue #86: combat-log retention is now scoped per battle type.
+        assert GameConstants.COMBAT_LOG_BOUNTY_RETENTION_HOURS == 48
+        assert GameConstants.COMBAT_LOG_PVP_RETENTION_HOURS == 8760
 
 
 # ---------------------------------------------------------------------------

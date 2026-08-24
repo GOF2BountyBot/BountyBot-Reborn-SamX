@@ -156,6 +156,7 @@ class CombatLogRepository(IRepository[CombatLog]):
         user_id: int,
         limit: int = 20,
         guild_id: int | None = None,
+        contexts: tuple[str, ...] | None = None,
     ) -> list[CombatLog]:
         """Return the most recent fights involving a player (§12 canonical query).
 
@@ -168,6 +169,9 @@ class CombatLogRepository(IRepository[CombatLog]):
             user_id:  Discord user ID to filter by (either combatant slot).
             limit:    Maximum rows to return (default 20).
             guild_id: When provided, restrict to this guild only (for autocomplete).
+            contexts: When provided, restrict to rows whose ``context`` is in this
+                      set (e.g. ("duel",) for PvP, ("bounty_pvc","bounty_bonus") for
+                      bounty). ``None`` returns all contexts (the default).
         """
         try:
             stmt = select(CombatLog).where(
@@ -178,6 +182,8 @@ class CombatLogRepository(IRepository[CombatLog]):
             )
             if guild_id is not None:
                 stmt = stmt.where(CombatLog.guild_id == guild_id)
+            if contexts is not None:
+                stmt = stmt.where(CombatLog.context.in_(contexts))
             stmt = stmt.order_by(CombatLog.created_at.desc()).limit(limit)
             result = await db.execute(stmt)
             return list(result.scalars().all())
@@ -217,25 +223,41 @@ class CombatLogRepository(IRepository[CombatLog]):
                 await db.rollback()
             raise
 
-    async def delete_older_than(self, db: AsyncSession, cutoff: datetime, *, commit: bool = True) -> int:
+    async def delete_older_than(
+        self,
+        db: AsyncSession,
+        cutoff: datetime,
+        *,
+        contexts: tuple[str, ...] | None = None,
+        commit: bool = True,
+    ) -> int:
         """Bulk-delete combat_log rows whose created_at is older than cutoff.
 
-        Returns the count of deleted rows. Called by T10's db_retention_executor
-        extension; T2 only lands the method.
+        Returns the count of deleted rows. Called by db_retention_executor's
+        combat-log pass, which scopes retention per battle type: bounty contexts
+        prune on a short window, duel (PvP) contexts on a long one.
+
+        Args:
+            contexts: When provided, only delete rows whose ``context`` is in this
+                      set. ``None`` deletes across all contexts (the default).
 
         Uses synchronize_session='fetch' (bulk DELETE exception — see
         persist/repositories/AGENTS.md).
         """
         try:
-            result = await db.execute(
-                delete(CombatLog).where(CombatLog.created_at < cutoff).execution_options(synchronize_session="fetch")
-            )
+            stmt = delete(CombatLog).where(CombatLog.created_at < cutoff)
+            if contexts is not None:
+                stmt = stmt.where(CombatLog.context.in_(contexts))
+            result = await db.execute(stmt.execution_options(synchronize_session="fetch"))
             if commit:
                 await db.commit()
             else:
                 await db.flush()
             count = result.rowcount or 0
-            flogger.info(f"Deleted {count} combat_log row(s) older than {cutoff.isoformat()}")
+            flogger.info(
+                f"Deleted {count} combat_log row(s) older than {cutoff.isoformat()}"
+                f"{'' if contexts is None else f' (contexts={list(contexts)})'}"
+            )
             return count
         except Exception as e:
             flogger.error(f"Error deleting combat_log rows older than {cutoff.isoformat()}: {e}")

@@ -188,9 +188,7 @@ async def test_delete_older_than_filters_by_context(repo, db_session):
     """contexts= only deletes matching-context rows; others survive even if older."""
     cutoff = datetime.now(UTC)
     old_duel = _make_log(context="duel", created_at=cutoff - timedelta(hours=100))
-    old_bounty = _make_log(
-        context="bounty_pvc", combatant2_user_id=None, created_at=cutoff - timedelta(hours=100)
-    )
+    old_bounty = _make_log(context="bounty_pvc", combatant2_user_id=None, created_at=cutoff - timedelta(hours=100))
     saved_duel = await repo.add(db_session, old_duel)
     saved_bounty = await repo.add(db_session, old_bounty)
 

@@ -235,9 +235,7 @@ class CombatLogCog(commands.Cog):
     # /combat-log <battle>
     # ------------------------------------------------------------------
 
-    async def _show_battle(
-        self, interaction: discord.Interaction, battle: int, public: bool, *, command: str
-    ) -> None:
+    async def _show_battle(self, interaction: discord.Interaction, battle: int, public: bool, *, command: str) -> None:
         """Fetch and render one battle's after-action report.
 
         Shared body for /combat-log, /combat-log-pvp and /combat-log-bounty — the
@@ -284,8 +282,7 @@ class CombatLogCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while fetching the battle report.", ephemeral=True)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.error(
-                f"{command} error: guild={interaction.guild_id} user={interaction.user.id}"
-                f" battle={battle} error={exc}"
+                f"{command} error: guild={interaction.guild_id} user={interaction.user.id} battle={battle} error={exc}"
             )
             await interaction.followup.send("⚠️ An error occurred while fetching the battle report.", ephemeral=True)
 

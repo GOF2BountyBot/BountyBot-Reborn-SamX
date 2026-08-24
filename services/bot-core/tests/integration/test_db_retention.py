@@ -343,8 +343,6 @@ async def test_combat_log_pvp_retention_zero_is_permanent(db_session, async_engi
     """COMBAT_LOG_PVP_RETENTION_HOURS=0 disables duel pruning entirely."""
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from services.game_constants import GameConstants
-
     now = datetime.now(UTC)
     # An ancient duel that WOULD be pruned under the 1yr window.
     db_session.add(_make_combat_log(context="duel", created_at=now - timedelta(days=3650)))
@@ -364,6 +362,7 @@ async def test_combat_log_pvp_retention_zero_is_permanent(db_session, async_engi
 
     from unittest.mock import patch
 
+    from services.game_constants import GameConstants
     from utils.executors.db_retention_executor import execute_db_retention_job
 
     with (

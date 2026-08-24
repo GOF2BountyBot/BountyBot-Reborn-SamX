@@ -8,14 +8,24 @@ class GameConstantsOverridesMixin(BaseModel):
 
     All fields are ``| None = None``.  NULL means "use the global GameConstants
     default" — the service layer resolves the actual value via ``resolve_constant``.
+
+    Validation contract (issue #70): strict types — no cross-type coercion, so a
+    bool field rejects ``0``/``1``/``"true"`` and an int field rejects ``"5"`` and
+    ``true`` (int stays accepted for float fields as a lossless widening) — and
+    every numeric field carries ge/le bounds so a fat-fingered override cannot
+    wedge the game loop. Cross-field checks (delay min<=max, loot qty ordering)
+    only fire when both sides arrive in the same request; a partial update is
+    not cross-checked against values already stored.
     """
+
+    model_config = ConfigDict(strict=True)
 
     # Combat / Balance
     division_max_tl: dict[str, int] | None = None
     ship_value_reward_percentage: float | None = Field(None, ge=0.0, le=1.0)
     criminal_equip_damageless_weapon_chance: int | None = Field(None, ge=0, le=100)
     criminal_max_gear_upgrade: int | None = Field(None, ge=0, le=10)
-    bounty_reward_to_xp_gain_mult: float | None = Field(None, ge=0.0)
+    bounty_reward_to_xp_gain_mult: float | None = Field(None, ge=0.0, le=100.0)
     bounty_winner_reserve_factor: float | None = Field(None, ge=0.0, le=1.0)
     # Per-division prize-pool scaler. NULL == GameConstants.BOUNTY_DIVISION_REWARD_MULT.
     bounty_division_reward_mult: dict[str, float] | None = None
@@ -24,40 +34,39 @@ class GameConstantsOverridesMixin(BaseModel):
     duel_cloak_chance: int | None = Field(None, ge=0, le=100)
 
     # Bounty mechanics
-    close_bounty_threshold: int | None = Field(None, ge=1)
+    close_bounty_threshold: int | None = Field(None, ge=1, le=50)
     max_route_length: int | None = Field(None, ge=1, le=500)
     min_route_systems: int | None = Field(None, ge=2, le=50)
     # ge=0: a max window of 0 disables the "recently spotted" hint guild-wide
     # (every bounty rolls B=0). Per-bounty B is rolled from [0, this value].
     recently_spotted_max_window: int | None = Field(None, ge=0, le=50)
-    bounty_delay_random_min: int | None = Field(None, ge=0)
-    bounty_delay_random_max: int | None = Field(None, ge=0)
-    bounty_spawn_jitter: int | None = Field(None, ge=0)
-    check_cooldown: int | None = Field(None, ge=0)
-    duel_request_expiry: int | None = Field(None, ge=0)
-    tier_change_cooldown: int | None = Field(None, ge=0)
+    bounty_delay_random_min: int | None = Field(None, ge=0, le=1440)  # minutes; <= 1 day
+    bounty_delay_random_max: int | None = Field(None, ge=0, le=1440)  # minutes; <= 1 day
+    bounty_spawn_jitter: int | None = Field(None, ge=0, le=3600)  # seconds; <= 1 hour
+    check_cooldown: int | None = Field(None, ge=0, le=86400)  # seconds; <= 1 day
+    duel_request_expiry: int | None = Field(None, ge=0, le=2_592_000)  # seconds; <= 30 days
+    tier_change_cooldown: int | None = Field(None, ge=0, le=2_592_000)  # seconds; <= 30 days
 
     # Activity / Temperature
     guild_activity_decay_rate: float | None = Field(None, ge=0.0, le=1.0)
-    min_guild_activity: float | None = Field(None, ge=0.0)
-    activity_temp_per_player: int | None = Field(None, ge=0)
+    min_guild_activity: float | None = Field(None, ge=0.0, le=100.0)
+    activity_temp_per_player: int | None = Field(None, ge=0, le=100)
 
     # Shop
-    shop_default_ships_num: int | None = Field(None, ge=0)
-    shop_default_weapons_num: int | None = Field(None, ge=0)
-    shop_default_modules_num: int | None = Field(None, ge=0)
-    shop_default_turrets_num: int | None = Field(None, ge=0)
+    shop_default_ships_num: int | None = Field(None, ge=0, le=50)
+    shop_default_weapons_num: int | None = Field(None, ge=0, le=50)
+    shop_default_modules_num: int | None = Field(None, ge=0, le=50)
+    shop_default_turrets_num: int | None = Field(None, ge=0, le=50)
     turret_spawn_probability: int | None = Field(None, ge=0, le=100)
 
-    # Inventory / Economy
-    kaamo_max_capacity: int | None = Field(None, ge=0)
-    classic_credits_per_check: int | None = Field(None, ge=0)
+    # Economy — kaamo_max_capacity retired (issue #70): Kaamo storage is not a mechanic
+    classic_credits_per_check: int | None = Field(None, ge=0, le=1_000_000)
 
     # Demotion
     demotion_credit_penalty_pct: int | None = Field(None, ge=0, le=100)
 
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
-    long_range_threshold_m: int | None = Field(None, ge=0)
+    long_range_threshold_m: int | None = Field(None, ge=0, le=50_000)  # metres; battlefield is ~5 km
     criminal_long_range_pct: float | None = Field(None, ge=0.0, le=1.0)
     primary_tl_band_weights: dict[str, int] | None = None
     criminal_cloak_chance_by_division: dict[str, int] | None = None
@@ -65,8 +74,8 @@ class GameConstantsOverridesMixin(BaseModel):
     criminal_emergency_chance_by_division: dict[str, int] | None = None
     criminal_weaponmod_chance_by_division: dict[str, int] | None = None
 
-    # Thread 6 — behavioral toggle (strict bool: reject 0/1/"true" coercion).
-    criminal_exclude_emp_weapons: bool | None = Field(None, strict=True)
+    # Thread 6 — behavioral toggle (strict bool now comes from the mixin-wide strict config).
+    criminal_exclude_emp_weapons: bool | None = None
 
     # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2).
     # Chances + band-select are int-percent (0–100); qty/window are non-negative ints;
@@ -79,17 +88,17 @@ class GameConstantsOverridesMixin(BaseModel):
     loot_band1_select_pct: int | None = Field(None, ge=0, le=100)
     loot_band2_select_pct: int | None = Field(None, ge=0, le=100)
     loot_band3_select_pct: int | None = Field(None, ge=0, le=100)
-    loot_band1_tl_window: int | None = Field(None, ge=0)
-    loot_band1_qty_min: int | None = Field(None, ge=0)
-    loot_band1_qty_max: int | None = Field(None, ge=0)
-    loot_band1_qty_mode: int | None = Field(None, ge=0)
-    loot_band2_qty_min: int | None = Field(None, ge=0)
-    loot_band2_qty_max: int | None = Field(None, ge=0)
-    loot_band2_qty_mode: int | None = Field(None, ge=0)
-    loot_band3_qty_min: int | None = Field(None, ge=0)
-    loot_band3_qty_max: int | None = Field(None, ge=0)
-    loot_band3_qty_mode: int | None = Field(None, ge=0)
-    loot_commodity_sell_fraction: float | None = Field(None, ge=0.0)
+    loot_band1_tl_window: int | None = Field(None, ge=0, le=9)  # TL span is 1-10
+    loot_band1_qty_min: int | None = Field(None, ge=0, le=1000)
+    loot_band1_qty_max: int | None = Field(None, ge=0, le=1000)
+    loot_band1_qty_mode: int | None = Field(None, ge=0, le=1000)
+    loot_band2_qty_min: int | None = Field(None, ge=0, le=1000)
+    loot_band2_qty_max: int | None = Field(None, ge=0, le=1000)
+    loot_band2_qty_mode: int | None = Field(None, ge=0, le=1000)
+    loot_band3_qty_min: int | None = Field(None, ge=0, le=1000)
+    loot_band3_qty_max: int | None = Field(None, ge=0, le=1000)
+    loot_band3_qty_mode: int | None = Field(None, ge=0, le=1000)
+    loot_commodity_sell_fraction: float | None = Field(None, ge=0.0, le=10.0)  # 10x face value ceiling
 
     # Shop module-draw combat/filler split (NULL == GameConstants.SHOP_COMBAT_MODULE_PROB)
     shop_combat_module_prob: float | None = Field(None, ge=0.0, le=1.0)
@@ -170,6 +179,25 @@ class GameConstantsOverridesMixin(BaseModel):
         mx = self.bounty_delay_random_max
         if mn is not None and mx is not None and mn > mx:
             raise ValueError("bounty_delay_random_min must be <= bounty_delay_random_max")
+        return self
+
+    @model_validator(mode="after")
+    def validate_loot_qty_ordering(self) -> "GameConstantsOverridesMixin":
+        """Loot qty triples are triangular-distribution params: min <= mode <= max.
+
+        Checks every pair present in this request; values not in the request
+        (partial update) cannot be cross-checked against the stored row.
+        """
+        for band in (1, 2, 3):
+            mn = getattr(self, f"loot_band{band}_qty_min")
+            mode = getattr(self, f"loot_band{band}_qty_mode")
+            mx = getattr(self, f"loot_band{band}_qty_max")
+            if mn is not None and mx is not None and mn > mx:
+                raise ValueError(f"loot_band{band}_qty_min must be <= loot_band{band}_qty_max")
+            if mn is not None and mode is not None and mode < mn:
+                raise ValueError(f"loot_band{band}_qty_mode must be >= loot_band{band}_qty_min")
+            if mx is not None and mode is not None and mode > mx:
+                raise ValueError(f"loot_band{band}_qty_mode must be <= loot_band{band}_qty_max")
         return self
 
 

@@ -42,7 +42,6 @@ def _reset_constants() -> None:
     GameConstants.DUEL_LOG_MAX_LENGTH = 10
     GameConstants.DUEL_CLOAK_CHANCE = 20
     GameConstants.MAX_SHIP_NICKNAME_LENGTH = 30
-    GameConstants.KAAMO_MAX_CAPACITY = 70
     GameConstants.CLASSIC_CREDITS_PER_CHECK = 1000
     GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT = 0.1
 
@@ -293,8 +292,7 @@ class TestInventory:
     def test_max_ship_nickname_length(self) -> None:
         assert GameConstants.MAX_SHIP_NICKNAME_LENGTH == 30
 
-    def test_kaamo_max_capacity(self) -> None:
-        assert GameConstants.KAAMO_MAX_CAPACITY == 70
+    # KAAMO_MAX_CAPACITY retired in issue #70 (never consumed; not a mechanic).
 
 
 # ---------------------------------------------------------------------------
@@ -477,10 +475,10 @@ class TestTypeConversion:
         assert isinstance(result, float)
 
     def test_env_int_reads_env_var_as_int(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("BOUNTYBOT_KAAMO_MAX_CAPACITY", "100")
+        monkeypatch.setenv("BOUNTYBOT_CLASSIC_CREDITS_PER_CHECK", "1500")
         GameConstants.load()
-        assert GameConstants.KAAMO_MAX_CAPACITY == 100
-        assert isinstance(GameConstants.KAAMO_MAX_CAPACITY, int)
+        assert GameConstants.CLASSIC_CREDITS_PER_CHECK == 1500
+        assert isinstance(GameConstants.CLASSIC_CREDITS_PER_CHECK, int)
         _reset_constants()
 
     def test_env_float_reads_env_var_as_float(self, monkeypatch: pytest.MonkeyPatch) -> None:

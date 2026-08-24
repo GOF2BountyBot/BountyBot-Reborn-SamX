@@ -67,7 +67,6 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "shop_default_modules_num",
     "shop_default_turrets_num",
     "turret_spawn_probability",
-    "kaamo_max_capacity",
     "classic_credits_per_check",
     "demotion_credit_penalty_pct",
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)

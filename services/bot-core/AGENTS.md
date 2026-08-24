@@ -533,7 +533,7 @@ Embed builders for bounty announcements/payouts and shop-refresh announcements P
 | `bounty_expire_executor.py` | `bounty_expire` | One-time at bounty.end_time | Mark bounty expired; delete its announcement; optionally schedule respawn |
 | `bounty_failsafe_cleanup_executor.py` | `bounty_failsafe_cleanup` | Every hour at :30 | Clean up stale/orphaned bounty state that missed normal expiry |
 | `bounty_respawn_executor.py` | `bounty_respawn` | One-time at bounty.respawn_time | Regenerate route, flip escaped bounty back to active, announce respawn |
-| `db_retention_executor.py` | `db_retention` | Daily at 03:45 UTC | Delete old rows: terminal bounties (24 h), terminal duels (24 h), audit logs (30 d), combat logs (72 h) — windows from GameConstants |
+| `db_retention_executor.py` | `db_retention` | Daily at 03:45 UTC | Delete old rows: terminal bounties (24 h), terminal duels (24 h), audit logs (30 d), bounty combat logs (48 h), PvP duel combat logs (1 yr; 0=permanent) — windows from GameConstants |
 | `duel_expire_executor.py` | `duel_expire` | Via /jobs API (no default job) | Find pending duels past `expires_at`; mark as expired |
 | `pg_backup_executor.py` | `pg_backup` | Every 3 hours at :15 | zstd-compressed PostgreSQL dump to `BACKUP_DIR` (default `/app/data/backups`); retains `BACKUP_RETAIN_DAYS` (default 7) |
 | `shop_refresh_executor.py` | `shop_refresh` | Every 6 hours | Call ShopService.refresh_shop() for all guild configs |
@@ -716,7 +716,8 @@ python -m persist.database.run_migration upgrade
 | `BOUNTYBOT_BOUNTY_RETENTION_HOURS` | `24` | Terminal-state bounty rows older than this are deleted by `db_retention_default` |
 | `BOUNTYBOT_DUEL_RETENTION_HOURS` | `24` | Terminal-state duel_requests rows older than this are deleted by `db_retention_default` |
 | `BOUNTYBOT_AUDIT_RETENTION_DAYS` | `30` | admin_audit_logs rows older than this are deleted by `db_retention_default`; long-term audit history is preserved via pg_backup |
-| `BOUNTYBOT_COMBAT_LOG_RETENTION_HOURS` | `72` | combat_log rows older than this are deleted by `db_retention_default` |
+| `BOUNTYBOT_COMBAT_LOG_BOUNTY_RETENTION_HOURS` | `48` | bounty (PvC) combat_log rows older than this are deleted by `db_retention_default` |
+| `BOUNTYBOT_COMBAT_LOG_PVP_RETENTION_HOURS` | `8760` | PvP (duel) combat_log rows older than this are deleted; `0` = never prune (permanent) |
 
 ---
 

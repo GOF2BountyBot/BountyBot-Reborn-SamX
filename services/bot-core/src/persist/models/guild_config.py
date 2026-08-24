@@ -136,8 +136,7 @@ class GuildConfig(Base):
     shop_default_turrets_num: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     turret_spawn_probability: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
-    # Inventory / Economy
-    kaamo_max_capacity: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Economy — kaamo_max_capacity retired (issue #70; dropped in revision 0027)
     classic_credits_per_check: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     # Demotion — NULL means "use GameConstants.DEMOTION_CREDIT_PENALTY_PCT (10)"

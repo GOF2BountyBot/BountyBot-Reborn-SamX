@@ -2417,7 +2417,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "shop_default_modules_num",
         "shop_default_turrets_num",
         "turret_spawn_probability",
-        "kaamo_max_capacity",
         "classic_credits_per_check",
         # Criminal loadout balance (Threads 3/4/6)
         "long_range_threshold_m",

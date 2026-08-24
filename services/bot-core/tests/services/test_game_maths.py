@@ -20,6 +20,7 @@ from services.game_constants import GameConstants
 from services.game_maths import (
     pick_division_tech_level,
     pick_random_item_tl,
+    pick_shop_tech_level,
     reward_per_sys_check,
     ship_tech_level_for_value,
 )
@@ -57,6 +58,92 @@ class TestPickDivisionTechLevel:
             assert pick_division_tech_level("Gold", GameConstants.DIVISION_MAX_TL) == 6
 
         picker.assert_called_once_with(6)  # gold centre, not the unknown-division default of 5
+
+
+# ---------------------------------------------------------------------------
+# TestPickShopTechLevel
+# ---------------------------------------------------------------------------
+
+
+class TestPickShopTechLevel:
+    """Characterisation of the two-bucket shop batch-TL draw.
+
+    Pins the intended per-tier distribution (design: uniform in-band bucket +
+    asymmetric exponential out-of-band taper, banded weight 0.70, up-decay 0.60,
+    down-decay 0.45).  A seeded large sample is asserted against the target grid
+    within a small tolerance so a future constant/formula tweak that re-widens a
+    tier (the "TL10 Bronze shop" regression) trips this test.
+    """
+
+    # Per-tier (band_lo, band_hi) from the SHOP_TL_BAND_* scalars.
+    _BANDS = {
+        "bronze": (1, 2),
+        "silver": (1, 4),
+        "gold": (4, 7),
+        "platinum": (7, 10),
+    }
+    # Target probability (%) per TL 1..10 — the agreed design grid.
+    _EXPECTED_PCT = {
+        "bronze": [35, 35, 12, 7, 4, 3, 2, 1, 1, 0],
+        "silver": [18, 18, 18, 18, 13, 8, 5, 3, 2, 1],
+        "gold": [2, 4, 8, 18, 18, 18, 18, 8, 5, 3],
+        "platinum": [0, 1, 2, 3, 7, 17, 18, 18, 18, 18],
+    }
+
+    def _sample(self, tier: str, n: int) -> Counter:
+        lo, hi = self._BANDS[tier]
+        return Counter(
+            pick_shop_tech_level(
+                lo,
+                hi,
+                GameConstants.SHOP_BANDED_TL_WEIGHT,
+                GameConstants.SHOP_UPTIER_TL_DECAY,
+                GameConstants.SHOP_DOWNTIER_TL_DECAY,
+            )
+            for _ in range(n)
+        )
+
+    @pytest.mark.parametrize("tier", ["bronze", "silver", "gold", "platinum"])
+    def test_distribution_matches_the_design_grid(self, tier: str) -> None:
+        random.seed(1234)
+        n = 40000
+        counts = self._sample(tier, n)
+
+        for tl in range(1, 11):
+            observed = 100.0 * counts.get(tl, 0) / n
+            expected = self._EXPECTED_PCT[tier][tl - 1]
+            assert abs(observed - expected) <= 3.0, (
+                f"{tier} TL{tl}: observed {observed:.1f}% vs expected {expected}%"
+            )
+
+    @pytest.mark.parametrize(
+        ("tier", "band"),
+        [("bronze", (1, 2)), ("silver", (1, 4)), ("gold", (4, 7)), ("platinum", (7, 10))],
+    )
+    def test_modal_tl_is_in_band(self, tier: str, band: tuple[int, int]) -> None:
+        """The single most common shop TL must always be tier-appropriate."""
+        random.seed(99)
+        counts = self._sample(tier, 40000)
+        modal_tl = counts.most_common(1)[0][0]
+        assert band[0] <= modal_tl <= band[1], f"{tier} modal TL{modal_tl} is out of band {band}"
+
+    def test_out_of_band_decays_with_distance(self) -> None:
+        """Further from the band edge is strictly rarer (Bronze upper tail)."""
+        random.seed(7)
+        counts = self._sample("bronze", 60000)
+        # Bronze band tops at 2; TL3 > TL4 > ... monotonically down the up-tail.
+        tail = [counts.get(tl, 0) for tl in range(3, 11)]
+        assert all(earlier >= later for earlier, later in zip(tail, tail[1:])), tail
+
+    def test_weight_one_is_pure_in_band_uniform(self) -> None:
+        random.seed(3)
+        drawn = Counter(pick_shop_tech_level(4, 7, 1.0, 0.6, 0.45) for _ in range(4000))
+        assert set(drawn) == {4, 5, 6, 7}  # never out of band
+
+    def test_weight_zero_is_pure_out_of_band(self) -> None:
+        random.seed(3)
+        drawn = {pick_shop_tech_level(4, 7, 0.0, 0.6, 0.45) for _ in range(4000)}
+        assert drawn.isdisjoint({4, 5, 6, 7})  # never in band
 
 
 # ---------------------------------------------------------------------------

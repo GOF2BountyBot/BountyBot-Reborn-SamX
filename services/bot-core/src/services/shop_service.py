@@ -34,7 +34,7 @@ from services.bounty_service import get_secondary_subtype
 from services.combat_models import DEFERRED_SECONDARY_SUBTYPES
 from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants, resolve_constant
-from services.game_maths import pick_division_tech_level, ship_tech_level_for_value
+from services.game_maths import pick_shop_tech_level, ship_tech_level_for_value
 
 flogger = bblogger.get_logger("shop-service")
 
@@ -867,19 +867,26 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         return player_level == shop_level
 
     def _select_shop_tech_level(self, tier: str, config=None) -> int:
-        """Draw the batch TL from one of two buckets.
+        """Draw the batch TL from one of two mutually-exclusive buckets.
 
-        ``SHOP_BANDED_TL_WEIGHT`` of the time the TL is drawn from the tier's
-        division band — the same distribution ``spawn_bounty`` uses for that
-        tier's criminals — so stock matches the enemies players face.  The rest
-        of the time it is drawn uniformly across every TL, which keeps a rare
-        high-TL shop reachable for players who save.
+        ``SHOP_BANDED_TL_WEIGHT`` of the time the TL is drawn **uniformly** from
+        the tier's in-band range ``[LO, HI]`` — the guaranteed tier-matched
+        fraction.  The rest of the time it is drawn from the out-of-band taper:
+        levels outside the band, rarer the further from an edge, gentle going up
+        (up-gearing) and steep going down (off-tier junk suppression).  See
+        :func:`pick_shop_tech_level` for the distribution.
         """
+        key = tier.upper()
+        band_lo = resolve_constant(
+            config, f"shop_tl_band_lo_{tier.lower()}", getattr(GameConstants, f"SHOP_TL_BAND_LO_{key}", GameConstants.MIN_TECH_LEVEL)
+        )
+        band_hi = resolve_constant(
+            config, f"shop_tl_band_hi_{tier.lower()}", getattr(GameConstants, f"SHOP_TL_BAND_HI_{key}", GameConstants.MAX_TECH_LEVEL)
+        )
         banded_weight = resolve_constant(config, "shop_banded_tl_weight", GameConstants.SHOP_BANDED_TL_WEIGHT)
-        if random.random() < banded_weight:
-            division_max_tl = resolve_constant(config, "division_max_tl", GameConstants.DIVISION_MAX_TL)
-            return pick_division_tech_level(tier, division_max_tl)
-        return random.randint(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL)
+        uptier_decay = resolve_constant(config, "shop_uptier_tl_decay", GameConstants.SHOP_UPTIER_TL_DECAY)
+        downtier_decay = resolve_constant(config, "shop_downtier_tl_decay", GameConstants.SHOP_DOWNTIER_TL_DECAY)
+        return pick_shop_tech_level(band_lo, band_hi, banded_weight, uptier_decay, downtier_decay)
 
     def _select_item_tech_level(self, shop_tech_level: int, probabilities: dict[str, float]) -> int:
         """Select item tech level based on shop tech level and probability distribution."""

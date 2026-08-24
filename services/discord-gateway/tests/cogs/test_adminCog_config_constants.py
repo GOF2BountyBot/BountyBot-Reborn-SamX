@@ -93,10 +93,11 @@ _NEW_LOOT_FIELDS = (
     "loot_commodity_sell_fraction",
 )
 
-# Full slash-settable surface after the change (53 fields; demotion_credit_penalty_pct
-# stays API-only). 25 prior + 8 criminal-loadout + 19 loot + 1 bounty_division_reward_mult = 53.
+# Full slash-settable surface (52 fields; demotion_credit_penalty_pct stays API-only).
+# 24 prior (kaamo_max_capacity retired in issue #70) + 8 criminal-loadout + 19 loot
+# + 1 bounty_division_reward_mult = 52.
 # Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
-_EXPECTED_SLASH_FIELD_COUNT = 53
+_EXPECTED_SLASH_FIELD_COUNT = 52
 
 
 def _evict_discord_modules():
@@ -173,12 +174,13 @@ class TestCriminalLoadoutFieldExposure:
         for field in _NEW_LOOT_FIELDS:
             assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
 
-    def test_slash_field_count_is_53(self, mock_admin_cog):
-        # Locks the slash-settable surface: 25 prior + 8 criminal-loadout + 19 loot
-        # + 1 bounty_division_reward_mult = 53 (see _EXPECTED_SLASH_FIELD_COUNT above).
-        # demotion_credit_penalty_pct stays API-only and must NOT appear here.
+    def test_slash_field_count_is_52(self, mock_admin_cog):
+        # Locks the slash-settable surface (see _EXPECTED_SLASH_FIELD_COUNT above).
+        # demotion_credit_penalty_pct stays API-only and must NOT appear here;
+        # kaamo_max_capacity was retired in issue #70.
         assert len(mock_admin_cog._GAME_CONSTANT_FIELDS) == _EXPECTED_SLASH_FIELD_COUNT
         assert "demotion_credit_penalty_pct" not in mock_admin_cog._GAME_CONSTANT_FIELDS
+        assert "kaamo_max_capacity" not in mock_admin_cog._GAME_CONSTANT_FIELDS
 
     def test_new_fields_surface_in_autocomplete(self, mock_admin_cog):
         interaction = _create_mock_interaction()

@@ -486,7 +486,6 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "shop_default_modules_num": config.shop_default_modules_num,
                 "shop_default_turrets_num": config.shop_default_turrets_num,
                 "turret_spawn_probability": config.turret_spawn_probability,
-                "kaamo_max_capacity": config.kaamo_max_capacity,
                 "classic_credits_per_check": config.classic_credits_per_check,
                 "demotion_credit_penalty_pct": config.demotion_credit_penalty_pct,
                 "tier_change_cooldown": config.tier_change_cooldown,

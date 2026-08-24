@@ -383,7 +383,6 @@ Use `int_value` for integer fields, `float_value` for float fields, `json_value`
 | `shop_default_modules_num` | int | `5` | count | Inert override (see above). |
 | `shop_default_turrets_num` | int | `2` | count | Inert override (see above). |
 | `turret_spawn_probability` | int | `45` | percent | **Inert override** — not consumed by `ShopService`. Defined and persisted for completeness. |
-| `kaamo_max_capacity` | int | `70` | items | Intended: max items a player can store in Kaamo station. **Inert override** — no bot-core code consults it (Kaamo storage is not implemented). |
 | `demotion_credit_penalty_pct` | int | `10` | percent | % of credits deducted on tier demotion. **API-only** — accepted by `PUT /api/v1/config/guild/{guild_id}` but not offered/validated by the `/admin_config_constants` slash command. |
 | `classic_credits_per_check` | int | `1000` | credits | Intended: credit floor per system check. **Effectively inert** — only consumed by the deprecated `reward_per_sys_check()` formula, which the spawn path no longer calls. |
 

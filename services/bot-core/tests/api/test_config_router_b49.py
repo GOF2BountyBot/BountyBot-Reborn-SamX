@@ -67,7 +67,6 @@ def make_mock_config(**overrides):
         shop_default_modules_num=None,
         shop_default_turrets_num=None,
         turret_spawn_probability=None,
-        kaamo_max_capacity=None,
         classic_credits_per_check=None,
         tier_change_cooldown=None,
         demotion_credit_penalty_pct=None,  # per-guild demotion penalty % (0–100; NULL → global default)
@@ -143,7 +142,6 @@ _OVERRIDE_FIELD_NAMES = [
     "shop_default_modules_num",
     "shop_default_turrets_num",
     "turret_spawn_probability",
-    "kaamo_max_capacity",
     "classic_credits_per_check",
     "tier_change_cooldown",
     "demotion_credit_penalty_pct",  # per-guild demotion penalty % (0–100; NULL → global default 10)

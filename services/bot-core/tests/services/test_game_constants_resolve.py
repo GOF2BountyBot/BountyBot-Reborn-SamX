@@ -85,7 +85,6 @@ def test_resolve_constant_dict_override():
         ("bounty_delay_random_max", 10, GameConstants.BOUNTY_DELAY_RANDOM_MAX),
         ("check_cooldown", 60, GameConstants.CHECK_COOLDOWN),
         ("duel_request_expiry", 3600, GameConstants.DUEL_REQUEST_EXPIRY),
-        ("kaamo_max_capacity", 100, GameConstants.KAAMO_MAX_CAPACITY),
         ("classic_credits_per_check", 500, GameConstants.CLASSIC_CREDITS_PER_CHECK),
         ("turret_spawn_probability", 30, GameConstants.TURRET_SPAWN_PROBABILITY),
     ],

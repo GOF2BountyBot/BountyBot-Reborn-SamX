@@ -450,7 +450,8 @@ class GameConstants:
     # ------------------------------------------------------------------
 
     MAX_SHIP_NICKNAME_LENGTH: int = 30
-    KAAMO_MAX_CAPACITY: int = 70
+    # KAAMO_MAX_CAPACITY — retired (issue #70): Kaamo storage capacity is not a
+    # mechanic and never will be; the override chain was a silent no-op.
 
     # ------------------------------------------------------------------
     # Loot (PvC) — tunable knobs (LOOT_JOURNAL §8, T2).
@@ -763,7 +764,6 @@ class GameConstants:
 
         # Inventory
         cls.MAX_SHIP_NICKNAME_LENGTH = _track_int("MAX_SHIP_NICKNAME_LENGTH", 30)
-        cls.KAAMO_MAX_CAPACITY = _track_int("KAAMO_MAX_CAPACITY", 70)
 
         # Demotion
         cls.DEMOTION_CREDIT_PENALTY_PCT = _track_int("DEMOTION_CREDIT_PENALTY_PCT", 10)

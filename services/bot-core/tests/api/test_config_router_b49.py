@@ -101,6 +101,31 @@ def make_mock_config(**overrides):
         loot_commodity_sell_fraction=None,
         # Shop module-draw combat/filler split
         shop_combat_module_prob=None,
+        # D-trivial + DIVISION_TL_CENTERS scalar overrides (revision 0028) — all null by default
+        criminal_secondary_min_damage=None,
+        shop_secondary_qty_scaler_heavy=None,
+        shop_secondary_qty_scaler_standard=None,
+        shop_tl_band_lo_bronze=None,
+        shop_tl_band_hi_bronze=None,
+        shop_tl_band_lo_silver=None,
+        shop_tl_band_hi_silver=None,
+        shop_tl_band_lo_gold=None,
+        shop_tl_band_hi_gold=None,
+        shop_tl_band_lo_platinum=None,
+        shop_tl_band_hi_platinum=None,
+        shop_banded_tl_weight=None,
+        shop_uptier_tl_decay=None,
+        shop_downtier_tl_decay=None,
+        division_tl_center_bronze=None,
+        division_tl_center_silver=None,
+        division_tl_center_gold=None,
+        division_tl_center_platinum=None,
+        # Previously column-only orphans (columns from revision 0026)
+        bounty_single_waypoint_prob=None,
+        bounty_dual_waypoint_prob=None,
+        bounty_waypoint_attempts=None,
+        bounty_waypoint_min_degree=None,
+        pvc_damage_reduction=None,
     )
     defaults.update(overrides)
     return defaults
@@ -176,6 +201,31 @@ _OVERRIDE_FIELD_NAMES = [
     "loot_commodity_sell_fraction",
     # Shop module-draw combat/filler split
     "shop_combat_module_prob",
+    # D-trivial + DIVISION_TL_CENTERS scalar overrides (issue #70, revision 0028)
+    "criminal_secondary_min_damage",
+    "shop_secondary_qty_scaler_heavy",
+    "shop_secondary_qty_scaler_standard",
+    "shop_tl_band_lo_bronze",
+    "shop_tl_band_hi_bronze",
+    "shop_tl_band_lo_silver",
+    "shop_tl_band_hi_silver",
+    "shop_tl_band_lo_gold",
+    "shop_tl_band_hi_gold",
+    "shop_tl_band_lo_platinum",
+    "shop_tl_band_hi_platinum",
+    "shop_banded_tl_weight",
+    "shop_uptier_tl_decay",
+    "shop_downtier_tl_decay",
+    "division_tl_center_bronze",
+    "division_tl_center_silver",
+    "division_tl_center_gold",
+    "division_tl_center_platinum",
+    # Previously column-only orphans (columns from revision 0026)
+    "bounty_single_waypoint_prob",
+    "bounty_dual_waypoint_prob",
+    "bounty_waypoint_attempts",
+    "bounty_waypoint_min_degree",
+    "pvc_damage_reduction",
 ]
 
 

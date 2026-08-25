@@ -519,6 +519,33 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "loot_band3_qty_max": config.loot_band3_qty_max,
                 "loot_band3_qty_mode": config.loot_band3_qty_mode,
                 "loot_commodity_sell_fraction": config.loot_commodity_sell_fraction,
+                # Shop module-draw combat/filler split
+                "shop_combat_module_prob": config.shop_combat_module_prob,
+                # D-trivial + DIVISION_TL_CENTERS scalar overrides (revision 0028)
+                "criminal_secondary_min_damage": config.criminal_secondary_min_damage,
+                "shop_secondary_qty_scaler_heavy": config.shop_secondary_qty_scaler_heavy,
+                "shop_secondary_qty_scaler_standard": config.shop_secondary_qty_scaler_standard,
+                "shop_tl_band_lo_bronze": config.shop_tl_band_lo_bronze,
+                "shop_tl_band_hi_bronze": config.shop_tl_band_hi_bronze,
+                "shop_tl_band_lo_silver": config.shop_tl_band_lo_silver,
+                "shop_tl_band_hi_silver": config.shop_tl_band_hi_silver,
+                "shop_tl_band_lo_gold": config.shop_tl_band_lo_gold,
+                "shop_tl_band_hi_gold": config.shop_tl_band_hi_gold,
+                "shop_tl_band_lo_platinum": config.shop_tl_band_lo_platinum,
+                "shop_tl_band_hi_platinum": config.shop_tl_band_hi_platinum,
+                "shop_banded_tl_weight": config.shop_banded_tl_weight,
+                "shop_uptier_tl_decay": config.shop_uptier_tl_decay,
+                "shop_downtier_tl_decay": config.shop_downtier_tl_decay,
+                "division_tl_center_bronze": config.division_tl_center_bronze,
+                "division_tl_center_silver": config.division_tl_center_silver,
+                "division_tl_center_gold": config.division_tl_center_gold,
+                "division_tl_center_platinum": config.division_tl_center_platinum,
+                # Previously column-only orphans (columns from 0026; summary exposure added here)
+                "bounty_single_waypoint_prob": config.bounty_single_waypoint_prob,
+                "bounty_dual_waypoint_prob": config.bounty_dual_waypoint_prob,
+                "bounty_waypoint_attempts": config.bounty_waypoint_attempts,
+                "bounty_waypoint_min_degree": config.bounty_waypoint_min_degree,
+                "pvc_damage_reduction": config.pvc_damage_reduction,
             }
 
         except Exception as e:

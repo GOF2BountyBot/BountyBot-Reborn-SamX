@@ -59,14 +59,19 @@ class GameConstants:
     MIN_TECH_LEVEL: int = 1
     MAX_TECH_LEVEL: int = 10
 
-    # Centres passed to pick_random_item_tl() when spawning enemies for a
-    # division.  Keep this alongside DIVISION_MAX_TL so every system that
-    # presents tier-appropriate tech levels can use the same source of truth.
-    #
-    # Issue #70 note: this and DIVISION_MAX_TL are dict-shaped (JSON) constants.
-    # If the per-guild override audit lands, both are candidates for flattening
-    # into scalar per-division knobs (DIVISION_TL_CENTER_BRONZE, ...) so each is
-    # a plain int column rather than free-form JSON.  Not done here.
+    # Per-division TL draw centre scalars — the per-guild columns added in revision
+    # 0028 are nullable and resolve via resolve_constant(cfg, "division_tl_center_{div}", ...).
+    # These four global scalars are the fallback when the column is NULL.
+    DIVISION_TL_CENTER_BRONZE: int = 1
+    DIVISION_TL_CENTER_SILVER: int = 3
+    DIVISION_TL_CENTER_GOLD: int = 6
+    DIVISION_TL_CENTER_PLATINUM: int = 8
+
+    # Legacy dict kept as a derived view for any existing callers and tests that
+    # read DIVISION_TL_CENTERS directly.  The sole live consumption site,
+    # game_maths.pick_division_tech_level(), has been updated to accept an
+    # explicit center int instead of reading this dict (issue #70 flatten).
+    # Do not add new readers of this dict — use the scalar constants above.
     DIVISION_TL_CENTERS: dict[str, int] = {
         "bronze": 1,
         "silver": 3,
@@ -674,6 +679,22 @@ class GameConstants:
             if os.environ.get(f"BOUNTYBOT_{key}") is not None:
                 _overrides.append(f"{key}={val}")
             return val
+
+        # Division TL draw centres (issue #70 flatten of DIVISION_TL_CENTERS dict)
+        cls.DIVISION_TL_CENTER_BRONZE = _track_int("DIVISION_TL_CENTER_BRONZE", 1)
+        cls.DIVISION_TL_CENTER_SILVER = _track_int("DIVISION_TL_CENTER_SILVER", 3)
+        cls.DIVISION_TL_CENTER_GOLD = _track_int("DIVISION_TL_CENTER_GOLD", 6)
+        cls.DIVISION_TL_CENTER_PLATINUM = _track_int("DIVISION_TL_CENTER_PLATINUM", 8)
+        # Keep derived dict in sync with updated scalars for legacy callers
+        cls.DIVISION_TL_CENTERS = {
+            "bronze": cls.DIVISION_TL_CENTER_BRONZE,
+            "silver": cls.DIVISION_TL_CENTER_SILVER,
+            "gold": cls.DIVISION_TL_CENTER_GOLD,
+            "platinum": cls.DIVISION_TL_CENTER_PLATINUM,
+        }
+
+        # Criminal secondary min damage (issue #70 batch)
+        cls.CRIMINAL_SECONDARY_MIN_DAMAGE = _track_int("CRIMINAL_SECONDARY_MIN_DAMAGE", 1)
 
         # Bounty system
         cls.MAX_BOUNTIES_PER_DIVISION = _track_int("MAX_BOUNTIES_PER_DIVISION", 5)

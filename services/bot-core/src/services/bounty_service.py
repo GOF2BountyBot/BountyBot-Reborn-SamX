@@ -925,6 +925,9 @@ class BountyService:
             _exclude_emp = resolve_constant(
                 cfg, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS
             )
+            _secondary_min_damage = resolve_constant(
+                cfg, "criminal_secondary_min_damage", GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE
+            )
 
             # Compute TL window: prefer item_tl, search down to MIN_TECH_LEVEL
             # then up by criminal_max_gear_upgrade (mirrors primary/turret logic).
@@ -939,7 +942,7 @@ class BountyService:
                 if _subtype in DEFERRED_SECONDARY_SUBTYPES:
                     continue
                 _sw_damage = int(getattr(_sw, "damage", 0) or 0)
-                if _sw_damage <= GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE:
+                if _sw_damage <= _secondary_min_damage:
                     continue
                 if _exclude_emp and _is_primarily_emp(_sw, is_secondary=True):
                     continue
@@ -1841,7 +1844,18 @@ class BountyService:
         if tech_level is None:
             # Shared with the shop-refresh batch TL — see pick_division_tech_level.
             _division_max_tl = resolve_constant(cfg, "division_max_tl", GameConstants.DIVISION_MAX_TL)
-            tech_level = pick_division_tech_level(division, _division_max_tl)
+            # Resolve per-guild TL draw centre (issue #70 flatten of DIVISION_TL_CENTERS).
+            _global_tl_center = getattr(
+                GameConstants,
+                f"DIVISION_TL_CENTER_{division.upper()}",
+                GameConstants.DIVISION_TL_CENTERS.get(division.lower(), 5),
+            )
+            _tl_center = resolve_constant(
+                cfg,
+                f"division_tl_center_{division.lower()}",
+                _global_tl_center,
+            )
+            tech_level = pick_division_tech_level(division, _division_max_tl, center=_tl_center)
 
         # Step 3: Generate route (≥ min_route_systems, optionally with waypoints)
         await self.graph_service.load_graph(db)

@@ -82,17 +82,28 @@ def pick_random_item_tl(shop_tl: int) -> int:
     return GameConstants.MAX_TECH_LEVEL
 
 
-def pick_division_tech_level(division: str, division_max_tl: dict[str, int]) -> int:
+def pick_division_tech_level(division: str, division_max_tl: dict[str, int], center: int | None = None) -> int:
     """Draw a tech level for a division the way criminal spawns do.
 
     Samples :func:`pick_random_item_tl` around the division's centre, then
-    applies the division cap.  Both ``spawn_bounty`` and the shop-refresh
-    batch TL call this, so a tier's stock is drawn from the same distribution
-    as the enemies players actually face there — including per-guild cap
-    overrides.
+    applies the division cap.  The caller resolves the per-guild center via
+    ``resolve_constant(cfg, f"division_tl_center_{division}", ...)`` and passes
+    it in; when *center* is ``None`` (legacy callers / tests) the global
+    :data:`~services.game_constants.GameConstants.DIVISION_TL_CENTERS` dict is
+    used as the fallback (same behaviour as before the issue #70 flatten).
+
+    Args:
+        division:       Division name (case-insensitive: ``"bronze"`` / ``"Gold"``).
+        division_max_tl: Per-guild cap dict or the global default dict.
+        center:         Explicit TL centre (issue #70 per-guild scalar).  When
+                        ``None``, falls back to ``GameConstants.DIVISION_TL_CENTERS``.
+
+    Returns:
+        Tech level in [1, cap].
     """
     key = division.lower()
-    center = GameConstants.DIVISION_TL_CENTERS.get(key, 5)
+    if center is None:
+        center = GameConstants.DIVISION_TL_CENTERS.get(key, 5)
     cap = division_max_tl.get(key, GameConstants.MAX_TECH_LEVEL)
     return min(pick_random_item_tl(center), cap)
 

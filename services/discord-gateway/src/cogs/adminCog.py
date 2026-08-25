@@ -111,6 +111,111 @@ _RENDER_PARAM_GROUPS: dict[str, tuple[str, ...]] = {
     "concurrency": ("max_concurrent_renders", "job_ttl_hours"),
 }
 
+# The 7 deprecated JSONB dict fields — still accept json_value for legacy JSON input.
+# Prefer the scalar *_bronze / *_silver / *_gold / *_platinum counterparts for all new usage.
+_DEPRECATED_DICT_FIELDS: frozenset[str] = frozenset(
+    {
+        "division_max_tl",
+        "bounty_division_reward_mult",
+        "primary_tl_band_weights",
+        "criminal_cloak_chance_by_division",
+        "criminal_booster_chance_by_division",
+        "criminal_emergency_chance_by_division",
+        "criminal_weaponmod_chance_by_division",
+    }
+)
+
+# Fields that cannot be reset via POST /game-constants/reset — they are top-level guild
+# config scalars with no game-constant default (use /admin_config action:Set to change them).
+_NON_RESETTABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "starting_credits",
+        "sale_price_factor",
+    }
+)
+
+
+class ConfigPageView(discord.ui.View):
+    """Paginated category browser for /admin_config action:View only_overridden:False."""
+
+    def __init__(
+        self,
+        categories: list[str],
+        pages: dict[str, list[tuple[str, str, str, bool]]],
+        *,
+        timeout: float = 180.0,
+    ):
+        super().__init__(timeout=timeout)
+        self.categories = categories
+        self.pages = pages
+        self.current_idx = 0
+        self._sync_buttons()
+        if len(categories) > 1:
+            self._rebuild_select()
+
+    def _sync_buttons(self) -> None:
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                if getattr(item, "custom_id", None) == "cfg_prev":
+                    item.disabled = self.current_idx == 0
+                elif getattr(item, "custom_id", None) == "cfg_next":
+                    item.disabled = self.current_idx >= len(self.categories) - 1
+
+    def _rebuild_select(self) -> None:
+        for item in list(self.children):
+            if isinstance(item, discord.ui.Select):
+                self.remove_item(item)
+        options = [
+            discord.SelectOption(label=cat[:100], value=str(i), default=(i == self.current_idx))
+            for i, cat in enumerate(self.categories[:25])
+        ]
+        sel = discord.ui.Select(placeholder="Jump to category…", options=options, custom_id="cfg_select")
+        sel.callback = self._on_select
+        self.add_item(sel)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        self.current_idx = int(interaction.data["values"][0])
+        self._sync_buttons()
+        if len(self.categories) > 1:
+            self._rebuild_select()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    def build_embed(self) -> discord.Embed:
+        cat = self.categories[self.current_idx]
+        rows = self.pages.get(cat, [])
+        n = len(self.categories)
+        idx = self.current_idx + 1
+        lines: list[str] = []
+        for field, current, default, is_overridden in rows:
+            if is_overridden:
+                lines.append(f"**{field}**: `{current}` *(default: {default})*")
+            else:
+                lines.append(f"{field}: {default}")
+        desc = "\n".join(lines) or "No settings in this category."
+        if len(desc) > 4000:
+            desc = desc[:3997] + "..."
+        return discord.Embed(
+            title=f"⚙️ Guild Settings — {cat} ({idx}/{n})",
+            description=desc,
+            color=discord.Color.blue(),
+        )
+
+    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary, custom_id="cfg_prev")
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_idx = max(0, self.current_idx - 1)
+        self._sync_buttons()
+        if len(self.categories) > 1:
+            self._rebuild_select()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary, custom_id="cfg_next")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_idx = min(len(self.categories) - 1, self.current_idx + 1)
+        self._sync_buttons()
+        if len(self.categories) > 1:
+            self._rebuild_select()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
 
 class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     def __init__(self, bot: commands.Bot):
@@ -138,6 +243,14 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             name="adminCog-pending-duels",
         )
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        # Config metadata cache — preloaded from GET /config/metadata.
+        # Powers setting autocomplete (97 fields: 95 game-constant + starting_credits +
+        # sale_price_factor), help text, and local bounds pre-check before any API call.
+        # NOTE: starting_credits and sale_price_factor are metadata-only additions and
+        # do NOT appear in _GAME_CONSTANT_FIELDS (the static fallback list, 95 fields).
+        # Falls back to _GAME_CONSTANT_FIELDS when the metadata endpoint is unavailable.
+        self._config_metadata: list[dict] = []
+        self._config_metadata_by_field: dict[str, dict] = {}
         bot.loop.create_task(self._preload_render_settings())
         bot.loop.create_task(self._preload_static_catalogs())
         flogger.debug("AdminCog initialized")
@@ -179,6 +292,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
         resp.raise_for_status()
         return [s["name"] for s in resp.json() if s.get("name")]
+
+    async def _fetch_config_metadata(self) -> list[dict]:
+        """Fetch per-field metadata from bot-core GET /config/metadata.
+
+        Returns a list of field descriptors:
+        {field, type, ge, le, default, description, category, deprecated, replaced_by}.
+        Raises on HTTP error; caller handles retry / graceful fallback.
+        """
+        resp = await self.http_client.get(f"{api_base}/config/metadata", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
 
     async def _preload_static_catalogs(self) -> None:
         """Preload item catalogs (4 categories) and ship catalog from bot-core.
@@ -232,6 +356,27 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 "autocomplete will be empty"
             )
             self._ship_catalog.set("all", [])
+
+        # Preload config metadata (97 fields: 95 game-constant + starting_credits + sale_price_factor).
+        for attempt in range(5):
+            try:
+                metadata = await self._fetch_config_metadata()
+                self._config_metadata = metadata
+                self._config_metadata_by_field = {m["field"]: m for m in metadata}
+                flogger.info(f"_preload_static_catalogs: loaded {len(metadata)} config metadata entries")
+                break
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                wait = min(5 * (2**attempt), 60)
+                flogger.warning(
+                    f"_preload_static_catalogs: failed for config metadata "
+                    f"(attempt {attempt + 1}/5): {type(exc).__name__}: {exc}, retrying in {wait}s"
+                )
+                await asyncio.sleep(wait)
+        else:
+            flogger.error(
+                "_preload_static_catalogs: terminal failure for config metadata after 5 attempts; "
+                "setting autocomplete will fall back to _GAME_CONSTANT_FIELDS (95 fields)"
+            )
 
     async def _fetch_admin_pending_duels(self, guild_id: int) -> list[dict]:
         """Refresh the guild-wide pending-duel list for /admin_duel. Cache refresh_fn.
@@ -759,105 +904,593 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.error(f"Error in /admin_guild_stats: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching guild statistics.", ephemeral=True)
 
-    @app_commands.command(name="admin_config", description="[ADMIN] View or update guild configuration")
+    # ------------------------------------------------------------------
+    # /admin_config — unified guild-settings command (issue #70 Option A)
+    # ------------------------------------------------------------------
+
+    async def setting_autocomplete(
+        self, _interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for the ``setting`` param of /admin_config.
+
+        When metadata is loaded (97 fields: 95 game-constant + starting_credits +
+        sale_price_factor), uses the live list with deprecated fields sorted last and
+        a "(deprecated)" suffix in the choice *name* (value stays the bare field name).
+
+        Falls back to _GAME_CONSTANT_FIELDS (95 fields — excludes starting_credits /
+        sale_price_factor which are metadata-only) when the metadata endpoint is offline.
+        """
+        current_lower = current.lower()
+        if self._config_metadata:
+            active = [m for m in self._config_metadata if not m.get("deprecated")]
+            deprecated = [m for m in self._config_metadata if m.get("deprecated")]
+            ordered = active + deprecated
+            choices: list[app_commands.Choice[str]] = []
+            for m in ordered:
+                field = m["field"]
+                if current_lower not in field.lower():
+                    continue
+                name = f"{field} (deprecated)" if m.get("deprecated") else field
+                choices.append(app_commands.Choice(name=name[:100], value=field))
+                if len(choices) == 25:
+                    break
+            return choices
+        # Fallback to static list (no metadata — 95 fields, no starting_credits/sale_price_factor)
+        return [app_commands.Choice(name=f, value=f) for f in self._GAME_CONSTANT_FIELDS if current_lower in f.lower()][
+            :25
+        ]
+
+    @app_commands.command(name="admin_config", description="[ADMIN] View, set, or reset any per-guild setting")
     @app_commands.describe(
-        action="Configuration action to perform",
-        starting_credits="Starting credits for new players",
-        admin_role="Admin role for the bot",
+        action="What to do",
+        setting="The setting to act on (autocomplete; leave blank for view/validate/help-overview)",
+        int_value="New value (integer settings)",
+        float_value="New value (decimal settings)",
+        bool_value="New value (on/off settings, e.g. criminal_exclude_emp_weapons)",
+        text_value="New value (text/enum settings)",
+        json_value="Advanced: raw JSON for the 7 legacy dict settings (prefer the *_bronze/... scalars)",
+        only_overridden="View: show only settings overridden from default (default: True)",
     )
     @app_commands.choices(
         action=[
-            app_commands.Choice(name="View Config", value="view"),
-            app_commands.Choice(name="Set Starting Credits", value="set_credits"),
-            app_commands.Choice(name="Set Admin Role", value="set_role"),
-            app_commands.Choice(name="Reset to Defaults", value="reset"),
+            app_commands.Choice(name="View settings", value="view"),
+            app_commands.Choice(name="Set a value", value="set"),
+            app_commands.Choice(name="Help for a setting", value="help"),
+            app_commands.Choice(name="Reset to default", value="reset"),
+            app_commands.Choice(name="Validate config", value="validate"),
         ]
     )
+    @app_commands.autocomplete(setting=setting_autocomplete)
     async def admin_config(
         self,
         interaction: discord.Interaction,
         action: str,
-        starting_credits: int | None = None,
-        admin_role: discord.Role | None = None,
+        setting: str | None = None,
+        int_value: int | None = None,
+        float_value: float | None = None,
+        bool_value: bool | None = None,
+        text_value: str | None = None,
+        json_value: str | None = None,
+        only_overridden: bool = True,
     ):
-        """Manage guild configuration."""
+        """View, set, help, reset, or validate per-guild config settings."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         if not await _check_is_admin(interaction):
             await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
             return
+
+        guild_id = interaction.guild_id
+
         try:
-            if action == "view":
-                resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=10)
-                resp.raise_for_status()
-                cfg = resp.json()
+            if action == "validate":
+                await self._admin_config_do_validate(interaction, guild_id)
 
-                embed = discord.Embed(title="⚙️ Guild Configuration", color=discord.Color.blue())
-                embed.add_field(name="Guild ID", value=str(cfg["guild_id"]), inline=True)
-                embed.add_field(name="Configured", value="✅" if cfg["configured"] else "❌", inline=True)
-                embed.add_field(
-                    name="Admin Role Set", value="✅" if cfg["admin_role_configured"] else "❌", inline=True
-                )
-                embed.add_field(name="Starting Credits", value=f"{cfg['starting_credits']:,}", inline=True)
-                embed.add_field(name="Sale Price Factor", value=f"{cfg['sale_price_factor']:.1%}", inline=True)
+            elif action == "view":
+                await self._admin_config_do_view(interaction, guild_id, only_overridden=only_overridden)
 
-                thresholds = cfg["xp_thresholds"]
-                threshold_lines = [
-                    f"Silver: {thresholds['Silver']:,}",
-                    f"Gold: {thresholds['Gold']:,}",
-                    f"Platinum: {thresholds['Platinum']:,}",
-                ]
-                if "Prestige" in thresholds:
-                    threshold_lines.append(f"Prestige: {thresholds['Prestige']:,}")
-                else:
-                    threshold_lines.append("Prestige: (default)")
-                embed.add_field(name="XP Thresholds", value="\n".join(threshold_lines), inline=True)
-                embed.add_field(
-                    name="Timestamps",
-                    value=(
-                        f"Created: {iso_to_discord_ts(cfg['created_at'], 'D')}\n"
-                        f"Updated: {iso_to_discord_ts(cfg['updated_at'], 'D')}"
-                    ),
-                    inline=False,
-                )
-                embed.set_footer(text="Use /admin_config action:Set ... to update")
+            elif action == "help":
+                await self._admin_config_do_help(interaction, guild_id, setting=setting)
 
-                await interaction.followup.send(embed=embed, ephemeral=True)
-
-            elif action == "set_credits":
-                if starting_credits is None:
-                    await interaction.followup.send("❌ Starting credits amount required.", ephemeral=True)
+            elif action == "set":
+                if setting is None:
+                    await interaction.followup.send(
+                        "❌ `setting` is required for `action:Set`. Use autocomplete to pick a field.",
+                        ephemeral=True,
+                    )
                     return
-                resp = await self.http_client.put(
-                    f"{api_base}/config/guild/{interaction.guild_id}/starting-credits/{max(0, starting_credits)}",
-                    timeout=10,
+                await self._admin_config_do_set(
+                    interaction,
+                    guild_id,
+                    setting=setting,
+                    int_value=int_value,
+                    float_value=float_value,
+                    bool_value=bool_value,
+                    text_value=text_value,
+                    json_value=json_value,
                 )
-                resp.raise_for_status()
-                await interaction.followup.send(f"✅ Starting credits set to {starting_credits:,}", ephemeral=True)
-
-            elif action == "set_role":
-                if admin_role is None:
-                    await interaction.followup.send("❌ Admin role required.", ephemeral=True)
-                    return
-                resp = await self.http_client.put(
-                    f"{api_base}/config/guild/{interaction.guild_id}/admin-role/{admin_role.id}", timeout=10
-                )
-                resp.raise_for_status()
-                await interaction.followup.send(f"✅ Admin role set to {admin_role.mention}", ephemeral=True)
 
             elif action == "reset":
-                resp = await self.http_client.post(f"{api_base}/config/guild/{interaction.guild_id}/reset", timeout=10)
-                resp.raise_for_status()
-                await interaction.followup.send(
-                    "✅ Guild configuration has been reset to default values", ephemeral=True
-                )
+                await self._admin_config_do_reset(interaction, guild_id, setting=setting)
 
-            flogger.info(f"Admin {interaction.user} performed config {action} in guild {interaction.guild_id}")
+            flogger.info(f"Admin {interaction.user} /admin_config action={action} setting={setting!r} guild={guild_id}")
 
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /admin_config: {e}")
+            flogger.error(f"Error in /admin_config action={action}: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing configuration.", ephemeral=True)
+
+    # ---------- action helpers ----------
+
+    async def _admin_config_do_validate(self, interaction: discord.Interaction, guild_id: int) -> None:
+        """Render the validate endpoint result (replaces /admin_config_validate)."""
+        resp = await self.http_client.get(
+            f"{api_base}/config/guild/{guild_id}/validate",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+
+        valid = result.get("valid", False)
+        errors = result.get("errors", [])
+        warnings = result.get("warnings", [])
+
+        embed = discord.Embed(
+            title="✅ Configuration Valid" if valid else "❌ Configuration Invalid",
+            description=f"Validation results for guild **{interaction.guild.name}**",
+            color=discord.Color.green() if valid else discord.Color.red(),
+        )
+        embed.add_field(
+            name="❌ Errors",
+            value="\n".join(f"• {e}" for e in errors) or "None",
+            inline=False,
+        )
+        embed.add_field(
+            name="⚠️ Warnings",
+            value="\n".join(f"• {w}" for w in warnings) or "None",
+            inline=False,
+        )
+        embed.set_footer(text=f"Guild ID: {result.get('guild_id', guild_id)}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        flogger.debug(f"Admin {interaction.user} validated config for guild={guild_id}")
+
+    async def _admin_config_do_view(
+        self, interaction: discord.Interaction, guild_id: int, *, only_overridden: bool
+    ) -> None:
+        """Show guild settings — compact overrides view or category-paginated full browse."""
+        resp = await self.http_client.get(
+            f"{api_base}/config/guild/{guild_id}/game-constants",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        gc_data = resp.json()
+
+        if only_overridden:
+            # Compact view: fields that differ from global default
+            meta_by = self._config_metadata_by_field
+            all_fields = (
+                [m["field"] for m in self._config_metadata]
+                if self._config_metadata
+                else list(self._GAME_CONSTANT_FIELDS)
+            )
+            lines: list[str] = []
+            for field in all_fields:
+                val = gc_data.get(field)
+                if val is None:
+                    continue
+                meta = meta_by.get(field, {})
+                default = meta.get("default", "?")
+                lines.append(f"**{field}**: `{val}` *(default: {default})*")
+
+            if not lines:
+                embed = discord.Embed(
+                    title="⚙️ Guild Settings — Overrides",
+                    description=(
+                        "No game-constant overrides set — all settings use global defaults.\n\n"
+                        "Use `/admin_config action:View only_overridden:False` to browse all settings by category."
+                    ),
+                    color=discord.Color.blue(),
+                )
+            else:
+                n_total = len(all_fields)
+                desc = "\n".join(lines)
+                if len(desc) > 4096:
+                    desc = desc[:4093] + "..."
+                embed = discord.Embed(
+                    title=f"⚙️ Guild Settings — Overrides ({len(lines)} of {n_total} overridden)",
+                    description=desc,
+                    color=discord.Color.blue(),
+                )
+                embed.set_footer(text="Use /admin_config action:View only_overridden:False to browse all by category.")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            # Category-paginated full browse
+            if self._config_metadata:
+                cats_order: list[str] = []
+                cats_fields: dict[str, list[dict]] = {}
+                for meta in self._config_metadata:
+                    cat = meta.get("category", "Other")
+                    if cat not in cats_fields:
+                        cats_fields[cat] = []
+                        cats_order.append(cat)
+                    cats_fields[cat].append(meta)
+            else:
+                cats_order = ["All Settings"]
+                cats_fields = {"All Settings": [{"field": f} for f in self._GAME_CONSTANT_FIELDS]}
+
+            pages: dict[str, list[tuple[str, str, str, bool]]] = {}
+            for cat in cats_order:
+                rows: list[tuple[str, str, str, bool]] = []
+                for meta in cats_fields[cat]:
+                    field = meta["field"]
+                    val = gc_data.get(field)
+                    default = str(meta.get("default", "—"))
+                    is_overridden = val is not None
+                    current = str(val) if is_overridden else "—"
+                    rows.append((field, current, default, is_overridden))
+                pages[cat] = rows
+
+            if not cats_order:
+                await interaction.followup.send("⚠️ No settings available.", ephemeral=True)
+                return
+
+            view = ConfigPageView(cats_order, pages)
+            await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
+
+    async def _admin_config_do_help(
+        self, interaction: discord.Interaction, guild_id: int, *, setting: str | None
+    ) -> None:
+        """Show help for a specific setting or a usage overview with category list."""
+        if setting is None:
+            # Overview: usage summary + category list
+            if self._config_metadata:
+                seen_cats: list[str] = []
+                for m in self._config_metadata:
+                    c = m.get("category", "Other")
+                    if c not in seen_cats:
+                        seen_cats.append(c)
+                cat_list = "\n".join(f"• {c}" for c in seen_cats)
+            else:
+                cat_list = "• (metadata not loaded — restart bot to retry)"
+
+            embed = discord.Embed(
+                title="❔ Admin Config Help",
+                description=(
+                    "**Usage:**\n"
+                    "`/admin_config action:View` — show overridden settings\n"
+                    "`/admin_config action:View only_overridden:False` — browse all categories\n"
+                    "`/admin_config action:Set setting:<name> <typed_value>` — update a setting\n"
+                    "`/admin_config action:Help setting:<name>` — detailed help for one setting\n"
+                    "`/admin_config action:Reset setting:<name>` — reset one to default\n"
+                    "`/admin_config action:Reset` — reset all overrides (confirmation required)\n"
+                    "`/admin_config action:Validate` — check config for issues\n\n"
+                    "**Categories:**\n" + cat_list
+                ),
+                color=discord.Color.blurple(),
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        # Per-setting help
+        meta = self._config_metadata_by_field.get(setting)
+
+        # Fetch current value (best-effort — don't fail help on API error)
+        current_val = None
+        try:
+            if setting in _NON_RESETTABLE_FIELDS:
+                cfg_resp = await self.http_client.get(f"{api_base}/config/guild/{guild_id}", timeout=10)
+                cfg_resp.raise_for_status()
+                current_val = cfg_resp.json().get(setting)
+            else:
+                gc_resp = await self.http_client.get(f"{api_base}/config/guild/{guild_id}/game-constants", timeout=10)
+                gc_resp.raise_for_status()
+                current_val = gc_resp.json().get(setting)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+        if meta:
+            field_type = meta.get("type", "unknown")
+            ge = meta.get("ge")
+            le = meta.get("le")
+            default = meta.get("default")
+            description = meta.get("description", "No description available.")
+            category = meta.get("category", "Other")
+            deprecated = meta.get("deprecated", False)
+            replaced_by = meta.get("replaced_by")
+
+            if ge is not None and le is not None:
+                range_str = f"{ge} – {le}"
+            elif ge is not None:
+                range_str = f"≥ {ge}"
+            elif le is not None:
+                range_str = f"≤ {le}"
+            else:
+                range_str = "—"
+
+            is_overridden = current_val is not None
+            current_display = f"`{current_val}` *(overridden)*" if is_overridden else f"`{default}` *(global default)*"
+
+            title = f"❔ {setting}"
+            if deprecated:
+                title += " ⚠️ deprecated"
+
+            embed = discord.Embed(title=title, description=description, color=discord.Color.blurple())
+            embed.add_field(name="Type", value=field_type, inline=True)
+            embed.add_field(name="Range", value=range_str, inline=True)
+            embed.add_field(name="Default", value=str(default) if default is not None else "—", inline=True)
+            embed.add_field(name="Current", value=current_display, inline=True)
+            embed.add_field(name="Category", value=category, inline=True)
+
+            if deprecated:
+                dep_msg = "⚠️ Deprecated. Prefer the scalar fields instead."
+                if replaced_by:
+                    dep_msg += f"\nReplaced by: `{replaced_by}`"
+                embed.add_field(name="Deprecation", value=dep_msg, inline=False)
+
+            type_param = {
+                "int": "int_value",
+                "float": "float_value",
+                "bool": "bool_value",
+                "str": "text_value",
+                "dict": "json_value",
+            }.get(field_type, "int_value")
+            embed.add_field(
+                name="Set with",
+                value=f"`/admin_config action:Set setting:{setting} {type_param}:<value>`",
+                inline=False,
+            )
+        else:
+            current_display = f"`{current_val}`" if current_val is not None else "*(global default)*"
+            embed = discord.Embed(
+                title=f"❔ {setting}",
+                description=(
+                    f"**Current value:** {current_display}\n\n"
+                    "*Detailed metadata unavailable — metadata endpoint may be offline.*"
+                ),
+                color=discord.Color.blurple(),
+            )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    async def _admin_config_do_set(
+        self,
+        interaction: discord.Interaction,
+        guild_id: int,
+        *,
+        setting: str,
+        int_value: int | None,
+        float_value: float | None,
+        bool_value: bool | None,
+        text_value: str | None,
+        json_value: str | None,
+    ) -> None:
+        """Set a per-guild setting to a new value with local validation + forwarding to bot-core."""
+        import json as _json
+
+        # Validate setting name
+        valid_fields = (
+            {m["field"] for m in self._config_metadata} if self._config_metadata else set(self._GAME_CONSTANT_FIELDS)
+        )
+        if setting not in valid_fields:
+            await interaction.followup.send(
+                f"❌ Unknown setting `{setting}`. Use autocomplete to pick a valid field.",
+                ephemeral=True,
+            )
+            return
+
+        # Exactly one typed param must be provided
+        provided = {
+            k: v
+            for k, v in {
+                "int_value": int_value,
+                "float_value": float_value,
+                "bool_value": bool_value,
+                "text_value": text_value,
+                "json_value": json_value,
+            }.items()
+            if v is not None
+        }
+        if not provided:
+            await interaction.followup.send(
+                "❌ Provide exactly one value parameter: `int_value`, `float_value`, `bool_value`, "
+                "`text_value`, or `json_value` (dict fields only).",
+                ephemeral=True,
+            )
+            return
+        if len(provided) > 1:
+            keys = ", ".join(f"`{k}`" for k in provided)
+            await interaction.followup.send(
+                f"❌ Provide only one value parameter at a time. You provided: {keys}.",
+                ephemeral=True,
+            )
+            return
+
+        param_name = next(iter(provided))
+        meta = self._config_metadata_by_field.get(setting)
+        field_type = meta.get("type") if meta else None
+
+        # json_value only accepted for dict-type (deprecated JSONB) fields
+        if param_name == "json_value":
+            is_dict_field = (field_type == "dict") if meta else (setting in _DEPRECATED_DICT_FIELDS)
+            if not is_dict_field:
+                type_hint = field_type or "unknown"
+                param_hint = {
+                    "int": "int_value",
+                    "float": "float_value",
+                    "bool": "bool_value",
+                    "str": "text_value",
+                }.get(type_hint, "the appropriate typed param")
+                await interaction.followup.send(
+                    f"❌ `json_value` is only accepted for the 7 legacy dict settings. "
+                    f"`{setting}` is a `{type_hint}` field — use `{param_hint}` instead.",
+                    ephemeral=True,
+                )
+                return
+            try:
+                new_value = _json.loads(json_value)  # type: ignore[arg-type]
+            except _json.JSONDecodeError as exc:
+                await interaction.followup.send(f"❌ Invalid JSON: {exc}", ephemeral=True)
+                return
+        elif param_name == "bool_value":
+            new_value = bool_value
+        elif param_name == "float_value":
+            new_value = float_value
+        elif param_name == "int_value":
+            new_value = int_value
+        else:  # text_value
+            new_value = text_value
+
+        # Type-param mismatch check (metadata-driven; int→float widening is allowed)
+        if meta and field_type and param_name != "json_value":
+            type_param_map = {
+                "int": "int_value",
+                "float": "float_value",
+                "bool": "bool_value",
+                "str": "text_value",
+            }
+            expected = type_param_map.get(field_type)
+            # int→float widening is acceptable per bot-core strict model
+            _widening_ok = field_type == "float" and param_name == "int_value"
+            if expected and param_name != expected and not _widening_ok:
+                type_label = {
+                    "int": "an integer",
+                    "float": "a decimal",
+                    "bool": "an on/off",
+                    "str": "a text",
+                }.get(field_type, field_type)
+                await interaction.followup.send(
+                    f"❌ `{setting}` is {type_label} setting — use `{expected}`, not `{param_name}`.",
+                    ephemeral=True,
+                )
+                return
+
+        # Local bounds pre-check (numeric only; saves a round-trip on obvious range violations)
+        if meta and isinstance(new_value, (int, float)):
+            ge = meta.get("ge")
+            le = meta.get("le")
+            if ge is not None and new_value < ge:
+                await interaction.followup.send(
+                    f"❌ `{setting}` must be between {ge} and {le}. You gave {new_value}.",
+                    ephemeral=True,
+                )
+                return
+            if le is not None and new_value > le:
+                ge_str = str(ge) if ge is not None else "—"
+                await interaction.followup.send(
+                    f"❌ `{setting}` must be between {ge_str} and {le}. You gave {new_value}.",
+                    ephemeral=True,
+                )
+                return
+
+        # Fetch old value for the success embed (best-effort, non-blocking)
+        old_value = None
+        try:
+            if setting in _NON_RESETTABLE_FIELDS:
+                old_resp = await self.http_client.get(f"{api_base}/config/guild/{guild_id}", timeout=10)
+                old_resp.raise_for_status()
+                old_value = old_resp.json().get(setting)
+            else:
+                old_resp = await self.http_client.get(f"{api_base}/config/guild/{guild_id}/game-constants", timeout=10)
+                old_resp.raise_for_status()
+                old_value = old_resp.json().get(setting)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass  # Embed shows None → new_value which is acceptable
+
+        # PUT the new value via the general config endpoint (accepts all 97 fields)
+        put_resp = await self.http_client.put(
+            f"{api_base}/config/guild/{guild_id}",
+            json={"guild_id": guild_id, setting: new_value},
+            timeout=10,
+        )
+        put_resp.raise_for_status()
+
+        # Success embed
+        description_text = meta.get("description", "") if meta else ""
+        range_text = ""
+        if meta:
+            ge = meta.get("ge")
+            le = meta.get("le")
+            if ge is not None and le is not None:
+                range_text = f" (range {ge}–{le})"
+
+        embed = discord.Embed(title="✅ Setting updated", color=discord.Color.green())
+        embed.add_field(name=setting, value=f"`{old_value}` → `{new_value}`", inline=False)
+        if description_text:
+            embed.add_field(name="Description", value=description_text + range_text, inline=False)
+        elif range_text:
+            embed.add_field(name="Range", value=range_text.strip(" ()"), inline=False)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        flogger.info(f"Admin {interaction.user} set {setting}={new_value!r} (was {old_value!r}) in guild={guild_id}")
+
+    async def _admin_config_do_reset(
+        self, interaction: discord.Interaction, guild_id: int, *, setting: str | None
+    ) -> None:
+        """Reset one field or all game-constant overrides, with confirmation flow."""
+        # starting_credits / sale_price_factor cannot be reset via game-constants endpoint
+        if setting is not None and setting in _NON_RESETTABLE_FIELDS:
+            await interaction.followup.send(
+                f"❌ `{setting}` has no game-constant default and cannot be reset automatically. "
+                f"Use `/admin_config action:Set setting:{setting}` to set it to the value you want.",
+                ephemeral=True,
+            )
+            return
+
+        # Validate setting name if one was provided
+        if setting is not None:
+            valid_fields = (
+                {m["field"] for m in self._config_metadata}
+                if self._config_metadata
+                else set(self._GAME_CONSTANT_FIELDS)
+            )
+            if setting not in valid_fields:
+                await interaction.followup.send(
+                    f"❌ Unknown setting `{setting}`. Use autocomplete to pick a valid field.",
+                    ephemeral=True,
+                )
+                return
+
+        action_desc = (
+            f"reset override for **{setting}**" if setting else "reset **all per-guild game-constant overrides**"
+        )
+        view = ConfirmView(action=f"{action_desc} for guild {guild_id}", timeout=60)
+        warning_embed = discord.Embed(
+            title="⚠️ Confirm Reset",
+            description=(
+                f"You are about to {action_desc} to global defaults.\n"
+                "This cannot be undone. Click **Confirm** to proceed."
+            ),
+            color=discord.Color.orange(),
+        )
+        await interaction.followup.send(embed=warning_embed, view=view, ephemeral=True)
+        await view.wait()
+
+        if view.result is None:
+            await interaction.followup.send("⏱️ Reset timed out — no changes made.", ephemeral=True)
+            return
+        if not view.result:
+            await interaction.followup.send("❌ Reset cancelled — no changes made.", ephemeral=True)
+            return
+
+        body = {"fields": [setting] if setting else None}
+        resp = await self.http_client.post(
+            f"{api_base}/config/guild/{guild_id}/game-constants/reset",
+            json=body,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        embed = discord.Embed(
+            title="✅ Game Constants Reset",
+            description=f"Successfully {action_desc} for guild {guild_id}.",
+            color=discord.Color.green(),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        flogger.info(f"Admin {interaction.user} reset game constants setting={setting!r} in guild={guild_id}")
+
+    @admin_config.error
+    async def admin_config_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_config", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     @app_commands.command(name="admin_uninstall", description="[ADMIN] Completely remove all bot data from this guild")
     async def admin_uninstall(
@@ -1010,6 +1643,19 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         turret_count_min="Minimum number of turret types in shop",
         turret_count_max="Maximum number of turret types in shop",
         sale_factor="Sale price factor (0.0 - 1.0, e.g. 0.8 = 80% of base price)",
+        ship_qty_min="Min units per ship in shop (quantity_ranges.ships.min)",
+        ship_qty_max="Max units per ship in shop (quantity_ranges.ships.max)",
+        weapon_qty_min="Min units per weapon in shop (quantity_ranges.weapons.min)",
+        weapon_qty_max="Max units per weapon in shop (quantity_ranges.weapons.max)",
+        secondary_weapon_qty_min="Min units per secondary weapon (quantity_ranges.secondary_weapons.min)",
+        secondary_weapon_qty_max="Max units per secondary weapon (quantity_ranges.secondary_weapons.max)",
+        module_qty_min="Min units per module in shop (quantity_ranges.modules.min)",
+        module_qty_max="Max units per module in shop (quantity_ranges.modules.max)",
+        turret_qty_min="Min units per turret in shop (quantity_ranges.turrets.min)",
+        turret_qty_max="Max units per turret in shop (quantity_ranges.turrets.max)",
+        tl_prob_same_level="TL probability: item at same level as shop band (0.0–1.0)",
+        tl_prob_one_lower="TL probability: item one level below band (0.0–1.0)",
+        tl_prob_two_lower="TL probability: item two levels below band (0.0–1.0)",
     )
     async def admin_config_shop(
         self,
@@ -1025,6 +1671,19 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         turret_count_min: int | None = None,
         turret_count_max: int | None = None,
         sale_factor: float | None = None,
+        ship_qty_min: int | None = None,
+        ship_qty_max: int | None = None,
+        weapon_qty_min: int | None = None,
+        weapon_qty_max: int | None = None,
+        secondary_weapon_qty_min: int | None = None,
+        secondary_weapon_qty_max: int | None = None,
+        module_qty_min: int | None = None,
+        module_qty_max: int | None = None,
+        turret_qty_min: int | None = None,
+        turret_qty_max: int | None = None,
+        tl_prob_same_level: float | None = None,
+        tl_prob_one_lower: float | None = None,
+        tl_prob_two_lower: float | None = None,
     ):
         """Update shop-specific configuration for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -1050,10 +1709,36 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         if turret_count_min is not None and turret_count_max is not None:
             item_count_ranges["turrets"] = {"min": turret_count_min, "max": turret_count_max}
 
+        # Build quantity_ranges — same bot-core "both required" rule as item_count_ranges
+        quantity_ranges: dict[str, dict[str, int]] = {}
+        if ship_qty_min is not None and ship_qty_max is not None:
+            quantity_ranges["ships"] = {"min": ship_qty_min, "max": ship_qty_max}
+        if weapon_qty_min is not None and weapon_qty_max is not None:
+            quantity_ranges["weapons"] = {"min": weapon_qty_min, "max": weapon_qty_max}
+        if secondary_weapon_qty_min is not None and secondary_weapon_qty_max is not None:
+            quantity_ranges["secondary_weapons"] = {"min": secondary_weapon_qty_min, "max": secondary_weapon_qty_max}
+        if module_qty_min is not None and module_qty_max is not None:
+            quantity_ranges["modules"] = {"min": module_qty_min, "max": module_qty_max}
+        if turret_qty_min is not None and turret_qty_max is not None:
+            quantity_ranges["turrets"] = {"min": turret_qty_min, "max": turret_qty_max}
+
+        # Build tech_level_probabilities — include any provided values
+        tl_probs: dict[str, float] = {}
+        if tl_prob_same_level is not None:
+            tl_probs["same_level"] = tl_prob_same_level
+        if tl_prob_one_lower is not None:
+            tl_probs["one_lower"] = tl_prob_one_lower
+        if tl_prob_two_lower is not None:
+            tl_probs["two_lower"] = tl_prob_two_lower
+
         # Build the shop-config payload matching UpdateShopConfigRequest
         shop_payload: dict = {"guild_id": interaction.guild_id}
         if item_count_ranges:
             shop_payload["item_count_ranges"] = item_count_ranges
+        if quantity_ranges:
+            shop_payload["quantity_ranges"] = quantity_ranges
+        if tl_probs:
+            shop_payload["tech_level_probabilities"] = tl_probs
 
         try:
             resp = await self.http_client.put(
@@ -1080,13 +1765,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             #   {
             #     "item_count_ranges": {"ships": {"min": N, "max": N}, ...},
             #     "quantity_ranges":   {"ships": {"min": N, "max": N}, ...},
-            #     "tech_level_probabilities": {...},
+            #     "tech_level_probabilities": {"same_level": F, "one_lower": F, "two_lower": F},
             #   }
             shop_cfg = cfg.get("shop_config", {})
             item_ranges = shop_cfg.get("item_count_ranges", {})
+            qty_ranges = shop_cfg.get("quantity_ranges", {})
+            tl_probs_resp = shop_cfg.get("tech_level_probabilities", {})
 
-            def _range_str(key: str) -> str:
-                r = item_ranges.get(key, {})
+            def _range_str(d: dict, key: str) -> str:
+                r = d.get(key, {})
+                if not r:
+                    return "—"
                 return f"Min: {r.get('min', '?')} / Max: {r.get('max', '?')}"
 
             embed = discord.Embed(
@@ -1094,17 +1783,27 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 description="Current shop configuration for this guild:",
                 color=discord.Color.green(),
             )
-            embed.add_field(name="Ships", value=_range_str("ships"), inline=True)
-            embed.add_field(name="Weapons", value=_range_str("weapons"), inline=True)
-            embed.add_field(name="Secondary Weapons", value=_range_str("secondary_weapons"), inline=True)
-            embed.add_field(name="Modules", value=_range_str("modules"), inline=True)
-            embed.add_field(name="Turrets", value=_range_str("turrets"), inline=True)
+            embed.add_field(name="Item Count — Ships", value=_range_str(item_ranges, "ships"), inline=True)
+            embed.add_field(name="Item Count — Weapons", value=_range_str(item_ranges, "weapons"), inline=True)
+            embed.add_field(
+                name="Item Count — Secondary", value=_range_str(item_ranges, "secondary_weapons"), inline=True
+            )
+            embed.add_field(name="Item Count — Modules", value=_range_str(item_ranges, "modules"), inline=True)
+            embed.add_field(name="Item Count — Turrets", value=_range_str(item_ranges, "turrets"), inline=True)
             sale_pf = cfg.get("sale_price_factor")
             embed.add_field(
                 name="Sale Price Factor",
                 value=f"{sale_pf:.0%}" if isinstance(sale_pf, float) else str(sale_pf or "?"),
                 inline=True,
             )
+            # Show quantity_ranges if any were updated or are set in response
+            if qty_ranges:
+                qty_lines = [f"{k}: {_range_str(qty_ranges, k)}" for k in qty_ranges]
+                embed.add_field(name="Quantity Ranges", value="\n".join(qty_lines), inline=False)
+            # Show TL probabilities if set in response
+            if tl_probs_resp:
+                tl_lines = [f"{k}: {v}" for k, v in tl_probs_resp.items()]
+                embed.add_field(name="TL Probabilities", value="\n".join(tl_lines), inline=False)
 
             await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(f"Admin {interaction.user} updated shop config for guild {interaction.guild_id}")
@@ -1114,61 +1813,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_config_shop: {e}")
             await interaction.followup.send("⚠️ An error occurred while updating shop configuration.", ephemeral=True)
-
-    @app_commands.command(name="admin_config_validate", description="[ADMIN] Validate guild configuration")
-    async def admin_config_validate(self, interaction: discord.Interaction):
-        """Validate the current guild configuration."""
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
-            return
-
-        try:
-            resp = await self.http_client.get(
-                f"{api_base}/config/guild/{interaction.guild_id}/validate",
-                timeout=10,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-
-            valid = result.get("valid", False)
-            errors = result.get("errors", [])
-            warnings = result.get("warnings", [])
-
-            embed = discord.Embed(
-                title=f"{'✅ Configuration Valid' if valid else '❌ Configuration Invalid'}",
-                description=f"Validation results for guild **{interaction.guild.name}**",
-                color=discord.Color.green() if valid else discord.Color.red(),
-            )
-
-            if errors:
-                embed.add_field(
-                    name="❌ Errors",
-                    value="\n".join(f"• {e}" for e in errors) or "None",
-                    inline=False,
-                )
-            else:
-                embed.add_field(name="❌ Errors", value="None", inline=False)
-
-            if warnings:
-                embed.add_field(
-                    name="⚠️ Warnings",
-                    value="\n".join(f"• {w}" for w in warnings) or "None",
-                    inline=False,
-                )
-            else:
-                embed.add_field(name="⚠️ Warnings", value="None", inline=False)
-
-            embed.set_footer(text=f"Guild ID: {result.get('guild_id', interaction.guild_id)}")
-
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            flogger.debug(f"Admin {interaction.user} validated config for guild {interaction.guild_id}")
-
-        except httpx.HTTPStatusError as e:
-            await report_api_error(interaction, e)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /admin_config_validate: {e}")
-            await interaction.followup.send("⚠️ An error occurred while validating configuration.", ephemeral=True)
 
     # ------------------------------------------------------------------
     # Render configuration commands
@@ -2385,7 +3029,10 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
-    # B.49/B.50: /admin_config_constants — per-guild game-constant overrides
+    # _GAME_CONSTANT_FIELDS — static fallback list (95 fields, rev 0031)
+    # Used by setting_autocomplete when the /config/metadata endpoint is offline.
+    # NOTE: starting_credits and sale_price_factor are NOT in this list — they are
+    # Tier-1 scalars served only via the metadata endpoint (metadata-only additions).
     # ------------------------------------------------------------------
 
     # All slash-settable per-guild game-constant override field names (identical to _OVERRIDE_FIELDS in
@@ -2524,274 +3171,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "criminal_weaponmod_chance_platinum",
         # _GAME_CONSTANT_FIELDS and _OVERRIDE_FIELDS (config.py) are now identical at 95 fields (rev 0031: 14 retired).
     )
-
-    async def constants_autocomplete(
-        self, _interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for game-constant field names."""
-        current_lower = current.lower()
-        return [app_commands.Choice(name=f, value=f) for f in self._GAME_CONSTANT_FIELDS if current_lower in f.lower()][
-            :25
-        ]
-
-    @app_commands.command(
-        name="admin_config_constants",
-        description="[ADMIN] View or set a per-guild game-constant override (B.49)",
-    )
-    @app_commands.describe(
-        setting="The game-constant field name (leave blank to list all)",
-        int_value="Integer value to set",
-        float_value="Float value to set",
-        json_value="JSON value to set (for dict/bool fields like division_max_tl, "
-        "criminal_cloak_chance_by_division, criminal_exclude_emp_weapons)",
-    )
-    @app_commands.autocomplete(setting=constants_autocomplete)
-    async def admin_config_constants(
-        self,
-        interaction: discord.Interaction,
-        setting: str | None = None,
-        int_value: int | None = None,
-        float_value: float | None = None,
-        json_value: str | None = None,
-    ):
-        """View or set a per-guild game-constant override."""
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
-            return
-
-        guild_id = interaction.guild_id
-
-        # No setting specified → show all current overrides (compact view)
-        if setting is None:
-            try:
-                resp = await self.http_client.get(
-                    f"{api_base}/config/guild/{guild_id}/game-constants",
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                lines = []
-                for field in self._GAME_CONSTANT_FIELDS:
-                    val = data.get(field)
-                    display = f"`{val}`" if val is not None else "*default*"
-                    lines.append(f"**{field}**: {display}")
-                desc = "\n".join(lines) or "No overrides set."
-                embed = discord.Embed(
-                    title=f"Game Constant Overrides — Guild {guild_id}",
-                    description=desc[:4096],
-                    color=discord.Color.blue(),
-                )
-                await interaction.followup.send(embed=embed, ephemeral=True)
-            except httpx.HTTPStatusError as e:
-                await report_api_error(interaction, e)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                flogger.error(f"admin_config_constants list error: {e}")
-                await interaction.followup.send("⚠️ Failed to fetch game constants.", ephemeral=True)
-            return
-
-        # Validate setting name
-        if setting not in self._GAME_CONSTANT_FIELDS:
-            await interaction.followup.send(
-                f"❌ Unknown setting `{setting}`. Use autocomplete to pick a valid field.",
-                ephemeral=True,
-            )
-            return
-
-        # No value provided → show current value of the specific setting
-        if int_value is None and float_value is None and json_value is None:
-            try:
-                resp = await self.http_client.get(
-                    f"{api_base}/config/guild/{guild_id}/game-constants",
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                val = data.get(setting)
-                display = f"`{val}`" if val is not None else "*using global default*"
-                await interaction.followup.send(
-                    f"**{setting}**: {display}",
-                    ephemeral=True,
-                )
-            except httpx.HTTPStatusError as e:
-                await report_api_error(interaction, e)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                flogger.error(f"admin_config_constants get error: {e}")
-                await interaction.followup.send("⚠️ Failed to fetch game constant.", ephemeral=True)
-            return
-
-        # Determine new value
-        import json as _json
-
-        new_value = None
-        if json_value is not None:
-            try:
-                new_value = _json.loads(json_value)
-            except _json.JSONDecodeError as e:
-                await interaction.followup.send(f"❌ Invalid JSON: {e}", ephemeral=True)
-                return
-        elif float_value is not None:
-            new_value = float_value
-        elif int_value is not None:
-            new_value = int_value
-
-        # PATCH the config
-        try:
-            resp = await self.http_client.put(
-                f"{api_base}/config/guild/{guild_id}",
-                json={"guild_id": guild_id, setting: new_value},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            embed = discord.Embed(
-                title="✅ Game Constant Updated",
-                description=f"**{setting}** set to `{new_value}` for guild {guild_id}.",
-                color=discord.Color.green(),
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            flogger.info(f"Admin {interaction.user} set game constant {setting}={new_value!r} in guild {guild_id}")
-        except httpx.HTTPStatusError as e:
-            await report_api_error(interaction, e)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"admin_config_constants set error: {e}")
-            await interaction.followup.send("⚠️ Failed to update game constant.", ephemeral=True)
-
-    @admin_config_constants.error
-    async def admin_config_constants_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        flogger.exception("Error in /admin_config_constants", exc_info=error)
-        if not interaction.response.is_done():
-            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
-
-    @app_commands.command(
-        name="admin_config_constants_view",
-        description="[ADMIN] Compact read-only view of all per-guild game-constant overrides (B.49)",
-    )
-    async def admin_config_constants_view(self, interaction: discord.Interaction):
-        """Read-only compact view of all per-guild game-constant overrides."""
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
-            return
-
-        guild_id = interaction.guild_id
-        try:
-            resp = await self.http_client.get(
-                f"{api_base}/config/guild/{guild_id}/game-constants",
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-            set_fields = [(f, data[f]) for f in self._GAME_CONSTANT_FIELDS if data.get(f) is not None]
-            if not set_fields:
-                await interaction.followup.send(
-                    "ℹ️ No per-guild overrides set — all constants use global defaults.",
-                    ephemeral=True,
-                )
-                return
-
-            lines = [f"**{f}**: `{v}`" for f, v in set_fields]
-            embed = discord.Embed(
-                title=f"Active Game Constant Overrides — Guild {guild_id}",
-                description="\n".join(lines)[:4096],
-                color=discord.Color.blue(),
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except httpx.HTTPStatusError as e:
-            await report_api_error(interaction, e)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"admin_config_constants_view error: {e}")
-            await interaction.followup.send("⚠️ Failed to fetch game constants.", ephemeral=True)
-
-    @admin_config_constants_view.error
-    async def admin_config_constants_view_error(
-        self, interaction: discord.Interaction, error: app_commands.AppCommandError
-    ):
-        flogger.exception("Error in /admin_config_constants_view", exc_info=error)
-        if not interaction.response.is_done():
-            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
-
-    @app_commands.command(
-        name="admin_config_constants_reset",
-        description="[ADMIN] Reset per-guild game-constant overrides to global defaults (B.49/B.50)",
-    )
-    @app_commands.describe(
-        setting="Specific field to reset (leave blank to reset all per-guild game-constant overrides)",
-    )
-    @app_commands.autocomplete(setting=constants_autocomplete)
-    async def admin_config_constants_reset(
-        self,
-        interaction: discord.Interaction,
-        setting: str | None = None,
-    ):
-        """Reset per-guild game-constant overrides with button confirmation (B.50)."""
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
-            return
-
-        guild_id = interaction.guild_id
-
-        if setting is not None and setting not in self._GAME_CONSTANT_FIELDS:
-            await interaction.followup.send(
-                f"❌ Unknown setting `{setting}`. Use autocomplete to pick a valid field.",
-                ephemeral=True,
-            )
-            return
-
-        action_desc = (
-            f"reset override for **{setting}**" if setting else "reset **all per-guild game-constant overrides**"
-        )
-
-        view = ConfirmView(action=f"{action_desc} for guild {guild_id}", timeout=60)
-        warning_embed = discord.Embed(
-            title="⚠️ Confirm Reset",
-            description=(
-                f"You are about to {action_desc} to global defaults.\n"
-                "This cannot be undone. Click **Confirm** to proceed."
-            ),
-            color=discord.Color.orange(),
-        )
-        await interaction.followup.send(embed=warning_embed, view=view, ephemeral=True)
-        await view.wait()
-
-        if view.result is None:
-            await interaction.followup.send("⏱️ Reset timed out — no changes made.", ephemeral=True)
-            return
-
-        if not view.result:
-            await interaction.followup.send("❌ Reset cancelled — no changes made.", ephemeral=True)
-            return
-
-        # Confirmed — call the reset endpoint
-        try:
-            body = {"fields": [setting] if setting else None}
-            resp = await self.http_client.post(
-                f"{api_base}/config/guild/{guild_id}/game-constants/reset",
-                json=body,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            embed = discord.Embed(
-                title="✅ Game Constants Reset",
-                description=f"Successfully {action_desc} for guild {guild_id}.",
-                color=discord.Color.green(),
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            flogger.info(f"Admin {interaction.user} reset game constants (setting={setting!r}) in guild {guild_id}")
-        except httpx.HTTPStatusError as e:
-            await report_api_error(interaction, e)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"admin_config_constants_reset error: {e}")
-            await interaction.followup.send("⚠️ Failed to reset game constants.", ephemeral=True)
-
-    @admin_config_constants_reset.error
-    async def admin_config_constants_reset_error(
-        self, interaction: discord.Interaction, error: app_commands.AppCommandError
-    ):
-        flogger.exception("Error in /admin_config_constants_reset", exc_info=error)
-        if not interaction.response.is_done():
-            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
     # /admin_duel — admin duel management (B.65 + touch-up)

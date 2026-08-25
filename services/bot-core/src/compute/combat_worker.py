@@ -35,7 +35,7 @@ so it can be submitted to ``concurrent.futures.ProcessPoolExecutor``.
 #   * this file is at compute/, not utils/, so utils/__init__ is never triggered
 # ---------------------------------------------------------------------------
 
-from services.combat_models import FightResults
+from services.combat_models import CombatTuning, FightResults
 from services.combat_resolver import TickResolver, _extract_key_events, deplete_side1_loadout
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,7 @@ def run_fight(
     combatant1_label: str,
     combatant2_label: str,
     compact: bool,
+    tuning: CombatTuning | None = None,
 ):
     """Execute a single combat simulation in an isolated worker process.
 
@@ -119,6 +120,7 @@ def run_fight(
         loadout1,
         loadout2,
         pvc_damage_reduction=pvc_damage_reduction,
+        tuning=tuning,
         combatant1_label=combatant1_label,
         combatant2_label=combatant2_label,
     )
@@ -187,6 +189,7 @@ def run_fight_batch(
     pvc_damage_reduction: float,
     compact: bool = True,
     carry_side1_resources: bool = False,
+    tuning: CombatTuning | None = None,
 ) -> list[tuple]:
     """Execute a batch of combat simulations in a single worker process.
 
@@ -245,6 +248,7 @@ def run_fight_batch(
                 combatant1_label=combatant1_label,
                 combatant2_label=combatant2_label,
                 compact=False,
+                tuning=tuning,
             )
             results.append((full["winner_side"], full["is_stalemate"]))
             # Deplete the player's carried consumables for the next fight.
@@ -260,6 +264,7 @@ def run_fight_batch(
             combatant1_label=combatant1_label,
             combatant2_label=combatant2_label,
             compact=compact,
+            tuning=tuning,
         )
         results.append(result)
     return results

@@ -11,15 +11,16 @@ COVERAGE
 1. STATIC (AST-level): enumerate the five offload/fight call sites and assert
    that none passes guild_config=<live ORM>.  Specifically:
 
-   a. bounties.py combat_bonus  (~:230)   → fight_ships, no guild_config kwarg
-   b. bounty_service.py bronze  (~:1524)  → fight_ships, no guild_config kwarg
-   c. bounty_service.py silver+ (~:1575)  → fight_ships, no guild_config kwarg
-   d. duel_service.py resolve   (~:290)   → fight_ships, no guild_config kwarg
-   e. combat_preflight_service  (~:182)   → run_fight_batch via offload_cpu,
-                                             no guild_config anywhere in the call
+   a. bounties.py combat_bonus  → fight_ships, guild_config= IS passed (A1, rev 0032)
+   b. bounty_service.py bronze  → fight_ships, guild_config= IS passed (A1, rev 0032)
+   c. bounty_service.py silver+ → fight_ships, guild_config= IS passed (A1, rev 0032)
+   d. duel_service.py resolve   → fight_ships, guild_config= IS passed (A1, rev 0032)
+   e. combat_preflight_service  → run_fight_batch via offload_cpu,
+                                   no guild_config kwarg (tuning= carries the struct)
 
-2. RUNTIME REJECTION (fight_ships path): passing a mapper-bearing object as
-   guild_config raises AssertionError before offload_cpu is called.
+2. RUNTIME BOUNDARY (fight_ships path): a real ORM guild_config is ACCEPTED
+   and consumed in-process into a frozen all-scalar CombatTuning; nothing ORM
+   ever reaches offload_cpu (post-A1 form of the C1a-4 guard).
 
 3. RUNTIME REJECTION (preflight path): passing a mapper-bearing object in
    matchups raises AssertionError before offload_cpu is called.
@@ -109,49 +110,61 @@ class TestStaticOffloadBoundary:
     """AST-level assertions for every fight/offload call site.
 
     Strategy: parse each source file once, find all fight_ships() /
-    offload_cpu() call AST nodes, and assert that:
-    - guild_config is never passed as a keyword argument
-    - The call site does not forward any symbol named guild_cfg / cfg / config
-      as the guild_config positional argument.
+    offload_cpu() call AST nodes, and assert boundary invariants:
+    - bounties.py, duel_service.py, and bounty_service.py: guild_config= IS
+      passed at every fight_ships call site (A1 wired, rev 0032)
 
-    We can't prove at the AST level that cfg is not an ORM (that would require
-    type-inference); what we CAN assert statically is that the guild_config
-    kwarg is absent from every fight_ships call — meaning the default None is
-    used, which is safe by definition.
+    fight_ships consumes guild_config in-process into a frozen all-scalar
+    CombatTuning; the C1a-4 guard asserts the struct's purity, so nothing ORM
+    crosses the offload boundary. The runtime tests
+    (TestRuntimeBoundaryFightShips) cover this guarantee end-to-end.
     """
 
-    def test_bounties_router_fight_ships_no_guild_config_kwarg(self):
-        """bounties.py combat_bonus fight_ships call does not pass guild_config=."""
+    def test_bounties_router_fight_ships_passes_guild_config_kwarg(self):
+        """bounties.py combat_bonus fight_ships call passes guild_config= (A1 wired, rev 0032).
+
+        A1 introduced per-guild tuning: guild_config is now explicitly passed so that
+        CombatTuning can be built inside combat_service.fight_ships.  The ORM guard
+        (_is_orm_model assertion) inside fight_ships enforces boundary purity at runtime.
+        """
         tree = _parse(_BOUNTIES_ROUTER)
         calls = _find_calls(tree, "fight_ships")
         assert calls, "Expected at least one fight_ships call in bounties.py"
         for call in calls:
             kwargs = _kwarg_names(call)
-            assert "guild_config" not in kwargs, (
-                f"bounties.py fight_ships call at line {call.lineno} "
-                f"passes guild_config= — C1a-4 violation risk; extract scalars first"
+            assert "guild_config" in kwargs, (
+                f"bounties.py fight_ships call at line {call.lineno} must pass guild_config= (A1 wiring, rev 0032)"
             )
 
-    def test_bounty_service_fight_ships_no_guild_config_kwarg(self):
-        """bounty_service.py fight_ships calls (bronze + silver+) do not pass guild_config=."""
+    def test_bounty_service_fight_ships_passes_guild_config_kwarg(self):
+        """bounty_service.py fight_ships calls (bronze + silver+) pass guild_config= (A1, rev 0032).
+
+        Bounty PvC is the primary combat path — leaving it on default tuning
+        would defeat per-guild combat tuning entirely.
+        """
         tree = _parse(_BOUNTY_SERVICE)
         calls = _find_calls(tree, "fight_ships")
         assert calls, "Expected at least one fight_ships call in bounty_service.py"
         for call in calls:
             kwargs = _kwarg_names(call)
-            assert "guild_config" not in kwargs, (
-                f"bounty_service.py fight_ships call at line {call.lineno} passes guild_config= — C1a-4 violation risk"
+            assert "guild_config" in kwargs, (
+                f"bounty_service.py fight_ships call at line {call.lineno} must pass guild_config= (A1 wiring)"
             )
 
-    def test_duel_service_fight_ships_no_guild_config_kwarg(self):
-        """duel_service.py fight_ships call does not pass guild_config=."""
+    def test_duel_service_fight_ships_passes_guild_config_kwarg(self):
+        """duel_service.py fight_ships call passes guild_config= (A1 wired, rev 0032).
+
+        A1 introduced per-guild tuning: guild_config is now explicitly passed so that
+        CombatTuning can be built inside combat_service.fight_ships.  The ORM guard
+        (_is_orm_model assertion) inside fight_ships enforces boundary purity at runtime.
+        """
         tree = _parse(_DUEL_SERVICE)
         calls = _find_calls(tree, "fight_ships")
         assert calls, "Expected at least one fight_ships call in duel_service.py"
         for call in calls:
             kwargs = _kwarg_names(call)
-            assert "guild_config" not in kwargs, (
-                f"duel_service.py fight_ships call at line {call.lineno} passes guild_config= — C1a-4 violation risk"
+            assert "guild_config" in kwargs, (
+                f"duel_service.py fight_ships call at line {call.lineno} must pass guild_config= (A1 wiring, rev 0032)"
             )
 
     def test_preflight_offload_cpu_call_has_no_guild_config_kwarg(self):
@@ -192,11 +205,11 @@ class TestStaticOffloadBoundary:
             "combat_preflight_service.py must have an _is_orm_model guard for C1a-4 parity with fight_ships"
         )
 
-    def test_fight_ships_has_orm_guard(self):
-        """combat_service.py fight_ships contains an _is_orm_model assert (the original C1a-4 guard)."""
+    def test_fight_ships_has_scalar_purity_guard(self):
+        """combat_service.py fight_ships asserts CombatTuning scalar purity (C1a-4, post-A1 form)."""
         source = (_SRC / "services" / "combat_service.py").read_text(encoding="utf-8")
-        assert "_is_orm_model(guild_config)" in source, (
-            "combat_service.py fight_ships must assert not _is_orm_model(guild_config)"
+        assert "CombatTuning must contain only plain int/float scalars" in source, (
+            "combat_service.py fight_ships must assert the CombatTuning struct is all plain scalars (C1a-4)"
         )
 
     def test_bounty_service_fight_ships_call_count(self):
@@ -241,48 +254,67 @@ class TestStaticOffloadBoundary:
 # ===========================================================================
 
 
-class TestRuntimeRejectionFightShips:
-    """fight_ships rejects a live-ORM guild_config before the worker boundary."""
+def _canned_offload_raw() -> dict:
+    """Minimal raw dict matching what run_fight returns through offload_cpu."""
+    _stats = {"raw_hp": 1.0, "raw_dps": 1.0, "varied_hp": 1.0, "varied_dps": 1.0, "ttk": 1.0}
+    return {
+        "winner_name": "Ship1",
+        "loser_name": "Ship2",
+        "is_stalemate": False,
+        "ship1_stats": dict(_stats, ship_name="Ship1"),
+        "ship2_stats": dict(_stats, ship_name="Ship2"),
+        "winner_side": 1,
+        "timeline": [],
+        "metadata": {},
+    }
+
+
+class TestRuntimeBoundaryFightShips:
+    """fight_ships consumes guild_config IN-PROCESS; only scalar CombatTuning crosses the boundary.
+
+    Post-A1 (rev 0032): a live ORM guild_config is ACCEPTED at the fight_ships
+    signature — it is extracted into a frozen all-scalar CombatTuning before
+    offload, and the C1a-4 guard asserts the struct's scalar purity instead of
+    rejecting the row at the signature.
+    """
 
     @pytest.mark.asyncio
-    async def test_orm_guild_config_raises_assertion_error(self):
-        """fight_ships raises AssertionError immediately when guild_config is an ORM model.
+    async def test_real_orm_guild_config_extracted_in_process(self):
+        """A REAL GuildConfig row is accepted; its override lands in the tuning
+        struct; nothing ORM crosses the offload boundary."""
+        from unittest.mock import AsyncMock, patch
 
-        The AssertionError must fire before offload_cpu is called — i.e. before
-        any process-pool serialisation attempt.
-        """
-        service = CombatService()
-        l1 = ShipLoadout(ship_name="Ship1", base_armour=100)
-        l2 = ShipLoadout(ship_name="Ship2", base_armour=100)
-
-        # Construct a mapper-bearing object — simulates a live SQLAlchemy row.
-        fake_orm = MagicMock()
-        type(fake_orm).__mapper__ = MagicMock()
-        assert _is_orm_model(fake_orm), "Test prerequisite: fake_orm must look like an ORM to _is_orm_model"
-
-        with pytest.raises(AssertionError, match="guild_config must not be a live ORM model"):
-            await service.fight_ships(l1, l2, log_result=False, guild_config=fake_orm)
-
-    @pytest.mark.asyncio
-    async def test_real_guild_config_orm_raises_assertion_error(self):
-        """fight_ships raises AssertionError for a REAL GuildConfig ORM instance (not a mock).
-
-        Uses GuildConfig.__new__ to allocate a bare mapped instance so SQLAlchemy's
-        mapper metadata (__mapper__) is present — the exact condition _is_orm_model tests.
-        """
         from persist.models.guild_config import GuildConfig
+        from services.combat_models import CombatTuning
 
         service = CombatService()
         l1 = ShipLoadout(ship_name="Ship1", base_armour=100)
         l2 = ShipLoadout(ship_name="Ship2", base_armour=100)
 
-        real_orm_instance = GuildConfig.__new__(GuildConfig)
-        assert _is_orm_model(real_orm_instance), (
-            "Test prerequisite: GuildConfig.__new__ must produce an instance _is_orm_model recognises as an ORM model"
-        )
+        cfg = GuildConfig(guild_id=1)
+        cfg.player_base_accuracy = 0.91
+        assert _is_orm_model(cfg), "Test prerequisite: GuildConfig instance must register as an ORM model"
 
-        with pytest.raises(AssertionError, match="guild_config must not be a live ORM model"):
-            await service.fight_ships(l1, l2, log_result=False, guild_config=real_orm_instance)
+        offload_mock = AsyncMock(return_value=_canned_offload_raw())
+        # Patch the symbol in fight_ships' OWN globals dict: immune to module
+        # aliasing/re-import games other test files play with sys.modules
+        # (a string-target patch on "services.combat_service" can miss when the
+        # session holds a different module object than the one this class
+        # closed over — observed as an import-order-dependent failure).
+        with patch.dict(CombatService.fight_ships.__globals__, {"offload_cpu": offload_mock}):
+            result = await service.fight_ships(l1, l2, log_result=False, guild_config=cfg)
+
+        assert result.winner_name == "Ship1"
+        offload_mock.assert_awaited_once()
+        args, kwargs = offload_mock.await_args
+        tuning = kwargs["tuning"]
+        # Identity-free checks: integration conftests can create a second copy
+        # of the services package during collection, so isinstance() against
+        # THIS module's CombatTuning import is order-dependent. Duck-type it.
+        assert type(tuning).__name__ == CombatTuning.__name__
+        assert tuning.player_base_accuracy == pytest.approx(0.91)
+        for v in list(args) + list(kwargs.values()):
+            assert not _is_orm_model(v), f"ORM object crossed the offload boundary: {type(v).__name__}"
 
     @pytest.mark.asyncio
     async def test_none_guild_config_is_accepted_by_fight_ships(self):
@@ -392,6 +424,10 @@ class TestRuntimeRejectionPreflightPath:
         db_mock = AsyncMock()
 
         with (
+            patch(
+                "services.combat_preflight_service.ConfigRepository.get_by_guild_id",
+                new=AsyncMock(return_value=None),
+            ),
             patch.object(svc, "_synthesize_criminals", new=AsyncMock(return_value=[synthetic_criminal])),
             patch(
                 "services.combat_preflight_service.LoadoutBuilder.from_player",

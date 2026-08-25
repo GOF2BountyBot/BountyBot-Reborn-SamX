@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
+from services.game_constants import GameConstants, resolve_constant
+
 # ---------------------------------------------------------------------------
 # Secondary-weapon subtype classification
 # ---------------------------------------------------------------------------
@@ -366,3 +368,113 @@ class CombatResolver(Protocol):
             stalemate flag.
         """
         ...  # pylint: disable=unnecessary-ellipsis
+
+
+# ---------------------------------------------------------------------------
+# CombatTuning — per-guild combat-engine constant snapshot (issue #70, unit A1)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CombatTuning:
+    """Per-guild combat-engine tuning constants — all plain scalars (picklable).
+
+    Build via ``from_guild_config(cfg)`` before crossing the process boundary.
+    ``defaults()`` is a convenience wrapper for paths with no guild context
+    (e.g. tests and callers that pass ``guild_config=None``).
+
+    Every field shadows a ``GameConstants`` attribute of the same name.
+    Fields that are dimensioned in metres, metres-per-second, percentage-points,
+    or whole seconds use ``int``; dimensionless ratios and scale factors use ``float``.
+    """
+
+    # Accuracy system (§5)
+    cloak_set_value: float
+    booster_accuracy_debuff_factor: float
+    thruster_accuracy_bonus_factor: float
+    auto_turret_accuracy_multiplier: float
+    player_base_accuracy: float
+    npc_base_accuracy: float
+    scanner_tier_b_bonus_pp: int
+    scanner_tier_c_bonus_pp: int
+    # Distance model (§2)
+    starting_distance_m: int
+    base_ship_speed_mps: int
+    min_distance_m: int
+    thruster_window_m: int
+    # Emergency system (§7.7)
+    emergency_system_invuln_s: int
+    # Nuke (§6.2)
+    nuke_magnitude_scale: float
+    nuke_friendly_factor: float
+    nuke_range_regime_threshold_m: int
+    nuke_lr_near_frac: float
+    nuke_cr_short_m: int
+    nuke_cr_overshoot_m: int
+    nuke_stack_falloff: float
+    # Shock-blast (§6.2 / D6)
+    shock_blast_trigger_range_m: int
+    # Shield / armour regen reemission (CI-21)
+    combat_layer_reemit_fraction: float
+
+    @classmethod
+    def from_guild_config(cls, cfg: Any) -> CombatTuning:
+        """Build a CombatTuning from a GuildConfig row (or None for global defaults).
+
+        ``cfg`` may be a live GuildConfig ORM row, a SimpleNamespace, or None.
+        When cfg is None every field resolves to the matching GameConstants default.
+        Float fields are cast via ``float()``; int fields (metres, m/s, pp, whole-s) via ``int()``.
+        """
+        return cls(
+            cloak_set_value=float(resolve_constant(cfg, "cloak_set_value", GameConstants.CLOAK_SET_VALUE)),
+            booster_accuracy_debuff_factor=float(
+                resolve_constant(cfg, "booster_accuracy_debuff_factor", GameConstants.BOOSTER_ACCURACY_DEBUFF_FACTOR)
+            ),
+            thruster_accuracy_bonus_factor=float(
+                resolve_constant(cfg, "thruster_accuracy_bonus_factor", GameConstants.THRUSTER_ACCURACY_BONUS_FACTOR)
+            ),
+            auto_turret_accuracy_multiplier=float(
+                resolve_constant(cfg, "auto_turret_accuracy_multiplier", GameConstants.AUTO_TURRET_ACCURACY_MULTIPLIER)
+            ),
+            player_base_accuracy=float(
+                resolve_constant(cfg, "player_base_accuracy", GameConstants.PLAYER_BASE_ACCURACY)
+            ),
+            npc_base_accuracy=float(resolve_constant(cfg, "npc_base_accuracy", GameConstants.NPC_BASE_ACCURACY)),
+            scanner_tier_b_bonus_pp=int(
+                resolve_constant(cfg, "scanner_tier_b_bonus_pp", GameConstants.SCANNER_TIER_B_BONUS_PP)
+            ),
+            scanner_tier_c_bonus_pp=int(
+                resolve_constant(cfg, "scanner_tier_c_bonus_pp", GameConstants.SCANNER_TIER_C_BONUS_PP)
+            ),
+            starting_distance_m=int(resolve_constant(cfg, "starting_distance_m", GameConstants.STARTING_DISTANCE_M)),
+            base_ship_speed_mps=int(resolve_constant(cfg, "base_ship_speed_mps", GameConstants.BASE_SHIP_SPEED_MPS)),
+            min_distance_m=int(resolve_constant(cfg, "min_distance_m", GameConstants.MIN_DISTANCE_M)),
+            thruster_window_m=int(resolve_constant(cfg, "thruster_window_m", GameConstants.THRUSTER_WINDOW_M)),
+            emergency_system_invuln_s=int(
+                resolve_constant(cfg, "emergency_system_invuln_s", GameConstants.EMERGENCY_SYSTEM_INVULN_S)
+            ),
+            nuke_magnitude_scale=float(
+                resolve_constant(cfg, "nuke_magnitude_scale", GameConstants.NUKE_MAGNITUDE_SCALE)
+            ),
+            nuke_friendly_factor=float(
+                resolve_constant(cfg, "nuke_friendly_factor", GameConstants.NUKE_FRIENDLY_FACTOR)
+            ),
+            nuke_range_regime_threshold_m=int(
+                resolve_constant(cfg, "nuke_range_regime_threshold_m", GameConstants.NUKE_RANGE_REGIME_THRESHOLD_M)
+            ),
+            nuke_lr_near_frac=float(resolve_constant(cfg, "nuke_lr_near_frac", GameConstants.NUKE_LR_NEAR_FRAC)),
+            nuke_cr_short_m=int(resolve_constant(cfg, "nuke_cr_short_m", GameConstants.NUKE_CR_SHORT_M)),
+            nuke_cr_overshoot_m=int(resolve_constant(cfg, "nuke_cr_overshoot_m", GameConstants.NUKE_CR_OVERSHOOT_M)),
+            nuke_stack_falloff=float(resolve_constant(cfg, "nuke_stack_falloff", GameConstants.NUKE_STACK_FALLOFF)),
+            shock_blast_trigger_range_m=int(
+                resolve_constant(cfg, "shock_blast_trigger_range_m", GameConstants.SHOCK_BLAST_TRIGGER_RANGE_M)
+            ),
+            combat_layer_reemit_fraction=float(
+                resolve_constant(cfg, "combat_layer_reemit_fraction", GameConstants.COMBAT_LAYER_REEMIT_FRACTION)
+            ),
+        )
+
+    @classmethod
+    def defaults(cls) -> CombatTuning:
+        """Return a CombatTuning with all fields set to global GameConstants defaults."""
+        return cls.from_guild_config(None)

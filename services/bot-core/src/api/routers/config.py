@@ -174,7 +174,36 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "criminal_weaponmod_chance_silver",
     "criminal_weaponmod_chance_gold",
     "criminal_weaponmod_chance_platinum",
-    # _OVERRIDE_FIELDS and _GAME_CONSTANT_FIELDS (adminCog) are now identical at 95 fields (rev 0031: 14 retired).
+    # Combat engine per-guild overrides, wired (issue #70 unit A1, revision 0032) — 22 new fields
+    # Accuracy system (§5)
+    "cloak_set_value",
+    "booster_accuracy_debuff_factor",
+    "thruster_accuracy_bonus_factor",
+    "auto_turret_accuracy_multiplier",
+    "player_base_accuracy",
+    "npc_base_accuracy",
+    "scanner_tier_b_bonus_pp",
+    "scanner_tier_c_bonus_pp",
+    # Distance model (§2)
+    "starting_distance_m",
+    "base_ship_speed_mps",
+    "min_distance_m",
+    "thruster_window_m",
+    # Emergency system (§7.7)
+    "emergency_system_invuln_s",
+    # Nuke (§6.2)
+    "nuke_magnitude_scale",
+    "nuke_friendly_factor",
+    "nuke_range_regime_threshold_m",
+    "nuke_lr_near_frac",
+    "nuke_cr_short_m",
+    "nuke_cr_overshoot_m",
+    "nuke_stack_falloff",
+    # Shock-blast (§6.2 / D6)
+    "shock_blast_trigger_range_m",
+    # Shield / armour regen reemission (CI-21)
+    "combat_layer_reemit_fraction",
+    # _OVERRIDE_FIELDS == _GAME_CONSTANT_FIELDS (adminCog): 117 fields as of rev 0032 (+22 combat engine).
 )
 
 

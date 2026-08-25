@@ -65,6 +65,23 @@ def _all_stalemates(num_sims: int) -> list[tuple]:
     return [(None, True)] * num_sims
 
 
+# ---------------------------------------------------------------------------
+# Module-level autouse fixture: stub ConfigRepository so estimate() can run
+# without a real DB session.  A1 (rev 0032) added a ConfigRepository call
+# inside estimate(); returning None is correct — means use GameConstants
+# global defaults, preserving all pre-A1 test expectations.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _stub_config_repo():
+    with patch(
+        "services.combat_preflight_service.ConfigRepository.get_by_guild_id",
+        new=AsyncMock(return_value=None),
+    ):
+        yield
+
+
 # ===========================================================================
 # Tests: NO_DATA verdict — only reached when synthesis fails completely
 # ===========================================================================
@@ -556,7 +573,7 @@ class TestSynthesizeCriminals:
 
         received_divisions: list[str] = []
 
-        async def _capture_division(db, division, count=5):
+        async def _capture_division(db, division, count=5, **_kw):
             received_divisions.append(division)
             return []  # synthesis empty → NO_DATA (no player loadout needed)
 
@@ -587,7 +604,7 @@ class TestSynthesizeCriminals:
 
         synth_results = [initial_synthetics, topup_synthetics]
 
-        async def _mock_synthesize(db, division, count=5):
+        async def _mock_synthesize(db, division, count=5, **_kw):
             captured_counts.append(count)
             idx = call_count[0]
             call_count[0] += 1
@@ -957,7 +974,7 @@ class TestP2T7CriminalDrawDistribution:
         call_idx = [0]
         return_vals = [small_pool, []]  # first call returns 3, top-up returns 0
 
-        async def _mock_synthesize(db, division, count=5):
+        async def _mock_synthesize(db, division, count=5, **_kw):
             idx = call_idx[0]
             call_idx[0] += 1
             return return_vals[idx] if idx < len(return_vals) else []

@@ -624,7 +624,9 @@ class TestRunFightBatchCarryResources:
         """Each fight sees the ammo left after prior fights' consumption."""
         seen_ammo: list[int | None] = []
 
-        def _fake_run_fight(l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+        def _fake_run_fight(
+            l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact, tuning=None
+        ):
             sw = next((w for w in l1.secondary_weapons if w.name == "Rocket"), None)
             seen_ammo.append(sw.ammo if sw else None)
             return {
@@ -648,7 +650,9 @@ class TestRunFightBatchCarryResources:
         """Once ammo hits 0 the weapon is gone for subsequent fights."""
         sw_present: list[bool] = []
 
-        def _fake_run_fight(l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+        def _fake_run_fight(
+            l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact, tuning=None
+        ):
             sw_present.append(any(w.name == "Rocket" for w in l1.secondary_weapons))
             return {
                 "winner_side": 1,
@@ -670,7 +674,9 @@ class TestRunFightBatchCarryResources:
         """An ES that activates in fight 1 is gone for later fights."""
         es_present: list[bool] = []
 
-        def _fake_run_fight(l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+        def _fake_run_fight(
+            l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact, tuning=None
+        ):
             es_present.append(any(m.module_type == _EMERGENCY_SYSTEM_MODULE_TYPE for m in l1.modules))
             # Report an ES activation every fight; once removed there is nothing to remove.
             return {
@@ -691,7 +697,9 @@ class TestRunFightBatchCarryResources:
     def test_carry_does_not_mutate_input_loadout(self):
         """The original side-1 loadout object is never mutated (frozen-safe threading)."""
 
-        def _fake_run_fight(l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+        def _fake_run_fight(
+            l1, l2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact, tuning=None
+        ):
             return {
                 "winner_side": 1,
                 "is_stalemate": False,

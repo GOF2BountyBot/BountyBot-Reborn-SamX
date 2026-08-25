@@ -17,6 +17,7 @@ CombatLogService.persist accepts both list[dict] (passthrough) and
 list[CombatEvent] (asdict via is_dataclass guard) for legacy/in-process callers.
 """
 
+import dataclasses
 from typing import TYPE_CHECKING
 
 from compute.combat_worker import run_fight
@@ -26,6 +27,7 @@ from utils.offload import offload_cpu
 from services.combat_models import (
     CombatMeta,
     CombatStats,
+    CombatTuning,
     FightResults,
     FightStats,
     ShipLoadout,
@@ -297,11 +299,15 @@ class CombatService:
             f"context={context!r} log_result={log_result} pvc_dr={pvc_damage_reduction}"
         )
 
-        # C1a-4: guard — guild_config MUST NOT cross the process boundary as an ORM row.
-        # Extract any needed scalar fields before offload; pass None for now (reserved).
-        # If guild_config were an SQLAlchemy model its lazy-load proxies are not picklable.
-        assert not _is_orm_model(guild_config), (
-            "fight_ships: guild_config must not be a live ORM model — extract scalar fields before offload (C1a-4)"
+        # C1a-4: the process boundary below must only ever see plain scalars.
+        # guild_config (which MAY be a live ORM row) is consumed HERE, in-process:
+        # CombatTuning extracts every per-guild combat knob into a frozen picklable
+        # struct, and the ORM row itself never enters the offload payload. The old
+        # guard rejected ORM rows at this signature; post-A1 the invariant moves to
+        # the extracted struct instead.
+        tuning = CombatTuning.from_guild_config(guild_config)
+        assert all(isinstance(getattr(tuning, f.name), (int, float)) for f in dataclasses.fields(tuning)), (
+            "fight_ships: CombatTuning must contain only plain int/float scalars (C1a-4)"
         )
 
         # P2-T2: run the tick resolver in a process-pool worker via offload_cpu.
@@ -316,6 +322,7 @@ class CombatService:
             combatant1_label=combatant1_label,
             combatant2_label=combatant2_label,
             compact=False,
+            tuning=tuning,
         )
 
         # Reconstruct FightStats from the plain-dict slices returned by the worker.

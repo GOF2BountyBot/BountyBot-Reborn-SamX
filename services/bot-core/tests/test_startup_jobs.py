@@ -299,7 +299,10 @@ class TestDefaultSchedulerJobsConstant:
         assert "temperature_decay_default" not in ids
 
     def test_bounty_spawn_cron_is_check_interval(self):
-        """bounty_spawn_default cron encodes BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES (renamed from BOUNTY_DELAY_RANDOM_MIN)."""
+        """bounty_spawn_default cron encodes BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES.
+
+        (Renamed from BOUNTY_DELAY_RANDOM_MIN in rev 0031.)
+        """
         from services.game_constants import GameConstants
 
         job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "bounty_spawn_default")

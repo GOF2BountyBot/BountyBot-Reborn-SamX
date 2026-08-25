@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -407,3 +407,27 @@ class BountyConfigStatusResponse(BountyConfigResponse):
 
 class ResetGameConstantsRequest(BaseModel):
     fields: list[str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# GET /config/metadata — per-field type/bounds/default/description response
+# ---------------------------------------------------------------------------
+
+
+class FieldMetadata(BaseModel):
+    """Metadata for one per-guild override field returned by GET /config/metadata."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    type: Literal["int", "float", "bool", "dict"]
+    min: int | float | None = None  # ge bound from the Pydantic schema, or null
+    max: int | float | None = None  # le bound from the Pydantic schema, or null
+    default: Any  # global GameConstants default for this field
+    description: str
+    deprecated: bool
+
+
+class ConfigMetadataResponse(BaseModel):
+    """Response for GET /config/metadata."""
+
+    fields: dict[str, FieldMetadata]

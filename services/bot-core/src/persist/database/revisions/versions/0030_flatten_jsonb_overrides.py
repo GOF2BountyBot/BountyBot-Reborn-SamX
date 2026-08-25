@@ -177,7 +177,7 @@ def _backfill_sqlite(bind: sa.engine.Connection, existing: set[str]) -> None:
     """Backfill scalar columns from JSONB source columns on SQLite (test suite)."""
     rows = bind.execute(
         sa.text("SELECT id, " + ", ".join(src for src, _ in _BACKFILL_SPEC if src in existing) + " FROM guild_configs")
-    ).fetchall()  # noqa: E501
+    ).fetchall()
     src_cols = [src for src, _ in _BACKFILL_SPEC if src in existing]
 
     for row in rows:

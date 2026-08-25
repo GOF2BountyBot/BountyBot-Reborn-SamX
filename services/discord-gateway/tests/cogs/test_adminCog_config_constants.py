@@ -205,11 +205,20 @@ class TestCriminalLoadoutFieldExposure:
         assert "bronze_combat_bonus_cap" in mock_admin_cog._GAME_CONSTANT_FIELDS
         # Rev 0031 retired fields must NOT appear
         for retired in (
-            "shop_default_ships_num", "shop_default_weapons_num", "shop_default_modules_num",
-            "shop_default_turrets_num", "turret_spawn_probability", "guild_activity_decay_rate",
-            "min_guild_activity", "activity_temp_per_player", "bounty_delay_random_min",
-            "bounty_delay_random_max", "bounty_spawn_jitter", "duel_cloak_chance",
-            "ship_value_reward_percentage", "criminal_equip_damageless_weapon_chance",
+            "shop_default_ships_num",
+            "shop_default_weapons_num",
+            "shop_default_modules_num",
+            "shop_default_turrets_num",
+            "turret_spawn_probability",
+            "guild_activity_decay_rate",
+            "min_guild_activity",
+            "activity_temp_per_player",
+            "bounty_delay_random_min",
+            "bounty_delay_random_max",
+            "bounty_spawn_jitter",
+            "duel_cloak_chance",
+            "ship_value_reward_percentage",
+            "criminal_equip_damageless_weapon_chance",
         ):
             assert retired not in mock_admin_cog._GAME_CONSTANT_FIELDS, (
                 f"{retired} should be RETIRED from _GAME_CONSTANT_FIELDS (rev 0031)"
@@ -313,3 +322,55 @@ class TestCriminalLoadoutSetForwarding:
             )
         assert not route.called
         interaction.followup.send.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# issue #70 canonical JSON guard
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalJsonGuard:
+    """Assert _GAME_CONSTANT_FIELDS matches the canonical override_fields.json.
+
+    The JSON lives in services/bot-core/tests/data/ (bot-core can read it directly;
+    gateway reads it via the repo-root-relative path, since the gateway suite runs
+    with the repo root mounted at /app).
+    """
+
+    @staticmethod
+    def _locate_json():
+        """Return path to override_fields.json, or None if not present."""
+        from pathlib import Path
+
+        # The test file is at:
+        #   services/discord-gateway/tests/cogs/test_adminCog_config_constants.py
+        # parents[0] = cogs/, parents[1] = tests/, parents[2] = discord-gateway/,
+        # parents[3] = services/, parents[4] = repo root
+        repo_root = Path(__file__).resolve().parents[4]
+        candidate = repo_root / "services" / "bot-core" / "tests" / "data" / "override_fields.json"
+        return candidate if candidate.exists() else None
+
+    def test_game_constant_fields_match_canonical_json(self, mock_admin_cog):
+        """_GAME_CONSTANT_FIELDS set must equal the canonical JSON fields set."""
+        import json as _json
+
+        json_path = self._locate_json()
+        if json_path is None:
+            pytest.skip(
+                "Canonical override_fields.json not found at "
+                "services/bot-core/tests/data/override_fields.json "
+                "(file is created by the bot-core test suite; run with repo root mounted)."
+            )
+
+        payload = _json.loads(json_path.read_text(encoding="utf-8"))
+        json_fields: set[str] = set(payload["fields"])
+        runtime_fields: set[str] = set(mock_admin_cog._GAME_CONSTANT_FIELDS)
+
+        in_json_only = json_fields - runtime_fields
+        in_runtime_only = runtime_fields - json_fields
+
+        assert not in_json_only and not in_runtime_only, (
+            f"_GAME_CONSTANT_FIELDS diverges from override_fields.json. "
+            f"In JSON only (should be added to _GAME_CONSTANT_FIELDS): {in_json_only!r}. "
+            f"In runtime only (should be added to override_fields.json or removed): {in_runtime_only!r}."
+        )

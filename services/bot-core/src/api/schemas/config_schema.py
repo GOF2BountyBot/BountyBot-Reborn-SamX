@@ -21,14 +21,32 @@ class GameConstantsOverridesMixin(BaseModel):
     model_config = ConfigDict(strict=True)
 
     # Combat / Balance
+    # division_max_tl JSONB — deprecated; scalar replacements below are the live API.
+    # Writes to this field are still honored via the resolve_flattened fallback chain.
+    # Removal planned for next release. The @field_validator below is kept while the
+    # JSONB column exists; retire it when the column is dropped.
     division_max_tl: dict[str, int] | None = None
+
+    # Flat scalars for division_max_tl (issue #70, revision 0030)
+    division_max_tl_bronze: int | None = Field(None, ge=1, le=10)
+    division_max_tl_silver: int | None = Field(None, ge=1, le=10)
+    division_max_tl_gold: int | None = Field(None, ge=1, le=10)
+    division_max_tl_platinum: int | None = Field(None, ge=1, le=10)
     ship_value_reward_percentage: float | None = Field(None, ge=0.0, le=1.0)
     criminal_equip_damageless_weapon_chance: int | None = Field(None, ge=0, le=100)
     criminal_max_gear_upgrade: int | None = Field(None, ge=0, le=10)
     bounty_reward_to_xp_gain_mult: float | None = Field(None, ge=0.0, le=100.0)
     bounty_winner_reserve_factor: float | None = Field(None, ge=0.0, le=1.0)
-    # Per-division prize-pool scaler. NULL == GameConstants.BOUNTY_DIVISION_REWARD_MULT.
+    # Per-division prize-pool scaler — JSONB, deprecated (scalar replacements below).
+    # Writes still honored via resolve_flattened fallback chain; dropped in next release.
+    # The @field_validator below is kept while the JSONB column exists.
     bounty_division_reward_mult: dict[str, float] | None = None
+
+    # Flat scalars for bounty_division_reward_mult (issue #70, revision 0030)
+    bounty_division_reward_mult_bronze: float | None = Field(None, ge=0.0, le=10.0)
+    bounty_division_reward_mult_silver: float | None = Field(None, ge=0.0, le=10.0)
+    bounty_division_reward_mult_gold: float | None = Field(None, ge=0.0, le=10.0)
+    bounty_division_reward_mult_platinum: float | None = Field(None, ge=0.0, le=10.0)
     # bounty_pvc_armour_buff_factor retired T10 (replaced by pvc_damage_reduction §3)
     # duel_variance_percent retired T10 (SimpleTTKResolver removed)
     duel_cloak_chance: int | None = Field(None, ge=0, le=100)
@@ -68,11 +86,41 @@ class GameConstantsOverridesMixin(BaseModel):
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
     long_range_threshold_m: int | None = Field(None, ge=0, le=50_000)  # metres; battlefield is ~5 km
     criminal_long_range_pct: float | None = Field(None, ge=0.0, le=1.0)
+    # primary_tl_band_weights JSONB — deprecated (scalar replacements below).
+    # Writes still honored via resolve_flattened fallback chain; dropped in next release.
+    # The @field_validator below is kept while the JSONB column exists.
     primary_tl_band_weights: dict[str, int] | None = None
+
+    # Flat scalars for primary_tl_band_weights (issue #70, revision 0030)
+    primary_tl_band_weight_center: int | None = Field(None, ge=0, le=1000)
+    primary_tl_band_weight_minus1: int | None = Field(None, ge=0, le=1000)
+    primary_tl_band_weight_plus1: int | None = Field(None, ge=0, le=1000)
+
+    # criminal_*_chance_by_division JSONB — deprecated (scalar replacements below).
+    # Writes still honored via resolve_flattened fallback chain; dropped in next release.
+    # The @field_validator below is kept while the JSONB columns exist.
     criminal_cloak_chance_by_division: dict[str, int] | None = None
     criminal_booster_chance_by_division: dict[str, int] | None = None
     criminal_emergency_chance_by_division: dict[str, int] | None = None
     criminal_weaponmod_chance_by_division: dict[str, int] | None = None
+
+    # Flat scalars for criminal chance dicts (issue #70, revision 0030)
+    criminal_cloak_chance_bronze: int | None = Field(None, ge=0, le=100)
+    criminal_cloak_chance_silver: int | None = Field(None, ge=0, le=100)
+    criminal_cloak_chance_gold: int | None = Field(None, ge=0, le=100)
+    criminal_cloak_chance_platinum: int | None = Field(None, ge=0, le=100)
+    criminal_booster_chance_bronze: int | None = Field(None, ge=0, le=100)
+    criminal_booster_chance_silver: int | None = Field(None, ge=0, le=100)
+    criminal_booster_chance_gold: int | None = Field(None, ge=0, le=100)
+    criminal_booster_chance_platinum: int | None = Field(None, ge=0, le=100)
+    criminal_emergency_chance_bronze: int | None = Field(None, ge=0, le=100)
+    criminal_emergency_chance_silver: int | None = Field(None, ge=0, le=100)
+    criminal_emergency_chance_gold: int | None = Field(None, ge=0, le=100)
+    criminal_emergency_chance_platinum: int | None = Field(None, ge=0, le=100)
+    criminal_weaponmod_chance_bronze: int | None = Field(None, ge=0, le=100)
+    criminal_weaponmod_chance_silver: int | None = Field(None, ge=0, le=100)
+    criminal_weaponmod_chance_gold: int | None = Field(None, ge=0, le=100)
+    criminal_weaponmod_chance_platinum: int | None = Field(None, ge=0, le=100)
 
     # Thread 6 — behavioral toggle (strict bool now comes from the mixin-wide strict config).
     criminal_exclude_emp_weapons: bool | None = None

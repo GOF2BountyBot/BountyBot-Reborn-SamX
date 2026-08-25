@@ -550,6 +550,38 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "bronze_combat_bonus_base_mult": config.bronze_combat_bonus_base_mult,
                 "bronze_combat_bonus_per_prestige": config.bronze_combat_bonus_per_prestige,
                 "bronze_combat_bonus_cap": config.bronze_combat_bonus_cap,
+                # JSONB flatten scalars (issue #70, revision 0030)
+                # division_max_tl flat scalars
+                "division_max_tl_bronze": config.division_max_tl_bronze,
+                "division_max_tl_silver": config.division_max_tl_silver,
+                "division_max_tl_gold": config.division_max_tl_gold,
+                "division_max_tl_platinum": config.division_max_tl_platinum,
+                # bounty_division_reward_mult flat scalars
+                "bounty_division_reward_mult_bronze": config.bounty_division_reward_mult_bronze,
+                "bounty_division_reward_mult_silver": config.bounty_division_reward_mult_silver,
+                "bounty_division_reward_mult_gold": config.bounty_division_reward_mult_gold,
+                "bounty_division_reward_mult_platinum": config.bounty_division_reward_mult_platinum,
+                # primary_tl_band_weights flat scalars
+                "primary_tl_band_weight_center": config.primary_tl_band_weight_center,
+                "primary_tl_band_weight_minus1": config.primary_tl_band_weight_minus1,
+                "primary_tl_band_weight_plus1": config.primary_tl_band_weight_plus1,
+                # criminal chance flat scalars
+                "criminal_cloak_chance_bronze": config.criminal_cloak_chance_bronze,
+                "criminal_cloak_chance_silver": config.criminal_cloak_chance_silver,
+                "criminal_cloak_chance_gold": config.criminal_cloak_chance_gold,
+                "criminal_cloak_chance_platinum": config.criminal_cloak_chance_platinum,
+                "criminal_booster_chance_bronze": config.criminal_booster_chance_bronze,
+                "criminal_booster_chance_silver": config.criminal_booster_chance_silver,
+                "criminal_booster_chance_gold": config.criminal_booster_chance_gold,
+                "criminal_booster_chance_platinum": config.criminal_booster_chance_platinum,
+                "criminal_emergency_chance_bronze": config.criminal_emergency_chance_bronze,
+                "criminal_emergency_chance_silver": config.criminal_emergency_chance_silver,
+                "criminal_emergency_chance_gold": config.criminal_emergency_chance_gold,
+                "criminal_emergency_chance_platinum": config.criminal_emergency_chance_platinum,
+                "criminal_weaponmod_chance_bronze": config.criminal_weaponmod_chance_bronze,
+                "criminal_weaponmod_chance_silver": config.criminal_weaponmod_chance_silver,
+                "criminal_weaponmod_chance_gold": config.criminal_weaponmod_chance_gold,
+                "criminal_weaponmod_chance_platinum": config.criminal_weaponmod_chance_platinum,
             }
 
         except Exception as e:

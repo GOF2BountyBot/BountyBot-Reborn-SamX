@@ -106,8 +106,13 @@ _NEW_LOOT_FIELDS = (
 #               pvc_damage_reduction)
 # + 3 added in Unit C batch (issue #70, revision 0029):
 #   bronze_combat_bonus_{base_mult,per_prestige,cap}
+# + 27 added in JSONB flatten (issue #70, revision 0030):
+#   division_max_tl_{bronze,silver,gold,platinum}                       (4)
+#   bounty_division_reward_mult_{bronze,silver,gold,platinum}           (4)
+#   primary_tl_band_weight_{center,minus1,plus1}                       (3)
+#   criminal_{cloak,booster,emergency,weaponmod}_chance_{bronze,...}   (16)
 # Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
-_EXPECTED_SLASH_FIELD_COUNT = 82
+_EXPECTED_SLASH_FIELD_COUNT = 109
 
 
 def _evict_discord_modules():

@@ -18,7 +18,7 @@ import pytest
 from api.schemas.config_schema import GameConstantsOverridesMixin
 from persist.models.guild_config import GuildConfig
 from pydantic import ValidationError
-from services.game_constants import GameConstants, resolve_constant
+from services.game_constants import GameConstants, resolve_constant, resolve_flattened
 
 # ---------------------------------------------------------------------------
 # 1. GameConstants defaults (locked journal values)
@@ -396,3 +396,203 @@ def test_criminal_secondary_min_damage_schema_bounds():
 
     with pytest.raises(ValidationError):
         GameConstantsOverridesMixin(criminal_secondary_min_damage=1001)
+
+
+# ===========================================================================
+# Per-key resolution tests (issue #70, revision 0030): resolve_flattened
+# One per consumer family: division_max_tl, reward_mult, band_weights, criminal chances
+# ===========================================================================
+
+
+class TestResolveFlattened:
+    """resolve_flattened() 3-step fallback chain per consumer family.
+
+    Step 1: scalar column set → returns scalar.
+    Step 2: scalar None but JSONB dict set → returns per-key value from dict.
+    Step 3: both None → returns global fallback.
+    """
+
+    # -----------------------------------------------------------------------
+    # Family: division_max_tl
+    # -----------------------------------------------------------------------
+
+    def test_division_max_tl_scalar_wins(self):
+        """Scalar column takes priority over JSONB dict when both are set."""
+        cfg = GuildConfig(guild_id=1)
+        cfg.division_max_tl_gold = 5  # scalar override
+        cfg.division_max_tl = {"gold": 9}  # JSONB (should be ignored)
+        result = resolve_flattened(
+            cfg,
+            "division_max_tl_gold",
+            "division_max_tl",
+            "gold",
+            GameConstants.DIVISION_MAX_TL_GOLD,
+        )
+        assert result == 5
+
+    def test_division_max_tl_jsonb_fallback(self):
+        """When scalar is None but JSONB dict is set, the dict key value is used."""
+        cfg = GuildConfig(guild_id=1)
+        # scalar column is None (default)
+        cfg.division_max_tl = {"gold": 6}
+        result = resolve_flattened(
+            cfg,
+            "division_max_tl_gold",
+            "division_max_tl",
+            "gold",
+            GameConstants.DIVISION_MAX_TL_GOLD,
+        )
+        assert result == 6
+
+    def test_division_max_tl_global_fallback(self):
+        """When both scalar and JSONB are None, returns the global constant."""
+        cfg = GuildConfig(guild_id=1)
+        # Both are None by default
+        result = resolve_flattened(
+            cfg,
+            "division_max_tl_gold",
+            "division_max_tl",
+            "gold",
+            GameConstants.DIVISION_MAX_TL_GOLD,
+        )
+        assert result == GameConstants.DIVISION_MAX_TL_GOLD
+
+    def test_division_max_tl_none_cfg_returns_fallback(self):
+        """None cfg always returns the global fallback."""
+        result = resolve_flattened(
+            None,
+            "division_max_tl_bronze",
+            "division_max_tl",
+            "bronze",
+            GameConstants.DIVISION_MAX_TL_BRONZE,
+        )
+        assert result == GameConstants.DIVISION_MAX_TL_BRONZE
+
+    # -----------------------------------------------------------------------
+    # Family: bounty_division_reward_mult
+    # -----------------------------------------------------------------------
+
+    def test_reward_mult_scalar_wins(self):
+        """Scalar reward_mult takes priority over JSONB when both set."""
+        cfg = GuildConfig(guild_id=2)
+        cfg.bounty_division_reward_mult_silver = 3.5
+        cfg.bounty_division_reward_mult = {"silver": 1.0}
+        result = resolve_flattened(
+            cfg,
+            "bounty_division_reward_mult_silver",
+            "bounty_division_reward_mult",
+            "silver",
+            GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER,
+        )
+        assert result == pytest.approx(3.5)
+
+    def test_reward_mult_jsonb_fallback(self):
+        """Falls back to JSONB key when scalar is None."""
+        cfg = GuildConfig(guild_id=2)
+        cfg.bounty_division_reward_mult = {"silver": 2.5}
+        result = resolve_flattened(
+            cfg,
+            "bounty_division_reward_mult_silver",
+            "bounty_division_reward_mult",
+            "silver",
+            GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER,
+        )
+        assert result == pytest.approx(2.5)
+
+    def test_reward_mult_global_fallback(self):
+        """Falls back to global constant when both are absent."""
+        cfg = GuildConfig(guild_id=2)
+        result = resolve_flattened(
+            cfg,
+            "bounty_division_reward_mult_silver",
+            "bounty_division_reward_mult",
+            "silver",
+            GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER,
+        )
+        assert result == pytest.approx(GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER)
+
+    # -----------------------------------------------------------------------
+    # Family: primary_tl_band_weights
+    # -----------------------------------------------------------------------
+
+    def test_band_weight_scalar_wins(self):
+        """Scalar band weight wins over JSONB dict when both set."""
+        cfg = GuildConfig(guild_id=3)
+        cfg.primary_tl_band_weight_center = 50
+        cfg.primary_tl_band_weights = {"center": 70, "minus1": 20, "plus1": 10}
+        result = resolve_flattened(
+            cfg,
+            "primary_tl_band_weight_center",
+            "primary_tl_band_weights",
+            "center",
+            GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER,
+        )
+        assert result == 50
+
+    def test_band_weight_jsonb_fallback(self):
+        """Falls back to JSONB key when scalar is None."""
+        cfg = GuildConfig(guild_id=3)
+        cfg.primary_tl_band_weights = {"center": 60, "minus1": 30, "plus1": 10}
+        result = resolve_flattened(
+            cfg,
+            "primary_tl_band_weight_center",
+            "primary_tl_band_weights",
+            "center",
+            GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER,
+        )
+        assert result == 60
+
+    def test_band_weight_global_fallback(self):
+        """Falls back to global constant when both absent."""
+        cfg = GuildConfig(guild_id=3)
+        result = resolve_flattened(
+            cfg,
+            "primary_tl_band_weight_center",
+            "primary_tl_band_weights",
+            "center",
+            GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER,
+        )
+        assert result == GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER
+
+    # -----------------------------------------------------------------------
+    # Family: criminal chance (cloak representative)
+    # -----------------------------------------------------------------------
+
+    def test_cloak_chance_scalar_wins(self):
+        """Scalar cloak chance wins over JSONB by_division when both set."""
+        cfg = GuildConfig(guild_id=4)
+        cfg.criminal_cloak_chance_bronze = 25
+        cfg.criminal_cloak_chance_by_division = {"bronze": 10, "silver": 5}
+        result = resolve_flattened(
+            cfg,
+            "criminal_cloak_chance_bronze",
+            "criminal_cloak_chance_by_division",
+            "bronze",
+            GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE,
+        )
+        assert result == 25
+
+    def test_cloak_chance_jsonb_fallback(self):
+        """Falls back to JSONB key when scalar is None."""
+        cfg = GuildConfig(guild_id=4)
+        cfg.criminal_cloak_chance_by_division = {"bronze": 8, "silver": 4}
+        result = resolve_flattened(
+            cfg,
+            "criminal_cloak_chance_bronze",
+            "criminal_cloak_chance_by_division",
+            "bronze",
+            GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE,
+        )
+        assert result == 8
+
+    def test_cloak_chance_global_fallback(self):
+        """Falls back to global constant when both absent."""
+        cfg = GuildConfig(guild_id=4)
+        result = resolve_flattened(
+            cfg,
+            "criminal_cloak_chance_bronze",
+            "criminal_cloak_chance_by_division",
+            "bronze",
+            GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE,
+        )
+        assert result == GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE

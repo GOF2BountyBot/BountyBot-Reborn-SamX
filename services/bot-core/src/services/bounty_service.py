@@ -33,7 +33,7 @@ from utils.bounty_announcement_payload import is_recently_spotted, resolve_spott
 from services.cargo_utils import compute_free_cargo, is_over_cap
 from services.combat_models import DEFERRED_SECONDARY_SUBTYPES, ShipLoadout
 from services.combat_service import CombatService
-from services.game_constants import GameConstants, resolve_constant
+from services.game_constants import GameConstants, resolve_constant, resolve_flattened
 from services.game_maths import (
     pick_division_tech_level,
     reward_per_sys_check,
@@ -196,21 +196,23 @@ _MODULE_PRIORITY_ORDER: list[tuple[str, str, str | None]] = [
     ("ScannerModule", _GUARANTEED, None),
     ("ArmourModule", _GUARANTEED, None),
     ("ShieldModule", _GUARANTEED, None),
-    ("CloakModule", _TWO_GATE, "criminal_cloak_chance_by_division"),
-    ("BoosterModule", _TWO_GATE, "criminal_booster_chance_by_division"),
-    ("EmergencySystemModule", _TWO_GATE, "criminal_emergency_chance_by_division"),
+    # chance_key is now the base name (issue #70 flatten); the loop uses
+    # resolve_flattened(cfg, f"{chance_key}_{div}", f"{chance_key}_by_division", div, ...)
+    ("CloakModule", _TWO_GATE, "criminal_cloak_chance"),
+    ("BoosterModule", _TWO_GATE, "criminal_booster_chance"),
+    ("EmergencySystemModule", _TWO_GATE, "criminal_emergency_chance"),
     ("RepairBotModule", _GUARANTEED, None),
-    ("PrimaryWeaponModModule", _TWO_GATE, "criminal_weaponmod_chance_by_division"),
+    ("PrimaryWeaponModModule", _TWO_GATE, "criminal_weaponmod_chance"),
     ("ThrusterModule", _GUARANTEED, None),
 ]
 
-# GameConstants attribute names paired to each chance_key (per-division dict
-# default lookups via resolve_constant).
+# GameConstants base constant names paired to each chance_key base (issue #70 flatten).
+# The loop uses getattr(GameConstants, f"{const_base}_{div.upper()}", 0) for the fallback.
 _CHANCE_KEY_TO_CONSTANT: dict[str, str] = {
-    "criminal_cloak_chance_by_division": "CRIMINAL_CLOAK_CHANCE_BY_DIVISION",
-    "criminal_booster_chance_by_division": "CRIMINAL_BOOSTER_CHANCE_BY_DIVISION",
-    "criminal_emergency_chance_by_division": "CRIMINAL_EMERGENCY_CHANCE_BY_DIVISION",
-    "criminal_weaponmod_chance_by_division": "CRIMINAL_WEAPONMOD_CHANCE_BY_DIVISION",
+    "criminal_cloak_chance": "CRIMINAL_CLOAK_CHANCE",
+    "criminal_booster_chance": "CRIMINAL_BOOSTER_CHANCE",
+    "criminal_emergency_chance": "CRIMINAL_EMERGENCY_CHANCE",
+    "criminal_weaponmod_chance": "CRIMINAL_WEAPONMOD_CHANCE",
 }
 
 # Filler tail (no combat effect).  Filler-A: each limit-1, drawn at random
@@ -1054,7 +1056,31 @@ class BountyService:
         """
         threshold = resolve_constant(cfg, "long_range_threshold_m", GameConstants.LONG_RANGE_THRESHOLD_M)
         pct = resolve_constant(cfg, "criminal_long_range_pct", GameConstants.CRIMINAL_LONG_RANGE_PCT)
-        band_weights = resolve_constant(cfg, "primary_tl_band_weights", GameConstants.PRIMARY_TL_BAND_WEIGHTS)
+        # Resolve primary TL band weights per key (issue #70 flatten, revision 0030).
+        # Fallback chain: scalar column → legacy JSONB key → global constant.
+        band_weights = {
+            "center": resolve_flattened(
+                cfg,
+                "primary_tl_band_weight_center",
+                "primary_tl_band_weights",
+                "center",
+                GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER,
+            ),
+            "minus1": resolve_flattened(
+                cfg,
+                "primary_tl_band_weight_minus1",
+                "primary_tl_band_weights",
+                "minus1",
+                GameConstants.PRIMARY_TL_BAND_WEIGHT_MINUS1,
+            ),
+            "plus1": resolve_flattened(
+                cfg,
+                "primary_tl_band_weight_plus1",
+                "primary_tl_band_weights",
+                "plus1",
+                GameConstants.PRIMARY_TL_BAND_WEIGHT_PLUS1,
+            ),
+        }
         exclude_emp = resolve_constant(cfg, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS)
 
         all_weapons = await self.item_repo.get_all(db, "primary_weapon")
@@ -1129,9 +1155,17 @@ class BountyService:
             if gate_kind == _GUARANTEED:
                 _append(nearest_tl_pick(variants, item_tl, division))
             else:  # two-gate
+                # chance_key is the base (e.g. "criminal_cloak_chance"); const_name is
+                # the GameConstants base (e.g. "CRIMINAL_CLOAK_CHANCE"). Resolve per
+                # (module-gate, division) key via the flat scalar with JSONB fallback.
                 const_name = _CHANCE_KEY_TO_CONSTANT[chance_key]
-                chance_by_div = resolve_constant(cfg, chance_key, getattr(GameConstants, const_name))
-                chance = chance_by_div.get(division, 0)
+                chance = resolve_flattened(
+                    cfg,
+                    f"{chance_key}_{division.lower()}",  # e.g. "criminal_cloak_chance_bronze"
+                    f"{chance_key}_by_division",  # legacy JSONB field
+                    division.lower(),  # key within JSONB
+                    getattr(GameConstants, f"{const_name}_{division.upper()}", 0),
+                )
                 if random.randint(1, 100) <= chance:
                     _append(nearest_tl_pick(variants, item_tl, division))
             # A failed gate / empty category leaves the slot for the next category.
@@ -1873,9 +1907,15 @@ class BountyService:
 
         # Step 2: Determine tech level
         if tech_level is None:
-            # Shared with the shop-refresh batch TL — see pick_division_tech_level.
-            _division_max_tl = resolve_constant(cfg, "division_max_tl", GameConstants.DIVISION_MAX_TL)
-            # Resolve per-guild TL draw centre (issue #70 flatten of DIVISION_TL_CENTERS).
+            # Resolve per-division TL cap and draw centre (issue #70 flatten, revision 0030).
+            # Fallback chain for cap: scalar column → legacy JSONB key → global constant.
+            _cap = resolve_flattened(
+                cfg,
+                f"division_max_tl_{division.lower()}",
+                "division_max_tl",
+                division.lower(),
+                getattr(GameConstants, f"DIVISION_MAX_TL_{division.upper()}", GameConstants.MAX_TECH_LEVEL),
+            )
             _global_tl_center = getattr(
                 GameConstants,
                 f"DIVISION_TL_CENTER_{division.upper()}",
@@ -1886,7 +1926,7 @@ class BountyService:
                 f"division_tl_center_{division.lower()}",
                 _global_tl_center,
             )
-            tech_level = pick_division_tech_level(division, _division_max_tl, center=_tl_center)
+            tech_level = pick_division_tech_level(division, _cap, center=_tl_center)
 
         # Step 3: Generate route (≥ min_route_systems, optionally with waypoints)
         await self.graph_service.load_graph(db)
@@ -1947,11 +1987,17 @@ class BountyService:
         # pool BEFORE the winner-reserve split, so the winner reserve and the
         # consolation pool scale together. Defaults to 1.0 for every division
         # except silver (2.0), which lifts silver off the bronze floor so the
-        # tier is a real step up. Per-guild override: bounty_division_reward_mult.
-        _division_reward_mult = resolve_constant(
-            cfg, "bounty_division_reward_mult", GameConstants.BOUNTY_DIVISION_REWARD_MULT
+        # tier is a real step up.
+        # Resolve per-division scalar (issue #70 flatten, revision 0030).
+        # Fallback chain: scalar column → legacy JSONB key → global constant.
+        _reward_mult = resolve_flattened(
+            cfg,
+            f"bounty_division_reward_mult_{division.lower()}",
+            "bounty_division_reward_mult",
+            division.lower(),
+            getattr(GameConstants, f"BOUNTY_DIVISION_REWARD_MULT_{division.upper()}", 1.0),
         )
-        total_reward = int(total_reward * _division_reward_mult.get(division, 1.0))
+        total_reward = int(total_reward * _reward_mult)
 
         _winner_reserve_factor = resolve_constant(
             cfg, "bounty_winner_reserve_factor", GameConstants.BOUNTY_WINNER_RESERVE_FACTOR

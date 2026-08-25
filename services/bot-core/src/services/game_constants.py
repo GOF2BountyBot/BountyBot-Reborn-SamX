@@ -181,12 +181,11 @@ class GameConstants:
 
     # ------------------------------------------------------------------
     # Bounty System
+    # Retired rev 0031: MAX_BOUNTIES_PER_DIVISION, SHIP_VALUE_REWARD_PERCENTAGE,
+    # CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE — no live readers.
     # ------------------------------------------------------------------
 
-    MAX_BOUNTIES_PER_DIVISION: int = 5
     CLOSE_BOUNTY_THRESHOLD: int = 4  # systems ahead for proximity hint
-    SHIP_VALUE_REWARD_PERCENTAGE: float = 0.01  # 1% of criminal's ship value
-    CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE: int = 20  # %
     CRIMINAL_MAX_GEAR_UPGRADE: int = 1  # TL levels above criminal
     MAX_ROUTE_LENGTH: int = 50  # A* pathfinding limit
     MIN_ROUTE_SYSTEMS: int = 3  # reject too-short routes (no adjacent-gate 2-system hunts)
@@ -296,27 +295,28 @@ class GameConstants:
     CRIMINAL_SECONDARY_MIN_DAMAGE: int = 1
 
     # ------------------------------------------------------------------
-    # Activity / Temperature
+    # Activity / Temperature — RETIRED rev 0031
+    # GUILD_ACTIVITY_DECAY_RATE, MIN_GUILD_ACTIVITY, ACTIVITY_TEMP_PER_PLAYER
+    # removed; temperature subsystem was never fully wired (owner-approved).
     # ------------------------------------------------------------------
 
-    GUILD_ACTIVITY_DECAY_RATE: float = 2 / 3  # ~0.667
-    MIN_GUILD_ACTIVITY: float = 1.0
-    ACTIVITY_TEMP_PER_PLAYER: int = 1
-
     # ------------------------------------------------------------------
-    # Bounty Spawn Delay (minutes)
+    # Bounty Spawn Check Interval (minutes)
+    # Spawn-orchestrator cron step; seeded into the persisted APScheduler
+    # store on first boot.  Env changes need POST /scheduler/reset.
+    # ENV VAR: BOUNTYBOT_BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES
+    # (renamed from BOUNTYBOT_BOUNTY_DELAY_RANDOM_MIN in rev 0031)
     # ------------------------------------------------------------------
 
-    BOUNTY_DELAY_RANDOM_MIN: int = 5
-    BOUNTY_DELAY_RANDOM_MAX: int = 7
+    BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES: int = 5
     BOUNTY_SPAWN_JITTER: int = 180  # Up to 3 minutes of random offset on each spawn check
 
     # ------------------------------------------------------------------
     # Timers (seconds)
     # ------------------------------------------------------------------
 
-    GUILD_ACTIVITY_DECAY_INTERVAL: int = 3600  # 1 hour
-    SHOP_REFRESH_INTERVAL: int = 21600  # 6 hours
+    # SHOP_REFRESH_INTERVAL — retired rev 0031 (zero readers; the shop_refresh
+    # scheduler job cron is defined in DEFAULT_SCHEDULER_JOBS, not from this).
     CHECK_COOLDOWN: int = 180  # 3 minutes
     DUEL_REQUEST_EXPIRY: int = 86400  # 1 day
     TIER_CHANGE_COOLDOWN: int = 86400  # 24 hours — gates /promote and /demote
@@ -338,14 +338,10 @@ class GameConstants:
 
     # ------------------------------------------------------------------
     # Shop Stock Generation
+    # Retired rev 0031: SHOP_DEFAULT_SHIPS_NUM, SHOP_DEFAULT_WEAPONS_NUM,
+    # SHOP_DEFAULT_MODULES_NUM, SHOP_DEFAULT_TURRETS_NUM, SHOP_DEFAULT_TOOLS_NUM,
+    # TURRET_SPAWN_PROBABILITY — no live readers; columns dropped in migration 0031.
     # ------------------------------------------------------------------
-
-    SHOP_DEFAULT_SHIPS_NUM: int = 5
-    SHOP_DEFAULT_WEAPONS_NUM: int = 5
-    SHOP_DEFAULT_MODULES_NUM: int = 5
-    SHOP_DEFAULT_TURRETS_NUM: int = 2
-    SHOP_DEFAULT_TOOLS_NUM: int = 0
-    TURRET_SPAWN_PROBABILITY: int = 45  # %
 
     # Secondary weapons are consumable rounds; scale the rolled shop quantity so a
     # single refresh cycle (6h default) can supply multiple players. Heavy ordnance
@@ -438,22 +434,17 @@ class GameConstants:
     SHOP_DOWNTIER_TL_DECAY: float = 0.45
 
     # ------------------------------------------------------------------
-    # Shop Rank Counts
+    # Shop Rank Counts — RETIRED rev 0031
+    # NUM_SHIP_RANKS, NUM_WEAPON_RANKS, NUM_MODULE_RANKS, NUM_TURRET_RANKS
+    # — hardcoded structure constants with no live readers; removed.
     # ------------------------------------------------------------------
-
-    NUM_SHIP_RANKS: int = 10
-    NUM_WEAPON_RANKS: int = 10
-    NUM_MODULE_RANKS: int = 7
-    NUM_TURRET_RANKS: int = 3
 
     # ------------------------------------------------------------------
     # Duels
-    # ------------------------------------------------------------------
-
-    DUEL_LOG_MAX_LENGTH: int = 10
-    DUEL_CLOAK_CHANCE: int = 20  # %
+    # Retired rev 0031: DUEL_LOG_MAX_LENGTH, DUEL_CLOAK_CHANCE — no live readers.
     # DUEL_VARIANCE_PERCENT — retired in T10 (SimpleTTKResolver removed; TickResolver has no variance).
     # BOUNTY_PVC_ARMOUR_BUFF_FACTOR — retired in T10 (replaced by PVC_DAMAGE_REDUCTION §3).
+    # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # Item Type Vocabulary
@@ -467,11 +458,8 @@ class GameConstants:
         {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module", "commodity"}
     )
 
-    # All concrete item types the data model has slots for (must match CATALOG_ITEM_TYPES
-    # once all mechanics are enabled; currently identical).
-    PLAYABLE_ITEM_TYPES: frozenset[str] = frozenset(
-        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module", "commodity"}
-    )
+    # Retired rev 0031: PLAYABLE_ITEM_TYPES — identical to CURRENTLY_ENABLED_TYPES;
+    # no live readers distinct from CATALOG_ITEM_TYPES / CURRENTLY_ENABLED_TYPES.
 
     # Concrete item types exposed on the user-facing economy/equip surface TODAY.
     # secondary_weapon is included; the shop excludes deferred subtypes (emp-bomb,
@@ -497,7 +485,10 @@ class GameConstants:
     # Inventory
     # ------------------------------------------------------------------
 
-    MAX_SHIP_NICKNAME_LENGTH: int = 30
+    # MAX_SHIP_NICKNAME_LENGTH: enforced global — 100 chars (rev 0031; was 30).
+    # The DB column player_ships.nickname is String(100).
+    # Validated in UpdateNicknameRequest (min_length=1, max_length=100).
+    MAX_SHIP_NICKNAME_LENGTH: int = 100
     # KAAMO_MAX_CAPACITY — retired (issue #70): Kaamo storage capacity is not a
     # mechanic and never will be; the override chain was a silent no-op.
 
@@ -585,30 +576,13 @@ class GameConstants:
     }
 
     # ------------------------------------------------------------------
-    # Combat System — Future Mechanics (placeholders, currently unused)
+    # Combat System — Future Mechanics — RETIRED rev 0031
+    # DEFAULT_ACCURACY, DEFAULT_EVASION, CLOAK_ACCURACY_PENALTY,
+    # SCANNER_ACCURACY_BONUS, THRUSTER_EVASION_BONUS, SHIELD_RECHARGE_RATE,
+    # REPAIR_BOT_HEAL_RATE, BOOSTER_DPS_MULTIPLIER, COMBAT_TICK_RATE,
+    # PERSISTENT_DAMAGE_DECAY_RATE — all placeholder zeros/ones with no live
+    # readers; removed to avoid confusion with the live Phase-1 constants below.
     # ------------------------------------------------------------------
-
-    # Accuracy: fraction of shots that hit (1.0 = 100% accuracy)
-    DEFAULT_ACCURACY: float = 1.0
-    DEFAULT_EVASION: float = 0.0
-
-    # Equipment effect placeholders (all neutral/zero = no effect)
-    CLOAK_ACCURACY_PENALTY: float = 0.0
-    SCANNER_ACCURACY_BONUS: float = 0.0
-    THRUSTER_EVASION_BONUS: float = 0.0
-
-    # Shield/repair mechanics (0.0 = disabled)
-    SHIELD_RECHARGE_RATE: float = 0.0
-    REPAIR_BOT_HEAL_RATE: float = 0.0
-
-    # Booster (1.0 = neutral, no boost)
-    BOOSTER_DPS_MULTIPLIER: float = 1.0
-
-    # Tick-based simulation (for future combat resolver)
-    COMBAT_TICK_RATE: float = 1.0
-
-    # Persistent damage (0.0 = instant full heal between fights)
-    PERSISTENT_DAMAGE_DECAY_RATE: float = 0.0
 
     # ------------------------------------------------------------------
     # Combat System — Phase-1 Constants (Appendix A, COMBAT_SPEC_LOCKED.md)
@@ -816,7 +790,8 @@ class GameConstants:
         cls.CRIMINAL_SECONDARY_MIN_DAMAGE = _track_int("CRIMINAL_SECONDARY_MIN_DAMAGE", 1)
 
         # Bounty system
-        cls.MAX_BOUNTIES_PER_DIVISION = _track_int("MAX_BOUNTIES_PER_DIVISION", 5)
+        # Retired rev 0031: MAX_BOUNTIES_PER_DIVISION, CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE,
+        # SHIP_VALUE_REWARD_PERCENTAGE — removed from load(); constants deleted.
         cls.CLOSE_BOUNTY_THRESHOLD = _track_int("CLOSE_BOUNTY_THRESHOLD", 4)
         cls.MAX_ROUTE_LENGTH = _track_int("MAX_ROUTE_LENGTH", 50)
         cls.MIN_ROUTE_SYSTEMS = _track_int("MIN_ROUTE_SYSTEMS", 3)
@@ -825,9 +800,7 @@ class GameConstants:
         cls.BOUNTY_DUAL_WAYPOINT_PROB = _track_float("BOUNTY_DUAL_WAYPOINT_PROB", 0.10)
         cls.BOUNTY_WAYPOINT_ATTEMPTS = _track_int("BOUNTY_WAYPOINT_ATTEMPTS", 20)
         cls.BOUNTY_WAYPOINT_MIN_DEGREE = _track_int("BOUNTY_WAYPOINT_MIN_DEGREE", 2)
-        cls.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE = _track_int("CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE", 20)
         cls.CRIMINAL_MAX_GEAR_UPGRADE = _track_int("CRIMINAL_MAX_GEAR_UPGRADE", 1)
-        cls.SHIP_VALUE_REWARD_PERCENTAGE = _track_float("SHIP_VALUE_REWARD_PERCENTAGE", 0.01)
 
         # Criminal loadout balance — scalar knobs (dict knobs are per-guild-only, no env form)
         cls.LONG_RANGE_THRESHOLD_M = _track_int("LONG_RANGE_THRESHOLD_M", 2600)
@@ -854,18 +827,18 @@ class GameConstants:
         cls.LOOT_BAND3_QTY_MODE = _track_int("LOOT_BAND3_QTY_MODE", 16)
         cls.LOOT_COMMODITY_SELL_FRACTION = _track_float("LOOT_COMMODITY_SELL_FRACTION", 1.0)
 
-        # Activity
-        cls.MIN_GUILD_ACTIVITY = _track_float("MIN_GUILD_ACTIVITY", 1.0)
-        cls.ACTIVITY_TEMP_PER_PLAYER = _track_int("ACTIVITY_TEMP_PER_PLAYER", 1)
+        # Activity / Temperature — RETIRED rev 0031
+        # MIN_GUILD_ACTIVITY, ACTIVITY_TEMP_PER_PLAYER removed; temperature
+        # subsystem was never fully wired (owner-approved).
+        # GUILD_ACTIVITY_DECAY_INTERVAL also retired (timer for removed system).
 
-        # Bounty spawn delay
-        cls.BOUNTY_DELAY_RANDOM_MIN = _track_int("BOUNTY_DELAY_RANDOM_MIN", 5)
-        cls.BOUNTY_DELAY_RANDOM_MAX = _track_int("BOUNTY_DELAY_RANDOM_MAX", 7)
+        # Bounty spawn check interval (renamed from BOUNTY_DELAY_RANDOM_MIN rev 0031).
+        # ENV: BOUNTYBOT_BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES
+        cls.BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES = _track_int("BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES", 5)
+        # Retired rev 0031: BOUNTY_DELAY_RANDOM_MAX — no live readers.
         cls.BOUNTY_SPAWN_JITTER = _track_int("BOUNTY_SPAWN_JITTER", 180)
 
         # Timers
-        cls.GUILD_ACTIVITY_DECAY_INTERVAL = _track_int("GUILD_ACTIVITY_DECAY_INTERVAL", 3600)
-        cls.SHOP_REFRESH_INTERVAL = _track_int("SHOP_REFRESH_INTERVAL", 21600)
         cls.CHECK_COOLDOWN = _track_int("CHECK_COOLDOWN", 180)
         cls.DUEL_REQUEST_EXPIRY = _track_int("DUEL_REQUEST_EXPIRY", 86400)
         cls.TIER_CHANGE_COOLDOWN = _track_int("TIER_CHANGE_COOLDOWN", 86400)
@@ -876,12 +849,9 @@ class GameConstants:
         cls.AUDIT_RETENTION_DAYS = _track_int("AUDIT_RETENTION_DAYS", 30)
 
         # Shop stock generation
-        cls.SHOP_DEFAULT_SHIPS_NUM = _track_int("SHOP_DEFAULT_SHIPS_NUM", 5)
-        cls.SHOP_DEFAULT_WEAPONS_NUM = _track_int("SHOP_DEFAULT_WEAPONS_NUM", 5)
-        cls.SHOP_DEFAULT_MODULES_NUM = _track_int("SHOP_DEFAULT_MODULES_NUM", 5)
-        cls.SHOP_DEFAULT_TURRETS_NUM = _track_int("SHOP_DEFAULT_TURRETS_NUM", 2)
-        cls.SHOP_DEFAULT_TOOLS_NUM = _track_int("SHOP_DEFAULT_TOOLS_NUM", 0)
-        cls.TURRET_SPAWN_PROBABILITY = _track_int("TURRET_SPAWN_PROBABILITY", 45)
+        # Retired rev 0031: SHOP_DEFAULT_SHIPS_NUM, SHOP_DEFAULT_WEAPONS_NUM,
+        # SHOP_DEFAULT_MODULES_NUM, SHOP_DEFAULT_TURRETS_NUM, SHOP_DEFAULT_TOOLS_NUM,
+        # TURRET_SPAWN_PROBABILITY — removed from load(); constants deleted.
         cls.SHOP_SECONDARY_QTY_SCALER_HEAVY = _track_int("SHOP_SECONDARY_QTY_SCALER_HEAVY", 5)
         cls.SHOP_SECONDARY_QTY_SCALER_STANDARD = _track_int("SHOP_SECONDARY_QTY_SCALER_STANDARD", 10)
         cls.SHOP_COMBAT_MODULE_PROB = _track_float("SHOP_COMBAT_MODULE_PROB", 0.75)
@@ -898,12 +868,11 @@ class GameConstants:
         cls.SHOP_DOWNTIER_TL_DECAY = _track_float("SHOP_DOWNTIER_TL_DECAY", 0.45)
 
         # Duels
-        cls.DUEL_LOG_MAX_LENGTH = _track_int("DUEL_LOG_MAX_LENGTH", 10)
-        cls.DUEL_CLOAK_CHANCE = _track_int("DUEL_CLOAK_CHANCE", 20)
+        # Retired rev 0031: DUEL_LOG_MAX_LENGTH, DUEL_CLOAK_CHANCE — no live readers.
         # DUEL_VARIANCE_PERCENT and BOUNTY_PVC_ARMOUR_BUFF_FACTOR retired in T10.
 
         # Inventory
-        cls.MAX_SHIP_NICKNAME_LENGTH = _track_int("MAX_SHIP_NICKNAME_LENGTH", 30)
+        cls.MAX_SHIP_NICKNAME_LENGTH = _track_int("MAX_SHIP_NICKNAME_LENGTH", 100)
 
         # Demotion
         cls.DEMOTION_CREDIT_PENALTY_PCT = _track_int("DEMOTION_CREDIT_PENALTY_PCT", 10)

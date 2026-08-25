@@ -782,7 +782,8 @@ class TestListJobsGuildFilter:
         assert "guild-job-222" not in ids
 
     def test_list_jobs_guild_filter_includes_all_three_defaults(self, client, mock_scheduler):
-        """All three default jobs are always included when guild_id filter is active."""
+        """All two global defaults are always included when guild_id filter is active
+        (rev 0031: temperature_decay_default removed from _DEFAULT_JOB_IDS)."""
         mock_scheduler.get_jobs.return_value = [
             make_mock_job(
                 job_id="bounty_spawn_default",
@@ -792,10 +793,7 @@ class TestListJobsGuildFilter:
                 job_id="shop_refresh_default",
                 args=["shop_refresh_default", {"job_type": "shop_refresh"}],
             ),
-            make_mock_job(
-                job_id="temperature_decay_default",
-                args=["temperature_decay_default", {"job_type": "temperature_decay"}],
-            ),
+            # temperature_decay_default NOT in defaults since rev 0031
             make_mock_job(
                 job_id="other-guild-job",
                 args=["other-guild-job", {"job_type": "duel_expire", "guild_id": 999}],
@@ -807,11 +805,12 @@ class TestListJobsGuildFilter:
         assert response.status_code == 200
         data = response.json()
         ids = [j["id"] for j in data]
-        # All defaults included, other guild job excluded
+        # Both global defaults included, other guild job excluded
         assert "bounty_spawn_default" in ids
         assert "shop_refresh_default" in ids
-        assert "temperature_decay_default" in ids
         assert "other-guild-job" not in ids
+        # temperature_decay_default is NOT in the default set (retired rev 0031)
+        assert "temperature_decay_default" not in ids
 
     def test_list_jobs_guild_filter_excludes_jobs_with_different_guild(self, client, mock_scheduler):
         """Jobs with a different guild_id are excluded when filtering by guild_id."""

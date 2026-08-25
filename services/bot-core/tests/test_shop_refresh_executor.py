@@ -135,14 +135,12 @@ async def _seed_guild_config(
     *,
     shop_channel_id: int | None = SHOP_CHANNEL,
     bounty_hunter_role_id: int | None = ROLE_ID,
-    division_temperatures: dict[str, float] | None = None,
 ) -> GuildConfig:
     """Persist a GuildConfig with optional shop channel."""
     config = GuildConfig(
         guild_id=guild_id,
         shop_channel_id=shop_channel_id,
         bounty_hunter_role_id=bounty_hunter_role_id,
-        division_temperatures=division_temperatures or {"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0},
     )
     db.add(config)
     await db.commit()

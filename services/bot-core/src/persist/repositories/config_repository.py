@@ -460,32 +460,32 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "next_spawn_check_at": (config.next_spawn_check_at.isoformat() if config.next_spawn_check_at else None),
                 # B.49: per-guild game-constant overrides (all nullable)
                 "division_max_tl": config.division_max_tl,
-                "ship_value_reward_percentage": config.ship_value_reward_percentage,
-                "criminal_equip_damageless_weapon_chance": config.criminal_equip_damageless_weapon_chance,
+                # ship_value_reward_percentage — RETIRED rev 0031
+                # criminal_equip_damageless_weapon_chance — RETIRED rev 0031
                 "criminal_max_gear_upgrade": config.criminal_max_gear_upgrade,
                 "bounty_reward_to_xp_gain_mult": config.bounty_reward_to_xp_gain_mult,
                 "bounty_winner_reserve_factor": config.bounty_winner_reserve_factor,
                 "bounty_division_reward_mult": config.bounty_division_reward_mult,
                 # bounty_pvc_armour_buff_factor retired T10
                 # duel_variance_percent retired T10
-                "duel_cloak_chance": config.duel_cloak_chance,
+                # duel_cloak_chance — RETIRED rev 0031
                 "close_bounty_threshold": config.close_bounty_threshold,
                 "max_route_length": config.max_route_length,
                 "min_route_systems": config.min_route_systems,
                 "recently_spotted_max_window": config.recently_spotted_max_window,
-                "bounty_delay_random_min": config.bounty_delay_random_min,
-                "bounty_delay_random_max": config.bounty_delay_random_max,
-                "bounty_spawn_jitter": config.bounty_spawn_jitter,
+                # bounty_delay_random_min — RETIRED rev 0031
+                # bounty_delay_random_max — RETIRED rev 0031
+                # bounty_spawn_jitter — RETIRED rev 0031
                 "check_cooldown": config.check_cooldown,
                 "duel_request_expiry": config.duel_request_expiry,
-                "guild_activity_decay_rate": config.guild_activity_decay_rate,
-                "min_guild_activity": config.min_guild_activity,
-                "activity_temp_per_player": config.activity_temp_per_player,
-                "shop_default_ships_num": config.shop_default_ships_num,
-                "shop_default_weapons_num": config.shop_default_weapons_num,
-                "shop_default_modules_num": config.shop_default_modules_num,
-                "shop_default_turrets_num": config.shop_default_turrets_num,
-                "turret_spawn_probability": config.turret_spawn_probability,
+                # guild_activity_decay_rate — RETIRED rev 0031
+                # min_guild_activity — RETIRED rev 0031
+                # activity_temp_per_player — RETIRED rev 0031
+                # shop_default_ships_num — RETIRED rev 0031
+                # shop_default_weapons_num — RETIRED rev 0031
+                # shop_default_modules_num — RETIRED rev 0031
+                # shop_default_turrets_num — RETIRED rev 0031
+                # turret_spawn_probability — RETIRED rev 0031
                 "classic_credits_per_check": config.classic_credits_per_check,
                 "demotion_credit_penalty_pct": config.demotion_credit_penalty_pct,
                 "tier_change_cooldown": config.tier_change_cooldown,
@@ -607,52 +607,8 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error getting all guild configs: {e}")
             raise
 
-    async def update_division_temperatures(
-        self,
-        db: AsyncSession,
-        guild_id: int,
-        temperatures: dict[str, float],
-        *,
-        commit: bool = True,
-    ) -> GuildConfig:
-        """Persist *temperatures* for the given guild.
-
-        Creates a default config if one does not yet exist.
-
-        Args:
-            db: Async database session.
-            guild_id: Discord guild snowflake ID.
-            temperatures: Mapping of division name (lowercase) → temperature float.
-                Example: ``{"bronze": 3.3, "silver": 1.0, "gold": 2.0}``
-            commit: When False, flush without committing (caller owns transaction).
-
-        Returns:
-            Updated :class:`GuildConfig` instance.
-        """
-        try:
-            config = await self.get_by_guild_id(db, guild_id)
-            if not config:
-                flogger.warning(f"update_division_temperatures: no config for guild {guild_id}, skipping")
-                return None  # type: ignore[return-value]
-
-            config.division_temperatures = temperatures
-            try:
-                if commit:
-                    await db.commit()
-                else:
-                    await db.flush()
-                await db.refresh(config)
-            except Exception:
-                if commit:
-                    await db.rollback()
-                raise
-
-            flogger.debug(f"Updated division_temperatures for guild {guild_id}: {temperatures}")
-            return config
-
-        except Exception as e:
-            flogger.error(f"Error updating division_temperatures for guild {guild_id}: {e}")
-            raise
+    # update_division_temperatures — RETIRED rev 0031 (division_temperatures column
+    # dropped; temperature subsystem removed — owner-approved).
 
     async def delete_guild_config(self, db: AsyncSession, guild_id: int, *, commit: bool = True) -> bool:
         """Delete all configuration for a guild.

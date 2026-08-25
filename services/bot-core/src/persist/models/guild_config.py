@@ -7,7 +7,7 @@ economic factors, progression thresholds, and administrative settings.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, Integer
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -72,13 +72,8 @@ class GuildConfig(Base):
         _JSONB, default={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
     )
 
-    # Activity temperature per division (persisted for decay across restarts)
-    # Default: {"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0}
-    division_temperatures: Mapped[dict[str, float]] = mapped_column(
-        _JSONB,
-        default={"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0},
-        nullable=True,
-    )
+    # division_temperatures — RETIRED rev 0031 (temperature subsystem removed)
+    # Column dropped in migration 0031; row-level default was {"bronze":1.0,...}.
 
     # Bounty configuration (per-guild)
     bounty_max_per_tier: Mapped[dict[str, int] | None] = mapped_column(
@@ -104,8 +99,8 @@ class GuildConfig(Base):
     division_max_tl_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     division_max_tl_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
-    ship_value_reward_percentage: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    criminal_equip_damageless_weapon_chance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # ship_value_reward_percentage — RETIRED rev 0031 (column dropped in migration 0031)
+    # criminal_equip_damageless_weapon_chance — RETIRED rev 0031 (column dropped)
     criminal_max_gear_upgrade: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_reward_to_xp_gain_mult: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     bounty_winner_reserve_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
@@ -120,7 +115,7 @@ class GuildConfig(Base):
     bounty_division_reward_mult_platinum: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     # bounty_pvc_armour_buff_factor — retired T10 (replaced by pvc_damage_reduction §3)
     # duel_variance_percent — retired T10 (SimpleTTKResolver removed)
-    duel_cloak_chance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # duel_cloak_chance — RETIRED rev 0031 (column dropped in migration 0031)
 
     # Bounty mechanics
     close_bounty_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -133,24 +128,21 @@ class GuildConfig(Base):
     bounty_dual_waypoint_prob: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     bounty_waypoint_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_waypoint_min_degree: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    bounty_delay_random_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    bounty_delay_random_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    bounty_spawn_jitter: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # bounty_delay_random_min — RETIRED rev 0031 (column dropped; constant renamed
+    #   to BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES; env var renamed accordingly)
+    # bounty_delay_random_max — RETIRED rev 0031 (column dropped)
+    # bounty_spawn_jitter — RETIRED rev 0031 (column dropped; constant BOUNTY_SPAWN_JITTER stays)
     check_cooldown: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     duel_request_expiry: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     tier_change_cooldown: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
-    # Activity / Temperature
-    guild_activity_decay_rate: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    min_guild_activity: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    activity_temp_per_player: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Activity / Temperature — RETIRED rev 0031 (columns dropped in migration 0031)
+    # guild_activity_decay_rate, min_guild_activity, activity_temp_per_player
+    # removed — temperature subsystem was never fully wired (owner-approved).
 
-    # Shop
-    shop_default_ships_num: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    shop_default_weapons_num: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    shop_default_modules_num: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    shop_default_turrets_num: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    turret_spawn_probability: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Shop — RETIRED rev 0031 (columns dropped in migration 0031)
+    # shop_default_ships_num, shop_default_weapons_num, shop_default_modules_num,
+    # shop_default_turrets_num, turret_spawn_probability removed — no live readers.
 
     # Economy — kaamo_max_capacity retired (issue #70; dropped in revision 0027)
     classic_credits_per_check: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -308,8 +300,8 @@ class GuildConfig(Base):
     auto_turret_accuracy_multiplier: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     player_base_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     npc_base_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    accuracy_clamp_min: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    accuracy_clamp_max: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # accuracy_clamp_min — RETIRED rev 0031 (column dropped; GameConstants.ACCURACY_CLAMP_MIN stays)
+    # accuracy_clamp_max — RETIRED rev 0031 (column dropped; GameConstants.ACCURACY_CLAMP_MAX stays)
     scanner_tier_b_bonus_pp: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     scanner_tier_c_bonus_pp: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
@@ -318,8 +310,8 @@ class GuildConfig(Base):
     ketar_ii_repair_pct_per_sec: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
     # Tick / timing (§1)
-    tick_ms: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    max_fight_ticks: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # tick_ms — RETIRED rev 0031 (column dropped; GameConstants.TICK_MS stays as global engine knob)
+    # max_fight_ticks — RETIRED rev 0031 (column dropped; GameConstants.MAX_FIGHT_TICKS stays)
 
     # Distance model (§2)
     starting_distance_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -328,8 +320,8 @@ class GuildConfig(Base):
     thruster_window_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     # HP-threshold activation lists (§7.2 / §7.3 / §8) — stored comma-separated
-    cloak_hp_thresholds_pct: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    booster_hp_thresholds_pct: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    # cloak_hp_thresholds_pct — RETIRED rev 0031 (column dropped; GameConstants.CLOAK_HP_THRESHOLDS_PCT stays)
+    # booster_hp_thresholds_pct — RETIRED rev 0031 (column dropped; GameConstants.BOOSTER_HP_THRESHOLDS_PCT stays)
 
     # EmergencySystem (§7.7)
     emergency_system_invuln_s: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -341,8 +333,7 @@ class GuildConfig(Base):
     # PvC damage reduction — Keith T. Maxwell bonus (§3)
     pvc_damage_reduction: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
-    # Combat log retention (§12)
-    combat_log_retention_hours: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # combat_log_retention_hours — RETIRED rev 0031 (column dropped; env-based COMBAT_LOG_*_RETENTION_HOURS stays)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

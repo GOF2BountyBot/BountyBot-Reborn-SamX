@@ -46,7 +46,9 @@ def _safe_serialize_args(args) -> list:
             return []
 
 
-_DEFAULT_JOB_IDS = frozenset({"bounty_spawn_default", "shop_refresh_default", "temperature_decay_default"})
+# temperature_decay_default removed from DEFAULT_SCHEDULER_JOBS (rev 0031; temperature subsystem retired).
+# Stale job rows may still exist in older deployments — they are handled as no-ops by the executor.
+_DEFAULT_JOB_IDS = frozenset({"bounty_spawn_default", "shop_refresh_default"})
 
 
 @router.get("/jobs", response_model=list[JobInfo])
@@ -230,11 +232,13 @@ async def delete_job(req: Request, job_id: str):
 
 @router.post("/reset")
 async def reset_scheduler(req: Request):
-    """Remove all jobs and re-register the 3 default recurring jobs.
+    """Remove all jobs and re-register the default recurring jobs.
 
     This is an admin-level operation that wipes the entire job queue and then
     calls ``register_default_jobs`` to recreate the standard recurring jobs
-    (bounty_spawn_default, shop_refresh_default, temperature_decay_default).
+    (bounty_spawn_default, shop_refresh_default, bounty_failsafe_cleanup_default,
+    pg_backup_default, db_retention_default).  Note: temperature_decay_default
+    is NOT re-seeded (temperature subsystem retired, rev 0031).
     """
     flogger.info("Reset scheduler endpoint: starting")
     scheduler = _get_scheduler(req)

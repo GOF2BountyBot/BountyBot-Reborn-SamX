@@ -48,8 +48,8 @@ def test_resolve_constant_returns_override_when_field_is_set():
 def test_resolve_constant_zero_int_is_valid_override():
     """0 is a legitimate override value and MUST NOT fall back to the default."""
     cfg = GuildConfig(guild_id=1)
-    cfg.duel_cloak_chance = 0
-    result = resolve_constant(cfg, "duel_cloak_chance", 20)
+    cfg.check_cooldown = 0
+    result = resolve_constant(cfg, "check_cooldown", 180)
     assert result == 0  # 0 is a valid override, NOT fallback
 
 
@@ -79,14 +79,12 @@ def test_resolve_constant_dict_override():
 @pytest.mark.parametrize(
     "field, override_val, fallback",
     [
-        ("guild_activity_decay_rate", 0.5, GameConstants.GUILD_ACTIVITY_DECAY_RATE),
-        ("min_guild_activity", 2.0, GameConstants.MIN_GUILD_ACTIVITY),
-        ("bounty_delay_random_min", 3, GameConstants.BOUNTY_DELAY_RANDOM_MIN),
-        ("bounty_delay_random_max", 10, GameConstants.BOUNTY_DELAY_RANDOM_MAX),
+        # guild_activity_decay_rate, min_guild_activity, bounty_delay_random_min/max,
+        # turret_spawn_probability — RETIRED rev 0031, rows removed.
         ("check_cooldown", 60, GameConstants.CHECK_COOLDOWN),
         ("duel_request_expiry", 3600, GameConstants.DUEL_REQUEST_EXPIRY),
         ("classic_credits_per_check", 500, GameConstants.CLASSIC_CREDITS_PER_CHECK),
-        ("turret_spawn_probability", 30, GameConstants.TURRET_SPAWN_PROBABILITY),
+        ("criminal_max_gear_upgrade", 2, GameConstants.CRIMINAL_MAX_GEAR_UPGRADE),
     ],
 )
 def test_resolve_constant_various_fields(field, override_val, fallback):
@@ -100,9 +98,10 @@ def test_resolve_constant_various_fields(field, override_val, fallback):
 @pytest.mark.parametrize(
     "field, fallback",
     [
-        ("guild_activity_decay_rate", GameConstants.GUILD_ACTIVITY_DECAY_RATE),
-        ("min_guild_activity", GameConstants.MIN_GUILD_ACTIVITY),
-        ("bounty_delay_random_min", GameConstants.BOUNTY_DELAY_RANDOM_MIN),
+        # guild_activity_decay_rate, min_guild_activity, bounty_delay_random_min —
+        # RETIRED rev 0031, rows removed.
+        ("check_cooldown", GameConstants.CHECK_COOLDOWN),
+        ("duel_request_expiry", GameConstants.DUEL_REQUEST_EXPIRY),
     ],
 )
 def test_resolve_constant_none_field_falls_back(field, fallback):

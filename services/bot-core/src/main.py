@@ -95,7 +95,9 @@ THREAD_POOL_WORKERS: int = _positive_int_env("THREAD_POOL_WORKERS", max(4, 2 * P
 DEFAULT_SCHEDULER_JOBS: list[dict] = [
     {
         "job_id": "bounty_spawn_default",
-        "cron": f"*/{GameConstants.BOUNTY_DELAY_RANDOM_MIN} * * * *",
+        # BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES: cron step for spawn-orchestrator (rev 0031 rename
+        # from BOUNTY_DELAY_RANDOM_MIN). Seeded on first boot; env changes need POST /scheduler/reset.
+        "cron": f"*/{GameConstants.BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES} * * * *",
         "payload": {"job_type": "bounty_spawn_orchestrate"},
         "jitter": GameConstants.BOUNTY_SPAWN_JITTER,  # seconds of random offset
     },
@@ -104,19 +106,19 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
         "cron": "0 */6 * * *",
         "payload": {"job_type": "shop_refresh"},
     },
-    {
-        "job_id": "temperature_decay_default",
-        "cron": "0 * * * *",
-        "payload": {"job_type": "temperature_decay"},
-    },
+    # temperature_decay_default REMOVED rev 0031 (temperature subsystem retired).
+    # Existing deployments that still have the job row can remove it via
+    # DELETE /jobs/temperature_decay_default or POST /scheduler/reset.
+    # The job_type="temperature_decay" handler is now a no-op (logs a deprecation
+    # warning) so stale rows do not error-spam.
     {
         "job_id": "bounty_failsafe_cleanup_default",
-        "cron": "30 * * * *",  # :30 past every hour (offset from temperature_decay at :00)
+        "cron": "30 * * * *",  # :30 past every hour
         "payload": {"job_type": "bounty_failsafe_cleanup"},
     },
     {
         "job_id": "pg_backup_default",
-        "cron": "15 */3 * * *",  # :15 past every 3rd hour; offset from shop_refresh (:00) and temperature_decay (:30)
+        "cron": "15 */3 * * *",  # :15 past every 3rd hour; offset from shop_refresh (:00)
         "payload": {"job_type": "pg_backup"},
     },
     {

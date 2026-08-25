@@ -709,12 +709,13 @@ class TestNonAsciiCrossCodec:
 class TestFloatJsonColumnRoundTrip:
     """Verify normal finite floats in JSON columns survive the orjson round-trip identically.
 
-    Covers the decay path columns: division_temperatures, tech_level_probabilities.
+    Covers float-valued JSON columns: tech_level_probabilities (and similar dicts).
     These hold float-valued dicts that must not be corrupted by the codec swap.
+    Note: division_temperatures was a float JSON column retired in rev 0031.
     """
 
     def test_tech_level_probabilities_float_round_trip(self):
-        """division_temperatures / tech_level_probabilities floats survive codec round-trip."""
+        """tech_level_probabilities floats survive codec round-trip."""
         original = {
             "same_level": 0.7,
             "one_lower": 0.2,
@@ -730,8 +731,8 @@ class TestFloatJsonColumnRoundTrip:
         assert decoded["one_lower"] == pytest.approx(0.2)
         assert decoded["two_lower"] == pytest.approx(0.1)
 
-    def test_division_temperature_floats_round_trip(self):
-        """Simulated division_temperatures dict with float values round-trips losslessly."""
+    def test_arbitrary_float_dict_round_trip(self):
+        """Arbitrary float-valued dict round-trips losslessly (division_temperatures retired rev 0031)."""
         original = {
             "Nivelian": 0.35,
             "Terran": 0.25,

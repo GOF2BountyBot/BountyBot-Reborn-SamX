@@ -110,7 +110,7 @@ _EXPECTED_COLUMNS = [
     ("guild_configs", "turret_quantity_range"),
     ("guild_configs", "tech_level_probabilities"),
     ("guild_configs", "xp_thresholds"),
-    ("guild_configs", "division_temperatures"),
+    # ("guild_configs", "division_temperatures") — RETIRED rev 0031 (column dropped)
     ("guild_configs", "bounty_max_per_tier"),
     ("guild_configs", "division_max_tl"),
     ("bounty", "route"),

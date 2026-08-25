@@ -40,33 +40,33 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 _OVERRIDE_FIELDS: tuple[str, ...] = (
     "division_max_tl",
-    "ship_value_reward_percentage",
-    "criminal_equip_damageless_weapon_chance",
+    # ship_value_reward_percentage — RETIRED rev 0031
+    # criminal_equip_damageless_weapon_chance — RETIRED rev 0031
     "criminal_max_gear_upgrade",
     "bounty_reward_to_xp_gain_mult",
     "bounty_winner_reserve_factor",
     "bounty_division_reward_mult",
     # bounty_pvc_armour_buff_factor retired T10
     # duel_variance_percent retired T10
-    "duel_cloak_chance",
+    # duel_cloak_chance — RETIRED rev 0031
     "close_bounty_threshold",
     "max_route_length",
     "min_route_systems",
     "recently_spotted_max_window",
-    "bounty_delay_random_min",
-    "bounty_delay_random_max",
-    "bounty_spawn_jitter",
+    # bounty_delay_random_min — RETIRED rev 0031
+    # bounty_delay_random_max — RETIRED rev 0031
+    # bounty_spawn_jitter — RETIRED rev 0031
     "check_cooldown",
     "duel_request_expiry",
     "tier_change_cooldown",
-    "guild_activity_decay_rate",
-    "min_guild_activity",
-    "activity_temp_per_player",
-    "shop_default_ships_num",
-    "shop_default_weapons_num",
-    "shop_default_modules_num",
-    "shop_default_turrets_num",
-    "turret_spawn_probability",
+    # guild_activity_decay_rate — RETIRED rev 0031
+    # min_guild_activity — RETIRED rev 0031
+    # activity_temp_per_player — RETIRED rev 0031
+    # shop_default_ships_num — RETIRED rev 0031
+    # shop_default_weapons_num — RETIRED rev 0031
+    # shop_default_modules_num — RETIRED rev 0031
+    # shop_default_turrets_num — RETIRED rev 0031
+    # turret_spawn_probability — RETIRED rev 0031
     "classic_credits_per_check",
     "demotion_credit_penalty_pct",
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
@@ -167,7 +167,7 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "criminal_weaponmod_chance_silver",
     "criminal_weaponmod_chance_gold",
     "criminal_weaponmod_chance_platinum",
-    # _OVERRIDE_FIELDS and _GAME_CONSTANT_FIELDS (adminCog) are now identical at 109 fields.
+    # _OVERRIDE_FIELDS and _GAME_CONSTANT_FIELDS (adminCog) are now identical at 95 fields (rev 0031: 14 retired).
 )
 
 

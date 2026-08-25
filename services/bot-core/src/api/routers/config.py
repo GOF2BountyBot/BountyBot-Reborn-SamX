@@ -131,7 +131,11 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "bounty_waypoint_attempts",
     "bounty_waypoint_min_degree",
     "pvc_damage_reduction",
-    # _OVERRIDE_FIELDS and _GAME_CONSTANT_FIELDS (adminCog) are now identical at 79 fields.
+    # Bronze combat bonus per-guild overrides (issue #70 Unit C, revision 0029)
+    "bronze_combat_bonus_base_mult",
+    "bronze_combat_bonus_per_prestige",
+    "bronze_combat_bonus_cap",
+    # _OVERRIDE_FIELDS and _GAME_CONSTANT_FIELDS (adminCog) are now identical at 82 fields.
 )
 
 

@@ -73,19 +73,27 @@ async def _resolve_combat_label(db, player, user_repo=None) -> str:
     return f"Player {getattr(player, 'id', '?')}"
 
 
-def _bronze_combat_bonus_fraction(prestige_count: int) -> float:
+def _bronze_combat_bonus_fraction(
+    prestige_count: int,
+    base_mult: float = GameConstants.BRONZE_COMBAT_BONUS_BASE_MULT,
+    per_prestige: float = GameConstants.BRONZE_COMBAT_BONUS_PER_PRESTIGE,
+    cap: float = GameConstants.BRONZE_COMBAT_BONUS_CAP,
+) -> float:
     """Prestige-scaled fraction of the base reward paid as the Bronze combat bonus.
 
-    fraction = min(CAP, BASE + PER_PRESTIGE × prestige_count)  (issue #51)
+    fraction = min(cap, base_mult + per_prestige × prestige_count)  (issue #51)
     Defaults: 40% at 0★, +10%/★, capped at 100% (reached at 6★).
+
+    The three scaling constants are per-guild overridable (issue #70 Unit C);
+    callers with a guild config should resolve and pass them explicitly via
+    resolve_constant.  Defaults fall back to the global GameConstants values.
 
     Module-level (not a method) so the /bounties/combat-bonus router can call it
     without routing through a possibly-mocked service instance.
     """
-    gc = GameConstants
     return min(
-        gc.BRONZE_COMBAT_BONUS_CAP,
-        gc.BRONZE_COMBAT_BONUS_BASE_MULT + gc.BRONZE_COMBAT_BONUS_PER_PRESTIGE * max(0, prestige_count),
+        cap,
+        base_mult + per_prestige * max(0, prestige_count),
     )
 
 
@@ -1622,6 +1630,7 @@ class BountyService:
         jump_gate_systems: list[str],
         min_systems: int,
         attempts: int = 8,
+        max_route_length: int = GameConstants.MAX_ROUTE_LENGTH,
     ) -> list[str] | None:
         """Generate a bounty route of at least ``min_systems`` systems.
 
@@ -1630,6 +1639,9 @@ class BountyService:
         length. If none reach the minimum (e.g. a tiny/sparse map), the longest
         route found is returned best-effort so a spawn never fails purely on a
         too-short route. Returns ``None`` only if no route could be built at all.
+
+        ``max_route_length`` is forwarded to the A* hop limit; per-guild overrides
+        are resolved by the caller (_generate_waypoint_route) and passed here.
         """
         best: list[str] | None = None
         for _attempt in range(max(1, attempts)):
@@ -1638,7 +1650,7 @@ class BountyService:
             while end == start:
                 end = random.choice(jump_gate_systems)
 
-            result = self.pathfinding_service.make_route(start, end)
+            result = self.pathfinding_service.make_route(start, end, max_route_length=max_route_length)
             if not isinstance(result, list):
                 continue
             if len(result) >= min_systems:
@@ -1699,7 +1711,12 @@ class BountyService:
                 out.append(name)
         return out
 
-    def _build_anchor_route(self, anchors: list[str], min_degree: int) -> list[str] | None:
+    def _build_anchor_route(
+        self,
+        anchors: list[str],
+        min_degree: int,
+        max_route_length: int = GameConstants.MAX_ROUTE_LENGTH,
+    ) -> list[str] | None:
         """Build a simple route visiting ``anchors`` in order, or None if a leg fails.
 
         Each leg is an independent A* hop with every previously-used system blocked
@@ -1707,6 +1724,8 @@ class BountyService:
         system. The next anchor must not already be consumed (building a leg *to* a
         used system would revisit it), and every interior waypoint must still
         satisfy the degree rubric against the post-removal graph.
+
+        ``max_route_length`` is forwarded to each A* leg call.
         """
         route: list[str] = [anchors[0]]
         used: set[str] = {anchors[0]}
@@ -1718,7 +1737,9 @@ class BountyService:
             # Interior waypoints (not the final endpoint) must keep their degree.
             if i + 1 < len(anchors) - 1 and self._available_degree(nxt, frozenset(used - {nxt})) < min_degree:
                 return None
-            leg = self.pathfinding_service.make_route(cur, nxt, blocked=frozenset(used - {cur}))
+            leg = self.pathfinding_service.make_route(
+                cur, nxt, blocked=frozenset(used - {cur}), max_route_length=max_route_length
+            )
             if not isinstance(leg, list):
                 return None
             route.extend(leg[1:])
@@ -1731,6 +1752,7 @@ class BountyService:
         num_waypoints: int,
         attempts: int,
         min_degree: int,
+        max_route_length: int = GameConstants.MAX_ROUTE_LENGTH,
     ) -> list[str] | None:
         """Try to build a simple route with exactly ``num_waypoints`` waypoints.
 
@@ -1738,6 +1760,9 @@ class BountyService:
         every interior ordering ("midpoint swap") before re-rolling. Returns None
         if no simple route could be built within ``attempts`` — the caller then
         falls back to a standard A→C route.
+
+        ``max_route_length`` is forwarded to _build_anchor_route and ultimately to
+        the A* pathfinder so per-guild overrides take effect end-to-end.
         """
         for _ in range(max(1, attempts)):
             start = random.choice(jump_gate_systems)
@@ -1753,7 +1778,7 @@ class BountyService:
             orders = list(itertools.permutations(waypoints))
             random.shuffle(orders)
             for order in orders:
-                route = self._build_anchor_route([start, *order, end], min_degree)
+                route = self._build_anchor_route([start, *order, end], min_degree, max_route_length=max_route_length)
                 if route is not None:
                     return route
         return None
@@ -1772,21 +1797,27 @@ class BountyService:
         spawn never fails on routing. The returned route is always a simple path,
         keeping every downstream consumer (distance hints, reward-per-system,
         ``checked`` map) correct.
+
+        Per-guild ``max_route_length`` is resolved here from ``cfg`` and forwarded to
+        all sub-calls so the A* hop limit is consistent across legs (Unit D2).
         """
+        max_route_length = resolve_constant(cfg, "max_route_length", GameConstants.MAX_ROUTE_LENGTH)
         num_waypoints = self._roll_waypoint_count(cfg)
         if num_waypoints == 0:
-            return self._generate_route(jump_gate_systems, min_systems)
+            return self._generate_route(jump_gate_systems, min_systems, max_route_length=max_route_length)
 
         attempts = resolve_constant(cfg, "bounty_waypoint_attempts", GameConstants.BOUNTY_WAYPOINT_ATTEMPTS)
         min_degree = resolve_constant(cfg, "bounty_waypoint_min_degree", GameConstants.BOUNTY_WAYPOINT_MIN_DEGREE)
-        route = self._build_waypoint_route(jump_gate_systems, num_waypoints, attempts, min_degree)
+        route = self._build_waypoint_route(
+            jump_gate_systems, num_waypoints, attempts, min_degree, max_route_length=max_route_length
+        )
         if route is not None:
             return route
 
         flogger.debug(
             f"Could not build a {num_waypoints}-waypoint route within {attempts} attempts; falling back to standard A→C"
         )
-        return self._generate_route(jump_gate_systems, min_systems)
+        return self._generate_route(jump_gate_systems, min_systems, max_route_length=max_route_length)
 
     @staticmethod
     def _roll_spotted_window(cfg) -> int:
@@ -1906,10 +1937,10 @@ class BountyService:
             )
 
         # Step 6: Calculate reward using the winner-reserve / consolation-pool model.
-        # The total reward is seeded by the legacy per-sys formula, but reward_per_sys
-        # is now derived from the consolation pool (total minus the winner's reserve),
-        # split evenly across the route length.
-        _legacy_rps = reward_per_sys_check(tech_level, loadout["total_value"])
+        # The total reward is seeded by the per-sys formula; the per-guild
+        # classic_credits_per_check override sets the floor (Unit D1).
+        _classic_floor = resolve_constant(cfg, "classic_credits_per_check", GameConstants.CLASSIC_CREDITS_PER_CHECK)
+        _legacy_rps = reward_per_sys_check(tech_level, loadout["total_value"], floor=_classic_floor)
         total_reward = _legacy_rps * len(route)
 
         # Apply the per-division prize-pool scaler (balance knob) to the whole
@@ -2307,7 +2338,27 @@ class BountyService:
                     combat_player_won = fight_results.winner_side == 1
                     if combat_player_won:
                         bonus_won = True
-                        bonus_credits = int(winner_reward * _bronze_combat_bonus_fraction(player.prestige_count))
+                        _bonus_base_mult = resolve_constant(
+                            cfg,
+                            "bronze_combat_bonus_base_mult",
+                            GameConstants.BRONZE_COMBAT_BONUS_BASE_MULT,
+                        )
+                        _bonus_per_prestige = resolve_constant(
+                            cfg,
+                            "bronze_combat_bonus_per_prestige",
+                            GameConstants.BRONZE_COMBAT_BONUS_PER_PRESTIGE,
+                        )
+                        _bonus_cap = resolve_constant(
+                            cfg,
+                            "bronze_combat_bonus_cap",
+                            GameConstants.BRONZE_COMBAT_BONUS_CAP,
+                        )
+                        bonus_credits = int(
+                            winner_reward
+                            * _bronze_combat_bonus_fraction(
+                                player.prestige_count, _bonus_base_mult, _bonus_per_prestige, _bonus_cap
+                            )
+                        )
                         await self._award_combat_bonus(db, player_id, bonus_credits)
                         total_reward = winner_reward + bonus_credits
                         # T5 LOOT HOOK (Bronze) — fires ONLY on the bonus-fight WIN,

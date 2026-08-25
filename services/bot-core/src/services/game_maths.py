@@ -173,33 +173,42 @@ def pick_shop_tech_level(
     return GameConstants.MAX_TECH_LEVEL  # floating-point safety fallback
 
 
-def reward_per_sys_check(tech_level: int, loadout_value: int) -> int:
+def reward_per_sys_check(
+    tech_level: int,
+    loadout_value: int,
+    floor: int = GameConstants.CLASSIC_CREDITS_PER_CHECK,
+) -> int:
     """Calculate the bounty credit reward for each system checked.
 
-    Implements the legacy formula from ``gameMaths.py`` lines 217-227.
+    Implements the formula from the original gameMaths.py (lines 217-227).
     Tech-level 1 criminals receive a 1.3x multiplier as a beginner bonus.
 
-    .. deprecated::
-        This function is superseded for the spawn path by the new
-        ``consolation_pool / route_length`` formula introduced alongside
-        ``BOUNTY_WINNER_RESERVE_FACTOR``.  ``spawn_bounty()`` no longer calls
-        this function.  It is kept because ``tests/services/test_game_maths.py``
-        exercises it directly; do not delete until those tests are updated.
+    This function is LIVE: ``spawn_bounty()`` calls it to seed every bounty
+    prize pool.  The ``_legacy_rps`` local name in ``bounty_service`` refers to
+    the formula's lineage, not its status — do not remove.
+
+    The ``floor`` parameter allows per-guild overrides of ``CLASSIC_CREDITS_PER_CHECK``
+    (issue #70 Unit D1).  Callers with a guild config should resolve the floor via
+    ``resolve_constant(cfg, "classic_credits_per_check", GameConstants.CLASSIC_CREDITS_PER_CHECK)``
+    and pass it explicitly; callers without cfg rely on the default.
 
     Args:
         tech_level:    Bounty (criminal) tech level (1-10).
         loadout_value: Total credit value of the criminal's equipment.
+        floor:         Minimum credit reward per system (default: CLASSIC_CREDITS_PER_CHECK).
 
     Returns:
-        Credit reward, floored at ``CLASSIC_CREDITS_PER_CHECK``.
+        Credit reward, floored at ``floor``.
     """
     multiplier = 1.3 if tech_level == 1 else 1
     divisor_offset = 1 if tech_level == 1 else 2
     reward = max(
-        GameConstants.CLASSIC_CREDITS_PER_CHECK,
+        floor,
         int((loadout_value * multiplier) / (2 * (tech_level + divisor_offset) * 10)),
     )
-    flogger.debug(f"reward_per_sys_check: tl={tech_level} loadout_value={loadout_value} → {reward} credits")
+    flogger.debug(
+        f"reward_per_sys_check: tl={tech_level} loadout_value={loadout_value} floor={floor} → {reward} credits"
+    )
     return reward
 
 

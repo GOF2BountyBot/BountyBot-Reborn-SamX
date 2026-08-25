@@ -247,7 +247,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         # Powers setting autocomplete (97 fields: 95 game-constant + starting_credits +
         # sale_price_factor), help text, and local bounds pre-check before any API call.
         # NOTE: starting_credits and sale_price_factor are metadata-only additions and
-        # do NOT appear in _GAME_CONSTANT_FIELDS (the static fallback list, 95 fields).
+        # do NOT appear in _GAME_CONSTANT_FIELDS (the static fallback list, 117 fields).
         # Falls back to _GAME_CONSTANT_FIELDS when the metadata endpoint is unavailable.
         self._config_metadata: list[dict] = []
         self._config_metadata_by_field: dict[str, dict] = {}
@@ -375,7 +375,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         else:
             flogger.error(
                 "_preload_static_catalogs: terminal failure for config metadata after 5 attempts; "
-                "setting autocomplete will fall back to _GAME_CONSTANT_FIELDS (95 fields)"
+                "setting autocomplete will fall back to _GAME_CONSTANT_FIELDS (117 fields)"
             )
 
     async def _fetch_admin_pending_duels(self, guild_id: int) -> list[dict]:
@@ -917,7 +917,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         sale_price_factor), uses the live list with deprecated fields sorted last and
         a "(deprecated)" suffix in the choice *name* (value stays the bare field name).
 
-        Falls back to _GAME_CONSTANT_FIELDS (95 fields — excludes starting_credits /
+        Falls back to _GAME_CONSTANT_FIELDS (117 fields — excludes starting_credits /
         sale_price_factor which are metadata-only) when the metadata endpoint is offline.
         """
         current_lower = current.lower()
@@ -935,7 +935,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 if len(choices) == 25:
                     break
             return choices
-        # Fallback to static list (no metadata — 95 fields, no starting_credits/sale_price_factor)
+        # Fallback to static list (no metadata — 117 fields, no starting_credits/sale_price_factor)
         return [app_commands.Choice(name=f, value=f) for f in self._GAME_CONSTANT_FIELDS if current_lower in f.lower()][
             :25
         ]
@@ -3029,18 +3029,18 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
-    # _GAME_CONSTANT_FIELDS — static fallback list (95 fields, rev 0031)
+    # _GAME_CONSTANT_FIELDS — static fallback list (117 fields, rev 0032)
     # Used by setting_autocomplete when the /config/metadata endpoint is offline.
     # NOTE: starting_credits and sale_price_factor are NOT in this list — they are
     # Tier-1 scalars served only via the metadata endpoint (metadata-only additions).
     # ------------------------------------------------------------------
 
     # All slash-settable per-guild game-constant override field names (identical to _OVERRIDE_FIELDS in
-    # bot-core config router). 95 fields as of rev 0031 (14 retired: duel_cloak_chance,
-    # criminal_equip_damageless_weapon_chance, ship_value_reward_percentage,
-    # shop_default_{ships,weapons,modules,turrets}_num, turret_spawn_probability,
-    # guild_activity_decay_rate, min_guild_activity, activity_temp_per_player,
-    # bounty_delay_random_min, bounty_delay_random_max, bounty_spawn_jitter).
+    # bot-core config router). 117 fields as of rev 0032 (+22 combat engine constants; 95+22=117).
+    # Rev 0031 retired 14 fields: duel_cloak_chance, criminal_equip_damageless_weapon_chance,
+    # ship_value_reward_percentage, shop_default_{ships,weapons,modules,turrets}_num,
+    # turret_spawn_probability, guild_activity_decay_rate, min_guild_activity,
+    # activity_temp_per_player, bounty_delay_random_min, bounty_delay_random_max, bounty_spawn_jitter.
     _GAME_CONSTANT_FIELDS: tuple[str, ...] = (
         "division_max_tl",
         # ship_value_reward_percentage — RETIRED rev 0031
@@ -3169,7 +3169,36 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "criminal_weaponmod_chance_silver",
         "criminal_weaponmod_chance_gold",
         "criminal_weaponmod_chance_platinum",
-        # _GAME_CONSTANT_FIELDS and _OVERRIDE_FIELDS (config.py) are now identical at 95 fields (rev 0031: 14 retired).
+        # Combat engine per-guild overrides, wired (issue #70 unit A1, revision 0032) — 22 new fields
+        # Accuracy system (§5)
+        "cloak_set_value",
+        "booster_accuracy_debuff_factor",
+        "thruster_accuracy_bonus_factor",
+        "auto_turret_accuracy_multiplier",
+        "player_base_accuracy",
+        "npc_base_accuracy",
+        "scanner_tier_b_bonus_pp",
+        "scanner_tier_c_bonus_pp",
+        # Distance model (§2)
+        "starting_distance_m",
+        "base_ship_speed_mps",
+        "min_distance_m",
+        "thruster_window_m",
+        # Emergency system (§7.7)
+        "emergency_system_invuln_s",
+        # Nuke (§6.2)
+        "nuke_magnitude_scale",
+        "nuke_friendly_factor",
+        "nuke_range_regime_threshold_m",
+        "nuke_lr_near_frac",
+        "nuke_cr_short_m",
+        "nuke_cr_overshoot_m",
+        "nuke_stack_falloff",
+        # Shock-blast (§6.2 / D6)
+        "shock_blast_trigger_range_m",
+        # Shield / armour regen reemission (CI-21)
+        "combat_layer_reemit_fraction",
+        # _GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS (config.py): 117 fields as of rev 0032 (+22 combat engine).
     )
 
     # ------------------------------------------------------------------

@@ -338,6 +338,7 @@ async def combat_bonus(
                 context="bounty_bonus",
                 log_result=True,
                 pvc_damage_reduction=_pvc_dr,
+                guild_config=guild_cfg,
                 session=db,
                 guild_id=player.guild_id,
                 combatant1_user_id=player.user_id,

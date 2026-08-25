@@ -364,6 +364,9 @@ class DuelService:
         challenger_loadout = await LoadoutBuilder.from_player(db, challenger.id)
         target_loadout = await LoadoutBuilder.from_player(db, target.id)
 
+        # Load per-guild config for combat-engine constant resolution (issue #70 A1).
+        _duel_guild_cfg = await self.config_repo.get_by_guild_id(db, duel.guild_id)
+
         # CI-20: resolve display labels for combat-log thread naming
         _c1_label = await self._resolve_player_label(db, challenger)
         _c2_label = await self._resolve_player_label(db, target)
@@ -375,6 +378,7 @@ class DuelService:
             context="duel",
             log_result=True,
             pvc_damage_reduction=0.0,
+            guild_config=_duel_guild_cfg,
             session=db,
             guild_id=duel.guild_id,
             combatant1_user_id=challenger.user_id,

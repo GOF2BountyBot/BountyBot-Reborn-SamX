@@ -31,6 +31,7 @@ from services.combat_balance import (
 from services.combat_models import (
     CombatEvent,
     CombatEventType,
+    CombatTuning,
     FightResults,
     FightStats,
     ModuleStats,
@@ -337,6 +338,7 @@ def _init_combatant(
     is_player: bool,
     slot: int = 1,
     display_name: str = "",
+    tuning: CombatTuning | None = None,
 ) -> _CombatantState:
     """Build combatant runtime state from a ShipLoadout.
 
@@ -379,10 +381,12 @@ def _init_combatant(
     module_cooldowns = {m.name: 0 for m in loadout.modules}
 
     # Precompute scanner tier once — stateless, same loadout always returns same result (§7.1)
+    _tier_b = tuning.scanner_tier_b_bonus_pp if tuning is not None else float(GameConstants.SCANNER_TIER_B_BONUS_PP)
+    _tier_c = tuning.scanner_tier_c_bonus_pp if tuning is not None else float(GameConstants.SCANNER_TIER_C_BONUS_PP)
     scanner_tier = resolve_scanner_tier(
         loadout,
-        tier_b_bonus_pp=float(GameConstants.SCANNER_TIER_B_BONUS_PP),
-        tier_c_bonus_pp=float(GameConstants.SCANNER_TIER_C_BONUS_PP),
+        tier_b_bonus_pp=_tier_b,
+        tier_c_bonus_pp=_tier_c,
     )
 
     # ------------------------------------------------------------------
@@ -557,7 +561,12 @@ def _init_combatant(
     )
 
 
-def _tick_shield_regen(state: _CombatantState, tick: int, events: list[CombatEvent]) -> None:
+def _tick_shield_regen(
+    state: _CombatantState,
+    tick: int,
+    events: list[CombatEvent],
+    reemit_frac: float = float(GameConstants.COMBAT_LAYER_REEMIT_FRACTION),
+) -> None:
     """Apply per-tick shield regen pulses. No-op when shield is at max (dormant)."""
     if not state.shield_regen_schedules:
         return
@@ -590,12 +599,17 @@ def _tick_shield_regen(state: _CombatantState, tick: int, events: list[CombatEve
     if (
         state.max_shield > 0
         and "shield" in state.depleted_layers
-        and (state.current_shield >= math.ceil(state.max_shield * GameConstants.COMBAT_LAYER_REEMIT_FRACTION))
+        and (state.current_shield >= math.ceil(state.max_shield * reemit_frac))
     ):
         state.depleted_layers.discard("shield")
 
 
-def _tick_repair_bot_regen(state: _CombatantState, tick: int, events: list[CombatEvent]) -> None:
+def _tick_repair_bot_regen(
+    state: _CombatantState,
+    tick: int,
+    events: list[CombatEvent],
+    reemit_frac: float = float(GameConstants.COMBAT_LAYER_REEMIT_FRACTION),
+) -> None:
     """Apply Repair Bot regen for one tick (Appendix B step 2).
 
     Fills hull first, then armour. Dormant when both layers are at max.
@@ -659,17 +673,16 @@ def _tick_repair_bot_regen(state: _CombatantState, tick: int, events: list[Comba
         state.repair_bot_regen_accumulator = 0.0
 
     # CI-21: clear depleted_layers latch for hull/armour when meaningful recovery achieved
-    _reemit_frac = GameConstants.COMBAT_LAYER_REEMIT_FRACTION
     if (
         state.max_hull > 0
         and "hull" in state.depleted_layers
-        and (state.current_hull >= math.ceil(state.max_hull * _reemit_frac))
+        and (state.current_hull >= math.ceil(state.max_hull * reemit_frac))
     ):
         state.depleted_layers.discard("hull")
     if (
         state.max_armour > 0
         and "armour" in state.depleted_layers
-        and (state.current_armour >= math.ceil(state.max_armour * _reemit_frac))
+        and (state.current_armour >= math.ceil(state.max_armour * reemit_frac))
     ):
         state.depleted_layers.discard("armour")
 
@@ -1098,31 +1111,42 @@ def _nuke_dmg(distance: float, damage: int, effective_magnitude: float) -> float
     return damage * (1.0 - fraction) ** 2
 
 
-def _nuke_window(current_distance: float) -> tuple[float, float]:
+def _nuke_window(
+    current_distance: float,
+    *,
+    threshold_m: float = float(GameConstants.NUKE_RANGE_REGIME_THRESHOLD_M),
+    lr_near_frac: float = float(GameConstants.NUKE_LR_NEAR_FRAC),
+    cr_short_m: float = float(GameConstants.NUKE_CR_SHORT_M),
+    cr_overshoot_m: float = float(GameConstants.NUKE_CR_OVERSHOOT_M),
+) -> tuple[float, float]:
     """D-014: two-regime nuke detonation window on the 1-D combat axis (firer at 0).
 
-    Long-range (d > NUKE_RANGE_REGIME_THRESHOLD_M):
-        [NEAR_FRAC × d, d] — aimed at the target, never overshoots; short rounds
+    Long-range (d > threshold_m):
+        [lr_near_frac × d, d] — aimed at the target, never overshoots; short rounds
         can fall deep toward the firer (long-range self-risk scales with the gap).
-    Close-range (d ≤ threshold):
-        [max(0, d − CR_SHORT_M), d + CR_OVERSHOOT_M] — artillery bracket with
+    Close-range (d ≤ threshold_m):
+        [max(0, d − cr_short_m), d + cr_overshoot_m] — artillery bracket with
         overshoot past the target; epicenter can land on either ship.
 
-    Edges meet continuously at the boundary when NEAR_FRAC × threshold
-    == threshold − CR_SHORT_M (defaults: 0.40×1000 == 1000−600).
+    Edges meet continuously at the boundary when lr_near_frac × threshold_m
+    == threshold_m − cr_short_m (defaults: 0.40×1000 == 1000−600).
     """
-    if current_distance > GameConstants.NUKE_RANGE_REGIME_THRESHOLD_M:
-        return (GameConstants.NUKE_LR_NEAR_FRAC * current_distance, current_distance)
+    if current_distance > threshold_m:
+        return (lr_near_frac * current_distance, current_distance)
     return (
-        max(0.0, current_distance - GameConstants.NUKE_CR_SHORT_M),
-        current_distance + GameConstants.NUKE_CR_OVERSHOOT_M,
+        max(0.0, current_distance - cr_short_m),
+        current_distance + cr_overshoot_m,
     )
 
 
-def _shock_blast_apply(attacker: _CombatantState, current_distance: float) -> float:
-    """Apply shock-blast Phase 6 effect: returns new distance (STARTING_DISTANCE_M).
+def _shock_blast_apply(
+    attacker: _CombatantState,
+    current_distance: float,
+    starting_distance_m: float = float(GameConstants.STARTING_DISTANCE_M),
+) -> float:
+    """Apply shock-blast Phase 6 effect: returns new distance (starting_distance_m).
 
-    Shock-blast resets current_distance to STARTING_DISTANCE_M (D6 / Appendix B §6).
+    Shock-blast resets current_distance to starting_distance_m (D6 / Appendix B §6).
     This function is PURE with respect to combatant state — it ONLY computes the
     new distance value. It does NOT mutate attacker, the target, module_cooldowns,
     weapon_cooldowns, or any other field on any _CombatantState.
@@ -1134,13 +1158,14 @@ def _shock_blast_apply(attacker: _CombatantState, current_distance: float) -> fl
     Args:
         attacker: Shock-blast owner (used for name in event; state NOT mutated).
         current_distance: Current resolver-local distance before reset.
+        starting_distance_m: The reset distance (per-guild or global default).
 
     Returns:
-        New distance after shock-blast reset (always STARTING_DISTANCE_M).
+        New distance after shock-blast reset (always starting_distance_m).
     """
     _ = attacker  # name used by caller for event actor; no state mutation
     _ = current_distance  # captured by caller for 'from' field; not used here
-    return float(GameConstants.STARTING_DISTANCE_M)
+    return starting_distance_m
 
 
 def _build_fight_summary(
@@ -1358,6 +1383,7 @@ class TickResolver:
         *,
         pvc_damage_reduction: float = 0.0,
         guild_config=None,
+        tuning: CombatTuning | None = None,
         rng: random.Random | None = None,
         combatant1_label: str = "",
         combatant2_label: str = "",
@@ -1368,7 +1394,10 @@ class TickResolver:
             loadout1: C1 — challenger (player in PvC when pvc_damage_reduction > 0).
             loadout2: C2 — opponent (NPC in PvC; player2 in PvP).
             pvc_damage_reduction: Keith T. Maxwell DR (§3). 0.33 for PvC, 0.0 for PvP.
-            guild_config: Reserved for per-guild constant overrides (T10+).
+            guild_config: Reserved for per-guild constant overrides (T10+). Superseded by
+                          ``tuning`` — pass the pre-built CombatTuning struct instead.
+            tuning: Pre-built per-guild constant snapshot (issue #70, unit A1). When None
+                    all constants fall back to GameConstants globals (existing behaviour).
             rng: Optional seeded RNG for deterministic testing. When provided, takes
                  precedence over any seed passed to the constructor. Pass exactly one;
                  passing both is allowed but rng= wins. None (default) falls back to
@@ -1381,33 +1410,69 @@ class TickResolver:
             FightResults with combat_log timeline and metadata block.
         """
         # --- Pre-loop bake: read constants once, not per-tick ---
+        # Global-invariant constants (never per-guild):
         tick_ms = GameConstants.TICK_MS
         max_ticks = GameConstants.MAX_FIGHT_TICKS
-        min_dist = float(GameConstants.MIN_DISTANCE_M)
-        distance_delta = GameConstants.BASE_SHIP_SPEED_MPS * 2 * (tick_ms / 1000)
-        # Accuracy constants (T4)
-        _player_base_acc = GameConstants.PLAYER_BASE_ACCURACY
-        _npc_base_acc = GameConstants.NPC_BASE_ACCURACY
-        _cloak_set = GameConstants.CLOAK_SET_VALUE
         _acc_clamp_min = GameConstants.ACCURACY_CLAMP_MIN
         _acc_clamp_max = GameConstants.ACCURACY_CLAMP_MAX
+        # T8: HP-threshold activation lists (global-invariant, not per-guild)
+        _cloak_thresholds: list[int] = list(GameConstants.CLOAK_HP_THRESHOLDS_PCT)
+        _booster_thresholds: list[int] = list(GameConstants.BOOSTER_HP_THRESHOLDS_PCT)
+        # Per-guild tunable constants — resolved from tuning struct or GameConstants:
+        _t = tuning  # alias for brevity
+        min_dist = _t.min_distance_m if _t is not None else float(GameConstants.MIN_DISTANCE_M)
+        _base_speed_mps = _t.base_ship_speed_mps if _t is not None else float(GameConstants.BASE_SHIP_SPEED_MPS)
+        distance_delta = _base_speed_mps * 2 * (tick_ms / 1000)
+        # Accuracy constants (T4)
+        _player_base_acc = _t.player_base_accuracy if _t is not None else GameConstants.PLAYER_BASE_ACCURACY
+        _npc_base_acc = _t.npc_base_accuracy if _t is not None else GameConstants.NPC_BASE_ACCURACY
+        _cloak_set = _t.cloak_set_value if _t is not None else GameConstants.CLOAK_SET_VALUE
         # RNG seam (T4 — not consumed until T5; inject via rng= kwarg for deterministic tests)
         _rng = rng if rng is not None else self._rng
         # T7: auto-turret accuracy multiplier (baked once — constant per fight)
-        _auto_turret_multiplier = GameConstants.AUTO_TURRET_ACCURACY_MULTIPLIER
-        # T8: HP-threshold activation constants (baked once per fight)
-        _cloak_thresholds: list[int] = list(GameConstants.CLOAK_HP_THRESHOLDS_PCT)
-        _booster_thresholds: list[int] = list(GameConstants.BOOSTER_HP_THRESHOLDS_PCT)
-        _k_boost = float(GameConstants.BOOSTER_ACCURACY_DEBUFF_FACTOR)
-        _k_thrust = float(GameConstants.THRUSTER_ACCURACY_BONUS_FACTOR)
-        _thruster_window = float(GameConstants.THRUSTER_WINDOW_M)
-        _base_speed_mps = float(GameConstants.BASE_SHIP_SPEED_MPS)
+        _auto_turret_multiplier = (
+            _t.auto_turret_accuracy_multiplier if _t is not None else GameConstants.AUTO_TURRET_ACCURACY_MULTIPLIER
+        )
+        # T8: per-guild debuff / bonus scalers
+        _k_boost = (
+            _t.booster_accuracy_debuff_factor if _t is not None else float(GameConstants.BOOSTER_ACCURACY_DEBUFF_FACTOR)
+        )
+        _k_thrust = (
+            _t.thruster_accuracy_bonus_factor if _t is not None else float(GameConstants.THRUSTER_ACCURACY_BONUS_FACTOR)
+        )
+        _thruster_window = _t.thruster_window_m if _t is not None else float(GameConstants.THRUSTER_WINDOW_M)
+        # Per-guild regen reemit threshold (CI-21)
+        _reemit_frac = (
+            _t.combat_layer_reemit_fraction if _t is not None else float(GameConstants.COMBAT_LAYER_REEMIT_FRACTION)
+        )
+        # Starting distance
+        _starting_dist = _t.starting_distance_m if _t is not None else float(GameConstants.STARTING_DISTANCE_M)
+        # Emergency system invuln (ms)
+        _emerg_invuln_ms = (
+            _t.emergency_system_invuln_s * 1000 if _t is not None else GameConstants.EMERGENCY_SYSTEM_INVULN_S * 1000
+        )
+        # Nuke constants
+        _nuke_mag_scale = _t.nuke_magnitude_scale if _t is not None else float(GameConstants.NUKE_MAGNITUDE_SCALE)
+        _nuke_friendly = _t.nuke_friendly_factor if _t is not None else float(GameConstants.NUKE_FRIENDLY_FACTOR)
+        _nuke_threshold_m = (
+            _t.nuke_range_regime_threshold_m if _t is not None else float(GameConstants.NUKE_RANGE_REGIME_THRESHOLD_M)
+        )
+        _nuke_lr_near = _t.nuke_lr_near_frac if _t is not None else float(GameConstants.NUKE_LR_NEAR_FRAC)
+        _nuke_cr_short = _t.nuke_cr_short_m if _t is not None else float(GameConstants.NUKE_CR_SHORT_M)
+        _nuke_cr_over = _t.nuke_cr_overshoot_m if _t is not None else float(GameConstants.NUKE_CR_OVERSHOOT_M)
+        _nuke_stack = _t.nuke_stack_falloff if _t is not None else float(GameConstants.NUKE_STACK_FALLOFF)
+        # Shock-blast trigger range
+        _shock_trigger_m = (
+            _t.shock_blast_trigger_range_m if _t is not None else float(GameConstants.SHOCK_BLAST_TRIGGER_RANGE_M)
+        )
 
         # --- Combatant init (§1: separate from tick loop) ---
-        c1 = _init_combatant(loadout1, is_player=(pvc_damage_reduction > 0.0), slot=1, display_name=combatant1_label)
-        c2 = _init_combatant(loadout2, is_player=False, slot=2, display_name=combatant2_label)
+        c1 = _init_combatant(
+            loadout1, is_player=(pvc_damage_reduction > 0.0), slot=1, display_name=combatant1_label, tuning=tuning
+        )
+        c2 = _init_combatant(loadout2, is_player=False, slot=2, display_name=combatant2_label, tuning=tuning)
 
-        current_distance = float(GameConstants.STARTING_DISTANCE_M)
+        current_distance = _starting_dist
         events: list[CombatEvent] = []
 
         # fight_start event (tick 0 pre-loop)
@@ -1556,10 +1621,10 @@ class TickResolver:
             # ------------------------------------------------------------------
             # Phase 2: Apply regen pulses (C1 then C2; shield + repair bot parallel)
             # ------------------------------------------------------------------
-            _tick_shield_regen(c1, tick, events)
-            _tick_repair_bot_regen(c1, tick, events)
-            _tick_shield_regen(c2, tick, events)
-            _tick_repair_bot_regen(c2, tick, events)
+            _tick_shield_regen(c1, tick, events, _reemit_frac)
+            _tick_repair_bot_regen(c1, tick, events, _reemit_frac)
+            _tick_shield_regen(c2, tick, events, _reemit_frac)
+            _tick_repair_bot_regen(c2, tick, events, _reemit_frac)
 
             # ------------------------------------------------------------------
             # Phase 3: Evaluate weapon firings — primary weapons (T5)
@@ -1727,21 +1792,23 @@ class TickResolver:
                     elif _sub == "nuke":
                         # D5/D-014: no accuracy roll; epicenter sampled via injected RNG from the
                         # two-regime window (one uniform draw — RNG sequence shape preserved).
-                        _win_lo, _win_hi = _nuke_window(current_distance)
+                        _win_lo, _win_hi = _nuke_window(
+                            current_distance,
+                            threshold_m=_nuke_threshold_m,
+                            lr_near_frac=_nuke_lr_near,
+                            cr_short_m=_nuke_cr_short,
+                            cr_overshoot_m=_nuke_cr_over,
+                        )
                         _epicenter = _rng.uniform(_win_lo, _win_hi)
                         _d_firer = _epicenter  # firer at position 0
                         _d_opp = abs(_epicenter - current_distance)
-                        _eff_mag = _sw.magnitude_m * GameConstants.NUKE_MAGNITUDE_SCALE
+                        _eff_mag = _sw.magnitude_m * _nuke_mag_scale
                         # D-014 yield interference: each successive detonation by this side
-                        # multiplies yield by NUKE_STACK_FALLOFF (whole detonation, self incl.)
-                        _stack_mult = GameConstants.NUKE_STACK_FALLOFF**_attacker.nukes_detonated
+                        # multiplies yield by nuke_stack_falloff (whole detonation, self incl.)
+                        _stack_mult = _nuke_stack**_attacker.nukes_detonated
                         _attacker.nukes_detonated += 1
                         _opp_raw = _nuke_dmg(_d_opp, _sw.damage_per_shot, _eff_mag) * _stack_mult
-                        _self_raw = (
-                            _nuke_dmg(_d_firer, _sw.damage_per_shot, _eff_mag)
-                            * _stack_mult
-                            * GameConstants.NUKE_FRIENDLY_FACTOR
-                        )
+                        _self_raw = _nuke_dmg(_d_firer, _sw.damage_per_shot, _eff_mag) * _stack_mult * _nuke_friendly
                         _opp_dmg_int = round(_opp_raw)
                         _self_dmg_int = round(_self_raw)
                         events.append(
@@ -1773,8 +1840,8 @@ class TickResolver:
 
                     elif _sub == "shock-blast":
                         # Only fire when the enemy is close; at long range the distance-reset is pointless
-                        # (resets to STARTING_DISTANCE_M) and would waste a cooldown.
-                        if current_distance >= GameConstants.SHOCK_BLAST_TRIGGER_RANGE_M:
+                        # (resets to starting_distance_m) and would waste a cooldown.
+                        if current_distance >= _shock_trigger_m:
                             continue
                         # D6: 100% guaranteed distance reset — no RNG draw, no damage
                         _prev_dist = current_distance
@@ -2042,8 +2109,8 @@ class TickResolver:
             # BEFORE phase 4b display clamp. C1 evaluated first, then C2 (Appendix B ordering).
             # ES is NOT an HP-threshold device (§8) — it lives here, not in Phase 5.
             # ------------------------------------------------------------------
-            _eval_emergency_system(c1, tick, events, GameConstants.EMERGENCY_SYSTEM_INVULN_S * 1000)
-            _eval_emergency_system(c2, tick, events, GameConstants.EMERGENCY_SYSTEM_INVULN_S * 1000)
+            _eval_emergency_system(c1, tick, events, _emerg_invuln_ms)
+            _eval_emergency_system(c2, tick, events, _emerg_invuln_ms)
 
             # ------------------------------------------------------------------
             # Phase 4b: HP clamp (C1 then C2; any layer below 0 → 0)
@@ -2079,7 +2146,7 @@ class TickResolver:
                 for _sb_entry in _shock_blast_entries:
                     _, _sb_att, _sb_sw, _sb_prev = _sb_entry  # _sb_prev unused — use live distance
                     _sb_from = current_distance  # actual pre-reset distance at phase 6 apply time
-                    _sb_new_dist = _shock_blast_apply(_sb_att, current_distance)
+                    _sb_new_dist = _shock_blast_apply(_sb_att, current_distance, _starting_dist)
                     current_distance = _sb_new_dist
                     events.append(
                         CombatEvent(

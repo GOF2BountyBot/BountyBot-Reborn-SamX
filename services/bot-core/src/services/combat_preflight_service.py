@@ -39,13 +39,15 @@ from enum import StrEnum
 from types import SimpleNamespace
 
 from compute.combat_worker import run_fight_batch
+from persist.repositories.config_repository import ConfigRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.offload import offload_cpu
 
 from services.bounty_service import BountyService
+from services.combat_models import CombatTuning
 from services.combat_service import _is_orm_model
-from services.game_constants import GameConstants
+from services.game_constants import GameConstants, resolve_flattened
 from services.loadout_builder import LoadoutBuilder
 
 flogger = bblogger.get_logger("combat-preflight-service")
@@ -83,6 +85,7 @@ class CombatPreflightService:
         db: AsyncSession,
         division: str,
         count: int = 5,
+        guild_cfg: object | None = None,
     ) -> list[object]:
         """Synthesize fake criminal bounty-like objects for a given division.
 
@@ -91,18 +94,24 @@ class CombatPreflightService:
         tech levels appropriate for the division.
 
         Args:
-            db:       Async database session.
-            division: Division name (e.g. "silver").
-            count:    Number of synthetic criminals to generate.
+            db:        Async database session.
+            division:  Division name (e.g. "silver").
+            count:     Number of synthetic criminals to generate.
+            guild_cfg: Per-guild config row (or None) for max-TL override resolution.
 
         Returns:
             List of SimpleNamespace objects with a ``criminal_ship`` attribute
             (duck-typed like a ``Bounty`` record). Empty list if synthesis fails.
         """
-        # TODO(A1): reads the global DIVISION_MAX_TL derived dict, ignoring per-guild overrides.
-        # Per-guild preflight parity (using the per-guild division_max_tl_* scalars) is tracked
-        # as issue #70 unit A1 — wire resolve_flattened here when that unit ships.
-        max_tl = GameConstants.DIVISION_MAX_TL.get(division, GameConstants.MAX_TECH_LEVEL)
+        # Per-guild max-TL resolution (issue #70 unit A1).
+        # Flat scalar (division_max_tl_<division>) wins over legacy JSONB dict fallback.
+        max_tl = resolve_flattened(
+            guild_cfg,
+            f"division_max_tl_{division}",
+            "division_max_tl",
+            division,
+            GameConstants.DIVISION_MAX_TL.get(division, GameConstants.MAX_TECH_LEVEL),
+        )
         min_tl = GameConstants.MIN_TECH_LEVEL
 
         bounty_svc = BountyService()
@@ -133,14 +142,17 @@ class CombatPreflightService:
         # Canonical -> lowercase division for tier lookups.
         division = (target_tier or "").lower()
 
+        # Load per-guild config for criminal TL cap and combat constant resolution.
+        guild_cfg = await ConfigRepository().get_by_guild_id(db, guild_id)
+
         # Always synthesize: each sim gets a freshly-rolled, division-TL-capped criminal.
-        criminals = await self._synthesize_criminals(db, division, count=num_sims)
+        criminals = await self._synthesize_criminals(db, division, count=num_sims, guild_cfg=guild_cfg)
 
         # Top-up: if synthesis returned fewer than num_sims (some generate_loadout calls
         # failed), attempt additional generations to reach num_sims distinct loadouts.
         if len(criminals) < num_sims:
             shortage = num_sims - len(criminals)
-            extras = await self._synthesize_criminals(db, division, count=shortage)
+            extras = await self._synthesize_criminals(db, division, count=shortage, guild_cfg=guild_cfg)
             criminals.extend(extras)
 
         # Cap pool to num_sims so sample_size == sims actually run (top-up may over-produce).
@@ -191,12 +203,19 @@ class CombatPreflightService:
             # seed=None matches the default-RNG behaviour of the old fight_ships path.
             matchups.append((player_loadout, criminal_loadout, None, "", ""))
 
-        # C1a-4 parity guard: ensure no live ORM model crosses the process boundary.
-        # run_fight_batch has no guild_config param, but a future refactor could
-        # accidentally introduce one.  This mirrors the _is_orm_model assert in fight_ships.
-        assert not _is_orm_model(GameConstants.PVC_DAMAGE_REDUCTION), (
-            "estimate: pvc_damage_reduction must not be a live ORM model (C1a-4)"
+        # Build per-guild tuning struct (all-scalar → picklable; None falls back to GameConstants).
+        tuning = CombatTuning.from_guild_config(guild_cfg)
+
+        # Resolve per-guild PvC DR (matches the bounties.py path).
+        _pvc_dr = float(
+            guild_cfg.pvc_damage_reduction
+            if guild_cfg is not None and guild_cfg.pvc_damage_reduction is not None
+            else GameConstants.PVC_DAMAGE_REDUCTION
         )
+
+        # C1a-4 parity guard: ensure no live ORM model crosses the process boundary.
+        assert not _is_orm_model(_pvc_dr), "estimate: pvc_damage_reduction must not be a live ORM model (C1a-4)"
+        assert not _is_orm_model(tuning), "estimate: tuning must not be a live ORM model (C1a-4)"
         for _idx, _matchup in enumerate(matchups):
             for _pos, _elem in enumerate(_matchup):
                 assert not _is_orm_model(_elem), (
@@ -213,9 +232,10 @@ class CombatPreflightService:
         sim_results: list[tuple] = await offload_cpu(
             run_fight_batch,
             matchups,
-            pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION,
+            pvc_damage_reduction=_pvc_dr,
             compact=True,
             carry_side1_resources=True,
+            tuning=tuning,
         )
 
         player_wins = 0

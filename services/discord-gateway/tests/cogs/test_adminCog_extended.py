@@ -635,6 +635,7 @@ class TestAdminConfig:
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
 
+    @pytest.mark.skip(reason="retired: 'set_credits' sub-action removed; use action:Set setting:starting_credits")
     def test_admin_config_set_credits_success(self, mock_admin_cog):
         """admin_config set_credits should update starting credits."""
         interaction = _create_mock_interaction()
@@ -652,6 +653,7 @@ class TestAdminConfig:
         call_args = interaction.followup.send.call_args[0][0]
         assert call_args == "✅ Starting credits set to 500"
 
+    @pytest.mark.skip(reason="retired: 'set_credits' sub-action removed")
     def test_admin_config_set_credits_missing(self, mock_admin_cog):
         """admin_config set_credits should reject missing amount."""
         interaction = _create_mock_interaction()
@@ -662,6 +664,7 @@ class TestAdminConfig:
         call_args = interaction.followup.send.call_args[0][0]
         assert "❌" in call_args
 
+    @pytest.mark.skip(reason="retired: 'set_role' sub-action removed; use /admin_setup")
     def test_admin_config_set_role_success(self, mock_admin_cog):
         """admin_config set_role should update admin role."""
         interaction = _create_mock_interaction()
@@ -683,6 +686,7 @@ class TestAdminConfig:
         call_args = interaction.followup.send.call_args[0][0]
         assert call_args == "✅ Admin role set to <@&222222222>"
 
+    @pytest.mark.skip(reason="retired: 'set_role' sub-action removed")
     def test_admin_config_set_role_missing(self, mock_admin_cog):
         """admin_config set_role should reject missing role."""
         interaction = _create_mock_interaction()
@@ -693,6 +697,7 @@ class TestAdminConfig:
         call_args = interaction.followup.send.call_args[0][0]
         assert "❌" in call_args
 
+    @pytest.mark.skip(reason="retired: old guild-config reset removed; new action:reset resets game-constant overrides")
     def test_admin_config_reset_success(self, mock_admin_cog):
         """admin_config reset should reset guild config to defaults."""
         interaction = _create_mock_interaction()

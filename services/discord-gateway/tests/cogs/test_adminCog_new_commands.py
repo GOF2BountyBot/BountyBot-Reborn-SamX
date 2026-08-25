@@ -623,10 +623,10 @@ class TestAdminConfigShop:
 
 
 class TestAdminConfigValidate:
-    """Tests for /admin_config_validate command."""
+    """Tests for /admin_config action:validate (replaces retired /admin_config_validate)."""
 
     def test_admin_config_validate_displays_pass(self, mock_admin_cog):
-        """/admin_config_validate should display a passing result."""
+        """/admin_config action:validate should display a passing result."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
@@ -641,7 +641,7 @@ class TestAdminConfigValidate:
         }
         mock_admin_cog.http_client.get = AsyncMock(return_value=validate_resp)
 
-        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "validate"))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         mock_admin_cog.http_client.get.assert_called_once()
@@ -656,7 +656,7 @@ class TestAdminConfigValidate:
         assert "Valid" in embed.title or "valid" in embed.title.lower()
 
     def test_admin_config_validate_displays_failure(self, mock_admin_cog):
-        """/admin_config_validate should display a failing result with errors."""
+        """/admin_config action:validate should display a failing result with errors."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
@@ -671,20 +671,20 @@ class TestAdminConfigValidate:
         }
         mock_admin_cog.http_client.get = AsyncMock(return_value=validate_resp)
 
-        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "validate"))
 
         interaction.followup.send.assert_called_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
     def test_admin_config_validate_api_error(self, mock_admin_cog):
-        """/admin_config_validate should handle API errors gracefully."""
+        """/admin_config action:validate should handle API errors gracefully."""
         interaction = _create_mock_interaction()
 
         http_error = _make_http_status_error(500, "Server error")
         mock_admin_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "validate"))
 
         interaction.followup.send.assert_called_once()
         # B.31b: helper now sends a sanitized embed instead of a raw URL string.
@@ -693,12 +693,12 @@ class TestAdminConfigValidate:
         assert "bot-core" not in (embed.description or "")
 
     def test_admin_config_validate_generic_error(self, mock_admin_cog):
-        """/admin_config_validate should handle unexpected errors gracefully."""
+        """/admin_config action:validate should handle unexpected errors gracefully."""
         interaction = _create_mock_interaction()
 
         mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Connection failed"))
 
-        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "validate"))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]

@@ -51,7 +51,6 @@ def _make_config(**overrides) -> MagicMock:
         sale_price_factor=0.8,
         starting_credits=0,
         xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000},
-        division_temperatures={"bronze": 1.0, "silver": 1.0, "gold": 1.0},
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )
@@ -501,63 +500,9 @@ class TestGetAllGuildConfigs:
 
 
 # ===================================================================
-# update_division_temperatures – inner rollback + outer (lines 362-384)
+# update_division_temperatures — RETIRED rev 0031 (method deleted)
+# TestUpdateDivisionTemperatures class removed; column + method dropped.
 # ===================================================================
-
-
-class TestUpdateDivisionTemperatures:
-    @pytest.mark.asyncio
-    async def test_update_division_temperatures_success(self, repo, mock_db):
-        # Real GuildConfig instead of MagicMock(spec=GuildConfig): a real attribute
-        # assignment + readback actually proves the value round-trips through the
-        # object, rather than a spec'd mock which would accept/return anything.
-        config = GuildConfig(guild_id=600)
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([config]))
-
-        result = await repo.update_division_temperatures(
-            mock_db, guild_id=600, temperatures={"bronze": 2.0, "silver": 1.5, "gold": 3.0}
-        )
-
-        assert result is config
-        assert result.division_temperatures == {"bronze": 2.0, "silver": 1.5, "gold": 3.0}
-        mock_db.commit.assert_awaited()
-
-    @pytest.mark.asyncio
-    async def test_update_division_temperatures_returns_none_if_missing(self, repo, mock_db):
-        """update_division_temperatures MUST NOT silently auto-create a config row.
-
-        Guild-not-configured guard policy: only /admin_setup creates config
-        rows. update_division_temperatures is called from the temperature_decay
-        executor which iterates all configured guilds; if the config somehow
-        disappeared mid-iteration, the method logs and returns None so the
-        executor can keep processing other guilds rather than crash.
-        """
-        empty_result = _make_scalars_result([])
-        mock_db.execute = AsyncMock(return_value=empty_result)
-
-        result = await repo.update_division_temperatures(mock_db, guild_id=600, temperatures={"bronze": 2.0})
-
-        assert result is None
-        # Commit must not happen — nothing was changed
-        mock_db.commit.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_update_division_temperatures_commit_fail_triggers_rollback(self, repo, mock_db):
-        config = _make_config(guild_id=600)
-        mock_db.execute = AsyncMock(return_value=_make_scalars_result([config]))
-        mock_db.commit = AsyncMock(side_effect=Exception("commit fail"))
-
-        with pytest.raises(Exception, match="commit fail"):
-            await repo.update_division_temperatures(mock_db, guild_id=600, temperatures={"bronze": 2.0})
-
-        mock_db.rollback.assert_awaited()
-
-    @pytest.mark.asyncio
-    async def test_update_division_temperatures_outer_exception(self, repo, mock_db):
-        mock_db.execute = AsyncMock(side_effect=Exception("temp fail"))
-
-        with pytest.raises(Exception, match="temp fail"):
-            await repo.update_division_temperatures(mock_db, guild_id=600, temperatures={})
 
 
 # ===================================================================

@@ -55,7 +55,9 @@ class UpdateLoadoutRequest(BaseModel):
 
 
 class UpdateNicknameRequest(BaseModel):
-    nickname: str
+    # max_length=100 matches MAX_SHIP_NICKNAME_LENGTH (rev 0031: raised from 30 to 100).
+    # The DB column player_ships.nickname is String(100).
+    nickname: str = Field(..., min_length=1, max_length=100)
 
 
 class EquipItemRequest(BaseModel):

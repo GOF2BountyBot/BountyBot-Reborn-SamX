@@ -104,7 +104,6 @@ async def _seed_guild_config(
         shop_channel_id=shop_channel_id,
         shop_announcements_role_id=shop_announcements_role_id,
         bounty_hunter_role_id=bounty_hunter_role_id,
-        division_temperatures={"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0},
     )
     db.add(config)
     await db.commit()

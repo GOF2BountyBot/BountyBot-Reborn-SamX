@@ -416,7 +416,7 @@ class ShipsCog(commands.Cog):
     @app_commands.command(name="nickname", description="Set a nickname for your ship")
     @app_commands.describe(
         ship_id="ID of the ship to nickname (pick from list or enter numeric ID)",
-        nickname="New nickname for the ship (max 50 characters)",
+        nickname="New nickname for the ship (max 100 characters)",
     )
     @app_commands.autocomplete(ship_id=ship_autocomplete)
     async def nickname(self, interaction: discord.Interaction, ship_id: str, nickname: str):
@@ -436,10 +436,13 @@ class ShipsCog(commands.Cog):
             return
 
         try:
-            # Validate nickname length
-            if len(nickname) > 50:
-                flogger.debug(f"/nickname validation failed: nickname_length={len(nickname)} exceeds max 50")
-                await interaction.followup.send("❌ Nickname must be 50 characters or less.", ephemeral=True)
+            # Validate nickname length (MAX_SHIP_NICKNAME_LENGTH=100 as of rev 0031)
+            if len(nickname) > 100:
+                flogger.debug(f"/nickname validation failed: nickname_length={len(nickname)} exceeds max 100")
+                await interaction.followup.send("❌ Nickname must be 100 characters or less.", ephemeral=True)
+                return
+            if len(nickname) < 1:
+                await interaction.followup.send("❌ Nickname must not be empty.", ephemeral=True)
                 return
 
             # First check if user owns the ship

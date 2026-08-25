@@ -1246,16 +1246,16 @@ class TestNicknameCommand:
         assert "embed" in call_kwargs
 
     def test_nickname_too_long(self, mock_ships_cog):
-        """nickname should reject nicknames longer than 50 characters."""
+        """nickname should reject nicknames longer than 100 characters (MAX_SHIP_NICKNAME_LENGTH=100 as of rev 0031)."""
         interaction = _create_mock_interaction()
 
-        long_name = "A" * 51
+        long_name = "A" * 101
 
         asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname=long_name))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
-        assert "50 characters" in call_args[0][0]
+        assert "100 characters" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
     def test_nickname_not_owned(self, mock_ships_cog, request):

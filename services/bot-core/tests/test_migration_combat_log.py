@@ -159,25 +159,22 @@ _APPENDIX_A_COLUMNS = [
     "auto_turret_accuracy_multiplier",
     "player_base_accuracy",
     "npc_base_accuracy",
-    "accuracy_clamp_min",
-    "accuracy_clamp_max",
+    # accuracy_clamp_min / accuracy_clamp_max — RETIRED rev 0031 (columns dropped; global-only)
     "scanner_tier_b_bonus_pp",
     "scanner_tier_c_bonus_pp",
     "ketar_i_repair_pct_per_sec",
     "ketar_ii_repair_pct_per_sec",
-    "tick_ms",
-    "max_fight_ticks",
+    # tick_ms / max_fight_ticks — RETIRED rev 0031 (columns dropped; global-only)
     "starting_distance_m",
     "base_ship_speed_mps",
     "min_distance_m",
     "thruster_window_m",
-    "cloak_hp_thresholds_pct",
-    "booster_hp_thresholds_pct",
+    # cloak_hp_thresholds_pct / booster_hp_thresholds_pct — RETIRED rev 0031 (CSV columns dropped)
     "emergency_system_invuln_s",
     "nuke_magnitude_scale",
     "nuke_friendly_factor",
     "pvc_damage_reduction",
-    "combat_log_retention_hours",
+    # combat_log_retention_hours — RETIRED rev 0031 (column dropped)
 ]
 
 

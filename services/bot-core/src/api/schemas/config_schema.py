@@ -32,8 +32,8 @@ class GameConstantsOverridesMixin(BaseModel):
     division_max_tl_silver: int | None = Field(None, ge=1, le=10)
     division_max_tl_gold: int | None = Field(None, ge=1, le=10)
     division_max_tl_platinum: int | None = Field(None, ge=1, le=10)
-    ship_value_reward_percentage: float | None = Field(None, ge=0.0, le=1.0)
-    criminal_equip_damageless_weapon_chance: int | None = Field(None, ge=0, le=100)
+    # ship_value_reward_percentage — RETIRED rev 0031 (column + constant removed)
+    # criminal_equip_damageless_weapon_chance — RETIRED rev 0031 (column + constant removed)
     criminal_max_gear_upgrade: int | None = Field(None, ge=0, le=10)
     bounty_reward_to_xp_gain_mult: float | None = Field(None, ge=0.0, le=100.0)
     bounty_winner_reserve_factor: float | None = Field(None, ge=0.0, le=1.0)
@@ -49,7 +49,7 @@ class GameConstantsOverridesMixin(BaseModel):
     bounty_division_reward_mult_platinum: float | None = Field(None, ge=0.0, le=10.0)
     # bounty_pvc_armour_buff_factor retired T10 (replaced by pvc_damage_reduction §3)
     # duel_variance_percent retired T10 (SimpleTTKResolver removed)
-    duel_cloak_chance: int | None = Field(None, ge=0, le=100)
+    # duel_cloak_chance — RETIRED rev 0031 (column + constant removed)
 
     # Bounty mechanics
     close_bounty_threshold: int | None = Field(None, ge=1, le=50)
@@ -58,24 +58,20 @@ class GameConstantsOverridesMixin(BaseModel):
     # ge=0: a max window of 0 disables the "recently spotted" hint guild-wide
     # (every bounty rolls B=0). Per-bounty B is rolled from [0, this value].
     recently_spotted_max_window: int | None = Field(None, ge=0, le=50)
-    bounty_delay_random_min: int | None = Field(None, ge=0, le=1440)  # minutes; <= 1 day
-    bounty_delay_random_max: int | None = Field(None, ge=0, le=1440)  # minutes; <= 1 day
-    bounty_spawn_jitter: int | None = Field(None, ge=0, le=3600)  # seconds; <= 1 hour
+    # bounty_delay_random_min — RETIRED rev 0031 (column dropped; use scheduler cron)
+    # bounty_delay_random_max — RETIRED rev 0031 (column + constant removed)
+    # bounty_spawn_jitter — RETIRED rev 0031 (column dropped; GameConstants.BOUNTY_SPAWN_JITTER stays)
     check_cooldown: int | None = Field(None, ge=0, le=86400)  # seconds; <= 1 day
     duel_request_expiry: int | None = Field(None, ge=0, le=2_592_000)  # seconds; <= 30 days
     tier_change_cooldown: int | None = Field(None, ge=0, le=2_592_000)  # seconds; <= 30 days
 
-    # Activity / Temperature
-    guild_activity_decay_rate: float | None = Field(None, ge=0.0, le=1.0)
-    min_guild_activity: float | None = Field(None, ge=0.0, le=100.0)
-    activity_temp_per_player: int | None = Field(None, ge=0, le=100)
+    # Activity / Temperature — RETIRED rev 0031 (columns + constants removed)
+    # guild_activity_decay_rate, min_guild_activity, activity_temp_per_player
+    # removed — temperature subsystem was never fully wired (owner-approved).
 
-    # Shop
-    shop_default_ships_num: int | None = Field(None, ge=0, le=50)
-    shop_default_weapons_num: int | None = Field(None, ge=0, le=50)
-    shop_default_modules_num: int | None = Field(None, ge=0, le=50)
-    shop_default_turrets_num: int | None = Field(None, ge=0, le=50)
-    turret_spawn_probability: int | None = Field(None, ge=0, le=100)
+    # Shop — RETIRED rev 0031 (columns + constants removed)
+    # shop_default_ships_num, shop_default_weapons_num, shop_default_modules_num,
+    # shop_default_turrets_num, turret_spawn_probability — no live readers.
 
     # Economy — kaamo_max_capacity retired (issue #70): Kaamo storage is not a mechanic
     classic_credits_per_check: int | None = Field(None, ge=0, le=1_000_000)
@@ -275,13 +271,8 @@ class GameConstantsOverridesMixin(BaseModel):
                 raise ValueError(f"primary_tl_band_weights[{key!r}] must be a non-negative integer")
         return v
 
-    @model_validator(mode="after")
-    def validate_bounty_delay_range(self) -> "GameConstantsOverridesMixin":
-        mn = self.bounty_delay_random_min
-        mx = self.bounty_delay_random_max
-        if mn is not None and mx is not None and mn > mx:
-            raise ValueError("bounty_delay_random_min must be <= bounty_delay_random_max")
-        return self
+    # validate_bounty_delay_range — RETIRED rev 0031 (both bounty_delay_random_min
+    # and bounty_delay_random_max fields removed; validator deleted).
 
     @model_validator(mode="after")
     def validate_loot_qty_ordering(self) -> "GameConstantsOverridesMixin":

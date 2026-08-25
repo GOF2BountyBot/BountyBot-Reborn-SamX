@@ -225,25 +225,38 @@ class TestCriminalLoadoutFieldExposure:
             )
 
     def test_new_fields_surface_in_autocomplete(self, mock_admin_cog):
+        # Uses the new setting_autocomplete (metadata-driven; falls back to _GAME_CONSTANT_FIELDS
+        # in tests since no metadata is preloaded). Values must equal the bare field name.
         interaction = _create_mock_interaction()
         for field in _NEW_CRIMINAL_FIELDS:
-            choices = asyncio.run(mock_admin_cog.constants_autocomplete(interaction, field))
+            choices = asyncio.run(mock_admin_cog.setting_autocomplete(interaction, field))
             values = {c.value for c in choices}
-            assert field in values, f"{field} not surfaced by constants_autocomplete"
+            assert field in values, f"{field} not surfaced by setting_autocomplete"
 
 
 class TestCriminalLoadoutSetForwarding:
     """A slash set must forward {setting: parsed_value} to the bot-core config API.
 
-    Migrated to respx: each ``_run_set`` call now pins the real
-    ``PUT {api_base}/config/guild/{guild_id}`` route (in addition to the payload
-    assertions already present in each test below), so a wrong URL/method would fail
-    the route's ``assert_all_called=True`` instead of shipping green against an
-    accept-anything MagicMock responder.
+    Converted from admin_config_constants → /admin_config action:Set (issue #70 Option A).
+    The forwarding assertions and respx pinning are unchanged; only the callback path changed.
+
+    Note: the old-value GET (/config/guild/{id}/game-constants) is made inside
+    _admin_config_do_set (best-effort, try/except). In the test respx context it raises
+    ConnectError which is caught silently — old_value is None, which is acceptable.
     """
 
-    def _run_set(self, mock_admin_cog, request, *, setting, int_value=None, float_value=None, json_value=None):
-        """Run admin_config_constants under respx and return the matched PUT route."""
+    def _run_set(
+        self,
+        mock_admin_cog,
+        request,
+        *,
+        setting,
+        int_value=None,
+        float_value=None,
+        bool_value=None,
+        json_value=None,
+    ):
+        """Run /admin_config action:Set under respx and return the matched PUT route."""
         _with_real_client(mock_admin_cog, request)
         interaction = _create_mock_interaction()
         with respx.mock(assert_all_called=True) as mock_router:
@@ -251,13 +264,17 @@ class TestCriminalLoadoutSetForwarding:
                 return_value=httpx.Response(200, json={"guild_id": interaction.guild_id})
             )
             asyncio.run(
-                mock_admin_cog.admin_config_constants.callback(
+                mock_admin_cog.admin_config.callback(
                     mock_admin_cog,
                     interaction,
+                    action="set",
                     setting=setting,
                     int_value=int_value,
                     float_value=float_value,
+                    bool_value=bool_value,
+                    text_value=None,
                     json_value=json_value,
+                    only_overridden=True,
                 )
             )
         return route
@@ -273,15 +290,42 @@ class TestCriminalLoadoutSetForwarding:
             "platinum": 100,
         }
 
-    def test_set_bool_field_true_via_json_value(self, mock_admin_cog, request):
-        route = self._run_set(mock_admin_cog, request, setting="criminal_exclude_emp_weapons", json_value="true")
+    def test_set_bool_field_via_bool_value_true(self, mock_admin_cog, request):
+        # criminal_exclude_emp_weapons is now set via bool_value (not json_value) in the new command.
+        route = self._run_set(mock_admin_cog, request, setting="criminal_exclude_emp_weapons", bool_value=True)
         body = _json_body(route)
         assert body["criminal_exclude_emp_weapons"] is True
 
-    def test_set_bool_field_false_via_json_value(self, mock_admin_cog, request):
-        route = self._run_set(mock_admin_cog, request, setting="criminal_exclude_emp_weapons", json_value="false")
+    def test_set_bool_field_via_bool_value_false(self, mock_admin_cog, request):
+        route = self._run_set(mock_admin_cog, request, setting="criminal_exclude_emp_weapons", bool_value=False)
         body = _json_body(route)
         assert body["criminal_exclude_emp_weapons"] is False
+
+    def test_set_bool_field_json_value_rejected(self, mock_admin_cog, request):
+        # json_value is NOT accepted for bool fields — the new command returns an error embed.
+        _with_real_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        with respx.mock(assert_all_called=False) as mock_router:
+            route = mock_router.put(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
+                return_value=httpx.Response(200, json={"guild_id": interaction.guild_id})
+            )
+            asyncio.run(
+                mock_admin_cog.admin_config.callback(
+                    mock_admin_cog,
+                    interaction,
+                    action="set",
+                    setting="criminal_exclude_emp_weapons",
+                    int_value=None,
+                    float_value=None,
+                    bool_value=None,
+                    text_value=None,
+                    json_value="true",
+                    only_overridden=True,
+                )
+            )
+        # PUT must NOT be called — bool fields reject json_value
+        assert not route.called
+        interaction.followup.send.assert_called()
 
     def test_set_scalar_field_via_int_value(self, mock_admin_cog, request):
         route = self._run_set(mock_admin_cog, request, setting="long_range_threshold_m", int_value=3000)
@@ -313,11 +357,17 @@ class TestCriminalLoadoutSetForwarding:
                 return_value=httpx.Response(200, json={"guild_id": interaction.guild_id})
             )
             asyncio.run(
-                mock_admin_cog.admin_config_constants.callback(
+                mock_admin_cog.admin_config.callback(
                     mock_admin_cog,
                     interaction,
+                    action="set",
                     setting="criminal_cloak_chance_by_division",
+                    int_value=None,
+                    float_value=None,
+                    bool_value=None,
+                    text_value=None,
                     json_value="{not valid json",
+                    only_overridden=True,
                 )
             )
         assert not route.called

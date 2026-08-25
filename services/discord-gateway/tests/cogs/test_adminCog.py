@@ -1812,6 +1812,7 @@ class TestAdminConfigViewTimestamps:
             "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 20000},
         }
 
+    @pytest.mark.skip(reason="retired: old view showed guild config + timestamps; new view shows game-constants")
     def test_admin_config_view_timestamps_in_field(self, mock_admin_cog):
         """admin_config view: embed must have a field containing <t: timestamp markers."""
         interaction = _create_mock_interaction()
@@ -2622,6 +2623,8 @@ class TestPreloadStaticCatalogs:
             mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
                 return_value=httpx.Response(200, json=[{"name": "Niode", "id": 6}])
             )
+            # metadata endpoint added in issue #70 — mock it to prevent retry-sleep hang
+            mock_router.get(f"{self._API_BASE}/config/metadata").mock(return_value=httpx.Response(200, json=[]))
 
             asyncio.run(mock_admin_cog._preload_static_catalogs())
 
@@ -2657,6 +2660,8 @@ class TestPreloadStaticCatalogs:
                     json=[{"name": "Niode", "id": 10}, {"name": "Groza", "id": 11}, {"name": "Bloodstar", "id": 12}],
                 )
             )
+            # metadata endpoint added in issue #70 — mock it to prevent retry-sleep hang
+            mock_router.get(f"{self._API_BASE}/config/metadata").mock(return_value=httpx.Response(200, json=[]))
 
             asyncio.run(mock_admin_cog._preload_static_catalogs())
 
@@ -3106,7 +3111,6 @@ class TestAdminRoleAccessGranted:
             "admin_config",
             "admin_uninstall",
             "admin_config_shop",
-            "admin_config_validate",
             "render_config",
             "render_cache_clear",
             "admin_clear_bounties",
@@ -3706,6 +3710,7 @@ class TestAdminConfig:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
+    @pytest.mark.skip(reason="retired: 'set_credits' sub-action removed; use action:Set setting:starting_credits")
     def test_admin_config_set_credits_success(self, mock_admin_cog):
         """admin_config set_credits updates starting credits."""
         interaction = _create_mock_interaction()
@@ -3722,6 +3727,7 @@ class TestAdminConfig:
         msg = interaction.followup.send.call_args[0][0]
         assert "✅" in msg or "credits" in msg.lower()
 
+    @pytest.mark.skip(reason="retired: 'set_credits' sub-action removed")
     def test_admin_config_set_credits_missing_amount(self, mock_admin_cog):
         """admin_config set_credits sends error when credits amount not provided."""
         interaction = _create_mock_interaction()
@@ -3733,6 +3739,7 @@ class TestAdminConfig:
         msg = interaction.followup.send.call_args[0][0]
         assert "required" in msg.lower() or "❌" in msg
 
+    @pytest.mark.skip(reason="retired: 'set_role' sub-action removed; use /admin_setup")
     def test_admin_config_set_role_success(self, mock_admin_cog):
         """admin_config set_role updates admin role."""
         interaction = _create_mock_interaction()
@@ -3755,6 +3762,7 @@ class TestAdminConfig:
         msg = interaction.followup.send.call_args[0][0]
         assert "✅" in msg or "role" in msg.lower()
 
+    @pytest.mark.skip(reason="retired: 'set_role' sub-action removed")
     def test_admin_config_set_role_missing_role(self, mock_admin_cog):
         """admin_config set_role sends error when no role provided."""
         interaction = _create_mock_interaction()
@@ -3766,6 +3774,7 @@ class TestAdminConfig:
         msg = interaction.followup.send.call_args[0][0]
         assert "required" in msg.lower() or "❌" in msg
 
+    @pytest.mark.skip(reason="retired: old guild-config reset removed; new action:reset resets game-constant overrides")
     def test_admin_config_reset_success(self, mock_admin_cog):
         """admin_config reset resets guild config to defaults."""
         interaction = _create_mock_interaction()
@@ -3826,6 +3835,7 @@ class TestAdminConfig:
         msg = interaction.followup.send.call_args[0][0]
         assert "⚠️" in msg or "error" in msg.lower()
 
+    @pytest.mark.skip(reason="retired: old view showed guild config + XP thresholds; new view shows game-constants")
     def test_admin_config_xp_threshold_prestige_default(self, mock_admin_cog):
         """admin_config view: XP thresholds embed shows Prestige (default) when absent."""
         interaction = _create_mock_interaction()
@@ -4025,10 +4035,10 @@ class TestAdminConfigShop:
 
 
 class TestAdminConfigValidate:
-    """Tests for admin_config_validate command (lines 973-1026)."""
+    """Tests for admin_config action:validate (replaces retired /admin_config_validate)."""
 
     def test_config_validate_success_valid(self, mock_admin_cog):
-        """admin_config_validate shows valid config embed."""
+        """admin_config action:validate shows valid config embed."""
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
         interaction.guild = MagicMock()
@@ -4040,7 +4050,7 @@ class TestAdminConfigValidate:
         resp.json.return_value = validate_data
         mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "validate"))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
@@ -4050,7 +4060,7 @@ class TestAdminConfigValidate:
         assert "Valid" in embed.title or "✅" in embed.title
 
     def test_config_validate_with_errors_and_warnings(self, mock_admin_cog):
-        """admin_config_validate shows errors and warnings in embed."""
+        """admin_config action:validate shows errors and warnings in embed."""
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
         interaction.guild = MagicMock()
@@ -4067,7 +4077,7 @@ class TestAdminConfigValidate:
         resp.json.return_value = validate_data
         mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "validate"))
 
         call_kwargs = interaction.followup.send.call_args[1]
         embed = call_kwargs["embed"]
@@ -4077,18 +4087,18 @@ class TestAdminConfigValidate:
         assert "Missing admin role" in combined
 
     def test_config_validate_not_admin(self, mock_admin_cog):
-        """admin_config_validate rejects non-admin user."""
+        """admin_config action:validate rejects non-admin user."""
         interaction = _create_mock_interaction()
 
         with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
-            asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+            asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "validate"))
 
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]
         assert "admin" in msg.lower() or "❌" in msg
 
     def test_config_validate_http_error(self, mock_admin_cog):
-        """admin_config_validate handles HTTP error gracefully."""
+        """admin_config action:validate handles HTTP error gracefully."""
         import httpx
 
         interaction = _create_mock_interaction()
@@ -4100,20 +4110,20 @@ class TestAdminConfigValidate:
             side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
         )
 
-        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "validate"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert call_args[1].get("ephemeral") is True
 
     def test_config_validate_generic_exception(self, mock_admin_cog):
-        """admin_config_validate handles unexpected exception."""
+        """admin_config action:validate handles unexpected exception."""
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
 
         mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Service down"))
 
-        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "validate"))
 
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]
@@ -5560,7 +5570,7 @@ class TestAdminGuildStatsRespx:
 
 
 class TestAdminConfigRespx:
-    """respx URL-contract test: admin_config view GETs /config/guild/{guild_id}."""
+    """respx URL-contract test: admin_config action:view GETs /config/guild/{guild_id}/game-constants."""
 
     def test_admin_config_view_gets_correct_url(self, mock_admin_cog, request):
         import httpx
@@ -5570,27 +5580,29 @@ class TestAdminConfigRespx:
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
 
-        cfg_json = {
-            "guild_id": 987654321,
-            "configured": True,
-            "admin_role_configured": True,
-            "starting_credits": 500,
-            "sale_price_factor": 0.8,
-            "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00",
-        }
-
         env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
         with (
             patch.dict(os.environ, env, clear=True),
             patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
             respx.mock(assert_all_called=True) as mock_router,
         ):
-            mock_router.get(f"{_BOT_CORE_URL}/config/guild/987654321").mock(
-                return_value=httpx.Response(200, json=cfg_json)
+            mock_router.get(f"{_BOT_CORE_URL}/config/guild/987654321/game-constants").mock(
+                return_value=httpx.Response(200, json={})
             )
-            asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
+            asyncio.run(
+                mock_admin_cog.admin_config.callback(
+                    mock_admin_cog,
+                    interaction,
+                    "view",
+                    setting=None,
+                    int_value=None,
+                    float_value=None,
+                    bool_value=None,
+                    text_value=None,
+                    json_value=None,
+                    only_overridden=True,
+                )
+            )
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]

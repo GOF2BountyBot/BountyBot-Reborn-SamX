@@ -5,6 +5,9 @@ Handles REST API endpoints for guild configuration management including
 settings persistence, validation, and default configurations.
 """
 
+from __future__ import annotations
+
+import typing
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -12,12 +15,16 @@ from persist.database.manager import get_db_session
 from persist.repositories.bounty_repository import BountyRepository
 from services.config_service import ConfigService
 from services.exceptions import GuildNotConfiguredError
+from services.game_constants import GameConstants
 from shared import bblogger
 
+from api.config_metadata import DEPRECATED_FIELDS, FIELD_DESCRIPTIONS
 from api.schemas.config_schema import (
     BountyConfigResponse,
     BountyConfigStatusResponse,
+    ConfigMetadataResponse,
     ConfigValidationResponse,
+    FieldMetadata,
     GameConstantsOverridesMixin,
     GuildConfigResponse,
     ResetGameConstantsRequest,
@@ -569,3 +576,106 @@ async def reset_game_constants(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reset game constants"
         ) from e
+
+
+# ---------------------------------------------------------------------------
+# GET /config/metadata — guild-independent field type/bounds/default/description
+# ---------------------------------------------------------------------------
+
+# Hard-coded defaults for fields that are config columns, not GameConstants.
+_CONFIG_COLUMN_DEFAULTS: dict[str, Any] = {
+    "starting_credits": 0,
+    "sale_price_factor": 0.8,
+}
+
+# Complete settable surface: 95 _OVERRIDE_FIELDS + 2 core config scalars.
+_METADATA_FIELDS: tuple[str, ...] = (*_OVERRIDE_FIELDS, "starting_credits", "sale_price_factor")
+
+
+def _get_field_type(fi: Any) -> str:
+    """Return 'int'|'float'|'bool'|'dict' for a Pydantic v2 FieldInfo."""
+    ann = fi.annotation
+    # Unwrap X | None  →  X
+    args = typing.get_args(ann)
+    if args:
+        non_none = [a for a in args if a is not type(None)]
+        if non_none:
+            ann = non_none[0]
+    if ann is bool:
+        return "bool"
+    if ann is int:
+        return "int"
+    if ann is float:
+        return "float"
+    if typing.get_origin(ann) is dict:
+        return "dict"
+    return "int"  # safe fallback for unexpected annotations
+
+
+def _get_ge_le(fi: Any) -> tuple[int | float | None, int | float | None]:
+    """Return (ge, le) from a Pydantic v2 FieldInfo metadata list."""
+    ge: int | float | None = None
+    le: int | float | None = None
+    for m in fi.metadata:
+        if getattr(m, "ge", None) is not None:
+            ge = m.ge
+        if getattr(m, "le", None) is not None:
+            le = m.le
+    return ge, le
+
+
+def _build_metadata() -> ConfigMetadataResponse:
+    """Build the full metadata response at module load time (cached in _METADATA_CACHE)."""
+    mixin_fields = GameConstantsOverridesMixin.model_fields
+    result: dict[str, FieldMetadata] = {}
+
+    for field in _METADATA_FIELDS:
+        description = FIELD_DESCRIPTIONS.get(field, f"No description available for {field}.")
+        deprecated = field in DEPRECATED_FIELDS
+
+        # default: GameConstants class attribute (UPPERCASE field name) or hard-coded override
+        if field in _CONFIG_COLUMN_DEFAULTS:
+            default = _CONFIG_COLUMN_DEFAULTS[field]
+            field_type: str = "int" if isinstance(default, int) else "float"
+            ge: int | float | None = None
+            le: int | float | None = None
+        elif field in mixin_fields:
+            fi = mixin_fields[field]
+            field_type = _get_field_type(fi)
+            ge, le = _get_ge_le(fi)
+            gc_attr = field.upper()
+            default = getattr(GameConstants, gc_attr, None)
+        else:
+            # Field exists in _METADATA_FIELDS but not in mixin (shouldn't happen after guard tests)
+            field_type = "int"
+            ge, le = None, None
+            default = None
+
+        result[field] = FieldMetadata(
+            type=field_type,  # type: ignore[arg-type]
+            min=ge,
+            max=le,
+            default=default,
+            description=description,
+            deprecated=deprecated,
+        )
+
+    return ConfigMetadataResponse(fields=result)
+
+
+# Build once at import time; the metadata is static (no DB access needed).
+_METADATA_CACHE: ConfigMetadataResponse = _build_metadata()
+
+
+@router.get("/metadata", response_model=ConfigMetadataResponse)
+async def get_config_metadata() -> ConfigMetadataResponse:
+    """Return field-level metadata for every per-guild override setting.
+
+    Guild-independent — no guild_id parameter.  Response is pre-computed at
+    import time from GameConstantsOverridesMixin (bounds/type) and GameConstants
+    (defaults), so it never touches the database.
+
+    Useful for: autocomplete labels, local bounds pre-checks, help text.
+    """
+    flogger.debug("GET /config/metadata")
+    return _METADATA_CACHE

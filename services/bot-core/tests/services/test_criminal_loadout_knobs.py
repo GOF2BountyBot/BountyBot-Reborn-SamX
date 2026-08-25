@@ -124,49 +124,19 @@ def test_resolve_criminal_long_range_pct_zero_is_valid_override():
     assert result == pytest.approx(0.0)
 
 
-def test_resolve_primary_tl_band_weights_override_wins():
+def test_resolve_primary_tl_band_weight_scalar_override_wins():
+    """Flat scalar band-weight scalar wins when set (rev 0033 — JSONB dict dropped)."""
     cfg = GuildConfig(guild_id=1)
-    cfg.primary_tl_band_weights = {"center": 50, "minus1": 30, "plus1": 20}
-    result = resolve_constant(cfg, "primary_tl_band_weights", GameConstants.PRIMARY_TL_BAND_WEIGHTS)
-    assert result == {"center": 50, "minus1": 30, "plus1": 20}
+    cfg.primary_tl_band_weight_center = 50
+    result = resolve_constant(cfg, "primary_tl_band_weight_center", GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER)
+    assert result == 50
 
 
-def test_resolve_primary_tl_band_weights_none_falls_back():
+def test_resolve_primary_tl_band_weight_scalar_none_falls_back():
+    """Flat scalar falls back to global constant when None."""
     cfg = GuildConfig(guild_id=1)
-    cfg.primary_tl_band_weights = None
-    result = resolve_constant(cfg, "primary_tl_band_weights", GameConstants.PRIMARY_TL_BAND_WEIGHTS)
-    assert result == {"center": 70, "minus1": 20, "plus1": 10}
-
-
-@pytest.mark.parametrize(
-    "field, default",
-    [
-        ("criminal_cloak_chance_by_division", GameConstants.CRIMINAL_CLOAK_CHANCE_BY_DIVISION),
-        ("criminal_booster_chance_by_division", GameConstants.CRIMINAL_BOOSTER_CHANCE_BY_DIVISION),
-        ("criminal_emergency_chance_by_division", GameConstants.CRIMINAL_EMERGENCY_CHANCE_BY_DIVISION),
-        ("criminal_weaponmod_chance_by_division", GameConstants.CRIMINAL_WEAPONMOD_CHANCE_BY_DIVISION),
-    ],
-)
-def test_resolve_criminal_division_chance_override_wins(field, default):
-    override = {"bronze": 10, "silver": 20, "gold": 30, "platinum": 40}
-    cfg = GuildConfig(guild_id=1)
-    setattr(cfg, field, override)
-    assert resolve_constant(cfg, field, default) == override
-
-
-@pytest.mark.parametrize(
-    "field, default",
-    [
-        ("criminal_cloak_chance_by_division", GameConstants.CRIMINAL_CLOAK_CHANCE_BY_DIVISION),
-        ("criminal_booster_chance_by_division", GameConstants.CRIMINAL_BOOSTER_CHANCE_BY_DIVISION),
-        ("criminal_emergency_chance_by_division", GameConstants.CRIMINAL_EMERGENCY_CHANCE_BY_DIVISION),
-        ("criminal_weaponmod_chance_by_division", GameConstants.CRIMINAL_WEAPONMOD_CHANCE_BY_DIVISION),
-    ],
-)
-def test_resolve_criminal_division_chance_none_falls_back(field, default):
-    cfg = GuildConfig(guild_id=1)
-    setattr(cfg, field, None)
-    assert resolve_constant(cfg, field, default) == default
+    result = resolve_constant(cfg, "primary_tl_band_weight_center", GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER)
+    assert result == GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER
 
 
 # ---------------------------------------------------------------------------
@@ -180,24 +150,26 @@ def test_schema_accepts_valid_scalar_overrides():
     assert m.criminal_long_range_pct == pytest.approx(0.6)
 
 
-def test_schema_accepts_valid_band_weights():
-    m = GameConstantsOverridesMixin(primary_tl_band_weights={"center": 60, "minus1": 25, "plus1": 15})
-    assert m.primary_tl_band_weights == {"center": 60, "minus1": 25, "plus1": 15}
+def test_schema_accepts_valid_flat_criminal_chance():
+    """Flat scalar criminal-chance overrides are accepted (rev 0033 — JSONB dict dropped)."""
+    m = GameConstantsOverridesMixin(criminal_cloak_chance_bronze=25, criminal_cloak_chance_gold=66)
+    assert m.criminal_cloak_chance_bronze == 25
+    assert m.criminal_cloak_chance_gold == 66
 
 
-def test_schema_accepts_valid_division_chance():
-    m = GameConstantsOverridesMixin(
-        criminal_cloak_chance_by_division={"bronze": 0, "silver": 25, "gold": 66, "platinum": 100}
-    )
-    assert m.criminal_cloak_chance_by_division["gold"] == 66
+def test_schema_accepts_valid_flat_band_weights():
+    """Flat scalar band-weight overrides are accepted (rev 0033 — JSONB dict dropped)."""
+    m = GameConstantsOverridesMixin(primary_tl_band_weight_center=50, primary_tl_band_weight_minus1=30)
+    assert m.primary_tl_band_weight_center == 50
+    assert m.primary_tl_band_weight_minus1 == 30
 
 
 def test_schema_accepts_all_none():
     """A fresh-guild mixin (everything None) validates fine."""
     m = GameConstantsOverridesMixin()
     assert m.long_range_threshold_m is None
-    assert m.criminal_cloak_chance_by_division is None
-    assert m.primary_tl_band_weights is None
+    assert m.criminal_cloak_chance_bronze is None
+    assert m.primary_tl_band_weight_center is None
 
 
 # ---------------------------------------------------------------------------
@@ -220,65 +192,22 @@ def test_schema_rejects_long_range_threshold_negative():
         GameConstantsOverridesMixin(long_range_threshold_m=-1)
 
 
-def test_schema_rejects_band_weights_wrong_keys():
+def test_schema_rejects_criminal_cloak_chance_bronze_over_100():
+    """Flat scalar criminal-chance out-of-range is rejected (rev 0033)."""
     with pytest.raises(ValidationError):
-        GameConstantsOverridesMixin(primary_tl_band_weights={"center": 70, "minus1": 20})
+        GameConstantsOverridesMixin(criminal_cloak_chance_bronze=101)
 
 
-def test_schema_rejects_band_weights_negative_value():
+def test_schema_rejects_criminal_cloak_chance_bronze_negative():
+    """Flat scalar criminal-chance negative value is rejected."""
     with pytest.raises(ValidationError):
-        GameConstantsOverridesMixin(primary_tl_band_weights={"center": 70, "minus1": -5, "plus1": 10})
+        GameConstantsOverridesMixin(criminal_cloak_chance_bronze=-1)
 
 
-def test_schema_rejects_division_chance_missing_key():
+def test_schema_rejects_primary_tl_band_weight_center_negative():
+    """Flat scalar band-weight negative value is rejected (rev 0033)."""
     with pytest.raises(ValidationError):
-        GameConstantsOverridesMixin(criminal_cloak_chance_by_division={"bronze": 0, "silver": 25, "gold": 66})
-
-
-def test_schema_rejects_division_chance_extra_key():
-    with pytest.raises(ValidationError):
-        GameConstantsOverridesMixin(
-            criminal_booster_chance_by_division={
-                "bronze": 50,
-                "silver": 100,
-                "gold": 100,
-                "platinum": 100,
-                "diamond": 100,
-            }
-        )
-
-
-def test_schema_rejects_division_chance_value_over_100():
-    with pytest.raises(ValidationError):
-        GameConstantsOverridesMixin(
-            criminal_emergency_chance_by_division={"bronze": 0, "silver": 25, "gold": 50, "platinum": 101}
-        )
-
-
-def test_schema_rejects_division_chance_value_negative():
-    with pytest.raises(ValidationError):
-        GameConstantsOverridesMixin(
-            criminal_weaponmod_chance_by_division={"bronze": -1, "silver": 25, "gold": 50, "platinum": 100}
-        )
-
-
-def test_schema_rejects_division_chance_not_a_dict():
-    with pytest.raises(ValidationError):
-        GameConstantsOverridesMixin(criminal_cloak_chance_by_division=[0, 25, 66, 100])
-
-
-def test_schema_rejects_band_weights_bool_value():
-    """A bool in band-weights is rejected (bool is an int subclass — must not slip through)."""
-    with pytest.raises(ValidationError):
-        GameConstantsOverridesMixin(primary_tl_band_weights={"center": True, "minus1": 20, "plus1": 10})
-
-
-def test_schema_rejects_division_chance_float_value():
-    """A float in a division-chance dict is rejected (must be a strict int)."""
-    with pytest.raises(ValidationError):
-        GameConstantsOverridesMixin(
-            criminal_cloak_chance_by_division={"bronze": 25.5, "silver": 25, "gold": 66, "platinum": 100}
-        )
+        GameConstantsOverridesMixin(primary_tl_band_weight_center=-5)
 
 
 # ---------------------------------------------------------------------------
@@ -405,11 +334,12 @@ def test_criminal_secondary_min_damage_schema_bounds():
 
 
 class TestResolveFlattened:
-    """resolve_flattened() 3-step fallback chain per consumer family.
+    """resolve_flattened() 2-step fallback chain per consumer family (revision 0033).
 
     Step 1: scalar column set → returns scalar.
-    Step 2: scalar None but JSONB dict set → returns per-key value from dict.
-    Step 3: both None → returns global fallback.
+    Step 2: scalar None → returns global fallback.
+
+    The JSONB dict fallback step was removed in revision 0033 (columns dropped).
     """
 
     # -----------------------------------------------------------------------
@@ -417,55 +347,21 @@ class TestResolveFlattened:
     # -----------------------------------------------------------------------
 
     def test_division_max_tl_scalar_wins(self):
-        """Scalar column takes priority over JSONB dict when both are set."""
+        """Scalar column is returned when set."""
         cfg = GuildConfig(guild_id=1)
-        cfg.division_max_tl_gold = 5  # scalar override
-        cfg.division_max_tl = {"gold": 9}  # JSONB (should be ignored)
-        result = resolve_flattened(
-            cfg,
-            "division_max_tl_gold",
-            "division_max_tl",
-            "gold",
-            GameConstants.DIVISION_MAX_TL_GOLD,
-        )
+        cfg.division_max_tl_gold = 5
+        result = resolve_flattened(cfg, "division_max_tl_gold", GameConstants.DIVISION_MAX_TL_GOLD)
         assert result == 5
 
-    def test_division_max_tl_jsonb_fallback(self):
-        """When scalar is None but JSONB dict is set, the dict key value is used."""
-        cfg = GuildConfig(guild_id=1)
-        # scalar column is None (default)
-        cfg.division_max_tl = {"gold": 6}
-        result = resolve_flattened(
-            cfg,
-            "division_max_tl_gold",
-            "division_max_tl",
-            "gold",
-            GameConstants.DIVISION_MAX_TL_GOLD,
-        )
-        assert result == 6
-
     def test_division_max_tl_global_fallback(self):
-        """When both scalar and JSONB are None, returns the global constant."""
+        """When scalar is None, returns the global constant."""
         cfg = GuildConfig(guild_id=1)
-        # Both are None by default
-        result = resolve_flattened(
-            cfg,
-            "division_max_tl_gold",
-            "division_max_tl",
-            "gold",
-            GameConstants.DIVISION_MAX_TL_GOLD,
-        )
+        result = resolve_flattened(cfg, "division_max_tl_gold", GameConstants.DIVISION_MAX_TL_GOLD)
         assert result == GameConstants.DIVISION_MAX_TL_GOLD
 
     def test_division_max_tl_none_cfg_returns_fallback(self):
         """None cfg always returns the global fallback."""
-        result = resolve_flattened(
-            None,
-            "division_max_tl_bronze",
-            "division_max_tl",
-            "bronze",
-            GameConstants.DIVISION_MAX_TL_BRONZE,
-        )
+        result = resolve_flattened(None, "division_max_tl_bronze", GameConstants.DIVISION_MAX_TL_BRONZE)
         assert result == GameConstants.DIVISION_MAX_TL_BRONZE
 
     # -----------------------------------------------------------------------
@@ -473,41 +369,19 @@ class TestResolveFlattened:
     # -----------------------------------------------------------------------
 
     def test_reward_mult_scalar_wins(self):
-        """Scalar reward_mult takes priority over JSONB when both set."""
+        """Scalar reward_mult is returned when set."""
         cfg = GuildConfig(guild_id=2)
         cfg.bounty_division_reward_mult_silver = 3.5
-        cfg.bounty_division_reward_mult = {"silver": 1.0}
         result = resolve_flattened(
-            cfg,
-            "bounty_division_reward_mult_silver",
-            "bounty_division_reward_mult",
-            "silver",
-            GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER,
+            cfg, "bounty_division_reward_mult_silver", GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER
         )
         assert result == pytest.approx(3.5)
 
-    def test_reward_mult_jsonb_fallback(self):
-        """Falls back to JSONB key when scalar is None."""
-        cfg = GuildConfig(guild_id=2)
-        cfg.bounty_division_reward_mult = {"silver": 2.5}
-        result = resolve_flattened(
-            cfg,
-            "bounty_division_reward_mult_silver",
-            "bounty_division_reward_mult",
-            "silver",
-            GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER,
-        )
-        assert result == pytest.approx(2.5)
-
     def test_reward_mult_global_fallback(self):
-        """Falls back to global constant when both are absent."""
+        """Falls back to global constant when scalar is absent."""
         cfg = GuildConfig(guild_id=2)
         result = resolve_flattened(
-            cfg,
-            "bounty_division_reward_mult_silver",
-            "bounty_division_reward_mult",
-            "silver",
-            GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER,
+            cfg, "bounty_division_reward_mult_silver", GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER
         )
         assert result == pytest.approx(GameConstants.BOUNTY_DIVISION_REWARD_MULT_SILVER)
 
@@ -516,42 +390,16 @@ class TestResolveFlattened:
     # -----------------------------------------------------------------------
 
     def test_band_weight_scalar_wins(self):
-        """Scalar band weight wins over JSONB dict when both set."""
+        """Flat scalar band weight is returned when set."""
         cfg = GuildConfig(guild_id=3)
         cfg.primary_tl_band_weight_center = 50
-        cfg.primary_tl_band_weights = {"center": 70, "minus1": 20, "plus1": 10}
-        result = resolve_flattened(
-            cfg,
-            "primary_tl_band_weight_center",
-            "primary_tl_band_weights",
-            "center",
-            GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER,
-        )
+        result = resolve_flattened(cfg, "primary_tl_band_weight_center", GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER)
         assert result == 50
 
-    def test_band_weight_jsonb_fallback(self):
-        """Falls back to JSONB key when scalar is None."""
-        cfg = GuildConfig(guild_id=3)
-        cfg.primary_tl_band_weights = {"center": 60, "minus1": 30, "plus1": 10}
-        result = resolve_flattened(
-            cfg,
-            "primary_tl_band_weight_center",
-            "primary_tl_band_weights",
-            "center",
-            GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER,
-        )
-        assert result == 60
-
     def test_band_weight_global_fallback(self):
-        """Falls back to global constant when both absent."""
+        """Falls back to global constant when scalar is absent."""
         cfg = GuildConfig(guild_id=3)
-        result = resolve_flattened(
-            cfg,
-            "primary_tl_band_weight_center",
-            "primary_tl_band_weights",
-            "center",
-            GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER,
-        )
+        result = resolve_flattened(cfg, "primary_tl_band_weight_center", GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER)
         assert result == GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER
 
     # -----------------------------------------------------------------------
@@ -559,40 +407,14 @@ class TestResolveFlattened:
     # -----------------------------------------------------------------------
 
     def test_cloak_chance_scalar_wins(self):
-        """Scalar cloak chance wins over JSONB by_division when both set."""
+        """Flat scalar cloak chance is returned when set."""
         cfg = GuildConfig(guild_id=4)
         cfg.criminal_cloak_chance_bronze = 25
-        cfg.criminal_cloak_chance_by_division = {"bronze": 10, "silver": 5}
-        result = resolve_flattened(
-            cfg,
-            "criminal_cloak_chance_bronze",
-            "criminal_cloak_chance_by_division",
-            "bronze",
-            GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE,
-        )
+        result = resolve_flattened(cfg, "criminal_cloak_chance_bronze", GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE)
         assert result == 25
 
-    def test_cloak_chance_jsonb_fallback(self):
-        """Falls back to JSONB key when scalar is None."""
-        cfg = GuildConfig(guild_id=4)
-        cfg.criminal_cloak_chance_by_division = {"bronze": 8, "silver": 4}
-        result = resolve_flattened(
-            cfg,
-            "criminal_cloak_chance_bronze",
-            "criminal_cloak_chance_by_division",
-            "bronze",
-            GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE,
-        )
-        assert result == 8
-
     def test_cloak_chance_global_fallback(self):
-        """Falls back to global constant when both absent."""
+        """Falls back to global constant when scalar is absent."""
         cfg = GuildConfig(guild_id=4)
-        result = resolve_flattened(
-            cfg,
-            "criminal_cloak_chance_bronze",
-            "criminal_cloak_chance_by_division",
-            "bronze",
-            GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE,
-        )
+        result = resolve_flattened(cfg, "criminal_cloak_chance_bronze", GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE)
         assert result == GameConstants.CRIMINAL_CLOAK_CHANCE_BRONZE

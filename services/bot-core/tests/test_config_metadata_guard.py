@@ -53,7 +53,8 @@ except IndexError:
 _CATALOG_VISIBLE: bool = _CATALOG_PATH.is_file()
 
 # ---------------------------------------------------------------------------
-# Expected total: 95 _OVERRIDE_FIELDS + starting_credits + sale_price_factor
+# Expected total: 110 _OVERRIDE_FIELDS + starting_credits + sale_price_factor
+# (revision 0033 dropped 7 JSONB dict fields, reducing _OVERRIDE_FIELDS from 117 to 110)
 # ---------------------------------------------------------------------------
 _EXPECTED_TOTAL = len(_OVERRIDE_FIELDS) + 2
 
@@ -82,7 +83,7 @@ class TestMetadataFieldSetParity:
         assert not dupes, f"Duplicate entries in _METADATA_FIELDS: {dupes}"
 
     def test_metadata_fields_count(self):
-        """_METADATA_FIELDS has exactly 97 entries."""
+        """_METADATA_FIELDS has exactly 112 entries (110 _OVERRIDE_FIELDS + 2 config columns)."""
         assert len(_METADATA_FIELDS) == _EXPECTED_TOTAL, (
             f"Expected {_EXPECTED_TOTAL} metadata fields, got {len(_METADATA_FIELDS)}."
         )
@@ -192,8 +193,8 @@ class TestMetadataEndpointSampleAssertions:
         assert "fields" in data
         assert isinstance(data["fields"], dict)
 
-    def test_metadata_has_all_97_fields(self):
-        """The 'fields' dict has exactly 97 entries."""
+    def test_metadata_has_all_112_fields(self):
+        """The 'fields' dict has exactly 112 entries (110 _OVERRIDE_FIELDS + 2 config columns)."""
         data = self.client.get("/api/v1/config/metadata").json()
         fields = data["fields"]
         assert len(fields) == _EXPECTED_TOTAL, (
@@ -238,15 +239,6 @@ class TestMetadataEndpointSampleAssertions:
         assert f["max"] is None
         assert f["default"] is True
         assert f["deprecated"] is False
-
-    def test_division_max_tl_deprecated_dict_sample(self):
-        """division_max_tl is deprecated=True with a dict default."""
-        fields = self.client.get("/api/v1/config/metadata").json()["fields"]
-        f = fields["division_max_tl"]
-        assert f["type"] == "dict"
-        assert f["deprecated"] is True
-        assert "Deprecated" in f["description"]
-        assert isinstance(f["default"], dict)
 
     def test_division_max_tl_bronze_flat_scalar_sample(self):
         """division_max_tl_bronze has type=int, min=1, max=10, default=2, not deprecated."""

@@ -9,8 +9,7 @@ Public symbols
 --------------
 FIELD_DESCRIPTIONS : dict[str, str]
     One admin-facing sentence per field.  Flat scalars derived from a parent
-    JSONB row include the division/key qualifier.  Deprecated JSONB dict fields
-    carry the standard deprecation notice.
+    JSONB row include the division/key qualifier.
 
 FIELD_TO_CATALOG_ROW : dict[str, str]
     Maps each override field name to the UPPERCASE constant name in
@@ -22,8 +21,10 @@ FIELD_TO_CATALOG_ROW : dict[str, str]
     intentionally absent — they are config columns, not GameConstants rows.
 
 DEPRECATED_FIELDS : frozenset[str]
-    The 7 JSONB dict fields grandfathered from before the flatten refactor.
-    Their descriptions say to use the per-division/per-key scalars instead.
+    Empty since revision 0033 — the 7 JSONB dict columns were dropped in that
+    migration (backfilled to flat scalars in revision 0030).  Kept as an empty
+    frozenset so downstream guard tests and metadata callers don't need to be
+    rewritten if a future deprecation cycle restores the mechanism.
 
 NO_CATALOG_ROW_FIELDS : frozenset[str]
     Fields with no GAME_CONSTANTS_CATALOG.md row.  Flagged here for
@@ -33,22 +34,11 @@ NO_CATALOG_ROW_FIELDS : frozenset[str]
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Deprecated JSONB dict fields
+# Deprecated fields — empty since revision 0033 (7 JSONB dicts dropped).
+# Kept as an empty frozenset to preserve the downstream guard mechanism.
 # ---------------------------------------------------------------------------
 
-DEPRECATED_FIELDS: frozenset[str] = frozenset(
-    {
-        "division_max_tl",
-        "bounty_division_reward_mult",
-        "primary_tl_band_weights",
-        "criminal_cloak_chance_by_division",
-        "criminal_booster_chance_by_division",
-        "criminal_emergency_chance_by_division",
-        "criminal_weaponmod_chance_by_division",
-    }
-)
-
-_DEPRECATED_DESCRIPTION = "Deprecated — set the per-division/per-key scalar settings instead; removed next release."
+DEPRECATED_FIELDS: frozenset[str] = frozenset()
 
 # ---------------------------------------------------------------------------
 # Fields with no GAME_CONSTANTS_CATALOG.md row (config columns, not constants)
@@ -71,14 +61,6 @@ NO_CATALOG_ROW_FIELDS: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 
 FIELD_TO_CATALOG_ROW: dict[str, str] = {
-    # ------- deprecated JSONB dicts (map to themselves) -------
-    "division_max_tl": "DIVISION_MAX_TL",
-    "bounty_division_reward_mult": "BOUNTY_DIVISION_REWARD_MULT",
-    "primary_tl_band_weights": "PRIMARY_TL_BAND_WEIGHTS",
-    "criminal_cloak_chance_by_division": "CRIMINAL_CLOAK_CHANCE_BY_DIVISION",
-    "criminal_booster_chance_by_division": "CRIMINAL_BOOSTER_CHANCE_BY_DIVISION",
-    "criminal_emergency_chance_by_division": "CRIMINAL_EMERGENCY_CHANCE_BY_DIVISION",
-    "criminal_weaponmod_chance_by_division": "CRIMINAL_WEAPONMOD_CHANCE_BY_DIVISION",
     # ------- division_max_tl flat scalars -------
     "division_max_tl_bronze": "DIVISION_MAX_TL",
     "division_max_tl_silver": "DIVISION_MAX_TL",
@@ -200,19 +182,12 @@ FIELD_TO_CATALOG_ROW: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# Field descriptions (97 total: 95 _OVERRIDE_FIELDS + starting_credits +
+# Field descriptions (112 total: 110 _OVERRIDE_FIELDS + starting_credits +
 # sale_price_factor).  Sentences end with a period.
+# (Revision 0033 dropped 7 JSONB dict fields; 7 entries removed here.)
 # ---------------------------------------------------------------------------
 
 FIELD_DESCRIPTIONS: dict[str, str] = {
-    # ====== deprecated JSONB dicts ======
-    "division_max_tl": _DEPRECATED_DESCRIPTION,
-    "bounty_division_reward_mult": _DEPRECATED_DESCRIPTION,
-    "primary_tl_band_weights": _DEPRECATED_DESCRIPTION,
-    "criminal_cloak_chance_by_division": _DEPRECATED_DESCRIPTION,
-    "criminal_booster_chance_by_division": _DEPRECATED_DESCRIPTION,
-    "criminal_emergency_chance_by_division": _DEPRECATED_DESCRIPTION,
-    "criminal_weaponmod_chance_by_division": _DEPRECATED_DESCRIPTION,
     # ====== division_max_tl flat scalars ======
     "division_max_tl_bronze": (
         "The highest equipment tech level a criminal can carry in the Bronze division"

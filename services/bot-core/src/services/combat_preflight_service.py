@@ -103,13 +103,10 @@ class CombatPreflightService:
             List of SimpleNamespace objects with a ``criminal_ship`` attribute
             (duck-typed like a ``Bounty`` record). Empty list if synthesis fails.
         """
-        # Per-guild max-TL resolution (issue #70 unit A1).
-        # Flat scalar (division_max_tl_<division>) wins over legacy JSONB dict fallback.
+        # Per-guild max-TL resolution (issue #70, revision 0033 — flat scalar only).
         max_tl = resolve_flattened(
             guild_cfg,
             f"division_max_tl_{division}",
-            "division_max_tl",
-            division,
             GameConstants.DIVISION_MAX_TL.get(division, GameConstants.MAX_TECH_LEVEL),
         )
         min_tl = GameConstants.MIN_TECH_LEVEL

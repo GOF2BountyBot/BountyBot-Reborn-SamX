@@ -63,20 +63,11 @@ _OVERRIDE_FIELDS_JSON = _DATA_DIR / "override_fields.json"
 BOOL_FIELDS: frozenset[str] = frozenset({"criminal_exclude_emp_weapons"})
 
 # ---------------------------------------------------------------------------
-# DICT_FIELDS — the 7 deprecated JSONB fields.  They carry custom @field_validators
-# for structural validation; no ge/le bounds apply.
+# DICT_FIELDS — empty since revision 0033 (the 7 deprecated JSONB dict columns
+# were dropped; their scalars are now in _OVERRIDE_FIELDS directly).
+# Kept as an empty frozenset so the guard logic below doesn't need rewriting.
 # ---------------------------------------------------------------------------
-DICT_FIELDS: frozenset[str] = frozenset(
-    {
-        "division_max_tl",
-        "bounty_division_reward_mult",
-        "primary_tl_band_weights",
-        "criminal_cloak_chance_by_division",
-        "criminal_booster_chance_by_division",
-        "criminal_emergency_chance_by_division",
-        "criminal_weaponmod_chance_by_division",
-    }
-)
+DICT_FIELDS: frozenset[str] = frozenset()
 
 # ---------------------------------------------------------------------------
 # LIVE_READ_EXCEPTIONS — fields consumed ONLY via f-string computed keys; a
@@ -108,10 +99,9 @@ LIVE_READ_EXCEPTIONS: frozenset[str] = frozenset(
         #   f"bounty_division_reward_mult_{division.lower()}"
         "bounty_division_reward_mult_bronze", "bounty_division_reward_mult_silver",
         "bounty_division_reward_mult_gold",   "bounty_division_reward_mult_platinum",
-        # services/bounty_service.py:1164–1165
-        #   f"{chance_key}_{division.lower()}"  (scalar)
-        #   f"{chance_key}_by_division"          (legacy JSONB fallback)
-        # All 16 flat scalars + 4 JSONB dict fields resolved exclusively via f-string.
+        # services/bounty_service.py:1162–1164
+        #   f"{chance_key}_{division.lower()}"  (scalar only since rev 0033)
+        # All 16 flat scalars resolved exclusively via f-string.
         "criminal_cloak_chance_bronze",    "criminal_cloak_chance_silver",
         "criminal_cloak_chance_gold",      "criminal_cloak_chance_platinum",
         "criminal_booster_chance_bronze",  "criminal_booster_chance_silver",
@@ -120,11 +110,6 @@ LIVE_READ_EXCEPTIONS: frozenset[str] = frozenset(
         "criminal_emergency_chance_gold",  "criminal_emergency_chance_platinum",
         "criminal_weaponmod_chance_bronze","criminal_weaponmod_chance_silver",
         "criminal_weaponmod_chance_gold",  "criminal_weaponmod_chance_platinum",
-        # JSONB dict fields read via f"{chance_key}_by_division" (bounty_service.py:1165)
-        "criminal_cloak_chance_by_division",
-        "criminal_booster_chance_by_division",
-        "criminal_emergency_chance_by_division",
-        "criminal_weaponmod_chance_by_division",
     }
 )
 # fmt: on

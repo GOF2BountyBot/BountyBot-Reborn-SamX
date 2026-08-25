@@ -2,12 +2,14 @@
 Tests for /admin_config_constants criminal-loadout balance knobs.
 
 Covers the 8 criminal-loadout fields added to AdminCog._GAME_CONSTANT_FIELDS so they
-are slash-settable (dict / bool / scalar) and surface in constants_autocomplete.
+are slash-settable (bool / scalar) and surface in constants_autocomplete.
 
 Value correctness is enforced server-side by the bot-core config schema; the gateway
-only parses json_value and forwards {setting: parsed_value} to the config API. These
-tests assert that forwarding behaviour (with a mocked http_client), matching how the
-pre-existing dict field division_max_tl already flows.
+forwards {setting: parsed_value} to the config API.
+These tests assert that forwarding behaviour (with a mocked http_client).
+
+Revision 0033: the 7 deprecated JSONB dict fields (division_max_tl, bounty_division_reward_mult,
+primary_tl_band_weights, criminal_*_chance_by_division) were retired; json_value parameter removed.
 """
 
 import asyncio
@@ -58,15 +60,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
-# The 8 criminal-loadout knobs newly exposed through the slash command.
+# The criminal-loadout knobs newly exposed through the slash command.
+# Revision 0033: 7 JSONB dict fields removed; only scalar/bool fields remain.
 _NEW_CRIMINAL_FIELDS = (
     "long_range_threshold_m",
     "criminal_long_range_pct",
-    "primary_tl_band_weights",
-    "criminal_cloak_chance_by_division",
-    "criminal_booster_chance_by_division",
-    "criminal_emergency_chance_by_division",
-    "criminal_weaponmod_chance_by_division",
     "criminal_exclude_emp_weapons",
 )
 
@@ -93,28 +91,13 @@ _NEW_LOOT_FIELDS = (
     "loot_commodity_sell_fraction",
 )
 
-# Full slash-settable surface (82 fields; _GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS).
-# 52 prior + 27 added in D-trivial batch (issue #70, revision 0028):
-#   4 previously API-only (min_route_systems, recently_spotted_max_window,
-#     demotion_credit_penalty_pct, shop_combat_module_prob)
-#   + 1 criminal_secondary_min_damage
-#   + 2 shop_secondary_qty_scaler_{heavy,standard}
-#   + 8 shop_tl_band_{lo,hi}_{bronze,silver,gold,platinum}
-#   + 3 shop_{banded_tl_weight,uptier_tl_decay,downtier_tl_decay}
-#   + 4 division_tl_center_{bronze,silver,gold,platinum}
-#   + 5 orphans (bounty_{single,dual}_waypoint_prob, bounty_waypoint_{attempts,min_degree},
-#               pvc_damage_reduction)
-# + 3 added in Unit C batch (issue #70, revision 0029):
-#   bronze_combat_bonus_{base_mult,per_prestige,cap}
-# + 27 added in JSONB flatten (issue #70, revision 0030):
-#   division_max_tl_{bronze,silver,gold,platinum}                       (4)
-#   bounty_division_reward_mult_{bronze,silver,gold,platinum}           (4)
-#   primary_tl_band_weight_{center,minus1,plus1}                       (3)
-#   criminal_{cloak,booster,emergency,weaponmod}_chance_{bronze,...}   (16)
+# Full slash-settable surface (_GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS).
+# Rev 0031: 14 fields retired → 95
+# Rev 0032: +22 combat engine constants → 117
+# Rev 0033: −7 JSONB dict fields (division_max_tl, bounty_division_reward_mult,
+#   primary_tl_band_weights, criminal_{cloak,booster,emergency,weaponmod}_chance_by_division) → 110
 # Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
-# Rev 0031: 14 fields retired → 109 - 14 = 95
-# Rev 0032: +22 combat engine constants → 95 + 22 = 117
-_EXPECTED_SLASH_FIELD_COUNT = 117
+_EXPECTED_SLASH_FIELD_COUNT = 110
 
 
 def _evict_discord_modules():
@@ -181,7 +164,7 @@ def _json_body(route):
 
 
 class TestCriminalLoadoutFieldExposure:
-    """The 8 knobs must be registered + autocompletable, and the slash surface must be 53."""
+    """The knobs must be registered + autocompletable, and the slash surface must be 110."""
 
     def test_all_new_fields_in_game_constant_fields(self, mock_admin_cog):
         for field in _NEW_CRIMINAL_FIELDS:
@@ -191,14 +174,9 @@ class TestCriminalLoadoutFieldExposure:
         for field in _NEW_LOOT_FIELDS:
             assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
 
-    def test_slash_field_count_is_117(self, mock_admin_cog):
+    def test_slash_field_count_is_110(self, mock_admin_cog):
         # Locks the slash-settable surface (see _EXPECTED_SLASH_FIELD_COUNT above).
-        # _GAME_CONSTANT_FIELDS now matches _OVERRIDE_FIELDS exactly (both 117 after rev 0032).
-        # demotion_credit_penalty_pct IS now slash-settable (added in issue #70 batch).
-        # kaamo_max_capacity was retired in issue #70.
-        # bronze_combat_bonus_{base_mult,per_prestige,cap} added in Unit C (revision 0029).
-        # 14 fields retired in rev 0031 (shop_default_*, activity/temperature, bounty timing).
-        # +22 combat engine constants added in rev 0032 (unit A1).
+        # Rev 0033: 7 JSONB dict fields retired → 110 total.
         assert len(mock_admin_cog._GAME_CONSTANT_FIELDS) == _EXPECTED_SLASH_FIELD_COUNT
         assert "demotion_credit_penalty_pct" in mock_admin_cog._GAME_CONSTANT_FIELDS
         assert "kaamo_max_capacity" not in mock_admin_cog._GAME_CONSTANT_FIELDS
@@ -224,6 +202,19 @@ class TestCriminalLoadoutFieldExposure:
         ):
             assert retired not in mock_admin_cog._GAME_CONSTANT_FIELDS, (
                 f"{retired} should be RETIRED from _GAME_CONSTANT_FIELDS (rev 0031)"
+            )
+        # Rev 0033 retired JSONB dict fields must NOT appear
+        for retired in (
+            "division_max_tl",
+            "bounty_division_reward_mult",
+            "primary_tl_band_weights",
+            "criminal_cloak_chance_by_division",
+            "criminal_booster_chance_by_division",
+            "criminal_emergency_chance_by_division",
+            "criminal_weaponmod_chance_by_division",
+        ):
+            assert retired not in mock_admin_cog._GAME_CONSTANT_FIELDS, (
+                f"{retired} should be RETIRED from _GAME_CONSTANT_FIELDS (rev 0033)"
             )
 
     def test_new_fields_surface_in_autocomplete(self, mock_admin_cog):
@@ -256,7 +247,6 @@ class TestCriminalLoadoutSetForwarding:
         int_value=None,
         float_value=None,
         bool_value=None,
-        json_value=None,
     ):
         """Run /admin_config action:Set under respx and return the matched PUT route."""
         _with_real_client(mock_admin_cog, request)
@@ -275,22 +265,10 @@ class TestCriminalLoadoutSetForwarding:
                     float_value=float_value,
                     bool_value=bool_value,
                     text_value=None,
-                    json_value=json_value,
                     only_overridden=True,
                 )
             )
         return route
-
-    def test_set_dict_field_via_json_value(self, mock_admin_cog, request):
-        payload = '{"bronze": 0, "silver": 25, "gold": 66, "platinum": 100}'
-        route = self._run_set(mock_admin_cog, request, setting="criminal_cloak_chance_by_division", json_value=payload)
-        body = _json_body(route)
-        assert body["criminal_cloak_chance_by_division"] == {
-            "bronze": 0,
-            "silver": 25,
-            "gold": 66,
-            "platinum": 100,
-        }
 
     def test_set_bool_field_via_bool_value_true(self, mock_admin_cog, request):
         # criminal_exclude_emp_weapons is now set via bool_value (not json_value) in the new command.
@@ -303,32 +281,6 @@ class TestCriminalLoadoutSetForwarding:
         body = _json_body(route)
         assert body["criminal_exclude_emp_weapons"] is False
 
-    def test_set_bool_field_json_value_rejected(self, mock_admin_cog, request):
-        # json_value is NOT accepted for bool fields — the new command returns an error embed.
-        _with_real_client(mock_admin_cog, request)
-        interaction = _create_mock_interaction()
-        with respx.mock(assert_all_called=False) as mock_router:
-            route = mock_router.put(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
-                return_value=httpx.Response(200, json={"guild_id": interaction.guild_id})
-            )
-            asyncio.run(
-                mock_admin_cog.admin_config.callback(
-                    mock_admin_cog,
-                    interaction,
-                    action="set",
-                    setting="criminal_exclude_emp_weapons",
-                    int_value=None,
-                    float_value=None,
-                    bool_value=None,
-                    text_value=None,
-                    json_value="true",
-                    only_overridden=True,
-                )
-            )
-        # PUT must NOT be called — bool fields reject json_value
-        assert not route.called
-        interaction.followup.send.assert_called()
-
     def test_set_scalar_field_via_int_value(self, mock_admin_cog, request):
         route = self._run_set(mock_admin_cog, request, setting="long_range_threshold_m", int_value=3000)
         body = _json_body(route)
@@ -339,41 +291,6 @@ class TestCriminalLoadoutSetForwarding:
         route = self._run_set(mock_admin_cog, request, setting="criminal_long_range_pct", float_value=0.65)
         body = _json_body(route)
         assert body == {"guild_id": 987654321, "criminal_long_range_pct": 0.65}
-
-    def test_set_band_weights_field_via_json_value(self, mock_admin_cog, request):
-        # Distinct dict structure from the *_chance_by_division fields.
-        payload = '{"center": 70, "minus1": 20, "plus1": 10}'
-        route = self._run_set(mock_admin_cog, request, setting="primary_tl_band_weights", json_value=payload)
-        body = _json_body(route)
-        assert body == {
-            "guild_id": 987654321,
-            "primary_tl_band_weights": {"center": 70, "minus1": 20, "plus1": 10},
-        }
-
-    def test_malformed_json_value_is_rejected_without_put(self, mock_admin_cog, request):
-        # Same handling as every existing dict field: parse failure → no API call.
-        _with_real_client(mock_admin_cog, request)
-        interaction = _create_mock_interaction()
-        with respx.mock(assert_all_called=False) as mock_router:
-            route = mock_router.put(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
-                return_value=httpx.Response(200, json={"guild_id": interaction.guild_id})
-            )
-            asyncio.run(
-                mock_admin_cog.admin_config.callback(
-                    mock_admin_cog,
-                    interaction,
-                    action="set",
-                    setting="criminal_cloak_chance_by_division",
-                    int_value=None,
-                    float_value=None,
-                    bool_value=None,
-                    text_value=None,
-                    json_value="{not valid json",
-                    only_overridden=True,
-                )
-            )
-        assert not route.called
-        interaction.followup.send.assert_called()
 
 
 # ---------------------------------------------------------------------------

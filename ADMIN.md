@@ -384,7 +384,7 @@ Use `int_value` for integer fields, `float_value` for float fields, `json_value`
 | `shop_default_turrets_num` | int | `2` | count | Inert override (see above). |
 | `turret_spawn_probability` | int | `45` | percent | **Inert override** — not consumed by `ShopService`. Defined and persisted for completeness. |
 | `demotion_credit_penalty_pct` | int | `10` | percent | % of credits deducted on tier demotion. **API-only** — accepted by `PUT /api/v1/config/guild/{guild_id}` but not offered/validated by the `/admin_config_constants` slash command. |
-| `classic_credits_per_check` | int | `1000` | credits | Intended: credit floor per system check. **Effectively inert** — only consumed by the deprecated `reward_per_sys_check()` formula, which the spawn path no longer calls. |
+| `classic_credits_per_check` | int | `1000` | credits | Credit floor per system check that seeds every bounty prize pool. **LIVE** — consumed via `game_maths.reward_per_sys_check()` (floored here at this value), then `bounty_service.spawn_bounty()` uses the result as `total_reward = _legacy_rps × len(route)`, which feeds the division-reward multiplier, winner-reserve split, and per-system consolation payout. The `_legacy_rps` local name and the helper's "deprecated" docstring refer to the formula's lineage, not deadness. GuildConfig column exists but per-guild wiring is not yet live (Unit D1 planned). |
 
 > `bounty_pvc_armour_buff_factor` and `duel_variance_percent` were retired in the T10 combat migration (the old `SimpleTTKResolver` was removed) and are no longer overridable.
 

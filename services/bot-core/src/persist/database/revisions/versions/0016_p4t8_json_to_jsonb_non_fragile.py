@@ -82,9 +82,26 @@ _JSONB_TYPE = JSONB()
 _JSON_TYPE = sa.JSON()
 
 
+def _existing_cols(table: str) -> set[str]:
+    """Column names present on *table* right now (inspector snapshot)."""
+    inspector = sa.inspect(op.get_bind())
+    return {c["name"] for c in inspector.get_columns(table)}
+
+
 def upgrade() -> None:
-    """Alter all non-fragile JSON columns to JSONB."""
+    """Alter all non-fragile JSON columns to JSONB.
+
+    Guarded per column: a fresh install materialises tables from CURRENT ORM
+    metadata in revision 0001, so columns retired later in the chain (e.g.
+    division_temperatures, dropped in 0031) never exist here and must be
+    skipped rather than altered.
+    """
+    cols_by_table: dict[str, set[str]] = {}
     for table, column in _ALL_COLS:
+        if table not in cols_by_table:
+            cols_by_table[table] = _existing_cols(table)
+        if column not in cols_by_table[table]:
+            continue
         op.alter_column(
             table,
             column,
@@ -94,8 +111,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Restore all JSONB columns back to JSON."""
+    """Restore all JSONB columns back to JSON (guarded like upgrade)."""
+    cols_by_table: dict[str, set[str]] = {}
     for table, column in _ALL_COLS:
+        if table not in cols_by_table:
+            cols_by_table[table] = _existing_cols(table)
+        if column not in cols_by_table[table]:
+            continue
         op.alter_column(
             table,
             column,

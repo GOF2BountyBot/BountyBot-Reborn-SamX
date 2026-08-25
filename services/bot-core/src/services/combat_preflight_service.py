@@ -99,6 +99,9 @@ class CombatPreflightService:
             List of SimpleNamespace objects with a ``criminal_ship`` attribute
             (duck-typed like a ``Bounty`` record). Empty list if synthesis fails.
         """
+        # TODO(A1): reads the global DIVISION_MAX_TL derived dict, ignoring per-guild overrides.
+        # Per-guild preflight parity (using the per-guild division_max_tl_* scalars) is tracked
+        # as issue #70 unit A1 — wire resolve_flattened here when that unit ships.
         max_tl = GameConstants.DIVISION_MAX_TL.get(division, GameConstants.MAX_TECH_LEVEL)
         min_tl = GameConstants.MIN_TECH_LEVEL
 

@@ -611,6 +611,96 @@ class TestShopTlBandOrdering:
 
 
 # ===========================================================================
+# 8. JSONB-flatten scalar bounds spot-checks (issue #70, revision 0030)
+# ===========================================================================
+
+
+class TestFlattenScalarBounds:
+    """Spot-check ge= / le= bounds for a representative 6 of the 27 new flat scalars."""
+
+    # --- division_max_tl_bronze (ge=1, le=10) ---
+
+    def test_division_max_tl_bronze_at_bounds_pass(self):
+        req = _make(division_max_tl_bronze=1)
+        assert req.division_max_tl_bronze == 1
+        req2 = _make(division_max_tl_bronze=10)
+        assert req2.division_max_tl_bronze == 10
+
+    def test_division_max_tl_bronze_zero_rejected(self):
+        _fails(division_max_tl_bronze=0)
+
+    def test_division_max_tl_bronze_above_le_rejected(self):
+        _fails(division_max_tl_bronze=11)
+
+    # --- bounty_division_reward_mult_silver (ge=0.0, le=10.0) ---
+
+    def test_bounty_division_reward_mult_silver_at_bounds_pass(self):
+        req = _make(bounty_division_reward_mult_silver=0.0)
+        assert req.bounty_division_reward_mult_silver == pytest.approx(0.0)
+        req2 = _make(bounty_division_reward_mult_silver=10.0)
+        assert req2.bounty_division_reward_mult_silver == pytest.approx(10.0)
+
+    def test_bounty_division_reward_mult_silver_above_le_rejected(self):
+        _fails(bounty_division_reward_mult_silver=10.01)
+
+    def test_bounty_division_reward_mult_silver_negative_rejected(self):
+        _fails(bounty_division_reward_mult_silver=-0.1)
+
+    # --- primary_tl_band_weight_center (ge=0, le=1000) ---
+
+    def test_primary_tl_band_weight_center_at_bounds_pass(self):
+        req = _make(primary_tl_band_weight_center=0)
+        assert req.primary_tl_band_weight_center == 0
+        req2 = _make(primary_tl_band_weight_center=1000)
+        assert req2.primary_tl_band_weight_center == 1000
+
+    def test_primary_tl_band_weight_center_above_le_rejected(self):
+        _fails(primary_tl_band_weight_center=1001)
+
+    def test_primary_tl_band_weight_center_negative_rejected(self):
+        _fails(primary_tl_band_weight_center=-1)
+
+    # --- criminal_cloak_chance_bronze (ge=0, le=100) ---
+
+    def test_criminal_cloak_chance_bronze_at_bounds_pass(self):
+        req = _make(criminal_cloak_chance_bronze=0)
+        assert req.criminal_cloak_chance_bronze == 0
+        req2 = _make(criminal_cloak_chance_bronze=100)
+        assert req2.criminal_cloak_chance_bronze == 100
+
+    def test_criminal_cloak_chance_bronze_above_le_rejected(self):
+        _fails(criminal_cloak_chance_bronze=101)
+
+    def test_criminal_cloak_chance_bronze_negative_rejected(self):
+        _fails(criminal_cloak_chance_bronze=-1)
+
+    # --- criminal_weaponmod_chance_platinum (ge=0, le=100) ---
+
+    def test_criminal_weaponmod_chance_platinum_at_bounds_pass(self):
+        req = _make(criminal_weaponmod_chance_platinum=0)
+        assert req.criminal_weaponmod_chance_platinum == 0
+        req2 = _make(criminal_weaponmod_chance_platinum=100)
+        assert req2.criminal_weaponmod_chance_platinum == 100
+
+    def test_criminal_weaponmod_chance_platinum_above_le_rejected(self):
+        _fails(criminal_weaponmod_chance_platinum=101)
+
+    # --- division_max_tl_platinum (ge=1, le=10) ---
+
+    def test_division_max_tl_platinum_at_bounds_pass(self):
+        req = _make(division_max_tl_platinum=1)
+        assert req.division_max_tl_platinum == 1
+        req2 = _make(division_max_tl_platinum=10)
+        assert req2.division_max_tl_platinum == 10
+
+    def test_division_max_tl_platinum_zero_rejected(self):
+        _fails(division_max_tl_platinum=0)
+
+    def test_division_max_tl_platinum_above_le_rejected(self):
+        _fails(division_max_tl_platinum=11)
+
+
+# ===========================================================================
 # 9. Bronze combat bonus overrides — Unit C bounds (revision 0029)
 # ===========================================================================
 

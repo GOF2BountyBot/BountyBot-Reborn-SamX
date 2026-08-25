@@ -1,13 +1,13 @@
 fastapi[standard]==0.141.1
 fastapi-health==0.4.0
-uvicorn[standard]==0.52.1
+uvicorn[standard]==0.52.4
 hypercorn[uvloop]==0.18.0
-python-dotenv==1.2.2
+python-dotenv==1.2.3
 Pillow==12.3.0
-idna==3.18  # CVE-2026-45409: bypass of CVE-2024-3651 fix; in /opt/venv transitive dep chain
+idna==3.19  # CVE-2026-45409: bypass of CVE-2024-3651 fix; in /opt/venv transitive dep chain
 pydantic-settings==2.15.0  # GHSA-4xgf-cpjx-pc3j: symlink traversal outside secrets_dir; transitive via fastapi[standard]
-numpy==2.5.1
-orjson==3.11.9
+numpy==2.5.2
+orjson==3.12.0
 pytest==9.1.1
 pytest-cov==7.1.0
 pytest-asyncio==1.4.0

@@ -1594,6 +1594,21 @@ class TestUpdateNicknameRequestSchema:
         with pytest.raises(ValidationError):
             UpdateNicknameRequest(nickname=42)
 
+    def test_max_length_100_accepted(self):
+        """Exactly 100 characters must be accepted (rev 0031: raised from 50 to 100)."""
+        req = UpdateNicknameRequest(nickname="A" * 100)
+        assert len(req.nickname) == 100
+
+    def test_length_101_rejected(self):
+        """101 characters must be rejected."""
+        with pytest.raises(ValidationError):
+            UpdateNicknameRequest(nickname="A" * 101)
+
+    def test_empty_string_rejected(self):
+        """Empty nickname must be rejected (min_length=1)."""
+        with pytest.raises(ValidationError):
+            UpdateNicknameRequest(nickname="")
+
 
 class TestEquipItemRequestSchema:
     """Tests for EquipItemRequest."""

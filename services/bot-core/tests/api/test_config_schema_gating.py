@@ -40,16 +40,16 @@ class TestStrictTyping:
     # -- int fields ---
 
     def test_string_for_int_field_rejected(self):
-        """str "5" for duel_cloak_chance (int) must be rejected in strict mode."""
-        _fails(duel_cloak_chance="5")
+        """str "5" for criminal_max_gear_upgrade (int) must be rejected in strict mode."""
+        _fails(criminal_max_gear_upgrade="5")
 
     def test_float_for_int_field_rejected(self):
-        """float 5.5 for duel_cloak_chance (int) must be rejected in strict mode."""
-        _fails(duel_cloak_chance=5.5)
+        """float 5.5 for criminal_max_gear_upgrade (int) must be rejected in strict mode."""
+        _fails(criminal_max_gear_upgrade=5.5)
 
     def test_bool_for_int_field_rejected(self):
-        """bool True for duel_cloak_chance (int) must be rejected in strict mode."""
-        _fails(duel_cloak_chance=True)
+        """bool True for criminal_max_gear_upgrade (int) must be rejected in strict mode."""
+        _fails(criminal_max_gear_upgrade=True)
 
     # -- bool field (criminal_exclude_emp_weapons) ---
 
@@ -135,41 +135,7 @@ class TestBounds:
     def test_classic_credits_per_check_negative_rejected(self):
         _fails(classic_credits_per_check=-1)
 
-    # --- shop_default_ships_num (ge=0, le=50) ---
-
-    def test_shop_default_ships_num_at_le_passes(self):
-        req = _make(shop_default_ships_num=50)
-        assert req.shop_default_ships_num == 50
-
-    def test_shop_default_ships_num_above_le_rejected(self):
-        _fails(shop_default_ships_num=51)
-
-    # --- shop_default_weapons_num (ge=0, le=50) ---
-
-    def test_shop_default_weapons_num_at_le_passes(self):
-        req = _make(shop_default_weapons_num=50)
-        assert req.shop_default_weapons_num == 50
-
-    def test_shop_default_weapons_num_above_le_rejected(self):
-        _fails(shop_default_weapons_num=51)
-
-    # --- shop_default_modules_num (ge=0, le=50) ---
-
-    def test_shop_default_modules_num_at_le_passes(self):
-        req = _make(shop_default_modules_num=50)
-        assert req.shop_default_modules_num == 50
-
-    def test_shop_default_modules_num_above_le_rejected(self):
-        _fails(shop_default_modules_num=51)
-
-    # --- shop_default_turrets_num (ge=0, le=50) ---
-
-    def test_shop_default_turrets_num_at_le_passes(self):
-        req = _make(shop_default_turrets_num=50)
-        assert req.shop_default_turrets_num == 50
-
-    def test_shop_default_turrets_num_above_le_rejected(self):
-        _fails(shop_default_turrets_num=51)
+    # --- shop_default_{ships,weapons,modules,turrets}_num — RETIRED rev 0031 (tests removed) ---
 
     # --- shop_combat_module_prob (ge=0.0, le=1.0) ---
 
@@ -183,26 +149,7 @@ class TestBounds:
     def test_shop_combat_module_prob_negative_rejected(self):
         _fails(shop_combat_module_prob=-0.1)
 
-    # --- bounty_delay_random_min (ge=0, le=1440) ---
-
-    def test_bounty_delay_random_min_at_le_passes(self):
-        req = _make(bounty_delay_random_min=1440)
-        assert req.bounty_delay_random_min == 1440
-
-    def test_bounty_delay_random_min_above_le_rejected(self):
-        _fails(bounty_delay_random_min=1441)
-
-    def test_bounty_delay_random_min_negative_rejected(self):
-        _fails(bounty_delay_random_min=-1)
-
-    # --- bounty_spawn_jitter (ge=0, le=3600) ---
-
-    def test_bounty_spawn_jitter_at_le_passes(self):
-        req = _make(bounty_spawn_jitter=3600)
-        assert req.bounty_spawn_jitter == 3600
-
-    def test_bounty_spawn_jitter_above_le_rejected(self):
-        _fails(bounty_spawn_jitter=3601)
+    # --- bounty_delay_random_min, bounty_spawn_jitter — RETIRED rev 0031 (tests removed) ---
 
     # --- check_cooldown (ge=0, le=86400) ---
 
@@ -213,32 +160,8 @@ class TestBounds:
     def test_check_cooldown_above_le_rejected(self):
         _fails(check_cooldown=86401)
 
-    # --- guild_activity_decay_rate (ge=0.0, le=1.0) ---
-
-    def test_guild_activity_decay_rate_at_le_passes(self):
-        req = _make(guild_activity_decay_rate=1.0)
-        assert req.guild_activity_decay_rate == pytest.approx(1.0)
-
-    def test_guild_activity_decay_rate_above_le_rejected(self):
-        _fails(guild_activity_decay_rate=1.1)
-
-    # --- min_guild_activity (ge=0.0, le=100.0) ---
-
-    def test_min_guild_activity_at_le_passes(self):
-        req = _make(min_guild_activity=100.0)
-        assert req.min_guild_activity == pytest.approx(100.0)
-
-    def test_min_guild_activity_above_le_rejected(self):
-        _fails(min_guild_activity=100.1)
-
-    # --- activity_temp_per_player (ge=0, le=100) ---
-
-    def test_activity_temp_per_player_at_le_passes(self):
-        req = _make(activity_temp_per_player=100)
-        assert req.activity_temp_per_player == 100
-
-    def test_activity_temp_per_player_above_le_rejected(self):
-        _fails(activity_temp_per_player=101)
+    # --- guild_activity_decay_rate, min_guild_activity, activity_temp_per_player —
+    # RETIRED rev 0031 (temperature subsystem removed, tests removed) ---
 
     # --- loot qty le=1000 (representative: band1_qty_min, band2_qty_max, band3_qty_mode) ---
 
@@ -373,36 +296,25 @@ class TestLootQtyOrdering:
 
 
 # ===========================================================================
-# 4. Bounty delay min <= max (existing validator still enforced)
+# 4. Bounty delay ordering — RETIRED rev 0031
+# bounty_delay_random_min/max both removed from schema; validator also deleted.
 # ===========================================================================
 
 
 class TestBountyDelayOrdering:
-    """validate_bounty_delay_range: bounty_delay_random_min must be <= max."""
+    """validate_bounty_delay_range was deleted in rev 0031 — both fields retired."""
 
-    def test_min_greater_than_max_rejected(self):
-        """bounty_delay_random_min=10, max=5 must be rejected."""
-        _fails(bounty_delay_random_min=10, bounty_delay_random_max=5)
+    def test_bounty_delay_fields_not_in_schema(self):
+        """bounty_delay_random_min/max must not appear in UpdateConfigRequest fields."""
+        from api.schemas.config_schema import UpdateConfigRequest
 
-    def test_min_equal_to_max_accepted(self):
-        """min == max is valid."""
-        req = _make(bounty_delay_random_min=5, bounty_delay_random_max=5)
-        assert req.bounty_delay_random_min == 5
-
-    def test_min_less_than_max_accepted(self):
-        """min < max is valid."""
-        req = _make(bounty_delay_random_min=3, bounty_delay_random_max=7)
-        assert req.bounty_delay_random_max == 7
-
-    def test_only_min_present_accepted(self):
-        """Partial update with only min — no cross-check triggers."""
-        req = _make(bounty_delay_random_min=5)
-        assert req.bounty_delay_random_min == 5
-
-    def test_only_max_present_accepted(self):
-        """Partial update with only max — no cross-check triggers."""
-        req = _make(bounty_delay_random_max=10)
-        assert req.bounty_delay_random_max == 10
+        fields = UpdateConfigRequest.model_fields
+        assert "bounty_delay_random_min" not in fields, (
+            "bounty_delay_random_min retired rev 0031 — must not be in UpdateConfigRequest"
+        )
+        assert "bounty_delay_random_max" not in fields, (
+            "bounty_delay_random_max retired rev 0031 — must not be in UpdateConfigRequest"
+        )
 
 
 # ===========================================================================

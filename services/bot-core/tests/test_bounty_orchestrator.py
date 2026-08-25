@@ -421,29 +421,20 @@ async def test_orchestrator_queue_count_uses_correct_prefix_filter(sqlite_engine
 
 
 async def test_orchestrator_uses_bounty_max_per_tier_not_temperature(sqlite_engine_and_factory):
-    """Test 5: TemperatureService.get_max_bounties is NOT called by the orchestrator."""
-    import services.temperature_service as temp_mod
+    """Test 5: orchestrator uses bounty_max_per_tier (TemperatureService retired rev 0031)."""
     from utils.executors.bounty_spawn_executor import execute_bounty_spawn_orchestrate_job
 
     _engine, factory = sqlite_engine_and_factory
     async with factory() as db:
         await _seed_config(db, 600, bounty_max_per_tier={"bronze": 5, "silver": 5, "gold": 5, "platinum": 5})
 
-    temp_called: list = []
-
-    def _record(self, *a, **kw):
-        temp_called.append(a)
-        return 999
-
     sched = _empty_scheduler()
     with (
         patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
         patch("utils.scheduler_holder.get_scheduler", return_value=sched),
-        patch.object(temp_mod.TemperatureService, "get_max_bounties", _record, create=True),
     ):
         result = await execute_bounty_spawn_orchestrate_job("orch-5", {"job_type": "bounty_spawn_orchestrate"})
 
-    assert temp_called == [], "TemperatureService.get_max_bounties was called — it should not be"
     # Proves the config max was used: max>0 for all tiers → 4 jobs queued.
     assert result["total_queued"] == 4
 

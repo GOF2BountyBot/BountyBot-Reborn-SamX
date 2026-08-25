@@ -47,7 +47,7 @@ _SERVICES_SKIP = frozenset(
         "map_renderer.py",  # PIL-based, no db.begin()
         "pathfinding_service.py",
         "system_graph_service.py",
-        "temperature_service.py",
+        # temperature_service.py — RETIRED rev 0031 (module deleted)
         "division_service.py",
     }
 )

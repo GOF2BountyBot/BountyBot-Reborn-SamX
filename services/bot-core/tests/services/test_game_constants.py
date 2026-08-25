@@ -16,32 +16,25 @@ from services.game_constants import GameConstants
 
 
 def _reset_constants() -> None:
-    """Restore all overridable class attributes to their hardcoded defaults."""
-    GameConstants.MAX_BOUNTIES_PER_DIVISION = 5
+    """Restore all overridable class attributes to their hardcoded defaults.
+
+    Rev 0031 retired constants removed from this list:
+      MAX_BOUNTIES_PER_DIVISION, CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE,
+      SHIP_VALUE_REWARD_PERCENTAGE, MIN_GUILD_ACTIVITY, ACTIVITY_TEMP_PER_PLAYER,
+      BOUNTY_DELAY_RANDOM_MIN (→ BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES), BOUNTY_DELAY_RANDOM_MAX,
+      GUILD_ACTIVITY_DECAY_INTERVAL, SHOP_DEFAULT_SHIPS_NUM, SHOP_DEFAULT_WEAPONS_NUM,
+      SHOP_DEFAULT_MODULES_NUM, SHOP_DEFAULT_TURRETS_NUM, SHOP_DEFAULT_TOOLS_NUM,
+      TURRET_SPAWN_PROBABILITY, DUEL_LOG_MAX_LENGTH, DUEL_CLOAK_CHANCE.
+    """
     GameConstants.CLOSE_BOUNTY_THRESHOLD = 4
     GameConstants.MAX_ROUTE_LENGTH = 50
-    GameConstants.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE = 20
     GameConstants.CRIMINAL_MAX_GEAR_UPGRADE = 1
-    GameConstants.SHIP_VALUE_REWARD_PERCENTAGE = 0.01
-    GameConstants.MIN_GUILD_ACTIVITY = 1.0
-    GameConstants.ACTIVITY_TEMP_PER_PLAYER = 1
-    GameConstants.BOUNTY_DELAY_RANDOM_MIN = 5
-    GameConstants.BOUNTY_DELAY_RANDOM_MAX = 7
+    GameConstants.BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES = 5
     GameConstants.BOUNTY_SPAWN_JITTER = 180
-    GameConstants.GUILD_ACTIVITY_DECAY_INTERVAL = 3600
-    GameConstants.SHOP_REFRESH_INTERVAL = 21600
     GameConstants.CHECK_COOLDOWN = 180
     GameConstants.DUEL_REQUEST_EXPIRY = 86400
-    GameConstants.SHOP_DEFAULT_SHIPS_NUM = 5
-    GameConstants.SHOP_DEFAULT_WEAPONS_NUM = 5
-    GameConstants.SHOP_DEFAULT_MODULES_NUM = 5
-    GameConstants.SHOP_DEFAULT_TURRETS_NUM = 2
-    GameConstants.SHOP_DEFAULT_TOOLS_NUM = 0
-    GameConstants.TURRET_SPAWN_PROBABILITY = 45
     # DUEL_VARIANCE_PERCENT retired in T10
-    GameConstants.DUEL_LOG_MAX_LENGTH = 10
-    GameConstants.DUEL_CLOAK_CHANCE = 20
-    GameConstants.MAX_SHIP_NICKNAME_LENGTH = 30
+    GameConstants.MAX_SHIP_NICKNAME_LENGTH = 100
     GameConstants.CLASSIC_CREDITS_PER_CHECK = 1000
     GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT = 0.1
 
@@ -141,17 +134,11 @@ class TestShipPriceThresholds:
 
 
 class TestBountySystem:
-    def test_max_bounties_per_division(self) -> None:
-        assert GameConstants.MAX_BOUNTIES_PER_DIVISION == 5
+    # Retired rev 0031: test_max_bounties_per_division, test_ship_value_reward_percentage,
+    # test_criminal_equip_damageless_weapon_chance — constants removed.
 
     def test_close_bounty_threshold(self) -> None:
         assert GameConstants.CLOSE_BOUNTY_THRESHOLD == 4
-
-    def test_ship_value_reward_percentage(self) -> None:
-        assert pytest.approx(GameConstants.SHIP_VALUE_REWARD_PERCENTAGE) == 0.01
-
-    def test_criminal_equip_damageless_weapon_chance(self) -> None:
-        assert GameConstants.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE == 20
 
     def test_criminal_max_gear_upgrade(self) -> None:
         assert GameConstants.CRIMINAL_MAX_GEAR_UPGRADE == 1
@@ -159,37 +146,65 @@ class TestBountySystem:
     def test_max_route_length(self) -> None:
         assert GameConstants.MAX_ROUTE_LENGTH == 50
 
+    def test_retired_constants_not_present(self) -> None:
+        """Rev 0031 retired constants must not exist on GameConstants."""
+        for name in (
+            "MAX_BOUNTIES_PER_DIVISION",
+            "SHIP_VALUE_REWARD_PERCENTAGE",
+            "CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE",
+            "GUILD_ACTIVITY_DECAY_RATE",
+            "MIN_GUILD_ACTIVITY",
+            "ACTIVITY_TEMP_PER_PLAYER",
+            "BOUNTY_DELAY_RANDOM_MIN",
+            "BOUNTY_DELAY_RANDOM_MAX",
+            "GUILD_ACTIVITY_DECAY_INTERVAL",
+            "SHOP_DEFAULT_SHIPS_NUM",
+            "SHOP_DEFAULT_WEAPONS_NUM",
+            "SHOP_DEFAULT_MODULES_NUM",
+            "SHOP_DEFAULT_TURRETS_NUM",
+            "SHOP_DEFAULT_TOOLS_NUM",
+            "TURRET_SPAWN_PROBABILITY",
+            "DUEL_LOG_MAX_LENGTH",
+            "DUEL_CLOAK_CHANCE",
+            "NUM_SHIP_RANKS",
+            "NUM_WEAPON_RANKS",
+            "NUM_MODULE_RANKS",
+            "NUM_TURRET_RANKS",
+            "PLAYABLE_ITEM_TYPES",
+            "SHOP_REFRESH_INTERVAL",
+            "DEFAULT_ACCURACY",
+            "DEFAULT_EVASION",
+            "CLOAK_ACCURACY_PENALTY",
+            "SCANNER_ACCURACY_BONUS",
+            "THRUSTER_EVASION_BONUS",
+            "SHIELD_RECHARGE_RATE",
+            "REPAIR_BOT_HEAL_RATE",
+            "BOOSTER_DPS_MULTIPLIER",
+            "COMBAT_TICK_RATE",
+            "PERSISTENT_DAMAGE_DECAY_RATE",
+        ):
+            assert not hasattr(GameConstants, name), f"{name} must be removed from GameConstants (rev 0031)"
+
 
 # ---------------------------------------------------------------------------
-# Activity / Temperature
+# Activity / Temperature — RETIRED rev 0031
+# TestActivityTemperature class removed; constants deleted.
 # ---------------------------------------------------------------------------
 
 
-class TestActivityTemperature:
-    def test_guild_activity_decay_rate(self) -> None:
-        assert pytest.approx(GameConstants.GUILD_ACTIVITY_DECAY_RATE) == 2 / 3
-
-    def test_min_guild_activity(self) -> None:
-        assert pytest.approx(GameConstants.MIN_GUILD_ACTIVITY) == 1.0
-
-    def test_activity_temp_per_player(self) -> None:
-        assert GameConstants.ACTIVITY_TEMP_PER_PLAYER == 1
-
-
 # ---------------------------------------------------------------------------
-# Bounty Spawn Delay
+# Bounty Spawn Check Interval (renamed from Bounty Spawn Delay)
 # ---------------------------------------------------------------------------
 
 
-class TestBountySpawnDelay:
-    def test_bounty_delay_random_min(self) -> None:
-        assert GameConstants.BOUNTY_DELAY_RANDOM_MIN == 5
+class TestBountySpawnCheckInterval:
+    def test_bounty_spawn_check_interval_default(self) -> None:
+        """BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES default is 5 (renamed from BOUNTY_DELAY_RANDOM_MIN)."""
+        assert GameConstants.BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES == 5
 
-    def test_bounty_delay_random_max(self) -> None:
-        assert GameConstants.BOUNTY_DELAY_RANDOM_MAX == 7
-
-    def test_min_less_than_max(self) -> None:
-        assert GameConstants.BOUNTY_DELAY_RANDOM_MIN < GameConstants.BOUNTY_DELAY_RANDOM_MAX
+    def test_bounty_spawn_check_interval_is_positive(self) -> None:
+        assert isinstance(GameConstants.BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES, int)
+        assert GameConstants.BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES > 0
 
     def test_bounty_spawn_jitter_default(self) -> None:
         """BOUNTY_SPAWN_JITTER default is 180 seconds (up to 3 min random offset)."""
@@ -207,11 +222,7 @@ class TestBountySpawnDelay:
 
 
 class TestTimers:
-    def test_guild_activity_decay_interval(self) -> None:
-        assert GameConstants.GUILD_ACTIVITY_DECAY_INTERVAL == 3600
-
-    def test_shop_refresh_interval(self) -> None:
-        assert GameConstants.SHOP_REFRESH_INTERVAL == 21600
+    # guild_activity_decay_interval, shop_refresh_interval — RETIRED rev 0031 (tests removed)
 
     def test_check_cooldown(self) -> None:
         assert GameConstants.CHECK_COOLDOWN == 180
@@ -221,47 +232,15 @@ class TestTimers:
 
 
 # ---------------------------------------------------------------------------
-# Shop Stock Generation
+# Shop Stock Generation — RETIRED rev 0031
+# TestShopStockGeneration class removed; constants deleted.
 # ---------------------------------------------------------------------------
 
 
-class TestShopStockGeneration:
-    def test_shop_default_ships_num(self) -> None:
-        assert GameConstants.SHOP_DEFAULT_SHIPS_NUM == 5
-
-    def test_shop_default_weapons_num(self) -> None:
-        assert GameConstants.SHOP_DEFAULT_WEAPONS_NUM == 5
-
-    def test_shop_default_modules_num(self) -> None:
-        assert GameConstants.SHOP_DEFAULT_MODULES_NUM == 5
-
-    def test_shop_default_turrets_num(self) -> None:
-        assert GameConstants.SHOP_DEFAULT_TURRETS_NUM == 2
-
-    def test_shop_default_tools_num(self) -> None:
-        assert GameConstants.SHOP_DEFAULT_TOOLS_NUM == 0
-
-    def test_turret_spawn_probability(self) -> None:
-        assert GameConstants.TURRET_SPAWN_PROBABILITY == 45
-
-
 # ---------------------------------------------------------------------------
-# Shop Rank Counts
+# Shop Rank Counts — RETIRED rev 0031
+# TestShopRankCounts class removed; constants deleted.
 # ---------------------------------------------------------------------------
-
-
-class TestShopRankCounts:
-    def test_num_ship_ranks(self) -> None:
-        assert GameConstants.NUM_SHIP_RANKS == 10
-
-    def test_num_weapon_ranks(self) -> None:
-        assert GameConstants.NUM_WEAPON_RANKS == 10
-
-    def test_num_module_ranks(self) -> None:
-        assert GameConstants.NUM_MODULE_RANKS == 7
-
-    def test_num_turret_ranks(self) -> None:
-        assert GameConstants.NUM_TURRET_RANKS == 3
 
 
 # ---------------------------------------------------------------------------
@@ -276,11 +255,8 @@ class TestDuels:
             "DUEL_VARIANCE_PERCENT must be deleted in T10 (SimpleTTKResolver retired)"
         )
 
-    def test_duel_log_max_length(self) -> None:
-        assert GameConstants.DUEL_LOG_MAX_LENGTH == 10
-
-    def test_duel_cloak_chance(self) -> None:
-        assert GameConstants.DUEL_CLOAK_CHANCE == 20
+    # test_duel_log_max_length — RETIRED rev 0031 (DUEL_LOG_MAX_LENGTH removed)
+    # test_duel_cloak_chance — RETIRED rev 0031 (DUEL_CLOAK_CHANCE removed)
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +266,8 @@ class TestDuels:
 
 class TestInventory:
     def test_max_ship_nickname_length(self) -> None:
-        assert GameConstants.MAX_SHIP_NICKNAME_LENGTH == 30
+        """MAX_SHIP_NICKNAME_LENGTH raised from 30 to 100 in rev 0031."""
+        assert GameConstants.MAX_SHIP_NICKNAME_LENGTH == 100
 
     # KAAMO_MAX_CAPACITY retired in issue #70 (never consumed; not a mechanic).
 
@@ -373,20 +350,14 @@ class TestEnvVarOverride:
         """Reset class attributes after every test to avoid cross-test pollution."""
         _reset_constants()
 
-    def test_max_bounties_per_division_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("BOUNTYBOT_MAX_BOUNTIES_PER_DIVISION", "10")
-        GameConstants.load()
-        assert GameConstants.MAX_BOUNTIES_PER_DIVISION == 10
+    # test_max_bounties_per_division_override — RETIRED rev 0031 (constant removed)
 
     def test_check_cooldown_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BOUNTYBOT_CHECK_COOLDOWN", "60")
         GameConstants.load()
         assert GameConstants.CHECK_COOLDOWN == 60
 
-    def test_shop_refresh_interval_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("BOUNTYBOT_SHOP_REFRESH_INTERVAL", "7200")
-        GameConstants.load()
-        assert GameConstants.SHOP_REFRESH_INTERVAL == 7200
+    # test_shop_refresh_interval_override removed — constant retired rev 0031.
 
     def test_duel_request_expiry_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BOUNTYBOT_DUEL_REQUEST_EXPIRY", "3600")
@@ -400,10 +371,7 @@ class TestEnvVarOverride:
         # The attribute should not exist; env var is a no-op
         assert not hasattr(GameConstants, "DUEL_VARIANCE_PERCENT")
 
-    def test_ship_value_reward_percentage_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("BOUNTYBOT_SHIP_VALUE_REWARD_PERCENTAGE", "0.05")
-        GameConstants.load()
-        assert pytest.approx(GameConstants.SHIP_VALUE_REWARD_PERCENTAGE) == 0.05
+    # test_ship_value_reward_percentage_override — RETIRED rev 0031 (constant removed)
 
     def test_bounty_spawn_jitter_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BOUNTYBOT_BOUNTY_SPAWN_JITTER", "60")
@@ -430,27 +398,27 @@ class TestEnvVarOverride:
 
     def test_env_var_reverts_after_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """After removing the env var and calling load() again the default is restored."""
-        monkeypatch.setenv("BOUNTYBOT_MAX_BOUNTIES_PER_DIVISION", "99")
+        monkeypatch.setenv("BOUNTYBOT_CHECK_COOLDOWN", "99")
         GameConstants.load()
-        assert GameConstants.MAX_BOUNTIES_PER_DIVISION == 99
+        assert GameConstants.CHECK_COOLDOWN == 99
 
-        monkeypatch.delenv("BOUNTYBOT_MAX_BOUNTIES_PER_DIVISION")
+        monkeypatch.delenv("BOUNTYBOT_CHECK_COOLDOWN")
         GameConstants.load()
-        assert GameConstants.MAX_BOUNTIES_PER_DIVISION == 5
+        assert GameConstants.CHECK_COOLDOWN == 180
 
     def test_load_without_env_vars_keeps_defaults(self) -> None:
         """Calling load() with no env vars set must not change any default value."""
         # Ensure the test-relevant env vars are absent (they normally are)
         for key in [
-            "BOUNTYBOT_MAX_BOUNTIES_PER_DIVISION",
             "BOUNTYBOT_CHECK_COOLDOWN",
+            "BOUNTYBOT_DUEL_REQUEST_EXPIRY",
         ]:
             os.environ.pop(key, None)
 
         GameConstants.load()
 
-        assert GameConstants.MAX_BOUNTIES_PER_DIVISION == 5
         assert GameConstants.CHECK_COOLDOWN == 180
+        assert GameConstants.DUEL_REQUEST_EXPIRY == 86400
 
 
 # ---------------------------------------------------------------------------

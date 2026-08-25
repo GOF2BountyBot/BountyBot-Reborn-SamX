@@ -252,7 +252,8 @@ class TestDefaultSchedulerJobsConstant:
 
     def test_three_jobs_defined(self):
         """DEFAULT_SCHEDULER_JOBS contains exactly six job definitions (db_retention_default added)."""
-        assert len(DEFAULT_SCHEDULER_JOBS) == 6
+        # temperature_decay_default REMOVED rev 0031 (temperature subsystem retired); was 6, now 5
+        assert len(DEFAULT_SCHEDULER_JOBS) == 5
 
     def test_job_ids_are_unique(self):
         """Each job definition has a unique job_id."""
@@ -264,7 +265,8 @@ class TestDefaultSchedulerJobsConstant:
         ids = {j["job_id"] for j in DEFAULT_SCHEDULER_JOBS}
         assert "bounty_spawn_default" in ids
         assert "shop_refresh_default" in ids
-        assert "temperature_decay_default" in ids
+        # temperature_decay_default — RETIRED rev 0031 (not in DEFAULT_SCHEDULER_JOBS)
+        assert "temperature_decay_default" not in ids
         assert "bounty_failsafe_cleanup_default" in ids
         assert "pg_backup_default" in ids
         assert "db_retention_default" in ids
@@ -291,28 +293,23 @@ class TestDefaultSchedulerJobsConstant:
         job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "shop_refresh_default")
         assert job["payload"]["job_type"] == "shop_refresh"
 
-    def test_temperature_decay_payload(self):
-        """temperature_decay_default payload has job_type='temperature_decay'."""
-        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "temperature_decay_default")
-        assert job["payload"]["job_type"] == "temperature_decay"
+    def test_temperature_decay_not_in_default_jobs(self):
+        """temperature_decay_default is not seeded (temperature subsystem retired rev 0031)."""
+        ids = {j["job_id"] for j in DEFAULT_SCHEDULER_JOBS}
+        assert "temperature_decay_default" not in ids
 
-    def test_bounty_spawn_cron_is_5_minute_interval(self):
-        """bounty_spawn_default cron encodes a 5-minute interval (BOUNTY_DELAY_RANDOM_MIN=5)."""
+    def test_bounty_spawn_cron_is_check_interval(self):
+        """bounty_spawn_default cron encodes BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES (renamed from BOUNTY_DELAY_RANDOM_MIN)."""
         from services.game_constants import GameConstants
 
         job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "bounty_spawn_default")
-        expected = f"*/{GameConstants.BOUNTY_DELAY_RANDOM_MIN} * * * *"
+        expected = f"*/{GameConstants.BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES} * * * *"
         assert job["cron"] == expected
 
     def test_shop_refresh_cron(self):
         """shop_refresh_default cron is '0 */6 * * *' (every 6 hours)."""
         job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "shop_refresh_default")
         assert job["cron"] == "0 */6 * * *"
-
-    def test_temperature_decay_cron(self):
-        """temperature_decay_default cron is '0 * * * *' (every hour)."""
-        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "temperature_decay_default")
-        assert job["cron"] == "0 * * * *"
 
     def test_bounty_spawn_has_jitter_key(self):
         """bounty_spawn_default job definition includes a 'jitter' key."""
@@ -337,10 +334,7 @@ class TestDefaultSchedulerJobsConstant:
         job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "shop_refresh_default")
         assert "jitter" not in job
 
-    def test_temperature_decay_has_no_jitter(self):
-        """temperature_decay_default does not define a jitter (deterministic schedule)."""
-        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "temperature_decay_default")
-        assert "jitter" not in job
+    # test_temperature_decay_has_no_jitter — RETIRED rev 0031 (job removed from DEFAULT_SCHEDULER_JOBS)
 
     def test_pg_backup_payload(self):
         """pg_backup_default payload has job_type='pg_backup'."""
@@ -386,12 +380,12 @@ class TestRegisterDefaultJobs:
     # ------------------------------------------------------------------
 
     def test_three_jobs_added_on_clean_scheduler(self):
-        """All six default jobs are added when the scheduler has no prior jobs."""
+        """All five default jobs are added when the scheduler has no prior jobs (rev 0031: was 6)."""
         scheduler = _make_mock_scheduler()
 
         register_default_jobs(scheduler)
 
-        assert scheduler.add_job.call_count == 6
+        assert scheduler.add_job.call_count == 5
 
     def test_bounty_spawn_job_added(self):
         """bounty_spawn_default is added with correct id and payload (orchestrate job type)."""
@@ -421,31 +415,19 @@ class TestRegisterDefaultJobs:
             {"job_type": "shop_refresh"},
         ]
 
-    def test_temperature_decay_job_added(self):
-        """temperature_decay_default is added with correct id and payload."""
-        scheduler = _make_mock_scheduler()
-
-        register_default_jobs(scheduler)
-
-        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
-        assert "temperature_decay_default" in calls_by_id
-        call = calls_by_id["temperature_decay_default"]
-        assert call.kwargs["args"] == [
-            "temperature_decay_default",
-            {"job_type": "temperature_decay"},
-        ]
+    # test_temperature_decay_job_added — RETIRED rev 0031 (job removed from DEFAULT_SCHEDULER_JOBS)
 
     # ------------------------------------------------------------------
     # Idempotency: no duplicate registration when jobs already exist
     # ------------------------------------------------------------------
 
     def test_no_jobs_added_when_all_already_exist(self):
-        """add_job is never called when all six default jobs already exist."""
+        """add_job is never called when all five default jobs already exist (rev 0031: was 6)."""
         scheduler = _make_mock_scheduler(
             existing_job_ids=[
                 "bounty_spawn_default",
                 "shop_refresh_default",
-                "temperature_decay_default",
+                # temperature_decay_default — RETIRED rev 0031 (removed from defaults)
                 "bounty_failsafe_cleanup_default",
                 "pg_backup_default",
                 "db_retention_default",
@@ -457,29 +439,28 @@ class TestRegisterDefaultJobs:
         scheduler.add_job.assert_not_called()
 
     def test_only_missing_jobs_are_added_partial_existing(self):
-        """Only the five missing jobs are added when one already exists."""
+        """Only the four missing jobs are added when one already exists (rev 0031: was 5)."""
         scheduler = _make_mock_scheduler(existing_job_ids=["bounty_spawn_default"])
 
         register_default_jobs(scheduler)
 
-        assert scheduler.add_job.call_count == 5
+        assert scheduler.add_job.call_count == 4
         registered_ids = {call.kwargs["id"] for call in scheduler.add_job.call_args_list}
         assert "shop_refresh_default" in registered_ids
-        assert "temperature_decay_default" in registered_ids
         assert "bounty_failsafe_cleanup_default" in registered_ids
         assert "pg_backup_default" in registered_ids
         assert "db_retention_default" in registered_ids
         assert "bounty_spawn_default" not in registered_ids
+        assert "temperature_decay_default" not in registered_ids  # retired rev 0031
 
     def test_single_missing_job_added(self):
-        """Only the one missing job is added when five already exist."""
+        """Only the one missing job is added when four already exist (rev 0031: was 5)."""
         scheduler = _make_mock_scheduler(
             existing_job_ids=[
                 "bounty_spawn_default",
                 "shop_refresh_default",
                 "bounty_failsafe_cleanup_default",
                 "pg_backup_default",
-                "db_retention_default",
             ]
         )
 
@@ -487,7 +468,7 @@ class TestRegisterDefaultJobs:
 
         assert scheduler.add_job.call_count == 1
         call = scheduler.add_job.call_args_list[0]
-        assert call.kwargs["id"] == "temperature_decay_default"
+        assert call.kwargs["id"] == "db_retention_default"
 
     # ------------------------------------------------------------------
     # Cron expression verification
@@ -502,7 +483,7 @@ class TestRegisterDefaultJobs:
 
         calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
         trigger = calls_by_id["bounty_spawn_default"].kwargs["trigger"]
-        expected_cron = f"*/{GameConstants.BOUNTY_DELAY_RANDOM_MIN} * * * *"
+        expected_cron = f"*/{GameConstants.BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES} * * * *"
         assert trigger._expr == expected_cron
 
     def test_shop_refresh_trigger_uses_correct_cron(self):
@@ -514,14 +495,7 @@ class TestRegisterDefaultJobs:
         trigger = calls_by_id["shop_refresh_default"].kwargs["trigger"]
         assert trigger._expr == "0 */6 * * *"
 
-    def test_temperature_decay_trigger_uses_correct_cron(self):
-        """temperature_decay_default trigger encodes the hourly cron expression."""
-        scheduler = _make_mock_scheduler()
-        register_default_jobs(scheduler)
-
-        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
-        trigger = calls_by_id["temperature_decay_default"].kwargs["trigger"]
-        assert trigger._expr == "0 * * * *"
+    # test_temperature_decay_trigger_uses_correct_cron — RETIRED rev 0031
 
     # ------------------------------------------------------------------
     # Jitter: bounty_spawn_default trigger must have jitter applied
@@ -549,15 +523,7 @@ class TestRegisterDefaultJobs:
         # jitter attribute should NOT be set on a no-jitter job
         assert not hasattr(trigger, "jitter"), "trigger.jitter should not be set on shop_refresh_default"
 
-    def test_temperature_decay_trigger_has_no_jitter(self):
-        """register_default_jobs does NOT set trigger.jitter on temperature_decay_default."""
-        scheduler = _make_mock_scheduler()
-        register_default_jobs(scheduler)
-
-        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
-        trigger = calls_by_id["temperature_decay_default"].kwargs["trigger"]
-        # jitter attribute should NOT be set on a no-jitter job
-        assert not hasattr(trigger, "jitter"), "trigger.jitter should not be set on temperature_decay_default"
+    # test_temperature_decay_trigger_has_no_jitter — RETIRED rev 0031 (job removed)
 
     # ------------------------------------------------------------------
     # run_job function is passed as the callable

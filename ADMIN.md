@@ -202,7 +202,7 @@ Controls how much XP players need to advance to each tier.
 
 ### Max Active Bounties
 
-The maximum number of simultaneously active bounties per tier. This is the sole active cap — the activity temperature no longer factors in (see [Activity Temperature System](#activity-temperature-system)).
+The maximum number of simultaneously active bounties per tier. This is the sole active cap — the activity temperature system was retired in rev 0031 (see [Activity Temperature System](#activity-temperature-system)).
 
 | | |
 |---|---|
@@ -242,32 +242,9 @@ Per-tier randomised fire-time window used by the spawn orchestrator when decidin
 
 ## Activity Temperature System
 
-> **Status: PARTIALLY IMPLEMENTED (decay-only).** The temperature system is currently vestigial. Storage and the hourly decay loop are live, but the temperature is never raised by any in-game event, and the bounty spawn cap no longer consults it. The active cap is `bounty_max_per_tier` only. See "Current behavior" below.
-
-Each division has a stored **activity temperature** (`GuildConfig.division_temperatures`, default `1.0` per tier). The design intent is to dynamically scale how many bounties can be active at once based on player activity.
-
-### Current behavior (what actually runs today)
-
-| Component | Status | Evidence |
-|---|---|---|
-| Storage (`division_temperatures` JSON column) | Live | `persist/models/guild_config.py` |
-| Hourly decay loop (`temperature_decay_default`) | Live — multiplies by `guild_activity_decay_rate` and clamps to `min_guild_activity` | `utils/executors/temperature_decay_executor.py` |
-| Floor enforcement (`min_guild_activity`) | Live — `decay_temperature()` clamps each tick | `services/temperature_service.py` |
-| Temperature **rise** on player activity | **NOT WIRED UP** — `TemperatureService.raise_temperature()` exists but no production callsite ever invokes it. Player `/check`, bounty spawn, bounty resolve, and duel paths do not call it. | Grep `raise_temperature` returns only the definition + tests |
-| Cap formula `min(max_per_tier, max(1, floor(temperature)))` | **REMOVED** from the spawn path. `TemperatureService.get_max_bounties()` still exists but is not consulted by the spawn orchestrator. The active cap is `bounty_max_per_tier[tier]` only. | `utils/executors/bounty_spawn_executor.py` (see "C3" comment block) |
-| `calculate_spawn_delay()` helper | **Dead code** — defined in `temperature_service.py` but no callers | Grep |
-
-**Net effect today:** each guild's per-division temperatures monotonically decay from their initial value and pin at `min_guild_activity`. They never rise and never influence the spawn cap. They are not surfaced by any slash command or config API response — they exist only in the `guild_configs.division_temperatures` column.
-
-### Per-guild temperature overrides (set via `/admin_config_constants`)
-
-These overrides are still accepted and persisted, but only the first two actually affect anything (the hourly decay loop). The third is currently inert.
-
-| Setting | Default | What It Controls |
-|---------|---------|-----------------|
-| `guild_activity_decay_rate` | `0.667` | Hourly decay multiplier (`0` = instant decay, `1.0` = no decay). **Active** in the decay executor. |
-| `min_guild_activity` | `1.0` | Temperature floor. **Active** in the decay executor. |
-| `activity_temp_per_player` | `1` | Intended: temperature increase per player system check. **Currently inert** — no callsite raises temperature. |
+> **Status: RETIRED in rev 0031.** The temperature subsystem was removed in migration 0031. The `division_temperatures` column was dropped from `guild_configs`, `temperature_service.py` was deleted, and the `temperature_decay_default` scheduler job was removed from `DEFAULT_SCHEDULER_JOBS`. The executor (`temperature_decay_executor.py`) is now a no-op shim — stale APScheduler rows that reference `temperature_decay_default` log a deprecation warning and return immediately without error. The active bounty cap is governed solely by `bounty_max_per_tier`.
+>
+> **If a stale `temperature_decay_default` job row exists in your APScheduler table**, it will fire harmlessly as a no-op until cleared. To remove it: call `POST /api/v1/scheduler/reset` or delete the row directly via `DELETE /api/v1/scheduler/jobs/temperature_decay_default`.
 
 ---
 
@@ -365,24 +342,10 @@ Use `int_value` for integer fields, `float_value` for float fields, `json_value`
 | `check_cooldown` | int | `180` | seconds | Cooldown between a player's `/check` commands |
 | `duel_request_expiry` | int | `86400` | seconds | Time before a pending duel challenge auto-expires (default: 24 hours) |
 | `tier_change_cooldown` | int | `86400` | seconds | Cooldown between tier advances/demotions (default: 24 hours) |
-| `bounty_delay_random_min` | int | `5` | minutes | Also drives the bounty-spawn cron cadence at startup: cron fires every `BOUNTY_DELAY_RANDOM_MIN` minutes (`main.py`). Per-guild override of this value does NOT change the live cron — that is set at process start. Also referenced by `TemperatureService.calculate_spawn_delay()` which is currently unused. |
-| `bounty_delay_random_max` | int | `7` | minutes | Upper bound referenced by the (currently unused) `TemperatureService.calculate_spawn_delay()` helper. Not consumed elsewhere. |
-| `bounty_spawn_jitter` | int | `180` | seconds | Random offset applied to each fire of the bounty-spawn cron (APScheduler `jitter`, ±N seconds) |
-| `guild_activity_decay_rate` | float | `0.667` | multiplier/hr | Hourly temperature decay multiplier (`0`=instant, `1`=no decay) |
-| `min_guild_activity` | float | `1.0` | temperature | Temperature floor per division |
-| `activity_temp_per_player` | int | `1` | temp units | Intended: temperature rise per player system check. **Currently inert** — `TemperatureService.raise_temperature()` is never called by production code. See [Activity Temperature System](#activity-temperature-system). |
-| `ship_value_reward_percentage` | float | `0.01` | fraction | Fraction of criminal ship value used as bounty reward (0.01 = 1%) |
-| `criminal_equip_damageless_weapon_chance` | int | `20` | percent | **Dead constant — no consumer in the loadout selection path** (superseded by the Thread-6 EMP exclusion `criminal_exclude_emp_weapons`; tuning this has no effect). See OPEN_ITEMS.md `BAL-dead-const`. |
 | `criminal_max_gear_upgrade` | int | `1` | TL levels | Max TL above criminal's base TL their gear can be |
 | `bounty_reward_to_xp_gain_mult` | float | `0.1` | multiplier | XP = reward_credits × this multiplier |
 | `bounty_winner_reserve_factor` | float | `0.25` | fraction | Fraction of reward guaranteed to winner (rest split as consolation) |
-| `duel_cloak_chance` | int | `20` | percent | **Inert override.** Cloak itself IS implemented (the tick-based combat resolver activates an equipped cloak module per its own stats), but this chance constant is not consulted by any combat code. |
 | `division_max_tl` | dict | `{"bronze":2,"silver":4,"gold":7,"platinum":10}` | TL | Max criminal tech level per division |
-| `shop_default_ships_num` | int | `5` | count | **Inert override** — `ShopService` reads the per-guild `shop_*_count_min/max` ranges (see [Shop Tunables](#shop-tunables)) and does not consult this constant. Defined and persisted for completeness. |
-| `shop_default_weapons_num` | int | `5` | count | Inert override (see above). |
-| `shop_default_modules_num` | int | `5` | count | Inert override (see above). |
-| `shop_default_turrets_num` | int | `2` | count | Inert override (see above). |
-| `turret_spawn_probability` | int | `45` | percent | **Inert override** — not consumed by `ShopService`. Defined and persisted for completeness. |
 | `demotion_credit_penalty_pct` | int | `10` | percent | % of credits deducted on tier demotion. **API-only** — accepted by `PUT /api/v1/config/guild/{guild_id}` but not offered/validated by the `/admin_config_constants` slash command. |
 | `classic_credits_per_check` | int | `1000` | credits | Credit floor per system check that seeds every bounty prize pool. **LIVE** — consumed via `game_maths.reward_per_sys_check()` (floored here at this value), then `bounty_service.spawn_bounty()` uses the result as `total_reward = _legacy_rps × len(route)`, which feeds the division-reward multiplier, winner-reserve split, and per-system consolation payout. The `_legacy_rps` local name and the helper's "deprecated" docstring refer to the formula's lineage, not deadness. GuildConfig column exists but per-guild wiring is not yet live (Unit D1 planned). |
 
@@ -627,7 +590,7 @@ All scheduler commands are **super-admin only** (`DEVELOPERS` env var — no Adm
 /admin_reset_scheduler
 ```
 
-> **Warning:** `/admin_reset_scheduler` is global, not per-guild — it calls bot-core's `POST /api/v1/reset`, which removes every job and re-registers the default recurring jobs from `main.py` (bounty spawn, shop refresh, temperature decay, bounty failsafe cleanup, pg backup, db retention).
+> **Warning:** `/admin_reset_scheduler` is global, not per-guild — it calls bot-core's `POST /api/v1/reset`, which removes every job and re-registers the default recurring jobs from `main.py` (bounty spawn, shop refresh, bounty failsafe cleanup, pg backup, db retention). Note: `temperature_decay_default` was removed from default jobs in rev 0031 — it will NOT be re-added by a reset.
 
 ---
 
@@ -696,7 +659,7 @@ Returns which rule grants them access: developer override, Discord Administrator
 
 ### Too Many / Too Few Bounties
 
-> The activity temperature system is currently decay-only and does NOT affect the active bounty cap (see [Activity Temperature System](#activity-temperature-system)). The cap is governed solely by `bounty_max_per_tier`. The procedures below reflect what actually changes spawn behaviour.
+> The activity temperature system was **retired in rev 0031** (see [Activity Temperature System](#activity-temperature-system)). The active bounty cap is governed solely by `bounty_max_per_tier`. The procedures below reflect what actually changes spawn behaviour.
 
 **Too many bounties:**
 1. Run `/admin_config_bounty action:View` to see current per-tier counts.
@@ -707,7 +670,7 @@ Returns which rule grants them access: developer override, Discord Administrator
 1. Raise the per-tier cap via `/admin_config_bounty action:Update max_bronze:5 ...`.
 2. Force-seed with `/admin_spawn_bounty tier:<tier> quantity:N` (bypasses cooldowns and caps).
 
-Adjusting `guild_activity_decay_rate` or `min_guild_activity` has no effect on spawn cadence today.
+The `guild_activity_decay_rate` and `min_guild_activity` settings were retired in rev 0031 and are no longer settable.
 
 ### Accidental Config Reset (Channels/Roles Unlinked)
 
@@ -728,5 +691,4 @@ This resets config to defaults (cancelling the guild's scheduled jobs first) and
 
 ---
 
-*Last updated: 2026-06-20 (PvC loot: +19 loot knobs / migration 0022, override
-count 34→53; new "PvC Loot (per-guild)" reference table). Prior: 2026-06-11 (full code reconciliation: permission model, new commands — cooldown reset / duel / combat-log / scheduler / dev, shop secondary-weapon config + quantity scaling, retired constants)*
+*Last updated: 2026-08-25 (rev 0031: 14 override fields retired — shop_default_*, turret_spawn_probability, activity/temperature subsystem, bounty timing dead constants, duel_cloak_chance, ship_value_reward_percentage, criminal_equip_damageless_weapon_chance; BOUNTY_DELAY_RANDOM_MIN renamed to BOUNTY_SPAWN_CHECK_INTERVAL_MINUTES; temperature_decay_default removed from default scheduler jobs; MAX_SHIP_NICKNAME_LENGTH raised 30→100). Prior: 2026-06-20 (PvC loot: +19 loot knobs / migration 0022, override count 34→53).*

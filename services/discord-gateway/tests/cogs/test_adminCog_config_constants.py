@@ -112,7 +112,8 @@ _NEW_LOOT_FIELDS = (
 #   primary_tl_band_weight_{center,minus1,plus1}                       (3)
 #   criminal_{cloak,booster,emergency,weaponmod}_chance_{bronze,...}   (16)
 # Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
-_EXPECTED_SLASH_FIELD_COUNT = 109
+# Rev 0031: 14 fields retired → 109 - 14 = 95
+_EXPECTED_SLASH_FIELD_COUNT = 95
 
 
 def _evict_discord_modules():
@@ -189,18 +190,30 @@ class TestCriminalLoadoutFieldExposure:
         for field in _NEW_LOOT_FIELDS:
             assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
 
-    def test_slash_field_count_is_82(self, mock_admin_cog):
+    def test_slash_field_count_is_95(self, mock_admin_cog):
         # Locks the slash-settable surface (see _EXPECTED_SLASH_FIELD_COUNT above).
-        # _GAME_CONSTANT_FIELDS now matches _OVERRIDE_FIELDS exactly (both 82).
+        # _GAME_CONSTANT_FIELDS now matches _OVERRIDE_FIELDS exactly (both 95 after rev 0031).
         # demotion_credit_penalty_pct IS now slash-settable (added in issue #70 batch).
         # kaamo_max_capacity was retired in issue #70.
         # bronze_combat_bonus_{base_mult,per_prestige,cap} added in Unit C (revision 0029).
+        # 14 fields retired in rev 0031 (shop_default_*, activity/temperature, bounty timing).
         assert len(mock_admin_cog._GAME_CONSTANT_FIELDS) == _EXPECTED_SLASH_FIELD_COUNT
         assert "demotion_credit_penalty_pct" in mock_admin_cog._GAME_CONSTANT_FIELDS
         assert "kaamo_max_capacity" not in mock_admin_cog._GAME_CONSTANT_FIELDS
         assert "bronze_combat_bonus_base_mult" in mock_admin_cog._GAME_CONSTANT_FIELDS
         assert "bronze_combat_bonus_per_prestige" in mock_admin_cog._GAME_CONSTANT_FIELDS
         assert "bronze_combat_bonus_cap" in mock_admin_cog._GAME_CONSTANT_FIELDS
+        # Rev 0031 retired fields must NOT appear
+        for retired in (
+            "shop_default_ships_num", "shop_default_weapons_num", "shop_default_modules_num",
+            "shop_default_turrets_num", "turret_spawn_probability", "guild_activity_decay_rate",
+            "min_guild_activity", "activity_temp_per_player", "bounty_delay_random_min",
+            "bounty_delay_random_max", "bounty_spawn_jitter", "duel_cloak_chance",
+            "ship_value_reward_percentage", "criminal_equip_damageless_weapon_chance",
+        ):
+            assert retired not in mock_admin_cog._GAME_CONSTANT_FIELDS, (
+                f"{retired} should be RETIRED from _GAME_CONSTANT_FIELDS (rev 0031)"
+            )
 
     def test_new_fields_surface_in_autocomplete(self, mock_admin_cog):
         interaction = _create_mock_interaction()

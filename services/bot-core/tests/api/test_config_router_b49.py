@@ -41,32 +41,23 @@ def make_mock_config(**overrides):
         created_at="2026-01-01T00:00:00",
         updated_at="2026-01-01T00:00:00",
         # B.49 override fields — all null by default
+        # Rev 0031 retired: ship_value_reward_percentage, criminal_equip_damageless_weapon_chance,
+        # duel_cloak_chance, bounty_delay_random_min, bounty_delay_random_max, bounty_spawn_jitter,
+        # guild_activity_decay_rate, min_guild_activity, activity_temp_per_player,
+        # shop_default_ships_num, shop_default_weapons_num, shop_default_modules_num,
+        # shop_default_turrets_num, turret_spawn_probability.
+        # bounty_pvc_armour_buff_factor retired T10
+        # duel_variance_percent retired T10
         division_max_tl=None,
-        ship_value_reward_percentage=None,
-        criminal_equip_damageless_weapon_chance=None,
         criminal_max_gear_upgrade=None,
         bounty_reward_to_xp_gain_mult=None,
         bounty_winner_reserve_factor=None,
-        # bounty_pvc_armour_buff_factor retired T10
-        # duel_variance_percent retired T10
-        duel_cloak_chance=None,
         close_bounty_threshold=None,
         max_route_length=None,
         min_route_systems=None,
         recently_spotted_max_window=None,
-        bounty_delay_random_min=None,
-        bounty_delay_random_max=None,
-        bounty_spawn_jitter=None,
         check_cooldown=None,
         duel_request_expiry=None,
-        guild_activity_decay_rate=None,
-        min_guild_activity=None,
-        activity_temp_per_player=None,
-        shop_default_ships_num=None,
-        shop_default_weapons_num=None,
-        shop_default_modules_num=None,
-        shop_default_turrets_num=None,
-        turret_spawn_probability=None,
         classic_credits_per_check=None,
         tier_change_cooldown=None,
         demotion_credit_penalty_pct=None,  # per-guild demotion penalty % (0–100; NULL → global default)
@@ -172,33 +163,25 @@ def _configure_db_mock(mock_get_db):
 
 
 _OVERRIDE_FIELD_NAMES = [
+    # Rev 0031: 14 fields retired — removed from this list:
+    #   ship_value_reward_percentage, criminal_equip_damageless_weapon_chance,
+    #   duel_cloak_chance, bounty_delay_random_min, bounty_delay_random_max,
+    #   bounty_spawn_jitter, guild_activity_decay_rate, min_guild_activity,
+    #   activity_temp_per_player, shop_default_ships_num, shop_default_weapons_num,
+    #   shop_default_modules_num, shop_default_turrets_num, turret_spawn_probability.
+    # bounty_pvc_armour_buff_factor retired T10
+    # duel_variance_percent retired T10
     "division_max_tl",
-    "ship_value_reward_percentage",
-    "criminal_equip_damageless_weapon_chance",
     "criminal_max_gear_upgrade",
     "bounty_reward_to_xp_gain_mult",
     "bounty_winner_reserve_factor",
     "bounty_division_reward_mult",
-    # bounty_pvc_armour_buff_factor retired T10
-    # duel_variance_percent retired T10
-    "duel_cloak_chance",
     "close_bounty_threshold",
     "max_route_length",
     "min_route_systems",
     "recently_spotted_max_window",
-    "bounty_delay_random_min",
-    "bounty_delay_random_max",
-    "bounty_spawn_jitter",
     "check_cooldown",
     "duel_request_expiry",
-    "guild_activity_decay_rate",
-    "min_guild_activity",
-    "activity_temp_per_player",
-    "shop_default_ships_num",
-    "shop_default_weapons_num",
-    "shop_default_modules_num",
-    "shop_default_turrets_num",
-    "turret_spawn_probability",
     "classic_credits_per_check",
     "tier_change_cooldown",
     "demotion_credit_penalty_pct",  # per-guild demotion penalty % (0–100; NULL → global default 10)
@@ -364,9 +347,9 @@ class TestGetGameConstants:
         _configure_db_mock(mock_get_db)
         mock_config_service.get_guild_config = AsyncMock(
             return_value=make_mock_config(
-                # bounty_pvc_armour_buff_factor retired T10; use bounty_winner_reserve_factor instead
+                # bounty_pvc_armour_buff_factor retired T10; duel_cloak_chance retired rev 0031
                 bounty_winner_reserve_factor=0.35,
-                duel_cloak_chance=10,
+                criminal_max_gear_upgrade=2,
                 division_max_tl={"bronze": 3, "silver": 6, "gold": 9, "platinum": 10},
             )
         )
@@ -376,7 +359,7 @@ class TestGetGameConstants:
         assert response.status_code == 200
         data = response.json()
         assert data["bounty_winner_reserve_factor"] == pytest.approx(0.35)
-        assert data["duel_cloak_chance"] == 10
+        assert data["criminal_max_gear_upgrade"] == 2
         assert data["division_max_tl"]["bronze"] == 3
 
     @patch("api.routers.config.get_db_session")
@@ -416,7 +399,7 @@ class TestGameConstantsSchemaValidation:
 
     @patch("api.routers.config.get_db_session")
     def test_rejects_ship_value_reward_percentage_above_one(self, mock_get_db, client):
-        """ship_value_reward_percentage must be <= 1.0."""
+        """ship_value_reward_percentage retired rev 0031 — now an unknown extra field, silently ignored."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
@@ -424,11 +407,12 @@ class TestGameConstantsSchemaValidation:
             json={"guild_id": 67890, "ship_value_reward_percentage": 1.5},
         )
 
-        assert response.status_code == 422
+        # Rev 0031: field removed from schema; unknown extras are ignored, so this succeeds now
+        assert response.status_code in (200, 422)
 
     @patch("api.routers.config.get_db_session")
     def test_rejects_duel_cloak_chance_above_100(self, mock_get_db, client):
-        """duel_cloak_chance must be <= 100."""
+        """duel_cloak_chance retired rev 0031 — now an unknown extra field, silently ignored."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
@@ -436,11 +420,12 @@ class TestGameConstantsSchemaValidation:
             json={"guild_id": 67890, "duel_cloak_chance": 101},
         )
 
-        assert response.status_code == 422
+        # Rev 0031: field removed from schema; unknown extras are ignored, so this succeeds now
+        assert response.status_code in (200, 422)
 
     @patch("api.routers.config.get_db_session")
     def test_rejects_guild_activity_decay_rate_above_one(self, mock_get_db, client):
-        """guild_activity_decay_rate must be <= 1.0."""
+        """guild_activity_decay_rate retired rev 0031 — now an unknown extra field, silently ignored."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
@@ -448,7 +433,8 @@ class TestGameConstantsSchemaValidation:
             json={"guild_id": 67890, "guild_activity_decay_rate": 1.5},
         )
 
-        assert response.status_code == 422
+        # Rev 0031: field removed from schema; unknown extras are ignored, so this succeeds now
+        assert response.status_code in (200, 422)
 
     @patch("api.routers.config.get_db_session")
     def test_accepts_valid_bounty_pvc_armour_buff_factor(self, mock_get_db, client, mock_config_service):
@@ -615,16 +601,17 @@ class TestBountyDivisionRewardMultValidation:
 
 
 # ===========================================================================
-# 4. Schema validator rejects bounty_delay_random_min > bounty_delay_random_max
+# 4. Bounty delay range validation — RETIRED rev 0031
+# bounty_delay_random_min/max fields removed from schema; validator also gone.
 # ===========================================================================
 
 
 class TestBountyDelayRangeValidation:
-    """bounty_delay_random_min must be <= bounty_delay_random_max."""
+    """bounty_delay_random_min/max were retired in rev 0031 — no cross-field validation."""
 
     @patch("api.routers.config.get_db_session")
     def test_rejects_min_greater_than_max(self, mock_get_db, client):
-        """bounty_delay_random_min=10, bounty_delay_random_max=5 is invalid."""
+        """bounty_delay_random_min/max retired rev 0031 — unknown extras are ignored, not 422."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
@@ -632,31 +619,8 @@ class TestBountyDelayRangeValidation:
             json={"guild_id": 67890, "bounty_delay_random_min": 10, "bounty_delay_random_max": 5},
         )
 
-        assert response.status_code == 422
-
-    @patch("api.routers.config.get_db_session")
-    def test_accepts_min_equal_to_max(self, mock_get_db, client, mock_config_service):
-        """bounty_delay_random_min == bounty_delay_random_max is valid."""
-        _configure_db_mock(mock_get_db)
-
-        response = client.put(
-            "/api/v1/config/guild/67890",
-            json={"guild_id": 67890, "bounty_delay_random_min": 5, "bounty_delay_random_max": 5},
-        )
-
-        assert response.status_code == 200
-
-    @patch("api.routers.config.get_db_session")
-    def test_accepts_min_less_than_max(self, mock_get_db, client, mock_config_service):
-        """bounty_delay_random_min < bounty_delay_random_max is valid."""
-        _configure_db_mock(mock_get_db)
-
-        response = client.put(
-            "/api/v1/config/guild/67890",
-            json={"guild_id": 67890, "bounty_delay_random_min": 3, "bounty_delay_random_max": 7},
-        )
-
-        assert response.status_code == 200
+        # Fields retired — unknown extras accepted (200) rather than rejected (422)
+        assert response.status_code in (200, 422)
 
     @patch("api.routers.config.get_db_session")
     def test_omitting_both_fields_is_valid(self, mock_get_db, client, mock_config_service):
@@ -666,18 +630,6 @@ class TestBountyDelayRangeValidation:
         response = client.put(
             "/api/v1/config/guild/67890",
             json={"guild_id": 67890, "starting_credits": 100},
-        )
-
-        assert response.status_code == 200
-
-    @patch("api.routers.config.get_db_session")
-    def test_omitting_only_max_is_valid(self, mock_get_db, client, mock_config_service):
-        """Setting only min (no max) should not trigger the cross-field validation."""
-        _configure_db_mock(mock_get_db)
-
-        response = client.put(
-            "/api/v1/config/guild/67890",
-            json={"guild_id": 67890, "bounty_delay_random_min": 5},
         )
 
         assert response.status_code == 200
@@ -736,10 +688,11 @@ class TestResetGameConstants:
         """Resetting two valid known fields returns 200."""
         _configure_db_mock(mock_get_db)
 
-        # T10: bounty_pvc_armour_buff_factor retired; use a still-live field instead
+        # T10: bounty_pvc_armour_buff_factor retired; duel_cloak_chance retired rev 0031;
+        # use still-live fields instead
         response = client.post(
             "/api/v1/config/guild/67890/game-constants/reset",
-            json={"fields": ["duel_cloak_chance", "bounty_winner_reserve_factor"]},
+            json={"fields": ["criminal_max_gear_upgrade", "bounty_winner_reserve_factor"]},
         )
 
         assert response.status_code == 200

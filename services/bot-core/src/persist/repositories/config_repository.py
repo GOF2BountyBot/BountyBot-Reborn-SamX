@@ -546,6 +546,10 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "bounty_waypoint_attempts": config.bounty_waypoint_attempts,
                 "bounty_waypoint_min_degree": config.bounty_waypoint_min_degree,
                 "pvc_damage_reduction": config.pvc_damage_reduction,
+                # Bronze combat bonus per-guild overrides (issue #70 Unit C, revision 0029)
+                "bronze_combat_bonus_base_mult": config.bronze_combat_bonus_base_mult,
+                "bronze_combat_bonus_per_prestige": config.bronze_combat_bonus_per_prestige,
+                "bronze_combat_bonus_cap": config.bronze_combat_bonus_cap,
             }
 
         except Exception as e:

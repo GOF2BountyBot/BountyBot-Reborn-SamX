@@ -18,11 +18,10 @@ from dataclasses import dataclass, field
 
 from shared import bblogger
 
+from services.game_constants import GameConstants
 from services.system_graph_service import SystemGraphService, SystemNode
 
 flogger = bblogger.get_logger("service-pathfinding")
-
-MAX_ROUTE_LENGTH = 50
 
 
 class PathfindingError(enum.Enum):
@@ -71,6 +70,7 @@ class PathfindingService:
         start: str,
         end: str,
         blocked: frozenset[str] = frozenset(),
+        max_route_length: int = GameConstants.MAX_ROUTE_LENGTH,
     ) -> list[str] | PathfindingError:
         """Find shortest path from start to end system.
 
@@ -141,10 +141,10 @@ class PathfindingService:
                 continue
 
             hop_counter += 1
-            if hop_counter >= MAX_ROUTE_LENGTH:
+            if hop_counter >= max_route_length:
                 flogger.warning(
-                    "A* exceeded MAX_ROUTE_LENGTH=%d between %s and %s",
-                    MAX_ROUTE_LENGTH,
+                    "A* exceeded max_route_length=%d between %s and %s",
+                    max_route_length,
                     start,
                     end,
                 )

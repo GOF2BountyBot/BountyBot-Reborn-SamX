@@ -126,6 +126,10 @@ def make_mock_config(**overrides):
         bounty_waypoint_attempts=None,
         bounty_waypoint_min_degree=None,
         pvc_damage_reduction=None,
+        # Bronze combat bonus per-guild overrides (Unit C, revision 0029) — all null by default
+        bronze_combat_bonus_base_mult=None,
+        bronze_combat_bonus_per_prestige=None,
+        bronze_combat_bonus_cap=None,
     )
     defaults.update(overrides)
     return defaults
@@ -226,6 +230,10 @@ _OVERRIDE_FIELD_NAMES = [
     "bounty_waypoint_attempts",
     "bounty_waypoint_min_degree",
     "pvc_damage_reduction",
+    # Bronze combat bonus per-guild overrides (Unit C, revision 0029)
+    "bronze_combat_bonus_base_mult",
+    "bronze_combat_bonus_per_prestige",
+    "bronze_combat_bonus_cap",
 ]
 
 

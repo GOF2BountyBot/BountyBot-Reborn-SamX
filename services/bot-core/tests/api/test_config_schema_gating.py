@@ -608,3 +608,65 @@ class TestShopTlBandOrdering:
             shop_tl_band_hi_platinum=10,
         )
         assert req.shop_tl_band_hi_platinum == 10
+
+
+# ===========================================================================
+# 9. Bronze combat bonus overrides — Unit C bounds (revision 0029)
+# ===========================================================================
+
+
+class TestBronzeCombatBonusBounds:
+    """Schema bounds for the three Bronze combat bonus per-guild knobs."""
+
+    # --- bronze_combat_bonus_base_mult (ge=0.0, le=1.0) ---
+
+    def test_base_mult_at_ge_passes(self):
+        req = _make(bronze_combat_bonus_base_mult=0.0)
+        assert req.bronze_combat_bonus_base_mult == 0.0
+
+    def test_base_mult_at_le_passes(self):
+        req = _make(bronze_combat_bonus_base_mult=1.0)
+        assert req.bronze_combat_bonus_base_mult == 1.0
+
+    def test_base_mult_above_le_rejected(self):
+        _fails(bronze_combat_bonus_base_mult=1.01)
+
+    def test_base_mult_below_ge_rejected(self):
+        _fails(bronze_combat_bonus_base_mult=-0.01)
+
+    # --- bronze_combat_bonus_per_prestige (ge=0.0, le=0.5) ---
+
+    def test_per_prestige_at_ge_passes(self):
+        req = _make(bronze_combat_bonus_per_prestige=0.0)
+        assert req.bronze_combat_bonus_per_prestige == 0.0
+
+    def test_per_prestige_at_le_passes(self):
+        req = _make(bronze_combat_bonus_per_prestige=0.5)
+        assert req.bronze_combat_bonus_per_prestige == 0.5
+
+    def test_per_prestige_above_le_rejected(self):
+        _fails(bronze_combat_bonus_per_prestige=0.51)
+
+    def test_per_prestige_below_ge_rejected(self):
+        _fails(bronze_combat_bonus_per_prestige=-0.01)
+
+    # --- bronze_combat_bonus_cap (ge=0.0, le=2.0) ---
+
+    def test_cap_at_ge_passes(self):
+        req = _make(bronze_combat_bonus_cap=0.0)
+        assert req.bronze_combat_bonus_cap == 0.0
+
+    def test_cap_at_le_passes(self):
+        req = _make(bronze_combat_bonus_cap=2.0)
+        assert req.bronze_combat_bonus_cap == 2.0
+
+    def test_cap_above_le_rejected(self):
+        _fails(bronze_combat_bonus_cap=2.01)
+
+    def test_cap_below_ge_rejected(self):
+        _fails(bronze_combat_bonus_cap=-0.01)
+
+    def test_int_accepted_for_float_bronze_bonus_field(self):
+        """Plain int is accepted for float fields in non-strict context."""
+        req = _make(bronze_combat_bonus_base_mult=1)
+        assert req.bronze_combat_bonus_base_mult == 1.0

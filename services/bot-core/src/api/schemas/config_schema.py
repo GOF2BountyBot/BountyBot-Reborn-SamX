@@ -149,6 +149,14 @@ class GameConstantsOverridesMixin(BaseModel):
     # PvC damage reduction — Keith T. Maxwell bonus (§3; column from Phase-1 schema)
     pvc_damage_reduction: float | None = Field(None, ge=0.0, le=1.0)
 
+    # ------------------------------------------------------------------
+    # Bronze combat bonus per-guild overrides (issue #70 Unit C, revision 0029)
+    # NULL == "use the matching GameConstants default". resolve_constant() handles fallback.
+    # ------------------------------------------------------------------
+    bronze_combat_bonus_base_mult: float | None = Field(None, ge=0.0, le=1.0)
+    bronze_combat_bonus_per_prestige: float | None = Field(None, ge=0.0, le=0.5)
+    bronze_combat_bonus_cap: float | None = Field(None, ge=0.0, le=2.0)
+
     @field_validator("division_max_tl", mode="before")
     @classmethod
     def validate_division_max_tl(cls, v: Any) -> Any:

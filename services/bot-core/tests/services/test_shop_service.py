@@ -2387,6 +2387,75 @@ class TestSecondaryQuantityScalers:
         mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=None)
         assert await service._get_secondary_subtype_by_name(mock_db, "Nonexistent") == ""
 
+    @pytest.mark.asyncio
+    async def test_per_guild_heavy_scaler_override_honored(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo
+    ):
+        """Per-guild shop_secondary_qty_scaler_heavy column overrides the global default.
+
+        When the guild sets shop_secondary_qty_scaler_heavy=2 (instead of the
+        global 5), a rolled quantity of 3 should become 3×2=6, not 3×5=15.
+        """
+        weapon = _make_secondary_weapon("AMR Extinctor", tech_level=1, subtype="nuke")
+        base_config = _make_config_secondary_only(qty_min=3, qty_max=3)
+        # Set the per-guild override column directly on the real GuildConfig instance.
+        base_config.shop_secondary_qty_scaler_heavy = 2
+        mock_config_repo.get_by_guild_id.return_value = base_config
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=weapon)
+
+        quantities: list[int] = []
+
+        async def _fake_create_or_update(db, item_data):
+            quantities.append(item_data["quantity"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        async def _fake_get_random(db, item_type, tech_level, **kwargs):
+            return weapon.name if item_type == "secondary_weapon" else None
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert len(quantities) == 1, f"Expected exactly 1 secondary written, got {len(quantities)}"
+        assert quantities[0] == 6, f"Expected 3×2=6 (per-guild heavy scaler override), got {quantities[0]}"
+
+    @pytest.mark.asyncio
+    async def test_per_guild_standard_scaler_override_honored(
+        self, service, mock_db, mock_config_repo, mock_shop_repo, mock_secondary_weapon_repo
+    ):
+        """Per-guild shop_secondary_qty_scaler_standard column overrides the global default.
+
+        When the guild sets shop_secondary_qty_scaler_standard=3 (instead of the
+        global 10), a rolled quantity of 3 should become 3×3=9, not 3×10=30.
+        """
+        weapon = _make_secondary_weapon("Jet Rocket", tech_level=1, subtype="missile")
+        base_config = _make_config_secondary_only(qty_min=3, qty_max=3)
+        base_config.shop_secondary_qty_scaler_standard = 3
+        mock_config_repo.get_by_guild_id.return_value = base_config
+        mock_secondary_weapon_repo.get_by_name = AsyncMock(return_value=weapon)
+
+        quantities: list[int] = []
+
+        async def _fake_create_or_update(db, item_data):
+            quantities.append(item_data["quantity"])
+            return _make_shop_item(item_name=item_data["item_name"], item_type=item_data["item_type"])
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        async def _fake_get_random(db, item_type, tech_level, **kwargs):
+            return weapon.name if item_type == "secondary_weapon" else None
+
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=100)
+
+        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        assert len(quantities) == 1, f"Expected exactly 1 secondary written, got {len(quantities)}"
+        assert quantities[0] == 9, f"Expected 3×3=9 (per-guild standard scaler override), got {quantities[0]}"
+
 
 # ===========================================================================
 # T1 (PvC loot C-1): commodity economy citizenship in ShopService.

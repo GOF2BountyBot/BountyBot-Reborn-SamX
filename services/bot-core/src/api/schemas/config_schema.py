@@ -103,6 +103,52 @@ class GameConstantsOverridesMixin(BaseModel):
     # Shop module-draw combat/filler split (NULL == GameConstants.SHOP_COMBAT_MODULE_PROB)
     shop_combat_module_prob: float | None = Field(None, ge=0.0, le=1.0)
 
+    # ------------------------------------------------------------------
+    # D-trivial + DIVISION_TL_CENTERS scalar overrides (issue #70, revision 0028)
+    # NULL == "use the matching GameConstants default". resolve_constant() handles fallback.
+    # ------------------------------------------------------------------
+
+    # Criminal loadout — secondary weapon selection
+    criminal_secondary_min_damage: int | None = Field(None, ge=0, le=1000)
+
+    # Shop — secondary weapon quantity scalers
+    shop_secondary_qty_scaler_heavy: int | None = Field(None, ge=1, le=50)
+    shop_secondary_qty_scaler_standard: int | None = Field(None, ge=1, le=100)
+
+    # Shop — per-tier in-band TL range bounds (1–10 each)
+    shop_tl_band_lo_bronze: int | None = Field(None, ge=1, le=10)
+    shop_tl_band_hi_bronze: int | None = Field(None, ge=1, le=10)
+    shop_tl_band_lo_silver: int | None = Field(None, ge=1, le=10)
+    shop_tl_band_hi_silver: int | None = Field(None, ge=1, le=10)
+    shop_tl_band_lo_gold: int | None = Field(None, ge=1, le=10)
+    shop_tl_band_hi_gold: int | None = Field(None, ge=1, le=10)
+    shop_tl_band_lo_platinum: int | None = Field(None, ge=1, le=10)
+    shop_tl_band_hi_platinum: int | None = Field(None, ge=1, le=10)
+
+    # Shop — batch TL draw parameters
+    shop_banded_tl_weight: float | None = Field(None, ge=0.0, le=1.0)
+    shop_uptier_tl_decay: float | None = Field(None, ge=0.0, le=1.0)
+    shop_downtier_tl_decay: float | None = Field(None, ge=0.0, le=1.0)
+
+    # Division TL draw centres (per-guild scalars replacing DIVISION_TL_CENTERS dict)
+    division_tl_center_bronze: int | None = Field(None, ge=1, le=10)
+    division_tl_center_silver: int | None = Field(None, ge=1, le=10)
+    division_tl_center_gold: int | None = Field(None, ge=1, le=10)
+    division_tl_center_platinum: int | None = Field(None, ge=1, le=10)
+
+    # ------------------------------------------------------------------
+    # Previously column-only orphans — columns already existed; schema fields added here.
+    # ------------------------------------------------------------------
+
+    # Waypoint route generation (columns added in revision 0026)
+    bounty_single_waypoint_prob: float | None = Field(None, ge=0.0, le=1.0)
+    bounty_dual_waypoint_prob: float | None = Field(None, ge=0.0, le=1.0)
+    bounty_waypoint_attempts: int | None = Field(None, ge=1, le=100)
+    bounty_waypoint_min_degree: int | None = Field(None, ge=1, le=10)
+
+    # PvC damage reduction — Keith T. Maxwell bonus (§3; column from Phase-1 schema)
+    pvc_damage_reduction: float | None = Field(None, ge=0.0, le=1.0)
+
     @field_validator("division_max_tl", mode="before")
     @classmethod
     def validate_division_max_tl(cls, v: Any) -> Any:
@@ -198,6 +244,21 @@ class GameConstantsOverridesMixin(BaseModel):
                 raise ValueError(f"loot_band{band}_qty_mode must be >= loot_band{band}_qty_min")
             if mx is not None and mode is not None and mode > mx:
                 raise ValueError(f"loot_band{band}_qty_mode must be <= loot_band{band}_qty_max")
+        return self
+
+    @model_validator(mode="after")
+    def validate_shop_tl_band_ordering(self) -> "GameConstantsOverridesMixin":
+        """Per-tier shop TL band: lo must be <= hi when both are present in the request.
+
+        Checks only pairs present in this request; a partial update supplying only
+        one side cannot be cross-checked against the stored row (same pattern as
+        validate_loot_qty_ordering and validate_bounty_delay_range).
+        """
+        for tier in ("bronze", "silver", "gold", "platinum"):
+            lo = getattr(self, f"shop_tl_band_lo_{tier}")
+            hi = getattr(self, f"shop_tl_band_hi_{tier}")
+            if lo is not None and hi is not None and lo > hi:
+                raise ValueError(f"shop_tl_band_lo_{tier} must be <= shop_tl_band_hi_{tier}")
         return self
 
 

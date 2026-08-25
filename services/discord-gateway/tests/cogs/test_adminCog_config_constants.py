@@ -93,11 +93,19 @@ _NEW_LOOT_FIELDS = (
     "loot_commodity_sell_fraction",
 )
 
-# Full slash-settable surface (52 fields; demotion_credit_penalty_pct stays API-only).
-# 24 prior (kaamo_max_capacity retired in issue #70) + 8 criminal-loadout + 19 loot
-# + 1 bounty_division_reward_mult = 52.
+# Full slash-settable surface (79 fields; _GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS).
+# 52 prior + 27 added in D-trivial batch (issue #70, revision 0028):
+#   4 previously API-only (min_route_systems, recently_spotted_max_window,
+#     demotion_credit_penalty_pct, shop_combat_module_prob)
+#   + 1 criminal_secondary_min_damage
+#   + 2 shop_secondary_qty_scaler_{heavy,standard}
+#   + 8 shop_tl_band_{lo,hi}_{bronze,silver,gold,platinum}
+#   + 3 shop_{banded_tl_weight,uptier_tl_decay,downtier_tl_decay}
+#   + 4 division_tl_center_{bronze,silver,gold,platinum}
+#   + 5 orphans (bounty_{single,dual}_waypoint_prob, bounty_waypoint_{attempts,min_degree},
+#               pvc_damage_reduction)
 # Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
-_EXPECTED_SLASH_FIELD_COUNT = 52
+_EXPECTED_SLASH_FIELD_COUNT = 79
 
 
 def _evict_discord_modules():
@@ -174,12 +182,13 @@ class TestCriminalLoadoutFieldExposure:
         for field in _NEW_LOOT_FIELDS:
             assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
 
-    def test_slash_field_count_is_52(self, mock_admin_cog):
+    def test_slash_field_count_is_79(self, mock_admin_cog):
         # Locks the slash-settable surface (see _EXPECTED_SLASH_FIELD_COUNT above).
-        # demotion_credit_penalty_pct stays API-only and must NOT appear here;
+        # _GAME_CONSTANT_FIELDS now matches _OVERRIDE_FIELDS exactly (both 79).
+        # demotion_credit_penalty_pct IS now slash-settable (added in issue #70 batch).
         # kaamo_max_capacity was retired in issue #70.
         assert len(mock_admin_cog._GAME_CONSTANT_FIELDS) == _EXPECTED_SLASH_FIELD_COUNT
-        assert "demotion_credit_penalty_pct" not in mock_admin_cog._GAME_CONSTANT_FIELDS
+        assert "demotion_credit_penalty_pct" in mock_admin_cog._GAME_CONSTANT_FIELDS
         assert "kaamo_max_capacity" not in mock_admin_cog._GAME_CONSTANT_FIELDS
 
     def test_new_fields_surface_in_autocomplete(self, mock_admin_cog):

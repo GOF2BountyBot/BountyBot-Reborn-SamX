@@ -139,6 +139,39 @@ class GuildConfig(Base):
     # Economy — kaamo_max_capacity retired (issue #70; dropped in revision 0027)
     classic_credits_per_check: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
+    # ------------------------------------------------------------------
+    # D-trivial scalar overrides (issue #70 batch, revision 0028)
+    # NULL == "use the matching GameConstants default". resolve_constant() handles fallback.
+    # ------------------------------------------------------------------
+
+    # Criminal loadout — secondary weapon selection
+    criminal_secondary_min_damage: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Shop — secondary weapon quantity scalers
+    shop_secondary_qty_scaler_heavy: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_secondary_qty_scaler_standard: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Shop — per-tier in-band TL range bounds
+    shop_tl_band_lo_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_tl_band_hi_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_tl_band_lo_silver: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_tl_band_hi_silver: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_tl_band_lo_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_tl_band_hi_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_tl_band_lo_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_tl_band_hi_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Shop — batch TL draw parameters (float)
+    shop_banded_tl_weight: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    shop_uptier_tl_decay: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    shop_downtier_tl_decay: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    # Division TL draw centres (flatten of GameConstants.DIVISION_TL_CENTERS dict, revision 0028)
+    division_tl_center_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    division_tl_center_silver: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    division_tl_center_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    division_tl_center_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     # Demotion — NULL means "use GameConstants.DEMOTION_CREDIT_PENALTY_PCT (10)"
     demotion_credit_penalty_pct: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 

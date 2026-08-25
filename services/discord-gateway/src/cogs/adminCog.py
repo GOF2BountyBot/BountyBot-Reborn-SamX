@@ -2447,6 +2447,42 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "loot_band3_qty_max",
         "loot_band3_qty_mode",
         "loot_commodity_sell_fraction",
+        # Previously API-only fields — now slash-settable (issue #70 batch)
+        "min_route_systems",
+        "recently_spotted_max_window",
+        "demotion_credit_penalty_pct",
+        "shop_combat_module_prob",
+        # D-trivial + DIVISION_TL_CENTERS scalar overrides (revision 0028)
+        # Criminal loadout — secondary selection
+        "criminal_secondary_min_damage",
+        # Shop — secondary weapon quantity scalers
+        "shop_secondary_qty_scaler_heavy",
+        "shop_secondary_qty_scaler_standard",
+        # Shop — per-tier in-band TL range bounds
+        "shop_tl_band_lo_bronze",
+        "shop_tl_band_hi_bronze",
+        "shop_tl_band_lo_silver",
+        "shop_tl_band_hi_silver",
+        "shop_tl_band_lo_gold",
+        "shop_tl_band_hi_gold",
+        "shop_tl_band_lo_platinum",
+        "shop_tl_band_hi_platinum",
+        # Shop — batch TL draw parameters
+        "shop_banded_tl_weight",
+        "shop_uptier_tl_decay",
+        "shop_downtier_tl_decay",
+        # Division TL draw centres
+        "division_tl_center_bronze",
+        "division_tl_center_silver",
+        "division_tl_center_gold",
+        "division_tl_center_platinum",
+        # Previously column-only orphans (columns from 0026; slash exposure added here)
+        "bounty_single_waypoint_prob",
+        "bounty_dual_waypoint_prob",
+        "bounty_waypoint_attempts",
+        "bounty_waypoint_min_degree",
+        "pvc_damage_reduction",
+        # _GAME_CONSTANT_FIELDS and _OVERRIDE_FIELDS (config.py) are now identical at 79 fields.
     )
 
     async def constants_autocomplete(

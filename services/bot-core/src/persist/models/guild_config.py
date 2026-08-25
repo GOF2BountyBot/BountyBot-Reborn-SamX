@@ -94,14 +94,30 @@ class GuildConfig(Base):
     # ------------------------------------------------------------------
 
     # Combat / Balance
+    # division_max_tl JSONB — deprecated; scalar replacements added in revision 0030.
+    # JSONB kept for fallback chain (resolve_flattened reads old dict rows); dropped in next release.
     division_max_tl: Mapped[dict[str, int] | None] = mapped_column(_JSONB, nullable=True, default=None)
+
+    # Flat scalars for division_max_tl (issue #70, revision 0030)
+    division_max_tl_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    division_max_tl_silver: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    division_max_tl_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    division_max_tl_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     ship_value_reward_percentage: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     criminal_equip_damageless_weapon_chance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     criminal_max_gear_upgrade: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_reward_to_xp_gain_mult: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     bounty_winner_reserve_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    # Per-division prize-pool scaler. NULL == "use GameConstants.BOUNTY_DIVISION_REWARD_MULT".
+    # bounty_division_reward_mult JSONB — deprecated; scalar replacements added in revision 0030.
+    # JSONB kept for fallback chain (resolve_flattened reads old dict rows); dropped in next release.
     bounty_division_reward_mult: Mapped[dict[str, float] | None] = mapped_column(_JSONB, nullable=True, default=None)
+
+    # Flat scalars for bounty_division_reward_mult (issue #70, revision 0030)
+    bounty_division_reward_mult_bronze: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    bounty_division_reward_mult_silver: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    bounty_division_reward_mult_gold: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    bounty_division_reward_mult_platinum: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     # bounty_pvc_armour_buff_factor — retired T10 (replaced by pvc_damage_reduction §3)
     # duel_variance_percent — retired T10 (SimpleTTKResolver removed)
     duel_cloak_chance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -189,9 +205,19 @@ class GuildConfig(Base):
     # Thread 3 — primary long-range selection
     long_range_threshold_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     criminal_long_range_pct: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # primary_tl_band_weights JSONB — deprecated; do not write new values via the dict API.
+    # Scalar replacements (primary_tl_band_weight_{center,minus1,plus1}) added in revision 0030.
+    # JSONB kept for fallback chain (resolve_flattened reads old dict rows); dropped in next release.
     primary_tl_band_weights: Mapped[dict[str, int] | None] = mapped_column(_JSONB, nullable=True, default=None)
 
+    # Flat scalars for primary_tl_band_weights (issue #70, revision 0030)
+    primary_tl_band_weight_center: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    primary_tl_band_weight_minus1: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    primary_tl_band_weight_plus1: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     # Thread 4 — criminal two-gate module Gate-1 equip chances by division (%)
+    # JSONB columns below are deprecated; scalar replacements added in revision 0030.
+    # JSONB kept for fallback chain (resolve_flattened reads old dict rows); dropped in next release.
     criminal_cloak_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
         _JSONB, nullable=True, default=None
     )
@@ -204,6 +230,24 @@ class GuildConfig(Base):
     criminal_weaponmod_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
         _JSONB, nullable=True, default=None
     )
+
+    # Flat scalars for criminal chance dicts (issue #70, revision 0030)
+    criminal_cloak_chance_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_cloak_chance_silver: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_cloak_chance_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_cloak_chance_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_booster_chance_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_booster_chance_silver: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_booster_chance_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_booster_chance_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_emergency_chance_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_emergency_chance_silver: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_emergency_chance_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_emergency_chance_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_weaponmod_chance_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_weaponmod_chance_silver: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_weaponmod_chance_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_weaponmod_chance_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     # Thread 6 — exclude primarily-EMP weapons from criminal selection.
     # NULL == "use GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS (True)".

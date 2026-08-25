@@ -81,6 +81,16 @@ class GameConstants:
 
     # Maximum tech level for criminal loadouts per division.
     # Bronze is capped low to ensure new players with Betty can compete.
+    # Flat scalar equivalents (issue #70 flatten; per-guild columns division_max_tl_{div}).
+    # Do not add new readers of the dict below — use these scalars via resolve_flattened().
+    DIVISION_MAX_TL_BRONZE: int = 2
+    DIVISION_MAX_TL_SILVER: int = 4
+    DIVISION_MAX_TL_GOLD: int = 7
+    DIVISION_MAX_TL_PLATINUM: int = 10
+
+    # Legacy dict: derived view rebuilt from scalars in load() (issue #70 flatten).
+    # Do not add new readers — use the DIVISION_MAX_TL_* scalars above.
+    # Kept for fallback chain in resolve_flattened() and legacy JSONB compatibility.
     DIVISION_MAX_TL: dict[str, int] = {
         "bronze": 2,  # Betty-class only (TL 0-2)
         "silver": 4,  # Mid-tier ships
@@ -124,8 +134,15 @@ class GameConstants:
     # fight — a dead rung. The geometric-ideal midpoint of bronze→gold is ~2.4×;
     # 2.0 is a deliberately more conservative default (silver ≈ 2.05× bronze,
     # ~12k median) that removes the dead rung without fully closing to the ladder.
-    # Tune per-guild via the bounty_division_reward_mult JSONB column;
-    # resolve_constant() handles the fallback. Mirrors the DIVISION_MAX_TL pattern.
+    # Tune per-guild via the bounty_division_reward_mult_{div} columns (issue #70 flatten).
+    # Flat scalar equivalents; do not add new readers of the dict below.
+    BOUNTY_DIVISION_REWARD_MULT_BRONZE: float = 1.0
+    BOUNTY_DIVISION_REWARD_MULT_SILVER: float = 2.0
+    BOUNTY_DIVISION_REWARD_MULT_GOLD: float = 1.0
+    BOUNTY_DIVISION_REWARD_MULT_PLATINUM: float = 1.0
+
+    # Legacy dict: derived view rebuilt from scalars in load() (issue #70 flatten).
+    # Do not add new readers — use the BOUNTY_DIVISION_REWARD_MULT_* scalars above.
     BOUNTY_DIVISION_REWARD_MULT: dict[str, float] = {
         "bronze": 1.0,
         "silver": 2.0,
@@ -210,13 +227,39 @@ class GameConstants:
     CRIMINAL_LONG_RANGE_PCT: float = 0.50
 
     # Per-slot ±1 TL-band pick weights for primary selection (center=target TL).
-    # Per-guild override: primary_tl_band_weights on GuildConfig (dict with keys
-    # exactly {center, minus1, plus1}, non-negative ints).
+    # Flat scalar equivalents (issue #70 flatten; per-guild columns primary_tl_band_weight_{key}).
+    # Do not add new readers of the dict below — use these scalars via resolve_flattened().
+    PRIMARY_TL_BAND_WEIGHT_CENTER: int = 70
+    PRIMARY_TL_BAND_WEIGHT_MINUS1: int = 20
+    PRIMARY_TL_BAND_WEIGHT_PLUS1: int = 10
+
+    # Legacy dict: derived view rebuilt from scalars in load() (issue #70 flatten).
+    # Do not add new readers — use the PRIMARY_TL_BAND_WEIGHT_* scalars above.
     PRIMARY_TL_BAND_WEIGHTS: dict[str, int] = {"center": 70, "minus1": 20, "plus1": 10}
 
     # Thread 4 — criminal two-gate module Gate-1 equip chances by division (%).
-    # Each is a dict keyed exactly {bronze, silver, gold, platinum} with ints 0–100.
-    # Per-guild overrides: the matching snake_case GuildConfig columns.
+    # Flat scalar equivalents (issue #70 flatten; per-guild columns criminal_{name}_chance_{div}).
+    # Do not add new readers of the dicts below — use these scalars via resolve_flattened().
+    CRIMINAL_CLOAK_CHANCE_BRONZE: int = 0
+    CRIMINAL_CLOAK_CHANCE_SILVER: int = 25
+    CRIMINAL_CLOAK_CHANCE_GOLD: int = 66
+    CRIMINAL_CLOAK_CHANCE_PLATINUM: int = 100
+    CRIMINAL_BOOSTER_CHANCE_BRONZE: int = 50
+    CRIMINAL_BOOSTER_CHANCE_SILVER: int = 100
+    CRIMINAL_BOOSTER_CHANCE_GOLD: int = 100
+    CRIMINAL_BOOSTER_CHANCE_PLATINUM: int = 100
+    CRIMINAL_EMERGENCY_CHANCE_BRONZE: int = 0
+    CRIMINAL_EMERGENCY_CHANCE_SILVER: int = 25
+    CRIMINAL_EMERGENCY_CHANCE_GOLD: int = 50
+    CRIMINAL_EMERGENCY_CHANCE_PLATINUM: int = 100
+    CRIMINAL_WEAPONMOD_CHANCE_BRONZE: int = 0
+    CRIMINAL_WEAPONMOD_CHANCE_SILVER: int = 25
+    CRIMINAL_WEAPONMOD_CHANCE_GOLD: int = 50
+    CRIMINAL_WEAPONMOD_CHANCE_PLATINUM: int = 100
+
+    # Legacy dicts: derived views rebuilt from scalars in load() (issue #70 flatten).
+    # Do not add new readers — use the CRIMINAL_*_CHANCE_* scalar constants above.
+    # Kept for fallback chain in resolve_flattened() and legacy JSONB compatibility.
     CRIMINAL_CLOAK_CHANCE_BY_DIVISION: dict[str, int] = {"bronze": 0, "silver": 25, "gold": 66, "platinum": 100}
     CRIMINAL_BOOSTER_CHANCE_BY_DIVISION: dict[str, int] = {"bronze": 50, "silver": 100, "gold": 100, "platinum": 100}
     CRIMINAL_EMERGENCY_CHANCE_BY_DIVISION: dict[str, int] = {"bronze": 0, "silver": 25, "gold": 50, "platinum": 100}
@@ -693,6 +736,82 @@ class GameConstants:
             "platinum": cls.DIVISION_TL_CENTER_PLATINUM,
         }
 
+        # JSONB flatten — division_max_tl (issue #70, revision 0030)
+        cls.DIVISION_MAX_TL_BRONZE = _track_int("DIVISION_MAX_TL_BRONZE", 2)
+        cls.DIVISION_MAX_TL_SILVER = _track_int("DIVISION_MAX_TL_SILVER", 4)
+        cls.DIVISION_MAX_TL_GOLD = _track_int("DIVISION_MAX_TL_GOLD", 7)
+        cls.DIVISION_MAX_TL_PLATINUM = _track_int("DIVISION_MAX_TL_PLATINUM", 10)
+        cls.DIVISION_MAX_TL = {
+            "bronze": cls.DIVISION_MAX_TL_BRONZE,
+            "silver": cls.DIVISION_MAX_TL_SILVER,
+            "gold": cls.DIVISION_MAX_TL_GOLD,
+            "platinum": cls.DIVISION_MAX_TL_PLATINUM,
+        }
+
+        # JSONB flatten — bounty_division_reward_mult (issue #70, revision 0030)
+        cls.BOUNTY_DIVISION_REWARD_MULT_BRONZE = _track_float("BOUNTY_DIVISION_REWARD_MULT_BRONZE", 1.0)
+        cls.BOUNTY_DIVISION_REWARD_MULT_SILVER = _track_float("BOUNTY_DIVISION_REWARD_MULT_SILVER", 2.0)
+        cls.BOUNTY_DIVISION_REWARD_MULT_GOLD = _track_float("BOUNTY_DIVISION_REWARD_MULT_GOLD", 1.0)
+        cls.BOUNTY_DIVISION_REWARD_MULT_PLATINUM = _track_float("BOUNTY_DIVISION_REWARD_MULT_PLATINUM", 1.0)
+        cls.BOUNTY_DIVISION_REWARD_MULT = {
+            "bronze": cls.BOUNTY_DIVISION_REWARD_MULT_BRONZE,
+            "silver": cls.BOUNTY_DIVISION_REWARD_MULT_SILVER,
+            "gold": cls.BOUNTY_DIVISION_REWARD_MULT_GOLD,
+            "platinum": cls.BOUNTY_DIVISION_REWARD_MULT_PLATINUM,
+        }
+
+        # JSONB flatten — primary_tl_band_weights (issue #70, revision 0030)
+        cls.PRIMARY_TL_BAND_WEIGHT_CENTER = _track_int("PRIMARY_TL_BAND_WEIGHT_CENTER", 70)
+        cls.PRIMARY_TL_BAND_WEIGHT_MINUS1 = _track_int("PRIMARY_TL_BAND_WEIGHT_MINUS1", 20)
+        cls.PRIMARY_TL_BAND_WEIGHT_PLUS1 = _track_int("PRIMARY_TL_BAND_WEIGHT_PLUS1", 10)
+        cls.PRIMARY_TL_BAND_WEIGHTS = {
+            "center": cls.PRIMARY_TL_BAND_WEIGHT_CENTER,
+            "minus1": cls.PRIMARY_TL_BAND_WEIGHT_MINUS1,
+            "plus1": cls.PRIMARY_TL_BAND_WEIGHT_PLUS1,
+        }
+
+        # JSONB flatten — criminal chance scalars (issue #70, revision 0030)
+        cls.CRIMINAL_CLOAK_CHANCE_BRONZE = _track_int("CRIMINAL_CLOAK_CHANCE_BRONZE", 0)
+        cls.CRIMINAL_CLOAK_CHANCE_SILVER = _track_int("CRIMINAL_CLOAK_CHANCE_SILVER", 25)
+        cls.CRIMINAL_CLOAK_CHANCE_GOLD = _track_int("CRIMINAL_CLOAK_CHANCE_GOLD", 66)
+        cls.CRIMINAL_CLOAK_CHANCE_PLATINUM = _track_int("CRIMINAL_CLOAK_CHANCE_PLATINUM", 100)
+        cls.CRIMINAL_CLOAK_CHANCE_BY_DIVISION = {
+            "bronze": cls.CRIMINAL_CLOAK_CHANCE_BRONZE,
+            "silver": cls.CRIMINAL_CLOAK_CHANCE_SILVER,
+            "gold": cls.CRIMINAL_CLOAK_CHANCE_GOLD,
+            "platinum": cls.CRIMINAL_CLOAK_CHANCE_PLATINUM,
+        }
+        cls.CRIMINAL_BOOSTER_CHANCE_BRONZE = _track_int("CRIMINAL_BOOSTER_CHANCE_BRONZE", 50)
+        cls.CRIMINAL_BOOSTER_CHANCE_SILVER = _track_int("CRIMINAL_BOOSTER_CHANCE_SILVER", 100)
+        cls.CRIMINAL_BOOSTER_CHANCE_GOLD = _track_int("CRIMINAL_BOOSTER_CHANCE_GOLD", 100)
+        cls.CRIMINAL_BOOSTER_CHANCE_PLATINUM = _track_int("CRIMINAL_BOOSTER_CHANCE_PLATINUM", 100)
+        cls.CRIMINAL_BOOSTER_CHANCE_BY_DIVISION = {
+            "bronze": cls.CRIMINAL_BOOSTER_CHANCE_BRONZE,
+            "silver": cls.CRIMINAL_BOOSTER_CHANCE_SILVER,
+            "gold": cls.CRIMINAL_BOOSTER_CHANCE_GOLD,
+            "platinum": cls.CRIMINAL_BOOSTER_CHANCE_PLATINUM,
+        }
+        cls.CRIMINAL_EMERGENCY_CHANCE_BRONZE = _track_int("CRIMINAL_EMERGENCY_CHANCE_BRONZE", 0)
+        cls.CRIMINAL_EMERGENCY_CHANCE_SILVER = _track_int("CRIMINAL_EMERGENCY_CHANCE_SILVER", 25)
+        cls.CRIMINAL_EMERGENCY_CHANCE_GOLD = _track_int("CRIMINAL_EMERGENCY_CHANCE_GOLD", 50)
+        cls.CRIMINAL_EMERGENCY_CHANCE_PLATINUM = _track_int("CRIMINAL_EMERGENCY_CHANCE_PLATINUM", 100)
+        cls.CRIMINAL_EMERGENCY_CHANCE_BY_DIVISION = {
+            "bronze": cls.CRIMINAL_EMERGENCY_CHANCE_BRONZE,
+            "silver": cls.CRIMINAL_EMERGENCY_CHANCE_SILVER,
+            "gold": cls.CRIMINAL_EMERGENCY_CHANCE_GOLD,
+            "platinum": cls.CRIMINAL_EMERGENCY_CHANCE_PLATINUM,
+        }
+        cls.CRIMINAL_WEAPONMOD_CHANCE_BRONZE = _track_int("CRIMINAL_WEAPONMOD_CHANCE_BRONZE", 0)
+        cls.CRIMINAL_WEAPONMOD_CHANCE_SILVER = _track_int("CRIMINAL_WEAPONMOD_CHANCE_SILVER", 25)
+        cls.CRIMINAL_WEAPONMOD_CHANCE_GOLD = _track_int("CRIMINAL_WEAPONMOD_CHANCE_GOLD", 50)
+        cls.CRIMINAL_WEAPONMOD_CHANCE_PLATINUM = _track_int("CRIMINAL_WEAPONMOD_CHANCE_PLATINUM", 100)
+        cls.CRIMINAL_WEAPONMOD_CHANCE_BY_DIVISION = {
+            "bronze": cls.CRIMINAL_WEAPONMOD_CHANCE_BRONZE,
+            "silver": cls.CRIMINAL_WEAPONMOD_CHANCE_SILVER,
+            "gold": cls.CRIMINAL_WEAPONMOD_CHANCE_GOLD,
+            "platinum": cls.CRIMINAL_WEAPONMOD_CHANCE_PLATINUM,
+        }
+
         # Criminal secondary min damage (issue #70 batch)
         cls.CRIMINAL_SECONDARY_MIN_DAMAGE = _track_int("CRIMINAL_SECONDARY_MIN_DAMAGE", 1)
 
@@ -895,3 +1014,38 @@ def resolve_constant[T](guild_config: Any | None, field: str, fallback: T) -> T:
     if val is None:
         return fallback
     return val
+
+
+def resolve_flattened[T](
+    guild_config: Any | None,
+    scalar_field: str,
+    legacy_dict_field: str,
+    key: str,
+    fallback: T,
+) -> T:
+    """Resolve a per-guild scalar with JSONB-dict legacy fallback (issue #70 flatten).
+
+    Fallback chain:
+    1. ``guild_config.<scalar_field>`` — new flat scalar column (NULL = not set).
+    2. ``guild_config.<legacy_dict_field>[key]`` — legacy JSONB per-key value for
+       rows written via the old dict API (e.g. before the backfill window closed).
+    3. ``fallback`` — global :class:`GameConstants` scalar constant.
+
+    A value of 0 or 0.0 on the scalar column is a valid override and is NOT
+    treated as None (same semantics as :func:`resolve_constant`).
+    Pass None for guild_config when no per-guild context is available.
+    """
+    if guild_config is None:
+        return fallback
+    # 1. Try flat scalar column.
+    val = getattr(guild_config, scalar_field, None)
+    if val is not None:
+        return val
+    # 2. Try legacy JSONB key.
+    legacy_dict = getattr(guild_config, legacy_dict_field, None)
+    if legacy_dict is not None and isinstance(legacy_dict, dict):
+        legacy_val = legacy_dict.get(key)
+        if legacy_val is not None:
+            return legacy_val
+    # 3. Global fallback.
+    return fallback

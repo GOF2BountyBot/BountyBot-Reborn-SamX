@@ -2486,7 +2486,39 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "bronze_combat_bonus_base_mult",
         "bronze_combat_bonus_per_prestige",
         "bronze_combat_bonus_cap",
-        # _GAME_CONSTANT_FIELDS and _OVERRIDE_FIELDS (config.py) are now identical at 82 fields.
+        # JSONB flatten scalars (issue #70, revision 0030) — 27 new fields
+        # division_max_tl flat scalars
+        "division_max_tl_bronze",
+        "division_max_tl_silver",
+        "division_max_tl_gold",
+        "division_max_tl_platinum",
+        # bounty_division_reward_mult flat scalars
+        "bounty_division_reward_mult_bronze",
+        "bounty_division_reward_mult_silver",
+        "bounty_division_reward_mult_gold",
+        "bounty_division_reward_mult_platinum",
+        # primary_tl_band_weights flat scalars
+        "primary_tl_band_weight_center",
+        "primary_tl_band_weight_minus1",
+        "primary_tl_band_weight_plus1",
+        # criminal chance flat scalars
+        "criminal_cloak_chance_bronze",
+        "criminal_cloak_chance_silver",
+        "criminal_cloak_chance_gold",
+        "criminal_cloak_chance_platinum",
+        "criminal_booster_chance_bronze",
+        "criminal_booster_chance_silver",
+        "criminal_booster_chance_gold",
+        "criminal_booster_chance_platinum",
+        "criminal_emergency_chance_bronze",
+        "criminal_emergency_chance_silver",
+        "criminal_emergency_chance_gold",
+        "criminal_emergency_chance_platinum",
+        "criminal_weaponmod_chance_bronze",
+        "criminal_weaponmod_chance_silver",
+        "criminal_weaponmod_chance_gold",
+        "criminal_weaponmod_chance_platinum",
+        # _GAME_CONSTANT_FIELDS and _OVERRIDE_FIELDS (config.py) are now identical at 109 fields.
     )
 
     async def constants_autocomplete(

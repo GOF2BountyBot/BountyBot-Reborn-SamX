@@ -35,28 +35,31 @@ class TestPickDivisionTechLevel:
     """Tests for the division TL draw shared by bounty spawns and shop refreshes."""
 
     @pytest.mark.parametrize(
-        ("division", "expected"),
+        ("division", "cap", "expected"),
         [
-            ("bronze", {1, 2}),
-            ("silver", {1, 2, 3, 4}),
-            ("gold", {4, 5, 6, 7}),
-            ("platinum", {6, 7, 8, 9, 10}),
+            ("bronze", GameConstants.DIVISION_MAX_TL_BRONZE, {1, 2}),
+            ("silver", GameConstants.DIVISION_MAX_TL_SILVER, {1, 2, 3, 4}),
+            ("gold", GameConstants.DIVISION_MAX_TL_GOLD, {4, 5, 6, 7}),
+            ("platinum", GameConstants.DIVISION_MAX_TL_PLATINUM, {6, 7, 8, 9, 10}),
         ],
     )
-    def test_stays_within_the_division_support_and_cap(self, division: str, expected: set[int]) -> None:
-        drawn = {pick_division_tech_level(division, GameConstants.DIVISION_MAX_TL) for _ in range(400)}
+    def test_stays_within_the_division_support_and_cap(self, division: str, cap: int, expected: set[int]) -> None:
+        # cap is now a resolved scalar int (issue #70 flatten — pick_division_tech_level
+        # takes cap: int, not a dict; callers resolve via resolve_flattened).
+        drawn = {pick_division_tech_level(division, cap) for _ in range(400)}
 
         assert drawn <= expected
 
     def test_applies_per_guild_cap_override(self) -> None:
-        caps = {"bronze": 2, "silver": 4, "gold": 5, "platinum": 10}
+        # Per-guild cap is now a resolved int, not a dict.
+        cap = 5  # gold override to 5 instead of the default 7
 
-        assert all(pick_division_tech_level("gold", caps) <= 5 for _ in range(200))
+        assert all(pick_division_tech_level("gold", cap) <= 5 for _ in range(200))
 
     def test_tier_name_case_is_ignored(self) -> None:
         """Shop tiers arrive capitalised ("Gold"); divisions are stored lowercase."""
         with patch("services.game_maths.pick_random_item_tl", return_value=6) as picker:
-            assert pick_division_tech_level("Gold", GameConstants.DIVISION_MAX_TL) == 6
+            assert pick_division_tech_level("Gold", GameConstants.DIVISION_MAX_TL_GOLD) == 6
 
         picker.assert_called_once_with(6)  # gold centre, not the unknown-division default of 5
 
@@ -67,7 +70,7 @@ class TestPickDivisionTechLevel:
         (patched to return 4 deterministically).
         """
         with patch("services.game_maths.pick_random_item_tl", return_value=4) as picker:
-            result = pick_division_tech_level("bronze", GameConstants.DIVISION_MAX_TL, center=4)
+            result = pick_division_tech_level("bronze", GameConstants.DIVISION_MAX_TL_BRONZE, center=4)
 
         picker.assert_called_once_with(4)
         assert result == 2  # capped at bronze MAX_TL=2 even with center override
@@ -75,7 +78,7 @@ class TestPickDivisionTechLevel:
     def test_explicit_center_none_falls_back_to_global(self) -> None:
         """Passing center=None (legacy call shape) falls back to DIVISION_TL_CENTERS."""
         with patch("services.game_maths.pick_random_item_tl", return_value=3) as picker:
-            result = pick_division_tech_level("silver", GameConstants.DIVISION_MAX_TL, center=None)
+            result = pick_division_tech_level("silver", GameConstants.DIVISION_MAX_TL_SILVER, center=None)
 
         picker.assert_called_once_with(3)  # silver center from DIVISION_TL_CENTERS is 3
         assert result == 3  # silver cap=4; 3 <= 4 so no clamping

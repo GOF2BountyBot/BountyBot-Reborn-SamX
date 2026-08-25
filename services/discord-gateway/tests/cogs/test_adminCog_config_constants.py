@@ -113,7 +113,8 @@ _NEW_LOOT_FIELDS = (
 #   criminal_{cloak,booster,emergency,weaponmod}_chance_{bronze,...}   (16)
 # Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
 # Rev 0031: 14 fields retired → 109 - 14 = 95
-_EXPECTED_SLASH_FIELD_COUNT = 95
+# Rev 0032: +22 combat engine constants → 95 + 22 = 117
+_EXPECTED_SLASH_FIELD_COUNT = 117
 
 
 def _evict_discord_modules():
@@ -190,13 +191,14 @@ class TestCriminalLoadoutFieldExposure:
         for field in _NEW_LOOT_FIELDS:
             assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
 
-    def test_slash_field_count_is_95(self, mock_admin_cog):
+    def test_slash_field_count_is_117(self, mock_admin_cog):
         # Locks the slash-settable surface (see _EXPECTED_SLASH_FIELD_COUNT above).
-        # _GAME_CONSTANT_FIELDS now matches _OVERRIDE_FIELDS exactly (both 95 after rev 0031).
+        # _GAME_CONSTANT_FIELDS now matches _OVERRIDE_FIELDS exactly (both 117 after rev 0032).
         # demotion_credit_penalty_pct IS now slash-settable (added in issue #70 batch).
         # kaamo_max_capacity was retired in issue #70.
         # bronze_combat_bonus_{base_mult,per_prestige,cap} added in Unit C (revision 0029).
         # 14 fields retired in rev 0031 (shop_default_*, activity/temperature, bounty timing).
+        # +22 combat engine constants added in rev 0032 (unit A1).
         assert len(mock_admin_cog._GAME_CONSTANT_FIELDS) == _EXPECTED_SLASH_FIELD_COUNT
         assert "demotion_credit_penalty_pct" in mock_admin_cog._GAME_CONSTANT_FIELDS
         assert "kaamo_max_capacity" not in mock_admin_cog._GAME_CONSTANT_FIELDS
@@ -396,7 +398,11 @@ class TestCanonicalJsonGuard:
         #   services/discord-gateway/tests/cogs/test_adminCog_config_constants.py
         # parents[0] = cogs/, parents[1] = tests/, parents[2] = discord-gateway/,
         # parents[3] = services/, parents[4] = repo root
-        repo_root = Path(__file__).resolve().parents[4]
+        # Guard against IndexError when running inside a container (shallow tree).
+        try:
+            repo_root = Path(__file__).resolve().parents[4]
+        except IndexError:
+            return None
         candidate = repo_root / "services" / "bot-core" / "tests" / "data" / "override_fields.json"
         return candidate if candidate.exists() else None
 

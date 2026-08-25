@@ -174,6 +174,29 @@ FIELD_TO_CATALOG_ROW: dict[str, str] = {
     "division_tl_center_silver": "DIVISION_TL_CENTERS",
     "division_tl_center_gold": "DIVISION_TL_CENTERS",
     "division_tl_center_platinum": "DIVISION_TL_CENTERS",
+    # ------- combat engine per-guild constants (issue #70 unit A1, revision 0032) -------
+    "cloak_set_value": "CLOAK_SET_VALUE",
+    "booster_accuracy_debuff_factor": "BOOSTER_ACCURACY_DEBUFF_FACTOR",
+    "thruster_accuracy_bonus_factor": "THRUSTER_ACCURACY_BONUS_FACTOR",
+    "auto_turret_accuracy_multiplier": "AUTO_TURRET_ACCURACY_MULTIPLIER",
+    "player_base_accuracy": "PLAYER_BASE_ACCURACY",
+    "npc_base_accuracy": "NPC_BASE_ACCURACY",
+    "scanner_tier_b_bonus_pp": "SCANNER_TIER_B_BONUS_PP",
+    "scanner_tier_c_bonus_pp": "SCANNER_TIER_C_BONUS_PP",
+    "starting_distance_m": "STARTING_DISTANCE_M",
+    "base_ship_speed_mps": "BASE_SHIP_SPEED_MPS",
+    "min_distance_m": "MIN_DISTANCE_M",
+    "thruster_window_m": "THRUSTER_WINDOW_M",
+    "emergency_system_invuln_s": "EMERGENCY_SYSTEM_INVULN_S",
+    "nuke_magnitude_scale": "NUKE_MAGNITUDE_SCALE",
+    "nuke_friendly_factor": "NUKE_FRIENDLY_FACTOR",
+    "nuke_range_regime_threshold_m": "NUKE_RANGE_REGIME_THRESHOLD_M",
+    "nuke_lr_near_frac": "NUKE_LR_NEAR_FRAC",
+    "nuke_cr_short_m": "NUKE_CR_SHORT_M",
+    "nuke_cr_overshoot_m": "NUKE_CR_OVERSHOOT_M",
+    "nuke_stack_falloff": "NUKE_STACK_FALLOFF",
+    "shock_blast_trigger_range_m": "SHOCK_BLAST_TRIGGER_RANGE_M",
+    "combat_layer_reemit_fraction": "COMBAT_LAYER_REEMIT_FRACTION",
 }
 
 # ---------------------------------------------------------------------------
@@ -472,6 +495,93 @@ FIELD_DESCRIPTIONS: dict[str, str] = {
     "bronze_combat_bonus_cap": (
         "The maximum bonus a Bronze player can earn from the post-capture duel, as a"
         " fraction of their bounty reward (100% by default, reached at 6 prestige stars)."
+    ),
+    # ====== Combat engine per-guild constants (issue #70 unit A1, revision 0032) ======
+    "cloak_set_value": (
+        "Controls how hard it is to hit a cloaked ship — lower means cloaking is more effective"
+        " (e.g. 0.05 = near-guaranteed miss)."
+    ),
+    "booster_accuracy_debuff_factor": (
+        "Controls how much an active booster throws off enemy aim — higher makes boosting more disruptive to attackers."
+    ),
+    "thruster_accuracy_bonus_factor": (
+        "Controls how much thruster modules improve a ship's aim at close range"
+        " — higher makes thruster modules more valuable in close-quarters fights."
+    ),
+    "auto_turret_accuracy_multiplier": (
+        "Controls how accurately auto-turrets fire relative to the pilot"
+        " — lower means turrets are a noticeably weaker supplement to main weapons."
+    ),
+    "player_base_accuracy": (
+        "Sets how accurate players are before any modules modify their aim"
+        " — higher makes every player a better shot out of the box."
+    ),
+    "npc_base_accuracy": (
+        "Sets how accurate criminals are before any of their equipped modules apply"
+        " — higher makes bounty fights harder across the board."
+    ),
+    "scanner_tier_b_bonus_pp": (
+        "Sets the accuracy bonus from mid-tier scanner modules"
+        " — higher makes scanners more valuable for hitting targets."
+    ),
+    "scanner_tier_c_bonus_pp": (
+        "Sets the accuracy bonus from top-tier scanner modules"
+        " — higher makes high-end scanners noticeably more powerful than mid-tier ones."
+    ),
+    "starting_distance_m": (
+        "Sets how far apart ships start when a fight begins"
+        " — lower helps short-range weapons sooner; higher gives long-range ships more time to fire unopposed."
+    ),
+    "base_ship_speed_mps": (
+        "Controls how fast ships close the distance every second"
+        " — higher means fights reach close range quicker and long-range weapons have less time to dominate."
+    ),
+    "min_distance_m": (
+        "Sets the closest two ships can get"
+        " — lower allows more extreme close-range bonuses; higher keeps fights at a comfortable minimum separation."
+    ),
+    "thruster_window_m": (
+        "Controls at what range thruster modules start improving aim"
+        " — a larger window means thrusters kick in earlier and across a wider stretch of the fight."
+    ),
+    "emergency_system_invuln_s": (
+        "Sets how long an Emergency System protects a ship from all damage after it triggers"
+        " — lower makes the module less of a last-ditch lifesaver."
+    ),
+    "nuke_magnitude_scale": (
+        "Controls how large nuke explosions are in combat"
+        " — higher means blasts deal damage over a wider distance from the epicentre."
+    ),
+    "nuke_friendly_factor": (
+        "Controls how much of a nuke's blast the shooter feels"
+        " — lower makes nukes safer for the attacker; higher punishes reckless use."
+    ),
+    "nuke_range_regime_threshold_m": (
+        "Sets where nukes switch from a targeted far-shot pattern to a close-range artillery bracket"
+        " — lower means the bracket applies across more of the fight."
+    ),
+    "nuke_lr_near_frac": (
+        "Controls long-range nuke self-risk — lower moves the near edge toward the firer,"
+        " making nukes riskier to both sides at long distance."
+    ),
+    "nuke_cr_short_m": (
+        "Controls how far short of the target a close-range nuke can land"
+        " — higher means wider spread toward the firer's own position."
+    ),
+    "nuke_cr_overshoot_m": (
+        "Controls how far past the target a close-range nuke can overshoot — higher means wider spread on the far side."
+    ),
+    "nuke_stack_falloff": (
+        "Controls how fast repeated nuke use loses impact"
+        " — lower means loading many nukes gives far less extra damage than a single well-placed shot."
+    ),
+    "shock_blast_trigger_range_m": (
+        "Sets how close ships must be before a shock-blast fires"
+        " — lower means it only activates very close up; higher lets it push ships apart from further away."
+    ),
+    "combat_layer_reemit_fraction": (
+        "Controls how much a shield or armour layer must recharge before depletion is logged again"
+        " — lower means it re-reports more readily after partial recovery."
     ),
     # ====== Tier-1 core config scalars (not GameConstants) ======
     "starting_credits": ("The number of credits new players start with when they join this guild."),

@@ -362,7 +362,9 @@ class TestPersistedByteIdentity:
         assert len(canonical_timeline) > 0, "Canonical timeline must be non-empty"
 
         # Step 2: fight_ships with seeded run_fight
-        def _seeded_run_fight(lo1, lo2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+        def _seeded_run_fight(
+            lo1, lo2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact, tuning=None
+        ):
             return real_run_fight(
                 lo1,
                 lo2,

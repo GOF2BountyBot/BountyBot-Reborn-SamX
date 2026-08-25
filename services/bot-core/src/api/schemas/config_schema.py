@@ -201,6 +201,45 @@ class GameConstantsOverridesMixin(BaseModel):
     bronze_combat_bonus_per_prestige: float | None = Field(None, ge=0.0, le=0.5)
     bronze_combat_bonus_cap: float | None = Field(None, ge=0.0, le=2.0)
 
+    # ------------------------------------------------------------------
+    # Combat System — Phase-1 per-guild overrides, wired (issue #70 unit A1, revision 0032)
+    # NULL == "use the matching GameConstants default". resolve_constant() handles fallback.
+    # ------------------------------------------------------------------
+
+    # Accuracy system (§5)
+    cloak_set_value: float | None = Field(None, ge=0.05, le=0.99)
+    booster_accuracy_debuff_factor: float | None = Field(None, ge=0.0, le=1.0)
+    thruster_accuracy_bonus_factor: float | None = Field(None, ge=0.0, le=1.0)
+    auto_turret_accuracy_multiplier: float | None = Field(None, ge=0.0, le=1.0)
+    player_base_accuracy: float | None = Field(None, ge=0.0, le=1.0)
+    npc_base_accuracy: float | None = Field(None, ge=0.0, le=1.0)
+    scanner_tier_b_bonus_pp: int | None = Field(None, ge=0, le=50)
+    scanner_tier_c_bonus_pp: int | None = Field(None, ge=0, le=50)
+
+    # Distance model (§2)
+    starting_distance_m: int | None = Field(None, ge=300, le=50_000)
+    base_ship_speed_mps: int | None = Field(None, ge=1, le=5_000)
+    min_distance_m: int | None = Field(None, ge=0, le=1_000)
+    thruster_window_m: int | None = Field(None, ge=0, le=10_000)
+
+    # Emergency system (§7.7)
+    emergency_system_invuln_s: int | None = Field(None, ge=1, le=60)
+
+    # Nuke (§6.2)
+    nuke_magnitude_scale: float | None = Field(None, ge=0.01, le=1.0)
+    nuke_friendly_factor: float | None = Field(None, ge=0.0, le=1.0)
+    nuke_range_regime_threshold_m: int | None = Field(None, ge=0, le=10_000)
+    nuke_lr_near_frac: float | None = Field(None, ge=0.0, le=1.0)
+    nuke_cr_short_m: int | None = Field(None, ge=0, le=5_000)
+    nuke_cr_overshoot_m: int | None = Field(None, ge=0, le=5_000)
+    nuke_stack_falloff: float | None = Field(None, ge=0.0, le=1.0)
+
+    # Shock-blast (§6.2 / D6)
+    shock_blast_trigger_range_m: int | None = Field(None, ge=0, le=10_000)
+
+    # Shield / armour regen reemission (CI-21)
+    combat_layer_reemit_fraction: float | None = Field(None, ge=0.0, le=1.0)
+
     @field_validator("division_max_tl", mode="before")
     @classmethod
     def validate_division_max_tl(cls, v: Any) -> Any:

@@ -182,26 +182,11 @@ ALLOWED_NON_OVERRIDE_COLUMNS: frozenset[str] = frozenset(
         "bounty_expiry_minutes",
         "bounty_spawn_interval_minutes",
         "next_spawn_check_at",
-        # ------- combat engine columns (Phase-1; not yet on the per-guild override surface) -------
-        # These exist in GuildConfig but are NOT in _OVERRIDE_FIELDS — they are not slash-settable.
-        # A future PR that exposes any of these must move them from this list into _OVERRIDE_FIELDS.
-        "cloak_set_value",
-        "booster_accuracy_debuff_factor",
-        "thruster_accuracy_bonus_factor",
-        "auto_turret_accuracy_multiplier",
-        "player_base_accuracy",
-        "npc_base_accuracy",
-        "scanner_tier_b_bonus_pp",
-        "scanner_tier_c_bonus_pp",
+        # ------- combat engine columns (ketar pair deferred to A2; all others now in _OVERRIDE_FIELDS) -------
+        # The ketar_i/ii columns exist in GuildConfig but are NOT yet in _OVERRIDE_FIELDS — deferred to unit A2.
+        # All other Phase-1 combat engine constants moved to _OVERRIDE_FIELDS in rev 0032 (unit A1).
         "ketar_i_repair_pct_per_sec",
         "ketar_ii_repair_pct_per_sec",
-        "starting_distance_m",
-        "base_ship_speed_mps",
-        "min_distance_m",
-        "thruster_window_m",
-        "emergency_system_invuln_s",
-        "nuke_magnitude_scale",
-        "nuke_friendly_factor",
     }
 )
 

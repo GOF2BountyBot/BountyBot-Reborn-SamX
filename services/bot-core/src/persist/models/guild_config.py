@@ -329,6 +329,18 @@ class GuildConfig(Base):
     # Nuke (§6.2)
     nuke_magnitude_scale: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     nuke_friendly_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # Nuke geometry / stack (§6.2 — new in revision 0032)
+    nuke_range_regime_threshold_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    nuke_lr_near_frac: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    nuke_cr_short_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    nuke_cr_overshoot_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    nuke_stack_falloff: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    # Shock-blast (§6.2 / D6 — new in revision 0032)
+    shock_blast_trigger_range_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Shield / armour regen reemission threshold (CI-21 — new in revision 0032)
+    combat_layer_reemit_fraction: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
     # PvC damage reduction — Keith T. Maxwell bonus (§3)
     pvc_damage_reduction: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)

@@ -227,7 +227,15 @@ class TestLogResultTrue:
         session_mock = AsyncMock()
 
         def _seeded_run_fight(
-            loadout1, loadout2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact
+            loadout1,
+            loadout2,
+            *,
+            pvc_damage_reduction,
+            seed,
+            combatant1_label,
+            combatant2_label,
+            compact,
+            tuning=None,
         ):
             return real_run_fight(
                 loadout1,
@@ -322,17 +330,26 @@ class TestOrmGuard:
         assert _is_orm_model(42) is False
 
     @pytest.mark.asyncio
-    async def test_orm_guild_config_raises_assertion_error(self):
-        """fight_ships raises AssertionError when guild_config is an ORM model (C1a-4)."""
+    async def test_orm_guild_config_is_accepted_post_a1(self):
+        """fight_ships ACCEPTS a real ORM guild_config (A1, rev 0032).
+
+        The C1a-4 guard moved: guild_config is consumed in-process into a
+        frozen all-scalar CombatTuning, and the assert now protects the
+        struct's purity instead of rejecting the row at the signature.
+        TestRuntimeBoundaryFightShips (test_p2t9_offload_boundary.py) covers
+        the full boundary-purity guarantee.
+        """
+        from persist.models.guild_config import GuildConfig
+        from services.combat_models import CombatTuning
+
         service = CombatService()
         l1, l2 = _make_loadouts()
 
-        # Simulate a live GuildConfig ORM row — has __mapper__ on the class
-        fake_orm_config = MagicMock()
-        type(fake_orm_config).__mapper__ = MagicMock()
-
-        with pytest.raises(AssertionError, match="guild_config must not be a live ORM model"):
-            await service.fight_ships(l1, l2, log_result=False, guild_config=fake_orm_config)
+        cfg = GuildConfig(guild_id=1)
+        result = await service.fight_ships(l1, l2, log_result=False, guild_config=cfg)
+        assert result is not None
+        # Defaults path: tuning built from an all-NULL config equals pure defaults.
+        assert CombatTuning.from_guild_config(cfg) == CombatTuning.defaults()
 
     @pytest.mark.asyncio
     async def test_none_guild_config_is_accepted(self):
@@ -406,7 +423,9 @@ class TestFightResultsReconstructionCompleteness:
         # --- Offload path: fight_ships with run_fight patched to use FIXED_SEED ---
         from compute.combat_worker import run_fight as real_run_fight
 
-        def _seeded_run_fight(lo1, lo2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact):
+        def _seeded_run_fight(
+            lo1, lo2, *, pvc_damage_reduction, seed, combatant1_label, combatant2_label, compact, tuning=None
+        ):
             return real_run_fight(
                 lo1,
                 lo2,

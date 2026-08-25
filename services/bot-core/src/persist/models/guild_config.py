@@ -172,6 +172,12 @@ class GuildConfig(Base):
     division_tl_center_gold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     division_tl_center_platinum: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
+    # Bronze combat bonus per-guild overrides (issue #70 Unit C, revision 0029)
+    # NULL == "use the matching GameConstants default". resolve_constant() handles fallback.
+    bronze_combat_bonus_base_mult: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    bronze_combat_bonus_per_prestige: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    bronze_combat_bonus_cap: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
     # Demotion — NULL means "use GameConstants.DEMOTION_CREDIT_PENALTY_PCT (10)"
     demotion_credit_penalty_pct: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 

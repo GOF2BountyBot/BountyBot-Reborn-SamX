@@ -25,3 +25,34 @@ def test_caps_at_100_percent_from_six_stars():
 
 def test_negative_prestige_floored_to_base():
     assert f(-3) == pytest.approx(0.40)
+
+
+# ---------------------------------------------------------------------------
+# Unit C: per-guild override support (issue #70)
+# ---------------------------------------------------------------------------
+
+
+def test_explicit_params_override_defaults():
+    """Passing explicit base/per_prestige/cap values bypasses the global defaults."""
+    # 20% base, +5%/star, capped at 50%
+    result = f(0, base_mult=0.20, per_prestige=0.05, cap=0.50)
+    assert result == pytest.approx(0.20)
+
+    result = f(2, base_mult=0.20, per_prestige=0.05, cap=0.50)
+    assert result == pytest.approx(0.30)  # 0.20 + 2 × 0.05
+
+
+def test_cap_clamping_with_custom_values():
+    """The cap is enforced regardless of how high prestige count climbs."""
+    # Cap of 0.50, so even 100 stars cannot exceed it.
+    result = f(100, base_mult=0.20, per_prestige=0.10, cap=0.50)
+    assert result == pytest.approx(0.50)
+
+
+def test_fallback_to_globals_when_cfg_none():
+    """Calling with no extra arguments still uses the global GameConstants defaults."""
+    # Matches the original behaviour: 0.40 + 0.10×0 capped at 1.0 = 0.40
+    assert f(0) == pytest.approx(GameConstants.BRONZE_COMBAT_BONUS_BASE_MULT)
+
+    # 6 stars → should be exactly the global CAP
+    assert f(6) == pytest.approx(GameConstants.BRONZE_COMBAT_BONUS_CAP)

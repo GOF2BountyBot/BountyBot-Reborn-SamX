@@ -2482,7 +2482,11 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "bounty_waypoint_attempts",
         "bounty_waypoint_min_degree",
         "pvc_damage_reduction",
-        # _GAME_CONSTANT_FIELDS and _OVERRIDE_FIELDS (config.py) are now identical at 79 fields.
+        # Bronze combat bonus per-guild overrides (issue #70 Unit C, revision 0029)
+        "bronze_combat_bonus_base_mult",
+        "bronze_combat_bonus_per_prestige",
+        "bronze_combat_bonus_cap",
+        # _GAME_CONSTANT_FIELDS and _OVERRIDE_FIELDS (config.py) are now identical at 82 fields.
     )
 
     async def constants_autocomplete(

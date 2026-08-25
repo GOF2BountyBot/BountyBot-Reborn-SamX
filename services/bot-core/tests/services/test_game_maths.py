@@ -329,6 +329,25 @@ class TestRewardPerSysCheck:
         result = reward_per_sys_check(tl, 0)
         assert result >= GameConstants.CLASSIC_CREDITS_PER_CHECK
 
+    # Unit D1 — per-guild floor override
+    def test_explicit_floor_honored(self) -> None:
+        """Passing an explicit floor overrides CLASSIC_CREDITS_PER_CHECK."""
+        # With a zero-value loadout, the formula returns the floor.
+        assert reward_per_sys_check(5, 0, floor=2000) == 2000
+
+    def test_explicit_floor_zero_does_not_raise(self) -> None:
+        """A floor of 0 is valid (guild might disable the floor)."""
+        assert reward_per_sys_check(5, 0, floor=0) == 0
+
+    def test_explicit_floor_does_not_cap_higher_formulas(self) -> None:
+        """When the formula result exceeds the floor, the formula result wins."""
+        # TL 5, loadout 1M → formula gives 7142 > any floor below 7142
+        assert reward_per_sys_check(5, 1_000_000, floor=500) == 7142
+
+    def test_default_floor_equals_game_constant(self) -> None:
+        """Calling without floor= gives the same result as floor=CLASSIC_CREDITS_PER_CHECK."""
+        assert reward_per_sys_check(3, 0) == reward_per_sys_check(3, 0, floor=GameConstants.CLASSIC_CREDITS_PER_CHECK)
+
 
 # ---------------------------------------------------------------------------
 # TestShipTechLevelForValue

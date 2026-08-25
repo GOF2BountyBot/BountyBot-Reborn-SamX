@@ -353,7 +353,27 @@ async def combat_bonus(
             bonus_credits = 0
 
             if won:
-                bonus_credits = int(request.base_reward * _bronze_combat_bonus_fraction(player.prestige_count))
+                _bonus_base_mult = resolve_constant(
+                    guild_cfg,
+                    "bronze_combat_bonus_base_mult",
+                    GameConstants.BRONZE_COMBAT_BONUS_BASE_MULT,
+                )
+                _bonus_per_prestige = resolve_constant(
+                    guild_cfg,
+                    "bronze_combat_bonus_per_prestige",
+                    GameConstants.BRONZE_COMBAT_BONUS_PER_PRESTIGE,
+                )
+                _bonus_cap = resolve_constant(
+                    guild_cfg,
+                    "bronze_combat_bonus_cap",
+                    GameConstants.BRONZE_COMBAT_BONUS_CAP,
+                )
+                bonus_credits = int(
+                    request.base_reward
+                    * _bronze_combat_bonus_fraction(
+                        player.prestige_count, _bonus_base_mult, _bonus_per_prestige, _bonus_cap
+                    )
+                )
                 await service._award_combat_bonus(db, request.player_id, bonus_credits)
 
             combat_dict = _serialize_fight_results(fight_results) or {}

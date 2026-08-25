@@ -93,7 +93,7 @@ _NEW_LOOT_FIELDS = (
     "loot_commodity_sell_fraction",
 )
 
-# Full slash-settable surface (79 fields; _GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS).
+# Full slash-settable surface (82 fields; _GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS).
 # 52 prior + 27 added in D-trivial batch (issue #70, revision 0028):
 #   4 previously API-only (min_route_systems, recently_spotted_max_window,
 #     demotion_credit_penalty_pct, shop_combat_module_prob)
@@ -104,8 +104,10 @@ _NEW_LOOT_FIELDS = (
 #   + 4 division_tl_center_{bronze,silver,gold,platinum}
 #   + 5 orphans (bounty_{single,dual}_waypoint_prob, bounty_waypoint_{attempts,min_degree},
 #               pvc_damage_reduction)
+# + 3 added in Unit C batch (issue #70, revision 0029):
+#   bronze_combat_bonus_{base_mult,per_prestige,cap}
 # Keep this in lock-step with AdminCog._GAME_CONSTANT_FIELDS.
-_EXPECTED_SLASH_FIELD_COUNT = 79
+_EXPECTED_SLASH_FIELD_COUNT = 82
 
 
 def _evict_discord_modules():
@@ -182,14 +184,18 @@ class TestCriminalLoadoutFieldExposure:
         for field in _NEW_LOOT_FIELDS:
             assert field in mock_admin_cog._GAME_CONSTANT_FIELDS, f"{field} missing from _GAME_CONSTANT_FIELDS"
 
-    def test_slash_field_count_is_79(self, mock_admin_cog):
+    def test_slash_field_count_is_82(self, mock_admin_cog):
         # Locks the slash-settable surface (see _EXPECTED_SLASH_FIELD_COUNT above).
-        # _GAME_CONSTANT_FIELDS now matches _OVERRIDE_FIELDS exactly (both 79).
+        # _GAME_CONSTANT_FIELDS now matches _OVERRIDE_FIELDS exactly (both 82).
         # demotion_credit_penalty_pct IS now slash-settable (added in issue #70 batch).
         # kaamo_max_capacity was retired in issue #70.
+        # bronze_combat_bonus_{base_mult,per_prestige,cap} added in Unit C (revision 0029).
         assert len(mock_admin_cog._GAME_CONSTANT_FIELDS) == _EXPECTED_SLASH_FIELD_COUNT
         assert "demotion_credit_penalty_pct" in mock_admin_cog._GAME_CONSTANT_FIELDS
         assert "kaamo_max_capacity" not in mock_admin_cog._GAME_CONSTANT_FIELDS
+        assert "bronze_combat_bonus_base_mult" in mock_admin_cog._GAME_CONSTANT_FIELDS
+        assert "bronze_combat_bonus_per_prestige" in mock_admin_cog._GAME_CONSTANT_FIELDS
+        assert "bronze_combat_bonus_cap" in mock_admin_cog._GAME_CONSTANT_FIELDS
 
     def test_new_fields_surface_in_autocomplete(self, mock_admin_cog):
         interaction = _create_mock_interaction()

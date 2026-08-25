@@ -1278,6 +1278,43 @@ async def test_spawn_bounty_pool_scaler_unknown_division_defaults_to_one(spawn_s
 
 
 @pytest.mark.asyncio
+async def test_spawn_bounty_classic_credits_floor_override(spawn_service, mock_db):
+    """A per-guild classic_credits_per_check override changes the reward floor (Unit D1)."""
+    from services.game_maths import reward_per_sys_check
+
+    route = ["A", "B", "C"]
+    # Build a cfg that doubles the floor vs the global default.
+    custom_floor = 5000  # >> GameConstants.CLASSIC_CREDITS_PER_CHECK (1000)
+    cfg = SimpleNamespace(classic_credits_per_check=custom_floor)
+
+    # With a near-zero loadout the formula falls back to the floor.
+    zero_loadout = {**SAMPLE_LOADOUT, "total_value": 0}
+
+    criminal = _make_criminal("Viper", "terran")
+    spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
+    spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+    spawn_service.config_repo.get_by_guild_id = AsyncMock(return_value=cfg)
+    spawn_service.pathfinding_service.make_route = MagicMock(return_value=list(route))
+
+    captured_bounties = []
+
+    async def capture_create(db, bounty):
+        captured_bounties.append(bounty)
+        return SimpleNamespace(id=99, **{k: getattr(bounty, k) for k in vars(bounty) if not k.startswith("_")})
+
+    spawn_service.bounty_repo.create = capture_create
+
+    with patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=zero_loadout)):
+        await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=3)
+
+    assert len(captured_bounties) == 1
+    b = captured_bounties[0]
+    # With total_value=0 the formula yields the floor; total_reward = floor * len(route).
+    expected_raw = reward_per_sys_check(3, 0, floor=custom_floor) * len(route)
+    assert b.reward == expected_raw
+
+
+@pytest.mark.asyncio
 async def test_spawn_bounty_end_time_calculation(spawn_service, mock_db):
     """end_time must be issue_time + timedelta(minutes=480) when no expiry_minutes given."""
     from datetime import timedelta

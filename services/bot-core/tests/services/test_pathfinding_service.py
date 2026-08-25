@@ -56,8 +56,12 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
-from services.pathfinding_service import MAX_ROUTE_LENGTH, PathfindingError, PathfindingService
+from services.game_constants import GameConstants
+from services.pathfinding_service import PathfindingError, PathfindingService
 from services.system_graph_service import SystemGraphService, SystemNode
+
+# MAX_ROUTE_LENGTH is now GameConstants.MAX_ROUTE_LENGTH (module literal removed in Unit D2)
+MAX_ROUTE_LENGTH = GameConstants.MAX_ROUTE_LENGTH
 
 # ---------------------------------------------------------------------------
 # Helpers — build a mock SystemGraphService from a plain dict
@@ -780,3 +784,58 @@ class TestMakeRouteBlocked:
         blk = frozenset({"B"})
         svc.make_route("A", "F", blocked=blk)
         assert blk == frozenset({"B"})
+
+
+# ===========================================================================
+# TestMaxRouteLengthParam — Unit D2: explicit max_route_length parameter
+# ===========================================================================
+
+
+class TestMaxRouteLengthParam:
+    """make_route's max_route_length parameter controls the A* hop limit (Unit D2)."""
+
+    def test_default_resolves_to_game_constant(self) -> None:
+        """The default value equals GameConstants.MAX_ROUTE_LENGTH (50)."""
+        import inspect
+
+        sig = inspect.signature(PathfindingService.make_route)
+        default = sig.parameters["max_route_length"].default
+        assert default == GameConstants.MAX_ROUTE_LENGTH
+
+    def test_explicit_short_limit_triggers_max_length_reached(self) -> None:
+        """Passing max_route_length=3 on a longer chain triggers MAX_LENGTH_REACHED."""
+        n = 10
+        systems: dict[str, tuple[tuple[int, int], list[str]]] = {}
+        for i in range(n):
+            name = f"S{i}"
+            neighbours: list[str] = []
+            if i > 0:
+                neighbours.append(f"S{i - 1}")
+            if i < n - 1:
+                neighbours.append(f"S{i + 1}")
+            systems[name] = ((i * 10, 0), neighbours)
+
+        svc = PathfindingService(_build_graph_service(systems))
+        # Route from S0 to S9 requires 9 hops; limit of 3 should cut it off.
+        result = svc.make_route("S0", "S9", max_route_length=3)
+        assert result is PathfindingError.MAX_LENGTH_REACHED
+
+    def test_explicit_large_limit_finds_route(self) -> None:
+        """A route that would exceed the default limit succeeds with a larger limit."""
+        n = 60
+        systems: dict[str, tuple[tuple[int, int], list[str]]] = {}
+        for i in range(n):
+            name = f"L{i}"
+            neighbours: list[str] = []
+            if i > 0:
+                neighbours.append(f"L{i - 1}")
+            if i < n - 1:
+                neighbours.append(f"L{i + 1}")
+            systems[name] = ((i * 10, 0), neighbours)
+
+        svc = PathfindingService(_build_graph_service(systems))
+        # Would fail at default limit of 50; should succeed with 200.
+        result = svc.make_route("L0", f"L{n - 1}", max_route_length=200)
+        assert isinstance(result, list)
+        assert result[0] == "L0"
+        assert result[-1] == f"L{n - 1}"

@@ -89,9 +89,7 @@ class GuildConfig(Base):
     # ------------------------------------------------------------------
 
     # Combat / Balance
-    # division_max_tl JSONB — deprecated; scalar replacements added in revision 0030.
-    # JSONB kept for fallback chain (resolve_flattened reads old dict rows); dropped in next release.
-    division_max_tl: Mapped[dict[str, int] | None] = mapped_column(_JSONB, nullable=True, default=None)
+    # division_max_tl JSONB — dropped in revision 0033 (backfilled to scalars in 0030).
 
     # Flat scalars for division_max_tl (issue #70, revision 0030)
     division_max_tl_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -104,9 +102,6 @@ class GuildConfig(Base):
     criminal_max_gear_upgrade: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     bounty_reward_to_xp_gain_mult: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     bounty_winner_reserve_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    # bounty_division_reward_mult JSONB — deprecated; scalar replacements added in revision 0030.
-    # JSONB kept for fallback chain (resolve_flattened reads old dict rows); dropped in next release.
-    bounty_division_reward_mult: Mapped[dict[str, float] | None] = mapped_column(_JSONB, nullable=True, default=None)
 
     # Flat scalars for bounty_division_reward_mult (issue #70, revision 0030)
     bounty_division_reward_mult_bronze: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
@@ -116,6 +111,7 @@ class GuildConfig(Base):
     # bounty_pvc_armour_buff_factor — retired T10 (replaced by pvc_damage_reduction §3)
     # duel_variance_percent — retired T10 (SimpleTTKResolver removed)
     # duel_cloak_chance — RETIRED rev 0031 (column dropped in migration 0031)
+    # bounty_division_reward_mult JSONB — dropped in revision 0033 (backfilled to scalars in 0030).
 
     # Bounty mechanics
     close_bounty_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -197,10 +193,7 @@ class GuildConfig(Base):
     # Thread 3 — primary long-range selection
     long_range_threshold_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     criminal_long_range_pct: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    # primary_tl_band_weights JSONB — deprecated; do not write new values via the dict API.
-    # Scalar replacements (primary_tl_band_weight_{center,minus1,plus1}) added in revision 0030.
-    # JSONB kept for fallback chain (resolve_flattened reads old dict rows); dropped in next release.
-    primary_tl_band_weights: Mapped[dict[str, int] | None] = mapped_column(_JSONB, nullable=True, default=None)
+    # primary_tl_band_weights JSONB — dropped in revision 0033 (backfilled to scalars in 0030).
 
     # Flat scalars for primary_tl_band_weights (issue #70, revision 0030)
     primary_tl_band_weight_center: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -208,20 +201,7 @@ class GuildConfig(Base):
     primary_tl_band_weight_plus1: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     # Thread 4 — criminal two-gate module Gate-1 equip chances by division (%)
-    # JSONB columns below are deprecated; scalar replacements added in revision 0030.
-    # JSONB kept for fallback chain (resolve_flattened reads old dict rows); dropped in next release.
-    criminal_cloak_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
-        _JSONB, nullable=True, default=None
-    )
-    criminal_booster_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
-        _JSONB, nullable=True, default=None
-    )
-    criminal_emergency_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
-        _JSONB, nullable=True, default=None
-    )
-    criminal_weaponmod_chance_by_division: Mapped[dict[str, int] | None] = mapped_column(
-        _JSONB, nullable=True, default=None
-    )
+    # criminal_*_chance_by_division JSONB — dropped in revision 0033 (backfilled to scalars in 0030).
 
     # Flat scalars for criminal chance dicts (issue #70, revision 0030)
     criminal_cloak_chance_bronze: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

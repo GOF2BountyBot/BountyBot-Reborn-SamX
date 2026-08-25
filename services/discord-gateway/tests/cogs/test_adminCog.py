@@ -5599,7 +5599,6 @@ class TestAdminConfigRespx:
                     float_value=None,
                     bool_value=None,
                     text_value=None,
-                    json_value=None,
                     only_overridden=True,
                 )
             )

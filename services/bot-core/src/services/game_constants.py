@@ -988,17 +988,13 @@ def resolve_constant[T](guild_config: Any | None, field: str, fallback: T) -> T:
 def resolve_flattened[T](
     guild_config: Any | None,
     scalar_field: str,
-    legacy_dict_field: str,
-    key: str,
     fallback: T,
 ) -> T:
-    """Resolve a per-guild scalar with JSONB-dict legacy fallback (issue #70 flatten).
+    """Resolve a per-guild scalar from a flat scalar column (issue #70, revision 0033).
 
-    Fallback chain:
-    1. ``guild_config.<scalar_field>`` — new flat scalar column (NULL = not set).
-    2. ``guild_config.<legacy_dict_field>[key]`` — legacy JSONB per-key value for
-       rows written via the old dict API (e.g. before the backfill window closed).
-    3. ``fallback`` — global :class:`GameConstants` scalar constant.
+    Fallback chain (revision 0033 — JSONB dicts dropped):
+    1. ``guild_config.<scalar_field>`` — flat scalar column (NULL = not set).
+    2. ``fallback`` — global :class:`GameConstants` scalar constant.
 
     A value of 0 or 0.0 on the scalar column is a valid override and is NOT
     treated as None (same semantics as :func:`resolve_constant`).
@@ -1010,11 +1006,5 @@ def resolve_flattened[T](
     val = getattr(guild_config, scalar_field, None)
     if val is not None:
         return val
-    # 2. Try legacy JSONB key.
-    legacy_dict = getattr(guild_config, legacy_dict_field, None)
-    if legacy_dict is not None and isinstance(legacy_dict, dict):
-        legacy_val = legacy_dict.get(key)
-        if legacy_val is not None:
-            return legacy_val
-    # 3. Global fallback.
+    # 2. Global fallback.
     return fallback

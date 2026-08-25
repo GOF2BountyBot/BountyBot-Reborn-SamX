@@ -213,7 +213,6 @@ def _run_admin_config(
     float_value=None,
     bool_value=None,
     text_value=None,
-    json_value=None,
     only_overridden=True,
 ):
     """Run /admin_config.callback synchronously via asyncio.run()."""
@@ -227,7 +226,6 @@ def _run_admin_config(
             float_value=float_value,
             bool_value=bool_value,
             text_value=text_value,
-            json_value=json_value,
             only_overridden=only_overridden,
         )
     )
@@ -496,35 +494,20 @@ class TestAdminConfigSet:
         assert "❌" in content
         assert "between" in content.lower()
 
-    def test_set_json_value_rejected_for_non_dict_field(self, cog_with_metadata):
-        """json_value must be rejected for non-dict fields (e.g. bool field)."""
-        _with_real_client(cog_with_metadata)
+    def test_set_no_value_params_returns_error(self, mock_admin_cog):
+        """Providing no typed param returns an error message (rev 0033 — json_value removed)."""
+        _with_real_client(mock_admin_cog)
         interaction = _create_mock_interaction()
         with respx.mock(assert_all_called=False) as router:
             route = router.put(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
                 return_value=httpx.Response(200, json={"guild_id": interaction.guild_id})
             )
-            _run_admin_config(
-                cog_with_metadata, interaction, action="set", setting="criminal_exclude_emp_weapons", json_value="true"
-            )
+            _run_admin_config(mock_admin_cog, interaction, action="set", setting="criminal_exclude_emp_weapons")
             assert not route.called
         interaction.followup.send.assert_called()
         msg = interaction.followup.send.call_args
         content = msg.args[0] if msg.args else msg.kwargs.get("content", "")
         assert "❌" in content
-
-    def test_set_json_value_accepted_for_dict_field(self, mock_admin_cog):
-        """json_value IS accepted for the 7 deprecated dict fields."""
-        _with_real_client(mock_admin_cog)
-        interaction = _create_mock_interaction()
-        payload = '{"bronze": 5, "silver": 7, "gold": 9, "platinum": 10}'
-        with respx.mock(assert_all_called=True) as router:
-            route = router.put(f"{_API_BASE}/config/guild/{interaction.guild_id}").mock(
-                return_value=httpx.Response(200, json={"guild_id": interaction.guild_id})
-            )
-            _run_admin_config(mock_admin_cog, interaction, action="set", setting="division_max_tl", json_value=payload)
-            body = _json_body(route)
-            assert body["division_max_tl"] == {"bronze": 5, "silver": 7, "gold": 9, "platinum": 10}
 
     def test_set_missing_setting_returns_error(self, mock_admin_cog):
         _with_real_client(mock_admin_cog)

@@ -46,13 +46,13 @@ router = APIRouter(
 # B.49: per-guild game-constant override field names (extended over time)
 # ---------------------------------------------------------------------------
 _OVERRIDE_FIELDS: tuple[str, ...] = (
-    "division_max_tl",
+    # division_max_tl — RETIRED rev 0033 (JSONB dropped, backfilled to division_max_tl_{bronze,...})
     # ship_value_reward_percentage — RETIRED rev 0031
     # criminal_equip_damageless_weapon_chance — RETIRED rev 0031
     "criminal_max_gear_upgrade",
     "bounty_reward_to_xp_gain_mult",
     "bounty_winner_reserve_factor",
-    "bounty_division_reward_mult",
+    # bounty_division_reward_mult — RETIRED rev 0033 (JSONB dropped; flat scalars added)
     # bounty_pvc_armour_buff_factor retired T10
     # duel_variance_percent retired T10
     # duel_cloak_chance — RETIRED rev 0031
@@ -79,11 +79,11 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
     "long_range_threshold_m",
     "criminal_long_range_pct",
-    "primary_tl_band_weights",
-    "criminal_cloak_chance_by_division",
-    "criminal_booster_chance_by_division",
-    "criminal_emergency_chance_by_division",
-    "criminal_weaponmod_chance_by_division",
+    # primary_tl_band_weights — RETIRED rev 0033 (JSONB dropped; flat scalars added)
+    # criminal_cloak_chance_by_division — RETIRED rev 0033 (JSONB dropped; flat scalars added)
+    # criminal_booster_chance_by_division — RETIRED rev 0033 (JSONB dropped)
+    # criminal_emergency_chance_by_division — RETIRED rev 0033 (JSONB dropped)
+    # criminal_weaponmod_chance_by_division — RETIRED rev 0033 (JSONB dropped)
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 6)
     "criminal_exclude_emp_weapons",
     # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2)
@@ -203,7 +203,7 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "shock_blast_trigger_range_m",
     # Shield / armour regen reemission (CI-21)
     "combat_layer_reemit_fraction",
-    # _OVERRIDE_FIELDS == _GAME_CONSTANT_FIELDS (adminCog): 117 fields as of rev 0032 (+22 combat engine).
+    # _OVERRIDE_FIELDS == _GAME_CONSTANT_FIELDS (adminCog): 110 fields as of rev 0033 (dropped 7 JSONB dicts).
 )
 
 

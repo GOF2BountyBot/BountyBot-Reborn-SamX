@@ -111,19 +111,7 @@ _RENDER_PARAM_GROUPS: dict[str, tuple[str, ...]] = {
     "concurrency": ("max_concurrent_renders", "job_ttl_hours"),
 }
 
-# The 7 deprecated JSONB dict fields — still accept json_value for legacy JSON input.
-# Prefer the scalar *_bronze / *_silver / *_gold / *_platinum counterparts for all new usage.
-_DEPRECATED_DICT_FIELDS: frozenset[str] = frozenset(
-    {
-        "division_max_tl",
-        "bounty_division_reward_mult",
-        "primary_tl_band_weights",
-        "criminal_cloak_chance_by_division",
-        "criminal_booster_chance_by_division",
-        "criminal_emergency_chance_by_division",
-        "criminal_weaponmod_chance_by_division",
-    }
-)
+# _DEPRECATED_DICT_FIELDS — RETIRED rev 0033 (JSONB columns dropped; no dict-type fields remain).
 
 # Fields that cannot be reset via POST /game-constants/reset — they are top-level guild
 # config scalars with no game-constant default (use /admin_config action:Set to change them).
@@ -247,7 +235,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         # Powers setting autocomplete (97 fields: 95 game-constant + starting_credits +
         # sale_price_factor), help text, and local bounds pre-check before any API call.
         # NOTE: starting_credits and sale_price_factor are metadata-only additions and
-        # do NOT appear in _GAME_CONSTANT_FIELDS (the static fallback list, 117 fields).
+        # do NOT appear in _GAME_CONSTANT_FIELDS (the static fallback list, 110 fields).
         # Falls back to _GAME_CONSTANT_FIELDS when the metadata endpoint is unavailable.
         self._config_metadata: list[dict] = []
         self._config_metadata_by_field: dict[str, dict] = {}
@@ -375,7 +363,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         else:
             flogger.error(
                 "_preload_static_catalogs: terminal failure for config metadata after 5 attempts; "
-                "setting autocomplete will fall back to _GAME_CONSTANT_FIELDS (117 fields)"
+                "setting autocomplete will fall back to _GAME_CONSTANT_FIELDS (110 fields)"
             )
 
     async def _fetch_admin_pending_duels(self, guild_id: int) -> list[dict]:
@@ -917,7 +905,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         sale_price_factor), uses the live list with deprecated fields sorted last and
         a "(deprecated)" suffix in the choice *name* (value stays the bare field name).
 
-        Falls back to _GAME_CONSTANT_FIELDS (117 fields — excludes starting_credits /
+        Falls back to _GAME_CONSTANT_FIELDS (110 fields — excludes starting_credits /
         sale_price_factor which are metadata-only) when the metadata endpoint is offline.
         """
         current_lower = current.lower()
@@ -935,7 +923,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 if len(choices) == 25:
                     break
             return choices
-        # Fallback to static list (no metadata — 117 fields, no starting_credits/sale_price_factor)
+        # Fallback to static list (no metadata — 110 fields, no starting_credits/sale_price_factor)
         return [app_commands.Choice(name=f, value=f) for f in self._GAME_CONSTANT_FIELDS if current_lower in f.lower()][
             :25
         ]
@@ -948,7 +936,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         float_value="New value (decimal settings)",
         bool_value="New value (on/off settings, e.g. criminal_exclude_emp_weapons)",
         text_value="New value (text/enum settings)",
-        json_value="Advanced: raw JSON for the 7 legacy dict settings (prefer the *_bronze/... scalars)",
         only_overridden="View: show only settings overridden from default (default: True)",
     )
     @app_commands.choices(
@@ -970,7 +957,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         float_value: float | None = None,
         bool_value: bool | None = None,
         text_value: str | None = None,
-        json_value: str | None = None,
         only_overridden: bool = True,
     ):
         """View, set, help, reset, or validate per-guild config settings."""
@@ -1006,7 +992,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     float_value=float_value,
                     bool_value=bool_value,
                     text_value=text_value,
-                    json_value=json_value,
                 )
 
             elif action == "reset":
@@ -1232,7 +1217,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 "float": "float_value",
                 "bool": "bool_value",
                 "str": "text_value",
-                "dict": "json_value",
             }.get(field_type, "int_value")
             embed.add_field(
                 name="Set with",
@@ -1261,11 +1245,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         float_value: float | None,
         bool_value: bool | None,
         text_value: str | None,
-        json_value: str | None,
     ) -> None:
         """Set a per-guild setting to a new value with local validation + forwarding to bot-core."""
-        import json as _json
-
         # Validate setting name
         valid_fields = (
             {m["field"] for m in self._config_metadata} if self._config_metadata else set(self._GAME_CONSTANT_FIELDS)
@@ -1285,14 +1266,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 "float_value": float_value,
                 "bool_value": bool_value,
                 "text_value": text_value,
-                "json_value": json_value,
             }.items()
             if v is not None
         }
         if not provided:
             await interaction.followup.send(
-                "❌ Provide exactly one value parameter: `int_value`, `float_value`, `bool_value`, "
-                "`text_value`, or `json_value` (dict fields only).",
+                "❌ Provide exactly one value parameter: `int_value`, `float_value`, `bool_value`, or `text_value`.",
                 ephemeral=True,
             )
             return
@@ -1308,29 +1287,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         meta = self._config_metadata_by_field.get(setting)
         field_type = meta.get("type") if meta else None
 
-        # json_value only accepted for dict-type (deprecated JSONB) fields
-        if param_name == "json_value":
-            is_dict_field = (field_type == "dict") if meta else (setting in _DEPRECATED_DICT_FIELDS)
-            if not is_dict_field:
-                type_hint = field_type or "unknown"
-                param_hint = {
-                    "int": "int_value",
-                    "float": "float_value",
-                    "bool": "bool_value",
-                    "str": "text_value",
-                }.get(type_hint, "the appropriate typed param")
-                await interaction.followup.send(
-                    f"❌ `json_value` is only accepted for the 7 legacy dict settings. "
-                    f"`{setting}` is a `{type_hint}` field — use `{param_hint}` instead.",
-                    ephemeral=True,
-                )
-                return
-            try:
-                new_value = _json.loads(json_value)  # type: ignore[arg-type]
-            except _json.JSONDecodeError as exc:
-                await interaction.followup.send(f"❌ Invalid JSON: {exc}", ephemeral=True)
-                return
-        elif param_name == "bool_value":
+        if param_name == "bool_value":
             new_value = bool_value
         elif param_name == "float_value":
             new_value = float_value
@@ -1340,7 +1297,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             new_value = text_value
 
         # Type-param mismatch check (metadata-driven; int→float widening is allowed)
-        if meta and field_type and param_name != "json_value":
+        if meta and field_type:
             type_param_map = {
                 "int": "int_value",
                 "float": "float_value",
@@ -3029,26 +2986,23 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
-    # _GAME_CONSTANT_FIELDS — static fallback list (117 fields, rev 0032)
+    # _GAME_CONSTANT_FIELDS — static fallback list (110 fields, rev 0032)
     # Used by setting_autocomplete when the /config/metadata endpoint is offline.
     # NOTE: starting_credits and sale_price_factor are NOT in this list — they are
     # Tier-1 scalars served only via the metadata endpoint (metadata-only additions).
     # ------------------------------------------------------------------
 
     # All slash-settable per-guild game-constant override field names (identical to _OVERRIDE_FIELDS in
-    # bot-core config router). 117 fields as of rev 0032 (+22 combat engine constants; 95+22=117).
-    # Rev 0031 retired 14 fields: duel_cloak_chance, criminal_equip_damageless_weapon_chance,
-    # ship_value_reward_percentage, shop_default_{ships,weapons,modules,turrets}_num,
-    # turret_spawn_probability, guild_activity_decay_rate, min_guild_activity,
-    # activity_temp_per_player, bounty_delay_random_min, bounty_delay_random_max, bounty_spawn_jitter.
+    # bot-core config router). 110 fields as of rev 0033 (117 from rev 0032 minus 7 JSONB dict fields).
+    # Rev 0031 retired 14 fields. Rev 0033 retired 7 JSONB dict fields (backfilled to flat scalars in 0030).
     _GAME_CONSTANT_FIELDS: tuple[str, ...] = (
-        "division_max_tl",
+        # division_max_tl — RETIRED rev 0033 (JSONB dropped)
         # ship_value_reward_percentage — RETIRED rev 0031
         # criminal_equip_damageless_weapon_chance — RETIRED rev 0031
         "criminal_max_gear_upgrade",
         "bounty_reward_to_xp_gain_mult",
         "bounty_winner_reserve_factor",
-        "bounty_division_reward_mult",
+        # bounty_division_reward_mult — RETIRED rev 0033 (JSONB dropped)
         # bounty_pvc_armour_buff_factor — retired T10 (dropped from guild_config)
         # duel_variance_percent — retired T10 (SimpleTTKResolver removed)
         # duel_cloak_chance — RETIRED rev 0031
@@ -3072,11 +3026,11 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         # Criminal loadout balance (Threads 3/4/6)
         "long_range_threshold_m",
         "criminal_long_range_pct",
-        "primary_tl_band_weights",
-        "criminal_cloak_chance_by_division",
-        "criminal_booster_chance_by_division",
-        "criminal_emergency_chance_by_division",
-        "criminal_weaponmod_chance_by_division",
+        # primary_tl_band_weights — RETIRED rev 0033 (JSONB dropped)
+        # criminal_cloak_chance_by_division — RETIRED rev 0033 (JSONB dropped)
+        # criminal_booster_chance_by_division — RETIRED rev 0033 (JSONB dropped)
+        # criminal_emergency_chance_by_division — RETIRED rev 0033 (JSONB dropped)
+        # criminal_weaponmod_chance_by_division — RETIRED rev 0033 (JSONB dropped)
         "criminal_exclude_emp_weapons",
         # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2)
         "loot_chance_tractor_t1",
@@ -3198,7 +3152,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         "shock_blast_trigger_range_m",
         # Shield / armour regen reemission (CI-21)
         "combat_layer_reemit_fraction",
-        # _GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS (config.py): 117 fields as of rev 0032 (+22 combat engine).
+        # _GAME_CONSTANT_FIELDS == _OVERRIDE_FIELDS (config.py): 110 fields as of rev 0033 (dropped 7 JSONB dicts).
     )
 
     # ------------------------------------------------------------------

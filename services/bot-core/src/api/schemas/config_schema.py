@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class GameConstantsOverridesMixin(BaseModel):
@@ -21,11 +21,7 @@ class GameConstantsOverridesMixin(BaseModel):
     model_config = ConfigDict(strict=True)
 
     # Combat / Balance
-    # division_max_tl JSONB — deprecated; scalar replacements below are the live API.
-    # Writes to this field are still honored via the resolve_flattened fallback chain.
-    # Removal planned for next release. The @field_validator below is kept while the
-    # JSONB column exists; retire it when the column is dropped.
-    division_max_tl: dict[str, int] | None = None
+    # division_max_tl JSONB — dropped rev 0033 (backfilled to scalars in 0030).
 
     # Flat scalars for division_max_tl (issue #70, revision 0030)
     division_max_tl_bronze: int | None = Field(None, ge=1, le=10)
@@ -37,10 +33,7 @@ class GameConstantsOverridesMixin(BaseModel):
     criminal_max_gear_upgrade: int | None = Field(None, ge=0, le=10)
     bounty_reward_to_xp_gain_mult: float | None = Field(None, ge=0.0, le=100.0)
     bounty_winner_reserve_factor: float | None = Field(None, ge=0.0, le=1.0)
-    # Per-division prize-pool scaler — JSONB, deprecated (scalar replacements below).
-    # Writes still honored via resolve_flattened fallback chain; dropped in next release.
-    # The @field_validator below is kept while the JSONB column exists.
-    bounty_division_reward_mult: dict[str, float] | None = None
+    # bounty_division_reward_mult JSONB — dropped rev 0033 (backfilled to scalars in 0030).
 
     # Flat scalars for bounty_division_reward_mult (issue #70, revision 0030)
     bounty_division_reward_mult_bronze: float | None = Field(None, ge=0.0, le=10.0)
@@ -82,23 +75,14 @@ class GameConstantsOverridesMixin(BaseModel):
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
     long_range_threshold_m: int | None = Field(None, ge=0, le=50_000)  # metres; battlefield is ~5 km
     criminal_long_range_pct: float | None = Field(None, ge=0.0, le=1.0)
-    # primary_tl_band_weights JSONB — deprecated (scalar replacements below).
-    # Writes still honored via resolve_flattened fallback chain; dropped in next release.
-    # The @field_validator below is kept while the JSONB column exists.
-    primary_tl_band_weights: dict[str, int] | None = None
+    # primary_tl_band_weights JSONB — dropped rev 0033 (backfilled to scalars in 0030).
 
     # Flat scalars for primary_tl_band_weights (issue #70, revision 0030)
     primary_tl_band_weight_center: int | None = Field(None, ge=0, le=1000)
     primary_tl_band_weight_minus1: int | None = Field(None, ge=0, le=1000)
     primary_tl_band_weight_plus1: int | None = Field(None, ge=0, le=1000)
 
-    # criminal_*_chance_by_division JSONB — deprecated (scalar replacements below).
-    # Writes still honored via resolve_flattened fallback chain; dropped in next release.
-    # The @field_validator below is kept while the JSONB columns exist.
-    criminal_cloak_chance_by_division: dict[str, int] | None = None
-    criminal_booster_chance_by_division: dict[str, int] | None = None
-    criminal_emergency_chance_by_division: dict[str, int] | None = None
-    criminal_weaponmod_chance_by_division: dict[str, int] | None = None
+    # criminal_*_chance_by_division JSONB — dropped rev 0033 (backfilled to scalars in 0030).
 
     # Flat scalars for criminal chance dicts (issue #70, revision 0030)
     criminal_cloak_chance_bronze: int | None = Field(None, ge=0, le=100)
@@ -240,75 +224,10 @@ class GameConstantsOverridesMixin(BaseModel):
     # Shield / armour regen reemission (CI-21)
     combat_layer_reemit_fraction: float | None = Field(None, ge=0.0, le=1.0)
 
-    @field_validator("division_max_tl", mode="before")
-    @classmethod
-    def validate_division_max_tl(cls, v: Any) -> Any:
-        if v is None:
-            return v
-        if not isinstance(v, dict):
-            raise ValueError("division_max_tl must be a dict")
-        required_keys = {"bronze", "silver", "gold", "platinum"}
-        if set(v.keys()) != required_keys:
-            raise ValueError(f"division_max_tl must have exactly keys: {required_keys}")
-        for key, val in v.items():
-            if not isinstance(val, int) or not 1 <= val <= 10:
-                raise ValueError(f"division_max_tl[{key!r}] must be an integer between 1 and 10")
-        return v
-
-    @field_validator("bounty_division_reward_mult", mode="before")
-    @classmethod
-    def validate_bounty_division_reward_mult(cls, v: Any) -> Any:
-        """Per-division pool scaler: keys exactly {bronze,silver,gold,platinum}, non-negative floats."""
-        if v is None:
-            return v
-        if not isinstance(v, dict):
-            raise ValueError("bounty_division_reward_mult must be a dict")
-        required_keys = {"bronze", "silver", "gold", "platinum"}
-        if set(v.keys()) != required_keys:
-            raise ValueError(f"bounty_division_reward_mult must have exactly keys: {required_keys}")
-        for key, val in v.items():
-            if isinstance(val, bool) or not isinstance(val, (int, float)) or val < 0:
-                raise ValueError(f"bounty_division_reward_mult[{key!r}] must be a non-negative number")
-        return v
-
-    @field_validator(
-        "criminal_cloak_chance_by_division",
-        "criminal_booster_chance_by_division",
-        "criminal_emergency_chance_by_division",
-        "criminal_weaponmod_chance_by_division",
-        mode="before",
-    )
-    @classmethod
-    def validate_criminal_division_chance(cls, v: Any, info: Any) -> Any:
-        """Per-division equip-chance dict: keys exactly {bronze,silver,gold,platinum}, ints 0–100."""
-        if v is None:
-            return v
-        name = info.field_name
-        if not isinstance(v, dict):
-            raise ValueError(f"{name} must be a dict")
-        required_keys = {"bronze", "silver", "gold", "platinum"}
-        if set(v.keys()) != required_keys:
-            raise ValueError(f"{name} must have exactly keys: {required_keys}")
-        for key, val in v.items():
-            if isinstance(val, bool) or not isinstance(val, int) or not 0 <= val <= 100:
-                raise ValueError(f"{name}[{key!r}] must be an integer between 0 and 100")
-        return v
-
-    @field_validator("primary_tl_band_weights", mode="before")
-    @classmethod
-    def validate_primary_tl_band_weights(cls, v: Any) -> Any:
-        """TL-band weights: keys exactly {center,minus1,plus1}, non-negative ints."""
-        if v is None:
-            return v
-        if not isinstance(v, dict):
-            raise ValueError("primary_tl_band_weights must be a dict")
-        required_keys = {"center", "minus1", "plus1"}
-        if set(v.keys()) != required_keys:
-            raise ValueError(f"primary_tl_band_weights must have exactly keys: {required_keys}")
-        for key, val in v.items():
-            if isinstance(val, bool) or not isinstance(val, int) or val < 0:
-                raise ValueError(f"primary_tl_band_weights[{key!r}] must be a non-negative integer")
-        return v
+    # validate_division_max_tl — RETIRED rev 0033 (JSONB column dropped)
+    # validate_bounty_division_reward_mult — RETIRED rev 0033 (JSONB column dropped)
+    # validate_criminal_division_chance — RETIRED rev 0033 (JSONB columns dropped)
+    # validate_primary_tl_band_weights — RETIRED rev 0033 (JSONB column dropped)
 
     # validate_bounty_delay_range — RETIRED rev 0031 (both bounty_delay_random_min
     # and bounty_delay_random_max fields removed; validator deleted).

@@ -318,10 +318,12 @@ When generating shop stock, the probability distribution for item tech level rel
 ```
 /admin_config_constants setting:check_cooldown int_value:120
 /admin_config_constants setting:duel_variance_percent float_value:0.10
-/admin_config_constants setting:division_max_tl json_value:{"bronze":3,"silver":5,"gold":8,"platinum":10}
+/admin_config_constants setting:division_max_tl_bronze int_value:3
+/admin_config_constants setting:division_max_tl_silver int_value:5
 ```
 
-Use `int_value` for integer fields, `float_value` for float fields, `json_value` for dict fields.
+Use `int_value` for integer fields, `float_value` for float fields, `bool_value` for on/off toggles.
+(The `json_value` parameter was retired in revision 0033 — no dict-type settings remain.)
 
 ### Resetting Overrides
 
@@ -353,7 +355,9 @@ Use `int_value` for integer fields, `float_value` for float fields, `json_value`
 
 ### Criminal Loadout Balance (per-guild)
 
-These eight knobs tune how bounty-criminal ships are equipped (primary-weapon range/TL selection and module equip odds). Like every row above, each is a **per-guild override of the `GameConstants` default**: `NULL` (unset) falls back to the global default; a set value applies only to this guild. They are **slash-settable** via `/admin_config_constants` (in addition to `PUT /api/v1/config/guild/{guild_id}`): the per-division dicts and `primary_tl_band_weights` take a JSON object in `json_value`, `criminal_exclude_emp_weapons` takes a JSON `true`/`false` in `json_value`, and the scalars (`long_range_threshold_m`, `criminal_long_range_pct`) take a number. Value correctness is enforced server-side by the config schema.
+These knobs tune how bounty-criminal ships are equipped (primary-weapon range/TL selection and module equip odds). Each is a **per-guild override of the `GameConstants` default**: `NULL` (unset) falls back to the global default; a set value applies only to this guild. All are **slash-settable** via `/admin_config` (in addition to `PUT /api/v1/config/guild/{guild_id}`): use `int_value` for ints, `float_value` for floats, `bool_value` for toggles. Value correctness is enforced server-side by the config schema.
+
+The per-division and per-key settings (e.g. `criminal_cloak_chance_bronze`, `division_max_tl_gold`) are individual scalar columns (set each key separately). The JSONB dict fields were retired in revision 0033 — use the flat scalars instead.
 
 For the full selection mechanics, see `services/bot-core/src/services/AGENTS.md` → "Criminal loadout-generation algorithm" (Threads 1/3/4/6).
 
@@ -361,11 +365,11 @@ For the full selection mechanics, see `services/bot-core/src/services/AGENTS.md`
 |---|---|---|---|
 | `long_range_threshold_m` | int | `2600` | Thread 3 — a primary weapon is classified LONG iff its `range_m` exceeds this (metres); otherwise SHORT. Validated `>= 0`. |
 | `criminal_long_range_pct` | float | `0.50` | Thread 3 — floor share of long-range primaries equipped per criminal ship (`ceil(pct × max_primaries)`), plus a per-remaining-slot long roll. Validated `0.0–1.0`. |
-| `primary_tl_band_weights` | dict | `{"center":70,"minus1":20,"plus1":10}` | Thread 3 — relative pick weights for the ±1 tech-level band when selecting a criminal primary (`center` = target TL). Keys must be exactly `{center, minus1, plus1}`; values non-negative ints. |
-| `criminal_cloak_chance_by_division` | dict | `{"bronze":0,"silver":25,"gold":66,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips a Cloak, by division. Keys exactly `{bronze, silver, gold, platinum}`; values ints `0–100`. |
-| `criminal_booster_chance_by_division` | dict | `{"bronze":50,"silver":100,"gold":100,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips a Booster module, by division. Same key/range rules. |
-| `criminal_emergency_chance_by_division` | dict | `{"bronze":0,"silver":25,"gold":50,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips an Emergency System module, by division. Same key/range rules. |
-| `criminal_weaponmod_chance_by_division` | dict | `{"bronze":0,"silver":25,"gold":50,"platinum":100}` | Thread 4 — Gate-1 percent chance a criminal equips a Weapon Mod module, by division. Same key/range rules. |
+| `primary_tl_band_weight_center` / `_minus1` / `_plus1` | int | `70` / `20` / `10` | Thread 3 — relative pick weights for the ±1 tech-level band when selecting a criminal primary (`center` = target TL). Non-negative ints. |
+| `criminal_cloak_chance_{bronze,...}` | int (%) | `0`/`25`/`66`/`100` | Thread 4 — Gate-1 percent chance a criminal equips a Cloak, per division. Validated `0–100`. |
+| `criminal_booster_chance_{bronze,...}` | int (%) | `50`/`100`/`100`/`100` | Thread 4 — Gate-1 percent chance a criminal equips a Booster module, per division. Validated `0–100`. |
+| `criminal_emergency_chance_{bronze,...}` | int (%) | `0`/`25`/`50`/`100` | Thread 4 — Gate-1 percent chance a criminal equips an Emergency System module, per division. Validated `0–100`. |
+| `criminal_weaponmod_chance_{bronze,...}` | int (%) | `0`/`25`/`50`/`100` | Thread 4 — Gate-1 percent chance a criminal equips a Weapon Mod module, per division. Validated `0–100`. |
 | `criminal_exclude_emp_weapons` | bool | `true` | Thread 6 — when on, excludes primarily-EMP weapons (`emp_damage > real_damage`) from criminal primary + secondary selection. Strict bool (`0`/`1`/`"true"` are rejected). Intended to auto-disable once EMP mechanics ship. |
 
 ### PvC Loot (per-guild)

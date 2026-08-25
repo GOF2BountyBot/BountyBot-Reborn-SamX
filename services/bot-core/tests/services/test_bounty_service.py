@@ -1222,8 +1222,8 @@ async def test_spawn_bounty_pool_scaler_per_guild_override(spawn_service, mock_d
     from services.game_maths import reward_per_sys_check
 
     route = ["A", "B", "C", "D", "E"]
-    # Full 4-key dict — matches what the config API validator actually accepts.
-    cfg = SimpleNamespace(bounty_division_reward_mult={"bronze": 1.0, "silver": 5.0, "gold": 1.0, "platinum": 1.0})
+    # Flattened scalar override (rev 0033: the JSONB dict column is gone).
+    cfg = SimpleNamespace(bounty_division_reward_mult_silver=5.0)
     unscaled = reward_per_sys_check(3, SAMPLE_LOADOUT["total_value"]) * len(route)
     expected = int(unscaled * 5.0)
 
@@ -1237,7 +1237,8 @@ async def test_spawn_bounty_pool_scaler_per_guild_override(spawn_service, mock_d
 async def test_spawn_bounty_pool_scaler_zero_zeroes_pool_without_crashing(spawn_service, mock_db):
     """A 0.0 scaler zeroes the pool (and reward_per_sys) without dividing-by-zero or crashing."""
     route = ["A", "B", "C", "D", "E"]
-    cfg = SimpleNamespace(bounty_division_reward_mult={"bronze": 1.0, "silver": 0.0, "gold": 1.0, "platinum": 1.0})
+    # Flattened scalar override; 0.0 is a valid override and must not fall back (rev 0033).
+    cfg = SimpleNamespace(bounty_division_reward_mult_silver=0.0)
 
     criminal = _make_criminal("Viper", "terran")
     spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
@@ -1264,11 +1265,11 @@ async def test_spawn_bounty_pool_scaler_zero_zeroes_pool_without_crashing(spawn_
 
 @pytest.mark.asyncio
 async def test_spawn_bounty_pool_scaler_unknown_division_defaults_to_one(spawn_service, mock_db):
-    """A division absent from the scaler dict falls back to 1.0 (no scaling, no crash)."""
+    """A division with no scalar override falls back to its global default (gold=1.0)."""
     from services.game_maths import reward_per_sys_check
 
     route = ["A", "B", "C", "D", "E"]
-    cfg = SimpleNamespace(bounty_division_reward_mult={"silver": 2.4})  # no "gold" key
+    cfg = SimpleNamespace(bounty_division_reward_mult_silver=2.4)  # no gold override
     expected = reward_per_sys_check(6, SAMPLE_LOADOUT["total_value"]) * len(route)
 
     reward = await _spawn_and_capture_reward(

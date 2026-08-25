@@ -6,7 +6,6 @@ tests verify that stale ``temperature_decay`` job rows do not error-spam
 the scheduler log.
 """
 
-import pytest
 from utils.executors.temperature_decay_executor import execute_temperature_decay_job
 
 

@@ -114,9 +114,9 @@ revision `0027`). It does not appear below.
 
 | Constant | Type | Default | Scope | Bounds | Technical | Admin-facing |
 |---|---|---|---|---|---|---|
-| `BOUNTY_DELAY_RANDOM_MIN` | int (minutes) | 5 | owner-flag (misnamed; per-guild path dead) | 0–1440 | Sets the cron recurrence step (in minutes) for the APScheduler `bounty_spawn_default` job in main.py: `f"*/{BOUNTY_DELAY_RANDOM_MIN} * * * *"`. With the default of 5 the orchestrator fires every 5 minutes. Also read by the dead `temperature_service.calculate_spawn_delay()` function as a random-delay lower bound, but that function is never called in production. | Controls how often the bot checks whether to spawn bounties (every 5 minutes by default); the per-guild override currently has no effect. |
+| `BOUNTY_DELAY_RANDOM_MIN` | int (minutes) | 5 | owner-flag (misnamed; per-guild path dead) | 0–1440 | Sets the cron recurrence step (in minutes) for the APScheduler `bounty_spawn_default` job in main.py: `f"*/{BOUNTY_DELAY_RANDOM_MIN} * * * *"`. With the default of 5 the orchestrator fires every 5 minutes. Also read by the dead `temperature_service.calculate_spawn_delay()` function as a random-delay lower bound, but that function is never called in production. Value only takes effect on first boot or after POST /scheduler/reset — the cron trigger is baked into the APScheduler job store at first registration; the seed block is skipped on every subsequent boot. | Controls how often the bot checks whether to spawn bounties (every 5 minutes by default); the per-guild override currently has no effect. |
 | `BOUNTY_DELAY_RANDOM_MAX` | int (minutes) | 7 | retiring (dead) | — | Default 7. Referenced only by the dead `temperature_service.calculate_spawn_delay()` which is never called in production; no live code path reads this constant. The config_schema validator `max ≥ min` still fires on API input but the stored value has no operational effect. | no effect. |
-| `BOUNTY_SPAWN_JITTER` | int (seconds) | 180 | global (owner-flag; scheduler-level) | — | Seconds of random offset added to each APScheduler spawn-check trigger in main.py; randomises the wall-clock minute within the cron window so multiple scheduler instances don't fire simultaneously. Not resolved per-guild. | (Global — not per-guild. Adds random spread to when the bounty spawn check fires each cycle.) |
+| `BOUNTY_SPAWN_JITTER` | int (seconds) | 180 | global (owner-flag; scheduler-level) | — | Seconds of random offset added to each APScheduler spawn-check trigger in main.py; randomises the wall-clock minute within the cron window so multiple scheduler instances don't fire simultaneously. Not resolved per-guild. Value only takes effect on first boot or after POST /scheduler/reset — the jitter is baked into the job store row at first registration; the seed block is skipped on every subsequent boot. | (Global — not per-guild. Adds random spread to when the bounty spawn check fires each cycle.) |
 
 ### Timers
 
@@ -140,7 +140,7 @@ revision `0027`). It does not appear below.
 | Constant | Type | Default | Scope | Bounds | Technical | Admin-facing |
 |---|---|---|---|---|---|---|
 | `DEMOTION_CREDIT_PENALTY_PCT` | int (%) | 10 | per-guild (wired; slash exposure planned) | 0–100 | Percentage of a player's credits deducted on /demote; resolved via resolve_constant in player_service.demote_player. The /admin config slash command does not yet expose this field. | The percentage of credits a player loses when they are demoted to a lower tier (10% by default). |
-| `CLASSIC_CREDITS_PER_CHECK` | int (credits) | 1000 | per-guild (override currently broken; wiring fix planned) | 0–1000000 | Minimum credit floor applied in game_maths.reward_per_sys_check; the function reads `GameConstants.CLASSIC_CREDITS_PER_CHECK` directly rather than using resolve_constant, so the GuildConfig column has no effect until the wiring fix lands. | The minimum credits a player earns per /check — currently fixed at 1000 regardless of your guild setting until a fix is deployed. |
+| `CLASSIC_CREDITS_PER_CHECK` | int (credits) | 1000 | per-guild (override currently broken; wiring fix planned) | 0–1000000 | LIVE. Floors the per-system credit reward in `game_maths.reward_per_sys_check()` (`game_maths.py:188`); called as `_legacy_rps` in `bounty_service.spawn_bounty():1898`; `total_reward = _legacy_rps * len(route)` then feeds the division-reward multiplier, winner-reserve split, and per-system consolation payout stored on the Bounty row (`:1899–1916`). The `_legacy_rps` local name and the helper's "deprecated" docstring refer to the formula's lineage, not deadness — this value seeds the entire bounty prize pool. GuildConfig column exists but `resolve_constant` is not called at the read site (wiring fix planned: Unit D1). | Sets the minimum credit reward per system check that seeds every bounty prize pool — a higher floor raises all bounty payouts. Currently fixed at 1000 regardless of guild setting until the wiring fix (Unit D1) lands. |
 
 ### Retiring Constants
 
@@ -355,3 +355,166 @@ These four constants tune the post-fight recap pipeline in `combat_recap.py`'s `
 |---|---|---|---|---|---|---|
 | `COMBAT_LOG_BOUNTY_RETENTION_HOURS` | `int` | `48` | global-infra (retention; operator-only) | — | Maximum age (hours) of PvC (bounty) combat-log rows before pruning by `execute_db_retention_job()` in `db_retention_executor.py`; overridable via `BOUNTYBOT_COMBAT_LOG_BOUNTY_RETENTION_HOURS`. | Operator setting — controls how long bounty fight logs are kept before automatic cleanup; set higher to retain history for longer. |
 | `COMBAT_LOG_PVP_RETENTION_HOURS` | `int` | `8760` | global-infra (retention; operator-only) | — | Maximum age (hours) of PvP (duel) combat-log rows before pruning by `execute_db_retention_job()`; a value of `0` disables pruning entirely (permanent retention); overridable via `BOUNTYBOT_COMBAT_LOG_PVP_RETENTION_HOURS`. | Operator setting — controls how long duel fight logs are kept; set to 0 to keep duel logs permanently. |
+
+## Conversion Cost & Refactor Units (plumbing trace, 2026-08-25)
+
+This section records the results of a full call-graph plumbing trace against live code (branch `feat/override-gating`), classifying each constant by the difficulty of making it per-guild and grouping them into owner-approvable refactor units. Code is the sole source consulted — repo `.md` docs are known to have drifted.
+
+The central question for every constant: **can a `GuildConfig` reach the point where the value is actually read?** The mechanism is `resolve_constant(guild_config, "field", GameConstants.X)` — it returns the override iff a `GuildConfig` object is in scope at the consumption point.
+
+### Cost classes
+
+| Class | Meaning |
+|---|---|
+| **trivial** | `GuildConfig` is already in scope at the read site — a one-line `resolve_constant` swap, a column-only addition, or list-membership exposure only |
+| **modest** | Thread a param 1–2 call levels; caller already has cfg but the read site does not; ~10–100 LOC per unit |
+| **significant** | Structural change required — the value crosses a process boundary (CPU pool) or sits deep in a module-level helper with no cfg path |
+
+"Significant" units require explicit owner go/no-go before implementation begins.
+
+### Per-constant cost table
+
+All paths are `services/bot-core/src/` unless noted.
+
+| Constant | Consumption chain | Guild-ctx at site? | Cost | Unit |
+|---|---|---|---|---|
+| MIN_DISTANCE_M | `TickResolver.resolve()` pre-loop bake — `guild_config` param exists but is never passed across `offload_cpu` | No | significant | A1 |
+| BASE_SHIP_SPEED_MPS | same | No | significant | A1 |
+| PLAYER_BASE_ACCURACY | same | No | significant | A1 |
+| NPC_BASE_ACCURACY | same | No | significant | A1 |
+| CLOAK_SET_VALUE | same | No | significant | A1 |
+| AUTO_TURRET_ACCURACY_MULTIPLIER | same | No | significant | A1 |
+| BOOSTER_ACCURACY_DEBUFF_FACTOR | same | No | significant | A1 |
+| THRUSTER_ACCURACY_BONUS_FACTOR | same | No | significant | A1 |
+| THRUSTER_WINDOW_M | same | No | significant | A1 |
+| SCANNER_TIER_B_BONUS_PP | `_init_combatant():384` (module-level helper, no cfg) | No | significant | A1 |
+| SCANNER_TIER_C_BONUS_PP | same | No | significant | A1 |
+| STARTING_DISTANCE_M | `resolve():1410,2518` + `_shock_blast_apply():1143` (module-level) | Partial | significant | A1 |
+| COMBAT_LAYER_REEMIT_FRACTION | `_tick_shield_regen():593`, `_tick_repair_bot_regen():662` (module-level) | No | significant | A1 |
+| EMERGENCY_SYSTEM_INVULN_S | `resolve():2045-2046` (loop, struct in scope after refactor) | Partial | significant | A1 |
+| NUKE_MAGNITUDE_SCALE | `resolve():1734` (loop) | Partial | significant | A1 |
+| NUKE_FRIENDLY_FACTOR | `resolve():1743` (loop) | Partial | significant | A1 |
+| NUKE_STACK_FALLOFF | `resolve():1737` (loop) | Partial | significant | A1 |
+| SHOCK_BLAST_TRIGGER_RANGE_M | `resolve():1777` (loop) | Partial | significant | A1 |
+| NUKE_RANGE_REGIME_THRESHOLD_M | `_nuke_window():1114` (module-level, no cfg) | No | significant | A1 |
+| NUKE_LR_NEAR_FRAC | `_nuke_window():1115` | No | significant | A1 |
+| NUKE_CR_SHORT_M | `_nuke_window():1117` | No | significant | A1 |
+| NUKE_CR_OVERSHOOT_M | `_nuke_window():1118` | No | significant | A1 |
+| KETAR_II_REPAIR_PCT_PER_SEC | `loadout_builder._module_stats_from_extra():113` (pre-fight, no cfg) | No | significant | A2 |
+| KETAR_I_REPAIR_PCT_PER_SEC | same | No | significant | A2 |
+| RECAP_COLLAPSE_MIN_RUN | `combat_recap.build_recap_sections():157` (no cfg param) | No | modest | B1 |
+| RECAP_GAP_FILL_S | same | No | modest | B1 |
+| RECAP_NUKE_SUMMARY_MIN_COUNT | same | No | modest | B1 |
+| RECAP_NUKE_SIGNIFICANCE_FRACTION | same | No | modest | B1 |
+| BRONZE_COMBAT_BONUS_BASE_MULT | `bounty_service._bronze_combat_bonus_fraction()` — callers have cfg, helper does not | No (helper) | modest | C |
+| BRONZE_COMBAT_BONUS_PER_PRESTIGE | same | No (helper) | modest | C |
+| BRONZE_COMBAT_BONUS_CAP | same | No (helper) | modest | C |
+| CLASSIC_CREDITS_PER_CHECK | `game_maths.reward_per_sys_check():188` (floor) → `spawn_bounty():1898`; cfg adjacent in spawn_bounty | No (helper) | modest | D1 |
+| MAX_ROUTE_LENGTH | `pathfinding_service.py:144` reads module literal `:25`, NOT `GameConstants` | No | modest | D2 |
+| CRIMINAL_SECONDARY_MIN_DAMAGE | `generate_loadout():942`; `cfg` param in scope | Yes | trivial | D-trivial |
+| SHOP_SECONDARY_QTY_SCALER_HEAVY | `refresh_shop():780-783`; `config` in scope | Yes | trivial | D-trivial |
+| SHOP_SECONDARY_QTY_SCALER_STANDARD | same | Yes | trivial | D-trivial |
+| 11 shop-TL knobs | already resolved per-guild via `resolve_constant`; column + schema exposure only | Yes | trivial | D-trivial |
+| 5 expose-only orphans (waypoints ×4 + `pvc_damage_reduction`) | columns live / already resolved; API/slash exposure only | Yes | trivial | D-trivial |
+| 4 slash-list additions | list membership only | n/a | trivial | D-trivial |
+
+### Unit A1 — CombatTuning struct + engine/worker/preflight threading (SIGNIFICANT)
+
+22 constants are stranded behind a deliberate `ProcessPoolExecutor` (forkserver) boundary in `combat_service.fight_ships`. All three fight entry points already hold guild context at the top level (`bounties.py:317-319`, `duel_service.accept_duel`, `combat_preflight_service.estimate`), but `fight_ships` passes `guild_config=None` to `run_fight` today — the reserved param and the C1a-4 ORM-boundary assert (`combat_service.py:303-305`, "guild_config must not be a live ORM model — extract scalar fields before offload") are pre-built scaffolding for this exact refactor.
+
+Design sketch:
+- New frozen, `slots=True` plain-scalar dataclass `CombatTuning` (int/float/bool only) in a DB-free leaf module (`combat_models.py` or new `combat_tuning.py`); add `CombatTuning.from_guild_config(cfg)` classmethod that calls `resolve_constant` for each field, returning a picklable struct.
+- Build it once in `fight_ships` (satisfies the C1a-4 "extract scalar fields before offload" comment); pass as `tuning=<struct>` through `offload_cpu`. Extend the ORM-boundary assert to also reject a non-dataclass tuning.
+- Thread `tuning` through `combat_worker.run_fight()` and `run_fight_batch()` (new `tuning=None` kwarg); wire into `resolver.resolve(tuning=…)`.
+- In `resolve()`, replace the pre-loop bake block (`:1383-1404`) and all in-loop constant reads with `tuning.X`; pass the needed scalars into the five module-level helpers: `_init_combatant`, `_tick_shield_regen`, `_tick_repair_bot_regen`, `_nuke_window`, `_shock_blast_apply`. `tuning=None` falls back to `GameConstants` so all existing seeded tests pass unchanged.
+- Entry-point wiring: `bounties.py:335` add `guild_config=guild_cfg` (already loaded); `duel_service.accept_duel` load and pass cfg.
+- Mandatory preflight-parity step: `combat_preflight_service.estimate` builds a `CombatTuning` from its guild and passes `tuning=` into `offload_cpu(run_fight_batch, …)` (`:210`) — without this, win-rate previews simulate with default physics while real fights use per-guild physics (see preflight-parity bug note below).
+- Schema: each exposed knob is a scalar column on `persist/models/guild_config.py` + a field in `api/schemas/config_schema.py` with `ge/le` bounds + one Alembic revision.
+
+Estimated scale: ~7 code files + 1 migration; ~300–500 LOC (dominated by column/schema boilerplate if all 22 knobs get columns; the struct + threading is ~120 LOC and low-branching). Adding the struct + threading is the fixed one-time cost; each additional column afterward is cheap.
+
+Risks:
+- Determinism: LOW if `tuning=None` preserves `GameConstants` defaults; add a couple of tuning-override tests alongside.
+- Picklability: struct must live in a DB-free leaf module; enforce via the existing `combat_worker` import discipline and extend the C1a-4 assert to `tuning`.
+- Preflight/live consistency: mandatory — thread into `run_fight_batch` (see preflight-parity bug note).
+- Column sprawl: 22 scalar columns is a wide surface; recommend landing a starter subset (e.g. `PLAYER_BASE_ACCURACY`, `NPC_BASE_ACCURACY`, nuke family) and deferring the rest to cheap follow-on column adds.
+- Combat-log replay / blender-service: NULL risk — blender-service renders ship skins/textures and imports none of `combat_resolver`/`TickResolver`/`run_fight`/`FightResults`; the combat timeline is persisted as concrete events and never re-simulated.
+
+**Recommendation: GO on the plumbing; owner picks the column subset.** The mechanism is low-risk and already scaffolded.
+
+### Unit A2 — KETAR repair rates in the loadout-build path (SIGNIFICANT, small)
+
+`KETAR_I/II_REPAIR_PCT_PER_SEC` are baked into `ModuleStats.repair_rate` at loadout-build time in `loadout_builder._module_stats_from_extra()` (`:113-115`), which runs pre-fight in the main process. `LoadoutBuilder.from_player`/`from_criminal_ship` take no `guild_config`; the builder already exposes a `repair_pct_per_sec` seed-key injection seam (`:108-110`).
+
+Preferred design (if A1 lands): resolve the two rates in `CombatTuning` and apply the override in `_init_combatant` when reading `mod.repair_rate`, keeping the loadout builder cfg-free and folding A2 into A1 cleanly. Standalone alternative: thread `cfg` from `from_player`/`from_criminal_ship` down to `_module_stats_from_extra`.
+
+Estimated scale: ~40–80 LOC, 1–2 files. Risks: touches the loadout-build path used by preflight and preview embeds; must not change picklability of `ShipLoadout`.
+
+**Recommendation: LOW-PRIORITY-DEFER (or fold into A1).** Only 2 constants; awkward location; low gameplay leverage. Defer unless per-guild repair-bot tuning is specifically wanted.
+
+### Unit B1 — Recap knobs (MODEST)
+
+Four constants (`RECAP_COLLAPSE_MIN_RUN`, `RECAP_GAP_FILL_S`, `RECAP_NUKE_SUMMARY_MIN_COUNT`, `RECAP_NUKE_SIGNIFICANCE_FRACTION`) are read as local defaults in `combat_recap.build_recap_sections()` with no cfg param. Write path: `combat_log_service.persist()` is reached from `fight_ships` which already has `guild_config` (`:260`). Read path: `_get_detail_legacy_fallback():443` has the loaded `CombatLog` row carrying `guild_id` (`persist/models/combat_log.py:26`, non-nullable) — a `GuildConfig` is loadable there.
+
+Design: add an optional cfg (or 4-field recap-tuning) param to `build_recap_sections`; thread it from `fight_ships` on the write path and load from `row.guild_id` on the read path. Recompute risk: if recap knobs change between fight time and view time, old-battle recaps recomputed in `_get_detail_legacy_fallback` will drift (cosmetic; legacy-fallback only).
+
+Estimated scale: ~60–100 LOC, 3 files. **Recommendation: LOW-PRIORITY-DEFER.** These are display/summarisation thresholds with low per-guild value; the write path is latency-sensitive. Promote only if an admin explicitly wants per-guild recap formatting.
+
+### Unit C — Bronze combat bonus helper (MODEST)
+
+`_bronze_combat_bonus_fraction(prestige_count)` (`bounty_service.py:76-89`) reads all three `BRONZE_COMBAT_BONUS_*` constants directly. Both callers already hold cfg: `_process_single_bounty_check` (`:2296`, `cfg` param in scope) and `bounties.py:356` (`guild_cfg` loaded `:317-319`).
+
+Design: add `cfg=None` to the helper; resolve the three constants via `resolve_constant` inside; both callers pass their cfg. One helper signature + two call sites.
+
+Estimated scale: ~15–25 LOC, 2 files + 3 columns/schema + migration. Risks: negligible; pure function; defaults preserved. Note the catalog's flagged partial-wiring gap (Bronze XP path in `_award_combat_bonus` always reads the global) is a sibling worth closing in the same PR.
+
+**Recommendation: GO.** Lowest-effort modest unit; both callers are cfg-ready.
+
+### Unit D1 — CLASSIC_CREDITS_PER_CHECK floor (MODEST)
+
+`reward_per_sys_check(tech_level, loadout_value)` (`game_maths.py:188`) floors the reward at `CLASSIC_CREDITS_PER_CHECK`; called as `_legacy_rps` in `bounty_service.spawn_bounty():1898`; `total_reward = _legacy_rps * len(route)` feeds the division-reward multiplier, winner-reserve split, and per-system consolation payout stored on the Bounty row (`:1899–1916`). `spawn_bounty` has `cfg` and already resolves other constants two lines below (`:1906,1911`).
+
+Design: add `cfg=None` to `reward_per_sys_check`; resolve the floor via `resolve_constant`; thread `cfg` from the single caller (`:1898`).
+
+Estimated scale: ~10–15 LOC, 2 files + 1 column/schema + migration. Risks: trivial; floor value, well-bounded.
+
+**Recommendation: GO.** One caller; cfg already adjacent.
+
+### Unit D2 — MAX_ROUTE_LENGTH literal removal + wiring (MODEST)
+
+`pathfinding_service.py:144` reads a module literal `MAX_ROUTE_LENGTH = 50` (`:25`) that shadows `GameConstants.MAX_ROUTE_LENGTH`; the constant is registered as trackable (`:169,681`) but never read — any per-guild override set today silently no-ops. Callers: `spawn_bounty` (has cfg) → `_generate_route`/`_build_anchor_route` → the pathfinder (no cfg). Public `systems.py` route endpoints have no guild context and keep the `GameConstants` default.
+
+Design: delete the module literal; thread an explicit hop-limit param from `spawn_bounty` (has cfg) → `_generate_route`/`_build_anchor_route` → the pathfinder (~2 levels). Systems.py endpoint passes the `GameConstants` default.
+
+Estimated scale: ~30–50 LOC, 2–3 files + 1 column/schema + migration. Risks: pathfinder is shared by a guild-less public endpoint — pass the default there; don't force cfg where none exists.
+
+**Recommendation: GO.** Also a correctness fix — the current per-guild override silently no-ops.
+
+### Unit D-trivial — batch wire (23 constants)
+
+- `CRIMINAL_SECONDARY_MIN_DAMAGE`: swap to `resolve_constant(cfg, …)`; `cfg` already in scope in `generate_loadout` (`:761`, read `:942`).
+- `SHOP_SECONDARY_QTY_SCALER_HEAVY/_STANDARD`: swap to `resolve_constant(config, …)`; `config` loaded in `refresh_shop` (`:715`, read `:780-783`).
+- 11 shop-TL knobs: consumption already calls `resolve_constant` per-guild; column + schema exposure only.
+- 5 expose-only orphans (waypoints ×4 + `pvc_damage_reduction`): columns live and already resolved; API/slash exposure only.
+- 4 slash-list additions: add to the `/admin_config_constants` allow-list only.
+
+Estimated scale: one modest PR — a handful of `resolve_constant` swaps + column/schema adds + one migration. Risks: none structural; standard schema validation applies.
+
+**Recommendation: GO.** Cheap, high-count win; good first PR to establish the column/schema pattern the other units reuse.
+
+### Group E — DEFAULT_SCHEDULER_JOBS: seeded once on first boot
+
+`BOUNTY_SPAWN_JITTER` and `BOUNTY_DELAY_RANDOM_MIN` feed `DEFAULT_SCHEDULER_JOBS` in `main.py` (`:95-127`): cron `f"*/{GameConstants.BOUNTY_DELAY_RANDOM_MIN} * * * *"` (`:98`) and `"jitter": GameConstants.BOUNTY_SPAWN_JITTER` (`:100`). `register_default_jobs(scheduler)` (`:130-160`) fetches existing job IDs via `scheduler.get_jobs()` before registering; if a job ID is already present the loop exits early at `:146-147` with `continue` and **never reaches the trigger or jitter lines**. Jobs persist in Postgres via `SQLAlchemyJobStore(tablename="apscheduler_jobs")`; `scheduler.start()` (`:464`) loads persisted rows before `register_default_jobs` (`:475`) runs. Consequence:
+
+- **First boot (empty table):** cron + jitter are baked from the current constant values into the persisted row.
+- **Every later boot:** the rows exist — the seed block is skipped entirely. Changing the constant or env var and restarting has **no effect** on an existing deployment.
+
+`PUT /jobs/{job_id}` (`scheduler.py:161-183`) modifies job args only, not cron/jitter. The **only** re-derive path is `POST /scheduler/reset` (`scheduler.py:231-250`), which calls `remove_all_jobs()` then re-registers from the current constants.
+
+Implication: making `BOUNTY_SPAWN_JITTER` or `BOUNTY_DELAY_RANDOM_MIN` per-guild via a column is meaningless while the scheduler is a single global APScheduler seeded once. Per-guild spawn cadence would require a different mechanism — reading cadence at job-run time from `GuildConfig` rather than baking it into the trigger at seed time. Both constants should remain `global-infra` / `owner-flag` with no columns until that mechanism exists.
+
+### Preflight-parity bug (pre-existing)
+
+Live PvC fights resolve the per-guild `pvc_damage_reduction` override via `resolve_constant(guild_cfg, "pvc_damage_reduction", …)` (`api/routers/bounties.py:320`), but `combat_preflight_service.run_fight_batch` passes the global default `pvc_damage_reduction=GameConstants.PVC_DAMAGE_REDUCTION` (`:213`). A guild that overrides PvC DR gets win-rate previews that do not match its actual fights.
+
+This is a pre-existing bug, independent of A1, but the A1 preflight-parity step (threading `tuning` into `run_fight_batch`) is the natural fix. It also illustrates a general hazard: any per-guild combat knob will silently desync the preflight preview from the real fight unless explicitly threaded into `run_fight_batch`. The parity step is **mandatory** in Unit A1.

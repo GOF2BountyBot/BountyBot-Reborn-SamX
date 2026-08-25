@@ -48,7 +48,7 @@ def make_mock_config(**overrides):
         # shop_default_turrets_num, turret_spawn_probability.
         # bounty_pvc_armour_buff_factor retired T10
         # duel_variance_percent retired T10
-        division_max_tl=None,
+        # division_max_tl — RETIRED rev 0033 (JSONB column dropped)
         criminal_max_gear_upgrade=None,
         bounty_reward_to_xp_gain_mult=None,
         bounty_winner_reserve_factor=None,
@@ -64,11 +64,11 @@ def make_mock_config(**overrides):
         # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
         long_range_threshold_m=None,
         criminal_long_range_pct=None,
-        primary_tl_band_weights=None,
-        criminal_cloak_chance_by_division=None,
-        criminal_booster_chance_by_division=None,
-        criminal_emergency_chance_by_division=None,
-        criminal_weaponmod_chance_by_division=None,
+        # primary_tl_band_weights — RETIRED rev 0033 (JSONB column dropped)
+        # criminal_cloak_chance_by_division — RETIRED rev 0033 (JSONB column dropped)
+        # criminal_booster_chance_by_division — RETIRED rev 0033
+        # criminal_emergency_chance_by_division — RETIRED rev 0033
+        # criminal_weaponmod_chance_by_division — RETIRED rev 0033
         criminal_exclude_emp_weapons=None,
         # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2) — all null by default
         loot_chance_tractor_t1=None,
@@ -186,19 +186,15 @@ def _configure_db_mock(mock_get_db):
 
 
 _OVERRIDE_FIELD_NAMES = [
-    # Rev 0031: 14 fields retired — removed from this list:
-    #   ship_value_reward_percentage, criminal_equip_damageless_weapon_chance,
-    #   duel_cloak_chance, bounty_delay_random_min, bounty_delay_random_max,
-    #   bounty_spawn_jitter, guild_activity_decay_rate, min_guild_activity,
-    #   activity_temp_per_player, shop_default_ships_num, shop_default_weapons_num,
-    #   shop_default_modules_num, shop_default_turrets_num, turret_spawn_probability.
-    # bounty_pvc_armour_buff_factor retired T10
-    # duel_variance_percent retired T10
-    "division_max_tl",
+    # Rev 0031: 14 fields retired. Rev 0033: 7 JSONB dict fields retired:
+    #   division_max_tl, bounty_division_reward_mult, primary_tl_band_weights,
+    #   criminal_{cloak,booster,emergency,weaponmod}_chance_by_division.
+    # bounty_pvc_armour_buff_factor retired T10. duel_variance_percent retired T10.
+    # division_max_tl — RETIRED rev 0033 (JSONB dropped)
     "criminal_max_gear_upgrade",
     "bounty_reward_to_xp_gain_mult",
     "bounty_winner_reserve_factor",
-    "bounty_division_reward_mult",
+    # bounty_division_reward_mult — RETIRED rev 0033 (JSONB dropped)
     "close_bounty_threshold",
     "max_route_length",
     "min_route_systems",
@@ -211,11 +207,11 @@ _OVERRIDE_FIELD_NAMES = [
     # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
     "long_range_threshold_m",
     "criminal_long_range_pct",
-    "primary_tl_band_weights",
-    "criminal_cloak_chance_by_division",
-    "criminal_booster_chance_by_division",
-    "criminal_emergency_chance_by_division",
-    "criminal_weaponmod_chance_by_division",
+    # primary_tl_band_weights — RETIRED rev 0033 (JSONB dropped)
+    # criminal_cloak_chance_by_division — RETIRED rev 0033 (JSONB dropped)
+    # criminal_booster_chance_by_division — RETIRED rev 0033
+    # criminal_emergency_chance_by_division — RETIRED rev 0033
+    # criminal_weaponmod_chance_by_division — RETIRED rev 0033
     "criminal_exclude_emp_weapons",
     # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2)
     "loot_chance_tractor_t1",
@@ -394,9 +390,11 @@ class TestGetGameConstants:
         mock_config_service.get_guild_config = AsyncMock(
             return_value=make_mock_config(
                 # bounty_pvc_armour_buff_factor retired T10; duel_cloak_chance retired rev 0031
+                # division_max_tl JSONB retired rev 0033; use flat scalars instead.
                 bounty_winner_reserve_factor=0.35,
                 criminal_max_gear_upgrade=2,
-                division_max_tl={"bronze": 3, "silver": 6, "gold": 9, "platinum": 10},
+                division_max_tl_bronze=3,
+                division_max_tl_silver=6,
             )
         )
 
@@ -406,7 +404,8 @@ class TestGetGameConstants:
         data = response.json()
         assert data["bounty_winner_reserve_factor"] == pytest.approx(0.35)
         assert data["criminal_max_gear_upgrade"] == 2
-        assert data["division_max_tl"]["bronze"] == 3
+        assert data["division_max_tl_bronze"] == 3
+        assert data["division_max_tl_silver"] == 6
 
     @patch("api.routers.config.get_db_session")
     def test_returns_404_for_unconfigured_guild(self, mock_get_db, client, mock_config_service):
@@ -499,148 +498,86 @@ class TestGameConstantsSchemaValidation:
 
 
 # ===========================================================================
-# 3. Schema validator rejects division_max_tl with missing tier keys
+# 3. Flat-scalar validation for rev 0033 (JSONB dict fields retired)
 # ===========================================================================
 
 
-class TestDivisionMaxTlValidation:
-    """division_max_tl must have exactly {bronze, silver, gold, platinum}."""
+class TestDivisionMaxTlScalarValidation:
+    """division_max_tl_{bronze,...} flat scalar fields (rev 0033 — JSONB dict retired)."""
 
     @patch("api.routers.config.get_db_session")
-    def test_rejects_division_max_tl_missing_keys(self, mock_get_db, client):
-        """division_max_tl with only 'bronze' key is rejected with 422."""
+    def test_rejects_division_max_tl_bronze_out_of_range(self, mock_get_db, client):
+        """division_max_tl_bronze must be between 1 and 10."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
             "/api/v1/config/guild/67890",
-            json={"guild_id": 67890, "division_max_tl": {"bronze": 2}},
+            json={"guild_id": 67890, "division_max_tl_bronze": 0},
         )
 
         assert response.status_code == 422
 
     @patch("api.routers.config.get_db_session")
-    def test_rejects_division_max_tl_extra_keys(self, mock_get_db, client):
-        """division_max_tl with extra keys beyond the required 4 is rejected."""
+    def test_rejects_division_max_tl_bronze_too_high(self, mock_get_db, client):
+        """division_max_tl_bronze above 10 is rejected."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
             "/api/v1/config/guild/67890",
-            json={
-                "guild_id": 67890,
-                "division_max_tl": {"bronze": 2, "silver": 5, "gold": 8, "platinum": 10, "diamond": 12},
-            },
+            json={"guild_id": 67890, "division_max_tl_bronze": 11},
         )
 
         assert response.status_code == 422
 
     @patch("api.routers.config.get_db_session")
-    def test_rejects_division_max_tl_value_out_of_range(self, mock_get_db, client):
-        """division_max_tl values must be integers between 1 and 10."""
+    def test_accepts_valid_division_max_tl_bronze(self, mock_get_db, client, mock_config_service):
+        """A valid in-range value for division_max_tl_bronze is accepted."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
             "/api/v1/config/guild/67890",
-            json={
-                "guild_id": 67890,
-                "division_max_tl": {"bronze": 0, "silver": 5, "gold": 8, "platinum": 10},
-            },
-        )
-
-        assert response.status_code == 422
-
-    @patch("api.routers.config.get_db_session")
-    def test_accepts_valid_division_max_tl(self, mock_get_db, client, mock_config_service):
-        """A correctly formed division_max_tl dict is accepted."""
-        _configure_db_mock(mock_get_db)
-
-        response = client.put(
-            "/api/v1/config/guild/67890",
-            json={
-                "guild_id": 67890,
-                "division_max_tl": {"bronze": 3, "silver": 6, "gold": 9, "platinum": 10},
-            },
+            json={"guild_id": 67890, "division_max_tl_bronze": 3},
         )
 
         assert response.status_code == 200
 
-
-class TestBountyDivisionRewardMultValidation:
-    """bounty_division_reward_mult must have exactly {bronze, silver, gold, platinum}, non-negative."""
-
     @patch("api.routers.config.get_db_session")
-    def test_rejects_partial_dict_missing_keys(self, mock_get_db, client):
-        """A partial dict (only 'silver') is rejected with 422 — the API requires all 4 keys."""
+    def test_division_max_tl_dict_is_now_unknown_field(self, mock_get_db, client, mock_config_service):
+        """division_max_tl as a dict is now an unknown extra field (ignored, not 422)."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
             "/api/v1/config/guild/67890",
-            json={"guild_id": 67890, "bounty_division_reward_mult": {"silver": 2.4}},
+            json={"guild_id": 67890, "division_max_tl": {"bronze": 3, "silver": 6, "gold": 9, "platinum": 10}},
         )
 
-        assert response.status_code == 422
+        # Unknown extra field → 200 (silently ignored by Pydantic extra='ignore')
+        assert response.status_code == 200
 
-    @patch("api.routers.config.get_db_session")
-    def test_rejects_extra_keys(self, mock_get_db, client):
-        """Keys beyond the required 4 are rejected."""
-        _configure_db_mock(mock_get_db)
 
-        response = client.put(
-            "/api/v1/config/guild/67890",
-            json={
-                "guild_id": 67890,
-                "bounty_division_reward_mult": {
-                    "bronze": 1.0,
-                    "silver": 2.4,
-                    "gold": 1.0,
-                    "platinum": 1.0,
-                    "diamond": 3.0,
-                },
-            },
-        )
-
-        assert response.status_code == 422
+class TestBountyDivisionRewardMultScalarValidation:
+    """bounty_division_reward_mult_{bronze,...} flat scalar fields (rev 0033 — JSONB dict retired)."""
 
     @patch("api.routers.config.get_db_session")
     def test_rejects_negative_value(self, mock_get_db, client):
-        """A negative multiplier is rejected."""
+        """A negative multiplier scalar is rejected."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
             "/api/v1/config/guild/67890",
-            json={
-                "guild_id": 67890,
-                "bounty_division_reward_mult": {"bronze": 1.0, "silver": -2.4, "gold": 1.0, "platinum": 1.0},
-            },
+            json={"guild_id": 67890, "bounty_division_reward_mult_silver": -2.4},
         )
 
         assert response.status_code == 422
 
     @patch("api.routers.config.get_db_session")
-    def test_rejects_bool_value(self, mock_get_db, client):
-        """A bool value (True) is rejected — must be a number, not a bool."""
+    def test_accepts_valid_scalar(self, mock_get_db, client, mock_config_service):
+        """A valid non-negative scalar for bounty_division_reward_mult_silver is accepted."""
         _configure_db_mock(mock_get_db)
 
         response = client.put(
             "/api/v1/config/guild/67890",
-            json={
-                "guild_id": 67890,
-                "bounty_division_reward_mult": {"bronze": 1.0, "silver": True, "gold": 1.0, "platinum": 1.0},
-            },
-        )
-
-        assert response.status_code == 422
-
-    @patch("api.routers.config.get_db_session")
-    def test_accepts_valid_dict(self, mock_get_db, client, mock_config_service):
-        """A correctly formed 4-key dict with the default silver=2.0 is accepted."""
-        _configure_db_mock(mock_get_db)
-
-        response = client.put(
-            "/api/v1/config/guild/67890",
-            json={
-                "guild_id": 67890,
-                "bounty_division_reward_mult": {"bronze": 1.0, "silver": 2.0, "gold": 1.0, "platinum": 1.0},
-            },
+            json={"guild_id": 67890, "bounty_division_reward_mult_silver": 2.0},
         )
 
         assert response.status_code == 200

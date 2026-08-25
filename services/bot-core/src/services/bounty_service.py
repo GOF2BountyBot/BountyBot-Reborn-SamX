@@ -196,8 +196,7 @@ _MODULE_PRIORITY_ORDER: list[tuple[str, str, str | None]] = [
     ("ScannerModule", _GUARANTEED, None),
     ("ArmourModule", _GUARANTEED, None),
     ("ShieldModule", _GUARANTEED, None),
-    # chance_key is now the base name (issue #70 flatten); the loop uses
-    # resolve_flattened(cfg, f"{chance_key}_{div}", f"{chance_key}_by_division", div, ...)
+    # chance_key is now the base name (issue #70 flatten, revision 0033 — flat scalar only).
     ("CloakModule", _TWO_GATE, "criminal_cloak_chance"),
     ("BoosterModule", _TWO_GATE, "criminal_booster_chance"),
     ("EmergencySystemModule", _TWO_GATE, "criminal_emergency_chance"),
@@ -1056,30 +1055,16 @@ class BountyService:
         """
         threshold = resolve_constant(cfg, "long_range_threshold_m", GameConstants.LONG_RANGE_THRESHOLD_M)
         pct = resolve_constant(cfg, "criminal_long_range_pct", GameConstants.CRIMINAL_LONG_RANGE_PCT)
-        # Resolve primary TL band weights per key (issue #70 flatten, revision 0030).
-        # Fallback chain: scalar column → legacy JSONB key → global constant.
+        # Resolve primary TL band weights per key (issue #70 flatten, revision 0033 — flat scalar only).
+        # Fallback chain: scalar column → global constant.
         band_weights = {
             "center": resolve_flattened(
-                cfg,
-                "primary_tl_band_weight_center",
-                "primary_tl_band_weights",
-                "center",
-                GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER,
+                cfg, "primary_tl_band_weight_center", GameConstants.PRIMARY_TL_BAND_WEIGHT_CENTER
             ),
             "minus1": resolve_flattened(
-                cfg,
-                "primary_tl_band_weight_minus1",
-                "primary_tl_band_weights",
-                "minus1",
-                GameConstants.PRIMARY_TL_BAND_WEIGHT_MINUS1,
+                cfg, "primary_tl_band_weight_minus1", GameConstants.PRIMARY_TL_BAND_WEIGHT_MINUS1
             ),
-            "plus1": resolve_flattened(
-                cfg,
-                "primary_tl_band_weight_plus1",
-                "primary_tl_band_weights",
-                "plus1",
-                GameConstants.PRIMARY_TL_BAND_WEIGHT_PLUS1,
-            ),
+            "plus1": resolve_flattened(cfg, "primary_tl_band_weight_plus1", GameConstants.PRIMARY_TL_BAND_WEIGHT_PLUS1),
         }
         exclude_emp = resolve_constant(cfg, "criminal_exclude_emp_weapons", GameConstants.CRIMINAL_EXCLUDE_EMP_WEAPONS)
 
@@ -1162,8 +1147,6 @@ class BountyService:
                 chance = resolve_flattened(
                     cfg,
                     f"{chance_key}_{division.lower()}",  # e.g. "criminal_cloak_chance_bronze"
-                    f"{chance_key}_by_division",  # legacy JSONB field
-                    division.lower(),  # key within JSONB
                     getattr(GameConstants, f"{const_name}_{division.upper()}", 0),
                 )
                 if random.randint(1, 100) <= chance:
@@ -1907,13 +1890,11 @@ class BountyService:
 
         # Step 2: Determine tech level
         if tech_level is None:
-            # Resolve per-division TL cap and draw centre (issue #70 flatten, revision 0030).
-            # Fallback chain for cap: scalar column → legacy JSONB key → global constant.
+            # Resolve per-division TL cap (issue #70 flatten, revision 0033 — flat scalar only).
+            # Fallback chain: scalar column → global constant.
             _cap = resolve_flattened(
                 cfg,
                 f"division_max_tl_{division.lower()}",
-                "division_max_tl",
-                division.lower(),
                 getattr(GameConstants, f"DIVISION_MAX_TL_{division.upper()}", GameConstants.MAX_TECH_LEVEL),
             )
             _global_tl_center = getattr(
@@ -1988,13 +1969,11 @@ class BountyService:
         # consolation pool scale together. Defaults to 1.0 for every division
         # except silver (2.0), which lifts silver off the bronze floor so the
         # tier is a real step up.
-        # Resolve per-division scalar (issue #70 flatten, revision 0030).
-        # Fallback chain: scalar column → legacy JSONB key → global constant.
+        # Resolve per-division scalar (issue #70 flatten, revision 0033 — flat scalar only).
+        # Fallback chain: scalar column → global constant.
         _reward_mult = resolve_flattened(
             cfg,
             f"bounty_division_reward_mult_{division.lower()}",
-            "bounty_division_reward_mult",
-            division.lower(),
             getattr(GameConstants, f"BOUNTY_DIVISION_REWARD_MULT_{division.upper()}", 1.0),
         )
         total_reward = int(total_reward * _reward_mult)

@@ -459,13 +459,13 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "bounty_spawn_interval_minutes": config.bounty_spawn_interval_minutes,
                 "next_spawn_check_at": (config.next_spawn_check_at.isoformat() if config.next_spawn_check_at else None),
                 # B.49: per-guild game-constant overrides (all nullable)
-                "division_max_tl": config.division_max_tl,
+                # division_max_tl — RETIRED rev 0033 (JSONB column dropped; flat scalars below)
                 # ship_value_reward_percentage — RETIRED rev 0031
                 # criminal_equip_damageless_weapon_chance — RETIRED rev 0031
                 "criminal_max_gear_upgrade": config.criminal_max_gear_upgrade,
                 "bounty_reward_to_xp_gain_mult": config.bounty_reward_to_xp_gain_mult,
                 "bounty_winner_reserve_factor": config.bounty_winner_reserve_factor,
-                "bounty_division_reward_mult": config.bounty_division_reward_mult,
+                # bounty_division_reward_mult — RETIRED rev 0033 (JSONB column dropped; flat scalars below)
                 # bounty_pvc_armour_buff_factor retired T10
                 # duel_variance_percent retired T10
                 # duel_cloak_chance — RETIRED rev 0031
@@ -492,11 +492,11 @@ class ConfigRepository(IRepository[GuildConfig]):
                 # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 3 & 4)
                 "long_range_threshold_m": config.long_range_threshold_m,
                 "criminal_long_range_pct": config.criminal_long_range_pct,
-                "primary_tl_band_weights": config.primary_tl_band_weights,
-                "criminal_cloak_chance_by_division": config.criminal_cloak_chance_by_division,
-                "criminal_booster_chance_by_division": config.criminal_booster_chance_by_division,
-                "criminal_emergency_chance_by_division": config.criminal_emergency_chance_by_division,
-                "criminal_weaponmod_chance_by_division": config.criminal_weaponmod_chance_by_division,
+                # primary_tl_band_weights — RETIRED rev 0033 (JSONB column dropped; flat scalars below)
+                # criminal_cloak_chance_by_division — RETIRED rev 0033 (JSONB column dropped; flat scalars below)
+                # criminal_booster_chance_by_division — RETIRED rev 0033 (JSONB column dropped; flat scalars below)
+                # criminal_emergency_chance_by_division — RETIRED rev 0033 (JSONB column dropped; flat scalars below)
+                # criminal_weaponmod_chance_by_division — RETIRED rev 0033 (JSONB column dropped; flat scalars below)
                 # Criminal loadout balance (BALANCE_JOURNAL §A — Thread 6)
                 "criminal_exclude_emp_weapons": config.criminal_exclude_emp_weapons,
                 # Loot (PvC) tunable knobs (LOOT_JOURNAL §8 / T2)

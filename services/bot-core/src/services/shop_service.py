@@ -776,10 +776,16 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                     # so one refresh cycle can supply multiple players.
                     if concrete_type == "secondary_weapon":
                         subtype = await self._get_secondary_subtype_by_name(db, item_name)
+                        heavy_scaler = resolve_constant(
+                            config, "shop_secondary_qty_scaler_heavy", GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY
+                        )
+                        standard_scaler = resolve_constant(
+                            config,
+                            "shop_secondary_qty_scaler_standard",
+                            GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD,
+                        )
                         scaler = (
-                            GameConstants.SHOP_SECONDARY_QTY_SCALER_HEAVY
-                            if subtype in GameConstants.SHOP_HEAVY_SECONDARY_SUBTYPES
-                            else GameConstants.SHOP_SECONDARY_QTY_SCALER_STANDARD
+                            heavy_scaler if subtype in GameConstants.SHOP_HEAVY_SECONDARY_SUBTYPES else standard_scaler
                         )
                         item_quantity *= scaler
 

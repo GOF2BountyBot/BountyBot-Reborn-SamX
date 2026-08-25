@@ -437,3 +437,174 @@ class TestKaamoRemoval:
             assert not hasattr(req, "kaamo_max_capacity") or getattr(req, "kaamo_max_capacity", None) is None
         except ValidationError:
             pass  # Also acceptable — the field is unknown
+
+
+# ===========================================================================
+# 6. D-trivial + DIVISION_TL_CENTERS scalar overrides — bounds spot-checks
+#    (issue #70, revision 0028)
+# ===========================================================================
+
+
+class TestDTrivialBoundsSampler:
+    """Spot-check ge/le bounds for a representative subset of the new scalars."""
+
+    # --- criminal_secondary_min_damage (ge=0, le=1000) ---
+
+    def test_criminal_secondary_min_damage_at_bounds_pass(self):
+        req = _make(criminal_secondary_min_damage=0)
+        assert req.criminal_secondary_min_damage == 0
+        req2 = _make(criminal_secondary_min_damage=1000)
+        assert req2.criminal_secondary_min_damage == 1000
+
+    def test_criminal_secondary_min_damage_above_le_rejected(self):
+        _fails(criminal_secondary_min_damage=1001)
+
+    def test_criminal_secondary_min_damage_negative_rejected(self):
+        _fails(criminal_secondary_min_damage=-1)
+
+    # --- shop_secondary_qty_scaler_heavy (ge=1, le=50) ---
+
+    def test_shop_secondary_qty_scaler_heavy_at_ge_passes(self):
+        req = _make(shop_secondary_qty_scaler_heavy=1)
+        assert req.shop_secondary_qty_scaler_heavy == 1
+
+    def test_shop_secondary_qty_scaler_heavy_at_le_passes(self):
+        req = _make(shop_secondary_qty_scaler_heavy=50)
+        assert req.shop_secondary_qty_scaler_heavy == 50
+
+    def test_shop_secondary_qty_scaler_heavy_above_le_rejected(self):
+        _fails(shop_secondary_qty_scaler_heavy=51)
+
+    def test_shop_secondary_qty_scaler_heavy_zero_rejected(self):
+        _fails(shop_secondary_qty_scaler_heavy=0)
+
+    # --- shop_secondary_qty_scaler_standard (ge=1, le=100) ---
+
+    def test_shop_secondary_qty_scaler_standard_at_le_passes(self):
+        req = _make(shop_secondary_qty_scaler_standard=100)
+        assert req.shop_secondary_qty_scaler_standard == 100
+
+    def test_shop_secondary_qty_scaler_standard_above_le_rejected(self):
+        _fails(shop_secondary_qty_scaler_standard=101)
+
+    # --- shop_banded_tl_weight (ge=0.0, le=1.0) ---
+
+    def test_shop_banded_tl_weight_at_bounds_pass(self):
+        req = _make(shop_banded_tl_weight=0.0)
+        assert req.shop_banded_tl_weight == pytest.approx(0.0)
+        req2 = _make(shop_banded_tl_weight=1.0)
+        assert req2.shop_banded_tl_weight == pytest.approx(1.0)
+
+    def test_shop_banded_tl_weight_above_le_rejected(self):
+        _fails(shop_banded_tl_weight=1.01)
+
+    # --- shop_tl_band_lo_bronze (ge=1, le=10) ---
+
+    def test_shop_tl_band_lo_bronze_at_ge_passes(self):
+        req = _make(shop_tl_band_lo_bronze=1)
+        assert req.shop_tl_band_lo_bronze == 1
+
+    def test_shop_tl_band_lo_bronze_above_le_rejected(self):
+        _fails(shop_tl_band_lo_bronze=11)
+
+    def test_shop_tl_band_lo_bronze_zero_rejected(self):
+        _fails(shop_tl_band_lo_bronze=0)
+
+    # --- division_tl_center_gold (ge=1, le=10) ---
+
+    def test_division_tl_center_gold_at_bounds_pass(self):
+        req = _make(division_tl_center_gold=1)
+        assert req.division_tl_center_gold == 1
+        req2 = _make(division_tl_center_gold=10)
+        assert req2.division_tl_center_gold == 10
+
+    def test_division_tl_center_gold_above_le_rejected(self):
+        _fails(division_tl_center_gold=11)
+
+    # --- pvc_damage_reduction (ge=0.0, le=1.0) ---
+
+    def test_pvc_damage_reduction_at_bounds_pass(self):
+        req = _make(pvc_damage_reduction=0.0)
+        assert req.pvc_damage_reduction == pytest.approx(0.0)
+        req2 = _make(pvc_damage_reduction=1.0)
+        assert req2.pvc_damage_reduction == pytest.approx(1.0)
+
+    def test_pvc_damage_reduction_above_le_rejected(self):
+        _fails(pvc_damage_reduction=1.01)
+
+    def test_pvc_damage_reduction_negative_rejected(self):
+        _fails(pvc_damage_reduction=-0.01)
+
+    # --- bounty_waypoint_attempts (ge=1, le=100) ---
+
+    def test_bounty_waypoint_attempts_at_bounds_pass(self):
+        req = _make(bounty_waypoint_attempts=1)
+        assert req.bounty_waypoint_attempts == 1
+        req2 = _make(bounty_waypoint_attempts=100)
+        assert req2.bounty_waypoint_attempts == 100
+
+    def test_bounty_waypoint_attempts_zero_rejected(self):
+        _fails(bounty_waypoint_attempts=0)
+
+    def test_bounty_waypoint_attempts_above_le_rejected(self):
+        _fails(bounty_waypoint_attempts=101)
+
+
+# ===========================================================================
+# 7. Shop TL band lo <= hi cross-field validator (validate_shop_tl_band_ordering)
+# ===========================================================================
+
+
+class TestShopTlBandOrdering:
+    """validate_shop_tl_band_ordering: lo must be <= hi per tier when both present."""
+
+    def test_bronze_lo_greater_than_hi_rejected(self):
+        """shop_tl_band_lo_bronze > shop_tl_band_hi_bronze in same request is rejected."""
+        _fails(shop_tl_band_lo_bronze=5, shop_tl_band_hi_bronze=3)
+
+    def test_silver_lo_greater_than_hi_rejected(self):
+        _fails(shop_tl_band_lo_silver=8, shop_tl_band_hi_silver=4)
+
+    def test_gold_lo_equal_to_hi_accepted(self):
+        """lo == hi (single TL band) is valid."""
+        req = _make(shop_tl_band_lo_gold=6, shop_tl_band_hi_gold=6)
+        assert req.shop_tl_band_lo_gold == 6
+        assert req.shop_tl_band_hi_gold == 6
+
+    def test_platinum_valid_range_accepted(self):
+        req = _make(shop_tl_band_lo_platinum=7, shop_tl_band_hi_platinum=10)
+        assert req.shop_tl_band_lo_platinum == 7
+        assert req.shop_tl_band_hi_platinum == 10
+
+    def test_only_lo_present_no_cross_check(self):
+        """Partial update with only lo — validator does not fire (no hi in request)."""
+        req = _make(shop_tl_band_lo_bronze=5)
+        assert req.shop_tl_band_lo_bronze == 5
+
+    def test_only_hi_present_no_cross_check(self):
+        """Partial update with only hi — validator does not fire (no lo in request)."""
+        req = _make(shop_tl_band_hi_gold=9)
+        assert req.shop_tl_band_hi_gold == 9
+
+    def test_tiers_are_validated_independently(self):
+        """A valid bronze band + an invalid gold band rejects the whole request."""
+        _fails(
+            shop_tl_band_lo_bronze=1,
+            shop_tl_band_hi_bronze=3,  # valid
+            shop_tl_band_lo_gold=8,
+            shop_tl_band_hi_gold=5,  # invalid
+        )
+
+    def test_all_tiers_valid_accepted(self):
+        """All four tiers with valid lo < hi is accepted."""
+        req = _make(
+            shop_tl_band_lo_bronze=1,
+            shop_tl_band_hi_bronze=2,
+            shop_tl_band_lo_silver=2,
+            shop_tl_band_hi_silver=5,
+            shop_tl_band_lo_gold=5,
+            shop_tl_band_hi_gold=8,
+            shop_tl_band_lo_platinum=8,
+            shop_tl_band_hi_platinum=10,
+        )
+        assert req.shop_tl_band_hi_platinum == 10

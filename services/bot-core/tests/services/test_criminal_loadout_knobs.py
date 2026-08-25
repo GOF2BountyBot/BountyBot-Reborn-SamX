@@ -349,3 +349,50 @@ def test_schema_rejects_exclude_emp_int_coercion():
 def test_schema_rejects_exclude_emp_string():
     with pytest.raises(ValidationError):
         GameConstantsOverridesMixin(criminal_exclude_emp_weapons="true")
+
+
+# ===========================================================================
+# D-trivial batch (issue #70, revision 0028): criminal_secondary_min_damage
+# ===========================================================================
+
+
+def test_criminal_secondary_min_damage_global_default():
+    """CRIMINAL_SECONDARY_MIN_DAMAGE default is 1 (drops 0-damage + Fireworks dummy)."""
+    assert GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE == 1
+
+
+def test_criminal_secondary_min_damage_resolve_override():
+    """resolve_constant returns the per-guild override when the column is set."""
+    cfg = GuildConfig(guild_id=42)
+    cfg.criminal_secondary_min_damage = 10
+    result = resolve_constant(cfg, "criminal_secondary_min_damage", GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE)
+    assert result == 10
+
+
+def test_criminal_secondary_min_damage_resolve_fallback_on_none():
+    """resolve_constant falls back to the global default when the column is NULL."""
+    cfg = GuildConfig(guild_id=42)
+    # Column is None by default (nullable)
+    result = resolve_constant(cfg, "criminal_secondary_min_damage", GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE)
+    assert result == GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE
+
+
+def test_criminal_secondary_min_damage_resolve_fallback_no_config():
+    """resolve_constant falls back when cfg is None."""
+    result = resolve_constant(None, "criminal_secondary_min_damage", GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE)
+    assert result == GameConstants.CRIMINAL_SECONDARY_MIN_DAMAGE
+
+
+def test_criminal_secondary_min_damage_schema_bounds():
+    """criminal_secondary_min_damage: ge=0, le=1000."""
+    m_low = GameConstantsOverridesMixin(criminal_secondary_min_damage=0)
+    assert m_low.criminal_secondary_min_damage == 0
+
+    m_high = GameConstantsOverridesMixin(criminal_secondary_min_damage=1000)
+    assert m_high.criminal_secondary_min_damage == 1000
+
+    with pytest.raises(ValidationError):
+        GameConstantsOverridesMixin(criminal_secondary_min_damage=-1)
+
+    with pytest.raises(ValidationError):
+        GameConstantsOverridesMixin(criminal_secondary_min_damage=1001)

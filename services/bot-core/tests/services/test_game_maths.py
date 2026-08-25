@@ -60,6 +60,26 @@ class TestPickDivisionTechLevel:
 
         picker.assert_called_once_with(6)  # gold centre, not the unknown-division default of 5
 
+    def test_explicit_center_override_used(self) -> None:
+        """When an explicit center is passed, DIVISION_TL_CENTERS is not consulted.
+
+        Bronze center is normally 1; passing center=4 should draw from TL 4
+        (patched to return 4 deterministically).
+        """
+        with patch("services.game_maths.pick_random_item_tl", return_value=4) as picker:
+            result = pick_division_tech_level("bronze", GameConstants.DIVISION_MAX_TL, center=4)
+
+        picker.assert_called_once_with(4)
+        assert result == 2  # capped at bronze MAX_TL=2 even with center override
+
+    def test_explicit_center_none_falls_back_to_global(self) -> None:
+        """Passing center=None (legacy call shape) falls back to DIVISION_TL_CENTERS."""
+        with patch("services.game_maths.pick_random_item_tl", return_value=3) as picker:
+            result = pick_division_tech_level("silver", GameConstants.DIVISION_MAX_TL, center=None)
+
+        picker.assert_called_once_with(3)  # silver center from DIVISION_TL_CENTERS is 3
+        assert result == 3  # silver cap=4; 3 <= 4 so no clamping
+
 
 # ---------------------------------------------------------------------------
 # TestPickShopTechLevel

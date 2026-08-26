@@ -84,8 +84,10 @@ When a formula uses a lowercase symbol whose value is sourced from a config knob
 - **Scope: hull + armour ONLY.** Repair bots do NOT touch the shield layer.
 - **Fill order:** hull first, then armour (inverse of damage stacking).
 - **Rate = percentage of max** of `(max_hull + max_armour)`:
-  - Ketar Repair Bot I → **2.5 %/s**
-  - Ketar Repair Bot II → **5.0 %/s**
+  - Ketar Repair Bot I → **2.0 %/s**
+  - Ketar Repair Bot II → **4.0 %/s**
+  - *(Corrected 2026-08-26: the original 2.5/5.0 spec values were tuned down in the
+    implementation for balance; owner confirmed 2.0/4.0 as intended — code is truth.)*
 - **Per-tick HP delta** = `(max_hull + max_armour) × rate × (tick_ms / 1000)`, accumulated with the same `+1 HP every N ticks` integer-flush discretization as shield regen (pattern shared; layers disjoint).
 - Seed `extra_atts.HPps` values (7 / 15) are stale data — **ignored.**
 
@@ -993,8 +995,8 @@ All overridable via `BOUNTYBOT_<NAME>` env var **and** per-guild override (per �
 | `BOOSTER_ACCURACY_DEBUFF_FACTOR` | **0.10** | §5 / §7.3 |
 | `THRUSTER_ACCURACY_BONUS_FACTOR` | **0.10** | §5 / §7.4 |
 | `AUTO_TURRET_ACCURACY_MULTIPLIER` | **0.85** | §6.3 |
-| `KETAR_I_REPAIR_PCT_PER_SEC` | **0.025** (2.5 %/s) | §3 / §7.6 |
-| `KETAR_II_REPAIR_PCT_PER_SEC` | **0.050** (5.0 %/s) | §3 / §7.6 |
+| `KETAR_I_REPAIR_PCT_PER_SEC` | **0.02** (2.0 %/s; tuned down from 2.5, owner-confirmed) | §3 / §7.6 |
+| `KETAR_II_REPAIR_PCT_PER_SEC` | **0.04** (4.0 %/s; tuned down from 5.0, owner-confirmed) | §3 / §7.6 |
 | `TICK_MS` | **10** | §1 |
 | `MAX_FIGHT_TICKS` | **18000** (3 min) | §1 / §9 |
 | `STARTING_DISTANCE_M` | **5000** | §2 |
@@ -1096,7 +1098,7 @@ effective_loading_speed_ms  = round((loading_speed_ms / (1 + fire_rate_pct / 100
 
 ### Regen pulse schedule (per layer source)
 - **Shield:** `+1 HP every N ticks`, `N = ceil(shield_recharge_ms / shield_capacity / tick_ms)` per shield module.
-- **Repair Bot (hull + armour):** per-tick delta = `(max_hull + max_armour) × rate × (tick_ms / 1000)`, accumulated and integer-flushed. `rate` ∈ {0.025, 0.050} for Ketar I / II.
+- **Repair Bot (hull + armour):** per-tick delta = `(max_hull + max_armour) × rate × (tick_ms / 1000)`, accumulated and integer-flushed. `rate` ∈ {0.02, 0.04} for Ketar I / II (tuned values; owner-confirmed 2026-08-26).
 
 ### Incoming damage reduction (PvC player buff — Keith T. Maxwell bonus)
 ```

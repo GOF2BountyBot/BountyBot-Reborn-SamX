@@ -8,6 +8,7 @@ settings persistence, validation, and default configurations.
 from __future__ import annotations
 
 import typing
+from types import NoneType
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -617,7 +618,7 @@ _CONFIG_COLUMN_DEFAULTS: dict[str, Any] = {
     "sale_price_factor": 0.8,
 }
 
-# Complete settable surface: 95 _OVERRIDE_FIELDS + 2 core config scalars.
+# Complete settable surface: the 110 _OVERRIDE_FIELDS + 2 core config scalars (112).
 _METADATA_FIELDS: tuple[str, ...] = (*_OVERRIDE_FIELDS, "starting_credits", "sale_price_factor")
 
 
@@ -627,7 +628,7 @@ def _get_field_type(fi: Any) -> str:
     # Unwrap X | None  →  X
     args = typing.get_args(ann)
     if args:
-        non_none = [a for a in args if a is not type(None)]
+        non_none = [a for a in args if a is not NoneType]
         if non_none:
             ann = non_none[0]
     if ann is bool:

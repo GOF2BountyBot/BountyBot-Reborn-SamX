@@ -281,16 +281,74 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         resp.raise_for_status()
         return [s["name"] for s in resp.json() if s.get("name")]
 
+    # Field-name prefix → view category, first match wins (order matters:
+    # longer/more-specific prefixes before their shorter parents).
+    _CONFIG_CATEGORY_PREFIXES: tuple[tuple[str, str], ...] = (
+        ("bronze_combat_bonus_", "Combat Bonus"),
+        ("criminal_", "Criminal Loadout"),
+        ("loot_", "Loot"),
+        ("shop_", "Shop"),
+        ("division_", "Division"),
+        ("bounty_", "Bounty"),
+        ("nuke_", "Combat Engine"),
+        ("scanner_", "Combat Engine"),
+        ("cloak_", "Combat Engine"),
+        ("booster_", "Combat Engine"),
+        ("thruster_", "Combat Engine"),
+        ("player_base_accuracy", "Combat Engine"),
+        ("npc_base_accuracy", "Combat Engine"),
+        ("auto_turret_", "Combat Engine"),
+        ("accuracy_", "Combat Engine"),
+        ("starting_distance", "Combat Engine"),
+        ("base_ship_speed", "Combat Engine"),
+        ("min_distance", "Combat Engine"),
+        ("emergency_system", "Combat Engine"),
+        ("shock_blast_", "Combat Engine"),
+        ("combat_layer_", "Combat Engine"),
+        ("ketar_", "Combat Engine"),
+        ("pvc_damage_reduction", "Combat Engine"),
+        ("check_cooldown", "Timers"),
+        ("duel_request_expiry", "Timers"),
+        ("tier_change_cooldown", "Timers"),
+        ("guild_activity", "Activity"),
+        ("min_guild_activity", "Activity"),
+        ("activity_", "Activity"),
+    )
+
+    @classmethod
+    def _config_category(cls, field: str) -> str:
+        """Map a settable field name to a view-grouping category."""
+        for prefix, cat in cls._CONFIG_CATEGORY_PREFIXES:
+            if field.startswith(prefix):
+                return cat
+        return "Economy & Misc"
+
     async def _fetch_config_metadata(self) -> list[dict]:
         """Fetch per-field metadata from bot-core GET /config/metadata.
 
-        Returns a list of field descriptors:
-        {field, type, ge, le, default, description, category, deprecated, replaced_by}.
-        Raises on HTTP error; caller handles retry / graceful fallback.
+        The endpoint returns ``{"fields": {name: {type, min, max, default,
+        description, deprecated}}}``; this normalises it to the list-of-descriptor
+        shape every consumer here expects — ``{field, type, ge, le, default,
+        description, deprecated, category}`` — mapping ``min``/``max`` → ``ge``/``le``
+        and deriving a view category from the field name. Raises on HTTP error;
+        caller handles retry / graceful fallback.
         """
         resp = await self.http_client.get(f"{api_base}/config/metadata", timeout=10)
         resp.raise_for_status()
-        return resp.json()
+        fields = resp.json().get("fields", {})
+        return [
+            {
+                "field": name,
+                "type": meta.get("type"),
+                "ge": meta.get("min"),
+                "le": meta.get("max"),
+                "default": meta.get("default"),
+                "description": meta.get("description"),
+                "deprecated": meta.get("deprecated", False),
+                "category": self._config_category(name),
+            }
+            for name, meta in fields.items()
+        ]
 
     async def _preload_static_catalogs(self) -> None:
         """Preload item catalogs (4 categories) and ship catalog from bot-core.

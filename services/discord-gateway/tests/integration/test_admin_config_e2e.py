@@ -32,6 +32,7 @@ import asyncio
 import os
 import sys
 import types
+import urllib.request
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -48,8 +49,6 @@ import pytest
 # ---------------------------------------------------------------------------
 def _resolve_bot_core_url() -> str:
     """Return the first reachable bot-core URL, preferring the container-network address."""
-    import urllib.request
-
     for url in (
         "http://bountydev-bot-core:18000/api/v1",  # container network (compose service:port)
         "http://localhost:18000/api/v1",  # docker host
@@ -65,6 +64,30 @@ def _resolve_bot_core_url() -> str:
 
 
 _LIVE_BOT_CORE_URL = os.environ.get("BOT_API_BASE_URL") or _resolve_bot_core_url()
+
+# ---------------------------------------------------------------------------
+# This is a LIVE-integration harness: it drives the real AdminCog against a
+# running bot-core. If none is reachable (e.g. CI's gateway unit-test job, which
+# has no bot-core service), skip the whole module cleanly rather than failing —
+# it is meant to be run against the dev stack, not in unit CI.
+#
+# CRITICAL: probe and skip BEFORE mutating the global os.environ below. Pytest
+# imports every collected test module in the worker process; setting
+# BOT_API_BASE_URL at import time and THEN skipping would still leak the value
+# to every other cog test in that worker (their api_base is read at import),
+# which silently broke the entire gateway suite. Skipping first keeps this
+# module's env changes from ever escaping when there is no live bot-core.
+# ---------------------------------------------------------------------------
+try:
+    urllib.request.urlopen(f"{_LIVE_BOT_CORE_URL}/config/metadata", timeout=3).read(1)
+except OSError as _exc:  # URLError is an OSError subclass — covers DNS/connect/timeout
+    pytest.skip(
+        f"live bot-core not reachable at {_LIVE_BOT_CORE_URL} ({type(_exc).__name__}); "
+        "this integration harness runs against the dev stack, not unit CI",
+        allow_module_level=True,
+    )
+
+# Only reached when bot-core is live (dev stack): point the cog imports below at it.
 os.environ["BOT_API_BASE_URL"] = _LIVE_BOT_CORE_URL
 
 # ---------------------------------------------------------------------------

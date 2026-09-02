@@ -278,11 +278,11 @@ class TestMetadataEndpointSampleAssertions:
         assert f["description"].endswith(".")
 
     def test_sale_price_factor_sample(self):
-        """sale_price_factor has type=float, default=0.8, min/max=null (no mixin field)."""
+        """sale_price_factor has type=float, default=1.0, min/max=null (no mixin field)."""
         fields = self.client.get("/api/v1/config/metadata").json()["fields"]
         f = fields["sale_price_factor"]
         assert f["type"] == "float"
-        assert f["default"] == pytest.approx(0.8)
+        assert f["default"] == pytest.approx(1.0)
         assert f["deprecated"] is False
 
     def test_check_cooldown_sample(self):

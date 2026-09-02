@@ -587,10 +587,10 @@ class TestSellItem:
             await service.sell_item(mock_db, player_id=1, item_name="AmbiguousItem")
 
     @pytest.mark.asyncio
-    async def test_sell_item_uses_full_value_no_tax(
+    async def test_sell_item_full_value_when_factor_default(
         self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_shop_repo
     ):
-        """sell_item credits full base value (no sell tax)."""
+        """With no guild config (factor defaults to 1.0), sell_item credits full value."""
         player = _make_player(credits=0)
         mock_player_repo.get_by_id.return_value = player
         mock_player_repo.get_by_id_for_update.return_value = player
@@ -602,7 +602,30 @@ class TestSellItem:
 
         result = await service.sell_item(mock_db, player_id=1, item_name="Gun", quantity=1)
 
-        assert result["unit_sell_price"] == 1000  # full value, no tax
+        assert result["unit_sell_price"] == 1000  # factor 1.0 → full value
+
+    @pytest.mark.asyncio
+    async def test_sell_item_applies_sale_price_factor(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_shop_repo, mock_config_repo
+    ):
+        """A per-guild sale_price_factor < 1.0 haircuts the SELLER's payout (issue #97).
+
+        Single-truncation on the full product: 1000 × 0.8 × 3 = 2400.
+        """
+        player = _make_player(credits=0)
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inventory_item = _make_inventory_item(quantity=3, item_type="primary_weapon")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inventory_item]
+        mock_shop_repo.get_shop_item_by_name.return_value = None
+        mock_config_repo.get_by_guild_id.return_value = _make_config(sale_price_factor=0.8)
+
+        service._get_item_base_price = AsyncMock(return_value=1000)
+
+        result = await service.sell_item(mock_db, player_id=1, item_name="Gun", quantity=3)
+
+        assert result["total_sell_value"] == 2400  # 1000 * 0.8 * 3
+        assert result["unit_sell_price"] == 800
 
     @pytest.mark.asyncio
     async def test_sell_item_uses_player_tier_as_target_shop(

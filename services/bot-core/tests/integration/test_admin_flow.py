@@ -113,7 +113,7 @@ async def test_guild_config_defaults_are_correct(
 
     assert result is not None
     assert result.admin_role_id is None
-    assert result.sale_price_factor == pytest.approx(0.8)
+    assert result.sale_price_factor == pytest.approx(1.0)
     assert "Silver" in result.xp_thresholds
     assert "Gold" in result.xp_thresholds
     assert "Platinum" in result.xp_thresholds

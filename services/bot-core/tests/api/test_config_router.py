@@ -21,7 +21,7 @@ def make_mock_config(**overrides):
         configured=True,
         admin_role_configured=True,
         starting_credits=0,
-        sale_price_factor=0.8,
+        sale_price_factor=1.0,
         xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000},
         shop_config={},
         created_at="2026-01-01T00:00:00",
@@ -122,7 +122,7 @@ class TestGetGuildConfig:
         assert data["configured"] is True
         assert data["admin_role_configured"] is True
         assert data["starting_credits"] == 0
-        assert data["sale_price_factor"] == pytest.approx(0.8)
+        assert data["sale_price_factor"] == pytest.approx(1.0)
         assert "xp_thresholds" in data
         assert "shop_config" in data
         assert "created_at" in data

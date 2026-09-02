@@ -533,7 +533,7 @@ async def get_default_config():
         "module_quantity_range": {"min": 2, "max": 4},
         "turret_quantity_range": {"min": 2, "max": 4},
         "tech_level_probabilities": {"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10},
-        "sale_price_factor": 0.8,
+        "sale_price_factor": 1.0,
         "starting_credits": 0,
         "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000, "Prestige": 50000},
     }
@@ -615,7 +615,7 @@ async def reset_game_constants(
 # Hard-coded defaults for fields that are config columns, not GameConstants.
 _CONFIG_COLUMN_DEFAULTS: dict[str, Any] = {
     "starting_credits": 0,
-    "sale_price_factor": 0.8,
+    "sale_price_factor": 1.0,
 }
 
 # Complete settable surface: the 110 _OVERRIDE_FIELDS + 2 core config scalars (112).

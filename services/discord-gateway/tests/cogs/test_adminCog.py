@@ -2624,7 +2624,7 @@ class TestPreloadStaticCatalogs:
                 return_value=httpx.Response(200, json=[{"name": "Niode", "id": 6}])
             )
             # metadata endpoint added in issue #70 — mock it to prevent retry-sleep hang
-            mock_router.get(f"{self._API_BASE}/config/metadata").mock(return_value=httpx.Response(200, json=[]))
+            mock_router.get(f"{self._API_BASE}/config/metadata").mock(return_value=httpx.Response(200, json={"fields": {}}))
 
             asyncio.run(mock_admin_cog._preload_static_catalogs())
 
@@ -2661,7 +2661,7 @@ class TestPreloadStaticCatalogs:
                 )
             )
             # metadata endpoint added in issue #70 — mock it to prevent retry-sleep hang
-            mock_router.get(f"{self._API_BASE}/config/metadata").mock(return_value=httpx.Response(200, json=[]))
+            mock_router.get(f"{self._API_BASE}/config/metadata").mock(return_value=httpx.Response(200, json={"fields": {}}))
 
             asyncio.run(mock_admin_cog._preload_static_catalogs())
 

@@ -112,7 +112,9 @@ _EXPECTED_COLUMNS = [
     ("guild_configs", "xp_thresholds"),
     # ("guild_configs", "division_temperatures") — RETIRED rev 0031 (column dropped)
     ("guild_configs", "bounty_max_per_tier"),
-    ("guild_configs", "division_max_tl"),
+    # ("guild_configs", "division_max_tl") — RETIRED rev 0033 (JSONB dict flattened
+    # to per-division scalar columns, then dropped). 0016's guarded upgrade skips it
+    # since it no longer exists at head; asserting it here would fail post-0033.
     ("bounty", "route"),
     ("bounty", "checked"),
     ("bounty", "criminal_ship"),

@@ -64,7 +64,12 @@ class GuildConfig(Base):
     )
 
     # Economic settings
-    sale_price_factor: Mapped[float] = mapped_column(Float, default=0.8)
+    # Fraction of an item's base value a player is paid when selling to the shop.
+    # Default 1.0 (full value) — the factor was historically unwired (all sells were
+    # 1:1); wiring it in (rev 0034) with a 1.0 default preserves that behaviour, and
+    # existing rows were migrated 0.8→1.0 in the same revision. Ships are exempt
+    # (always 1:1). Admins may lower it to create a sell-side credit sink.
+    sale_price_factor: Mapped[float] = mapped_column(Float, default=1.0)
     starting_credits: Mapped[int] = mapped_column(Integer, default=0)
 
     # XP and tier thresholds

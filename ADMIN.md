@@ -134,15 +134,20 @@ Credits given to a player when their account is first created.
 
 ### Sale Price Factor
 
-The fraction of an item's base value a player receives when selling to the shop.
+The fraction of an item's base value a player receives when selling weapons,
+modules, and turrets to the shop. **Ships are exempt — they always sell at full
+(1:1) value.**
 
 | | |
 |---|---|
 | **View** | `/admin_config action:View Config` |
 | **Set** | `/admin_config_shop sale_factor:0.75` |
-| **Reset** | `/admin_config action:Reset to Defaults` (resets to `0.8`) |
+| **Reset** | `/admin_config action:Reset to Defaults` (resets to `1.0`) |
 
-**Constraint:** Must be `> 0` and `<= 1`. Default `0.8` = players sell at 80% of base price.
+**Constraint:** Must be `> 0` and `<= 1`. Default `1.0` = players sell at full base
+price. Lower it (e.g. `0.8` = 80%) to create a sell-side credit sink. (This factor
+was historically unwired — all sells were 1:1; it was wired in rev 0034 with a 1.0
+default so existing guilds' behaviour is unchanged until an admin lowers it.)
 
 ### Viewing and Validating Config
 

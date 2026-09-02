@@ -534,8 +534,21 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 )
                 return transaction_details
 
-            unit_sell_price = base_price
-            total_sell_value = unit_sell_price * quantity
+            # Apply the guild's sale-price factor to the payout (default 1.0 = full
+            # value; ships are exempt and always sell 1:1 — see sell_ship). Loaded per
+            # sale off the seller's guild config; an unconfigured guild falls back to
+            # 1.0 rather than blocking the sale. Single truncation on the full product
+            # (mirrors the commodity branch) so a sub-1.0 factor never underpays via
+            # per-unit rounding. The shop still restocks at base_price (below), so the
+            # factor only affects what the SELLER is paid, not the shop's re-list price.
+            sale_config = await self.config_repo.get_by_guild_id(db, player.guild_id)
+            sale_factor = (
+                sale_config.sale_price_factor
+                if sale_config is not None and sale_config.sale_price_factor is not None
+                else 1.0
+            )
+            total_sell_value = int(base_price * sale_factor * quantity)
+            unit_sell_price = total_sell_value // quantity if quantity else 0
 
             # Player row already locked (FOR UPDATE) at the top of this method (D5-T2).
             # Remove item from player inventory (commit=False — caller's transaction controls commit)

@@ -148,7 +148,7 @@ async def test_create_default_config(db_session: AsyncSession, repo: ConfigRepos
 
     assert config.guild_id == 800
     assert config.starting_credits == 0
-    assert config.sale_price_factor == 0.8
+    assert config.sale_price_factor == 1.0
     assert config.ship_count_range == {"min": 3, "max": 5}
     assert config.xp_thresholds == {"Silver": 1000, "Gold": 5000, "Platinum": 15000, "Prestige": 50000}
 
@@ -194,7 +194,7 @@ async def test_reset_to_defaults(db_session: AsyncSession, repo: ConfigRepositor
     config = await repo.reset_to_defaults(db_session, guild_id=1100)
 
     assert config.starting_credits == 0
-    assert config.sale_price_factor == 0.8
+    assert config.sale_price_factor == 1.0
 
 
 async def test_reset_to_defaults_creates_if_missing(db_session: AsyncSession, repo: ConfigRepository):

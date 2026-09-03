@@ -379,6 +379,7 @@ class DuelService:
             log_result=True,
             pvc_damage_reduction=0.0,
             guild_config=_duel_guild_cfg,
+            stakes=stakes,
             session=db,
             guild_id=duel.guild_id,
             combatant1_user_id=challenger.user_id,
@@ -427,8 +428,25 @@ class DuelService:
                 )
 
             flogger.info(f"Duel {duel_id} resolved: winner player={winner.id} stakes={stakes} transferred")
+
+            # Slice 2: duel event hook (issue #30 spec §3)
+            from services import event_service as _event_svc  # deferred — avoids circular import
+            await _event_svc.record(
+                db, winner,
+                {"duel_wins": 1, "duel_fights": 1, "credits_won": float(stakes)},
+                context="duel", stakes=stakes,
+            )
+            await _event_svc.record(
+                db, loser,
+                {"duel_losses": 1, "duel_fights": 1, "credits_lost": float(stakes)},
+                context="duel", stakes=stakes,
+            )
         else:
             flogger.info(f"Duel {duel_id} ended in a stalemate — no credits transferred.")
+            # Slice 2: stalemate — only duels_fought counts
+            from services import event_service as _event_svc  # deferred — avoids circular import
+            await _event_svc.record(db, challenger, {"duel_fights": 1}, context="duel", stakes=stakes)
+            await _event_svc.record(db, target, {"duel_fights": 1}, context="duel", stakes=stakes)
 
         # Mark duel as completed (commit=False so we own the explicit commit below).
         # B.34 closeout: previously this method relied on the duel_repo.update_status

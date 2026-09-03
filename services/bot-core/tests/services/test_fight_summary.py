@@ -1158,3 +1158,90 @@ class TestSecondaryRoundsByWeapon:
         assert field == timeline_count, (
             f"secondary_rounds_by_weapon {field!r} != hand-tally from combat_log {timeline_count!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestSlice2SummaryExtension — killing_blow_subtype and max_nuke_absorbed
+# (issue #30, slice 2 deliverable 1)
+# ---------------------------------------------------------------------------
+
+
+def _nuke_damage_event(target: str, attacker: str, absorbed: int, tick: int = 1) -> CombatEvent:
+    """Damage event with source.subtype == 'nuke' (absorbed == amount, no overkill)."""
+    return CombatEvent(
+        tick=tick,
+        type=CombatEventType.damage,
+        actor=None,
+        target=target,
+        data={
+            "amount": absorbed,
+            "absorbed": absorbed,
+            "breakdown": {"shield": 0, "armour": 0, "hull": absorbed},
+            "hp_after": _hp(0),
+            "source": {"subtype": "nuke", "weapon": "TestNuke", "attacker": attacker},
+        },
+    )
+
+
+class TestSlice2SummaryExtension:
+    """Verify killing_blow_subtype and max_nuke_absorbed per-combatant summary fields."""
+
+    def test_stalemate_killing_blow_is_none(self):
+        """Stalemate: killing_blow_subtype is None for both combatants."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _damage_event("C2", attacker="C1", amount=20, tick=1),
+            _fight_end_event(5, None, "time_cap", 5, _hp(80), _hp(80)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None, winner_side=None)
+        assert s["combatants"]["1"]["killing_blow_subtype"] is None
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None
+
+    def test_stalemate_max_nuke_absorbed_zero(self):
+        """Stalemate with no nuke damage: max_nuke_absorbed == 0 for both sides."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _fight_end_event(5, None, "time_cap", 5, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None, winner_side=None)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 0
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_nuke_kill_killing_blow_subtype(self):
+        """C1 kills C2 with a nuke: C1.killing_blow_subtype == 'nuke', C2's is None."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_damage_event("C2", attacker="C1", absorbed=100, tick=2),
+            _fight_end_event(3, "C1", "hp_depleted", 3, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 3, "C1", winner_side=1)
+        assert s["combatants"]["1"]["killing_blow_subtype"] == "nuke"
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None
+
+    def test_nuke_kill_max_nuke_absorbed(self):
+        """C1 hits C2 twice with nukes (50 and 80); C1.max_nuke_absorbed == 80, C2 == 0."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_damage_event("C2", attacker="C1", absorbed=50, tick=1),
+            _nuke_damage_event("C2", attacker="C1", absorbed=80, tick=2),
+            _fight_end_event(3, "C1", "hp_depleted", 3, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 3, "C1", winner_side=1)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 80
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_primary_killing_blow(self):
+        """Primary attack kills: killing_blow_subtype == 'primary' on the winner."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _damage_event("C2", attacker="C1", amount=100, tick=1),
+            _fight_end_event(2, "C1", "hp_depleted", 2, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
+        assert s["combatants"]["1"]["killing_blow_subtype"] == "primary"
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None

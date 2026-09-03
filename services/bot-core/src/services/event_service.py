@@ -135,6 +135,49 @@ async def _upsert_metric(
     await session.execute(stmt)
 
 
+async def on_tier_change(session: AsyncSession, player) -> None:
+    """Delete division-scoped metric rows for a player on tier change (spec §3).
+
+    When a player promotes or demotes, their accumulations in division-gated events
+    become irrelevant (they no longer belong to that division). This purges those rows
+    so they start fresh in the new tier without needing re-baseline machinery.
+
+    Non-fatal — same rule as record().  Called from player_service promote/demote only
+    (prestige and admin reset are intentionally excluded — spec §3 / §12 cut-list).
+    """
+    try:
+        from sqlalchemy import delete
+
+        result = await session.execute(
+            select(GameEvent).where(
+                GameEvent.guild_id == player.guild_id,
+                GameEvent.state == "active",
+            )
+        )
+        active_events = result.scalars().all()
+
+        division_event_ids = [ev.id for ev in active_events if (ev.params or {}).get("division")]
+        if not division_event_ids:
+            return
+
+        await session.execute(
+            delete(GameEventMetric).where(
+                GameEventMetric.event_id.in_(division_event_ids),
+                GameEventMetric.player_id == player.id,
+            )
+        )
+        await session.flush()
+        flogger.info(
+            f"on_tier_change: deleted division-scoped metrics for player_id={player.id} "
+            f"guild={player.guild_id} event_ids={division_event_ids}"
+        )
+    except Exception as exc:
+        flogger.error(
+            f"on_tier_change failed player_id={getattr(player, 'id', '?')} "
+            f"guild={getattr(player, 'guild_id', '?')}: {exc}"
+        )
+
+
 async def standings(
     session: AsyncSession,
     event: GameEvent,

@@ -766,6 +766,7 @@ class TestGuildConfigResponseSchema:
             admin_role_configured=False,
             starting_credits=500,
             sale_price_factor=0.8,
+            event_min_duel_stakes=1000,
             xp_thresholds={"Silver": 1000, "Gold": 5000},
             shop_config={"tech_levels": [1, 2]},
             created_at="2026-01-01T00:00:00",
@@ -774,6 +775,7 @@ class TestGuildConfigResponseSchema:
         assert resp.guild_id == 1
         assert resp.configured is True
         assert resp.sale_price_factor == 0.8
+        assert resp.event_min_duel_stakes == 1000
 
     def test_missing_required_raises(self):
         with pytest.raises(ValidationError):

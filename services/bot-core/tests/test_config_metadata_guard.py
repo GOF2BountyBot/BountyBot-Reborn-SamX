@@ -53,18 +53,19 @@ except IndexError:
 _CATALOG_VISIBLE: bool = _CATALOG_PATH.is_file()
 
 # ---------------------------------------------------------------------------
-# Expected total: 110 _OVERRIDE_FIELDS + starting_credits + sale_price_factor
-# (revision 0033 dropped 7 JSONB dict fields, reducing _OVERRIDE_FIELDS from 117 to 110)
+# Expected total: 110 _OVERRIDE_FIELDS + starting_credits + sale_price_factor + event_min_duel_stakes
+# (revision 0033 dropped 7 JSONB dict fields, reducing _OVERRIDE_FIELDS from 117 to 110;
+#  revision 0035 added event_min_duel_stakes, bringing the config-column extras to 3)
 # ---------------------------------------------------------------------------
-_EXPECTED_TOTAL = len(_OVERRIDE_FIELDS) + 2
+_EXPECTED_TOTAL = len(_OVERRIDE_FIELDS) + 3
 
 
 class TestMetadataFieldSetParity:
     """Guard 1: metadata field set == _OVERRIDE_FIELDS ∪ {starting_credits, sale_price_factor}."""
 
     def test_metadata_fields_equals_override_fields_plus_two(self):
-        """_METADATA_FIELDS must be exactly _OVERRIDE_FIELDS + starting_credits + sale_price_factor."""
-        expected = set(_OVERRIDE_FIELDS) | {"starting_credits", "sale_price_factor"}
+        """_METADATA_FIELDS must be _OVERRIDE_FIELDS + starting_credits + sale_price_factor + event_min_duel_stakes."""
+        expected = set(_OVERRIDE_FIELDS) | {"starting_credits", "sale_price_factor", "event_min_duel_stakes"}
         actual = set(_METADATA_FIELDS)
         assert actual == expected, (
             f"_METADATA_FIELDS mismatch.\n"
@@ -83,7 +84,7 @@ class TestMetadataFieldSetParity:
         assert not dupes, f"Duplicate entries in _METADATA_FIELDS: {dupes}"
 
     def test_metadata_fields_count(self):
-        """_METADATA_FIELDS has exactly 112 entries (110 _OVERRIDE_FIELDS + 2 config columns)."""
+        """_METADATA_FIELDS has exactly 113 entries (110 _OVERRIDE_FIELDS + 3 config columns)."""
         assert len(_METADATA_FIELDS) == _EXPECTED_TOTAL, (
             f"Expected {_EXPECTED_TOTAL} metadata fields, got {len(_METADATA_FIELDS)}."
         )
@@ -160,7 +161,7 @@ class TestCatalogParity:
     )
     def test_field_to_catalog_row_covers_non_deprecated_non_config_fields(self):
         """Every non-deprecated, non-config-column _OVERRIDE_FIELD has a catalog-row mapping."""
-        config_only = {"starting_credits", "sale_price_factor"}
+        config_only = {"starting_credits", "sale_price_factor", "event_min_duel_stakes"}
         not_in_map = [
             f
             for f in _OVERRIDE_FIELDS
@@ -194,7 +195,7 @@ class TestMetadataEndpointSampleAssertions:
         assert isinstance(data["fields"], dict)
 
     def test_metadata_has_all_112_fields(self):
-        """The 'fields' dict has exactly 112 entries (110 _OVERRIDE_FIELDS + 2 config columns)."""
+        """The 'fields' dict has exactly 113 entries (110 _OVERRIDE_FIELDS + 3 config columns)."""
         data = self.client.get("/api/v1/config/metadata").json()
         fields = data["fields"]
         assert len(fields) == _EXPECTED_TOTAL, (

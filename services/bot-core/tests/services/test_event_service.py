@@ -234,3 +234,141 @@ async def test_duel_no_stakes_ignored(engine_and_factory):
         from sqlalchemy import select
         rows = (await session.execute(select(GameEventMetric))).scalars().all()
         assert len(rows) == 0, "No metric row when stakes is None"
+
+
+# ---------------------------------------------------------------------------
+# Slice 2 hook tests (issue #30)
+# ---------------------------------------------------------------------------
+
+
+def _all_registry_keys() -> set[str]:
+    """Expand all registry metric keys across all known param variants.
+
+    For parameterised types, enumerate known param values from the spec catalog
+    to build the full set of concrete keys the registry can consume.
+    # ponytail: hardcoded variant lists; update if new param values are added.
+    """
+    from services.event_types import EVENT_TYPES, resolve_metrics
+
+    _SUBTYPE_VARIANTS = ["nuke", "rocket", "missile", "cluster-missile", "emp-bomb", "shock-blast",
+                         "primary", "turret", "ionizing-missile"]
+    _MODULE_VARIANTS = ["cloak", "booster", "emergency_system"]
+    _WEAPON_VARIANTS = _SUBTYPE_VARIANTS  # weapon param uses same subtype strings
+
+    keys: set[str] = set()
+    for slug, et in EVENT_TYPES.items():
+        param_combos: list[dict] = [{}]
+        if "{subtype}" in str(et.metrics):
+            param_combos = [{"subtype": v} for v in _SUBTYPE_VARIANTS]
+        elif "{module}" in str(et.metrics):
+            param_combos = [{"module": v} for v in _MODULE_VARIANTS]
+        elif "{weapon}" in str(et.metrics):
+            param_combos = [{"weapon": v} for v in _WEAPON_VARIANTS]
+        for params in param_combos:
+            keys.update(resolve_metrics(slug, params).keys())
+    return keys
+
+
+def _make_fight_contrib(
+    *,
+    is_winner: bool = True,
+    is_stalemate: bool = False,
+    secondary_subtypes: dict | None = None,
+    module_activations: dict | None = None,
+    killing_blow_subtype: str | None = None,
+) -> dict[str, float]:
+    """Build a representative fight-hook contrib dict (mirrors combat_service logic)."""
+    contrib: dict[str, float] = {
+        "fights": 1.0,
+        "shots_fired": 10.0,
+        "shots": 10.0,
+        "hits": 7.0,
+        "total_damage_dealt": 500.0,
+        "max_damage_dealt": 500.0,
+        "max_damage_taken": 300.0,
+        "max_nuke_absorbed": 200.0,
+    }
+    for sub, cnt in (secondary_subtypes or {"nuke": 2}).items():
+        contrib[f"secondary_fired:{sub}"] = float(cnt)
+    for mod, cnt in (module_activations or {"cloak": 1}).items():
+        contrib[f"module_activations:{mod}"] = float(cnt)
+    if is_winner:
+        contrib["duration_ticks_win"] = 100.0
+        if killing_blow_subtype:
+            contrib[f"kills_by_weapon:{killing_blow_subtype}"] = 1.0
+    elif not is_stalemate:  # mirrors combat_service: stalemate emits neither duration key
+        contrib["duration_ticks_loss"] = 100.0
+    return contrib
+
+
+async def test_fight_contrib_keys_subset_of_registry(engine_and_factory):
+    """All keys in the fight-hook contrib dict are known to the registry.
+
+    This is the mismatch guard (brief §7a): if a key the hook emits is not in
+    the registry, no event type can ever consume it and we have a silent bug.
+    """
+    registry_keys = _all_registry_keys()
+    contrib = _make_fight_contrib(
+        is_winner=True,
+        secondary_subtypes={"nuke": 2, "rocket": 1},
+        module_activations={"cloak": 1, "booster": 2},
+        killing_blow_subtype="nuke",
+    )
+    unknown = set(contrib.keys()) - registry_keys
+    assert not unknown, f"Fight contrib contains keys unknown to the registry: {unknown}"
+    loser = _make_fight_contrib(is_winner=False)
+    assert not (set(loser) - registry_keys), "loser-path contrib has keys unknown to the registry"
+    assert "duration_ticks_loss" in loser
+    stalemate = _make_fight_contrib(is_winner=False, is_stalemate=True)
+    assert "duration_ticks_loss" not in stalemate and "duration_ticks_win" not in stalemate
+
+
+async def test_duel_stalemate_records_only_duel_fights(engine_and_factory):
+    """Stalemate duel: record() with {duel_fights: 1} only — no win/loss/credits rows."""
+    _, factory = engine_and_factory
+    ev = _make_event(slug="duels_fought", params={})
+    async with factory() as session:
+        await _seed(session, stakes=500, events=[ev])
+        await session.refresh(ev)
+        # Stalemate: BOTH players get only duel_fights=1
+        for pid in (1, 2):
+            await record(session, _make_player(id=pid), {"duel_fights": 1.0}, context="duel", stakes=1000)
+        await session.commit()
+
+    async with factory() as session:
+        from sqlalchemy import select
+        rows = (await session.execute(select(GameEventMetric))).scalars().all()
+        assert sorted(r.player_id for r in rows) == [1, 2]
+        assert all(r.metric == "duel_fights" and float(r.value) == 1.0 for r in rows)
+
+
+async def test_on_tier_change_deletes_division_rows_only(engine_and_factory):
+    """on_tier_change deletes only division-scoped active event metrics for the player."""
+    from services.event_service import on_tier_change
+
+    _, factory = engine_and_factory
+    # Two active events: one division-scoped, one not
+    ev_div = _make_event(slug="fights_fought", params={"division": "Silver"})
+    ev_plain = _make_event(slug="bounty_caps", params={})
+    player = _make_player(id=42)
+
+    async with factory() as session:
+        await _seed(session, events=[ev_div, ev_plain])
+        await session.refresh(ev_div)
+        await session.refresh(ev_plain)
+        # Seed one metric row per event for this player
+        session.add(GameEventMetric(event_id=ev_div.id, player_id=player.id, metric="fights", value=5))
+        session.add(GameEventMetric(event_id=ev_plain.id, player_id=player.id, metric="captures", value=3))
+        await session.commit()
+
+    async with factory() as session:
+        await on_tier_change(session, player)
+        await session.commit()
+
+    async with factory() as session:
+        from sqlalchemy import select
+        rows = (await session.execute(select(GameEventMetric))).scalars().all()
+        # Only the non-division row should survive
+        assert len(rows) == 1
+        assert rows[0].metric == "captures"
+        assert float(rows[0].value) == 3.0

@@ -120,7 +120,8 @@ EVENT_TYPES: dict[str, EventType] = {
         display_name="Kills",
         rules_text="Rack up the most kills across bounty hunts and qualifying duels.",
         category="combat",
-        metrics={"kills": "sum"},
+        metrics={"captures": "sum", "duel_wins": "sum"},  # fed by the bounty + duel hooks; no separate "kills" key
+        value=lambda m: m.get("captures", 0) + m.get("duel_wins", 0),
     ),
     "kills_by_weapon": EventType(
         slug="kills_by_weapon",

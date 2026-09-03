@@ -511,6 +511,9 @@ class PlayerService:
             scrubbed = await self._scrub_orphaned_checks_after_tier_change(
                 db, player_id=player_id, guild_id=player.guild_id, new_tier=next_tier
             )
+            # Slice 2: purge division-scoped event metrics (issue #30 spec §3)
+            from services import event_service as _event_svc  # deferred — avoids circular import
+            await _event_svc.on_tier_change(db, player)
             await db.commit()
             await db.refresh(player)
 
@@ -598,6 +601,9 @@ class PlayerService:
             scrubbed = await self._scrub_orphaned_checks_after_tier_change(
                 db, player_id=player_id, guild_id=player.guild_id, new_tier=prev_tier
             )
+            # Slice 2: purge division-scoped event metrics (issue #30 spec §3)
+            from services import event_service as _event_svc  # deferred — avoids circular import
+            await _event_svc.on_tier_change(db, player)
             await db.commit()
             await db.refresh(player)
 

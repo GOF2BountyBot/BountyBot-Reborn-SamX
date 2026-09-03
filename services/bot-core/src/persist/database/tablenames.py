@@ -23,3 +23,7 @@ class TableNames(Enum):
     TurretWeapon = "turret_weapon"
     Users = "users"
     Weapon = "weapon"
+    GameEvents = "game_events"
+    GameEventPrizes = "game_event_prizes"
+    GameEventMetrics = "game_event_metrics"
+    EventResults = "event_results"

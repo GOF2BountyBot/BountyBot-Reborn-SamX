@@ -309,6 +309,11 @@ class ConfigService:
             if factor <= 0 or factor > 1:
                 raise ValueError("Sale price factor must be between 0 and 1")
 
+        if "event_min_duel_stakes" in validated_config:
+            stakes = validated_config["event_min_duel_stakes"]
+            if stakes < 0:
+                raise ValueError("event_min_duel_stakes cannot be negative")
+
         # Validate XP thresholds if provided
         if "xp_thresholds" in validated_config:
             thresholds = validated_config["xp_thresholds"]

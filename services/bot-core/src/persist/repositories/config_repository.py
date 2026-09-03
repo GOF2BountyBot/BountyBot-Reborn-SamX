@@ -157,6 +157,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "tech_level_probabilities": {"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10},
                 "sale_price_factor": 1.0,
                 "starting_credits": 0,
+                "event_min_duel_stakes": 1000,
                 "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000, "Prestige": 50000},
             }
 
@@ -418,6 +419,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "admin_role_configured": config.admin_role_id is not None,
                 "starting_credits": config.starting_credits,
                 "sale_price_factor": config.sale_price_factor,
+                "event_min_duel_stakes": config.event_min_duel_stakes,
                 "xp_thresholds": config.xp_thresholds,
                 "shop_config": {
                     "item_count_ranges": {

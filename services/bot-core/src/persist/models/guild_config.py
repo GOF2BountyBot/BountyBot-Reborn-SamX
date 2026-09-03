@@ -71,6 +71,8 @@ class GuildConfig(Base):
     # (always 1:1). Admins may lower it to create a sell-side credit sink.
     sale_price_factor: Mapped[float] = mapped_column(Float, default=1.0)
     starting_credits: Mapped[int] = mapped_column(Integer, default=0)
+    # Minimum duel-stakes for contributions to count toward active events (§3).
+    event_min_duel_stakes: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
 
     # XP and tier thresholds
     xp_thresholds: Mapped[dict[str, int]] = mapped_column(

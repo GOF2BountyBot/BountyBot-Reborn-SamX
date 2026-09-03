@@ -22,6 +22,7 @@ def make_mock_config(**overrides):
         admin_role_configured=True,
         starting_credits=0,
         sale_price_factor=1.0,
+        event_min_duel_stakes=1000,
         xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000},
         shop_config={},
         created_at="2026-01-01T00:00:00",

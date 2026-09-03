@@ -6,19 +6,19 @@ aiohttp[speedups]==3.14.3
 fastapi==0.141.1
 python-multipart==0.0.32  # required by FastAPI for UploadFile / multipart form parsing (used by /channels/{id}/upload-batch)
 uvicorn[standard]==0.52.4
-rapidfuzz==3.14.5
+rapidfuzz==3.14.6
 apscheduler==3.11.3
 orjson==3.12.0
 tenacity==9.1.4
 
 # Testing & QC
-pylint==4.0.7
+pylint==4.0.8
 pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-mock==3.15.1
 faker==40.37.0
-coverage==7.15.4
+coverage==7.16.0
 respx==0.23.1
 pytest-timeout==2.4.0
 pytest-xdist==3.8.0

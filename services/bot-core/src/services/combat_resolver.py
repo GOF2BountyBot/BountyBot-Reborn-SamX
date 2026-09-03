@@ -1176,6 +1176,7 @@ def _build_fight_summary(
     reason: str,
     duration_ticks: int,
     winner_name: str | None,
+    winner_side: int | None = None,
 ) -> dict:
     """Build the Tier-0 summary dict (§12 data.summary) by scanning the in-memory event list.
 
@@ -1188,6 +1189,9 @@ def _build_fight_summary(
       shots_hit         — landed aimed shots: +1 per hit, + landed sub-munitions for clusters
       accuracy          — shots_hit/shots_fired; 0.0 if no shots
       module_activations          — {module_key: count} SPARSE (cloak/booster/emergency_system only)
+      killing_blow_subtype        — subtype of last absorbed damage event targeting the loser
+                                    (None on stalemate or if no damage events recorded)
+      max_nuke_absorbed           — max absorbed HP from a nuke source by this side (0 if none)
       secondary_fired             — {subtype: count} SPARSE (secondaries only)
       secondary_rounds_by_weapon  — {weapon_name: count} SPARSE (secondaries only, by weapon name);
                                     mirrors _consume_secondary_ammo criterion (slot=="secondary").
@@ -1255,6 +1259,24 @@ def _build_fight_summary(
         slot = _name_to_slot.get(actor)
         return str(slot) if slot is not None else None
 
+    # Slice 2 event-hook fields (issue #30)
+    # killing_blow_subtype: subtype of the last absorbed-damage event whose target is the loser
+    # tracked per target slot — winner's block reads last_damage_subtype[loser_slot]
+    last_damage_subtype: dict[str, str | None] = {c1_slot: None, c2_slot: None}
+    # max_nuke_absorbed: max nuke absorbed HP by each attacking side
+    max_nuke_absorbed: dict[str, int] = {c1_slot: 0, c2_slot: 0}
+
+    # Derive winner/loser slots for killing_blow attribution
+    if winner_side == 1:
+        _winner_slot: str | None = c1_slot
+        _loser_slot: str | None = c2_slot
+    elif winner_side == 2:
+        _winner_slot = c2_slot
+        _loser_slot = c1_slot
+    else:
+        _winner_slot = None  # stalemate
+        _loser_slot = None
+
     # Discrete activation modules tracked in summary (§12 / §13) — uses module-level constant
 
     for ev in events:
@@ -1321,12 +1343,23 @@ def _build_fight_summary(
                     damage_dealt[att_slot] += absorbed_hp
                 if tgt_slot in damage_taken:
                     damage_taken[tgt_slot] += absorbed_hp
+                # Slice 2: track last damage subtype per target slot (killing_blow_subtype)
+                if tgt_slot in last_damage_subtype:
+                    last_damage_subtype[tgt_slot] = source.get("subtype") or "primary"
+                # Slice 2: track max nuke absorbed per attacker slot
+                if source.get("subtype") == "nuke" and att_slot in max_nuke_absorbed:
+                    max_nuke_absorbed[att_slot] = max(max_nuke_absorbed[att_slot], absorbed_hp)
 
     def _combatant_block(cx: _CombatantState, slot_key: str) -> dict:
         """Build per-combatant summary block (CI-24: keyed on slot, not name)."""
         fired = shots_fired[slot_key]
         hit = shots_hit[slot_key]
         acc = (hit / fired) if fired > 0 else 0.0
+        # killing_blow_subtype: winner's slot gets the subtype of last damage to loser
+        if slot_key == _winner_slot and _loser_slot is not None:
+            kb_sub: str | None = last_damage_subtype.get(_loser_slot)
+        else:
+            kb_sub = None
         return {
             "name": cx.display_name,  # CI-20: pilot/criminal label (defaults to ship_name)
             "ship": cx.loadout.ship_name,
@@ -1340,6 +1373,8 @@ def _build_fight_summary(
             "module_activations": dict(module_activations[slot_key]),  # sparse — only keys that fired ≥1
             "secondary_fired": dict(secondary_fired[slot_key]),  # sparse — only subtypes that fired ≥1
             "secondary_rounds_by_weapon": dict(secondary_rounds_by_weapon[slot_key]),  # sparse — by weapon name
+            "killing_blow_subtype": kb_sub,
+            "max_nuke_absorbed": max_nuke_absorbed[slot_key],
         }
 
     return {
@@ -2291,6 +2326,7 @@ class TickResolver:
             reason=reason,
             duration_ticks=ticks_elapsed,
             winner_name=winner_name,
+            winner_side=winner_side,
         )
 
         # FightStats wire-compat (§12 "Legacy FightStats wire-compat") — derived from summary.

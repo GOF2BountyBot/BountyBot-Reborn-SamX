@@ -260,6 +260,7 @@ class CombatService:
         log_result: bool = True,
         pvc_damage_reduction: float = 0.0,
         guild_config=None,
+        stakes: int | None = None,
         # DB context required when log_result=True
         session: "AsyncSession | None" = None,
         guild_id: int | None = None,
@@ -396,6 +397,8 @@ class CombatService:
             combatant1_user_id=combatant1_user_id,
             combatant2_user_id=combatant2_user_id,
             guild_id=guild_id,
+            context=context,
+            stakes=stakes,
         )
 
         # CI-16: secondary ammo write-back — must be AFTER _increment_player_stats,
@@ -433,6 +436,8 @@ class CombatService:
         combatant1_user_id: int | None,
         combatant2_user_id: int | None,
         guild_id: int,
+        context: str | None = None,
+        stakes: int | None = None,
     ) -> None:
         """Increment Player combat-stat counters for human combatants (§13).
 
@@ -494,6 +499,35 @@ class CombatService:
                     f"total_fights={player.total_fights} nukes_fired+={nukes_fired} "
                     f"module_activations+={module_activations}"
                 )
+                # Slice 2: event-hook contribution (issue #30 spec §3)
+                # Build contrib from the side's summary block; keys must match the registry.
+                # record() is non-fatal itself; keep inside this try so stat failures never abort.
+                if context is not None:
+                    from services import event_service as _event_svc  # deferred — avoids circular import
+                    is_winner = (fight_results.winner_side is not None and
+                                 fight_results.winner_side == int(slot_key))
+                    _contrib: dict[str, float] = {
+                        "fights": 1,
+                        "shots_fired": float(cb_block.get("shots_fired", 0)),
+                        "shots": float(cb_block.get("shots_fired", 0)),   # avg_accuracy metric
+                        "hits": float(cb_block.get("shots_hit", 0)),       # avg_accuracy metric
+                        "total_damage_dealt": float(cb_block.get("damage_dealt", 0)),
+                        "max_damage_dealt": float(cb_block.get("damage_dealt", 0)),
+                        "max_damage_taken": float(cb_block.get("damage_taken", 0)),
+                        "max_nuke_absorbed": float(cb_block.get("max_nuke_absorbed", 0)),
+                    }
+                    for _sub, _cnt in cb_block.get("secondary_fired", {}).items():
+                        _contrib[f"secondary_fired:{_sub}"] = float(_cnt)
+                    for _mod, _cnt in cb_block.get("module_activations", {}).items():
+                        _contrib[f"module_activations:{_mod}"] = float(_cnt)
+                    if is_winner:
+                        _contrib["duration_ticks_win"] = float(summary.get("duration_ticks", 0))
+                        _kb = cb_block.get("killing_blow_subtype")
+                        if _kb:
+                            _contrib[f"kills_by_weapon:{_kb}"] = 1.0
+                    elif not fight_results.is_stalemate:  # stalemate: neither won nor lost
+                        _contrib["duration_ticks_loss"] = float(summary.get("duration_ticks", 0))
+                    await _event_svc.record(session, player, _contrib, context=context, stakes=stakes)
             except Exception as exc:
                 # Non-fatal — stat increment failure should not abort the fight
                 flogger.error(f"Player stat increment failed: user_id={user_id} guild_id={guild_id}: {exc}")

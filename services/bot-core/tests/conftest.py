@@ -80,6 +80,8 @@ _PUSH_STUB_TARGETS = (
     "api.routers.duels._push_duel_cache",
     "api.routers.duels._push_duel_caches_for_players",
     "services.bounty_service.BountyService._push_bounty_cache_after_capture",
+    "api.routers.events._push_events_cache",
+    "utils.event_cache_push._push_events_cache",  # tick executor local-imports from here
 )
 
 

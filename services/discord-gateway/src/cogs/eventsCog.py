@@ -123,6 +123,27 @@ def _prize_label(p: dict) -> str:
     return f"#{p.get('id')} · {place} · {item_ref or kind} x{qty}"
 
 
+def _prize_display(p: dict) -> str:
+    """Display-friendly prize label for embeds (no DB id prefix)."""
+    rank_from = p.get("rank_from")
+    rank_to = p.get("rank_to")
+    kind = p.get("kind", "?")
+    item_ref = p.get("item_ref") or ""
+    qty = p.get("qty", 1)
+
+    if rank_from is None:
+        place = "Participation"
+    elif rank_from == rank_to:
+        suffixes = {1: "st", 2: "nd", 3: "rd"}
+        place = f"{rank_from}{suffixes.get(rank_from, 'th')}"
+    else:
+        place = f"Top {rank_to}"
+
+    if kind == "credits":
+        return f"{place} — {qty:,} credits"
+    return f"{place} — {item_ref or kind} ×{qty}"
+
+
 class EventsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -788,7 +809,7 @@ class EventsCog(commands.Cog):
 
             prizes = e.get("prizes", [])
             if prizes:
-                lines = [_prize_label(p) for p in prizes]
+                lines = [_prize_display(p) for p in prizes]
                 embed.add_field(name="Prizes", value="\n".join(lines[:10]) or "None", inline=False)
 
             await interaction.followup.send(embed=embed)
@@ -896,6 +917,16 @@ class EventsCog(commands.Cog):
                     text=f"Your rank: #{caller_row['rank']} — {caller_row['value']:.1f}"
                     + ("" if caller_row.get("qualified", True) else " (unqualified)")
                 )
+            # Fetch event detail for prizes (non-fatal if it fails)
+            try:
+                detail_resp = await self.http_client.get(f"{api_base}/events/{event}", timeout=10)
+                detail_resp.raise_for_status()
+                prizes = detail_resp.json().get("prizes", [])
+                if prizes:
+                    prize_lines = [_prize_display(p) for p in prizes]
+                    embed.add_field(name="Prizes", value="\n".join(prize_lines[:10]) or "None", inline=False)
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass  # non-fatal — standings already shown
             await interaction.followup.send(embed=embed)
 
         else:

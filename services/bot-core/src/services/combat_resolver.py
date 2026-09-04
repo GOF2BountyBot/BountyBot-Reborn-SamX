@@ -1345,7 +1345,10 @@ def _build_fight_summary(
                     damage_taken[tgt_slot] += absorbed_hp
                 # Slice 2: track last damage subtype per target slot (killing_blow_subtype)
                 if tgt_slot in last_damage_subtype:
-                    last_damage_subtype[tgt_slot] = source.get("subtype") or "primary"
+                    _sub = source.get("subtype") or "primary"
+                    # Turret fire carries subtype "auto" or "manual"; normalise to "turret"
+                    # so kills_by_weapon weapon=turret events can score correctly.
+                    last_damage_subtype[tgt_slot] = "turret" if _sub in ("auto", "manual") else _sub
                 # Slice 2: track max nuke absorbed per attacker slot
                 if source.get("subtype") == "nuke" and att_slot in max_nuke_absorbed:
                     max_nuke_absorbed[att_slot] = max(max_nuke_absorbed[att_slot], absorbed_hp)

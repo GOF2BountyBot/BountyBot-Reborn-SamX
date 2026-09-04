@@ -1,4 +1,6 @@
-# Custom Events — Implementation Reference (issue #30) — v3, ponytail audit 2026-09-03
+# Custom Events — Implementation Reference (issue #30) — v4, as built (2026-09-04)
+
+**Status:** implemented on branch `feat/custom-events` (PR #102 → dev). This doc now describes what was built; §12 keeps the cut list.
 
 **Status:** spec, not implemented. **Catalog comment:** https://github.com/GOF2BountyBot/BountyBot-Reborn-SamX/issues/30#issuecomment-5526628936
 **Legacy:** original bot had no event code — admins ran stat races by hand off `leaderboard -c/-s/-w`. Nothing to port.
@@ -45,7 +47,7 @@ Hook sites (all existing code, one call each):
 | `duels_won` / `duels_lost` / `duels_fought` | duel outcome | Σ | S | fought counts stalemates |
 | `duel_credits_won` / `duel_credits_lost` | stakes | Σ | S | |
 | `kills` | captures + duel wins | Σ | S | |
-| `kills_by_weapon` (`weapon`) | killing_blow_subtype == weapon | Σ | S | needs the summary extension |
+| `kills_by_weapon` (`weapon`) | killing_blow_subtype == weapon | Σ | S | `weapon` ∈ `primary`, `turret` (turret sources `auto`/`manual` are normalised to `turret` at attribution), or a secondary subtype (`nuke`, `rocket`, `missile`, `cluster-missile`, `emp-bomb`, `shock-blast`, `ionizing-missile`) |
 | `secondary_fired` (`subtype`) | `secondary_fired[...]` | Σ | S | subtypes: nuke, rocket, missile, cluster-missile, emp-bomb, shock-blast ("most nukes fired" is `subtype=nuke`) |
 | `module_activations` (`module`) | `module_activations[...]` | Σ | S | gated by `_ACTIVATION_MODULES` allowlist (`combat_resolver.py` ~L155) |
 | `fights_fought` | fights | Σ | S | |
@@ -59,13 +61,13 @@ Hook sites (all existing code, one call each):
 ## 5. Lifecycle, jobs, payout
 `draft → (scheduled →) active → ended | cancelled`; `draft`/`scheduled` deletable.
 **One recurring bot-core job, `event_tick`** (every 5 min; registered in the default recurring list in `main.py:~115` next to `bounty_failsafe_cleanup_default`, so `/scheduler/reset` re-creates it; dispatched via `utils/job_executor.py`): starts `scheduled` events past `scheduled_start_at`, ends `active` events past `ends_at`. No one-time jobs → survives `/scheduler/reset` and downtime for free. `# ponytail: ±5 min start/end precision; add one-time jobs if anyone notices.`
-**Start** (tick or `/admin_event_start`): validate prizes non-overlapping, `discussion_channel_id` + `event_announcements_role_id` set (a tick-driven start that fails validation logs and retries next tick); stamp `started_at`/`ends_at`; announce.
+**Start** (tick or `/admin_event_start`): validate prizes non-overlapping and `discussion_channel_id` set (a tick-driven start that fails validation logs and retries next tick); the announcements role is **optional** — NULL just means no mention; stamp `started_at`/`ends_at`; return the announcement for the caller to post after commit.
 **Payout** (tick or `/admin_event_end payout:Yes`): take qualified, non-disqualified entries; **drop players no longer in the guild** (user: must be present to win — in the guild, not online) — one gateway call, `GET /guilds/{guild_id}/members` (`discord-gateway/src/api/routers/guilds.py:98`), via the same bot-core→gateway HTTP path the announcement executors use; rank by `value` with **competition ranking** (`RANK()` — tied players share the rank; 3-way tie for 1st = ranks 1,1,1,4) and **every tied player receives that rank's prize in full** (user: three tied for 1st with a Specter as 1st prize → three Specters minted). Same for Top-N slots: a tie straddling the boundary is in. Slots skipped by a tie (2nd/3rd after a 3-way tie for 1st) go unawarded; mint per slot through the admin-give **service** paths (§8) inside per-slot try/except, status → `event_results`; write results; announce winners + participation count; `ended`. State transition in the same transaction = idempotent.
 **Announcements** are posted by the caller **after the transaction commits** (`start_event`/`end_event` return the announcement; the tick and the API router post it post-commit) — posting before commit would re-run payout on the next tick if the commit failed. Target `guild_config.discussion_channel_id`, with `<@&event_announcements_role_id>` in **`text_content`** (Discord ignores role mentions in embeds — `shop_announcement.py:144–147`); NULL role → no mention. Start / end / cancelled.
 **Medals** (§ leaderboard): derived from `event_results.rank` (1/2/3 = 🥇🥈🥉), Olympic ordering (golds, silvers, bronzes, then events entered). Per-type = same query filtered by `type_slug`.
 
 ## 6. Commands (flat `admin_*` / player names, repo convention)
-Selector = shared autocomplete over a per-guild events cache in `autocomplete_state` + warm job, invalidated on admin mutation (existing pattern, `utils/autocomplete_warm.py`). State filter per command: prize add/remove → `draft` (+`active` for add); start → `draft`/`scheduled`; end → `active`; delete → `draft`/`scheduled`/`cancelled`; `/events`, `/event_leaderboard` → `scheduled`/`active`/`ended` ≤ 7 d. `type` at create = autocomplete straight over the in-process registry — static, no cache, no refresh job.
+Selector = shared autocomplete over a per-guild events cache in `autocomplete_state` + warm job, invalidated on admin mutation (existing pattern, `utils/autocomplete_warm.py`). State filter per command: prize add/remove → `draft` (+`active` for add); start → `draft`/`scheduled`; end → `active`; delete → `draft`/`scheduled`/`cancelled`; `/events`, `/event_leaderboard` → `scheduled`/`active`/`ended` ≤ 7 d. `type` at create = autocomplete over the registry, fetched once from bot-core `GET /events/types` into a never-expiring cache (the gateway cannot import bot-core); no refresh job.
 | Command | Notes |
 |---|---|
 | `/admin_event_create type duration_days [params]` | draft |
@@ -77,7 +79,7 @@ Selector = shared autocomplete over a per-guild events cache in `autocomplete_st
 | `/admin_event_list [state]` | |
 | `/admin_sync_roles [dry_run]` | force the role sync for this guild, counts back |
 | `/events [event]` | live ("ends <t:R>") + scheduled ("starts <t:R>"); with `event` → rules/prizes/timestamps. **Also runs `_sync_player_notification_roles` for the caller.** |
-| `/event_leaderboard [event] [type]` | no args = all-time medals; `event` = standings (top 10/page + caller's rank; gated entries footnoted); `type` = medals for that type |
+| `/event_leaderboard [event] [type]` | no args = all-time medals; `event` = standings (top 10/page + caller's rank; **only qualified players are ranked**, same rule as payout; gated entries footnoted); `type` = medals for that type |
 
 ## 7. Event Announcements role (Kibbles) — opt-in default, opt-out
 Third instance of the Shop Announcements pattern (migration `0003` precedent). Touchpoints: `guild_setup.py` find-or-create (clone of ~L433–458, `mentionable=True`) + `ADMIN.md:82`; `guild_configs.event_announcements_role_id` through the same files that carry `shop_announcements_role_id`; `players.event_notifications_enabled` (`server_default="true"`, precedent revision 0019); `/notifications` third choice (`playerCog.py:1022`); projection block in `_sync_player_notification_roles` (`:1312`, covers `/profile` = `/register`); `/unregister` `extra_role_ids` (`:1209`); `/admin_uninstall` id list + `_BOUNTYBOT_ROLE_NAMES`; setup embed + `/admin_check`.
@@ -102,7 +104,7 @@ class EventType:
     fmt: Callable[[float], str] = str
 EVENT_TYPES: dict[str, EventType] = {...}   # DB stores slug + params only
 ```
-Checks: one `test_event_scoring.py` — `record()` on a synthetic fight summary (stalemate, nuke killing blow, stakes below/above filter), overlap rejection, payout idempotency. E2E on the dev stack (`--env-file .env.dev`): one event, one duel, early end both ways.
+Checks (as built): bot-core `tests/services/test_event_service.py` (record/standings/hooks/queries, real SQLite), `tests/services/test_event_payout.py` (ties, ranges, forfeits, idempotency, partial failure, announcement payload shape, gateway failures), `tests/test_event_tick_executor.py` (per-event transactions, announce-after-commit order), `tests/api/test_events_router.py` (validation, 403/409 gates, mocked service), `tests/test_migration_0035_custom_events.py`, `tests/test_migration_0036_event_announcements_role.py`; gateway `tests/cogs/test_events_selector.py`, `tests/api/test_events_push.py`, `tests/utils/test_events_warm.py`, `tests/cogs/test_notifications_event.py`, `tests/utils/test_guild_setup_event_role.py`, `tests/utils/test_notification_role_sync.py`. Live: dev stack rebuilt from the branch, slash commands force-synced (83 commands, 25 offset choices accepted).
 
 ## 11. Open
 - Per-opponent daily duel cap: **skip** until abuse is seen; the 1000-credit stakes floor is the guard.
@@ -126,3 +128,6 @@ Checks: one `test_event_scoring.py` — `record()` on a synthetic fight summary 
 | `nukes_fired` slug | it is `secondary_fired(subtype=nuke)` | never |
 | `min_fights` gate on Σ types | volume stats can't be won by one lucky fight | never |
 | ORM `before_flush` tier listener | two explicit calls in `player_service` are boring and greppable | a third tier-assignment site appears |
+
+## 13. Env vars introduced
+`AUTOCOMPLETE_EVENTS_REFRESH_MINUTES` (gateway, default 10) · `NOTIFICATION_ROLE_SYNC_HOURS` (gateway, default 12) · `BOUNTYBOT_EVENT_METRICS_RETENTION_DAYS` (bot-core, default 30). Guild-level: `event_min_duel_stakes` (default 1000) via `/admin_config`.

@@ -227,6 +227,154 @@ async def standings(
 
 
 # ---------------------------------------------------------------------------
+# Display name helper (used by both event_service and events router)
+# ---------------------------------------------------------------------------
+
+
+def display_name(player) -> str:
+    """Canonical display name for a Player ORM object with a loaded .user relationship."""
+    return (
+        (player.display_name if player.display_name else None)
+        or (player.user.display_name if player.user and player.user.display_name else None)
+        or (player.user.discord_username if player.user else None)
+        or f"#{player.id}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Query helpers — extracted from router so they run against real DB in tests
+# ---------------------------------------------------------------------------
+
+
+async def live_standings(session: AsyncSession, event: GameEvent) -> list[dict]:
+    """Compute current standings for a live event, ranking qualified players only.
+
+    Unqualified players are included but shown at rank=None so callers can
+    display them without mixing them into the competition ranking.
+
+    Returns: list of dicts sorted descending by value, shape:
+        {player_id, value, qualified, rank (int for qualified, None for unqualified)}
+    """
+    from persist.models.player import Player
+    from sqlalchemy.orm import selectinload
+
+    raw = await standings(session, event)
+
+    # Rank among qualified only (competition ranking: 1 + count with strictly higher val)
+    qual_vals = [v for _, v, q in raw if q]
+
+    player_ids = [pid for pid, _, _ in raw]
+    pl_result = await session.execute(
+        select(Player).options(selectinload(Player.user)).where(Player.id.in_(player_ids))
+    )
+    players_by_id = {p.id: p for p in pl_result.scalars().all()}
+
+    out: list[dict] = []
+    for pid, val, qual in raw:
+        p = players_by_id.get(pid)
+        rk: int | None = (1 + sum(1 for v in qual_vals if v > val)) if qual else None
+        out.append(
+            {
+                "player_id": pid,
+                "user_id": p.user_id if p else 0,
+                "display_name": display_name(p) if p else f"#{pid}",
+                "value": val,
+                "qualified": qual,
+                "rank": rk,
+            }
+        )
+    return out
+
+
+async def final_standings(session: AsyncSession, event: GameEvent) -> list[dict]:
+    """Read finalised standings from event_results (state=ended events only).
+
+    Returns: list of dicts sorted by rank, shape:
+        {player_id, user_id, display_name, value, qualified, rank}
+    """
+    from persist.models.game_event import EventResult
+    from persist.models.player import Player
+    from sqlalchemy.orm import selectinload
+
+    er_result = await session.execute(
+        select(EventResult).where(EventResult.event_id == event.id).order_by(EventResult.rank)
+    )
+    results = er_result.scalars().all()
+    player_ids = [r.player_id for r in results]
+    pl_result = await session.execute(
+        select(Player).options(selectinload(Player.user)).where(Player.id.in_(player_ids))
+    )
+    players_by_id = {p.id: p for p in pl_result.scalars().all()}
+
+    out: list[dict] = []
+    for r in results:
+        p = players_by_id.get(r.player_id)
+        out.append(
+            {
+                "player_id": r.player_id,
+                "user_id": p.user_id if p else 0,
+                "display_name": display_name(p) if p else f"#{r.player_id}",
+                "value": r.value or 0.0,
+                "qualified": bool(r.qualified),
+                "rank": r.rank or 0,
+            }
+        )
+    return out
+
+
+async def medals(session: AsyncSession, guild_id: int, type_slug: str | None = None) -> list[dict]:
+    """Aggregate medal counts per player for a guild (Olympic ordering).
+
+    Returns: list of dicts sorted by gold desc, silver desc, bronze desc, events desc.
+        {player_id, user_id, display_name, gold, silver, bronze, events}
+    """
+    from persist.models.game_event import EventResult
+    from persist.models.player import Player
+    from sqlalchemy.orm import selectinload
+
+    q = select(EventResult).where(EventResult.guild_id == guild_id, EventResult.qualified.is_(True))
+    if type_slug:
+        q = q.where(EventResult.type_slug == type_slug)
+    result = await session.execute(q)
+    rows = result.scalars().all()
+
+    player_ids = list({r.player_id for r in rows})
+    pl_result = await session.execute(
+        select(Player).options(selectinload(Player.user)).where(Player.id.in_(player_ids))
+    )
+    players_by_id = {p.id: p for p in pl_result.scalars().all()}
+
+    agg: dict[int, dict] = {}
+    for r in rows:
+        pid = r.player_id
+        if pid not in agg:
+            agg[pid] = {"gold": 0, "silver": 0, "bronze": 0, "events": 0}
+        agg[pid]["events"] += 1
+        rk = r.rank or 99
+        if rk == 1:
+            agg[pid]["gold"] += 1
+        elif rk == 2:
+            agg[pid]["silver"] += 1
+        elif rk == 3:
+            agg[pid]["bronze"] += 1
+
+    entries: list[dict] = []
+    for pid, counts in agg.items():
+        p = players_by_id.get(pid)
+        entries.append(
+            {
+                "player_id": pid,
+                "user_id": p.user_id if p else 0,
+                "display_name": display_name(p) if p else f"#{pid}",
+                **counts,
+            }
+        )
+
+    entries.sort(key=lambda e: (-e["gold"], -e["silver"], -e["bronze"], -e["events"]))
+    return entries
+
+
+# ---------------------------------------------------------------------------
 # Slice 3 helpers
 # ---------------------------------------------------------------------------
 
@@ -291,6 +439,7 @@ async def _fetch_member_discord_ids(guild_id: int) -> set[int] | None:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 f"{_GATEWAY_BASE_URL}/guilds/{guild_id}/members",
+                # ponytail: no pagination; guilds > 5000 members would silently forfeit — paginate when one exists
                 params={"limit": 5000},
                 timeout=10,
             )
@@ -575,7 +724,7 @@ async def end_event(
     standing_lines: list[str] = []
     for pid, val, rk in ranked[:10]:  # cap at 10 to fit embed
         player = players_by_id.get(pid)
-        name = (player.user.display_name or player.user.discord_username) if player and player.user else f"#{pid}"
+        name = display_name(player) if player else f"#{pid}"
         val_str = et.fmt(val) if et else str(val)
         standing_lines.append(f"{_ordinal(rk)}: **{name}** — {val_str}")
     # Collect @mentions of placed winners (rank ≤ highest prize rank, capped at 10)

@@ -1245,3 +1245,54 @@ class TestSlice2SummaryExtension:
         s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
         assert s["combatants"]["1"]["killing_blow_subtype"] == "primary"
         assert s["combatants"]["2"]["killing_blow_subtype"] is None
+
+    def test_turret_auto_killing_blow_normalised(self):
+        """Turret auto-fire (subtype='auto') killing blow → killing_blow_subtype == 'turret'."""
+        c1, c2 = _make_states()
+        turret_dmg = CombatEvent(
+            tick=1,
+            type=CombatEventType.damage,
+            actor=None,
+            target="C2",
+            data={
+                "amount": 100,
+                "absorbed": 100,
+                "breakdown": {"shield": 0, "armour": 0, "hull": 100},
+                "hp_after": _hp(0),
+                "source": {"subtype": "auto", "weapon": "TestTurret", "attacker": "C1"},
+            },
+        )
+        events = [
+            _fight_start_event("C1", "C2"),
+            turret_dmg,
+            _fight_end_event(2, "C1", "hp_depleted", 2, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
+        assert s["combatants"]["1"]["killing_blow_subtype"] == "turret", (
+            f"Expected 'turret' for auto subtype, got {s['combatants']['1']['killing_blow_subtype']!r}"
+        )
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None
+
+    def test_turret_manual_killing_blow_normalised(self):
+        """Turret manual-fire (subtype='manual') killing blow → killing_blow_subtype == 'turret'."""
+        c1, c2 = _make_states()
+        turret_dmg = CombatEvent(
+            tick=1,
+            type=CombatEventType.damage,
+            actor=None,
+            target="C2",
+            data={
+                "amount": 100,
+                "absorbed": 100,
+                "breakdown": {"shield": 0, "armour": 0, "hull": 100},
+                "hp_after": _hp(0),
+                "source": {"subtype": "manual", "weapon": "TestTurret", "attacker": "C1"},
+            },
+        )
+        events = [
+            _fight_start_event("C1", "C2"),
+            turret_dmg,
+            _fight_end_event(2, "C1", "hp_depleted", 2, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
+        assert s["combatants"]["1"]["killing_blow_subtype"] == "turret"

@@ -575,6 +575,46 @@ These commands target the **blender-service** (not bot-core).
 
 ---
 
+## Events
+
+Custom stat-race challenges let admins run time-limited competitions (e.g. "most bounty caps in 7 days"). The lifecycle is: **create → add prizes → start (now or scheduled) → auto-end at deadline + payout**.
+
+### Running a Challenge
+
+1. Create a draft event: `/admin_event_create type:<type> duration_days:<N>`
+2. Add prizes: `/admin_event_add_prize event:<id> place:<1st|Top N|Participation> type:<Credits|Ship|…> qty:<N>`
+3. Start: `/admin_event_start event:<id>` (now) or `/admin_event_start event:<id> at:<YYYY-MM-DD HH:MM> utc_offset:<±N>`
+4. The event ends automatically at the deadline; winners receive prizes and an end announcement is posted.
+5. To end early with payout: `/admin_event_end event:<id> payout:Yes`
+6. To cancel (no payout): `/admin_event_end event:<id> payout:No`
+
+A **notification role** (`Event Announcements`) is mentioned in start/end announcements when `event_announcements_role_id` is configured (set via `/admin_setup` — re-run after changing the role). Players opt in via `/notifications`.
+
+### Admin Event Commands
+
+| Command | Description |
+|---------|-------------|
+| `/admin_event_create` | Create a new draft event (type, duration, optional division/subtype/module/weapon params) |
+| `/admin_event_add_prize` | Add a prize slot (1st–10th, Top N, or Participation; Credits/Ship/Primary/Secondary/Turret/Module) |
+| `/admin_event_remove_prize` | Remove a prize from a draft event |
+| `/admin_event_start` | Start an event immediately or schedule it at a future time |
+| `/admin_event_end` | End an active event with or without payout |
+| `/admin_event_delete` | Permanently delete a draft/scheduled/cancelled event |
+| `/admin_event_list` | List events for this guild, optionally filtered by state |
+| `/admin_sync_roles` | Force notification role sync for this guild (dry_run flag available) |
+
+### Event Environment Variables
+
+The following env vars control event-related behaviour (all optional — defaults shown):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AUTOCOMPLETE_EVENTS_REFRESH_MINUTES` | `20` | TTL (dead-man switch) for the per-guild events autocomplete cache; bot-core pushes invalidations after every mutation |
+| `NOTIFICATION_ROLE_SYNC_HOURS` | `24` | Interval for the background notification role sync job |
+| `BOUNTYBOT_EVENT_METRICS_RETENTION_DAYS` | *(unset)* | If set, event metric rows older than this many days are pruned by the db_retention job |
+
+---
+
 ## Scheduler Management
 
 All scheduler commands are **super-admin only** (`DEVELOPERS` env var — no Administrator/Bot Admin fallback). They operate on bot-core's APScheduler job store.

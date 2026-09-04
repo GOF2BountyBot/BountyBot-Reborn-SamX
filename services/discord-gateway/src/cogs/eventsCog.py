@@ -260,14 +260,9 @@ class EventsCog(commands.Cog):
             if prize_type == "Credits":
                 return []  # no item needed for credits
 
-            # Item types: map to catalog category
-            cat_map = {
-                "Primary": "primary_weapon",
-                "Secondary": "secondary_weapon",
-                "Turret": "turret_weapon",
-                "Module": "module",
-            }
-            category = cat_map.get(prize_type or "")
+            # Item types: map to catalog category (reuse module-level _PRIZE_TYPE_MAP)
+            _, _cat = _PRIZE_TYPE_MAP.get(prize_type or "", (None, None))
+            category = _cat
             if not category:
                 return []  # No type selected — no suggestions (less confusing than dumping everything)
             categories = (category,)
@@ -329,39 +324,66 @@ class EventsCog(commands.Cog):
         return await self._events_autocomplete(interaction, current, states={"draft", "scheduled", "cancelled"})
 
     async def _ac_event_player(self, interaction, current):
-        """Player-facing autocomplete: scheduled/active/ended, dropping ended events older than 7 days."""
+        """Player-facing: scheduled/active/ended via _events_autocomplete, then drop ended > 7 days."""
+        choices = await self._events_autocomplete(interaction, current, states={"scheduled", "active", "ended"})
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        # Post-filter: drop ended events older than 7 days.
+        # Cache entries have "ends_at" and "state" attached by _fetch_events.
+        guild_id = interaction.guild_id
+        events = self._events_cache.peek(guild_id) or []
+        by_id = {str(e["id"]): e for e in events}
+        out = []
+        for ch in choices:
+            e = by_id.get(ch.value, {})
+            if e.get("state") == "ended":
+                ts_str = e.get("ends_at")
+                if ts_str:
+                    try:
+                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        if ts < cutoff:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+            out.append(ch)
+        return out
+
+    # ------------------------------------------------------------------
+    # Shared helpers — reduce boilerplate in admin commands
+    # ------------------------------------------------------------------
+
+    async def _admin_gate(self, interaction: discord.Interaction) -> bool:
+        """Defer ephemeral + check admin; sends ❌ and returns False if not admin."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ Admin privileges required.", ephemeral=True)
+            return False
+        return True
+
+    async def _api(
+        self, interaction: discord.Interaction, method: str, url: str, **kw
+    ) -> httpx.Response | None:
+        """Call the bot-core API; surface HTTPStatusError as ❌ followup, return None on error."""
         try:
-            guild_id = interaction.guild_id
-            events = self._events_cache.peek(guild_id)
-            if events is None:
-                events = await self._events_cache.get_with_timeout(guild_id, timeout=1.0)
-            if events is None:
-                return []
-            cutoff = datetime.now(UTC) - timedelta(days=7)
-            norm_current = normalize_for_search(current)
-            choices = []
-            for e in events:
-                state = e.get("state")
-                if state not in {"scheduled", "active", "ended"}:
-                    continue
-                if state == "ended":
-                    ts_str = e.get("ends_at") or e.get("updated_at")
-                    if ts_str:
-                        try:
-                            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                            if ts < cutoff:
-                                continue
-                        except (ValueError, TypeError):
-                            pass
-                label = (
-                    f"#{e.get('id')} · {e.get('type_display', e.get('type_slug', ''))} · {event_status_label(e)}"
-                )
-                norm_label = e.get("_norm") or normalize_for_search(label)
-                if norm_current in norm_label:
-                    choices.append(app_commands.Choice(name=label[:100], value=str(e["id"])))
-            return choices[:25]
-        except Exception:  # pylint: disable=broad-exception-caught
-            return []
+            resp = await getattr(self.http_client, method)(url, **kw)
+            resp.raise_for_status()
+            return resp
+        except httpx.HTTPStatusError as exc:
+            await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+            return None
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            await interaction.followup.send(f"❌ Unexpected error: {exc}", ephemeral=True)
+            return None
+
+    async def _confirm(self, interaction: discord.Interaction, embed: discord.Embed, action: str) -> bool | None:
+        """Show a ConfirmView, wait, return True/False/None (timeout)."""
+        view = ConfirmView(action=action, timeout=60)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        await view.wait()
+        if view.result is None:
+            await interaction.followup.send("⏱️ Timed out — no changes made.", ephemeral=True)
+        elif not view.result:
+            await interaction.followup.send("❌ Cancelled — no changes made.", ephemeral=True)
+        return view.result
 
     # ------------------------------------------------------------------
     # Admin commands
@@ -387,12 +409,9 @@ class EventsCog(commands.Cog):
         module: str | None = None,
         weapon: str | None = None,
     ):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ Admin privileges required.", ephemeral=True)
+        if not await self._admin_gate(interaction):
             return
 
-        # Only send params the type accepts — fetch type definition
         params: dict[str, str] = {}
         if division:
             params["division"] = division
@@ -403,22 +422,14 @@ class EventsCog(commands.Cog):
         if weapon:
             params["weapon"] = weapon
 
-        try:
-            resp = await self.http_client.post(
-                f"{api_base}/events",
-                json={
-                    "guild_id": interaction.guild_id,
-                    "type_slug": type,
-                    "duration_days": duration_days,
-                    "params": params,
-                },
-                params={"user_id": interaction.user.id},
-                timeout=10,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            detail = _extract_detail(exc)
-            await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+        resp = await self._api(
+            interaction, "post", f"{api_base}/events",
+            json={"guild_id": interaction.guild_id, "type_slug": type,
+                  "duration_days": duration_days, "params": params},
+            params={"user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
             return
 
         event = resp.json()
@@ -454,17 +465,14 @@ class EventsCog(commands.Cog):
         item: str | None = None,
         top_n: int = 10,
     ):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ Admin privileges required.", ephemeral=True)
+        if not await self._admin_gate(interaction):
             return
 
-        # Resolve rank_from / rank_to from place choice.
         if place in _PLACE_ORDINALS:
             rank_from, rank_to = _PLACE_ORDINALS[place]
         elif place == "Top N":
             rank_from, rank_to = 1, top_n
-        else:  # Participation
+        else:
             rank_from, rank_to = None, None
 
         kind, _ = _PRIZE_TYPE_MAP.get(type, ("credits", None))
@@ -475,16 +483,13 @@ class EventsCog(commands.Cog):
                 return
             body["item_ref"] = item
 
-        try:
-            resp = await self.http_client.post(
-                f"{api_base}/events/{event}/prizes",
-                json=body,
-                params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
-                timeout=10,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+        resp = await self._api(
+            interaction, "post", f"{api_base}/events/{event}/prizes",
+            json=body,
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
             return
 
         self._events_cache.invalidate(interaction.guild_id)
@@ -507,20 +512,15 @@ class EventsCog(commands.Cog):
         event: str,
         prize: str,
     ):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ Admin privileges required.", ephemeral=True)
+        if not await self._admin_gate(interaction):
             return
 
-        try:
-            resp = await self.http_client.delete(
-                f"{api_base}/events/{event}/prizes/{prize}",
-                params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
-                timeout=10,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+        resp = await self._api(
+            interaction, "delete", f"{api_base}/events/{event}/prizes/{prize}",
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
             return
 
         self._events_cache.invalidate(interaction.guild_id)
@@ -542,9 +542,7 @@ class EventsCog(commands.Cog):
         at: str | None = None,
         utc_offset: str = "0",
     ):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ Admin privileges required.", ephemeral=True)
+        if not await self._admin_gate(interaction):
             return
 
         body: dict = {}
@@ -574,13 +572,11 @@ class EventsCog(commands.Cog):
 
             unix = int(scheduled_ts.timestamp())
             body["scheduled_start_at"] = scheduled_ts.isoformat()
-
             embed = discord.Embed(
                 title="Confirm Schedule",
                 description=(
                     f"Schedule event **#{event}** to start:\n"
-                    f"**<t:{unix}:F>** (<t:{unix}:R>)\n\n"
-                    "Click **Confirm** to schedule."
+                    f"**<t:{unix}:F>** (<t:{unix}:R>)\n\nClick **Confirm** to schedule."
                 ),
                 color=discord.Color.blue(),
             )
@@ -591,27 +587,16 @@ class EventsCog(commands.Cog):
                 color=discord.Color.green(),
             )
 
-        view = ConfirmView(action=f"start event #{event}", timeout=60)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        await view.wait()
-
-        if view.result is None:
-            await interaction.followup.send("⏱️ Timed out — no changes made.", ephemeral=True)
-            return
-        if not view.result:
-            await interaction.followup.send("❌ Cancelled — no changes made.", ephemeral=True)
+        if not await self._confirm(interaction, embed, f"start event #{event}"):
             return
 
-        try:
-            resp = await self.http_client.post(
-                f"{api_base}/events/{event}/start",
-                json=body,
-                params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
-                timeout=10,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+        resp = await self._api(
+            interaction, "post", f"{api_base}/events/{event}/start",
+            json=body,
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
             return
 
         self._events_cache.invalidate(interaction.guild_id)
@@ -646,9 +631,7 @@ class EventsCog(commands.Cog):
         payout: str,
         reason: str | None = None,
     ):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ Admin privileges required.", ephemeral=True)
+        if not await self._admin_gate(interaction):
             return
 
         do_payout = payout.lower() == "yes"
@@ -662,27 +645,16 @@ class EventsCog(commands.Cog):
             ),
             color=discord.Color.orange(),
         )
-        view = ConfirmView(action=f"end event #{event}", timeout=60)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        await view.wait()
-
-        if view.result is None:
-            await interaction.followup.send("⏱️ Timed out — no changes made.", ephemeral=True)
-            return
-        if not view.result:
-            await interaction.followup.send("❌ Cancelled — no changes made.", ephemeral=True)
+        if not await self._confirm(interaction, embed, f"end event #{event}"):
             return
 
-        try:
-            resp = await self.http_client.post(
-                f"{api_base}/events/{event}/end",
-                json={"payout": do_payout, "reason": reason},
-                params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
-                timeout=30,  # payout can be slow
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+        resp = await self._api(
+            interaction, "post", f"{api_base}/events/{event}/end",
+            json={"payout": do_payout, "reason": reason},
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=30,
+        )
+        if resp is None:
             return
 
         self._events_cache.invalidate(interaction.guild_id)
@@ -703,9 +675,7 @@ class EventsCog(commands.Cog):
         interaction: discord.Interaction,
         event: str,
     ):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ Admin privileges required.", ephemeral=True)
+        if not await self._admin_gate(interaction):
             return
 
         embed = discord.Embed(
@@ -713,26 +683,15 @@ class EventsCog(commands.Cog):
             description=f"Permanently delete event **#{event}**?\n\nThis cannot be undone.",
             color=discord.Color.red(),
         )
-        view = ConfirmView(action=f"delete event #{event}", timeout=60)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        await view.wait()
-
-        if view.result is None:
-            await interaction.followup.send("⏱️ Timed out — no changes made.", ephemeral=True)
-            return
-        if not view.result:
-            await interaction.followup.send("❌ Cancelled — no changes made.", ephemeral=True)
+        if not await self._confirm(interaction, embed, f"delete event #{event}"):
             return
 
-        try:
-            resp = await self.http_client.delete(
-                f"{api_base}/events/{event}",
-                params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
-                timeout=10,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+        resp = await self._api(
+            interaction, "delete", f"{api_base}/events/{event}",
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
             return
 
         self._events_cache.invalidate(interaction.guild_id)
@@ -747,22 +706,18 @@ class EventsCog(commands.Cog):
         interaction: discord.Interaction,
         state: str = "all",
     ):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ Admin privileges required.", ephemeral=True)
+        if not await self._admin_gate(interaction):
             return
 
         params: dict = {"guild_id": interaction.guild_id}
         if state != "all":
             params["state"] = state
 
-        try:
-            resp = await self.http_client.get(
-                f"{api_base}/events/guild/{interaction.guild_id}", params=params, timeout=10
-            )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+        resp = await self._api(
+            interaction, "get", f"{api_base}/events/guild/{interaction.guild_id}",
+            params=params, timeout=10,
+        )
+        if resp is None:
             return
 
         events = resp.json()

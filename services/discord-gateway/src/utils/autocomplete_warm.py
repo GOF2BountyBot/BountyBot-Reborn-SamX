@@ -68,6 +68,28 @@ async def warm_guild_shop_cache(bot, guild_id: int) -> None:
         flogger.warning(f"warm_guild_shop_cache({guild_id}): unexpected error: {type(exc).__name__}: {exc}")
 
 
+async def warm_guild_events_cache(bot, guild_id: int) -> None:
+    """Warm the events autocomplete cache for one guild on startup.
+
+    Looks up the EventsCog; if it has ``_events_cache``, calls
+    ``cog._events_cache.get(guild_id)`` to trigger a refresh.
+
+    Non-fatal: logs WARNING on any error and returns without raising.
+    """
+    try:
+        cog = bot.get_cog("EventsCog")
+        if cog is None:
+            flogger.warning(f"warm_guild_events_cache({guild_id}): EventsCog not found on bot; skipping")
+            return
+        if hasattr(cog, "_events_cache"):
+            await cog._events_cache.get(guild_id)
+            flogger.debug(f"warm_guild_events_cache({guild_id}): events cache warmed")
+        else:
+            flogger.debug(f"warm_guild_events_cache({guild_id}): EventsCog has no _events_cache; skipping")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"warm_guild_events_cache({guild_id}): unexpected error: {type(exc).__name__}: {exc}")
+
+
 async def warm_guild_bounty_cache(bot, guild_id: int) -> None:
     """Warm the bounty autocomplete cache for one guild on startup.
 
@@ -547,6 +569,43 @@ async def refresh_bounty_cache(bot) -> None:
         flogger.warning(f"refresh_bounty_cache: failed: {type(exc).__name__}: {exc}")
 
 
+async def refresh_events_cache(bot) -> None:
+    """Scheduled job: refresh events cache for all guilds the bot is in.
+
+    Iterates bot.guilds and calls cog._events_cache.get(guild.id) for each —
+    this triggers _fetch_events on miss/expiry and resets the TTL.
+    Semaphore-throttled to AUTOCOMPLETE_WARM_CONCURRENCY.
+    Non-fatal: logs WARNING on any error and returns without raising.
+    """
+    try:
+        cog = bot.get_cog("EventsCog")
+        if cog is None:
+            flogger.warning("refresh_events_cache: EventsCog not found on bot; skipping")
+            return
+        if not hasattr(cog, "_events_cache"):
+            flogger.warning("refresh_events_cache: EventsCog has no _events_cache; skipping")
+            return
+
+        sem = _get_semaphore()
+
+        async def _refresh_one(guild_id: int) -> None:
+            async with sem:
+                try:
+                    await cog._events_cache.get(guild_id)
+                    flogger.debug(f"refresh_events_cache: refreshed guild_id={guild_id}")
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"refresh_events_cache: failed for guild_id={guild_id}: {type(exc).__name__}: {exc}"
+                    )
+
+        tasks = [asyncio.create_task(_refresh_one(guild.id), name=f"events-refresh-{guild.id}") for guild in bot.guilds]
+        if tasks:
+            await asyncio.gather(*tasks)
+        flogger.info(f"refresh_events_cache: refreshed {len(tasks)} guilds")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"refresh_events_cache: failed: {type(exc).__name__}: {exc}")
+
+
 async def refresh_jobs_cache(bot) -> None:
     """Scheduled job: refresh the scheduler jobs cache in-place.
 
@@ -636,7 +695,15 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
             id=f"warm-bounty-{guild.id}",
             replace_existing=True,
         )
-    flogger.info(f"register_warm_jobs: scheduled {len(bot.guilds)} Wave 0 guild shop+bounty warm jobs")
+        scheduler.add_job(
+            warm_guild_events_cache,
+            "date",
+            run_date=wave0_run_date,
+            args=[bot, guild.id],
+            id=f"warm-events-{guild.id}",
+            replace_existing=True,
+        )
+    flogger.info(f"register_warm_jobs: scheduled {len(bot.guilds)} Wave 0 guild shop+bounty+events warm jobs")
 
     # Wave 1: per-user player warm, starting at 8s (B-P3: was 15s).
     # Starts 3s after Wave 0 (5s + 3s) so guild-wide data is ready first.
@@ -762,4 +829,13 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
         args=[bot],
         replace_existing=True,
     )
-    flogger.info("register_warm_jobs: registered 8 recurring refresh jobs")
+    events_refresh_min = int(os.getenv("AUTOCOMPLETE_EVENTS_REFRESH_MINUTES", "10"))
+    scheduler.add_job(
+        refresh_events_cache,
+        "interval",
+        minutes=events_refresh_min,
+        id="events-cache-refresh",
+        args=[bot],
+        replace_existing=True,
+    )
+    flogger.info("register_warm_jobs: registered 9 recurring refresh jobs")

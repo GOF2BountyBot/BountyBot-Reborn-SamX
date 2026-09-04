@@ -15,6 +15,12 @@ class BountyCachePush(BaseModel):
     bounties: list[dict]  # full active bounty list for one guild
 
 
+class EventCachePush(BaseModel):
+    """Payload for pushing event list into the gateway EventsCog autocomplete cache."""
+
+    events: list[dict]  # full event list for one guild (EventListItem shape)
+
+
 class DuelCachePush(BaseModel):
     """Payload for pushing duel lists into the gateway DuelCog autocomplete caches.
 

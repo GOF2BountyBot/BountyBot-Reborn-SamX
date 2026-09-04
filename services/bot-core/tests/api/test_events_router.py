@@ -713,3 +713,42 @@ class TestAnnounceAfterCommit:
         assert call_order.index("db_exit") < call_order.index("announce"), (
             f"announce was called before db context exited: {call_order}"
         )
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    @patch("api.routers.events.AuditService.log_action", new_callable=AsyncMock)
+    @patch("api.routers.events._push_events_cache", new_callable=AsyncMock)
+    def test_scheduled_push_called_after_db_context_exits(
+        self, mock_push, mock_audit, mock_db, mock_admin, client, db_ctx
+    ):
+        """Scheduled path: _push_events_cache must be called after the db context exits (post-commit)."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        ev = make_event(state="draft")
+        mock_session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=lambda: ev))
+        mock_session.flush = AsyncMock()
+
+        call_order: list[str] = []
+
+        async def track_exit(*a):
+            call_order.append("db_exit")
+            return False
+
+        async def track_push(*a):
+            call_order.append("push")
+
+        mock_cm.__aexit__ = track_exit
+        mock_push.side_effect = track_push
+
+        future = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+        resp = client.post(
+            "/api/v1/events/1/start?guild_id=99&user_id=42",
+            json={"scheduled_start_at": future},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "scheduled"
+        assert "db_exit" in call_order
+        assert "push" in call_order
+        assert call_order.index("db_exit") < call_order.index("push"), (
+            f"push was called before db context exited: {call_order}"
+        )

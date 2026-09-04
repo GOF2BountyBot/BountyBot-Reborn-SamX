@@ -731,7 +731,9 @@ async def end_event(
         player = players_by_id.get(pid)
         name = display_name(player) if player else f"#{pid}"
         val_str = et.fmt(val) if et else str(val)
-        standing_lines.append(f"{_ordinal(rk)}: **{name}** — {val_str}")
+        pz = "; ".join(prize_parts.get(pid, []))
+        suffix = f" · {pz}" if pz else ""
+        standing_lines.append(f"{_ordinal(rk)}: **{name}** — {val_str}{suffix}")
     # Collect @mentions of placed winners (rank ≤ highest prize rank, capped at 10)
     top_mention_pids = {pid for pid, _, rk in ranked if rk <= 3}
     mention_str = " ".join(
@@ -739,13 +741,22 @@ async def end_event(
     )
     text_content = " ".join(filter(None, [role_mention, mention_str])) or None
 
+    embed_fields: list[dict] = [{"name": "Participants", "value": str(len(ranked)), "inline": True}]
+    participation_slot = next((s for s in prizes if s.rank_from is None), None)
+    if participation_slot:
+        part_prize = (
+            f"{participation_slot.qty:,} credits"
+            if participation_slot.kind == "credits"
+            else f"{participation_slot.qty}× {participation_slot.item_ref or '?'}"
+        )
+        embed_fields.append(
+            {"name": "Participation", "value": f"{part_prize} — {len(ranked)} recipients", "inline": True}
+        )
     embed = {
         "title": f"🏁 {et.display_name if et else event.type_slug} Event Ended",
         "description": "\n".join(standing_lines) or "No qualified finishers.",
         "color": 3066993,
-        "fields": [
-            {"name": "Participants", "value": str(len(ranked)), "inline": True},
-        ],
+        "fields": embed_fields,
     }
     ann = (event.guild_id, channel_id, embed, text_content) if channel_id else None
     return {"status": "ok", "ranked_players": len(ranked), "errors": len(failures), "announcement": ann}

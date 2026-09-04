@@ -297,6 +297,7 @@ class GuildConfigResponse(GameConstantsOverridesMixin):
     platinum_bounty_channel_id: int | None = None
     platinum_role_id: int | None = None
     shop_announcements_role_id: int | None = None
+    event_announcements_role_id: int | None = None
 
 
 class ConfigValidationResponse(BaseModel):
@@ -328,6 +329,7 @@ class UpdateConfigRequest(GameConstantsOverridesMixin):
     platinum_bounty_channel_id: int | None = None
     platinum_role_id: int | None = None
     shop_announcements_role_id: int | None = None
+    event_announcements_role_id: int | None = None
 
 
 class UpdateShopConfigRequest(BaseModel):

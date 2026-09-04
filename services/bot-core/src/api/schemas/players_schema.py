@@ -32,6 +32,7 @@ class PlayerResponse(BaseModel):
     # Discord roles by the gateway. Default opted-in (True) to match historical default.
     bounty_notifications_enabled: bool = True
     shop_notifications_enabled: bool = True
+    event_notifications_enabled: bool = True
     created_at: str
     updated_at: str
 
@@ -73,13 +74,16 @@ class NotificationPreferenceUpdate(BaseModel):
     ``notification_type`` selects which persisted flag to write:
     - ``"bounty"`` → ``bounty_notifications_enabled``
     - ``"shop"``   → ``shop_notifications_enabled``
+    - ``"event"``  → ``event_notifications_enabled``
 
     The stored flag is the source of truth; the gateway syncs the corresponding
-    Discord role (tier role for bounty, shop_announcements_role_id for shop) to
-    match after persisting here.
+    Discord role (tier role for bounty, shop_announcements_role_id for shop,
+    event_announcements_role_id for event) to match after persisting here.
     """
 
-    notification_type: str = Field(pattern="^(bounty|shop)$", description="Must be 'bounty' or 'shop'")
+    notification_type: str = Field(
+        pattern="^(bounty|shop|event)$", description="Must be 'bounty', 'shop', or 'event'"
+    )
     enabled: bool = Field(description="Whether the player wants these announcement @-mentions")
 
 

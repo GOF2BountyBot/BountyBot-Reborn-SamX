@@ -917,24 +917,20 @@ class TestRequiredParams:
 
 
 # ---------------------------------------------------------------------------
-# item 6: rules_detail content for duel event with min_fights=3 and stakes 1000
+# item 6: render_rules — rules_text in GET /events/{id} contains resolved numbers
 # ---------------------------------------------------------------------------
 
 
-class TestRulesDetail:
-    @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock)
-    @patch("api.routers.events.get_db_session")
-    def test_duel_event_rules_detail(self, mock_db, mock_cfg, client, db_ctx):
-        """GET /events/{id} includes rules_detail for a duel event."""
+class TestRulesText:
+    """render_rules integration: GET /events/{id} returns rendered rules_text (no rules_detail)."""
+
+    def _setup(self, mock_db, mock_cfg, db_ctx, type_slug: str, params: dict, min_duel_stakes: int = 1000):
         mock_session, mock_cm = db_ctx
         mock_db.return_value = mock_cm
-
-        # Config: stakes floor = 1000
         cfg_mock = MagicMock()
-        cfg_mock.event_min_duel_stakes = 1000
+        cfg_mock.event_min_duel_stakes = min_duel_stakes
         mock_cfg.return_value = cfg_mock
-
-        ev = make_event(type_slug="duels_won", params={"min_fights": 3})
+        ev = make_event(type_slug=type_slug, params=params)
         mock_session.execute = AsyncMock(
             side_effect=[
                 MagicMock(scalar_one_or_none=lambda: ev),
@@ -942,35 +938,60 @@ class TestRulesDetail:
             ]
         )
 
+    @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock)
+    @patch("api.routers.events.get_db_session")
+    def test_duels_won_stakes_1000_min_fights_3(self, mock_db, mock_cfg, client, db_ctx):
+        """duels_won with stakes 1000 / min_fights 3 / no division → approved wording + Prizes line."""
+        self._setup(mock_db, mock_cfg, db_ctx, "duels_won", {"min_fights": 3}, 1000)
         resp = client.get("/api/v1/events/1")
         assert resp.status_code == 200
-        data = resp.json()
-        detail = data.get("rules_detail", [])
-        assert any("1,000" in line for line in detail), f"stake amount missing: {detail}"
-        assert any("3" in line and "battles" in line for line in detail), f"min_fights line missing: {detail}"
+        rt = resp.json()["rules_text"]
+        assert "Win the most duels." in rt, f"opening sentence missing: {rt!r}"
+        assert "1,000 credits" in rt, f"stake amount missing: {rt!r}"
+        assert "Stalemates count as fights but not wins." in rt, f"stalemates clause missing: {rt!r}"
+        assert "Losing still counts as taking part." in rt, f"losing clause missing: {rt!r}"
+        assert "Prizes require at least 3 battles." in rt, f"prizes line missing: {rt!r}"
+        assert "rules_detail" not in resp.json(), "rules_detail should not exist in response"
 
     @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock)
     @patch("api.routers.events.get_db_session")
-    def test_bounty_event_rules_detail_says_checks(self, mock_db, mock_cfg, client, db_ctx):
-        """Bounty event rules_detail says 'checks' not 'battles'."""
-        mock_session, mock_cm = db_ctx
-        mock_db.return_value = mock_cm
-
-        cfg_mock = MagicMock()
-        cfg_mock.event_min_duel_stakes = 500
-        mock_cfg.return_value = cfg_mock
-
-        ev = make_event(type_slug="bounty_caps", params={})
-        mock_session.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=lambda: ev),
-                MagicMock(scalars=lambda: MagicMock(all=lambda: [])),
-            ]
-        )
-
+    def test_secondary_fired_nuke_mentions_nukes_and_both_contexts(self, mock_db, mock_cfg, client, db_ctx):
+        """secondary_fired subtype=nuke mentions nukes and both duel stakes and bounty fights."""
+        self._setup(mock_db, mock_cfg, db_ctx, "secondary_fired", {"subtype": "nuke"}, 1000)
         resp = client.get("/api/v1/events/1")
         assert resp.status_code == 200
-        data = resp.json()
-        detail = data.get("rules_detail", [])
-        assert any("checks" in line for line in detail), f"'checks' missing from detail: {detail}"
-        assert not any("battles" in line for line in detail), f"'battles' should not appear: {detail}"
+        rt = resp.json()["rules_text"]
+        assert "nuke" in rt, f"subtype nuke missing: {rt!r}"
+        assert "1,000 credits" in rt, f"duel stakes missing: {rt!r}"
+        assert "bounty fights always count" in rt, f"bounty context missing: {rt!r}"
+
+    @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock)
+    @patch("api.routers.events.get_db_session")
+    def test_bounty_caps_mentions_checks_no_stakes(self, mock_db, mock_cfg, client, db_ctx):
+        """bounty_caps mentions checks and has no duel-stakes sentence."""
+        self._setup(mock_db, mock_cfg, db_ctx, "bounty_caps", {}, 1000)
+        resp = client.get("/api/v1/events/1")
+        assert resp.status_code == 200
+        rt = resp.json()["rules_text"]
+        assert "check" in rt.lower(), f"'check' missing from bounty_caps: {rt!r}"
+        assert "credits" not in rt, f"duel-stakes sentence should not appear for bounty type: {rt!r}"
+
+    @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock)
+    @patch("api.routers.events.get_db_session")
+    def test_min_fights_1_appends_nothing(self, mock_db, mock_cfg, client, db_ctx):
+        """min_fights=1 (or default 1) does not append 'Prizes require' line."""
+        self._setup(mock_db, mock_cfg, db_ctx, "duels_won", {}, 1000)
+        resp = client.get("/api/v1/events/1")
+        assert resp.status_code == 200
+        rt = resp.json()["rules_text"]
+        assert "Prizes require" not in rt, f"'Prizes require' should not appear for min_fights=1: {rt!r}"
+
+    @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock)
+    @patch("api.routers.events.get_db_session")
+    def test_division_appends_division_line(self, mock_db, mock_cfg, client, db_ctx):
+        """division param appends 'Bronze division only.' to rules_text."""
+        self._setup(mock_db, mock_cfg, db_ctx, "duels_won", {"division": "Bronze"}, 1000)
+        resp = client.get("/api/v1/events/1")
+        assert resp.status_code == 200
+        rt = resp.json()["rules_text"]
+        assert "Bronze division only." in rt, f"division line missing: {rt!r}"

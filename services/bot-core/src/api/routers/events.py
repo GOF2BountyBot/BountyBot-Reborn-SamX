@@ -16,7 +16,7 @@ from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.ship_repository import ShipRepository
 from services.audit_service import AuditService
 from services.combat_resolver import _ACTIVATION_MODULES
-from services.event_types import EVENT_TYPES, build_rules_detail
+from services.event_types import EVENT_TYPES, render_rules
 from services.inventory_service import InventoryService
 from shared import bblogger
 from sqlalchemy import func, select
@@ -153,6 +153,7 @@ async def list_event_types():
             display_name=et.display_name,
             category=et.category,
             params=_type_param_keys(et.slug),
+            rules_template=et.rules_text,
         )
         for et in EVENT_TYPES.values()
     ]
@@ -534,13 +535,21 @@ async def get_event(event_id: int):
     params = event.params or {}
     effective_min_fights = params.get("min_fights", et.default_min_fights if et else 1)
     min_duel_stakes: int = config.event_min_duel_stakes if config else 1000
-    rules_detail = build_rules_detail(et, params, min_duel_stakes, effective_min_fights) if et else []
+    rendered = (
+        render_rules(
+            et,
+            min_stakes=min_duel_stakes,
+            min_fights=effective_min_fights,
+            division=params.get("division"),
+            params=params,
+        )
+        if et else ""
+    )
     return EventDetailResponse(
         **EventResponse.model_validate(event).model_dump(),
         prizes=[PrizeResponse.model_validate(p) for p in prizes],
-        rules_text=et.rules_text if et else "",
+        rules_text=rendered,
         effective_min_fights=effective_min_fights,
-        rules_detail=rules_detail,
     )
 
 

@@ -459,6 +459,7 @@ class TestP6T3DBPagination:
             active_ship_id=None,
             bounty_notifications_enabled=True,
             shop_notifications_enabled=True,
+            event_notifications_enabled=True,
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
             updated_at=datetime(2025, 1, 1, tzinfo=UTC),
         )

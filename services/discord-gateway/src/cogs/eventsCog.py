@@ -201,11 +201,12 @@ class EventsCog(commands.Cog):
     # ------------------------------------------------------------------
 
     async def _events_autocomplete(
-        self, interaction: discord.Interaction, current: str, *, states: set[str]
+        self, interaction: discord.Interaction, current: str, *, states: set[str], limit: int | None = 25
     ) -> list[app_commands.Choice[str]]:
         """Zero-HTTP hot-path event autocomplete, filtered by allowed states.
 
         Peek → cold-fill within 1.0s budget (same contract as bounty_autocomplete).
+        Pass limit=None to skip the cap (caller is responsible for final [:25]).
         """
         try:
             guild_id = interaction.guild_id
@@ -225,7 +226,7 @@ class EventsCog(commands.Cog):
                 norm_label = e.get("_norm") or normalize_for_search(label)
                 if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=str(e["id"])))
-            return choices[:25]
+            return choices if limit is None else choices[:limit]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -345,28 +346,39 @@ class EventsCog(commands.Cog):
         return await self._events_autocomplete(interaction, current, states={"draft", "scheduled", "cancelled"})
 
     async def _ac_event_player(self, interaction, current):
-        """/event_leaderboard selector: active events and ended events within the last 7 days."""
-        choices = await self._events_autocomplete(interaction, current, states={"active", "ended"})
+        """/event_leaderboard selector: active events and ended events within the last 7 days.
+
+        Fetches all matching choices (no cap) then filters ended > 7 d, sorts active first,
+        and caps at 25.  This prevents old ended events from crowding out live ones when
+        the raw cache exceeds 25 entries.
+        """
+        # ponytail: limit=None — caller caps; avoids a second cache peek
+        all_choices = await self._events_autocomplete(interaction, current, states={"active", "ended"}, limit=None)
+        if not all_choices:
+            return []
         cutoff = datetime.now(UTC) - timedelta(days=7)
-        # Post-filter: drop ended events older than 7 days.
-        # Cache entries have "ends_at" and "state" attached by _fetch_events.
         guild_id = interaction.guild_id
         events = self._events_cache.peek(guild_id) or []
         by_id = {str(e["id"]): e for e in events}
-        out = []
-        for ch in choices:
+        active: list[app_commands.Choice[str]] = []
+        recent_ended: list[tuple[datetime, app_commands.Choice[str]]] = []
+        for ch in all_choices:
             e = by_id.get(ch.value, {})
             if e.get("state") == "ended":
                 ts_str = e.get("ends_at")
-                if ts_str:
-                    try:
-                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                        if ts < cutoff:
-                            continue
-                    except (ValueError, TypeError):
-                        pass
-            out.append(ch)
-        return out
+                if not ts_str:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if ts < cutoff:
+                        continue
+                    recent_ended.append((ts, ch))
+                except (ValueError, TypeError):
+                    pass
+            else:
+                active.append(ch)
+        recent_ended.sort(key=lambda x: x[0], reverse=True)
+        return (active + [ch for _, ch in recent_ended])[:25]
 
     async def _ac_event_selector_events(self, interaction, current):
         """/events selector: only active and scheduled events."""
@@ -864,20 +876,25 @@ class EventsCog(commands.Cog):
         try:
             player_cog = self.bot.get_cog("PlayerCog")
             if player_cog is not None and isinstance(interaction.user, discord.Member):
-                player_resp = await self.http_client.get(
+                # POST /players/ = get-or-create upsert; GET /players/ is not served (405).
+                player_resp = await self.http_client.post(
                     f"{api_base}/players/",
-                    params={"discord_id": interaction.user.id, "guild_id": interaction.guild_id},
+                    json={
+                        "discord_id": interaction.user.id,
+                        "guild_id": interaction.guild_id,
+                        "discord_username": str(interaction.user),
+                        "display_name": getattr(interaction.user, "display_name", None),
+                    },
                     timeout=5,
                 )
-                if player_resp.status_code == 200:
-                    players = player_resp.json()
-                    if players:
-                        await player_cog._sync_player_notification_roles(
-                            interaction.guild,
-                            interaction.user,
-                            interaction.guild_id,
-                            players[0],
-                        )
+                player_resp.raise_for_status()
+                player_data = player_resp.json()
+                await player_cog._sync_player_notification_roles(
+                    interaction.guild,
+                    interaction.user,
+                    interaction.guild_id,
+                    player_data,
+                )
         except Exception:  # pylint: disable=broad-exception-caught
             pass  # non-fatal — primary command already responded
 

@@ -613,3 +613,189 @@ class TestEventsDetailRulesDetail:
         assert "Prizes require at least 3 battles" in embed.description, (
             f"rules_detail prize line missing from description: {embed.description!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Item 3: /events no-arg list — embed field values must contain <t: timestamps
+# ---------------------------------------------------------------------------
+
+
+class TestEventsListTimestamp:
+    def test_list_embed_fields_contain_discord_ts(self, events_cog):
+        """No-arg /events list — embed field values must contain Discord <t:...> relative timestamps."""
+        future_end = (datetime.now(UTC) + timedelta(hours=10)).isoformat()
+        events_payload = [
+            {
+                "id": 100,
+                "type_slug": "bounty_caps",
+                "type_display": "Bounty Caps",
+                "state": "active",
+                "ends_at": future_end,
+                "scheduled_start_at": None,
+                "prize_count": 2,
+            }
+        ]
+
+        async def _mock_get(url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.raise_for_status = MagicMock()
+            resp.json = MagicMock(return_value=events_payload)
+            return resp
+
+        events_cog.http_client.get = AsyncMock(side_effect=_mock_get)
+        # Role-sync POST — non-fatal; route via None get_cog so the try block exits early
+        events_cog.bot.get_cog = MagicMock(return_value=None)
+
+        interaction = _create_mock_interaction()
+        interaction.guild = MagicMock()
+        interaction.guild.name = "TestGuild"
+        interaction.guild_id = 987654321
+
+        import discord
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 111111111
+        interaction.user.__str__ = MagicMock(return_value="TestUser#0001")
+        interaction.user.display_name = "TestUser"
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        captured_embeds = []
+
+        async def _followup_send(*args, embed=None, **kwargs):
+            if embed is not None:
+                captured_embeds.append(embed)
+
+        interaction.followup.send = AsyncMock(side_effect=_followup_send)
+
+        asyncio.run(events_cog.events.callback(events_cog, interaction, event=None))
+
+        assert captured_embeds, "expected embed for non-empty events list"
+        embed = captured_embeds[0]
+        assert embed.fields, "embed must have at least one field"
+        field_values = [f.value for f in embed.fields]
+        assert any("<t:" in v for v in field_values), (
+            f"embed field must contain Discord timestamp <t:...; got field values: {field_values}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bug 1: Role sync must use POST /players/ (upsert), never GET /players/?
+# ---------------------------------------------------------------------------
+
+
+class TestEventsRoleSyncPost:
+    def test_role_sync_uses_post_not_get(self, events_cog):
+        """POST /players/ must be used for player lookup, not GET /players/?discord_id=...
+
+        bot-core responds 405 to GET /players/ — the old code silently never synced roles.
+        Fails before fix (GET is called); passes after fix (POST is called, sync awaited).
+        """
+        player_cog = MagicMock()
+        player_cog._sync_player_notification_roles = AsyncMock()
+        events_cog.bot.get_cog = MagicMock(return_value=player_cog)
+
+        player_payload = {"id": 7, "tier": "Alpha", "notification_roles": []}
+        get_calls: list[str] = []
+
+        async def _mock_get(url, **kwargs):
+            get_calls.append(url)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.raise_for_status = MagicMock()
+            resp.json = MagicMock(return_value=[])
+            return resp
+
+        async def _mock_post(url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.raise_for_status = MagicMock()
+            resp.json = MagicMock(return_value=player_payload)
+            return resp
+
+        events_cog.http_client.get = AsyncMock(side_effect=_mock_get)
+        events_cog.http_client.post = AsyncMock(side_effect=_mock_post)
+
+        interaction = _create_mock_interaction()
+        interaction.guild = MagicMock()
+        interaction.guild.name = "TestGuild"
+        interaction.guild_id = 987654321
+
+        import discord
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 111111111
+        interaction.user.__str__ = MagicMock(return_value="TestUser#0001")
+        interaction.user.display_name = "TestUser"
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        asyncio.run(events_cog.events.callback(events_cog, interaction, event=None))
+
+        # No GET call should target /players/
+        players_gets = [u for u in get_calls if "players" in u]
+        assert not players_gets, (
+            f"GET /players/ must not be called (bot-core returns 405); got: {players_gets}"
+        )
+        # POST /players/ must be called
+        events_cog.http_client.post.assert_awaited_once()
+        # sync must be awaited with the POST-returned player payload
+        player_cog._sync_player_notification_roles.assert_awaited_once()
+        assert player_cog._sync_player_notification_roles.call_args.args[3] == player_payload, (
+            f"sync must receive player_payload from POST; got: "
+            f"{player_cog._sync_player_notification_roles.call_args}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bug 2: _ac_event_player cap applied BEFORE 7-day filter crowds out live events
+# ---------------------------------------------------------------------------
+
+
+class TestPlayerSelectorCapOrdering:
+    """Pre-loads 40 old-ended events so the raw 25-cap excludes live events."""
+
+    @staticmethod
+    def _load_crowded_cache(events_cog):
+        old_end = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+        recent_end = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+        events = [_make_event(i, state="ended", ends_at=old_end) for i in range(1, 41)]
+        events.append(_make_event(41, state="active"))
+        events.append(_make_event(42, state="scheduled"))
+        events.append(_make_event(43, state="ended", ends_at=recent_end))
+        events_cog._events_cache.set(987654321, events)
+
+    def test_active_not_crowded_out_by_old_ended(self, events_cog):
+        """Active event must appear in /event_leaderboard selector despite 40 old-ended events.
+
+        Fails before fix (old-ended events fill the 25-cap, active is never reached);
+        passes after fix (filter then cap).
+        """
+        self._load_crowded_cache(events_cog)
+        interaction = _create_mock_interaction()
+        res = asyncio.run(events_cog._ac_event_player(interaction, ""))
+        values = [c.value for c in res]
+        assert "41" in values, f"Active event #41 must not be crowded out; got: {values}"
+        for i in range(1, 41):
+            assert str(i) not in values, f"Old ended event #{i} must not appear; got: {values}"
+
+    def test_recent_ended_included_despite_crowd(self, events_cog):
+        """2-day-old ended event must appear alongside the active event.
+
+        Fails before fix; passes after fix.
+        """
+        self._load_crowded_cache(events_cog)
+        interaction = _create_mock_interaction()
+        res = asyncio.run(events_cog._ac_event_player(interaction, ""))
+        values = [c.value for c in res]
+        assert "43" in values, f"Recent ended event #43 must appear; got: {values}"
+
+    def test_events_selector_active_and_scheduled_survive_crowd(self, events_cog):
+        """_ac_event_selector_events must surface active + scheduled regardless of old-ended count."""
+        self._load_crowded_cache(events_cog)
+        interaction = _create_mock_interaction()
+        res = asyncio.run(events_cog._ac_event_selector_events(interaction, ""))
+        values = [c.value for c in res]
+        assert "41" in values, f"Active event #41 must appear in /events selector; got: {values}"
+        assert "42" in values, f"Scheduled event #42 must appear in /events selector; got: {values}"
+        for i in range(1, 41):
+            assert str(i) not in values, f"Old ended event #{i} must not be in /events selector"

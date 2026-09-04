@@ -661,6 +661,165 @@ async def refresh_shop_cache(bot) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) -> dict:
+    """Sync Discord notification roles for one guild.
+
+    (a) If event_announcements_role_id is NULL: find-or-create via guild_setup
+        helper and persist via config update API.
+    (b) Fetch players for the guild (from player_cache if it has the three
+        *_notifications_enabled flags, else GET /players/guild/{guild_id}).
+    (c) For each player: get member from guild, compute desired role set
+        from flags, add any missing roles (add-only, never removes).
+
+    When dry_run=True, skips add_roles but still counts what would be added.
+
+    Returns counts: {players_scanned, roles_added, not_found, failures}.
+    # ponytail: add-only; removal requires an explicit /notifications call or /unregister
+    """
+    from utils.guild_setup import _find_or_create_event_announcements_role
+
+    client = autocomplete_state.get_http_client()
+    api_base_url = autocomplete_state.get_api_base()
+    guild_id = guild.id
+    counts = {"players_scanned": 0, "roles_added": 0, "not_found": 0, "failures": 0}
+
+    try:
+        # Fetch guild config
+        cfg_resp = await with_transient_retry(client.get, f"{api_base_url}/config/guild/{guild_id}", timeout=5)
+        cfg = cfg_resp.json()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"sync_notification_roles: guild={guild_id}: config fetch failed: {exc}")
+        return counts
+
+    # (a) find-or-create event_announcements_role_id when NULL
+    event_role_id = cfg.get("event_announcements_role_id")
+    if not event_role_id:
+        role = await _find_or_create_event_announcements_role(guild)
+        if role is not None:
+            event_role_id = role.id
+            if not dry_run:
+                try:
+                    await with_transient_retry(
+                        client.put,
+                        f"{api_base_url}/config/guild/{guild_id}",
+                        json={"guild_id": guild_id, "event_announcements_role_id": event_role_id},
+                        timeout=5,
+                    )
+                    flogger.info(
+                        "sync_notification_roles: guild=%s: persisted event_announcements_role_id=%s",
+                        guild_id,
+                        event_role_id,
+                    )
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"sync_notification_roles: guild={guild_id}: failed to persist event_role_id: {exc}"
+                    )
+
+    # (b) Fetch players — prefer player_cache payload (already has flags), else API call
+    players: list[dict] = []
+    try:
+        cached = autocomplete_state.player_cache
+        if cached is not None:
+            raw_players = cached.get(guild_id, [])
+            # Each entry is a NormalizedChoice with .raw = player dict if flags present
+            has_flags = raw_players and isinstance(raw_players[0].raw, dict) and "event_notifications_enabled" in raw_players[0].raw  # noqa: E501
+            if has_flags:
+                players = [p.raw for p in raw_players]
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+    if not players:
+        try:
+            pr = await with_transient_retry(
+                client.get, f"{api_base_url}/players/guild/{guild_id}", timeout=10
+            )
+            players = pr.json()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"sync_notification_roles: guild={guild_id}: player fetch failed: {exc}")
+            return counts
+
+    # (c) Per-member role assignment
+    shop_role_id = cfg.get("shop_announcements_role_id")
+    tier_role_keys = {
+        "bronze": cfg.get("bronze_role_id"),
+        "silver": cfg.get("silver_role_id"),
+        "gold": cfg.get("gold_role_id"),
+        "platinum": cfg.get("platinum_role_id"),
+    }
+
+    for player in players:
+        counts["players_scanned"] += 1
+        discord_id = player.get("user_id") or player.get("discord_id")
+        if not discord_id:
+            continue
+        try:
+            member = guild.get_member(discord_id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(discord_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    counts["not_found"] += 1
+                    continue
+
+            roles_to_add: list = []
+            member_role_ids = {r.id for r in member.roles}
+
+            # Tier role (bounty flag)
+            bounty_flag = bool(player.get("bounty_notifications_enabled", True))
+            tier = (player.get("tier") or "bronze").lower()
+            tier_rid = tier_role_keys.get(tier)
+            if bounty_flag and tier_rid and tier_rid not in member_role_ids:
+                r = guild.get_role(tier_rid)
+                if r:
+                    roles_to_add.append(r)
+
+            # Shop role
+            shop_flag = bool(player.get("shop_notifications_enabled", True))
+            if shop_flag and shop_role_id and shop_role_id not in member_role_ids:
+                r = guild.get_role(shop_role_id)
+                if r:
+                    roles_to_add.append(r)
+
+            # Event role
+            event_flag = bool(player.get("event_notifications_enabled", True))
+            if event_flag and event_role_id and event_role_id not in member_role_ids:
+                r = guild.get_role(event_role_id)
+                if r:
+                    roles_to_add.append(r)
+
+            if roles_to_add:
+                counts["roles_added"] += len(roles_to_add)
+                if not dry_run:
+                    await member.add_roles(*roles_to_add, reason="BountyBot notification role sync")
+                    flogger.debug(
+                        f"sync_notification_roles: guild={guild_id} user={discord_id} "
+                        f"added {[r.name for r in roles_to_add]}"
+                    )
+            if not dry_run:
+                await asyncio.sleep(0.3)  # ponytail: global rate-limit guard; per-account locks if throughput matters
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.warning(
+                f"sync_notification_roles: guild={guild_id} user={discord_id}: member failed: {exc}"
+            )
+            counts["failures"] += 1
+
+    flogger.info(
+        f"sync_notification_roles: guild={guild_id} scanned={counts['players_scanned']} "
+        f"added={counts['roles_added']} not_found={counts['not_found']} failures={counts['failures']}"
+        + (" [dry_run]" if dry_run else "")
+    )
+
+    return counts
+
+
+async def sync_notification_roles_all_guilds(bot) -> dict:
+    """Sync notification roles for all guilds. Thin loop over sync_guild_notification_roles."""
+    results: dict = {}
+    for guild in bot.guilds:
+        results[guild.id] = await sync_guild_notification_roles(bot, guild)
+    return results
+
+
 def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
     """Register all autocomplete warm and refresh jobs with the given scheduler.
 
@@ -765,6 +924,8 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
     player_refresh_min = int(os.getenv("AUTOCOMPLETE_PLAYER_REFRESH_MINUTES", "10"))
     loadout_refresh_min = int(os.getenv("AUTOCOMPLETE_LOADOUT_REFRESH_MINUTES", "5"))
 
+    _recurring_jobs_start = len(scheduler.get_jobs())
+
     scheduler.add_job(
         refresh_all_guild_players,
         "interval",
@@ -838,4 +999,26 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
         args=[bot],
         replace_existing=True,
     )
-    flogger.info("register_warm_jobs: registered 9 recurring refresh jobs")
+    _n_recurring_refresh = len(scheduler.get_jobs()) - _recurring_jobs_start
+
+    # Notification role sync: 12h recurring + one-shot at T+60s
+    sync_hours = int(os.getenv("NOTIFICATION_ROLE_SYNC_HOURS", "12"))
+    scheduler.add_job(
+        sync_notification_roles_all_guilds,
+        "interval",
+        hours=sync_hours,
+        id="notification-role-sync",
+        args=[bot],
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        sync_notification_roles_all_guilds,
+        "date",
+        run_date=now + timedelta(seconds=60),
+        id="notification-role-sync-startup",
+        args=[bot],
+        replace_existing=True,
+    )
+    flogger.info(f"register_warm_jobs: registered {_n_recurring_refresh} recurring refresh jobs + notification-role-sync")  # noqa: E501

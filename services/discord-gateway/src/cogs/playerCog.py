@@ -1029,6 +1029,7 @@ class PlayerCog(commands.Cog):
         notification_type=[
             app_commands.Choice(name="Bounty Announcements", value="bounty"),
             app_commands.Choice(name="Shop Announcements", value="shop"),
+            app_commands.Choice(name="Event Announcements", value="event"),
         ],
         enabled=[
             app_commands.Choice(name="On", value=1),
@@ -1187,6 +1188,67 @@ class PlayerCog(commands.Cog):
                     f"guild={interaction.guild_id}, user={interaction.user.id}"
                 )
 
+            elif notification_type == "event":
+                event_role_id = config.get("event_announcements_role_id")
+                if not event_role_id:
+                    await interaction.followup.send(
+                        "❌ Event notifications aren't configured yet — ask an admin to re-run `/admin_setup`.",
+                        ephemeral=True,
+                    )
+                    return
+
+                event_role = guild.get_role(event_role_id)
+                if not event_role:
+                    await interaction.followup.send(
+                        "❌ Notification role not found — ask an admin to re-run `/admin_setup`.", ephemeral=True
+                    )
+                    return
+
+                event_user_data = {
+                    "discord_id": interaction.user.id,
+                    "guild_id": interaction.guild_id,
+                    "discord_username": None,
+                    "display_name": getattr(interaction.user, "display_name", None),
+                }
+                event_player_resp = await self.http_client.post(
+                    f"{api_base}/players/", json=event_user_data, timeout=10
+                )
+                if event_player_resp.status_code == 400:
+                    await interaction.followup.send("❌ Run `/profile` first to register as a player.", ephemeral=True)
+                    return
+                event_player_resp.raise_for_status()
+                event_player_data = event_player_resp.json()
+
+                await self._persist_notification_preference(event_player_data["id"], "event", bool(enabled))
+
+                try:
+                    member = interaction.user
+                    if enabled:
+                        if event_role not in member.roles:
+                            await member.add_roles(event_role, reason="BountyBot event notification opt-in")
+                        embed = discord.Embed(
+                            title="🔔 Event notifications enabled",
+                            description="You will be mentioned when events are announced.",
+                            color=discord.Color.green(),
+                        )
+                    else:
+                        if event_role in member.roles:
+                            await member.remove_roles(event_role, reason="BountyBot event notification opt-out")
+                        embed = discord.Embed(
+                            title="🔕 Event notifications disabled",
+                            description="You won't be mentioned when events are announced.",
+                            color=discord.Color.greyple(),
+                        )
+                except discord.Forbidden:
+                    await interaction.followup.send("❌ Bot doesn't have permission to manage roles.", ephemeral=True)
+                    return
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                flogger.info(
+                    f"/notifications event {'on' if enabled else 'off'}: "
+                    f"guild={interaction.guild_id}, user={interaction.user.id}"
+                )
+
         except httpx.HTTPStatusError as e:
             flogger.error(
                 f"/notifications HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
@@ -1228,7 +1290,7 @@ class PlayerCog(commands.Cog):
                 await interaction.followup.send("⚠️ Bounty Hunter role not found in this guild.", ephemeral=True)
                 return
 
-            # Collect all BH-related role IDs from config (generic + 4 tier roles + shop announcements)
+            # Collect all BH-related role IDs from config (generic + 4 tier roles + shop/event announcements)
             extra_role_ids: list[int] = [
                 rid
                 for rid in [
@@ -1237,6 +1299,7 @@ class PlayerCog(commands.Cog):
                     config.get("gold_role_id"),
                     config.get("platinum_role_id"),
                     config.get("shop_announcements_role_id"),
+                    config.get("event_announcements_role_id"),
                 ]
                 if rid is not None
             ]
@@ -1376,6 +1439,17 @@ class PlayerCog(commands.Cog):
                         roles_to_add.append(shop_role)
                     elif not shop_enabled and shop_role in member.roles:
                         roles_to_remove.append(shop_role)
+
+            # Event role — projection of event_notifications_enabled.
+            event_enabled = bool(player_data.get("event_notifications_enabled", True))
+            event_role_id = config.get("event_announcements_role_id")
+            if event_role_id:
+                event_role = guild.get_role(event_role_id)
+                if event_role:
+                    if event_enabled and event_role not in member.roles:
+                        roles_to_add.append(event_role)
+                    elif not event_enabled and event_role in member.roles:
+                        roles_to_remove.append(event_role)
 
             if roles_to_add:
                 await member.add_roles(*roles_to_add, reason="BountyBot notification preference sync")

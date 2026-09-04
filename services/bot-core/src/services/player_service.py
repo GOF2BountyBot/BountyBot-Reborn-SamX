@@ -226,9 +226,14 @@ class PlayerService:
             raise
 
     async def update_player_credits(
-        self, db: AsyncSession, player_id: int, new_credits: int, update_lifetime: bool = True
+        self, db: AsyncSession, player_id: int, new_credits: int, update_lifetime: bool = True, commit: bool = True
     ) -> Player:
-        """Update player credits and optionally lifetime credits."""
+        """Update player credits and optionally lifetime credits.
+
+        commit=False: flush only — caller owns the transaction (e.g. event payout inside
+        an outer db.begin() block). commit=True (default): self-commits as before, used by
+        standalone endpoints (PUT /players/{id}/credits, admin credits route).
+        """
         try:
             # D5-T2: lock the aggregate-root Player row FIRST (FOR UPDATE) before the
             # credits/lifetime_credits read-modify-write.  PUT /players/{id}/credits
@@ -236,10 +241,16 @@ class PlayerService:
             # with no outer lock, so without this lock two concurrent admin credit
             # sets on the same player could interleave and lose an update (e.g. the
             # lifetime_credits accumulation, computed from the pre-read balance).
-            # This method owns its own transaction (it commits below), so the lock
-            # is held by the session autobegin until that commit — no router
-            # db.begin() is required (and would conflict with the internal commit).
-            player = await self.player_repo.get_by_id_for_update(db, player_id)
+            # When commit=True this method owns its own transaction (it commits below);
+            # when commit=False the caller's db.begin() owns the transaction — the FOR
+            # UPDATE lock is redundant there, and get_by_id_for_update's populate_existing=True
+            # would clear eagerly-loaded relationships (e.g. player.user) causing lazy-load
+            # MissingGreenlet errors.  Use session.get() which returns from the identity map
+            # without overwriting loaded relationship state.
+            if commit:
+                player = await self.player_repo.get_by_id_for_update(db, player_id)
+            else:
+                player = await db.get(Player, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -271,8 +282,11 @@ class PlayerService:
                         f"for player_id={player_id}: {_duel_exc}"
                     )
 
-            await db.commit()
-            await db.refresh(player)
+            if commit:
+                await db.commit()
+                await db.refresh(player)
+            else:
+                await db.flush()
 
             flogger.debug(f"Updated credits for player {player_id}: {new_credits}")
             return player

@@ -233,19 +233,20 @@ async def add_prize(event_id: int, body: AddPrizeRequest, guild_id: int = Query(
         raise HTTPException(status_code=400, detail=f"item_ref is required for {body.kind} prizes")
 
     async with get_db_session() as db:
-        # Validate item/ship existence
-        if body.kind == "item":
-            inv_svc = InventoryService()
-            item_details = await inv_svc.get_item_details(db, body.item_ref)  # type: ignore[arg-type]
-            if not item_details:
-                raise HTTPException(status_code=400, detail=f"Item {body.item_ref!r} not in game catalog")
-        elif body.kind == "ship":
-            ship_repo = ShipRepository()
-            game_ship = await ship_repo.get_by_name(db, body.item_ref)  # type: ignore[arg-type]
-            if not game_ship:
-                raise HTTPException(status_code=400, detail=f"Ship {body.item_ref!r} not in game catalog")
-
         async with db.begin():
+            # Validate item/ship existence inside the transaction — avoids autobegin before begin()
+            # which would cause InvalidRequestError: "A transaction is already begun on this Session".
+            if body.kind == "item":
+                inv_svc = InventoryService()
+                item_details = await inv_svc.get_item_details(db, body.item_ref)  # type: ignore[arg-type]
+                if not item_details:
+                    raise HTTPException(status_code=400, detail=f"Item {body.item_ref!r} not in game catalog")
+            elif body.kind == "ship":
+                ship_repo = ShipRepository()
+                game_ship = await ship_repo.get_by_name(db, body.item_ref)  # type: ignore[arg-type]
+                if not game_ship:
+                    raise HTTPException(status_code=400, detail=f"Ship {body.item_ref!r} not in game catalog")
+
             ev_result = await db.execute(select(GameEvent).where(GameEvent.id == event_id))
             event = _load_event_or_404(ev_result.scalar_one_or_none(), event_id, guild_id)
             _assert_state_or_409(event, "draft", "active")

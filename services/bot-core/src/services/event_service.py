@@ -332,7 +332,9 @@ async def medals(session: AsyncSession, guild_id: int, type_slug: str | None = N
     from persist.models.player import Player
     from sqlalchemy.orm import selectinload
 
-    q = select(EventResult).where(EventResult.guild_id == guild_id, EventResult.qualified.is_(True))
+    # ponytail: qualified is an Integer(0/1) column; is_(True) → "IS TRUE" fails on Postgres.
+    # Use == 1 until the column is migrated to Boolean (follow-up task).
+    q = select(EventResult).where(EventResult.guild_id == guild_id, EventResult.qualified == 1)
     if type_slug:
         q = q.where(EventResult.type_slug == type_slug)
     result = await session.execute(q)
@@ -636,7 +638,10 @@ async def end_event(
                     # ponytail: update_player_credits uses FOR UPDATE — redundant here since payout
                     # is one-shot (event state already "ended" via idempotency guard above), but
                     # reusing the service ensures lifetime_credits is updated consistently.
-                    await PlayerService().update_player_credits(session, player.id, player.credits + slot.qty)
+                    # commit=False: caller (router / tick executor) owns the transaction via db.begin().
+                    await PlayerService().update_player_credits(
+                        session, player.id, player.credits + slot.qty, commit=False
+                    )
                     prize_parts[pid].append(f"{rank_label}: {slot.qty:,} credits")
                 elif slot.kind == "item":
                     if not slot.item_ref:

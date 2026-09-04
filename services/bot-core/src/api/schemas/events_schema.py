@@ -91,6 +91,7 @@ class EventDetailResponse(EventResponse):
     prizes: list[PrizeResponse] = Field(default_factory=list)
     rules_text: str = ""
     effective_min_fights: int = 1
+    rules_detail: list[str] = Field(default_factory=list)
 
 
 class StandingEntry(BaseModel):
@@ -98,7 +99,7 @@ class StandingEntry(BaseModel):
     user_id: int
     display_name: str
     value: float
-    rank: int
+    rank: int | None
     qualified: bool
 
 

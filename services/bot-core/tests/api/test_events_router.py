@@ -781,8 +781,9 @@ class TestMinFightsParam:
         assert resp.status_code == 400
         assert "min_fights" in resp.json().get("detail", "").lower()
 
+    @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock, return_value=None)
     @patch("api.routers.events.get_db_session")
-    def test_effective_min_fights_in_detail_response(self, mock_db, client, db_ctx):
+    def test_effective_min_fights_in_detail_response(self, mock_db, mock_cfg, client, db_ctx):
         """GET /events/{id} includes effective_min_fights from event params."""
         mock_session, mock_cm = db_ctx
         mock_db.return_value = mock_cm
@@ -799,3 +800,178 @@ class TestMinFightsParam:
         data = resp.json()
         assert "effective_min_fights" in data, f"effective_min_fights missing from response: {list(data)}"
         assert data["effective_min_fights"] == 5
+
+
+# ---------------------------------------------------------------------------
+# item 1: standings with rank=None (unqualified player) → 200, qualified=false
+# ---------------------------------------------------------------------------
+
+
+class TestStandingsRankNone:
+    @patch("api.routers.events.get_db_session")
+    @patch("api.routers.events.event_service.live_standings", new_callable=AsyncMock)
+    def test_rank_none_unqualified_200(self, mock_standings, mock_db, client, db_ctx):
+        """A standing with rank=None (unqualified) serialises to 200 and qualified=false."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        ev = make_event(state="active")
+        mock_session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=lambda: ev))
+
+        mock_standings.return_value = [
+            {
+                "player_id": 1,
+                "user_id": 1001,
+                "display_name": "Alice",
+                "value": 5.0,
+                "rank": 1,
+                "qualified": True,
+            },
+            {
+                "player_id": 2,
+                "user_id": 1002,
+                "display_name": "Bob",
+                "value": 0.0,
+                "rank": None,          # unqualified — the bug-fix path
+                "qualified": False,
+            },
+        ]
+
+        resp = client.get("/api/v1/events/1/standings")
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert len(rows) == 2
+        bob = next(r for r in rows if r["display_name"] == "Bob")
+        assert bob["rank"] is None
+        assert bob["qualified"] is False
+
+
+# ---------------------------------------------------------------------------
+# item 3: required param validation — secondary_fired without subtype → 400
+# ---------------------------------------------------------------------------
+
+
+class TestRequiredParams:
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    def test_secondary_fired_without_subtype_400(self, mock_admin, client):
+        """POST /events with type=secondary_fired but no subtype param → 400."""
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "secondary_fired", "duration_days": 7, "params": {}},
+        )
+        assert resp.status_code == 400
+        assert "subtype" in resp.json()["detail"]
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    def test_module_activations_without_module_400(self, mock_admin, client):
+        """POST /events with type=module_activations but no module param → 400."""
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "module_activations", "duration_days": 7, "params": {}},
+        )
+        assert resp.status_code == 400
+        assert "module" in resp.json()["detail"]
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    def test_kills_by_weapon_without_weapon_400(self, mock_admin, client):
+        """POST /events with type=kills_by_weapon but no weapon param → 400."""
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "kills_by_weapon", "duration_days": 7, "params": {}},
+        )
+        assert resp.status_code == 400
+        assert "weapon" in resp.json()["detail"]
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    @patch("api.routers.events.AuditService.log_action", new_callable=AsyncMock)
+    def test_secondary_fired_with_subtype_accepted(self, mock_audit, mock_db, mock_admin, client, db_ctx):
+        """POST /events with type=secondary_fired and valid subtype → not 400."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        ev = make_event(type_slug="secondary_fired", params={"subtype": "nuke"})
+        mock_session.flush = AsyncMock()
+        mock_session.refresh = AsyncMock()
+
+        def _add(obj):
+            obj.id = 1
+            obj.guild_id = 99
+            obj.type_slug = "secondary_fired"
+            obj.params = {"subtype": "nuke"}
+            obj.duration_days = 7
+            obj.state = "draft"
+            from datetime import UTC, datetime
+            obj.created_at = datetime.now(UTC)
+            obj.updated_at = datetime.now(UTC)
+            obj.scheduled_start_at = None
+            obj.started_at = None
+            obj.ends_at = None
+            obj.created_by_user_id = 42
+
+        mock_session.add = MagicMock(side_effect=_add)
+
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "secondary_fired", "duration_days": 7,
+                  "params": {"subtype": "nuke"}},
+        )
+        assert resp.status_code != 400 or "subtype" not in resp.json().get("detail", "")
+
+
+# ---------------------------------------------------------------------------
+# item 6: rules_detail content for duel event with min_fights=3 and stakes 1000
+# ---------------------------------------------------------------------------
+
+
+class TestRulesDetail:
+    @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock)
+    @patch("api.routers.events.get_db_session")
+    def test_duel_event_rules_detail(self, mock_db, mock_cfg, client, db_ctx):
+        """GET /events/{id} includes rules_detail for a duel event."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+
+        # Config: stakes floor = 1000
+        cfg_mock = MagicMock()
+        cfg_mock.event_min_duel_stakes = 1000
+        mock_cfg.return_value = cfg_mock
+
+        ev = make_event(type_slug="duels_won", params={"min_fights": 3})
+        mock_session.execute = AsyncMock(
+            side_effect=[
+                MagicMock(scalar_one_or_none=lambda: ev),
+                MagicMock(scalars=lambda: MagicMock(all=lambda: [])),
+            ]
+        )
+
+        resp = client.get("/api/v1/events/1")
+        assert resp.status_code == 200
+        data = resp.json()
+        detail = data.get("rules_detail", [])
+        assert any("1,000" in line for line in detail), f"stake amount missing: {detail}"
+        assert any("3" in line and "battles" in line for line in detail), f"min_fights line missing: {detail}"
+
+    @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock)
+    @patch("api.routers.events.get_db_session")
+    def test_bounty_event_rules_detail_says_checks(self, mock_db, mock_cfg, client, db_ctx):
+        """Bounty event rules_detail says 'checks' not 'battles'."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+
+        cfg_mock = MagicMock()
+        cfg_mock.event_min_duel_stakes = 500
+        mock_cfg.return_value = cfg_mock
+
+        ev = make_event(type_slug="bounty_caps", params={})
+        mock_session.execute = AsyncMock(
+            side_effect=[
+                MagicMock(scalar_one_or_none=lambda: ev),
+                MagicMock(scalars=lambda: MagicMock(all=lambda: [])),
+            ]
+        )
+
+        resp = client.get("/api/v1/events/1")
+        assert resp.status_code == 200
+        data = resp.json()
+        detail = data.get("rules_detail", [])
+        assert any("checks" in line for line in detail), f"'checks' missing from detail: {detail}"
+        assert not any("battles" in line for line in detail), f"'battles' should not appear: {detail}"

@@ -16,7 +16,7 @@ from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.ship_repository import ShipRepository
 from services.audit_service import AuditService
 from services.combat_resolver import _ACTIVATION_MODULES
-from services.event_types import EVENT_TYPES
+from services.event_types import EVENT_TYPES, build_rules_detail
 from services.inventory_service import InventoryService
 from shared import bblogger
 from sqlalchemy import func, select
@@ -79,12 +79,22 @@ def _validate_params(type_slug: str, params: dict) -> None:
         raise HTTPException(status_code=400, detail=f"Unknown event type: {type_slug!r}")
     # Infer which param keys this type accepts from its metric templates
     accepted: set[str] = set()
+    required: set[str] = set()
     for tmpl in et.metrics:
         for key in _KNOWN_PARAM_KEYS:
             if f"{{{key}}}" in tmpl:
                 accepted.add(key)
-    # division and min_fights are accepted by all types
+                if key not in {"division", "min_fights"}:
+                    required.add(key)
+    # division and min_fights are accepted by all types but never required
     accepted |= {"division", "min_fights"}
+    # Require placeholder params to be present (e.g. secondary_fired needs subtype)
+    for key in required:
+        if key not in params:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Param {key!r} is required for type {type_slug!r}",
+            )
     for key in params:
         if key not in accepted:
             raise HTTPException(status_code=400, detail=f"Param {key!r} not accepted by type {type_slug!r}")
@@ -518,15 +528,19 @@ async def get_event(event_id: int):
         event = _load_event_or_404(ev_result.scalar_one_or_none(), event_id)
         pr_result = await db.execute(select(GameEventPrize).where(GameEventPrize.event_id == event_id))
         prizes = pr_result.scalars().all()
+        config = await _config_repo.get_by_guild_id(db, event.guild_id)
 
     et = EVENT_TYPES.get(event.type_slug)
     params = event.params or {}
     effective_min_fights = params.get("min_fights", et.default_min_fights if et else 1)
+    min_duel_stakes: int = config.event_min_duel_stakes if config else 1000
+    rules_detail = build_rules_detail(et, params, min_duel_stakes, effective_min_fights) if et else []
     return EventDetailResponse(
         **EventResponse.model_validate(event).model_dump(),
         prizes=[PrizeResponse.model_validate(p) for p in prizes],
         rules_text=et.rules_text if et else "",
         effective_min_fights=effective_min_fights,
+        rules_detail=rules_detail,
     )
 
 

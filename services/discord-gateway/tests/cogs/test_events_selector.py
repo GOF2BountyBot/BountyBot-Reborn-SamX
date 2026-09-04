@@ -269,6 +269,51 @@ class TestPlayerEventSelector:
         res = asyncio.run(events_cog._ac_event_player(interaction, ""))
         assert len(res) == 1
 
+    def test_scheduled_excluded_from_leaderboard(self, events_cog):
+        """Scheduled events are NOT shown in the /event_leaderboard selector."""
+        events_cog._events_cache.set(987654321, [_make_event(15, state="scheduled")])
+        interaction = _create_mock_interaction()
+        res = asyncio.run(events_cog._ac_event_player(interaction, ""))
+        assert res == [], "Scheduled events must not appear in the leaderboard selector"
+
+
+# ---------------------------------------------------------------------------
+# _ac_event_selector_events — /events command: active + scheduled only
+# ---------------------------------------------------------------------------
+
+
+class TestEventsCommandSelector:
+    def test_active_included(self, events_cog):
+        """Active events appear in the /events selector."""
+        events_cog._events_cache.set(987654321, [_make_event(20, state="active")])
+        interaction = _create_mock_interaction()
+        res = asyncio.run(events_cog._ac_event_selector_events(interaction, ""))
+        assert len(res) == 1
+        assert res[0].value == "20"
+
+    def test_scheduled_included(self, events_cog):
+        """Scheduled events appear in the /events selector."""
+        events_cog._events_cache.set(987654321, [_make_event(21, state="scheduled")])
+        interaction = _create_mock_interaction()
+        res = asyncio.run(events_cog._ac_event_selector_events(interaction, ""))
+        assert len(res) == 1
+        assert res[0].value == "21"
+
+    def test_ended_excluded_from_events_selector(self, events_cog):
+        """Ended events are NOT shown in the /events selector."""
+        recent_end = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        events_cog._events_cache.set(987654321, [_make_event(22, state="ended", ends_at=recent_end)])
+        interaction = _create_mock_interaction()
+        res = asyncio.run(events_cog._ac_event_selector_events(interaction, ""))
+        assert res == [], "Ended events must not appear in the /events selector"
+
+    def test_draft_excluded_from_events_selector(self, events_cog):
+        """Draft events are NOT shown in the /events selector."""
+        events_cog._events_cache.set(987654321, [_make_event(23, state="draft")])
+        interaction = _create_mock_interaction()
+        res = asyncio.run(events_cog._ac_event_selector_events(interaction, ""))
+        assert res == []
+
 
 # ---------------------------------------------------------------------------
 # _item_autocomplete — no type → empty; Credits → empty; Ship/Secondary filtered
@@ -458,15 +503,21 @@ class TestMinFightsGateway:
         assert params.get("min_fights") == 3, f"min_fights=3 should be in params, got: {params}"
 
     def test_leaderboard_qualify_footer_shown(self, events_cog):
-        """event_leaderboard shows Qualify: ≥N battles in footer when effective_min_fights is in detail."""
+        """event_leaderboard shows a 'Prizes require' footer line from rules_detail or effective_min_fights."""
         standings_payload = [
             {"rank": 1, "display_name": "Alice", "value": 5.0, "qualified": True, "user_id": 111},
         ]
+        # Include rules_detail the way the updated API returns it
         detail_payload = {
             "id": 99,
             "type_slug": "duels_won",
             "effective_min_fights": 3,
             "prizes": [],
+            "rules_detail": [
+                "Counts: duels with at least 1,000 credits at stake.",
+                "Prizes require at least 3 battles.",
+                "Losing still counts as taking part.",
+            ],
         }
 
         async def _mock_get(url, **kwargs):
@@ -498,5 +549,67 @@ class TestMinFightsGateway:
         embed = captured_embeds[0]
         # discord.Embed.set_footer stores the text in embed.footer.text
         footer_text = embed.footer.text if embed.footer else ""
-        assert "≥3" in footer_text, f"expected '≥3' in footer text, got: {footer_text!r}"
+        assert "Prizes require" in footer_text, f"expected 'Prizes require' in footer: {footer_text!r}"
+        assert "3" in footer_text, f"expected '3' in footer text, got: {footer_text!r}"
         assert "battles" in footer_text, f"expected 'battles' in footer text, got: {footer_text!r}"
+
+
+# ---------------------------------------------------------------------------
+# item 6c: /events detail renders rules_detail lines
+# ---------------------------------------------------------------------------
+
+
+class TestEventsDetailRulesDetail:
+    def test_rules_detail_lines_in_description(self, events_cog):
+        """/events with event= selected renders rules_detail lines in the embed description."""
+        detail_payload = {
+            "id": 7,
+            "type_slug": "duels_won",
+            "type_display": "Duels Won",
+            "state": "active",
+            "rules_text": "Win the most duels.",
+            "rules_detail": [
+                "Counts: duels with at least 1,000 credits at stake.",
+                "Prizes require at least 3 battles.",
+                "Losing still counts as taking part.",
+            ],
+            "prizes": [],
+            "effective_min_fights": 3,
+            "started_at": None,
+            "ends_at": None,
+            "scheduled_start_at": None,
+        }
+
+        async def _mock_get(url, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(return_value=detail_payload)
+            return resp
+
+        events_cog.http_client.get = AsyncMock(side_effect=_mock_get)
+
+        interaction = _create_mock_interaction()
+        interaction.guild = MagicMock()
+        interaction.guild.name = "TestGuild"
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        captured_embeds = []
+
+        async def _followup_send(*args, embed=None, **kwargs):
+            if embed is not None:
+                captured_embeds.append(embed)
+
+        interaction.followup.send = AsyncMock(side_effect=_followup_send)
+
+        asyncio.run(events_cog.events.callback(events_cog, interaction, event="7"))
+
+        assert captured_embeds, "expected embed to be sent"
+        embed = captured_embeds[0]
+        assert "1,000 credits" in embed.description, (
+            f"rules_detail stake line missing from description: {embed.description!r}"
+        )
+        assert "Prizes require at least 3 battles" in embed.description, (
+            f"rules_detail prize line missing from description: {embed.description!r}"
+        )

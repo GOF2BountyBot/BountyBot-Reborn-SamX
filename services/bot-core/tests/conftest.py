@@ -229,6 +229,7 @@ def make_mock_player(**overrides):
         bounty_cooldown_end=None,
         bounty_notifications_enabled=True,
         shop_notifications_enabled=True,
+        event_notifications_enabled=True,
         created_at=datetime(2026, 1, 1),
         updated_at=datetime(2026, 1, 1),
     )

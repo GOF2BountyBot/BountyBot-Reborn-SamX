@@ -977,6 +977,43 @@ class EventsCog(commands.Cog):
             await interaction.followup.send(embed=embed)
 
 
+    @app_commands.command(
+        name="admin_sync_roles",
+        description="[ADMIN] Force notification role sync for this guild",
+    )
+    @app_commands.describe(dry_run="If True, count what would change without adding roles")
+    async def admin_sync_roles(self, interaction: discord.Interaction, dry_run: bool = False) -> None:
+        """Force the notification role sync for the current guild and reply with counts."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
+
+        from utils.autocomplete_warm import sync_guild_notification_roles
+
+        guild = interaction.guild
+
+        try:
+            counts = await sync_guild_notification_roles(self.bot, guild, dry_run=dry_run)
+            prefix = "ℹ️ Dry run — " if dry_run else ""
+            lines = [
+                f"{prefix}Players scanned: **{counts.get('players_scanned', 0)}**",
+                f"Roles {'would be added' if dry_run else 'added'}: **{counts.get('roles_added', 0)}**",
+                f"Members not found: **{counts.get('not_found', 0)}**",
+                f"Failures: **{counts.get('failures', 0)}**",
+            ]
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.error(f"/admin_sync_roles error: guild={guild.id}: {exc}")
+            await interaction.followup.send(f"❌ Sync error: {exc}", ephemeral=True)
+
+    @admin_sync_roles.error
+    async def admin_sync_roles_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_sync_roles", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

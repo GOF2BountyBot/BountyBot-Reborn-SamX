@@ -93,6 +93,7 @@ async def create_or_get_player(
                 display_name=player.display_name,
                 bounty_notifications_enabled=player.bounty_notifications_enabled,
                 shop_notifications_enabled=player.shop_notifications_enabled,
+                event_notifications_enabled=player.event_notifications_enabled,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )
@@ -145,6 +146,7 @@ async def get_player(player_id: int, player_service: PlayerService = Depends(get
                 active_ship_id=player.active_ship_id,
                 bounty_notifications_enabled=player.bounty_notifications_enabled,
                 shop_notifications_enabled=player.shop_notifications_enabled,
+                event_notifications_enabled=player.event_notifications_enabled,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )
@@ -216,6 +218,7 @@ async def get_players_by_guild(
                     active_ship_id=player.active_ship_id,
                     bounty_notifications_enabled=player.bounty_notifications_enabled,
                     shop_notifications_enabled=player.shop_notifications_enabled,
+                    event_notifications_enabled=player.event_notifications_enabled,
                     created_at=player.created_at.isoformat(),
                     updated_at=player.updated_at.isoformat(),
                 )
@@ -256,6 +259,7 @@ async def update_player_credits(
                 active_ship_id=player.active_ship_id,
                 bounty_notifications_enabled=player.bounty_notifications_enabled,
                 shop_notifications_enabled=player.shop_notifications_enabled,
+                event_notifications_enabled=player.event_notifications_enabled,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )
@@ -296,6 +300,7 @@ async def update_player_xp(
                 active_ship_id=player.active_ship_id,
                 bounty_notifications_enabled=player.bounty_notifications_enabled,
                 shop_notifications_enabled=player.shop_notifications_enabled,
+                event_notifications_enabled=player.event_notifications_enabled,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )
@@ -315,9 +320,10 @@ async def update_notification_preference(
 ):
     """Persist a player's notification preference (D-019).
 
-    Writes the ``bounty_notifications_enabled`` / ``shop_notifications_enabled`` flag
-    selected by ``notification_type``. The stored flag is the source of truth; the
-    gateway syncs the corresponding Discord role to match after this returns.
+    Writes the ``bounty_notifications_enabled`` / ``shop_notifications_enabled`` /
+    ``event_notifications_enabled`` flag selected by ``notification_type``. The stored
+    flag is the source of truth; the gateway syncs the corresponding Discord role to
+    match after this returns.
     """
     flogger.info(
         f"Updating {request.notification_type} notification preference for player {player_id}: "
@@ -348,6 +354,7 @@ async def update_notification_preference(
                 active_ship_id=player.active_ship_id,
                 bounty_notifications_enabled=player.bounty_notifications_enabled,
                 shop_notifications_enabled=player.shop_notifications_enabled,
+                event_notifications_enabled=player.event_notifications_enabled,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )
@@ -457,7 +464,7 @@ async def combat_preflight(player_id: int, target_tier: str, num_sims: int = 20)
             player = await PlayerService().player_repo.get_by_id(db, player_id)
             if not player:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {player_id} not found")
-            # noqa: TRANSACTION_DISCIPLINE - preflight uses log_result=False; no DB writes
+            # TRANSACTION_DISCIPLINE - preflight uses log_result=False; no DB writes
             result = await CombatPreflightService().estimate(
                 db,
                 player_id=player_id,

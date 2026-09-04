@@ -43,6 +43,7 @@ class GuildConfig(Base):
     platinum_bounty_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     platinum_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     shop_announcements_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    event_announcements_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # Shop inventory size ranges (JSON objects with min/max values)
     ship_count_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 3, "max": 5})

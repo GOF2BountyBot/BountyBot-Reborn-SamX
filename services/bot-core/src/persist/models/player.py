@@ -58,6 +58,9 @@ class Player(Base):
     shop_notifications_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
+    event_notifications_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
     # Extended progression fields
     xp_surplus: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

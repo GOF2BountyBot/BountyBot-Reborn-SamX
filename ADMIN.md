@@ -79,7 +79,7 @@ This creates all required Discord infrastructure (channels, roles, category) and
 |------|------|
 | Category | BountyBot |
 | Channels | `#bronze-bounty-board`, `#silver-bounty-board`, `#gold-bounty-board`, `#platinum-bounties`, `#shop`, `#bounty-hunting`, `#bounty-discussions`, `#bot-images` (private) |
-| Roles | `Bounty Hunter`, `Bounty Hunter Bronze`, `Bounty Hunter Silver`, `Bounty Hunter Gold`, `Bounty Hunter Platinum`, `Shop Announcements` |
+| Roles | `Bounty Hunter`, `Bounty Hunter Bronze`, `Bounty Hunter Silver`, `Bounty Hunter Gold`, `Bounty Hunter Platinum`, `Shop Announcements`, `Event Announcements` |
 
 After setup, run `/admin_config_validate` to confirm the config is clean.
 

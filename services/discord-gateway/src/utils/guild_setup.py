@@ -17,6 +17,7 @@ flogger = bblogger.get_logger("discord-gateway-GuildSetup")
 _BOUNTYBOT_CATEGORY = "BountyBot"
 _BOUNTY_HUNTER_ROLE = "Bounty Hunter"
 _SHOP_ANNOUNCEMENTS_ROLE = "Shop Announcements"
+_EVENT_ANNOUNCEMENTS_ROLE = "Event Announcements"
 
 _TIER_ROLE_NAMES = {
     "bronze": "Bounty Hunter Bronze",
@@ -459,6 +460,36 @@ async def _find_or_create_shop_announcements_role(guild: discord.Guild) -> disco
         return None
 
 
+async def _find_or_create_event_announcements_role(guild: discord.Guild) -> discord.Role | None:
+    """Find (case-insensitive) or create the '@Event Announcements' role.
+
+    Mentionable role used for opt-in event announcement notifications.
+    Does NOT control channel access — only used for @-mentions.
+
+    Returns the role, or None if creation failed.
+    """
+    roles: list = list(guild.roles) if guild.roles else []
+    existing = next((r for r in roles if r.name.lower() == _EVENT_ANNOUNCEMENTS_ROLE.lower()), None)
+    if existing is not None:
+        flogger.debug(f"Role '{_EVENT_ANNOUNCEMENTS_ROLE}' already exists in guild {guild.id}")
+        return existing
+
+    try:
+        role = await guild.create_role(
+            name=_EVENT_ANNOUNCEMENTS_ROLE,
+            mentionable=True,
+            hoist=False,
+        )
+        flogger.info(f"Created role '{_EVENT_ANNOUNCEMENTS_ROLE}' in guild {guild.id}")
+        return role
+    except discord.Forbidden:
+        flogger.warning(f"Missing permissions to create role '{_EVENT_ANNOUNCEMENTS_ROLE}' in guild {guild.id}")
+        return None
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"Error creating role '{_EVENT_ANNOUNCEMENTS_ROLE}' in guild {guild.id}: {e}")
+        return None
+
+
 async def ensure_bountybot_infrastructure(guild: discord.Guild) -> dict:
     """
     Idempotently create or find BountyBot Discord infrastructure.
@@ -475,7 +506,7 @@ async def ensure_bountybot_infrastructure(guild: discord.Guild) -> dict:
         gold_bounty_channel_id, platinum_bounty_channel_id, shop_channel_id,
         hunting_channel_id, discussion_channel_id, image_channel_id,
         bounty_hunter_role_id, bronze_role_id, silver_role_id, gold_role_id,
-        platinum_role_id, shop_announcements_role_id
+        platinum_role_id, shop_announcements_role_id, event_announcements_role_id
     All values are int (Discord snowflake IDs) or None if creation failed.
     """
     result: dict[str, int | None] = {
@@ -494,6 +525,7 @@ async def ensure_bountybot_infrastructure(guild: discord.Guild) -> dict:
         "gold_role_id": None,
         "platinum_role_id": None,
         "shop_announcements_role_id": None,
+        "event_announcements_role_id": None,
     }
 
     # ── Step 1: find or create @Bounty Hunter role ────────────────────────────
@@ -509,6 +541,11 @@ async def ensure_bountybot_infrastructure(guild: discord.Guild) -> dict:
     shop_announcements_role = await _find_or_create_shop_announcements_role(guild)
     if shop_announcements_role is not None:
         result["shop_announcements_role_id"] = shop_announcements_role.id
+
+    # ── Step 1d: find or create @Event Announcements role ────────────────────
+    event_announcements_role = await _find_or_create_event_announcements_role(guild)
+    if event_announcements_role is not None:
+        result["event_announcements_role_id"] = event_announcements_role.id
 
     # ── Step 2: find or create BountyBot category ─────────────────────────────
     category = await _find_or_create_category(guild, bounty_hunter_role)

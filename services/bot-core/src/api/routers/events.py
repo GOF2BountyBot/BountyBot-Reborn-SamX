@@ -606,7 +606,7 @@ async def get_medals(guild_id: int, type_slug: str | None = Query(default=None))
     from sqlalchemy.orm import selectinload
 
     async with get_db_session() as db:
-        q = select(EventResult).where(EventResult.guild_id == guild_id, EventResult.qualified == True)
+        q = select(EventResult).where(EventResult.guild_id == guild_id, EventResult.qualified.is_(True))
         if type_slug:
             q = q.where(EventResult.type_slug == type_slug)
         result = await db.execute(q)

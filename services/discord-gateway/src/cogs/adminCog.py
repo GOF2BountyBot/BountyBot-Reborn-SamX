@@ -549,6 +549,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 "gold_role_id": channel_ids.get("gold_role_id"),
                 "platinum_role_id": channel_ids.get("platinum_role_id"),
                 "shop_announcements_role_id": channel_ids.get("shop_announcements_role_id"),
+                "event_announcements_role_id": channel_ids.get("event_announcements_role_id"),
             }
             resp = await self.http_client.post(
                 f"{api_base}/admin/guilds/initialize",
@@ -607,6 +608,11 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             shop_ann_role_id = channel_ids.get("shop_announcements_role_id")
             if shop_ann_role_id:
                 embed.add_field(name="Shop Announcements Role", value=f"<@&{shop_ann_role_id}>", inline=True)
+
+            # Show Event Announcements role if created
+            event_ann_role_id = channel_ids.get("event_announcements_role_id")
+            if event_ann_role_id:
+                embed.add_field(name="Event Announcements Role", value=f"<@&{event_ann_role_id}>", inline=True)
 
             embed.set_footer(text="The bot is now ready for use in this guild!")
 
@@ -1594,6 +1600,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     "bounty hunter silver",
                     "bounty hunter gold",
                     "bounty hunter platinum",
+                    "shop announcements",
+                    "event announcements",
                 }
                 stored_role_ids: set = set()
                 for rk in (
@@ -1602,6 +1610,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     "silver_role_id",
                     "gold_role_id",
                     "platinum_role_id",
+                    "shop_announcements_role_id",
+                    "event_announcements_role_id",
                 ):
                     rid = cfg.get(rk)
                     if rid:

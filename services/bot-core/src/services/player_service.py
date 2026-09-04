@@ -328,8 +328,10 @@ class PlayerService:
         ``db.begin()`` is required (and would conflict with the internal commit).
         """
         try:
-            if notification_type not in ("bounty", "shop"):
-                raise ValueError(f"Invalid notification_type: {notification_type!r}. Must be 'bounty' or 'shop'")
+            if notification_type not in ("bounty", "shop", "event"):
+                raise ValueError(
+                    f"Invalid notification_type: {notification_type!r}. Must be 'bounty', 'shop', or 'event'"
+                )
 
             player = await self.player_repo.get_by_id_for_update(db, player_id)
             if not player:
@@ -337,8 +339,10 @@ class PlayerService:
 
             if notification_type == "bounty":
                 player.bounty_notifications_enabled = enabled
-            else:
+            elif notification_type == "shop":
                 player.shop_notifications_enabled = enabled
+            else:
+                player.event_notifications_enabled = enabled
 
             await db.commit()
             await db.refresh(player)

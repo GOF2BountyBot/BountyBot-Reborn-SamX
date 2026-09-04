@@ -238,6 +238,7 @@ def _build_config_response(config: dict[str, Any]) -> GuildConfigResponse:
         gold_role_id=config.get("gold_role_id"),
         platinum_role_id=config.get("platinum_role_id"),
         shop_announcements_role_id=config.get("shop_announcements_role_id"),
+        event_announcements_role_id=config.get("event_announcements_role_id"),
         **override_kwargs,
     )
 

@@ -138,6 +138,7 @@ async def initialize_guild(
                 "platinum_bounty_channel_id": request.platinum_bounty_channel_id,
                 "platinum_role_id": request.platinum_role_id,
                 "shop_announcements_role_id": request.shop_announcements_role_id,
+                "event_announcements_role_id": request.event_announcements_role_id,
             }
 
             await config_service.create_or_update_config(db, config_data)
@@ -187,6 +188,7 @@ async def initialize_guild(
                 gold_role_id=request.gold_role_id,
                 platinum_role_id=request.platinum_role_id,
                 shop_announcements_role_id=request.shop_announcements_role_id,
+                event_announcements_role_id=request.event_announcements_role_id,
                 message=f"Guild {request.guild_id} initialized successfully with {shops_created} shops",
             )
 

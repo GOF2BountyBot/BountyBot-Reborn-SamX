@@ -352,7 +352,7 @@ async def start_event(
 
     # Build announcement (caller posts it AFTER commit)
     et = EVENT_TYPES.get(event.type_slug)
-    rid = getattr(config, "event_announcements_role_id", None)
+    rid = config.event_announcements_role_id
     role_mention = f"<@&{rid}>" if rid else None
     embed = {
         "title": f"🏆 {et.display_name if et else event.type_slug} Event Started!",
@@ -568,7 +568,7 @@ async def end_event(
     )
 
     # End announcement
-    rid = getattr(config, "event_announcements_role_id", None) if config else None
+    rid = config.event_announcements_role_id if config else None
     role_mention = f"<@&{rid}>" if rid else None
 
     # Build standings fields for prize-winning ranks

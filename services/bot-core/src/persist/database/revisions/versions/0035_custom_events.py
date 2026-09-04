@@ -36,83 +36,105 @@ depends_on: str | Sequence[str] | None = None
 _JSONB = sa.JSON().with_variant(JSONB(), "postgresql")
 
 
+def _cols(inspector: sa.engine.reflection.Inspector, table: str) -> set[str]:
+    return {c["name"] for c in inspector.get_columns(table)}
+
+
+def _indexes(inspector: sa.engine.reflection.Inspector, table: str) -> set[str]:
+    return {i["name"] for i in inspector.get_indexes(table)}
+
+
 def upgrade() -> None:
+    """Idempotent: every op is guarded so fresh installs (where ``create_all`` already
+    built the schema from the models before Alembic runs) and re-runs are no-ops."""
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
     # -- guild_configs: new column -----------------------------------------
-    op.add_column(
-        "guild_configs",
-        sa.Column(
-            "event_min_duel_stakes",
-            sa.Integer(),
-            nullable=False,
-            server_default="1000",
-        ),
-    )
+    if "event_min_duel_stakes" not in _cols(inspector, "guild_configs"):
+        op.add_column(
+            "guild_configs",
+            sa.Column(
+                "event_min_duel_stakes",
+                sa.Integer(),
+                nullable=False,
+                server_default="1000",
+            ),
+        )
 
     # -- game_events ----------------------------------------------------------
-    op.create_table(
-        "game_events",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("guild_id", sa.BigInteger(), nullable=False),
-        sa.Column("type_slug", sa.String(64), nullable=False),
-        sa.Column("params", _JSONB, nullable=False, server_default="{}"),
-        sa.Column("state", sa.String(16), nullable=False, server_default="draft"),
-        sa.Column("duration_days", sa.Integer(), nullable=False, server_default="7"),
-        sa.Column("scheduled_start_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("ends_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_by_user_id", sa.BigInteger(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_game_events_guild_state", "game_events", ["guild_id", "state"])
+    if not inspector.has_table("game_events"):
+        op.create_table(
+            "game_events",
+            sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+            sa.Column("guild_id", sa.BigInteger(), nullable=False),
+            sa.Column("type_slug", sa.String(64), nullable=False),
+            sa.Column("params", _JSONB, nullable=False, server_default="{}"),
+            sa.Column("state", sa.String(16), nullable=False, server_default="draft"),
+            sa.Column("duration_days", sa.Integer(), nullable=False, server_default="7"),
+            sa.Column("scheduled_start_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("ends_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("created_by_user_id", sa.BigInteger(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.PrimaryKeyConstraint("id"),
+        )
+    if "ix_game_events_guild_state" not in _indexes(inspector, "game_events"):
+        op.create_index("ix_game_events_guild_state", "game_events", ["guild_id", "state"])
 
     # -- game_event_prizes ----------------------------------------------------
-    op.create_table(
-        "game_event_prizes",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("event_id", sa.Integer(), nullable=False),
-        sa.Column("rank_from", sa.Integer(), nullable=True),
-        sa.Column("rank_to", sa.Integer(), nullable=True),
-        sa.Column("kind", sa.String(16), nullable=False),
-        sa.Column("item_ref", sa.String(128), nullable=True),
-        sa.Column("qty", sa.Integer(), nullable=False),
-        sa.ForeignKeyConstraint(["event_id"], ["game_events.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
+    if not inspector.has_table("game_event_prizes"):
+        op.create_table(
+            "game_event_prizes",
+            sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+            sa.Column("event_id", sa.Integer(), nullable=False),
+            sa.Column("rank_from", sa.Integer(), nullable=True),
+            sa.Column("rank_to", sa.Integer(), nullable=True),
+            sa.Column("kind", sa.String(16), nullable=False),
+            sa.Column("item_ref", sa.String(128), nullable=True),
+            sa.Column("qty", sa.Integer(), nullable=False),
+            sa.ForeignKeyConstraint(["event_id"], ["game_events.id"], ondelete="CASCADE"),
+            sa.PrimaryKeyConstraint("id"),
+        )
 
     # -- game_event_metrics ---------------------------------------------------
-    op.create_table(
-        "game_event_metrics",
-        sa.Column("event_id", sa.Integer(), nullable=False),
-        sa.Column("player_id", sa.Integer(), nullable=False),
-        sa.Column("metric", sa.String(128), nullable=False),
-        sa.Column("value", sa.Numeric(precision=20, scale=4), nullable=False),
-        sa.ForeignKeyConstraint(["event_id"], ["game_events.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["player_id"], ["players.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("event_id", "player_id", "metric"),
-    )
+    if not inspector.has_table("game_event_metrics"):
+        op.create_table(
+            "game_event_metrics",
+            sa.Column("event_id", sa.Integer(), nullable=False),
+            sa.Column("player_id", sa.Integer(), nullable=False),
+            sa.Column("metric", sa.String(128), nullable=False),
+            sa.Column("value", sa.Numeric(precision=20, scale=4), nullable=False),
+            sa.ForeignKeyConstraint(["event_id"], ["game_events.id"], ondelete="CASCADE"),
+            sa.ForeignKeyConstraint(["player_id"], ["players.id"], ondelete="CASCADE"),
+            sa.PrimaryKeyConstraint("event_id", "player_id", "metric"),
+        )
 
     # -- event_results --------------------------------------------------------
-    op.create_table(
-        "event_results",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("event_id", sa.Integer(), nullable=False),
-        sa.Column("guild_id", sa.BigInteger(), nullable=False),
-        sa.Column("type_slug", sa.String(64), nullable=False),
-        sa.Column("player_id", sa.Integer(), nullable=False),
-        sa.Column("rank", sa.Integer(), nullable=True),
-        sa.Column("value", sa.Float(), nullable=True),
-        sa.Column("qualified", sa.Integer(), nullable=True),
-        sa.Column("prize", sa.String(256), nullable=True),
-        sa.Column("status", sa.String(32), nullable=True),
-        sa.Column("awarded_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["event_id"], ["game_events.id"]),
-        sa.ForeignKeyConstraint(["player_id"], ["players.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_event_results_guild_player", "event_results", ["guild_id", "player_id"])
-    op.create_index("ix_event_results_guild_slug", "event_results", ["guild_id", "type_slug"])
+    if not inspector.has_table("event_results"):
+        op.create_table(
+            "event_results",
+            sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+            sa.Column("event_id", sa.Integer(), nullable=False),
+            sa.Column("guild_id", sa.BigInteger(), nullable=False),
+            sa.Column("type_slug", sa.String(64), nullable=False),
+            sa.Column("player_id", sa.Integer(), nullable=False),
+            sa.Column("rank", sa.Integer(), nullable=True),
+            sa.Column("value", sa.Float(), nullable=True),
+            sa.Column("qualified", sa.Integer(), nullable=True),
+            sa.Column("prize", sa.String(256), nullable=True),
+            sa.Column("status", sa.String(32), nullable=True),
+            sa.Column("awarded_at", sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(["event_id"], ["game_events.id"]),
+            sa.ForeignKeyConstraint(["player_id"], ["players.id"], ondelete="CASCADE"),
+            sa.PrimaryKeyConstraint("id"),
+        )
+    er_idx = _indexes(inspector, "event_results")
+    if "ix_event_results_guild_player" not in er_idx:
+        op.create_index("ix_event_results_guild_player", "event_results", ["guild_id", "player_id"])
+    if "ix_event_results_guild_slug" not in er_idx:
+        op.create_index("ix_event_results_guild_slug", "event_results", ["guild_id", "type_slug"])
 
 
 def downgrade() -> None:

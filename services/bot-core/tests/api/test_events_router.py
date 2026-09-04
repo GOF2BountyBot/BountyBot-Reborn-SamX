@@ -888,7 +888,6 @@ class TestRequiredParams:
         """POST /events with type=secondary_fired and valid subtype → not 400."""
         mock_session, mock_cm = db_ctx
         mock_db.return_value = mock_cm
-        ev = make_event(type_slug="secondary_fired", params={"subtype": "nuke"})
         mock_session.flush = AsyncMock()
         mock_session.refresh = AsyncMock()
 

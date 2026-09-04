@@ -7,6 +7,7 @@ Cache pipeline mirrors bountyCog exactly (per-guild, TTL=1200s, warm+refresh+pus
 from __future__ import annotations
 
 import os
+import re
 from datetime import UTC, datetime, timedelta, timezone
 
 import discord
@@ -813,11 +814,9 @@ class EventsCog(commands.Cog):
             e = resp.json()
             et_display = e.get("type_display", e.get("type_slug", "?"))
             rules_text = e.get("rules_text") or "No rules text."
-            rules_detail = e.get("rules_detail") or []
-            description_parts = [rules_text, *rules_detail]
             embed = discord.Embed(
                 title=f"Event #{e['id']} — {et_display}",
-                description="\n".join(description_parts),
+                description=rules_text,
                 color=discord.Color.gold(),
             )
             embed.add_field(name="State", value=e.get("state", "?"), inline=True)
@@ -953,18 +952,9 @@ class EventsCog(commands.Cog):
                 if prizes:
                     prize_lines = [_prize_display(p) for p in prizes]
                     embed.add_field(name="Prizes", value="\n".join(prize_lines[:10]) or "None", inline=False)
-                # Use the "Prizes require…" line from rules_detail for the footer
-                rules_detail = detail.get("rules_detail") or []
-                prizes_line = next((ln for ln in rules_detail if ln.startswith("Prizes require")), None)
-                if prizes_line is None:
-                    # Fallback: build from effective_min_fights for older API responses
-                    mf = detail.get("effective_min_fights")
-                    if mf is not None:
-                        slug = detail.get("type_slug", "")
-                        activity_word = "checks" if slug in (
-                            "bounty_caps", "systems_checked", "systems_checked_no_capture"
-                        ) else "battles"
-                        prizes_line = f"Prizes require at least {mf} {activity_word}."
+                # Extract "Prizes require…" sentence from rendered rules_text for the footer
+                _m = re.search(r"Prizes require[^.]+\.", detail.get("rules_text", ""))
+                prizes_line = _m.group(0) if _m else None
                 embed.set_footer(text=" · ".join(filter(None, [caller_footer, prizes_line])))
             except Exception:  # pylint: disable=broad-exception-caught
                 if caller_footer:

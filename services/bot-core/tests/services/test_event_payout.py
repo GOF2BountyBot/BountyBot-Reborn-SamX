@@ -152,10 +152,9 @@ async def test_three_way_tie_first_place_all_get_1st(engine_and_factory):
         respx.get(_MEMBERS_URL).mock(return_value=_member_resp([101, 102, 103]))
         respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             await end_event(db, ev, payout=True)
-            await db.commit()
 
     async with factory() as db:
         results = (await db.execute(select(EventResult))).scalars().all()
@@ -211,10 +210,9 @@ async def test_top_n_range_tie_straddling_gives_4_recipients(engine_and_factory)
         respx.get(_MEMBERS_URL).mock(return_value=_member_resp([201, 202, 203, 204]))
         respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             await end_event(db, ev, payout=True)
-            await db.commit()
 
     async with factory() as db:
         results = (await db.execute(select(EventResult))).scalars().all()
@@ -259,10 +257,9 @@ async def test_participation_only_qualified(engine_and_factory):
         respx.get(_MEMBERS_URL).mock(return_value=_member_resp([301, 302]))
         respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             await end_event(db, ev, payout=True)
-            await db.commit()
 
     async with factory() as db:
         results = (await db.execute(select(EventResult))).scalars().all()
@@ -309,10 +306,9 @@ async def test_departed_player_forfeits(engine_and_factory):
         respx.get(_MEMBERS_URL).mock(return_value=_member_resp([402, 403]))
         respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             await end_event(db, ev, payout=True)
-            await db.commit()
 
     async with factory() as db:
         results = (await db.execute(select(EventResult))).scalars().all()
@@ -362,16 +358,14 @@ async def test_end_event_idempotent(engine_and_factory):
         respx.get(_MEMBERS_URL).mock(return_value=_member_resp([501]))
         respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             first = await end_event(db, ev, payout=True)
-            await db.commit()
         assert first  # first call returns non-empty
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             second = await end_event(db, ev, payout=True)
-            await db.commit()
         assert second == {}  # idempotent no-op returns empty dict
 
     async with factory() as db:
@@ -412,10 +406,9 @@ async def test_partial_failure_item_ref_missing(engine_and_factory):
         respx.get(_MEMBERS_URL).mock(return_value=_member_resp([601]))
         respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             await end_event(db, ev, payout=True)
-            await db.commit()
 
     async with factory() as db:
         ev = (await db.execute(select(GameEvent))).scalar_one()
@@ -469,10 +462,9 @@ async def test_announce_failure_is_nonfatal(engine_and_factory):
         # end_event does NOT call announce; this mock verifies the 500 is non-fatal when called
         respx.post(channel_url).mock(return_value=Response(500, text="internal error"))
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             result = await end_event(db, ev, payout=True)
-            await db.commit()
 
         # Caller posts the announcement — a 500 must not raise
         ann = result.get("announcement")
@@ -520,10 +512,9 @@ async def test_gateway_members_500_skips_filter_all_paid(engine_and_factory):
         respx.get(_MEMBERS_URL).mock(return_value=Response(500, text="err"))
         respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             await end_event(db, ev, payout=True)
-            await db.commit()
 
     # Both players paid (filter skipped); rank 1 gets the prize
     async with factory() as db:
@@ -565,10 +556,9 @@ async def test_gateway_members_timeout_skips_filter_all_paid(engine_and_factory)
         respx.get(_MEMBERS_URL).mock(side_effect=_httpx.ReadTimeout("timeout", request=None))
         respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             await end_event(db, ev, payout=True)
-            await db.commit()
 
     async with factory() as db:
         p811 = (await db.execute(select(Player).where(Player.user_id == 811))).scalar_one()
@@ -594,10 +584,9 @@ async def test_zero_participant_event_ends_cleanly(engine_and_factory):
         respx.get(_MEMBERS_URL).mock(return_value=_member_resp([]))
         respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             result = await end_event(db, ev, payout=True)
-            await db.commit()
 
     assert result.get("status") == "none"
     async with factory() as db:
@@ -627,10 +616,9 @@ async def test_end_event_payout_false_returns_cancelled_announcement(engine_and_
         ev.state = "active"
         await db.commit()
 
-    async with factory() as db:
+    async with factory() as db, db.begin():
         ev = (await db.execute(select(GameEvent))).scalar_one()
         result = await end_event(db, ev, payout=False, reason="Test cancel")
-        await db.commit()
 
     assert result["status"] == "cancelled"
     # Announcement tuple should be present (guild_id, channel_id, embed, text)
@@ -685,10 +673,9 @@ async def test_end_announcement_embed_structure_and_role_mention(engine_and_fact
         members_route = respx.get(members_url).mock(return_value=_member_resp([1001]))
         channel_route = respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             result = await end_event(db, ev, payout=True)
-            await db.commit()
 
         # announce-after-commit: caller must POST the announcement tuple
         if result.get("announcement"):
@@ -751,10 +738,9 @@ async def test_end_announcement_no_role_mention_when_null(engine_and_factory):
         respx.get(_MEMBERS_URL).mock(return_value=_member_resp([1002]))
         channel_route = respx.post(channel_url).mock(return_value=_ok_resp())
 
-        async with factory() as db:
+        async with factory() as db, db.begin():
             ev = (await db.execute(select(GameEvent))).scalar_one()
             result = await end_event(db, ev, payout=True)
-            await db.commit()
 
         # announce-after-commit: caller must POST the announcement tuple
         if result.get("announcement"):
@@ -780,10 +766,9 @@ async def test_cancel_announcement_embed_structure(engine_and_factory):
         ev.state = "active"
         await db.commit()
 
-    async with factory() as db:
+    async with factory() as db, db.begin():
         ev = (await db.execute(select(GameEvent))).scalar_one()
         result = await end_event(db, ev, payout=False, reason="Admin cancelled")
-        await db.commit()
 
     ann = result.get("announcement")
     assert ann is not None

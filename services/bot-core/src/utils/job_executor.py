@@ -13,6 +13,7 @@ from utils.executors.bounty_spawn_executor import (
 )
 from utils.executors.db_retention_executor import execute_db_retention_job
 from utils.executors.duel_expire_executor import execute_duel_expire_job
+from utils.executors.event_tick_executor import execute_event_tick_job
 from utils.executors.pg_backup_executor import execute_pg_backup_job
 from utils.executors.shop_refresh_executor import execute_shop_refresh_job
 from utils.executors.temperature_decay_executor import execute_temperature_decay_job
@@ -89,7 +90,12 @@ class JobExecutor:
                 flogger.debug(f"Dispatching db_retention for job {job_id}")
                 return await execute_db_retention_job(job_id, payload)
 
-            # 10) fallback for other payloads
+            # 11) event-tick jobs
+            if payload.get("job_type") == "event_tick":
+                flogger.debug(f"Dispatching event_tick for job {job_id}")
+                return await execute_event_tick_job(job_id, payload)
+
+            # fallback for other payloads
             flogger.debug(f"Job '{job_id}': executing generic payload handler")
             # … your existing task/logic here …
 

@@ -40,6 +40,7 @@ from persist.models.base import Base
 from persist.models.bounty import Bounty
 from persist.models.combat_log import CombatLog
 from persist.models.duel_request import DuelRequest
+from persist.models.game_event import EventResult, GameEvent, GameEventMetric, GameEventPrize
 from persist.models.guild_config import GuildConfig
 from persist.models.guild_shop import GuildShop
 from persist.models.player import Player
@@ -60,6 +61,10 @@ _SQLITE_TABLES = [
     DuelRequest.__table__,
     AdminAuditLog.__table__,
     CombatLog.__table__,  # SQLite-safe (JSON-only); lets the db-retention combat_log pass run for real
+    GameEvent.__table__,
+    GameEventPrize.__table__,
+    GameEventMetric.__table__,
+    EventResult.__table__,
 ]
 
 

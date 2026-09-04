@@ -335,6 +335,8 @@ class GameConstants:
     BOUNTY_RETENTION_HOURS: int = 24
     DUEL_RETENTION_HOURS: int = 24
     AUDIT_RETENTION_DAYS: int = 30
+    # Overridable via ``BOUNTYBOT_EVENT_METRICS_RETENTION_DAYS``.
+    EVENT_METRICS_RETENTION_DAYS: int = 30
 
     # ------------------------------------------------------------------
     # Shop Stock Generation
@@ -847,6 +849,7 @@ class GameConstants:
         cls.BOUNTY_RETENTION_HOURS = _track_int("BOUNTY_RETENTION_HOURS", 24)
         cls.DUEL_RETENTION_HOURS = _track_int("DUEL_RETENTION_HOURS", 24)
         cls.AUDIT_RETENTION_DAYS = _track_int("AUDIT_RETENTION_DAYS", 30)
+        cls.EVENT_METRICS_RETENTION_DAYS = _track_int("EVENT_METRICS_RETENTION_DAYS", 30)
 
         # Shop stock generation
         # Retired rev 0031: SHOP_DEFAULT_SHIPS_NUM, SHOP_DEFAULT_WEAPONS_NUM,

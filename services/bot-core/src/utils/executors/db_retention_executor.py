@@ -168,10 +168,43 @@ async def execute_db_retention_job(job_id: str, payload: dict) -> dict:
 
     combat_logs_deleted = combat_logs_bounty_deleted + combat_logs_pvp_deleted
 
+    # ----- Pass 5: event_metrics for ended/cancelled events ------------------
+    event_metrics_deleted = 0
+    try:
+        from persist.models.game_event import GameEvent, GameEventMetric
+
+        event_metrics_cutoff = now - timedelta(days=GameConstants.EVENT_METRICS_RETENTION_DAYS)
+        async with db_manager.get_session() as db:
+            from sqlalchemy import delete, select
+
+            # Find IDs of ended/cancelled events old enough to prune
+            old_event_ids_result = await db.execute(
+                select(GameEvent.id).where(
+                    GameEvent.state.in_(("ended", "cancelled")),
+                    GameEvent.updated_at < event_metrics_cutoff,
+                )
+            )
+            old_event_ids = [r for (r,) in old_event_ids_result.all()]
+            if old_event_ids:
+                del_result = await db.execute(
+                    delete(GameEventMetric).where(GameEventMetric.event_id.in_(old_event_ids))
+                )
+                event_metrics_deleted = del_result.rowcount or 0
+        flogger.info(
+            f"DBRetention[{job_id}] event_metrics pass: deleted={event_metrics_deleted} "
+            f"cutoff={event_metrics_cutoff.isoformat()} "
+            f"(retention={GameConstants.EVENT_METRICS_RETENTION_DAYS}d)"
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        msg = f"event_metrics pass failed: {type(e).__name__}: {e}"
+        flogger.warning(f"DBRetention[{job_id}] {msg}")
+        errors.append(msg)
+
     flogger.info(
         f"DBRetention[{job_id}] DONE bounties={bounties_deleted} duels={duels_deleted} "
         f"audit={audit_logs_deleted} combat_logs={combat_logs_deleted} "
-        f"(bounty={combat_logs_bounty_deleted} pvp={combat_logs_pvp_deleted}) errors={len(errors)}"
+        f"(bounty={combat_logs_bounty_deleted} pvp={combat_logs_pvp_deleted}) "
+        f"event_metrics={event_metrics_deleted} errors={len(errors)}"
     )
 
     return {
@@ -182,5 +215,6 @@ async def execute_db_retention_job(job_id: str, payload: dict) -> dict:
         "combat_logs_deleted": combat_logs_deleted,
         "combat_logs_bounty_deleted": combat_logs_bounty_deleted,
         "combat_logs_pvp_deleted": combat_logs_pvp_deleted,
+        "event_metrics_deleted": event_metrics_deleted,
         "errors": errors,
     }

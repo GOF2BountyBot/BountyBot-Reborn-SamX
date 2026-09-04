@@ -237,8 +237,8 @@ async def reset_scheduler(req: Request):
     This is an admin-level operation that wipes the entire job queue and then
     calls ``register_default_jobs`` to recreate the standard recurring jobs
     (bounty_spawn_default, shop_refresh_default, bounty_failsafe_cleanup_default,
-    pg_backup_default, db_retention_default).  Note: temperature_decay_default
-    is NOT re-seeded (temperature subsystem retired, rev 0031).
+    pg_backup_default, db_retention_default, event_tick_default).  Note:
+    temperature_decay_default is NOT re-seeded (temperature subsystem retired, rev 0031).
     """
     flogger.info("Reset scheduler endpoint: starting")
     scheduler = _get_scheduler(req)

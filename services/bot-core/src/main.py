@@ -126,6 +126,11 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
         "cron": "45 3 * * *",  # daily at 03:45 UTC — well clear of all hourly/3-hourly jobs
         "payload": {"job_type": "db_retention"},
     },
+    {
+        "job_id": "event_tick_default",
+        "cron": "*/5 * * * *",  # every 5 minutes — start scheduled events and end expired ones
+        "payload": {"job_type": "event_tick"},
+    },
 ]
 
 

@@ -267,7 +267,7 @@ class TestAdminGiveItem:
         mock_player_repo_cls.return_value = mock_player_repo
 
         # Simulate _get_item_details returning the resolved concrete type
-        mock_inventory_service._get_item_details = AsyncMock(
+        mock_inventory_service.get_item_details = AsyncMock(
             return_value={"name": "Pulse Laser", "type": "primary_weapon", "tech_level": 5, "value": 1000}
         )
 
@@ -304,7 +304,7 @@ class TestAdminGiveItem:
         mock_player_repo_cls.return_value = mock_player_repo
 
         # _get_item_details returns None for unknown items
-        mock_inventory_service._get_item_details = AsyncMock(return_value=None)
+        mock_inventory_service.get_item_details = AsyncMock(return_value=None)
 
         payload = {
             "guild_id": 67890,
@@ -335,7 +335,7 @@ class TestAdminGiveItem:
         mock_player_repo_cls.return_value = mock_player_repo
 
         # _get_item_details returns ship type
-        mock_inventory_service._get_item_details = AsyncMock(
+        mock_inventory_service.get_item_details = AsyncMock(
             return_value={"name": "Sidewinder", "type": "ship", "tech_level": None, "value": 5000}
         )
 
@@ -648,14 +648,13 @@ class TestAdminGiveShip:
     @patch("api.routers.admin.get_db_session")
     @patch("api.routers.admin.ShipRepository")
     @patch("api.routers.admin.PlayerRepository")
-    @patch("api.routers.admin.PlayerShipRepository")
     def test_give_ship_success(
         self,
-        mock_player_ship_repo_cls,
         mock_player_repo_cls,
         mock_ship_repo_cls,
         mock_get_db,
         client,
+        mock_inventory_service,
     ):
         """Returns 200 with ship details when ship is given successfully."""
         _configure_db_mock(mock_get_db)
@@ -671,10 +670,9 @@ class TestAdminGiveShip:
         mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=make_mock_player())
         mock_player_repo_cls.return_value = mock_player_repo
 
+        # grant_ship goes through inventory_service; no PlayerShipRepository needed here
         created_ship = make_mock_player_ship()
-        mock_ps_repo = AsyncMock()
-        mock_ps_repo.add = AsyncMock(return_value=created_ship)
-        mock_player_ship_repo_cls.return_value = mock_ps_repo
+        mock_inventory_service.grant_ship = AsyncMock(return_value=created_ship)
 
         payload = {
             "guild_id": 67890,

@@ -1,18 +1,28 @@
 """Event service — core tallying for custom stat-race challenges (issue #30, spec §3).
 
 Slice 1: record() and standings() only.
-Slice 2 (TODO): hooks into combat/duel/bounty services.
+Slice 2: hooks into combat/duel/bounty services.
+Slice 3: start_event(), end_event(), payout, announcements.
 """
 
 from __future__ import annotations
 
+import os
+import traceback
+from datetime import UTC, datetime, timedelta
+
+import httpx
 from persist.models.game_event import GameEvent, GameEventMetric
 from persist.repositories.config_repository import ConfigRepository
 from shared import bblogger
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.event_types import EVENT_TYPES, resolve_metrics
+
+_GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+_GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
+_GATEWAY_BASE_URL = f"http://{_GATEWAY_HOST}:{_GATEWAY_PORT}/api/v1"
 
 flogger = bblogger.get_logger("event-service")
 
@@ -214,3 +224,374 @@ async def standings(
 
     out.sort(key=lambda t: t[1], reverse=True)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Slice 3 helpers
+# ---------------------------------------------------------------------------
+
+
+def _ordinal(n: int) -> str:
+    """1 → '1st', 2 → '2nd', 3 → '3rd', 4 → '4th', …"""
+    suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10 if n % 100 not in (11, 12, 13) else 0, "th")
+    return f"{n}{suf}"
+
+
+def _validate_prize_ranges(prizes: list) -> None:
+    """Raise ValueError if any two ranked prize slots have overlapping rank ranges."""
+    ranked = [(p.rank_from, p.rank_to) for p in prizes if p.rank_from is not None]
+    for i, (af, at) in enumerate(ranked):
+        for j, (bf, bt) in enumerate(ranked):
+            if i >= j:
+                continue
+            at_ = at if at is not None else af
+            bt_ = bt if bt is not None else bf
+            if af <= bt_ and bf <= at_:
+                raise ValueError(f"Prize rank ranges overlap: {af}–{at} and {bf}–{bt}")
+
+
+def _format_prize_list(prizes: list) -> str:
+    """Human-readable prize list for start announcement embed."""
+    lines: list[str] = []
+    for p in sorted(prizes, key=lambda x: (x.rank_from is None, x.rank_from or 0)):
+        if p.rank_from is None:
+            place = "Participation"
+        elif p.rank_from == p.rank_to:
+            place = f"{_ordinal(p.rank_from)} Place"
+        else:
+            place = f"Top {p.rank_to}"
+        reward = f"{p.qty:,} credits" if p.kind == "credits" else f"{p.qty}× {p.item_ref or '?'}"
+        lines.append(f"**{place}:** {reward}")
+    return "\n".join(lines) if lines else "None"
+
+
+async def announce(guild_id: int, channel_id: int | None, embed: dict, text_content: str | None) -> None:
+    """POST an embed to the gateway channel messages endpoint. Non-fatal."""
+    if channel_id is None:
+        flogger.warning(f"event_announce: guild={guild_id} no channel configured — skipping")
+        return
+    payload = {"content": embed, "text_content": text_content, "message_type": "default"}
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{_GATEWAY_BASE_URL}/channels/{channel_id}/messages",
+                json=payload,
+                timeout=10,
+            )
+        resp.raise_for_status()
+        flogger.info(f"event_announce: guild={guild_id} channel={channel_id} posted OK")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.error(f"event_announce: guild={guild_id} channel={channel_id} failed: {exc}")
+        flogger.trace(traceback.format_exc())
+
+
+async def _fetch_member_discord_ids(guild_id: int) -> set[int] | None:
+    """Return set of Discord user IDs currently in the guild. None on failure (log and skip filter)."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{_GATEWAY_BASE_URL}/guilds/{guild_id}/members",
+                params={"limit": 5000},
+                timeout=10,
+            )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        return {int(m["user"]["id"]) for m in data if "user" in m}
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"_fetch_member_discord_ids: guild={guild_id} failed: {exc} — skipping membership filter")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Slice 3 — event lifecycle
+# ---------------------------------------------------------------------------
+
+
+async def start_event(
+    session: AsyncSession, event: GameEvent
+) -> tuple[int, int | None, dict, str | None] | None:
+    """Activate a scheduled or draft event: validate, set state=active, flush.
+
+    Caller posts the returned announcement AFTER commit; posting before commit is a double-payout path.
+
+    Raises ValueError (player-readable) on validation failure so the tick executor
+    can log and skip this event without blocking others.
+
+    Returns the (guild_id, channel_id, embed, text_content) announcement tuple, or None
+    if no channel is configured (announcement skipped).
+    """
+    from persist.models.game_event import GameEventPrize
+
+    if event.state not in ("draft", "scheduled"):
+        raise ValueError(f"Cannot start event in state={event.state!r} (event_id={event.id})")
+
+    prizes_result = await session.execute(
+        select(GameEventPrize).where(GameEventPrize.event_id == event.id)
+    )
+    prizes = prizes_result.scalars().all()
+    _validate_prize_ranges(prizes)
+
+    config = await _config_repo.get_by_guild_id(session, event.guild_id)
+    if not config or not config.discussion_channel_id:
+        raise ValueError(
+            f"Guild {event.guild_id} has no discussion_channel_id configured — configure it before starting events"
+        )
+
+    now = datetime.now(UTC)
+    event.state = "active"
+    event.started_at = now
+    event.ends_at = now + timedelta(days=event.duration_days)
+    event.scheduled_start_at = None
+    event.updated_at = now
+    await session.flush()
+
+    flogger.info(
+        f"start_event: event_id={event.id} guild={event.guild_id} type={event.type_slug} "
+        f"started_at={now.isoformat()} ends_at={event.ends_at.isoformat()}"
+    )
+
+    # Build announcement (caller posts it AFTER commit)
+    et = EVENT_TYPES.get(event.type_slug)
+    rid = getattr(config, "event_announcements_role_id", None)
+    role_mention = f"<@&{rid}>" if rid else None
+    embed = {
+        "title": f"🏆 {et.display_name if et else event.type_slug} Event Started!",
+        "description": et.rules_text if et else "",
+        "color": 9699539,  # purple #941733
+        "fields": [
+            {"name": "Ends", "value": f"<t:{int(event.ends_at.timestamp())}:R>", "inline": True},
+            {"name": "Prizes", "value": _format_prize_list(prizes), "inline": False},
+        ],
+    }
+    if not config.discussion_channel_id:
+        return None
+    return (event.guild_id, config.discussion_channel_id, embed, role_mention)
+
+
+async def end_event(
+    session: AsyncSession,
+    event: GameEvent,
+    *,
+    payout: bool,
+    reason: str | None = None,
+    actor_user_id: int | None = None,
+) -> dict:
+    """End an active event: idempotent state transition, optional payout, audit.
+
+    Caller posts the returned announcement AFTER commit; posting before commit is a double-payout path.
+
+    Returns a summary dict with an "announcement" key containing the
+    (guild_id, channel_id, embed, text_content) tuple to post, or None if nothing to post.
+    The caller owns the transaction (flush only; caller commits).
+    """
+    from persist.models.game_event import EventResult, GameEventPrize
+    from persist.models.player import Player
+    from persist.repositories.ship_repository import ShipRepository
+    from sqlalchemy.orm import selectinload
+
+    from services.audit_service import AuditService
+    from services.inventory_service import InventoryService
+
+    new_state = "ended" if payout else "cancelled"
+    now = datetime.now(UTC)
+
+    # Idempotency: UPDATE only if currently active
+    result = await session.execute(
+        update(GameEvent)
+        .where(GameEvent.id == event.id, GameEvent.state == "active")
+        .values(state=new_state, updated_at=now)
+    )
+    if result.rowcount == 0:
+        flogger.info(f"end_event: event_id={event.id} not active (rowcount=0) — idempotent no-op")
+        return {}
+
+    # Sync ORM object to avoid stale reads
+    event.state = new_state
+    event.updated_at = now
+
+    config = await _config_repo.get_by_guild_id(session, event.guild_id)
+    channel_id = config.discussion_channel_id if config else None
+    et = EVENT_TYPES.get(event.type_slug)
+
+    if not payout:
+        embed = {
+            "title": f"❌ {et.display_name if et else event.type_slug} Event Cancelled",
+            "description": reason or "Event cancelled.",
+            "color": 16711680,
+            "fields": [],
+        }
+        ann = (event.guild_id, channel_id, embed, None) if channel_id else None
+        return {"status": "cancelled", "announcement": ann}
+
+    # --- Payout path ---
+
+    all_standings = await standings(session, event)
+    qual = [(pid, val) for pid, val, q in all_standings if q]
+
+    if not qual:
+        flogger.info(f"end_event: event_id={event.id} no qualified players — skipping payout")
+        ann_embed = {
+            "title": f"🏁 {et.display_name if et else event.type_slug} Event Ended",
+            "description": "No qualified players.",
+            "color": 7506394,
+            "fields": [],
+        }
+        ann = (event.guild_id, channel_id, ann_embed, None) if channel_id else None
+        return {"status": "none", "ranked_players": 0, "announcement": ann}
+
+    # Load Player objects (with User for display names and user_id for membership filter)
+    player_result = await session.execute(
+        select(Player).options(selectinload(Player.user)).where(Player.id.in_([pid for pid, _ in qual]))
+    )
+    players_by_id: dict[int, Player] = {p.id: p for p in player_result.scalars().all()}
+
+    # Membership filter: drop departed players (lesser evil = pay them; log if gateway fails)
+    member_ids = await _fetch_member_discord_ids(event.guild_id)
+    if member_ids is not None:
+        qual = [(pid, val) for pid, val in qual if players_by_id.get(pid) and players_by_id[pid].user_id in member_ids]
+
+    # Competition rank: 1 + count of players with strictly greater value
+    def _rank(player_val: float) -> int:
+        return 1 + sum(1 for _, v in qual if v > player_val)
+
+    ranked: list[tuple[int, float, int]] = [(pid, val, _rank(val)) for pid, val in qual]
+
+    # Load prize slots
+    prize_result = await session.execute(select(GameEventPrize).where(GameEventPrize.event_id == event.id))
+    prizes = prize_result.scalars().all()
+
+    inv_svc = InventoryService()
+    ship_repo = ShipRepository()
+
+    # per-player prize text and status parts
+    prize_parts: dict[int, list[str]] = {pid: [] for pid, _, _ in ranked}
+    status_parts: dict[int, list[str]] = {pid: [] for pid, _, _ in ranked}
+
+    for slot in prizes:
+        # Determine eligible players for this slot
+        if slot.rank_from is None:  # participation
+            slot_players = ranked
+        else:
+            rank_to = slot.rank_to if slot.rank_to is not None else slot.rank_from
+            slot_players = [(pid, val, rk) for pid, val, rk in ranked if slot.rank_from <= rk <= rank_to]
+
+        for pid, _val, rk in slot_players:
+            player = players_by_id.get(pid)
+            if player is None:
+                continue
+            rank_label = _ordinal(rk) if slot.rank_from is not None else "participation"
+            try:
+                if slot.kind == "credits":
+                    from services.player_service import PlayerService  # deferred to avoid circular import
+
+                    # ponytail: update_player_credits uses FOR UPDATE — redundant here since payout
+                    # is one-shot (event state already "ended" via idempotency guard above), but
+                    # reusing the service ensures lifetime_credits is updated consistently.
+                    await PlayerService().update_player_credits(session, player.id, player.credits + slot.qty)
+                    prize_parts[pid].append(f"{rank_label}: {slot.qty:,} credits")
+                elif slot.kind == "item":
+                    if not slot.item_ref:
+                        raise ValueError("item prize missing item_ref")
+                    item_details = await inv_svc.get_item_details(session, slot.item_ref)
+                    if not item_details:
+                        raise ValueError(f"Item {slot.item_ref!r} not in game catalog")
+                    await inv_svc.add_item_to_inventory(
+                        session, pid, item_details["type"], slot.item_ref, slot.qty, commit=False
+                    )
+                    prize_parts[pid].append(f"{rank_label}: {slot.qty}× {slot.item_ref}")
+                elif slot.kind == "ship":
+                    if not slot.item_ref:
+                        raise ValueError("ship prize missing item_ref")
+                    game_ship = await ship_repo.get_by_name(session, slot.item_ref)
+                    if not game_ship:
+                        raise ValueError(f"Ship {slot.item_ref!r} not in game catalog")
+                    for _ in range(slot.qty):
+                        await inv_svc.grant_ship(session, player, game_ship)
+                    prize_parts[pid].append(f"{rank_label}: {slot.qty}× {slot.item_ref}")
+                else:
+                    raise ValueError(f"Unknown prize kind={slot.kind!r}")
+                status_parts[pid].append("ok")
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                flogger.error(
+                    f"end_event: mint failed event_id={event.id} player_id={pid} "
+                    f"slot_id={slot.id} kind={slot.kind}: {exc}"
+                )
+                status_parts[pid].append("partial")
+
+    # Write event_results rows (one per qualified + member player)
+    # status ∈ {"ok", "partial", "none"}: failure details are in the audit log
+    for pid, val, rk in ranked:
+        prize_text = "; ".join(prize_parts.get(pid, [])) or "—"
+        parts = status_parts.get(pid, [])
+        if not parts:
+            status_text = "none"
+        elif all(s == "ok" for s in parts):
+            status_text = "ok"
+        else:
+            status_text = "partial"
+        session.add(
+            EventResult(
+                event_id=event.id,
+                guild_id=event.guild_id,
+                type_slug=event.type_slug,
+                player_id=pid,
+                rank=rk,
+                value=val,
+                qualified=True,
+                prize=prize_text[:256],  # column is String(256)
+                status=status_text,
+                awarded_at=now,
+            )
+        )
+    await session.flush()
+
+    # Audit log (commit=False — caller commits)
+    winner_summary = {
+        str(pid): {"rank": rk, "value": val, "prize": "; ".join(prize_parts.get(pid, []))}
+        for pid, val, rk in ranked
+        if rk <= 3
+    }
+    failures = [
+        f"player_id={pid}: partial mint failure (slot details in ERROR log)"
+        for pid, parts in status_parts.items()
+        if any(s == "partial" for s in parts)
+    ]
+    await AuditService.log_action(
+        session,
+        user_id=actor_user_id or event.created_by_user_id or 0,
+        action="event_payout",
+        guild_id=event.guild_id,
+        resource_type="event",
+        resource_id=str(event.id),
+        details={"winners": winner_summary, "failures": failures},
+        commit=False,
+    )
+
+    # End announcement
+    rid = getattr(config, "event_announcements_role_id", None) if config else None
+    role_mention = f"<@&{rid}>" if rid else None
+
+    # Build standings fields for prize-winning ranks
+    standing_lines: list[str] = []
+    for pid, val, rk in ranked[:10]:  # cap at 10 to fit embed
+        player = players_by_id.get(pid)
+        name = (player.user.display_name or player.user.discord_username) if player and player.user else f"#{pid}"
+        val_str = et.fmt(val) if et else str(val)
+        standing_lines.append(f"{_ordinal(rk)}: **{name}** — {val_str}")
+    # Collect @mentions of placed winners (rank ≤ highest prize rank, capped at 10)
+    top_mention_pids = {pid for pid, _, rk in ranked if rk <= 3}
+    mention_str = " ".join(
+        f"<@{players_by_id[pid].user_id}>" for pid in top_mention_pids if pid in players_by_id
+    )
+    text_content = " ".join(filter(None, [role_mention, mention_str])) or None
+
+    embed = {
+        "title": f"🏁 {et.display_name if et else event.type_slug} Event Ended",
+        "description": "\n".join(standing_lines) or "No qualified finishers.",
+        "color": 3066993,
+        "fields": [
+            {"name": "Participants", "value": str(len(ranked)), "inline": True},
+        ],
+    }
+    ann = (event.guild_id, channel_id, embed, text_content) if channel_id else None
+    return {"status": "ok", "ranked_players": len(ranked), "errors": len(failures), "announcement": ann}

@@ -253,7 +253,7 @@ class TestDefaultSchedulerJobsConstant:
     def test_three_jobs_defined(self):
         """DEFAULT_SCHEDULER_JOBS contains exactly six job definitions (db_retention_default added)."""
         # temperature_decay_default REMOVED rev 0031 (temperature subsystem retired); was 6, now 5
-        assert len(DEFAULT_SCHEDULER_JOBS) == 5
+        assert len(DEFAULT_SCHEDULER_JOBS) == 6
 
     def test_job_ids_are_unique(self):
         """Each job definition has a unique job_id."""
@@ -270,6 +270,7 @@ class TestDefaultSchedulerJobsConstant:
         assert "bounty_failsafe_cleanup_default" in ids
         assert "pg_backup_default" in ids
         assert "db_retention_default" in ids
+        assert "event_tick_default" in ids
 
     def test_each_job_has_required_keys(self):
         """Every job definition has job_id, cron, and payload keys."""
@@ -388,7 +389,7 @@ class TestRegisterDefaultJobs:
 
         register_default_jobs(scheduler)
 
-        assert scheduler.add_job.call_count == 5
+        assert scheduler.add_job.call_count == 6
 
     def test_bounty_spawn_job_added(self):
         """bounty_spawn_default is added with correct id and payload (orchestrate job type)."""
@@ -434,6 +435,7 @@ class TestRegisterDefaultJobs:
                 "bounty_failsafe_cleanup_default",
                 "pg_backup_default",
                 "db_retention_default",
+                "event_tick_default",
             ]
         )
 
@@ -447,12 +449,13 @@ class TestRegisterDefaultJobs:
 
         register_default_jobs(scheduler)
 
-        assert scheduler.add_job.call_count == 4
+        assert scheduler.add_job.call_count == 5
         registered_ids = {call.kwargs["id"] for call in scheduler.add_job.call_args_list}
         assert "shop_refresh_default" in registered_ids
         assert "bounty_failsafe_cleanup_default" in registered_ids
         assert "pg_backup_default" in registered_ids
         assert "db_retention_default" in registered_ids
+        assert "event_tick_default" in registered_ids
         assert "bounty_spawn_default" not in registered_ids
         assert "temperature_decay_default" not in registered_ids  # retired rev 0031
 
@@ -464,6 +467,7 @@ class TestRegisterDefaultJobs:
                 "shop_refresh_default",
                 "bounty_failsafe_cleanup_default",
                 "pg_backup_default",
+                "event_tick_default",
             ]
         )
 

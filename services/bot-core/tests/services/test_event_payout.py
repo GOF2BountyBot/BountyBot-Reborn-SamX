@@ -18,7 +18,7 @@ from persist.models.game_event import EventResult, GameEvent, GameEventMetric, G
 from persist.models.guild_config import GuildConfig
 from persist.models.player import Player
 from persist.models.user import User
-from services.event_service import end_event
+from services.event_service import announce, end_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -648,3 +648,183 @@ async def test_end_event_payout_false_returns_cancelled_announcement(engine_and_
         assert results == []
         p951 = (await db.execute(select(Player).where(Player.user_id == 951))).scalar_one()
         assert p951.credits == 1000  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# Announcement body / request inspection tests (item 5)
+# ---------------------------------------------------------------------------
+
+
+async def test_end_announcement_embed_structure_and_role_mention(engine_and_factory):
+    """end_event POST to channel carries correct embed shape and role mention when configured."""
+    _, factory = engine_and_factory
+    role_id = 99_999
+
+    async with factory() as db:
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=1001, event_announcements_role_id=role_id)
+        db.add(cfg)
+        ev = _make_event(slug="bounty_caps")
+        db.add(ev)
+        await db.flush()
+        db.add(_make_prize(ev.id, 1, 1, qty=500))
+        db.add(_make_user(1001, "Winner"))
+        await db.flush()
+        db.add(_make_player(1001, credits=0))
+        await db.commit()
+
+    async with factory() as db:
+        p = (await db.execute(select(Player))).scalar_one()
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=5))
+        ev.state = "active"
+        await db.commit()
+
+    channel_url = _CHANNEL_URL_TMPL.format(channel_id=1001)
+    members_url = _MEMBERS_URL
+    with respx.mock:
+        members_route = respx.get(members_url).mock(return_value=_member_resp([1001]))
+        channel_route = respx.post(channel_url).mock(return_value=_ok_resp())
+
+        async with factory() as db:
+            ev = (await db.execute(select(GameEvent))).scalar_one()
+            result = await end_event(db, ev, payout=True)
+            await db.commit()
+
+        # announce-after-commit: caller must POST the announcement tuple
+        if result.get("announcement"):
+            await announce(*result["announcement"])
+
+    # members GET must carry limit param
+    assert members_route.called
+    assert "limit=5000" in str(members_route.calls[0].request.url)
+
+    # channel POST was called — inspect body
+    assert channel_route.called
+    import json as _json
+    body = _json.loads(channel_route.calls[0].request.content)
+    assert body["message_type"] == "default"
+    embed = body["content"]
+    assert isinstance(embed.get("title"), str)
+    assert isinstance(embed.get("description"), str)
+    assert isinstance(embed.get("color"), int)
+    fields = embed.get("fields", [])
+    assert isinstance(fields, list)
+    for f in fields:
+        assert "name" in f and "value" in f and "inline" in f
+
+    # text_content must mention the role
+    tc = body.get("text_content", "") or ""
+    assert f"<@&{role_id}>" in tc, f"Expected role mention in text_content, got: {tc!r}"
+
+    # end embed description names the ranked winner
+    winner_in_desc = "Winner" in embed["description"]
+    winner_in_fields = any("Winner" in f.get("value", "") for f in fields)
+    assert winner_in_desc or winner_in_fields
+
+
+async def test_end_announcement_no_role_mention_when_null(engine_and_factory):
+    """end_event: text_content has no role mention when event_announcements_role_id is NULL."""
+    _, factory = engine_and_factory
+
+    async with factory() as db:
+        # No event_announcements_role_id set
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=1002)
+        db.add(cfg)
+        ev = _make_event()
+        db.add(ev)
+        await db.flush()
+        db.add(_make_prize(ev.id, 1, 1, qty=100))
+        db.add(_make_user(1002, "P1002"))
+        await db.flush()
+        db.add(_make_player(1002, credits=0))
+        await db.commit()
+
+    async with factory() as db:
+        p = (await db.execute(select(Player))).scalar_one()
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=5))
+        ev.state = "active"
+        await db.commit()
+
+    channel_url = _CHANNEL_URL_TMPL.format(channel_id=1002)
+    with respx.mock:
+        respx.get(_MEMBERS_URL).mock(return_value=_member_resp([1002]))
+        channel_route = respx.post(channel_url).mock(return_value=_ok_resp())
+
+        async with factory() as db:
+            ev = (await db.execute(select(GameEvent))).scalar_one()
+            result = await end_event(db, ev, payout=True)
+            await db.commit()
+
+        # announce-after-commit: caller must POST the announcement tuple
+        if result.get("announcement"):
+            await announce(*result["announcement"])
+
+    import json as _json
+    body = _json.loads(channel_route.calls[0].request.content)
+    tc = body.get("text_content")
+    # text_content should be None or contain no <@&...> mention
+    assert tc is None or "<@&" not in tc, f"Unexpected role mention in text_content: {tc!r}"
+
+
+async def test_cancel_announcement_embed_structure(engine_and_factory):
+    """end_event(payout=False) POST has correct embed shape: title, description, color, fields."""
+    _, factory = engine_and_factory
+
+    async with factory() as db:
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=1003)
+        db.add(cfg)
+        ev = _make_event()
+        db.add(ev)
+        await db.flush()
+        ev.state = "active"
+        await db.commit()
+
+    async with factory() as db:
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        result = await end_event(db, ev, payout=False, reason="Admin cancelled")
+        await db.commit()
+
+    ann = result.get("announcement")
+    assert ann is not None
+    _guild_id, _channel_id, embed, text_content = ann
+    assert isinstance(embed.get("title"), str)
+    assert isinstance(embed.get("description"), str)
+    assert isinstance(embed.get("color"), int)
+    assert isinstance(embed.get("fields"), list)
+    for f in embed["fields"]:
+        assert "name" in f and "value" in f and "inline" in f
+    assert text_content is None  # no mentions on cancel
+
+
+async def test_start_announcement_embed_structure_and_role_mention(engine_and_factory):
+    """start_event returns announcement tuple with correct embed shape and role mention."""
+    from services.event_service import start_event
+    _, factory = engine_and_factory
+    role_id = 77_777
+
+    async with factory() as db:
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=1004, event_announcements_role_id=role_id)
+        db.add(cfg)
+        ev = _make_event(slug="bounty_caps")
+        db.add(ev)
+        await db.flush()
+        db.add(_make_prize(ev.id, 1, 1, qty=200))
+        await db.commit()
+
+    async with factory() as db:
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        ann = await start_event(db, ev)
+        await db.commit()
+
+    assert ann is not None
+    _guild_id, _channel_id, embed, text_content = ann
+    assert isinstance(embed.get("title"), str)
+    assert isinstance(embed.get("description"), str)
+    assert isinstance(embed.get("color"), int)
+    fields = embed.get("fields", [])
+    assert isinstance(fields, list)
+    for f in fields:
+        assert "name" in f and "value" in f and "inline" in f
+
+    assert text_content == f"<@&{role_id}>", f"Expected role mention, got: {text_content!r}"

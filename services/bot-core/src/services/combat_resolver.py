@@ -1344,13 +1344,14 @@ def _build_fight_summary(
                 if tgt_slot in damage_taken:
                     damage_taken[tgt_slot] += absorbed_hp
                 # Slice 2: track last damage subtype per target slot (killing_blow_subtype)
-                if tgt_slot in last_damage_subtype:
+                # Exclude self-damage (att_slot == tgt_slot): a self-kill must not credit the opponent.
+                if tgt_slot in last_damage_subtype and att_slot != tgt_slot:
                     _sub = source.get("subtype") or "primary"
                     # Turret fire carries subtype "auto" or "manual"; normalise to "turret"
                     # so kills_by_weapon weapon=turret events can score correctly.
                     last_damage_subtype[tgt_slot] = "turret" if _sub in ("auto", "manual") else _sub
-                # Slice 2: track max nuke absorbed per attacker slot
-                if source.get("subtype") == "nuke" and att_slot in max_nuke_absorbed:
+                # Slice 2: track max nuke absorbed per attacker slot (opponent-only; self-damage excluded)
+                if source.get("subtype") == "nuke" and att_slot in max_nuke_absorbed and att_slot != tgt_slot:
                     max_nuke_absorbed[att_slot] = max(max_nuke_absorbed[att_slot], absorbed_hp)
 
     def _combatant_block(cx: _CombatantState, slot_key: str) -> dict:

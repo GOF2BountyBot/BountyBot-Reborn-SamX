@@ -432,3 +432,41 @@ async def test_min_fights_per_event_gates_qualification(engine_and_factory):
         by_pid = {pid: qual for pid, _val, qual in result}
         assert by_pid[8] is False, "2 fights with min_fights=3 → unqualified"
         assert by_pid[9] is True, "3 fights with min_fights=3 → qualified"
+
+
+# ---------------------------------------------------------------------------
+# concurrent end_event guard (item 2)
+# ---------------------------------------------------------------------------
+
+
+async def test_second_end_event_is_noop(engine_and_factory):
+    """A second end_event after the first committed returns the idempotent no-op result ({}).
+
+    The SELECT FOR UPDATE guard is a no-op on SQLite, so the true race is only
+    covered by the row lock on Postgres; this test verifies the idempotency path.
+    """
+    from services.event_service import end_event
+    from sqlalchemy import select as sa_select
+
+    _, factory = engine_and_factory
+    ev = _make_event(slug="duels_won", params={})
+    async with factory() as session:
+        await _seed(session, events=[ev])
+        await session.refresh(ev)
+        ev_id = ev.id
+
+    # First end_event — should succeed and return non-empty summary
+    async with factory() as session:
+        ev1 = (await session.execute(sa_select(GameEvent).where(GameEvent.id == ev_id))).scalar_one()
+        result1 = await end_event(session, ev1, payout=False, reason="test", actor_user_id=1)
+        await session.commit()
+
+    assert result1 != {}, "First end_event should return a non-empty summary"
+
+    # Second end_event — event is no longer active → idempotent no-op
+    async with factory() as session:
+        ev2 = (await session.execute(sa_select(GameEvent).where(GameEvent.id == ev_id))).scalar_one()
+        result2 = await end_event(session, ev2, payout=False, reason="test", actor_user_id=1)
+        await session.commit()
+
+    assert result2 == {}, "Second end_event must return {} (idempotent no-op)"

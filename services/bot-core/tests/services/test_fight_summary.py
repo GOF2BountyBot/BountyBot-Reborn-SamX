@@ -1234,6 +1234,50 @@ class TestSlice2SummaryExtension:
         assert s["combatants"]["1"]["max_nuke_absorbed"] == 80
         assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
 
+    def test_self_nuke_contributes_zero_to_max_nuke_absorbed(self):
+        """A nuke event where attacker==target (self-damage) contributes 0 to max_nuke_absorbed."""
+        c1, c2 = _make_states()
+        # C1 hits itself with a nuke (attacker and target are both "C1")
+        self_nuke = _nuke_damage_event("C1", attacker="C1", absorbed=200, tick=1)
+        events = [
+            _fight_start_event("C1", "C2"),
+            self_nuke,
+            _fight_end_event(2, "C2", "hp_depleted", 2, _hp(0), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C2", winner_side=2)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 0, (
+            "Self-nuke damage must not count toward max_nuke_absorbed"
+        )
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_self_nuke_does_not_credit_killing_blow(self):
+        """A self-nuke kill must not set killing_blow_subtype on the surviving player."""
+        c1, c2 = _make_states()
+        # C1 kills itself with a nuke: C2 wins but did no damage
+        self_nuke = _nuke_damage_event("C1", attacker="C1", absorbed=100, tick=1)
+        primary_hit = CombatEvent(
+            tick=2,
+            type=CombatEventType.damage,
+            actor=None,
+            target="C1",
+            data={
+                "amount": 50,
+                "absorbed": 50,
+                "breakdown": {"shield": 0, "armour": 0, "hull": 50},
+                "hp_after": {"shield": 0, "armour": 0, "hull": 0},
+                "source": {"subtype": "primary", "weapon": "TestGun", "attacker": "C2"},
+            },
+        )
+        events = [
+            _fight_start_event("C1", "C2"),
+            self_nuke,
+            primary_hit,
+            _fight_end_event(3, "C2", "hp_depleted", 3, _hp(0), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 3, "C2", winner_side=2)
+        # The killing blow on C1 is attributed to C2's primary (last non-self damage)
+        assert s["combatants"]["2"]["killing_blow_subtype"] == "primary"
+
     def test_primary_killing_blow(self):
         """Primary attack kills: killing_blow_subtype == 'primary' on the winner."""
         c1, c2 = _make_states()

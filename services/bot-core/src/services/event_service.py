@@ -548,6 +548,14 @@ async def end_event(
     new_state = "ended" if payout else "cancelled"
     now = datetime.now(UTC)
 
+    # Concurrent-end guard: lock the row before checking state.
+    # with_for_update() is a no-op on SQLite; on Postgres it serialises concurrent end_event
+    # calls so only the first can pass the active-state check in the UPDATE below.
+    # ponytail: per-row lock is sufficient; upgrade to advisory lock only if contention spikes.
+    await session.execute(
+        select(GameEvent).where(GameEvent.id == event.id).with_for_update()
+    )
+
     # Idempotency: UPDATE only if currently active
     result = await session.execute(
         update(GameEvent)

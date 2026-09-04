@@ -48,7 +48,7 @@ _config_repo = ConfigRepository()
 # Helpers
 # ---------------------------------------------------------------------------
 
-_KNOWN_PARAM_KEYS = {"division", "weapon", "subtype", "module"}
+_KNOWN_PARAM_KEYS = {"division", "weapon", "subtype", "module", "min_fights"}
 _VALID_DIVISIONS = {"Bronze", "Silver", "Gold", "Platinum"}
 _VALID_SUBTYPES: frozenset[str] = frozenset({
     "nuke", "rocket", "missile", "cluster-missile", "emp-bomb", "shock-blast", "ionizing-missile",
@@ -83,8 +83,10 @@ def _validate_params(type_slug: str, params: dict) -> None:
         for key in _KNOWN_PARAM_KEYS:
             if f"{{{key}}}" in tmpl:
                 accepted.add(key)
+    # division and min_fights are accepted by all types
+    accepted |= {"division", "min_fights"}
     for key in params:
-        if key not in accepted and key != "division":
+        if key not in accepted:
             raise HTTPException(status_code=400, detail=f"Param {key!r} not accepted by type {type_slug!r}")
     if "division" in params and params["division"] not in _VALID_DIVISIONS:
         raise HTTPException(
@@ -106,6 +108,10 @@ def _validate_params(type_slug: str, params: dict) -> None:
             status_code=400,
             detail=f"weapon must be one of {sorted(_VALID_WEAPON_VALS)}, got {params['weapon']!r}",
         )
+    if "min_fights" in params:
+        mf = params["min_fights"]
+        if not isinstance(mf, int) or mf < 0:
+            raise HTTPException(status_code=400, detail=f"min_fights must be a non-negative integer, got {mf!r}")
 
 
 def _type_param_keys(type_slug: str) -> list[str]:
@@ -117,6 +123,8 @@ def _type_param_keys(type_slug: str) -> list[str]:
                 keys.append(key)
     if "division" not in keys:
         keys.append("division")
+    if "min_fights" not in keys:
+        keys.append("min_fights")
     return keys
 
 
@@ -512,10 +520,13 @@ async def get_event(event_id: int):
         prizes = pr_result.scalars().all()
 
     et = EVENT_TYPES.get(event.type_slug)
+    params = event.params or {}
+    effective_min_fights = params.get("min_fights", et.default_min_fights if et else 1)
     return EventDetailResponse(
         **EventResponse.model_validate(event).model_dump(),
         prizes=[PrizeResponse.model_validate(p) for p in prizes],
         rules_text=et.rules_text if et else "",
+        effective_min_fights=effective_min_fights,
     )
 
 

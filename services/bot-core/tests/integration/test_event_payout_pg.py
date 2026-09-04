@@ -146,7 +146,9 @@ async def test_payout_credits_and_medals():
             db.add(GameEventPrize(event_id=ev_id, rank_from=None, rank_to=None, kind="credits", item_ref=None, qty=100))
             # Both tied at 10 captures → both rank 1
             db.add(GameEventMetric(event_id=ev_id, player_id=player_a_id, metric="captures", value=10))
+            db.add(GameEventMetric(event_id=ev_id, player_id=player_a_id, metric="checks", value=10))
             db.add(GameEventMetric(event_id=ev_id, player_id=player_b_id, metric="captures", value=10))
+            db.add(GameEventMetric(event_id=ev_id, player_id=player_b_id, metric="checks", value=10))
 
         assert ev_id is not None
 

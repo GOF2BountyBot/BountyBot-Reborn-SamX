@@ -588,6 +588,8 @@ Custom stat-race challenges let admins run time-limited competitions (e.g. "most
 5. To end early with payout: `/admin_event_end event:<id> payout:Yes`
 6. To cancel (no payout): `/admin_event_end event:<id> payout:No`
 
+**Participation = did the activity.** Every event has a `min_fights` parameter (set at create via `/admin_event_create min_fights:<N>`; default is 10 for max/ratio types, 1 for everything else). A player qualifies — and receives the participation prize — if they reached that activity threshold, even with a primary score of 0. *Lossless-event example:* `duels_won`, `min_fights=3`, participation 3000 credits, stakes floor 1000 — a player who loses all three qualifying duels still breaks even.
+
 A **notification role** (`Event Announcements`) is mentioned in start/end announcements when `event_announcements_role_id` is configured (set via `/admin_setup` — re-run after changing the role). Players opt in via `/notifications`.
 
 ### Admin Event Commands

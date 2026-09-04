@@ -90,6 +90,7 @@ class PrizeResponse(BaseModel):
 class EventDetailResponse(EventResponse):
     prizes: list[PrizeResponse] = Field(default_factory=list)
     rules_text: str = ""
+    effective_min_fights: int = 1
 
 
 class StandingEntry(BaseModel):

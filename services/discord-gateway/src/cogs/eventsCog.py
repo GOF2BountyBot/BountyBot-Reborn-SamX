@@ -418,6 +418,7 @@ class EventsCog(commands.Cog):
         subtype="Weapon subtype (for weapon-type events)",
         module="Module type (for module events)",
         weapon="Weapon category (for weapon-kill events)",
+        min_fights="Minimum battles/checks to qualify (default per type; 0 = no gate)",
     )
     @app_commands.autocomplete(type=_type_autocomplete)
     async def admin_event_create(
@@ -429,11 +430,12 @@ class EventsCog(commands.Cog):
         subtype: str | None = None,
         module: str | None = None,
         weapon: str | None = None,
+        min_fights: int | None = None,
     ):
         if not await self._admin_gate(interaction):
             return
 
-        params: dict[str, str] = {}
+        params: dict = {}
         if division:
             params["division"] = division
         if subtype:
@@ -442,6 +444,8 @@ class EventsCog(commands.Cog):
             params["module"] = module
         if weapon:
             params["weapon"] = weapon
+        if min_fights is not None:
+            params["min_fights"] = min_fights
 
         resp = await self._api(
             interaction, "post", f"{api_base}/events",
@@ -812,6 +816,13 @@ class EventsCog(commands.Cog):
                 lines = [_prize_display(p) for p in prizes]
                 embed.add_field(name="Prizes", value="\n".join(lines[:10]) or "None", inline=False)
 
+            mf = e.get("effective_min_fights")
+            if mf is not None:
+                slug = e.get("type_slug", "")
+                _bounty_slugs = {"bounty_caps", "systems_checked", "systems_checked_no_capture"}
+                activity_word = "checks" if slug in _bounty_slugs else "battles"
+                embed.add_field(name="Qualify", value=f"≥{mf} {activity_word}", inline=True)
+
             await interaction.followup.send(embed=embed)
         else:
             # Summary of active + scheduled events.
@@ -912,21 +923,33 @@ class EventsCog(commands.Cog):
                 if r.get("user_id") == caller_id and r["rank"] > 10:
                     caller_row = r
             embed.description = "\n".join(lines) or "No entries."
-            if caller_row:
-                embed.set_footer(
-                    text=f"Your rank: #{caller_row['rank']} — {caller_row['value']:.1f}"
-                    + ("" if caller_row.get("qualified", True) else " (unqualified)")
-                )
-            # Fetch event detail for prizes (non-fatal if it fails)
+            caller_footer = (
+                f"Your rank: #{caller_row['rank']} — {caller_row['value']:.1f}"
+                + ("" if caller_row.get("qualified", True) else " (unqualified)")
+            ) if caller_row else ""
+            # Fetch event detail for prizes + qualify info (non-fatal if it fails)
             try:
                 detail_resp = await self.http_client.get(f"{api_base}/events/{event}", timeout=10)
                 detail_resp.raise_for_status()
-                prizes = detail_resp.json().get("prizes", [])
+                detail = detail_resp.json()
+                prizes = detail.get("prizes", [])
                 if prizes:
                     prize_lines = [_prize_display(p) for p in prizes]
                     embed.add_field(name="Prizes", value="\n".join(prize_lines[:10]) or "None", inline=False)
+                mf = detail.get("effective_min_fights")
+                if mf is not None:
+                    slug = detail.get("type_slug", "")
+                    activity_word = "checks" if slug in (
+                        "bounty_caps", "systems_checked", "systems_checked_no_capture"
+                    ) else "battles"
+                    qualify_str = f"Qualify: ≥{mf} {activity_word}"
+                    embed.set_footer(text=" · ".join(filter(None, [caller_footer, qualify_str])))
+                elif caller_footer:
+                    embed.set_footer(text=caller_footer)
             except Exception:  # pylint: disable=broad-exception-caught
-                pass  # non-fatal — standings already shown
+                if caller_footer:
+                    embed.set_footer(text=caller_footer)
+                # non-fatal — standings already shown
             await interaction.followup.send(embed=embed)
 
         else:

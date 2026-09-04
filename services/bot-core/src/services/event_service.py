@@ -212,14 +212,16 @@ async def standings(
     for row in rows:
         by_player.setdefault(row.player_id, {})[row.metric] = float(row.value)
 
+    params = event.params or {}
+    effective_min = params.get("min_fights", et.default_min_fights)
+
     out: list[tuple[int, float, bool]] = []
     for pid, metrics in by_player.items():
         val = et.value(metrics) if et.value is not None else next(iter(metrics.values()), 0.0)
         qual = True
         if et.qualified is not None:
             qual = et.qualified(metrics)
-        if et.min_fights is not None:
-            qual = qual and metrics.get("fights", 0) >= et.min_fights
+        qual = qual and metrics.get(et.activity, 0) >= effective_min
         out.append((pid, val, qual))
 
     out.sort(key=lambda t: t[1], reverse=True)

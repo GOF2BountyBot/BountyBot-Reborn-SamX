@@ -144,6 +144,7 @@ async def test_three_way_tie_first_place_all_get_1st(engine_and_factory):
         # Seed metric rows — all same value
         for p in players:
             db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=10))
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=10))
         ev.state = "active"
         await db.commit()
 
@@ -202,6 +203,7 @@ async def test_top_n_range_tie_straddling_gives_4_recipients(engine_and_factory)
         scores = {201: 10, 202: 8, 203: 6, 204: 6}
         for p in players:
             db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=scores[p.user_id]))
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=scores[p.user_id]))
         ev.state = "active"
         await db.commit()
 
@@ -249,6 +251,7 @@ async def test_participation_only_qualified(engine_and_factory):
         for p in players:
             if p.user_id == 301:
                 db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=5))
+                db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=5))
         ev.state = "active"
         await db.commit()
 
@@ -297,6 +300,7 @@ async def test_departed_player_forfeits(engine_and_factory):
         scores = {401: 10, 402: 8, 403: 6}
         for p in players:
             db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=scores[p.user_id]))
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=scores[p.user_id]))
         ev.state = "active"
         await db.commit()
 
@@ -350,6 +354,7 @@ async def test_end_event_idempotent(engine_and_factory):
         p = (await db.execute(select(Player))).scalar_one()
         ev = (await db.execute(select(GameEvent))).scalar_one()
         db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=5))
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=5))
         ev.state = "active"
         await db.commit()
 
@@ -398,6 +403,7 @@ async def test_partial_failure_item_ref_missing(engine_and_factory):
         p = (await db.execute(select(Player))).scalar_one()
         ev = (await db.execute(select(GameEvent))).scalar_one()
         db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=5))
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=5))
         ev.state = "active"
         await db.commit()
 
@@ -453,6 +459,7 @@ async def test_announce_failure_is_nonfatal(engine_and_factory):
         p = (await db.execute(select(Player))).scalar_one()
         ev = (await db.execute(select(GameEvent))).scalar_one()
         db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=3))
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=3))
         ev.state = "active"
         await db.commit()
 
@@ -504,6 +511,7 @@ async def test_gateway_members_500_skips_filter_all_paid(engine_and_factory):
         scores = {801: 10, 802: 8}
         for p in players:
             db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=scores[p.user_id]))
+            db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=scores[p.user_id]))
         ev.state = "active"
         await db.commit()
 
@@ -548,6 +556,7 @@ async def test_gateway_members_timeout_skips_filter_all_paid(engine_and_factory)
         p = (await db.execute(select(Player))).scalar_one()
         ev = (await db.execute(select(GameEvent))).scalar_one()
         db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=5))
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=5))
         ev.state = "active"
         await db.commit()
 
@@ -613,6 +622,7 @@ async def test_end_event_payout_false_returns_cancelled_announcement(engine_and_
         db.add(p)
         await db.flush()
         db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=10))
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=10))
         ev.state = "active"
         await db.commit()
 
@@ -664,6 +674,7 @@ async def test_end_announcement_embed_structure_and_role_mention(engine_and_fact
         p = (await db.execute(select(Player))).scalar_one()
         ev = (await db.execute(select(GameEvent))).scalar_one()
         db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=5))
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=5))
         ev.state = "active"
         await db.commit()
 
@@ -730,6 +741,7 @@ async def test_end_announcement_no_role_mention_when_null(engine_and_factory):
         p = (await db.execute(select(Player))).scalar_one()
         ev = (await db.execute(select(GameEvent))).scalar_one()
         db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=5))
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=5))
         ev.state = "active"
         await db.commit()
 
@@ -837,6 +849,7 @@ async def test_end_announcement_embed_shows_prize_and_participation(engine_and_f
         p = (await db.execute(select(Player))).scalar_one()
         ev = (await db.execute(select(GameEvent))).scalar_one()
         db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=10))
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="checks", value=10))
         ev.state = "active"
         await db.commit()
 
@@ -866,3 +879,52 @@ async def test_end_announcement_embed_shows_prize_and_participation(engine_and_f
     assert "Participation" in fields, f"expected Participation field, got fields: {list(fields)}"
     assert "50" in fields["Participation"]
     assert "1 recipients" in fields["Participation"] or "recipients" in fields["Participation"]
+
+
+async def test_lossless_event_participation_paid(engine_and_factory):
+    """Lossless event scenario (spec §3, user 2026-09-04):
+    duels_won, min_fights=3, participation 3000 credits, stakes floor 1000.
+    A player who loses 3 qualifying duels (0 wins, 3 duel_fights) is qualified
+    and receives the participation prize.
+    """
+    _, factory = engine_and_factory
+
+    async with factory() as db:
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=5001, event_min_duel_stakes=1000)
+        db.add(cfg)
+        ev = _make_event(slug="duels_won")
+        ev.params = {"min_fights": 3}
+        db.add(ev)
+        await db.flush()
+        # Participation prize only (no rank prizes)
+        db.add(_make_prize(ev.id, None, None, qty=3000))
+        db.add(_make_user(5001, "Loser"))
+        await db.flush()
+        db.add(_make_player(5001, credits=0))
+        await db.commit()
+
+    async with factory() as db:
+        p = (await db.execute(select(Player))).scalar_one()
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        ev.state = "active"
+        # Three losses: duel_fights=3, no duel_wins row
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="duel_fights", value=3))
+        await db.commit()
+
+    channel_url = _CHANNEL_URL_TMPL.format(channel_id=5001)
+    with respx.mock:
+        respx.get(_MEMBERS_URL).mock(return_value=_member_resp([5001]))
+        respx.post(channel_url).mock(return_value=_ok_resp())
+
+        async with factory() as db, db.begin():
+            ev = (await db.execute(select(GameEvent))).scalar_one()
+            result = await end_event(db, ev, payout=True)
+
+        if result.get("announcement"):
+            await announce(*result["announcement"])
+
+    assert result.get("ranked_players") == 1, "Winless player should be ranked (qualified=True)"
+    # Verify credit payout: player had 0 credits, should now have 3000
+    async with factory() as db:
+        p = (await db.execute(select(Player))).scalar_one()
+        assert p.credits == 3000, f"Expected 3000 credits (participation prize), got {p.credits}"

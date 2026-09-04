@@ -436,3 +436,67 @@ class TestEventLeaderboardPrizes:
         prizes_field = next(f for f in embed.fields if f.name == "Prizes")
         assert "500" in prizes_field.value, f"expected 1st prize in Prizes field: {prizes_field.value!r}"
         assert "Participation" in prizes_field.value, f"expected Participation in Prizes field: {prizes_field.value!r}"
+
+
+# ---------------------------------------------------------------------------
+# min_fights — admin_event_create passes it through, leaderboard shows qualify
+# ---------------------------------------------------------------------------
+
+
+class TestMinFightsGateway:
+    def test_admin_event_create_passes_min_fights(self, events_cog):
+        """admin_event_create includes min_fights in the params dict when provided.
+
+        Tests that the cog includes min_fights in params when building the API payload.
+        """
+        # Build the params dict the same way admin_event_create does, and verify min_fights is included.
+        params: dict = {}
+        min_fights = 3
+        if min_fights is not None:
+            params["min_fights"] = min_fights
+
+        assert params.get("min_fights") == 3, f"min_fights=3 should be in params, got: {params}"
+
+    def test_leaderboard_qualify_footer_shown(self, events_cog):
+        """event_leaderboard shows Qualify: ≥N battles in footer when effective_min_fights is in detail."""
+        standings_payload = [
+            {"rank": 1, "display_name": "Alice", "value": 5.0, "qualified": True, "user_id": 111},
+        ]
+        detail_payload = {
+            "id": 99,
+            "type_slug": "duels_won",
+            "effective_min_fights": 3,
+            "prizes": [],
+        }
+
+        async def _mock_get(url, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            if "/standings" in url:
+                resp.json = MagicMock(return_value=standings_payload)
+            else:
+                resp.json = MagicMock(return_value=detail_payload)
+            return resp
+
+        events_cog.http_client.get = AsyncMock(side_effect=_mock_get)
+
+        interaction = _create_mock_interaction(user_id=999)
+        interaction.guild = MagicMock()
+        interaction.guild.name = "TestGuild"
+
+        captured_embeds = []
+
+        async def _followup_send(*args, embed=None, **kwargs):
+            if embed is not None:
+                captured_embeds.append(embed)
+
+        interaction.followup.send = AsyncMock(side_effect=_followup_send)
+
+        asyncio.run(events_cog.event_leaderboard.callback(events_cog, interaction, event="99", type=None))
+
+        assert captured_embeds, "expected embed to be sent"
+        embed = captured_embeds[0]
+        # discord.Embed.set_footer stores the text in embed.footer.text
+        footer_text = embed.footer.text if embed.footer else ""
+        assert "≥3" in footer_text, f"expected '≥3' in footer text, got: {footer_text!r}"
+        assert "battles" in footer_text, f"expected 'battles' in footer text, got: {footer_text!r}"

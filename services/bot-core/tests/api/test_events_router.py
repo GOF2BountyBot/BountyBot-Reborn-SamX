@@ -752,3 +752,50 @@ class TestAnnounceAfterCommit:
         assert call_order.index("db_exit") < call_order.index("push"), (
             f"push was called before db context exited: {call_order}"
         )
+
+
+# ---------------------------------------------------------------------------
+# min_fights param validation (user decision 2026-09-04)
+# ---------------------------------------------------------------------------
+
+
+class TestMinFightsParam:
+    def test_min_fights_accepted_in_validate_params(self, client, db_ctx):
+        """_validate_params accepts min_fights >= 0 for any event type."""
+        from api.routers.events import _validate_params
+        # Should not raise for valid min_fights values
+        _validate_params("duels_won", {"min_fights": 0})
+        _validate_params("duels_won", {"min_fights": 3})
+        _validate_params("bounty_caps", {"min_fights": 10})
+
+    def test_min_fights_negative_rejected(self, client, db_ctx):
+        """min_fights=-1 is rejected with 400."""
+        with (
+            patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+            patch("api.routers.events.get_db_session"),
+        ):
+            resp = client.post(
+                "/api/v1/events?user_id=42",
+                json={"guild_id": 99, "type_slug": "duels_won", "params": {"min_fights": -1}},
+            )
+        assert resp.status_code == 400
+        assert "min_fights" in resp.json().get("detail", "").lower()
+
+    @patch("api.routers.events.get_db_session")
+    def test_effective_min_fights_in_detail_response(self, mock_db, client, db_ctx):
+        """GET /events/{id} includes effective_min_fights from event params."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        ev = make_event(type_slug="duels_won", params={"min_fights": 5})
+        mock_session.execute = AsyncMock(
+            side_effect=[
+                MagicMock(scalar_one_or_none=lambda: ev),
+                MagicMock(scalars=lambda: MagicMock(all=lambda: [])),
+            ]
+        )
+
+        resp = client.get("/api/v1/events/1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "effective_min_fights" in data, f"effective_min_fights missing from response: {list(data)}"
+        assert data["effective_min_fights"] == 5

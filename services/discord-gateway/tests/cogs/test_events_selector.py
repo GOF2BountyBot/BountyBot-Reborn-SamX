@@ -374,3 +374,65 @@ class TestEventsPlayerSync:
 
         # Should NOT raise — exception is swallowed
         asyncio.run(events_cog.events.callback(events_cog, interaction, event=None))
+
+
+# ---------------------------------------------------------------------------
+# event_leaderboard — Prizes field from GET /events/{id}
+# ---------------------------------------------------------------------------
+
+
+class TestEventLeaderboardPrizes:
+    def test_prizes_field_rendered_from_event_detail(self, events_cog):
+        """event_leaderboard with event= fetches GET /events/{id} and adds a Prizes field."""
+        standings_payload = [
+            {"rank": 1, "display_name": "Alice", "value": 15.0, "qualified": True, "user_id": 111},
+            {"rank": 2, "display_name": "Bob",   "value": 10.0, "qualified": True, "user_id": 222},
+        ]
+        detail_payload = {
+            "id": 42,
+            "type_slug": "bounty_caps",
+            "prizes": [
+                {"id": 1, "rank_from": 1, "rank_to": 1, "kind": "credits", "item_ref": None, "qty": 500},
+                {"id": 2, "rank_from": None, "rank_to": None, "kind": "credits", "item_ref": None, "qty": 50},
+            ],
+        }
+
+        call_order = []
+
+        async def _mock_get(url, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            if "/standings" in url:
+                call_order.append("standings")
+                resp.json = MagicMock(return_value=standings_payload)
+            else:
+                call_order.append("detail")
+                resp.json = MagicMock(return_value=detail_payload)
+            return resp
+
+        events_cog.http_client.get = AsyncMock(side_effect=_mock_get)
+
+        interaction = _create_mock_interaction()
+        interaction.guild = MagicMock()
+        interaction.guild.name = "TestGuild"
+
+        captured_embeds = []
+
+        async def _followup_send(*args, embed=None, **kwargs):
+            if embed is not None:
+                captured_embeds.append(embed)
+
+        interaction.followup.send = AsyncMock(side_effect=_followup_send)
+
+        asyncio.run(events_cog.event_leaderboard.callback(events_cog, interaction, event="42", type=None))
+
+        assert "detail" in call_order, "expected GET /events/{id} to be called"
+        assert captured_embeds, "expected an embed to be sent"
+
+        embed = captured_embeds[0]
+        field_names = [f.name for f in embed.fields]
+        assert "Prizes" in field_names, f"expected Prizes field in embed, got: {field_names}"
+
+        prizes_field = next(f for f in embed.fields if f.name == "Prizes")
+        assert "500" in prizes_field.value, f"expected 1st prize in Prizes field: {prizes_field.value!r}"
+        assert "Participation" in prizes_field.value, f"expected Participation in Prizes field: {prizes_field.value!r}"

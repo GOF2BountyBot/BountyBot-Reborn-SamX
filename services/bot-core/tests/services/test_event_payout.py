@@ -813,3 +813,56 @@ async def test_start_announcement_embed_structure_and_role_mention(engine_and_fa
         assert "name" in f and "value" in f and "inline" in f
 
     assert text_content == f"<@&{role_id}>", f"Expected role mention, got: {text_content!r}"
+
+
+async def test_end_announcement_embed_shows_prize_and_participation(engine_and_factory):
+    """end_event embed description includes prize text per ranked player;
+    embed fields include a Participation summary when a participation slot exists."""
+    _, factory = engine_and_factory
+
+    async with factory() as db:
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=2001)
+        db.add(cfg)
+        ev = _make_event(slug="bounty_caps")
+        db.add(ev)
+        await db.flush()
+        db.add(_make_prize(ev.id, 1, 1, qty=500))          # 1st place: 500 credits
+        db.add(_make_prize(ev.id, None, None, qty=50))      # participation: 50 credits
+        db.add(_make_user(2001, "TopPlayer"))
+        await db.flush()
+        db.add(_make_player(2001, credits=0))
+        await db.commit()
+
+    async with factory() as db:
+        p = (await db.execute(select(Player))).scalar_one()
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="captures", value=10))
+        ev.state = "active"
+        await db.commit()
+
+    channel_url = _CHANNEL_URL_TMPL.format(channel_id=2001)
+    with respx.mock:
+        respx.get(_MEMBERS_URL).mock(return_value=_member_resp([2001]))
+        respx.post(channel_url).mock(return_value=_ok_resp())
+
+        async with factory() as db, db.begin():
+            ev = (await db.execute(select(GameEvent))).scalar_one()
+            result = await end_event(db, ev, payout=True)
+
+        if result.get("announcement"):
+            await announce(*result["announcement"])
+
+    ann = result["announcement"]
+    assert ann is not None
+    _gid, _cid, embed, _text = ann
+
+    # Per-player prize text in description
+    desc = embed["description"]
+    assert "TopPlayer" in desc
+    assert "500" in desc, f"expected 1st-prize credits in description: {desc!r}"
+
+    # Participation summary field
+    fields = {f["name"]: f["value"] for f in embed.get("fields", [])}
+    assert "Participation" in fields, f"expected Participation field, got fields: {list(fields)}"
+    assert "50" in fields["Participation"]
+    assert "1 recipients" in fields["Participation"] or "recipients" in fields["Participation"]

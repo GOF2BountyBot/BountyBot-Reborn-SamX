@@ -33,12 +33,12 @@ Hook sites (all existing code, one call each):
 | `player_service.py:509` (promotion) and `:574` (demotion) | one call each: delete the player's metric rows in active division-scoped events — they start over in the new tier. Prestige (`:702`) and admin reset (`admin.py:614`) are ignored on purpose (user: repercussions accepted). |
 
 **Duel stakes filter** (user decision): global, default **1000**, guild-settable. New `guild_configs.event_min_duel_stakes` + field on `GameConstantsOverridesMixin` + `_METADATA_FIELDS` + `FIELD_DESCRIPTIONS` (`api/routers/config.py:657` pattern) → appears in `/admin_config` automatically. No per-event override.
-**Gates:** `min_fights` — a registry constant (10) on max/ratio types, qualified when the `fights` row ≥ 10 (`# ponytail: constant; make it a param when an admin asks`); `division` — enforced at write time (above) plus the two tier-change calls.
+**Participation = did the activity (user, 2026-09-04).** Every type declares an `activity` metric it also tallies — `duel_fights` for duel types, `fights` for combat types, `checks` for bounty types — so a player who engaged but scored zero (three lost duels in a `duels_won` event) still has an entry, shows at 0 on the board, and earns the participation award. **`min_fights` is a per-event param** (admin sets at create; default 10 on max/ratio types, 1 otherwise): qualified ⇔ `activity ≥ min_fights` (plus any type-specific rule such as no-capture). Design pattern this enables — the *lossless* event: `duels_won`, `min_fights=3`, participation 3000 credits, stakes floor 1000 → a player who loses all three still breaks even. `division` — enforced at write time (above) plus the two tier-change calls.
 **Admin `reset_player` / prestige:** irrelevant — events never read `Player` counters (user: current behaviour is fine anyway).
 **Combat contexts** are only `duel`, `bounty_pvc`, `bounty_bonus` — no free practice-fight farming vector.
 
 ## 4. Catalog (v1)
-`agg`: Σ sum · max · ratio. Gate: S = stakes filter (all duel-context contributions, every type) · F = `min_fights` · D = `division` (any type).
+`agg`: Σ sum · max · ratio. Gate: S = stakes filter (all duel-context contributions, every type) · F = `min_fights` (per-event param, default 10 on max/ratio types else 1) · D = `division` (any type). Activity metric per family: duels → `duel_fights`, combat → `fights`, bounty → `checks`.
 | Slug | Metric(s) | agg | Gate | Note |
 |---|---|---|---|---|
 | `bounty_caps` | captures | Σ | | |
@@ -123,7 +123,8 @@ Checks (as built): bot-core `tests/services/test_event_service.py` (record/stand
 | Role-mention fallback to Bounty Hunter | role job creates the role within ~60 s | never |
 | Re-baselining on admin reset | events don't read Player counters | never |
 | Prize "vanished" handling beyond per-slot try/except | catalog is static (user) | never |
-| Per-event `min_stakes` / `min_fights` params | guild config + registry constant cover it | an admin asks for per-event values |
+| Per-event `min_stakes` param | guild config covers it | an admin asks for per-event values |
+| (reinstated 2026-09-04) per-event `min_fights` | the user's lossless-event design needs it | — |
 | `metrics` JSONB + `value` column + `entries` table (`tier_at_first_activity`, `disqualified`) | one narrow `game_event_metrics` table with a native upsert; division enforced at write time; tier change deletes rows | never — JSON read-modify-write under concurrent fights is a race farm |
 | `nukes_fired` slug | it is `secondary_fired(subtype=nuke)` | never |
 | `min_fights` gate on Σ types | volume stats can't be won by one lucky fight | never |

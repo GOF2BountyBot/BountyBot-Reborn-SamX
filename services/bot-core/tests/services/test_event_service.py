@@ -372,3 +372,63 @@ async def test_on_tier_change_deletes_division_rows_only(engine_and_factory):
         assert len(rows) == 1
         assert rows[0].metric == "captures"
         assert float(rows[0].value) == 3.0
+
+
+# ---------------------------------------------------------------------------
+# Participation = did the activity (user decision 2026-09-04)
+# ---------------------------------------------------------------------------
+
+
+async def test_winless_dueller_appears_at_zero(engine_and_factory):
+    """A player who loses all duels in a duels_won event has value=0 in standings.
+
+    After the activity-metric change, duel_fights is tallied even on losses,
+    so the player appears on the board at 0 and qualifies if duel_fights >= min_fights.
+    """
+    _, factory = engine_and_factory
+    ev = _make_event(slug="duels_won", params={})  # default_min_fights=1
+    async with factory() as session:
+        await _seed(session, stakes=500, events=[ev])
+        await session.refresh(ev)
+        player = _make_player(id=7)
+        # Three qualifying duel losses: each contributes duel_fights=1; duel_wins=0 (skipped)
+        for _ in range(3):
+            await record(session, player, {"duel_losses": 1.0, "duel_fights": 1.0}, context="duel", stakes=1000)
+        await session.commit()
+
+    async with factory() as session:
+        from sqlalchemy import select
+        ev2 = (await session.execute(select(GameEvent))).scalar_one()
+        result = await standings(session, ev2)
+        assert len(result) == 1
+        pid, val, qual = result[0]
+        assert pid == 7
+        assert val == 0.0, "Winless player has value=0 (no duel_wins)"
+        assert qual is True, "duel_fights=3 >= default_min_fights=1 → qualified"
+
+
+async def test_min_fights_per_event_gates_qualification(engine_and_factory):
+    """With per-event min_fights=3, a player with 2 fights is unqualified; at 3 they qualify."""
+    _, factory = engine_and_factory
+    # min_fights=3 stored in event params
+    ev = _make_event(slug="duels_won", params={"min_fights": 3})
+    async with factory() as session:
+        await _seed(session, stakes=500, events=[ev])
+        await session.refresh(ev)
+        player_a = _make_player(id=8)
+        player_b = _make_player(id=9)
+        # Player A: 2 fights → unqualified
+        for _ in range(2):
+            await record(session, player_a, {"duel_losses": 1.0, "duel_fights": 1.0}, context="duel", stakes=1000)
+        # Player B: 3 fights → qualified
+        for _ in range(3):
+            await record(session, player_b, {"duel_losses": 1.0, "duel_fights": 1.0}, context="duel", stakes=1000)
+        await session.commit()
+
+    async with factory() as session:
+        from sqlalchemy import select
+        ev2 = (await session.execute(select(GameEvent))).scalar_one()
+        result = await standings(session, ev2)
+        by_pid = {pid: qual for pid, _val, qual in result}
+        assert by_pid[8] is False, "2 fights with min_fights=3 → unqualified"
+        assert by_pid[9] is True, "3 fights with min_fights=3 → qualified"

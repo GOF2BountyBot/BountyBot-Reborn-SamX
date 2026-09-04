@@ -29,12 +29,17 @@ class EventType:
     # metrics: {metric_name: agg_mode} where agg_mode is "sum" or "max"
     # For parameterised types the metric_name may contain "{param}" placeholder.
     metrics: dict[str, str]
+    # activity: the metric key that counts "did the activity" (always "sum"-aggregated).
+    # A player qualifies iff metrics[activity] >= effective_min_fights.
+    # Duel family → "duel_fights"; combat family → "fights"; bounty family → "checks".
+    activity: str = "fights"
     # value: rows (dict metric->float) → rank key; None = single metric value
     value: Callable[[dict], float] | None = None
     # qualified: rows → bool (None = always qualified)
     qualified: Callable[[dict], bool] | None = None
-    # min_fights: require the "fights" metric >= this before qualified=True (max/ratio types)
-    min_fights: int | None = None
+    # default_min_fights: per-type default for the per-event min_fights param.
+    # 10 on max/ratio types (ceiling can be gamed with one lucky fight); 1 otherwise.
+    default_min_fights: int = 1
     fmt: Callable[[float], str] = field(default=str, compare=False)
 
 
@@ -61,7 +66,9 @@ EVENT_TYPES: dict[str, EventType] = {
         display_name="Bounty Captures",
         rules_text="Capture the most pirates on bounty hunts.",
         category="bounty",
-        metrics={"captures": "sum"},
+        metrics={"captures": "sum", "checks": "sum"},
+        activity="checks",
+        value=lambda m: m.get("captures", 0.0),
     ),
     "systems_checked": EventType(
         slug="systems_checked",
@@ -69,6 +76,7 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Scout the most star systems on bounty runs.",
         category="bounty",
         metrics={"checks": "sum"},
+        activity="checks",
     ),
     "systems_checked_no_capture": EventType(
         slug="systems_checked_no_capture",
@@ -76,6 +84,8 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Scout the most systems without claiming a single capture.",
         category="bounty",
         metrics={"checks": "sum", "captures": "sum"},
+        activity="checks",
+        value=lambda m: m.get("checks", 0.0),
         qualified=lambda m: m.get("captures", 0) == 0,
     ),
     # ---- duels ----
@@ -84,14 +94,18 @@ EVENT_TYPES: dict[str, EventType] = {
         display_name="Duels Won",
         rules_text="Win the most qualifying duels.",
         category="duel",
-        metrics={"duel_wins": "sum"},
+        metrics={"duel_wins": "sum", "duel_fights": "sum"},
+        activity="duel_fights",
+        value=lambda m: m.get("duel_wins", 0.0),
     ),
     "duels_lost": EventType(
         slug="duels_lost",
         display_name="Duels Lost",
         rules_text="Lose the most qualifying duels.",
         category="duel",
-        metrics={"duel_losses": "sum"},
+        metrics={"duel_losses": "sum", "duel_fights": "sum"},
+        activity="duel_fights",
+        value=lambda m: m.get("duel_losses", 0.0),
     ),
     "duels_fought": EventType(
         slug="duels_fought",
@@ -99,20 +113,25 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Fight the most qualifying duels, counting stalemates.",
         category="duel",
         metrics={"duel_fights": "sum"},
+        activity="duel_fights",
     ),
     "duel_credits_won": EventType(
         slug="duel_credits_won",
         display_name="Duel Credits Won",
         rules_text="Walk away with the most credits from qualifying duels.",
         category="duel",
-        metrics={"credits_won": "sum"},
+        metrics={"credits_won": "sum", "duel_fights": "sum"},
+        activity="duel_fights",
+        value=lambda m: m.get("credits_won", 0.0),
     ),
     "duel_credits_lost": EventType(
         slug="duel_credits_lost",
         display_name="Duel Credits Lost",
         rules_text="Wager the most credits in qualifying duels.",
         category="duel",
-        metrics={"credits_lost": "sum"},
+        metrics={"credits_lost": "sum", "duel_fights": "sum"},
+        activity="duel_fights",
+        value=lambda m: m.get("credits_lost", 0.0),
     ),
     # ---- kills ----
     "kills": EventType(
@@ -120,7 +139,9 @@ EVENT_TYPES: dict[str, EventType] = {
         display_name="Kills",
         rules_text="Rack up the most kills across bounty hunts and qualifying duels.",
         category="combat",
-        metrics={"captures": "sum", "duel_wins": "sum"},  # fed by the bounty + duel hooks; no separate "kills" key
+        # captures from bounty hook, duel_wins from duel hook, fights from combat hook (both contexts)
+        metrics={"captures": "sum", "duel_wins": "sum", "fights": "sum"},
+        activity="fights",
         value=lambda m: m.get("captures", 0) + m.get("duel_wins", 0),
     ),
     "kills_by_weapon": EventType(
@@ -129,7 +150,9 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Land the most killing blows with a chosen weapon in qualifying fights.",
         category="combat",
         # metric key = kills_by_weapon:{params[weapon]}; expanded by event_service
-        metrics={"kills_by_weapon:{weapon}": "sum"},
+        metrics={"kills_by_weapon:{weapon}": "sum", "fights": "sum"},
+        activity="fights",
+        value=lambda m: sum(v for k, v in m.items() if k != "fights"),
     ),
     # ---- secondaries / modules ----
     "secondary_fired": EventType(
@@ -138,7 +161,9 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Fire the most rounds of a chosen secondary weapon in qualifying fights.",
         category="combat",
         # metric key = secondary_fired:{params[subtype]}
-        metrics={"secondary_fired:{subtype}": "sum"},
+        metrics={"secondary_fired:{subtype}": "sum", "fights": "sum"},
+        activity="fights",
+        value=lambda m: sum(v for k, v in m.items() if k != "fights"),
     ),
     "module_activations": EventType(
         slug="module_activations",
@@ -146,7 +171,9 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Trigger a chosen module the most times in qualifying fights.",
         category="combat",
         # metric key = module_activations:{params[module]}
-        metrics={"module_activations:{module}": "sum"},
+        metrics={"module_activations:{module}": "sum", "fights": "sum"},
+        activity="fights",
+        value=lambda m: sum(v for k, v in m.items() if k != "fights"),
     ),
     # ---- fights ----
     "fights_fought": EventType(
@@ -155,6 +182,7 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Take part in the most qualifying fights.",
         category="combat",
         metrics={"fights": "sum"},
+        activity="fights",
     ),
     # ---- max / duration ----
     "longest_battle_won": EventType(
@@ -163,8 +191,9 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Win the single longest fight by round count (10 fights needed to qualify).",
         category="combat",
         metrics={"duration_ticks_win": "max", "fights": "sum"},
+        activity="fights",
         value=lambda m: m.get("duration_ticks_win", 0),
-        min_fights=10,
+        default_min_fights=10,
     ),
     "longest_battle_lost": EventType(
         slug="longest_battle_lost",
@@ -172,8 +201,9 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Lose the single longest fight by round count (10 fights needed to qualify).",
         category="combat",
         metrics={"duration_ticks_loss": "max", "fights": "sum"},
+        activity="fights",
         value=lambda m: m.get("duration_ticks_loss", 0),
-        min_fights=10,
+        default_min_fights=10,
     ),
     "max_damage_dealt_fight": EventType(
         slug="max_damage_dealt_fight",
@@ -181,8 +211,9 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Deal the most damage in a single qualifying fight (10 fights needed to qualify).",
         category="combat",
         metrics={"max_damage_dealt": "max", "fights": "sum"},
+        activity="fights",
         value=lambda m: m.get("max_damage_dealt", 0),
-        min_fights=10,
+        default_min_fights=10,
     ),
     "max_damage_taken_fight": EventType(
         slug="max_damage_taken_fight",
@@ -190,8 +221,9 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Absorb the most damage in a single qualifying fight (10 fights needed to qualify).",
         category="combat",
         metrics={"max_damage_taken": "max", "fights": "sum"},
+        activity="fights",
         value=lambda m: m.get("max_damage_taken", 0),
-        min_fights=10,
+        default_min_fights=10,
     ),
     "max_single_nuke_damage": EventType(
         slug="max_single_nuke_damage",
@@ -199,8 +231,9 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Score the biggest single nuke hit across all qualifying fights (10 fights needed to qualify).",
         category="combat",
         metrics={"max_nuke_absorbed": "max", "fights": "sum"},
+        activity="fights",
         value=lambda m: m.get("max_nuke_absorbed", 0),
-        min_fights=10,
+        default_min_fights=10,
     ),
     # ---- volume ----
     "total_damage_dealt": EventType(
@@ -208,14 +241,18 @@ EVENT_TYPES: dict[str, EventType] = {
         display_name="Total Damage Dealt",
         rules_text="Deal the most total damage across all qualifying fights.",
         category="combat",
-        metrics={"total_damage_dealt": "sum"},
+        metrics={"total_damage_dealt": "sum", "fights": "sum"},
+        activity="fights",
+        value=lambda m: m.get("total_damage_dealt", 0.0),
     ),
     "shots_fired": EventType(
         slug="shots_fired",
         display_name="Shots Fired",
         rules_text="Fire the most shots across all qualifying fights (nukes and shock-blasts excluded).",
         category="combat",
-        metrics={"shots_fired": "sum"},
+        metrics={"shots_fired": "sum", "fights": "sum"},
+        activity="fights",
+        value=lambda m: m.get("shots_fired", 0.0),
     ),
     # ---- ratio ----
     "avg_accuracy": EventType(
@@ -224,8 +261,9 @@ EVENT_TYPES: dict[str, EventType] = {
         rules_text="Post the highest hit rate across all qualifying fights (10 fights needed to qualify).",
         category="combat",
         metrics={"hits": "sum", "shots": "sum", "fights": "sum"},
+        activity="fights",
         value=_safe_ratio("hits", "shots"),
-        min_fights=10,
+        default_min_fights=10,
         fmt=lambda v: f"{v:.1%}",
     ),
 }

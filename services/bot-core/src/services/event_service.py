@@ -18,7 +18,7 @@ from shared import bblogger
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.event_types import EVENT_TYPES, resolve_metrics
+from services.event_types import EVENT_TYPES, render_rules, resolve_metrics
 
 _GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
 _GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
@@ -507,9 +507,22 @@ async def start_event(
     et = EVENT_TYPES.get(event.type_slug)
     rid = config.event_announcements_role_id
     role_mention = f"<@&{rid}>" if rid else None
+    params = event.params or {}
+    effective_min_fights = params.get("min_fights", et.default_min_fights if et else 1)
+    min_duel_stakes: int = config.event_min_duel_stakes if config else 1000
+    rules_rendered = (
+        render_rules(
+            et,
+            min_stakes=min_duel_stakes,
+            min_fights=effective_min_fights,
+            division=params.get("division"),
+            params=params,
+        )
+        if et else ""
+    )
     embed = {
         "title": f"🏆 {et.display_name if et else event.type_slug} Event Started!",
-        "description": et.rules_text if et else "",
+        "description": rules_rendered,
         "color": 9699539,  # purple #941733
         "fields": [
             {"name": "Ends", "value": f"<t:{int(event.ends_at.timestamp())}:R>", "inline": True},

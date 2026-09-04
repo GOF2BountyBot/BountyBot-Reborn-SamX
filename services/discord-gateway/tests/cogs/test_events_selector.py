@@ -503,21 +503,21 @@ class TestMinFightsGateway:
         assert params.get("min_fights") == 3, f"min_fights=3 should be in params, got: {params}"
 
     def test_leaderboard_qualify_footer_shown(self, events_cog):
-        """event_leaderboard shows a 'Prizes require' footer line from rules_detail or effective_min_fights."""
+        """event_leaderboard shows a 'Prizes require' footer line extracted from rendered rules_text."""
         standings_payload = [
             {"rank": 1, "display_name": "Alice", "value": 5.0, "qualified": True, "user_id": 111},
         ]
-        # Include rules_detail the way the updated API returns it
+        # rules_text is now the fully rendered string from the API
         detail_payload = {
             "id": 99,
             "type_slug": "duels_won",
             "effective_min_fights": 3,
             "prizes": [],
-            "rules_detail": [
-                "Counts: duels with at least 1,000 credits at stake.",
-                "Prizes require at least 3 battles.",
-                "Losing still counts as taking part.",
-            ],
+            "rules_text": (
+                "Win the most duels. Duels count when stakes are at least 1,000 credits. "
+                "Stalemates count as fights but not wins. Losing still counts as taking part. "
+                "Prizes require at least 3 battles."
+            ),
         }
 
         async def _mock_get(url, **kwargs):
@@ -555,24 +555,24 @@ class TestMinFightsGateway:
 
 
 # ---------------------------------------------------------------------------
-# item 6c: /events detail renders rules_detail lines
+# item 6c: /events detail renders rules_text (the rendered string) in the embed description
 # ---------------------------------------------------------------------------
 
 
 class TestEventsDetailRulesDetail:
-    def test_rules_detail_lines_in_description(self, events_cog):
-        """/events with event= selected renders rules_detail lines in the embed description."""
+    def test_rules_text_in_description(self, events_cog):
+        """/events with event= selected renders the rendered rules_text in the embed description."""
+        # rules_text is now a single rendered string that includes all the detail
         detail_payload = {
             "id": 7,
             "type_slug": "duels_won",
             "type_display": "Duels Won",
             "state": "active",
-            "rules_text": "Win the most duels.",
-            "rules_detail": [
-                "Counts: duels with at least 1,000 credits at stake.",
-                "Prizes require at least 3 battles.",
-                "Losing still counts as taking part.",
-            ],
+            "rules_text": (
+                "Win the most duels. Duels count when stakes are at least 1,000 credits. "
+                "Stalemates count as fights but not wins. Losing still counts as taking part. "
+                "Prizes require at least 3 battles."
+            ),
             "prizes": [],
             "effective_min_fights": 3,
             "started_at": None,
@@ -608,10 +608,10 @@ class TestEventsDetailRulesDetail:
         assert captured_embeds, "expected embed to be sent"
         embed = captured_embeds[0]
         assert "1,000 credits" in embed.description, (
-            f"rules_detail stake line missing from description: {embed.description!r}"
+            f"stake amount missing from description: {embed.description!r}"
         )
         assert "Prizes require at least 3 battles" in embed.description, (
-            f"rules_detail prize line missing from description: {embed.description!r}"
+            f"prizes line missing from description: {embed.description!r}"
         )
 
 

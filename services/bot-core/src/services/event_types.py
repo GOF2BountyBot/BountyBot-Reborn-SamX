@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 class EventType:
     slug: str
     display_name: str
+    # rules_text is a template; call render_rules() to get the player-facing string.
+    # Placeholders: {min_stakes:,} for duel/combat, {subtype}/{module}/{weapon} for parameterised types.
     rules_text: str
     category: str
     # metrics: {metric_name: agg_mode} where agg_mode is "sum" or "max"
@@ -64,7 +66,10 @@ EVENT_TYPES: dict[str, EventType] = {
     "bounty_caps": EventType(
         slug="bounty_caps",
         display_name="Bounty Captures",
-        rules_text="Capture the most pirates on bounty hunts. Every check counts; captures are the score.",
+        rules_text=(
+            "Capture the most pirates. Every system check counts as a battle. "
+            "Captures are the score."
+        ),
         category="bounty",
         metrics={"captures": "sum", "checks": "sum"},
         activity="checks",
@@ -73,7 +78,10 @@ EVENT_TYPES: dict[str, EventType] = {
     "systems_checked": EventType(
         slug="systems_checked",
         display_name="Systems Checked",
-        rules_text="Check the most bounty systems. Captures count as checks; only checks matter for the score.",
+        rules_text=(
+            "Check the most bounty systems. Every system check counts. "
+            "Captures also count as checks."
+        ),
         category="bounty",
         metrics={"checks": "sum"},
         activity="checks",
@@ -81,7 +89,10 @@ EVENT_TYPES: dict[str, EventType] = {
     "systems_checked_no_capture": EventType(
         slug="systems_checked_no_capture",
         display_name="Systems Checked (No Captures)",
-        rules_text="Check the most systems without capturing a single bounty — one capture and you're out.",
+        rules_text=(
+            "Check the most systems without capturing a single pirate. "
+            "Every check counts. One capture and you are disqualified."
+        ),
         category="bounty",
         metrics={"checks": "sum", "captures": "sum"},
         activity="checks",
@@ -92,9 +103,12 @@ EVENT_TYPES: dict[str, EventType] = {
     "duels_won": EventType(
         slug="duels_won",
         display_name="Duels Won",
+        # User-approved wording (verbatim); see ux-followups.md item 3.
         rules_text=(
-            "Win the most duels. Duels count when stakes meet the guild's minimum. "
-            "Stalemates count as fights but not wins. Losing still counts as taking part."
+            "Win the most duels. "
+            "Duels count when stakes are at least {min_stakes:,} credits. "
+            "Stalemates count as fights but not wins. "
+            "Losing still counts as taking part."
         ),
         category="duel",
         metrics={"duel_wins": "sum", "duel_fights": "sum"},
@@ -105,8 +119,10 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="duels_lost",
         display_name="Duels Lost",
         rules_text=(
-            "Lose the most duels. Duels count when stakes meet the guild's minimum. "
-            "Stalemates count as fights but not losses. Winning still counts as taking part."
+            "Lose the most duels. "
+            "Duels count when stakes are at least {min_stakes:,} credits. "
+            "Stalemates count as fights but not losses. "
+            "Winning still counts as taking part."
         ),
         category="duel",
         metrics={"duel_losses": "sum", "duel_fights": "sum"},
@@ -117,8 +133,10 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="duels_fought",
         display_name="Duels Fought",
         rules_text=(
-            "Fight the most battles. Duels count only when stakes meet the guild's minimum; "
-            "bounty fights always count. Stalemates count as fights."
+            "Fight the most duels. "
+            "Duels count when stakes are at least {min_stakes:,} credits. "
+            "Stalemates count as fights. "
+            "Losing still counts as taking part."
         ),
         category="duel",
         metrics={"duel_fights": "sum"},
@@ -128,7 +146,8 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="duel_credits_won",
         display_name="Duel Credits Won",
         rules_text=(
-            "Walk away with the most credits from duels at or above the guild's stakes floor. "
+            "Walk away with the most credits from duels. "
+            "Duels count when stakes are at least {min_stakes:,} credits. "
             "Losing still counts as taking part."
         ),
         category="duel",
@@ -140,7 +159,8 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="duel_credits_lost",
         display_name="Duel Credits Lost",
         rules_text=(
-            "Lose the most credits in duels at or above the guild's stakes floor. "
+            "Lose the most credits in duels. "
+            "Duels count when stakes are at least {min_stakes:,} credits. "
             "Winning still counts as taking part."
         ),
         category="duel",
@@ -153,8 +173,10 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="kills",
         display_name="Kills",
         rules_text=(
-            "Rack up the most kills. Bounty captures and duel wins both count. "
-            "Duels must meet the guild's stakes minimum. Losing still counts as taking part."
+            "Rack up the most kills. "
+            "Kills are bounty captures plus duel wins. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
+            "Losing still counts as taking part."
         ),
         category="combat",
         # captures from bounty hook, duel_wins from duel hook, fights from combat hook (both contexts)
@@ -166,8 +188,9 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="kills_by_weapon",
         display_name="Kills by Weapon",
         rules_text=(
-            "Land the most killing blows with a chosen weapon. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count. "
+            "Land the most killing blows with the {weapon}. "
+            "Only the finishing blow with that weapon counts; interim damage does not. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
             "Losing still counts as taking part."
         ),
         category="combat",
@@ -181,8 +204,8 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="secondary_fired",
         display_name="Secondaries Fired",
         rules_text=(
-            "Fire the most rounds of a chosen secondary weapon. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count. "
+            "Fire the most {subtype} shots. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
             "Losing still counts as taking part."
         ),
         category="combat",
@@ -195,8 +218,8 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="module_activations",
         display_name="Module Activations",
         rules_text=(
-            "Trigger a chosen module the most times. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count. "
+            "Activate the {module} module the most times. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
             "Losing still counts as taking part."
         ),
         category="combat",
@@ -210,8 +233,10 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="fights_fought",
         display_name="Fights Fought",
         rules_text=(
-            "Fight the most battles. Duels count only when stakes meet the guild's minimum; "
-            "bounty fights always count. Stalemates count as fights."
+            "Fight the most battles. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
+            "Stalemates count as fights. "
+            "Losing still counts as taking part."
         ),
         category="combat",
         metrics={"fights": "sum"},
@@ -222,8 +247,9 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="longest_battle_won",
         display_name="Longest Battle Won",
         rules_text=(
-            "Win the single longest fight by round count. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count."
+            "Win the single longest fight, measured in combat rounds. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
+            "Only your longest winning fight counts."
         ),
         category="combat",
         metrics={"duration_ticks_win": "max", "fights": "sum"},
@@ -235,8 +261,9 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="longest_battle_lost",
         display_name="Longest Battle Lost",
         rules_text=(
-            "Lose the single longest fight by round count. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count."
+            "Lose the single longest fight, measured in combat rounds. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
+            "Only your longest losing fight counts."
         ),
         category="combat",
         metrics={"duration_ticks_loss": "max", "fights": "sum"},
@@ -249,7 +276,8 @@ EVENT_TYPES: dict[str, EventType] = {
         display_name="Max Damage Dealt in a Fight",
         rules_text=(
             "Deal the most damage in a single fight. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count."
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
+            "Only your single highest-damage fight counts."
         ),
         category="combat",
         metrics={"max_damage_dealt": "max", "fights": "sum"},
@@ -262,7 +290,8 @@ EVENT_TYPES: dict[str, EventType] = {
         display_name="Max Damage Taken in a Fight",
         rules_text=(
             "Absorb the most damage in a single fight. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count."
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
+            "Only your single highest-damage-taken fight counts."
         ),
         category="combat",
         metrics={"max_damage_taken": "max", "fights": "sum"},
@@ -274,9 +303,9 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="max_single_nuke_damage",
         display_name="Max Single Nuke Damage",
         rules_text=(
-            "Land the single biggest nuke hit on an opponent "
-            "(damage you take from your own nuke doesn't count). "
-            "Duels must meet the guild's stakes minimum; bounty fights always count."
+            "Land the biggest nuke hit on an opponent in a single shot. "
+            "Self-damage from your own nuke does not count. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count."
         ),
         category="combat",
         metrics={"max_nuke_absorbed": "max", "fights": "sum"},
@@ -289,8 +318,8 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="total_damage_dealt",
         display_name="Total Damage Dealt",
         rules_text=(
-            "Deal the most total damage. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count. "
+            "Deal the most total damage across all fights. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
             "Losing still counts as taking part."
         ),
         category="combat",
@@ -302,8 +331,9 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="shots_fired",
         display_name="Shots Fired",
         rules_text=(
-            "Fire the most shots. Nukes and shock-blasts excluded. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count. "
+            "Fire the most shots. "
+            "Nukes and shock-blasts do not count as shots. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
             "Losing still counts as taking part."
         ),
         category="combat",
@@ -316,8 +346,9 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="avg_accuracy",
         display_name="Average Accuracy",
         rules_text=(
-            "Post the highest hit rate. Nukes and shock-blasts excluded. "
-            "Duels must meet the guild's stakes minimum; bounty fights always count."
+            "Post the highest hit rate across all fights. "
+            "Accuracy is hits divided by shots; nukes and shock-blasts are excluded from both. "
+            "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count."
         ),
         category="combat",
         metrics={"hits": "sum", "shots": "sum", "fights": "sum"},
@@ -345,40 +376,35 @@ def resolve_metrics(slug: str, params: dict) -> dict[str, str]:
     return result
 
 
-def build_rules_detail(
+def render_rules(
     et: EventType,
+    *,
+    min_stakes: int,
+    min_fights: int,
+    division: str | None,
     params: dict,
-    min_duel_stakes: int,
-    effective_min_fights: int,
-) -> list[str]:
-    """Build the concrete rules-detail lines for an event.
+) -> str:
+    """Render the rules template into the player-facing string.
 
-    Returns a list of short sentences suitable for display in Discord embeds.
-    The gateway prints them as-is so everything concrete lives in one place.
+    Substitutes {min_stakes:,}, {subtype}, {module}, {weapon} from params,
+    then appends "Prizes require at least N battles/checks." (when min_fights > 1)
+    and "{division} division only." (when set).
     """
-    lines: list[str] = []
+    # Build substitution dict: formatted min_stakes plus any event params
+    subs: dict[str, str] = {k: str(v) for k, v in params.items()}
+    # Format min_stakes with comma separator; the template uses {min_stakes:,}
+    # so we pre-format it and insert it as a plain {min_stakes} substitute.
+    # We do this by manually replacing the format-spec variant first.
+    text = et.rules_text.replace("{min_stakes:,}", f"{min_stakes:,}")
+    # Then substitute any remaining plain placeholders (subtype, module, weapon, etc.)
+    for key, val in subs.items():
+        text = text.replace(f"{{{key}}}", val)
 
-    # What counts
-    if et.category == "duel":
-        lines.append(f"Counts: duels with at least {min_duel_stakes:,} credits at stake.")
-    elif et.category == "combat":
-        lines.append(
-            f"Counts: duels with at least {min_duel_stakes:,} credits at stake, and bounty fights."
-        )
-    elif et.category == "bounty":
-        lines.append("Counts: bounty system checks and captures.")
-
-    # Minimum activity for prizes
-    activity_label = "checks" if et.category == "bounty" else "battles"
-    lines.append(f"Prizes require at least {effective_min_fights} {activity_label}.")
-
-    # Division scope
-    division = params.get("division")
+    parts = [text]
+    if min_fights > 1:
+        activity_label = "checks" if et.category == "bounty" else "battles"
+        parts.append(f"Prizes require at least {min_fights} {activity_label}.")
     if division:
-        lines.append(f"Division: {division} only.")
+        parts.append(f"{division} division only.")
 
-    # Losing/stalemates count as participation for fight-based events
-    if et.category in ("duel", "combat"):
-        lines.append("Losing still counts as taking part.")
-
-    return lines
+    return " ".join(parts)

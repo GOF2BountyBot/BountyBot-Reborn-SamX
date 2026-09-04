@@ -470,3 +470,71 @@ async def test_second_end_event_is_noop(engine_and_factory):
         await session.commit()
 
     assert result2 == {}, "Second end_event must return {} (idempotent no-op)"
+
+
+# ---------------------------------------------------------------------------
+# render_rules unit tests (ux-followups.md item 3, all 21 types)
+# ---------------------------------------------------------------------------
+
+
+def test_render_rules_duels_won_approved_wording():
+    """duels_won stakes=1000 / min_fights=3 / no division == user-approved sentence + Prizes line."""
+    from services.event_types import EVENT_TYPES, render_rules
+
+    et = EVENT_TYPES["duels_won"]
+    result = render_rules(et, min_stakes=1000, min_fights=3, division=None, params={})
+    assert result.startswith("Win the most duels."), f"wrong opening: {result!r}"
+    assert "1,000 credits" in result, f"stake amount missing: {result!r}"
+    assert "Stalemates count as fights but not wins." in result, f"stalemates clause missing: {result!r}"
+    assert "Losing still counts as taking part." in result, f"losing clause missing: {result!r}"
+    assert "Prizes require at least 3 battles." in result, f"prizes line missing: {result!r}"
+
+
+def test_render_rules_secondary_fired_nuke():
+    """secondary_fired subtype=nuke mentions nukes and both duel stakes and bounty fights."""
+    from services.event_types import EVENT_TYPES, render_rules
+
+    et = EVENT_TYPES["secondary_fired"]
+    result = render_rules(et, min_stakes=1000, min_fights=1, division=None, params={"subtype": "nuke"})
+    assert "nuke" in result, f"subtype nuke missing: {result!r}"
+    assert "1,000 credits" in result, f"duel stakes missing: {result!r}"
+    assert "bounty fights always count" in result, f"bounty context missing: {result!r}"
+    assert "Prizes require" not in result, "min_fights=1 should append nothing"
+
+
+def test_render_rules_bounty_caps_checks_no_stakes():
+    """bounty_caps mentions checks and has no duel-stakes text."""
+    from services.event_types import EVENT_TYPES, render_rules
+
+    et = EVENT_TYPES["bounty_caps"]
+    result = render_rules(et, min_stakes=1000, min_fights=1, division=None, params={})
+    assert "check" in result.lower(), f"'check' missing: {result!r}"
+    assert "credits" not in result, f"stakes should not appear for bounty type: {result!r}"
+
+
+def test_render_rules_bounty_caps_min_fights_says_checks():
+    """bounty_caps with min_fights=5 appends 'checks' not 'battles'."""
+    from services.event_types import EVENT_TYPES, render_rules
+
+    et = EVENT_TYPES["bounty_caps"]
+    result = render_rules(et, min_stakes=1000, min_fights=5, division=None, params={})
+    assert "Prizes require at least 5 checks." in result, f"checks line missing: {result!r}"
+    assert "battles" not in result, f"'battles' should not appear for bounty type: {result!r}"
+
+
+def test_render_rules_min_fights_1_appends_nothing():
+    """min_fights=1 never appends the 'Prizes require' line."""
+    from services.event_types import EVENT_TYPES, render_rules
+
+    et = EVENT_TYPES["duels_won"]
+    result = render_rules(et, min_stakes=500, min_fights=1, division=None, params={})
+    assert "Prizes require" not in result, f"should not appear for min_fights=1: {result!r}"
+
+
+def test_render_rules_division_appends_line():
+    """division='Bronze' appends 'Bronze division only.'"""
+    from services.event_types import EVENT_TYPES, render_rules
+
+    et = EVENT_TYPES["duels_won"]
+    result = render_rules(et, min_stakes=1000, min_fights=1, division="Bronze", params={"division": "Bronze"})
+    assert "Bronze division only." in result, f"division line missing: {result!r}"

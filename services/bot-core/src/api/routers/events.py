@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 from persist.database.manager import get_db_session
-from persist.models.game_event import EventResult, GameEvent, GameEventPrize
+from persist.models.game_event import GameEvent, GameEventPrize
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.ship_repository import ShipRepository
 from services.audit_service import AuditService
@@ -50,7 +50,9 @@ _config_repo = ConfigRepository()
 
 _KNOWN_PARAM_KEYS = {"division", "weapon", "subtype", "module"}
 _VALID_DIVISIONS = {"Bronze", "Silver", "Gold", "Platinum"}
-_VALID_SUBTYPES: frozenset[str] = frozenset({"nuke", "rocket", "missile", "cluster-missile", "emp-bomb", "shock-blast"})
+_VALID_SUBTYPES: frozenset[str] = frozenset({
+    "nuke", "rocket", "missile", "cluster-missile", "emp-bomb", "shock-blast", "ionizing-missile",
+})
 _VALID_WEAPON_VALS: frozenset[str] = _VALID_SUBTYPES | {"primary", "turret"}
 _VALID_STATES: frozenset[str] = frozenset({"draft", "scheduled", "active", "ended", "cancelled"})
 
@@ -117,10 +119,6 @@ def _type_param_keys(type_slug: str) -> list[str]:
         keys.append("division")
     return keys
 
-
-# Competition ranking: 1 + count of entries with strictly higher value.
-def _rank(player_val: float, all_vals: list[float]) -> int:
-    return 1 + sum(1 for v in all_vals if v > player_val)
 
 
 # ---------------------------------------------------------------------------
@@ -527,72 +525,16 @@ async def get_event(event_id: int):
 
 @router.get("/{event_id}/standings", response_model=list[StandingEntry])
 async def get_standings(event_id: int):
-    from persist.models.player import Player
-    from sqlalchemy.orm import selectinload
-
     async with get_db_session() as db:
         ev_result = await db.execute(select(GameEvent).where(GameEvent.id == event_id))
         event = _load_event_or_404(ev_result.scalar_one_or_none(), event_id)
 
         if event.state == "ended":
-            # Read from event_results
-            er_result = await db.execute(
-                select(EventResult).where(EventResult.event_id == event_id).order_by(EventResult.rank)
-            )
-            results = er_result.scalars().all()
-            player_ids = [r.player_id for r in results]
-            pl_result = await db.execute(
-                select(Player).options(selectinload(Player.user)).where(Player.id.in_(player_ids))
-            )
-            players_by_id = {p.id: p for p in pl_result.scalars().all()}
-            out: list[StandingEntry] = []
-            for r in results:
-                p = players_by_id.get(r.player_id)
-                name = ""
-                uid = 0
-                if p:
-                    name = (p.display_name or (p.user.discord_username if p.user else "")) or f"#{p.id}"
-                    uid = p.user_id
-                out.append(
-                    StandingEntry(
-                        player_id=r.player_id,
-                        user_id=uid,
-                        display_name=name,
-                        value=r.value or 0.0,
-                        rank=r.rank or 0,
-                        qualified=bool(r.qualified),
-                    )
-                )
-            return out
+            rows = await event_service.final_standings(db, event)
         else:
-            raw = await event_service.standings(db, event)
-            # raw = list of (player_id, value, qualified) sorted desc by value
-            all_vals = [v for _, v, _ in raw]
-            player_ids = [pid for pid, _, _ in raw]
-            pl_result = await db.execute(
-                select(Player).options(selectinload(Player.user)).where(Player.id.in_(player_ids))
-            )
-            players_by_id = {p.id: p for p in pl_result.scalars().all()}
+            rows = await event_service.live_standings(db, event)
 
-            out = []
-            for pid, val, qual in raw:
-                p = players_by_id.get(pid)
-                name = ""
-                uid = 0
-                if p:
-                    name = (p.display_name or (p.user.discord_username if p.user else "")) or f"#{p.id}"
-                    uid = p.user_id
-                out.append(
-                    StandingEntry(
-                        player_id=pid,
-                        user_id=uid,
-                        display_name=name,
-                        value=val,
-                        rank=_rank(val, all_vals),
-                        qualified=qual,
-                    )
-                )
-            return out
+    return [StandingEntry(**row) for row in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -602,54 +544,6 @@ async def get_standings(event_id: int):
 
 @router.get("/guild/{guild_id}/medals", response_model=list[MedalEntry])
 async def get_medals(guild_id: int, type_slug: str | None = Query(default=None)):
-    from persist.models.player import Player
-    from sqlalchemy.orm import selectinload
-
     async with get_db_session() as db:
-        q = select(EventResult).where(EventResult.guild_id == guild_id, EventResult.qualified.is_(True))
-        if type_slug:
-            q = q.where(EventResult.type_slug == type_slug)
-        result = await db.execute(q)
-        rows = result.scalars().all()
-
-        player_ids = list({r.player_id for r in rows})
-        pl_result = await db.execute(
-            select(Player).options(selectinload(Player.user)).where(Player.id.in_(player_ids))
-        )
-        players_by_id = {p.id: p for p in pl_result.scalars().all()}
-
-    # Aggregate per player
-    agg: dict[int, dict] = {}
-    for r in rows:
-        pid = r.player_id
-        if pid not in agg:
-            agg[pid] = {"gold": 0, "silver": 0, "bronze": 0, "events": 0}
-        agg[pid]["events"] += 1
-        rk = r.rank or 99
-        if rk == 1:
-            agg[pid]["gold"] += 1
-        elif rk == 2:
-            agg[pid]["silver"] += 1
-        elif rk == 3:
-            agg[pid]["bronze"] += 1
-
-    entries: list[MedalEntry] = []
-    for pid, counts in agg.items():
-        p = players_by_id.get(pid)
-        name = ""
-        uid = 0
-        if p:
-            name = (p.display_name or (p.user.discord_username if p.user else "")) or f"#{p.id}"
-            uid = p.user_id
-        entries.append(
-            MedalEntry(
-                player_id=pid,
-                user_id=uid,
-                display_name=name,
-                **counts,
-            )
-        )
-
-    # Olympic ordering: golds desc, silvers desc, bronzes desc, events desc
-    entries.sort(key=lambda e: (-e.gold, -e.silver, -e.bronze, -e.events))
-    return entries
+        rows = await event_service.medals(db, guild_id, type_slug=type_slug)
+    return [MedalEntry(**row) for row in rows]

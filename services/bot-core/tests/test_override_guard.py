@@ -145,6 +145,7 @@ ALLOWED_NON_OVERRIDE_COLUMNS: frozenset[str] = frozenset(
         "gold_role_id",
         "platinum_role_id",
         "shop_announcements_role_id",
+        "event_announcements_role_id",  # events (#30): infra id, set by guild_setup / role-sync job
         # ------- shop inventory size / quantity ranges (UpdateShopConfigRequest) -------
         "ship_count_range",
         "weapon_count_range",
@@ -159,6 +160,7 @@ ALLOWED_NON_OVERRIDE_COLUMNS: frozenset[str] = frozenset(
         "tech_level_probabilities",
         # ------- economy (UpdateConfigRequest / dedicated endpoints) -------
         "sale_price_factor",
+        "event_min_duel_stakes",  # events (#30): exposed via _METADATA_FIELDS like sale_price_factor
         "starting_credits",
         # ------- tier progression (UpdateXPThresholdsRequest) -------
         "xp_thresholds",

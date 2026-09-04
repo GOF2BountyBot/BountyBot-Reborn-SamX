@@ -241,7 +241,7 @@ class TestEnsureBountyBotInfrastructure:
         result = asyncio.run(ensure_bountybot_infrastructure(guild))
 
         # create_role called 6 times: 1 general + 4 tier + 1 shop announcements
-        assert guild.create_role.call_count == 6
+        assert guild.create_role.call_count == 7  # + Event Announcements (#30)
         guild.create_category.assert_called_once()
         assert guild.create_text_channel.call_count == 8
 
@@ -365,7 +365,7 @@ class TestEnsureBountyBotInfrastructure:
         result = asyncio.run(ensure_bountybot_infrastructure(guild))
 
         # General BH role was found — not created. Tier roles + shop announcements were created (5 calls).
-        assert guild.create_role.call_count == 5
+        assert guild.create_role.call_count == 6  # + Event Announcements (#30)
         assert result["bounty_hunter_role_id"] == 555
         assert result["bronze_role_id"] == 556
         assert result["silver_role_id"] == 557
@@ -1208,7 +1208,7 @@ class TestEnsureBountyBotInfrastructure:
         asyncio.run(ensure_bountybot_infrastructure(guild))
 
         # Should have called create_role 6 times: general + 4 tier + 1 shop announcements
-        assert guild.create_role.call_count == 6
+        assert guild.create_role.call_count == 7  # + Event Announcements (#30)
 
         # Each tier role should be created with mentionable=True and hoist=False
         # Calls: [0]=general BH, [1:5]=tier roles, [5]=shop announcements
@@ -1234,8 +1234,11 @@ class TestEnsureBountyBotInfrastructure:
         gold_role = _make_role(name="Bounty Hunter Gold", role_id=602)
         platinum_role = _make_role(name="bounty hunter platinum", role_id=603)
         shop_ann_role = _make_role(name="Shop Announcements", role_id=604)
+        event_ann_role = _make_role(name="Event Announcements", role_id=605)  # (#30)
 
-        guild = _make_guild(roles=[general_role, bronze_role, silver_role, gold_role, platinum_role, shop_ann_role])
+        guild = _make_guild(
+            roles=[general_role, bronze_role, silver_role, gold_role, platinum_role, shop_ann_role, event_ann_role]
+        )
 
         new_cat = _make_category(cat_id=111)
         guild.create_category.return_value = new_cat

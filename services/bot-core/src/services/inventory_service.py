@@ -218,6 +218,24 @@ class InventoryService:
             flogger.error(f"Error adding item to inventory: {e}")
             raise
 
+    async def grant_ship(self, db: AsyncSession, player, game_ship):  # -> PlayerShip
+        """Create a PlayerShip (inactive, empty loadout) for player. Caller owns commit/flush.
+
+        Moved from api/routers/admin.py admin_give_ship so both the admin router
+        and event payout can call one code path.
+        """
+        from persist.models.player_ship import PlayerShip
+
+        new_ship = PlayerShip(
+            player_id=player.id,
+            ship_name=game_ship.name,
+            is_active=False,
+            weapons=[],
+            modules=[],
+            turrets=[],
+        )
+        return await self.player_ship_repo.add(db, new_ship, commit=False)
+
     async def remove_item_from_inventory(
         self,
         db: AsyncSession,
@@ -526,12 +544,12 @@ class InventoryService:
     ) -> dict[str, dict[str, Any] | None]:
         """Batch-fetch item details for a list of item names.
 
-        P6-T2: replaces N×6 sequential ``_get_item_details`` calls (one per item
+        P6-T2: replaces N×6 sequential ``get_item_details`` calls (one per item
         name × six repos) with 6 batched ``WHERE name IN (...)`` queries — one
         per repo type.  For an inventory with N distinct item names this reduces
         the query count from up to 6·N to exactly 6.
 
-        The priority ordering mirrors ``_get_item_details``: primary_weapon →
+        The priority ordering mirrors ``get_item_details``: primary_weapon →
         secondary_weapon → turret_weapon → module → commodity → ship.  If the same name
         somehow appears in two repos (shouldn't happen in practice) the first
         match wins, matching the old sequential-scan behaviour.
@@ -553,7 +571,7 @@ class InventoryService:
         # Pre-fill with None so all queried names are present in the result.
         details: dict[str, dict[str, Any] | None] = dict.fromkeys(unique_names, None)
 
-        # Repos in priority order (mirrors _get_item_details lookup sequence).
+        # Repos in priority order (mirrors get_item_details lookup sequence).
         # commodity is included so looted commodities (C-1) resolve to a detail
         # dict — otherwise their item_details is None and the non-nullable
         # response schema rejects the WHOLE inventory list (breaks /sell).
@@ -584,7 +602,7 @@ class InventoryService:
 
         return details
 
-    async def _get_item_details(self, db: AsyncSession, item_name: str) -> dict[str, Any] | None:
+    async def get_item_details(self, db: AsyncSession, item_name: str) -> dict[str, Any] | None:
         """Get item details by searching all item repositories.
 
         Single-item convenience wrapper around ``_get_items_details_batch``.

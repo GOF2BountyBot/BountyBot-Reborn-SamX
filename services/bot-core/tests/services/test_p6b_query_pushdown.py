@@ -1,6 +1,6 @@
 """P6 Pass B — behavior-equivalence + efficiency tests for four query-pushdown changes.
 
-P6-T2  Batch inventory ``_get_item_details`` (kill N×5 lookups)
+P6-T2  Batch inventory ``get_item_details`` (kill N×5 lookups)
     - Output of ``get_player_inventory`` (item_details dicts) is identical across
       mixed-type inventories, empty inventories, and inventories containing an
       unknown item name.
@@ -400,13 +400,13 @@ class TestP6T2BatchItemDetails:
 
     @pytest.mark.asyncio
     async def test_single_item_details_delegates_to_batch(self):
-        """_get_item_details (single-item wrapper) returns correct detail for a module."""
+        """get_item_details (single-item wrapper) returns correct detail for a module."""
         svc = _make_inventory_service()
         mod = _make_module_obj("Cabin Module", tech_level=1, value=300)
         svc.module_repo.get_by_names = AsyncMock(return_value=[mod])
         db = _make_db()
 
-        result = await svc._get_item_details(db, "Cabin Module")
+        result = await svc.get_item_details(db, "Cabin Module")
 
         assert result == {
             "name": "Cabin Module",
@@ -417,11 +417,11 @@ class TestP6T2BatchItemDetails:
 
     @pytest.mark.asyncio
     async def test_single_item_details_none_for_unknown(self):
-        """_get_item_details returns None for an unknown item name."""
+        """get_item_details returns None for an unknown item name."""
         svc = _make_inventory_service()
         db = _make_db()
 
-        result = await svc._get_item_details(db, "No Such Item")
+        result = await svc.get_item_details(db, "No Such Item")
 
         assert result is None
 

@@ -345,8 +345,8 @@ class EventsCog(commands.Cog):
         return await self._events_autocomplete(interaction, current, states={"draft", "scheduled", "cancelled"})
 
     async def _ac_event_player(self, interaction, current):
-        """Player-facing: scheduled/active/ended via _events_autocomplete, then drop ended > 7 days."""
-        choices = await self._events_autocomplete(interaction, current, states={"scheduled", "active", "ended"})
+        """/event_leaderboard selector: active events and ended events within the last 7 days."""
+        choices = await self._events_autocomplete(interaction, current, states={"active", "ended"})
         cutoff = datetime.now(UTC) - timedelta(days=7)
         # Post-filter: drop ended events older than 7 days.
         # Cache entries have "ends_at" and "state" attached by _fetch_events.
@@ -367,6 +367,10 @@ class EventsCog(commands.Cog):
                         pass
             out.append(ch)
         return out
+
+    async def _ac_event_selector_events(self, interaction, current):
+        """/events selector: only active and scheduled events."""
+        return await self._events_autocomplete(interaction, current, states={"active", "scheduled"})
 
     # ------------------------------------------------------------------
     # Shared helpers — reduce boilerplate in admin commands
@@ -777,7 +781,7 @@ class EventsCog(commands.Cog):
 
     @app_commands.command(name="events", description="View live and upcoming events (or details for one event)")
     @app_commands.describe(event="Event to view in detail")
-    @app_commands.autocomplete(event=_ac_event_player)
+    @app_commands.autocomplete(event=_ac_event_selector_events)
     async def events(
         self,
         interaction: discord.Interaction,
@@ -796,9 +800,12 @@ class EventsCog(commands.Cog):
 
             e = resp.json()
             et_display = e.get("type_display", e.get("type_slug", "?"))
+            rules_text = e.get("rules_text") or "No rules text."
+            rules_detail = e.get("rules_detail") or []
+            description_parts = [rules_text, *rules_detail]
             embed = discord.Embed(
                 title=f"Event #{e['id']} — {et_display}",
-                description=e.get("rules_text") or "No rules text.",
+                description="\n".join(description_parts),
                 color=discord.Color.gold(),
             )
             embed.add_field(name="State", value=e.get("state", "?"), inline=True)
@@ -815,13 +822,6 @@ class EventsCog(commands.Cog):
             if prizes:
                 lines = [_prize_display(p) for p in prizes]
                 embed.add_field(name="Prizes", value="\n".join(lines[:10]) or "None", inline=False)
-
-            mf = e.get("effective_min_fights")
-            if mf is not None:
-                slug = e.get("type_slug", "")
-                _bounty_slugs = {"bounty_caps", "systems_checked", "systems_checked_no_capture"}
-                activity_word = "checks" if slug in _bounty_slugs else "battles"
-                embed.add_field(name="Qualify", value=f"≥{mf} {activity_word}", inline=True)
 
             await interaction.followup.send(embed=embed)
         else:
@@ -936,16 +936,19 @@ class EventsCog(commands.Cog):
                 if prizes:
                     prize_lines = [_prize_display(p) for p in prizes]
                     embed.add_field(name="Prizes", value="\n".join(prize_lines[:10]) or "None", inline=False)
-                mf = detail.get("effective_min_fights")
-                if mf is not None:
-                    slug = detail.get("type_slug", "")
-                    activity_word = "checks" if slug in (
-                        "bounty_caps", "systems_checked", "systems_checked_no_capture"
-                    ) else "battles"
-                    qualify_str = f"Qualify: ≥{mf} {activity_word}"
-                    embed.set_footer(text=" · ".join(filter(None, [caller_footer, qualify_str])))
-                elif caller_footer:
-                    embed.set_footer(text=caller_footer)
+                # Use the "Prizes require…" line from rules_detail for the footer
+                rules_detail = detail.get("rules_detail") or []
+                prizes_line = next((ln for ln in rules_detail if ln.startswith("Prizes require")), None)
+                if prizes_line is None:
+                    # Fallback: build from effective_min_fights for older API responses
+                    mf = detail.get("effective_min_fights")
+                    if mf is not None:
+                        slug = detail.get("type_slug", "")
+                        activity_word = "checks" if slug in (
+                            "bounty_caps", "systems_checked", "systems_checked_no_capture"
+                        ) else "battles"
+                        prizes_line = f"Prizes require at least {mf} {activity_word}."
+                embed.set_footer(text=" · ".join(filter(None, [caller_footer, prizes_line])))
             except Exception:  # pylint: disable=broad-exception-caught
                 if caller_footer:
                     embed.set_footer(text=caller_footer)

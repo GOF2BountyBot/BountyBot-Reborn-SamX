@@ -590,6 +590,18 @@ Custom stat-race challenges let admins run time-limited competitions (e.g. "most
 
 **Participation = did the activity.** Every event has a `min_fights` parameter (set at create via `/admin_event_create min_fights:<N>`; default is 10 for max/ratio types, 1 for everything else). A player qualifies — and receives the participation prize — if they reached that activity threshold, even with a primary score of 0. *Lossless-event example:* `duels_won`, `min_fights=3`, participation 3000 credits, stakes floor 1000 — a player who loses all three qualifying duels still breaks even.
 
+**What counts per event family:**
+
+| Family | What counts | Stakes filter |
+|--------|------------|---------------|
+| `duel` | Duels at or above `event_min_duel_stakes`. Stalemates count as fights but not wins/losses. | Yes — duels below the floor are ignored |
+| `combat` | Duels at or above `event_min_duel_stakes`, plus all bounty fights. | Duels only |
+| `bounty` | Bounty system checks and captures. | No |
+
+**Self-damage note:** For `max_single_nuke_damage`, damage a player takes from their own nuke does not count toward their score — only hits landing on the opponent are tracked.
+
+**Concrete in-game display:** When a player runs `/events event:<id>` or `/event_leaderboard event:<id>`, the embed shows the exact rules for that event instance — the live guild stakes floor, the `min_fights` threshold, and any division scope. No need to look these up manually; the bot derives them from current configuration.
+
 A **notification role** (`Event Announcements`) is mentioned in start/end announcements when `event_announcements_role_id` is configured (set via `/admin_setup` — re-run after changing the role). Players opt in via `/notifications`.
 
 ### Admin Event Commands

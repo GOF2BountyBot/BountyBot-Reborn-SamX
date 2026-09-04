@@ -68,6 +68,11 @@ async def execute_event_tick_job(job_id: str, payload: dict) -> dict:
                             await announce(*ann)
                         except Exception as _ann_exc:  # pylint: disable=broad-exception-caught
                             flogger.error(f"EventTick[{job_id}] announce failed event_id={event_id}: {_ann_exc}")
+                    try:
+                        from utils.event_cache_push import _push_events_cache
+                        await _push_events_cache(ev.guild_id)
+                    except Exception as _push_exc:  # pylint: disable=broad-exception-caught
+                        flogger.warning(f"EventTick[{job_id}] cache push failed event_id={event_id}: {_push_exc}")
                 elif event_state == "active" and ev.state == "active":
                     result = await end_event(db, ev, payout=True)
                     await db.commit()
@@ -79,6 +84,11 @@ async def execute_event_tick_job(job_id: str, payload: dict) -> dict:
                             await announce(*ann)
                         except Exception as _ann_exc:  # pylint: disable=broad-exception-caught
                             flogger.error(f"EventTick[{job_id}] announce failed event_id={event_id}: {_ann_exc}")
+                    try:
+                        from utils.event_cache_push import _push_events_cache
+                        await _push_events_cache(ev.guild_id)
+                    except Exception as _push_exc:  # pylint: disable=broad-exception-caught
+                        flogger.warning(f"EventTick[{job_id}] cache push failed event_id={event_id}: {_push_exc}")
                 else:
                     flogger.debug(
                         f"EventTick[{job_id}] event_id={event_id} state changed to {ev.state!r} since read — skip"

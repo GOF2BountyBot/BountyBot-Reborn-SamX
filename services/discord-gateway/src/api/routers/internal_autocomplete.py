@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from shared import bblogger
 
-from api.schemas.internal_schemas import BountyCachePush, DuelCachePush, ShopCachePush
+from api.schemas.internal_schemas import BountyCachePush, DuelCachePush, EventCachePush, ShopCachePush
 
 flogger = bblogger.get_logger("gateway-internal-autocomplete")
 
@@ -252,3 +252,54 @@ async def autocomplete_cache_health(
         "ships_cache_size": state.ships_cache.size if state.ships_cache else 0,
         "initialized": state._initialized,
     }
+
+
+# ---------------------------------------------------------------------------
+# Events cache push
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/events-cache/{guild_id}",
+    status_code=204,
+    summary="Push event list into gateway EventsCog cache",
+    description=(
+        "Called by bot-core after each event mutation (create, start, end, delete, prize changes). "
+        "Writes the new event list directly into EventsCog._events_cache so the next autocomplete "
+        "keystroke returns fresh data without a GET call to bot-core."
+    ),
+)
+async def push_events_cache(
+    request: Request,
+    guild_id: int,
+    payload: EventCachePush,
+) -> Response:
+    """Update the gateway EventsCog autocomplete cache for one guild."""
+    await _verify_auth(request.headers.get("x-internal-auth"))
+
+    bot = getattr(request.app.state, "bot", None)
+    if bot is None:
+        flogger.warning("push_events_cache: app.state.bot not available")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bot not initialised")
+
+    cog = bot.get_cog("EventsCog")
+    if cog is None or not hasattr(cog, "_events_cache"):
+        # Graceful no-op — cog may not yet be loaded.
+        flogger.warning(
+            f"push_events_cache: EventsCog not loaded or _events_cache not present (guild={guild_id}) — graceful no-op"
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    # Pre-compute _norm so autocomplete hot path never calls normalize_for_search per event.
+    from utils.autocomplete_utils import normalize_for_search
+    from utils.timestamp_utils import event_status_label
+
+    events = payload.events
+    for e in events:
+        td = e.get("type_display", e.get("type_slug", ""))
+        label = f"#{e.get('id')} · {td} · {event_status_label(e)}"
+        e["_norm"] = normalize_for_search(label)
+
+    cog._events_cache.set(guild_id, events)
+    flogger.info(f"push_events_cache: updated cache for guild={guild_id} events={len(events)}")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

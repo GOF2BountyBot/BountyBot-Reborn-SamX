@@ -20,6 +20,7 @@ from services.event_types import EVENT_TYPES
 from services.inventory_service import InventoryService
 from shared import bblogger
 from sqlalchemy import func, select
+from utils.event_cache_push import _push_events_cache
 
 from api.routers.admin import verify_admin_permissions
 from api.schemas.events_schema import (
@@ -179,6 +180,7 @@ async def create_event(body: CreateEventRequest, user_id: int = Query(...)):
             )
         await db.refresh(event)
     flogger.info(f"create_event: event_id={event.id} guild={body.guild_id} type={body.type_slug} by user={user_id}")
+    await _push_events_cache(body.guild_id)
     return EventResponse.model_validate(event)
 
 
@@ -207,6 +209,7 @@ async def delete_event(event_id: int, guild_id: int = Query(...), user_id: int =
             commit=False,
         )
     flogger.info(f"delete_event: event_id={event_id} guild={event.guild_id} by user={user_id}")
+    await _push_events_cache(guild_id)
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +292,7 @@ async def add_prize(event_id: int, body: AddPrizeRequest, guild_id: int = Query(
             )
         await db.refresh(prize)
     flogger.info(f"add_prize: event_id={event_id} prize_id={prize.id} kind={body.kind} by user={user_id}")
+    await _push_events_cache(guild_id)
     return PrizeResponse.model_validate(prize)
 
 
@@ -324,6 +328,7 @@ async def delete_prize(event_id: int, prize_id: int, guild_id: int = Query(...),
             commit=False,
         )
     flogger.info(f"delete_prize: event_id={event_id} prize_id={prize_id} by user={user_id}")
+    await _push_events_cache(guild_id)
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +343,7 @@ async def start_event(event_id: int, body: StartEventRequest, guild_id: int = Qu
 
     now = datetime.now(UTC)
     announcement = None
+    scheduled_result: dict | None = None
 
     async with get_db_session() as db, db.begin():
         ev_result = await db.execute(select(GameEvent).where(GameEvent.id == event_id))
@@ -367,7 +373,7 @@ async def start_event(event_id: int, body: StartEventRequest, guild_id: int = Qu
                 commit=False,
             )
             flogger.info(f"start_event: event_id={event_id} scheduled at {t.isoformat()} by user={user_id}")
-            return {"status": "scheduled", "scheduled_start_at": t.isoformat()}
+            scheduled_result = {"status": "scheduled", "scheduled_start_at": t.isoformat()}
         else:
             # Immediate start — state already gated above to draft|scheduled
             try:
@@ -385,7 +391,10 @@ async def start_event(event_id: int, body: StartEventRequest, guild_id: int = Qu
                 commit=False,
             )
 
-    # announce-after-commit contract: only post after the block exits (commit)
+    # Both branches: push AFTER commit (announce-after-commit contract)
+    await _push_events_cache(guild_id)
+    if scheduled_result is not None:
+        return scheduled_result
     if announcement:
         await event_service.announce(*announcement)
     flogger.info(f"start_event: event_id={event_id} started by user={user_id}")
@@ -430,6 +439,7 @@ async def end_event(event_id: int, body: EndEventRequest, guild_id: int = Query(
     if announcement:
         await event_service.announce(*announcement)
     flogger.info(f"end_event: event_id={event_id} payout={body.payout} by user={user_id}")
+    await _push_events_cache(guild_id)
     return summary
 
 

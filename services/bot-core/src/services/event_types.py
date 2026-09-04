@@ -19,6 +19,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from services.combat_resolver import _TICK_MS as _COMBAT_TICK_MS
+
 
 @dataclass(frozen=True)
 class EventType:
@@ -67,8 +69,10 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="bounty_caps",
         display_name="Bounty Captures",
         rules_text=(
-            "Capture the most pirates. Every system check counts as a battle. "
-            "Captures are the score."
+            "Capture the most bounties. "
+            "A capture means you found the criminal's system and won the fight; "
+            "in Bronze the capture is guaranteed once you find them and the battle is a bonus. "
+            "Every /check counts as taking part, including checks where you found the criminal but lost."
         ),
         category="bounty",
         metrics={"captures": "sum", "checks": "sum"},
@@ -79,8 +83,8 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="systems_checked",
         display_name="Systems Checked",
         rules_text=(
-            "Check the most bounty systems. Every system check counts. "
-            "Captures also count as checks."
+            "Check the most bounty systems. "
+            "Every /check counts, whether or not you find anything; captures count as checks too."
         ),
         category="bounty",
         metrics={"checks": "sum"},
@@ -90,8 +94,8 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="systems_checked_no_capture",
         display_name="Systems Checked (No Captures)",
         rules_text=(
-            "Check the most systems without capturing a single pirate. "
-            "Every check counts. One capture and you are disqualified."
+            "Check the most bounty systems without capturing a single bounty. "
+            "Every /check counts. One capture and you are out of the running."
         ),
         category="bounty",
         metrics={"checks": "sum", "captures": "sum"},
@@ -188,8 +192,8 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="kills_by_weapon",
         display_name="Kills by Weapon",
         rules_text=(
-            "Land the most killing blows with the {weapon}. "
-            "Only the finishing blow with that weapon counts; interim damage does not. "
+            "Score the most kills where the finishing blow came from {weapon}. "
+            "Damage from other weapons doesn't count toward the kill. "
             "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
             "Losing still counts as taking part."
         ),
@@ -247,7 +251,7 @@ EVENT_TYPES: dict[str, EventType] = {
         slug="longest_battle_won",
         display_name="Longest Battle Won",
         rules_text=(
-            "Win the single longest fight, measured in combat rounds. "
+            "Win the single longest fight, measured in seconds. "
             "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
             "Only your longest winning fight counts."
         ),
@@ -256,12 +260,13 @@ EVENT_TYPES: dict[str, EventType] = {
         activity="fights",
         value=lambda m: m.get("duration_ticks_win", 0),
         default_min_fights=10,
+        fmt=lambda v: f"{v * _COMBAT_TICK_MS / 1000:.1f}s",
     ),
     "longest_battle_lost": EventType(
         slug="longest_battle_lost",
         display_name="Longest Battle Lost",
         rules_text=(
-            "Lose the single longest fight, measured in combat rounds. "
+            "Lose the single longest fight, measured in seconds. "
             "Duels count when stakes are at least {min_stakes:,} credits; bounty fights always count. "
             "Only your longest losing fight counts."
         ),
@@ -270,6 +275,7 @@ EVENT_TYPES: dict[str, EventType] = {
         activity="fights",
         value=lambda m: m.get("duration_ticks_loss", 0),
         default_min_fights=10,
+        fmt=lambda v: f"{v * _COMBAT_TICK_MS / 1000:.1f}s",
     ),
     "max_damage_dealt_fight": EventType(
         slug="max_damage_dealt_fight",

@@ -935,12 +935,14 @@ class EventsCog(commands.Cog):
             for r in rows[:10]:
                 medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(r["rank"], f"#{r['rank']}")
                 qual = "" if r.get("qualified", True) else " *(unqualified)*"
-                lines.append(f"{medal} **{r['display_name']}** — {r['value']:.1f}{qual}")
+                val_str = r.get("value_display") or f"{r['value']:.1f}"
+                lines.append(f"{medal} **{r['display_name']}** — {val_str}{qual}")
                 if r.get("user_id") == caller_id and r["rank"] > 10:
                     caller_row = r
             embed.description = "\n".join(lines) or "No entries."
             caller_footer = (
-                f"Your rank: #{caller_row['rank']} — {caller_row['value']:.1f}"
+                f"Your rank: #{caller_row['rank']} — "
+                + (caller_row.get("value_display") or f"{caller_row['value']:.1f}")
                 + ("" if caller_row.get("qualified", True) else " (unqualified)")
             ) if caller_row else ""
             # Fetch event detail for prizes + qualify info (non-fatal if it fails)

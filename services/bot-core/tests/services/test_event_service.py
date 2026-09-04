@@ -503,12 +503,13 @@ def test_render_rules_secondary_fired_nuke():
 
 
 def test_render_rules_bounty_caps_checks_no_stakes():
-    """bounty_caps mentions checks and has no duel-stakes text."""
+    """bounty_caps mentions /check and has no duel-stakes text (new wording)."""
     from services.event_types import EVENT_TYPES, render_rules
 
     et = EVENT_TYPES["bounty_caps"]
     result = render_rules(et, min_stakes=1000, min_fights=1, division=None, params={})
-    assert "check" in result.lower(), f"'check' missing: {result!r}"
+    assert "/check" in result, f"'/check' missing: {result!r}"
+    assert "criminal" in result, f"'criminal' missing from new wording: {result!r}"
     assert "credits" not in result, f"stakes should not appear for bounty type: {result!r}"
 
 
@@ -519,7 +520,18 @@ def test_render_rules_bounty_caps_min_fights_says_checks():
     et = EVENT_TYPES["bounty_caps"]
     result = render_rules(et, min_stakes=1000, min_fights=5, division=None, params={})
     assert "Prizes require at least 5 checks." in result, f"checks line missing: {result!r}"
-    assert "battles" not in result, f"'battles' should not appear for bounty type: {result!r}"
+    assert "battles" not in result, f"'battles' (plural) should not appear for bounty type: {result!r}"
+
+
+def test_longest_battle_won_fmt_ticks_to_seconds():
+    """longest_battle_won.fmt converts ticks to seconds rounded to 1 decimal."""
+    from services.event_types import EVENT_TYPES
+
+    et = EVENT_TYPES["longest_battle_won"]
+    # 1234 ticks * 10 ms/tick = 12340 ms = 12.34 s → formatted as "12.3s"
+    assert et.fmt(1234) == "12.3s", f"unexpected: {et.fmt(1234)!r}"
+    # sanity: zero ticks
+    assert et.fmt(0) == "0.0s"
 
 
 def test_render_rules_min_fights_1_appends_nothing():

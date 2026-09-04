@@ -255,3 +255,33 @@ async def test_live_standings_qualified_only_ranked(db_factory):
     assert by_user[402]["rank"] is not None
     # p401 has longer battle → ranks higher
     assert by_user[401]["rank"] < by_user[402]["rank"]
+
+
+async def test_live_standings_longest_battle_value_display(db_factory):
+    """live_standings for longest_battle_won includes value_display formatted as '<N.N>s'."""
+    async with db_factory() as db:
+        cfg = GuildConfig(guild_id=GUILD_ID, discussion_channel_id=5)
+        db.add(cfg)
+        ev = _make_event(slug="longest_battle_won")
+        db.add(ev)
+        await db.flush()
+
+        db.add(_make_user(501, "U501"))
+        await db.flush()
+        p = _make_player(501)
+        db.add(p)
+        await db.flush()
+
+        # 1234 ticks * 10 ms/tick = 12.34 s → "12.3s"
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="duration_ticks_win", value=1234))
+        db.add(GameEventMetric(event_id=ev.id, player_id=p.id, metric="fights", value=10))
+        await db.commit()
+
+    async with db_factory() as db:
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        rows = await live_standings(db, ev)
+
+    assert rows, "expected at least one row"
+    row = rows[0]
+    assert "value_display" in row, "value_display key missing from standings dict"
+    assert row["value_display"] == "12.3s", f"expected '12.3s', got {row['value_display']!r}"

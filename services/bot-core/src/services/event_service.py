@@ -271,6 +271,7 @@ async def live_standings(session: AsyncSession, event: GameEvent) -> list[dict]:
     )
     players_by_id = {p.id: p for p in pl_result.scalars().all()}
 
+    et = EVENT_TYPES.get(event.type_slug)
     out: list[dict] = []
     for pid, val, qual in raw:
         p = players_by_id.get(pid)
@@ -281,6 +282,7 @@ async def live_standings(session: AsyncSession, event: GameEvent) -> list[dict]:
                 "user_id": p.user_id if p else 0,
                 "display_name": display_name(p) if p else f"#{pid}",
                 "value": val,
+                "value_display": et.fmt(val) if et else str(val),
                 "qualified": qual,
                 "rank": rk,
             }
@@ -308,15 +310,18 @@ async def final_standings(session: AsyncSession, event: GameEvent) -> list[dict]
     )
     players_by_id = {p.id: p for p in pl_result.scalars().all()}
 
+    et = EVENT_TYPES.get(event.type_slug)
     out: list[dict] = []
     for r in results:
         p = players_by_id.get(r.player_id)
+        val = r.value or 0.0
         out.append(
             {
                 "player_id": r.player_id,
                 "user_id": p.user_id if p else 0,
                 "display_name": display_name(p) if p else f"#{r.player_id}",
-                "value": r.value or 0.0,
+                "value": val,
+                "value_display": et.fmt(val) if et else str(val),
                 "qualified": bool(r.qualified),
                 "rank": r.rank or 0,
             }

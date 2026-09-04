@@ -98,6 +98,7 @@ class StandingEntry(BaseModel):
     user_id: int
     display_name: str
     value: float
+    value_display: str = ""
     rank: int | None
     qualified: bool
 

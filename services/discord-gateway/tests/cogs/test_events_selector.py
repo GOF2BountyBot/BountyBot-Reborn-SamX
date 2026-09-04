@@ -799,3 +799,55 @@ class TestPlayerSelectorCapOrdering:
         assert "42" in values, f"Scheduled event #42 must appear in /events selector; got: {values}"
         for i in range(1, 41):
             assert str(i) not in values, f"Old ended event #{i} must not be in /events selector"
+
+
+# ---------------------------------------------------------------------------
+# value_display — standings embed uses formatted string from API when present
+# ---------------------------------------------------------------------------
+
+
+class TestStandingsValueDisplay:
+    def test_value_display_used_in_embed_description(self, events_cog):
+        """event_leaderboard uses value_display (e.g. '12.3s') over raw value when present."""
+        standings_payload = [
+            {
+                "rank": 1,
+                "display_name": "Alice",
+                "value": 1234.0,
+                "value_display": "12.3s",
+                "qualified": True,
+                "user_id": 111,
+            },
+        ]
+        detail_payload = {"id": 77, "type_slug": "longest_battle_won", "prizes": [], "rules_text": ""}
+
+        async def _mock_get(url, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            if "/standings" in url:
+                resp.json = MagicMock(return_value=standings_payload)
+            else:
+                resp.json = MagicMock(return_value=detail_payload)
+            return resp
+
+        events_cog.http_client.get = AsyncMock(side_effect=_mock_get)
+
+        interaction = _create_mock_interaction()
+        interaction.guild = MagicMock()
+        interaction.guild.name = "TestGuild"
+
+        captured_embeds = []
+
+        async def _followup_send(*args, embed=None, **kwargs):
+            if embed is not None:
+                captured_embeds.append(embed)
+
+        interaction.followup.send = AsyncMock(side_effect=_followup_send)
+
+        asyncio.run(events_cog.event_leaderboard.callback(events_cog, interaction, event="77", type=None))
+
+        assert captured_embeds, "expected embed"
+        desc = captured_embeds[0].description or ""
+        assert "12.3s" in desc, f"expected '12.3s' from value_display in embed; got: {desc!r}"
+        # raw "1234" should not appear
+        assert "1234" not in desc, f"raw tick count must not appear in embed; got: {desc!r}"

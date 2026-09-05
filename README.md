@@ -153,6 +153,30 @@ python run_migration.py upgrade head
 
 Migration scripts live in `services/bot-core/src/persist/database/revisions/versions/`.
 
+### Rolling Back a Release That Included a Migration
+
+The bot-core entrypoint runs `run_migration upgrade` *before* starting the app. An **older image will refuse to start against a newer schema**: Alembic aborts with `Can't locate revision identified by '<rev>'` because the image's migration folder does not contain that revision, and the app never launches. So a rollback needs one database step, taken **while the new image is still running** (only the new image knows how to walk the schema back).
+
+Find the revision the old image expects (the newest file under `revisions/versions/` in the old image's source, e.g. `0034`), then pick one of two paths:
+
+**1. Stamp back and keep the schema (recommended).** The old code ignores the extra tables/columns; keep every column a migration adds either nullable or with a `server_default`, so the old code's INSERTs keep working. All data written by the new version survives, and re-deploying the new image later simply re-applies the migrations, which are written to be idempotent.
+
+```bash
+# On the host, with the NEW bot-core container still running:
+docker exec bountybot-bot-core sh -c 'cd /app/src && python -m persist.database.run_migration stamp --target 0034'
+# then swap the images back (compose pull / up -d with the previous tags)
+```
+
+**2. Downgrade (destructive).** Drops the tables/columns those migrations created — use only if you want the schema gone too.
+
+```bash
+docker exec bountybot-bot-core sh -c 'cd /app/src && python -m persist.database.run_migration downgrade --target 0034'
+```
+
+Afterwards `python -m persist.database.run_migration current` inside the old container should print the target revision, and the old image's startup log shows `Database already at head revision`.
+
+Leftovers to know about: scheduler jobs the new version registered stay in `apscheduler_jobs` — the old executor logs them as a generic payload and does nothing, so they are harmless (delete the rows if the log noise bothers you); Discord roles or slash commands created by the new gateway are ignored by the old one. The gateway has no database of its own. Take a [backup](#database-backups) first if the release touched data, not just schema.
+
 ### Database Backups
 
 Automated backups run inside the **bot-core** container via APScheduler every 3 hours (at :15 past 00:00, 03:00, 06:00, …). Dumps are written to the bot-core data volume and organised by date:

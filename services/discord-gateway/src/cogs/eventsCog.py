@@ -97,6 +97,8 @@ _UTC_OFFSET_CHOICES = [
 ]
 
 _DIVISION_CHOICES = [app_commands.Choice(name=d, value=d) for d in ("Bronze", "Silver", "Gold", "Platinum")]
+# Edit adds an explicit "All" so an existing division filter can be removed.
+_DIVISION_EDIT_CHOICES = [app_commands.Choice(name="All divisions", value="all"), *_DIVISION_CHOICES]
 
 # State filter choices for /admin_event_list.
 _STATE_CHOICES = [
@@ -128,6 +130,33 @@ def _prize_label(p: dict) -> str:
     if kind == "credits":
         return f"#{p.get('id')} · {place} · {qty:,} credits"
     return f"#{p.get('id')} · {place} · {item_ref or kind} x{qty}"
+
+
+def _event_detail_embed(e: dict) -> discord.Embed:
+    """Full view of one event (any state): rules, settings, timing, prizes. Shared by /events and /admin_event_list."""
+    et_display = e.get("type_display", e.get("type_slug", "?"))
+    embed = discord.Embed(
+        title=f"Event #{e['id']} — {et_display}",
+        description=e.get("rules_text") or "No rules text.",
+        color=discord.Color.gold(),
+    )
+    embed.add_field(name="State", value=e.get("state", "?"), inline=True)
+    params = e.get("params") or {}
+    settings = [f"{e.get('duration_days', '?')} days"] + [f"{k}: {v}" for k, v in sorted(params.items())]
+    embed.add_field(name="Settings", value=" · ".join(settings), inline=True)
+    if e.get("started_at"):
+        embed.add_field(name="Started", value=iso_to_discord_ts(e["started_at"], "F"), inline=True)
+    if e.get("ends_at"):
+        ends_ts = f"{iso_to_discord_ts(e['ends_at'], 'F')} ({iso_to_discord_ts(e['ends_at'], 'R')})"
+        embed.add_field(name="Ends", value=ends_ts, inline=False)
+    if e.get("scheduled_start_at"):
+        embed.add_field(name="Scheduled Start", value=iso_to_discord_ts(e["scheduled_start_at"], "F"), inline=False)
+    prizes = e.get("prizes", [])
+    lines = [_prize_display(p) for p in prizes[:10]]
+    embed.add_field(
+        name="Prizes", value="\n".join(lines) or "None yet — add with `/admin_event_add_prize`", inline=False
+    )
+    return embed
 
 
 def _prize_display(p: dict) -> str:
@@ -343,6 +372,10 @@ class EventsCog(commands.Cog):
         """
         try:
             type_slug = getattr(interaction.namespace, "type", None)
+            event_id = getattr(interaction.namespace, "event", None)
+            if not type_slug and isinstance(event_id, str):  # /admin_event_edit: type comes from the chosen event
+                cached = self._events_cache.peek(interaction.guild_id) or []
+                type_slug = next((e.get("type_slug") for e in cached if str(e.get("id")) == event_id), None)
             types = self._types_cache.peek("all")
             if types is None:
                 types = await self._types_cache.get_with_timeout("all", timeout=1.0)
@@ -531,6 +564,79 @@ class EventsCog(commands.Cog):
             f"✅ Draft event **#{event['id']}** created (type `{type}`, {duration_days}d).\n"
             f"Use `/admin_event_add_prize` to add prizes, then `/admin_event_start` to launch.",
             ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="admin_event_edit", description="[ADMIN] Edit a draft/scheduled event (only the fields you pass change)"
+    )
+    @app_commands.describe(
+        event="Draft or scheduled event to edit",
+        duration_days="New duration in days",
+        division="Only count players in this division (All divisions = remove the filter)",
+        subtype="Weapon subtype (for weapon-type events)",
+        module="Module type (for module events)",
+        weapon="Weapon category (for weapon-kill events)",
+        min_fights="Minimum battles/checks to qualify (0 = no gate)",
+    )
+    @app_commands.autocomplete(
+        event=_ac_event_draft_scheduled,
+        subtype=_subtype_autocomplete,
+        module=_module_autocomplete,
+        weapon=_weapon_autocomplete,
+    )
+    @app_commands.choices(division=_DIVISION_EDIT_CHOICES)
+    async def admin_event_edit(
+        self,
+        interaction: discord.Interaction,
+        event: str,
+        duration_days: app_commands.Range[int, 1, 60] | None = None,
+        division: str | None = None,
+        subtype: str | None = None,
+        module: str | None = None,
+        weapon: str | None = None,
+        min_fights: app_commands.Range[int, 0] | None = None,
+    ):
+        if not await self._admin_gate(interaction):
+            return
+
+        current = await self._api(interaction, "get", f"{api_base}/events/{event}", timeout=10)
+        if current is None:
+            return
+        params = dict(current.json().get("params") or {})
+        for key, val in (
+            ("division", division),
+            ("subtype", subtype),
+            ("module", module),
+            ("weapon", weapon),
+            ("min_fights", min_fights),
+        ):
+            if val is None:
+                continue
+            if key == "division" and val == "all":
+                params.pop("division", None)
+            else:
+                params[key] = val
+        body: dict = {"params": params}
+        if duration_days is not None:
+            body["duration_days"] = duration_days
+        if duration_days is None and params == (current.json().get("params") or {}):
+            await interaction.followup.send("Nothing to change — pass at least one field.", ephemeral=True)
+            return
+
+        resp = await self._api(
+            interaction,
+            "patch",
+            f"{api_base}/events/{event}",
+            json=body,
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
+            return
+        self._events_cache.invalidate(interaction.guild_id)
+        flogger.info(f"/admin_event_edit: event={event} changes={body} by user={interaction.user.id}")
+        await interaction.followup.send(
+            content="✅ Event updated.", embed=_event_detail_embed(resp.json()), ephemeral=True
         )
 
     @app_commands.command(name="admin_event_add_prize", description="[ADMIN] Add a prize to a draft/active event")
@@ -797,6 +903,16 @@ class EventsCog(commands.Cog):
         flogger.info(f"/admin_event_delete: event={event} by user={interaction.user.id}")
         await interaction.followup.send(f"✅ Event **#{event}** deleted.", ephemeral=True)
 
+    @app_commands.command(name="admin_event_view", description="[ADMIN] Review a draft/scheduled event in full")
+    @app_commands.describe(event="Draft or scheduled event to review (rules, settings, timing, prizes)")
+    @app_commands.autocomplete(event=_ac_event_draft_scheduled)
+    async def admin_event_view(self, interaction: discord.Interaction, event: str):
+        if not await self._admin_gate(interaction):
+            return
+        resp = await self._api(interaction, "get", f"{api_base}/events/{event}", timeout=10)
+        if resp is not None:
+            await interaction.followup.send(embed=_event_detail_embed(resp.json()), ephemeral=True)
+
     @app_commands.command(name="admin_event_list", description="[ADMIN] List events for this guild")
     @app_commands.describe(state="Filter by state (default: all)")
     @app_commands.choices(state=_STATE_CHOICES)
@@ -871,30 +987,7 @@ class EventsCog(commands.Cog):
                 await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
                 return
 
-            e = resp.json()
-            et_display = e.get("type_display", e.get("type_slug", "?"))
-            rules_text = e.get("rules_text") or "No rules text."
-            embed = discord.Embed(
-                title=f"Event #{e['id']} — {et_display}",
-                description=rules_text,
-                color=discord.Color.gold(),
-            )
-            embed.add_field(name="State", value=e.get("state", "?"), inline=True)
-            if e.get("started_at"):
-                embed.add_field(name="Started", value=iso_to_discord_ts(e["started_at"], "F"), inline=True)
-            if e.get("ends_at"):
-                ends_ts = f"{iso_to_discord_ts(e['ends_at'], 'F')} ({iso_to_discord_ts(e['ends_at'], 'R')})"
-                embed.add_field(name="Ends", value=ends_ts, inline=False)
-            if e.get("scheduled_start_at"):
-                sched_ts = iso_to_discord_ts(e["scheduled_start_at"], "F")
-                embed.add_field(name="Scheduled Start", value=sched_ts, inline=False)
-
-            prizes = e.get("prizes", [])
-            if prizes:
-                lines = [_prize_display(p) for p in prizes]
-                embed.add_field(name="Prizes", value="\n".join(lines[:10]) or "None", inline=False)
-
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=_event_detail_embed(resp.json()))
         else:
             # Summary of active + scheduled events.
             try:

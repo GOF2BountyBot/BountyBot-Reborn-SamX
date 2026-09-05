@@ -173,3 +173,33 @@ async def test_add_ship_prize_201(pg_event):
         pr = (await db.execute(select(GameEventPrize).where(GameEventPrize.id == result.id))).scalar_one_or_none()
         if pr:
             await db.delete(pr)
+
+
+async def test_update_event_pg(pg_event):
+    """PATCH on a real Postgres draft: params replaced + duration changed inside one transaction, detail returned."""
+    from api.routers.events import update_event
+    from api.schemas.events_schema import EventDetailResponse, UpdateEventRequest
+
+    body = UpdateEventRequest(duration_days=14, params={"division": "Gold", "min_fights": 2})
+    with (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock) as push,
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    ):
+        result = await update_event(event_id=pg_event, body=body, guild_id=_GUILD, user_id=_USER)
+
+    assert isinstance(result, EventDetailResponse)
+    assert (result.duration_days, result.params, result.effective_min_fights) == (14, body.params, 2)
+    assert "Gold division only" in result.rules_text
+    push.assert_awaited_once_with(_GUILD)
+
+    async with _pg_factory() as db:
+        ev = (await db.execute(select(GameEvent).where(GameEvent.id == pg_event))).scalar_one()
+        assert (ev.duration_days, ev.params) == (14, {"division": "Gold", "min_fights": 2})
+        audit = (
+            await db.execute(
+                text("SELECT details FROM admin_audit_logs WHERE action='event_update' AND resource_id=:rid"),
+                {"rid": str(pg_event)},
+            )
+        ).first()
+        assert audit is not None

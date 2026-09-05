@@ -427,6 +427,25 @@ class TestParamAutocomplete:
         ]
         assert [c.value for c in asyncio.run(cog._module_autocomplete(interaction, ""))] == []
 
+    def test_event_option_resolves_type_from_events_cache(self, mock_bot):
+        """/admin_event_edit has no `type` option: the chosen event's type_slug drives the values."""
+        types = [
+            {"slug": "secondary_fired", "param_values": {"subtype": ["nuke", "rocket"]}},
+            {"slug": "kills_by_weapon", "param_values": {"weapon": ["primary"], "subtype": ["missile"]}},
+        ]
+        cog = self._make_cog_with_types(mock_bot, types)
+        cog._events_cache.set(987654321, [{"id": 7, "type_slug": "secondary_fired"}])
+        interaction = _create_mock_interaction()
+        interaction.namespace.type = None
+        interaction.namespace.event = "7"
+        assert [c.value for c in asyncio.run(cog._subtype_autocomplete(interaction, ""))] == ["nuke", "rocket"]
+        interaction.namespace.event = "999"  # unknown event → union fallback
+        assert [c.value for c in asyncio.run(cog._subtype_autocomplete(interaction, ""))] == [
+            "missile",
+            "nuke",
+            "rocket",
+        ]
+
     def test_returns_param_values_for_selected_type(self, mock_bot):
         """secondary_fired type → returns its subtype param_values filtered by current."""
         types = [
@@ -1016,9 +1035,98 @@ class TestCommandOptions:
         for key in ("subtype", "module", "weapon"):
             assert p[key].autocomplete, f"{key} must autocomplete"
 
+    def test_edit_options(self, events_cog):
+        p = self._params(events_cog, "admin_event_edit")
+        assert {c.value for c in p["division"].choices} == {"all", "Bronze", "Silver", "Gold", "Platinum"}
+        assert (p["duration_days"].min_value, p["duration_days"].max_value) == (1, 60)
+        assert p["min_fights"].min_value == 0
+        assert p["event"].autocomplete and p["subtype"].autocomplete and p["weapon"].autocomplete
+
+    def test_view_options(self, events_cog):
+        p = self._params(events_cog, "admin_event_view")
+        assert p["event"].required and p["event"].autocomplete
+
     def test_add_prize_options(self, events_cog):
         p = self._params(events_cog, "admin_event_add_prize")
         assert p["qty"].min_value == 1
         assert (p["top_n"].min_value, p["top_n"].max_value) == (1, 10)
         assert {c.value for c in p["place"].choices} >= {"1st", "Top N", "Participation"}
         assert p["item"].autocomplete
+
+
+# ---------------------------------------------------------------------------
+# /admin_event_edit — merges the passed fields into the event's params and PATCHes
+# ---------------------------------------------------------------------------
+
+
+class TestAdminEventEdit:
+    def _run(self, events_cog, current_params, **kwargs):
+        events_cog._admin_gate = AsyncMock(return_value=True)
+        current = MagicMock()
+        current.json = MagicMock(return_value={"id": 7, "params": current_params, "duration_days": 7})
+        patched = MagicMock()
+        patched.json = MagicMock(
+            return_value={"id": 7, "type_display": "Duels Won", "state": "draft", "params": {}, "prizes": []}
+        )
+        events_cog._api = AsyncMock(side_effect=[current, patched])
+        interaction = _create_mock_interaction()
+        asyncio.run(events_cog.admin_event_edit.callback(events_cog, interaction, event="7", **kwargs))
+        return events_cog._api, interaction
+
+    def test_merges_and_patches(self, events_cog):
+        api, interaction = self._run(
+            events_cog, {"division": "Gold", "min_fights": 5}, duration_days=14, division="all", weapon="turret"
+        )
+        assert api.await_count == 2
+        method, url = api.await_args_list[1].args[1:3]
+        assert (method, url.endswith("/events/7")) == ("patch", True)
+        assert api.await_args_list[1].kwargs["json"] == {
+            "params": {"min_fights": 5, "weapon": "turret"},
+            "duration_days": 14,
+        }
+        assert api.await_args_list[1].kwargs["params"] == {"guild_id": 987654321, "user_id": 111111111}
+        sent = interaction.followup.send.await_args.kwargs
+        assert sent["embed"].title == "Event #7 — Duels Won" and sent["ephemeral"] is True
+
+    def test_nothing_to_change_does_not_patch(self, events_cog):
+        api, interaction = self._run(events_cog, {"min_fights": 5})
+        assert api.await_count == 1
+        assert "Nothing to change" in interaction.followup.send.await_args.args[0]
+
+
+class TestAdminEventView:
+    def test_view_sends_full_embed(self, events_cog):
+        events_cog._admin_gate = AsyncMock(return_value=True)
+        detail = MagicMock()
+        detail.json = MagicMock(
+            return_value={
+                "id": 7,
+                "type_display": "Duels Won",
+                "state": "draft",
+                "duration_days": 14,
+                "params": {"division": "Gold", "min_fights": 3},
+                "rules_text": "Win the most duels.",
+                "prizes": [{"rank_from": 1, "rank_to": 1, "kind": "credits", "qty": 500}],
+            }
+        )
+        events_cog._api = AsyncMock(return_value=detail)
+        interaction = _create_mock_interaction()
+        asyncio.run(events_cog.admin_event_view.callback(events_cog, interaction, event="7"))
+        embed = interaction.followup.send.await_args.kwargs["embed"]
+        fields = {f.name: f.value for f in embed.fields}
+        assert embed.title == "Event #7 — Duels Won" and embed.description == "Win the most duels."
+        assert fields["State"] == "draft"
+        assert fields["Settings"] == "14 days · division: Gold · min_fights: 3"
+        assert fields["Prizes"] == "1st — 500 credits"
+
+    def test_view_without_prizes_says_so(self, events_cog):
+        events_cog._admin_gate = AsyncMock(return_value=True)
+        detail = MagicMock()
+        detail.json = MagicMock(
+            return_value={"id": 8, "state": "draft", "duration_days": 7, "params": {}, "prizes": []}
+        )
+        events_cog._api = AsyncMock(return_value=detail)
+        interaction = _create_mock_interaction()
+        asyncio.run(events_cog.admin_event_view.callback(events_cog, interaction, event="8"))
+        fields = {f.name: f.value for f in interaction.followup.send.await_args.kwargs["embed"].fields}
+        assert fields["Prizes"].startswith("None yet")

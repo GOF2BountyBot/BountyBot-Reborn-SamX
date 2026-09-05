@@ -71,6 +71,8 @@ Selector = shared autocomplete over a per-guild events cache in `autocomplete_st
 | Command | Notes |
 |---|---|
 | `/admin_event_create type duration_days [params]` | draft |
+| `/admin_event_view event` | `draft`/`scheduled` selector; full embed (rules, settings, timing, prizes) — the "is this ready to start?" check. Added 2026-09-05. |
+| `/admin_event_edit event [duration_days] [division] [min_fights] [subtype\|module\|weapon]` | `draft`/`scheduled` only (`PATCH /events/{id}`; `params` replaced wholesale after the same validation as create; `division:all` clears the filter). Added 2026-09-05 after dev-guild review — admins could seed prizes but not fix a wrong duration/division without delete + recreate. |
 | `/admin_event_add_prize event place type [item] qty` | `place` choices: `1st…10th`, `Top N` (+`top_n`), `Participation`; `item` autocomplete filtered by `type` via `interaction.namespace`; validates catalog + overlap on add. Drafts + active. |
 | `/admin_event_remove_prize event place` | drafts |
 | `/admin_event_start event [at] [utc_offset]` | now, or scheduled; re-running on a `scheduled` event replaces the schedule. `at` = `YYYY-MM-DD HH:MM` (`datetime.strptime`, one format); `utc_offset` = 25 static choices UTC−12…+12, UTC if omitted; reject past / > 90 d; ephemeral confirm shows `<t:…:F>` (viewer-local) behind the shared `ConfirmView`. |

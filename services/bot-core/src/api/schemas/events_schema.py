@@ -18,6 +18,13 @@ class CreateEventRequest(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class UpdateEventRequest(BaseModel):
+    """Editable fields of a draft/scheduled event; omitted fields are unchanged. `params` replaces the whole map."""
+
+    duration_days: int | None = Field(default=None, ge=1, le=60)
+    params: dict | None = None
+
+
 class AddPrizeRequest(BaseModel):
     rank_from: int | None = Field(default=None, ge=1, le=10)
     rank_to: int | None = Field(default=None, ge=1, le=10)

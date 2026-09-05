@@ -1,0 +1,47 @@
+# Stock Event Templates
+
+The out-of-the-box event templates every guild receives. They are seeded by `/admin_setup` and re-synced at each bot startup while a guild's copy is untouched; the moment an admin edits one (settings or prizes) it becomes that guild's own and is never overwritten. Definitions live in `services/bot-core/src/services/event_templates.json`; how templates work is in [ADMIN.md](ADMIN.md#running-a-challenge).
+
+Create a run with `/admin_event_create type:"From Template" template:<name>`, tweak the draft if needed, then `/admin_event_start`.
+
+Rules are shown exactly as players see them, rendered with default settings (duel stakes floor 1,000 credits; a guild's own floor is substituted live). All prizes are credits. Every template runs 7 days.
+
+| # | Template | Type | Rules | Prizes |
+|---|---|---|---|---|
+| 1 | **Bounty Hunter** | Bounty Captures | Capture the most bounties. A capture means you found the criminal's system and won the fight; in Bronze the capture is guaranteed once you find them and the battle is a bonus. Every /check counts as taking part, including checks where you found the criminal but lost. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 1,000 |
+| 2 | **Explorer** | Systems Checked | Check the most bounty systems. Every /check counts, whether or not you find anything; captures count as checks too. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 1,000 |
+| 3 | **Wild Goose Chase** | Systems Checked (No Captures) | Check the most bounty systems without capturing a single bounty. Every /check counts. One capture and you are out of the running. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 1,000 |
+| 4 | **Duel Champion** | Duels Won | Win the most duels. Duels count when stakes are at least 1,000 credits. Stalemates count as fights but not wins. Losing still counts as taking part. Prizes require at least 3 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 6,000 |
+| 5 | **Glutton for Punishment** | Duels Lost | Lose the most duels. Duels count when stakes are at least 1,000 credits. Stalemates count as fights but not losses. Winning still counts as taking part. Prizes require at least 3 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 6 | **Iron Gauntlet** | Duels Fought | Fight the most duels. Duels count when stakes are at least 1,000 credits. Stalemates count as fights. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 7 | **High Roller** | Duel Credits Won | Walk away with the most credits from duels. Duels count when stakes are at least 1,000 credits. Losing still counts as taking part. Prizes require at least 3 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 8 | **Big Spender** | Duel Credits Lost | Lose the most credits in duels. Duels count when stakes are at least 1,000 credits. Winning still counts as taking part. Prizes require at least 3 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 9 | **Executioner** | Kills | Rack up the most kills. Kills are bounty captures plus duel wins. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 10 | **Warmonger** | Fights Fought | Fight the most battles. Duels count when stakes are at least 1,000 credits; bounty fights always count. Stalemates count as fights. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 11 | **Trigger Happy** | Shots Fired | Fire the most shots. Nukes and shock-blasts do not count as shots. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 12 | **Big Bang** | Max Single Nuke Damage | Land the biggest nuke hit on an opponent in a single shot. Self-damage from your own nuke does not count. Duels count when stakes are at least 1,000 credits; bounty fights always count. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 13 | **Nuke Fest** | Secondaries Fired | Fire the most nuke shots. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 14 | **Rocket Rain** | Secondaries Fired | Fire the most rocket shots. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 15 | **Missile Mania** | Secondaries Fired | Fire the most missile shots. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 16 | **Gunslinger** | Kills by Weapon | Score the most kills where the finishing blow came from primary. Damage from other weapons doesn't count toward the kill. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 17 | **Turret Master** | Kills by Weapon | Score the most kills where the finishing blow came from turret. Damage from other weapons doesn't count toward the kill. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 18 | **Ghost** | Module Activations | Activate the cloak module the most times. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 19 | **Speed Demon** | Module Activations | Activate the booster module the most times. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 20 | **Close Call** | Module Activations | Activate the emergency_system module the most times. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 5 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 · Participation 2,000 |
+| 21 | **Sharpshooter** | Average Accuracy | Post the highest hit rate across all fights. Accuracy is hits divided by shots; nukes and shock-blasts are excluded from both. Duels count when stakes are at least 1,000 credits; bounty fights always count. Prizes require at least 10 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 |
+| 22 | **Marathon** | Longest Battle Won | Win the single longest fight, measured in seconds. Duels count when stakes are at least 1,000 credits; bounty fights always count. Only your longest winning fight counts. Prizes require at least 10 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 |
+| 23 | **Last Stand** | Longest Battle Lost | Lose the single longest fight, measured in seconds. Duels count when stakes are at least 1,000 credits; bounty fights always count. Only your longest losing fight counts. Prizes require at least 10 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 |
+| 24 | **Alpha Strike** | Max Damage Dealt in a Fight | Deal the most damage in a single fight. Duels count when stakes are at least 1,000 credits; bounty fights always count. Only your single highest-damage fight counts. Prizes require at least 10 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 |
+| 25 | **Iron Hull** | Max Damage Taken in a Fight | Absorb the most damage in a single fight. Duels count when stakes are at least 1,000 credits; bounty fights always count. Only your single highest-damage-taken fight counts. Prizes require at least 10 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 |
+| 26 | **Heavy Hitter** | Total Damage Dealt | Deal the most total damage across all fights. Duels count when stakes are at least 1,000 credits; bounty fights always count. Losing still counts as taking part. Prizes require at least 10 battles. | 1st 50,000 · 2nd 20,000 · 3rd 10,000 |
+
+## Gates by family
+
+| Family | Qualifying activity | Participation prize |
+|---|---|---|
+| Bounty: Bounty Hunter, Explorer, Wild Goose Chase | 1 check | 1,000 |
+| Duels: Duel Champion, Glutton for Punishment, High Roller, Big Spender (Iron Gauntlet needs 5) | 3 duels at or above the stakes floor | 6,000 for Duel Champion, 2,000 for the rest |
+| Combat counts, secondaries fired, kills by weapon, module activations | 5 fights | 2,000 |
+| Max / ratio: Sharpshooter, Marathon, Last Stand, Alpha Strike, Iron Hull, Heavy Hitter | 10 fights | none, so a single lucky fight cannot pay |
+
+Duel Champion is the *lossless* pattern: three duels at the 1,000-credit floor and a 6,000 participation prize, so a player who loses all three still comes out ahead.

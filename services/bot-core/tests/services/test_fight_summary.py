@@ -1183,6 +1183,38 @@ def _nuke_damage_event(target: str, attacker: str, absorbed: int, tick: int = 1)
     )
 
 
+def _nuke_event_with_side(
+    target_slot: str,
+    attacker: str,
+    absorbed: int,
+    tick: int = 1,
+    is_self: bool = False,
+) -> CombatEvent:
+    """Nuke damage event with data['side'] set — mirrors real TickResolver output.
+
+    When is_self=True, source carries 'is_self': True exactly as TickResolver emits it
+    (combat_resolver.py line ~2119).  The inversion att_slot = other(target_slot) yields
+    the opponent's slot for self-damage events, so is_self is the only reliable guard.
+    """
+    source: dict = {"subtype": "nuke", "weapon": "TestNuke", "attacker": attacker}
+    if is_self:
+        source["is_self"] = True
+    return CombatEvent(
+        tick=tick,
+        type=CombatEventType.damage,
+        actor=None,
+        target=None,
+        data={
+            "amount": absorbed,
+            "absorbed": absorbed,
+            "side": target_slot,
+            "breakdown": {"shield": 0, "armour": 0, "hull": absorbed},
+            "hp_after": _hp(0),
+            "source": source,
+        },
+    )
+
+
 class TestSlice2SummaryExtension:
     """Verify killing_blow_subtype and max_nuke_absorbed per-combatant summary fields."""
 
@@ -1340,3 +1372,66 @@ class TestSlice2SummaryExtension:
         ]
         s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
         assert s["combatants"]["1"]["killing_blow_subtype"] == "turret"
+
+    # ------------------------------------------------------------------
+    # Regression tests for self-damage slot inversion bug (is_self guard)
+    # These use _nuke_event_with_side (data["side"] set) to exercise the
+    # inversion path that was broken before the is_self fix.
+    # ------------------------------------------------------------------
+
+    def test_nuke_self_damage_side_keyed_excluded_from_max_nuke(self):
+        """(a) Nuke hits opponent for 80 and self for 30 (side-keyed events):
+        max_nuke_absorbed is 80 for the firer (slot 1) and 0 for the target (slot 2).
+        Before the fix, the self-damage was credited to slot 2 via inversion."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_event_with_side("2", attacker="C1", absorbed=80, tick=1),  # opponent hit
+            _nuke_event_with_side("1", attacker="C1", absorbed=30, tick=1, is_self=True),  # self-damage
+            _fight_end_event(2, "C1", "hp_depleted", 2, _hp(70), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 80, "Firer gets credit for opponent hit"
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0, "Opponent must not get self-damage credit"
+        # Regression: slot 2 never fired a secondary → secondary_fired is sparse {}
+        assert s["combatants"]["2"]["secondary_fired"] == {}
+
+    def test_nuke_self_damage_only_side_keyed_zero_for_both(self):
+        """(b) Nuke self-damage only (no opponent hit, side-keyed): max_nuke_absorbed == 0 for both."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_event_with_side("1", attacker="C1", absorbed=30, tick=1, is_self=True),
+            _fight_end_event(2, "C2", "hp_depleted", 2, _hp(0), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C2", winner_side=2)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 0
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_nuke_self_damage_names_collide_excluded_from_max_nuke(self):
+        """(c) Same-name combatants variant of (a): is_self still guards correctly."""
+        c1, c2 = _make_states(name1="X", name2="X")
+        events = [
+            _fight_start_event("X", "X"),
+            _nuke_event_with_side("2", attacker="X", absorbed=80, tick=1),
+            _nuke_event_with_side("1", attacker="X", absorbed=30, tick=1, is_self=True),
+            _fight_end_event(2, "X", "hp_depleted", 2, _hp(70), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "X", winner_side=1)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 80
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_self_inflicted_fatal_nuke_killing_blow_none_for_both(self):
+        """(d) Self-inflicted fatal nuke: killing_blow_subtype is None for both sides.
+        Before the fix, inversion put the self-kill subtype on the winner (slot 2)."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_event_with_side("1", attacker="C1", absorbed=100, tick=1, is_self=True),
+            _fight_end_event(2, "C2", "hp_depleted", 2, _hp(0), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C2", winner_side=2)
+        assert s["combatants"]["1"]["killing_blow_subtype"] is None, "Loser never gets killing_blow_subtype"
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None, (
+            "Winner must not inherit killing_blow_subtype from self-inflicted fatal nuke"
+        )

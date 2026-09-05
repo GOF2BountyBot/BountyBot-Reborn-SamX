@@ -583,9 +583,11 @@ def _detail_response(event: GameEvent, prizes, config) -> EventDetailResponse:
         if et
         else ""
     )
+    # Rank order for display: 1st, 2nd, … Top N, then Participation — not insertion order.
+    ordered = sorted(prizes, key=lambda p: (p.rank_from is None, p.rank_from or 0, p.rank_to or 0))
     return EventDetailResponse(
         **EventResponse.model_validate(event).model_dump(),
-        prizes=[PrizeResponse.model_validate(p) for p in prizes],
+        prizes=[PrizeResponse.model_validate(p) for p in ordered],
         rules_text=rendered,
         effective_min_fights=effective_min_fights,
     )

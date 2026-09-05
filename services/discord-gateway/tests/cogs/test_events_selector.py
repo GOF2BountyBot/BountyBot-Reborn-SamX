@@ -1123,13 +1123,14 @@ class TestAdminEventView:
         events_cog._admin_gate = AsyncMock(return_value=True)
         detail = MagicMock()
         detail.json = MagicMock(
-            return_value={"id": 8, "state": "draft", "duration_days": 7, "params": {}, "prizes": []}
+            return_value={"id": 8, "state": "draft", "duration_days": 1, "params": {}, "prizes": []}
         )
         events_cog._api = AsyncMock(return_value=detail)
         interaction = _create_mock_interaction()
         asyncio.run(events_cog.admin_event_view.callback(events_cog, interaction, event="8"))
         fields = {f.name: f.value for f in interaction.followup.send.await_args.kwargs["embed"].fields}
         assert fields["Prizes"].startswith("None yet")
+        assert fields["Settings"] == "1 day"
 
 
 class TestAdminEventList:

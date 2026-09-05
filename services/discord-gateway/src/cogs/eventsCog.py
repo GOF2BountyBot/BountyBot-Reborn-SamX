@@ -96,6 +96,8 @@ _UTC_OFFSET_CHOICES = [
     app_commands.Choice(name="UTC+12 (New Zealand)", value="12"),
 ]
 
+_DIVISION_CHOICES = [app_commands.Choice(name=d, value=d) for d in ("Bronze", "Silver", "Gold", "Platinum")]
+
 # State filter choices for /admin_event_list.
 _STATE_CHOICES = [
     app_commands.Choice(name="All", value="all"),
@@ -336,22 +338,21 @@ class EventsCog(commands.Cog):
         """Autocomplete for subtype/module/weapon params — reads live param_values from /events/types.
 
         Reads interaction.namespace.type to find the selected event type, then returns
-        the allowed values for param_key from that type's param_values map.
-        Returns empty if no type is selected yet.
+        the allowed values for param_key from that type's param_values map. Before a
+        type is picked, offers the union of values across all types.
         """
         try:
             type_slug = getattr(interaction.namespace, "type", None)
-            if not type_slug:
-                return []
             types = self._types_cache.peek("all")
             if types is None:
                 types = await self._types_cache.get_with_timeout("all", timeout=1.0)
             if types is None:
                 return []
-            entry = next((t for t in types if t["slug"] == type_slug), None)
-            if entry is None:
-                return []
-            values: list[str] = (entry.get("param_values") or {}).get(param_key, [])
+            if type_slug:
+                entry = next((t for t in types if t["slug"] == type_slug), None)
+                values: list[str] = (entry.get("param_values") or {}).get(param_key, []) if entry else []
+            else:  # no type picked yet: offer every value any type accepts for this param
+                values = sorted({v for t in types for v in (t.get("param_values") or {}).get(param_key, [])})
             norm = normalize_for_search(current)
             return [app_commands.Choice(name=v, value=v) for v in values if norm in normalize_for_search(v)][:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -465,7 +466,7 @@ class EventsCog(commands.Cog):
     @app_commands.describe(
         type="Event type (autocomplete from registry)",
         duration_days="Duration in days (default 7)",
-        division="Division filter: Bronze/Silver/Gold/Platinum",
+        division="Only count players in this division (default: all)",
         subtype="Weapon subtype (for weapon-type events)",
         module="Module type (for module events)",
         weapon="Weapon category (for weapon-kill events)",
@@ -477,16 +478,17 @@ class EventsCog(commands.Cog):
         module=_module_autocomplete,
         weapon=_weapon_autocomplete,
     )
+    @app_commands.choices(division=_DIVISION_CHOICES)
     async def admin_event_create(
         self,
         interaction: discord.Interaction,
         type: str,
-        duration_days: int = 7,
+        duration_days: app_commands.Range[int, 1, 60] = 7,
         division: str | None = None,
         subtype: str | None = None,
         module: str | None = None,
         weapon: str | None = None,
-        min_fights: int | None = None,
+        min_fights: app_commands.Range[int, 0] | None = None,
     ):
         if not await self._admin_gate(interaction):
             return
@@ -548,9 +550,9 @@ class EventsCog(commands.Cog):
         event: str,
         place: str,
         type: str,
-        qty: int = 1,
+        qty: app_commands.Range[int, 1] = 1,
         item: str | None = None,
-        top_n: int = 10,
+        top_n: app_commands.Range[int, 1, 10] = 10,
     ):
         if not await self._admin_gate(interaction):
             return

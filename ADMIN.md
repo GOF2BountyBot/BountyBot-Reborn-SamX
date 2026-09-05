@@ -600,6 +600,8 @@ Custom stat-race challenges let admins run time-limited competitions (e.g. "most
 
 **Self-damage note:** For `max_single_nuke_damage`, damage a player takes from their own nuke does not count toward their score — only hits landing on the opponent are tracked.
 
+**Secondary scoring limits:** `secondary_fired` accepts `subtype` values `cluster-missile`, `ionizing-missile`, `missile`, `nuke`, `rocket`, `shock-blast` — `emp-bomb` is excluded because the resolver treats it as a deferred no-op and never emits a weapon-fire event. `kills_by_weapon` accepts `weapon` values `cluster-missile`, `missile`, `nuke`, `primary`, `rocket`, `turret` — `emp-bomb`, `shock-blast`, and `ionizing-missile` are excluded because `emp-bomb` fires no event and `shock-blast`/`ionizing-missile` deal 0 HP damage, making a killing blow impossible.
+
 **Concrete in-game display:** When a player runs `/events event:<id>` or `/event_leaderboard event:<id>`, the embed shows the exact rules for that event instance — the live guild stakes floor, the `min_fights` threshold, and any division scope. No need to look these up manually; the bot derives them from current configuration.
 
 A **notification role** (`Event Announcements`) is mentioned in start/end announcements when `event_announcements_role_id` is configured (set via `/admin_setup` — re-run after changing the role). Players opt in via `/notifications`.

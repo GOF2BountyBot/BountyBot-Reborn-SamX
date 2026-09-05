@@ -116,6 +116,32 @@ class TestListEventTypes:
             assert "category" in t
             assert isinstance(t["params"], list)
 
+    def test_param_values_present(self, client):
+        """GET /events/types includes param_values with scorable sets for parameterised types."""
+        resp = client.get("/api/v1/events/types")
+        assert resp.status_code == 200
+        by_slug = {t["slug"]: t for t in resp.json()}
+
+        sf = by_slug["secondary_fired"]
+        assert "param_values" in sf
+        assert "subtype" in sf["param_values"]
+        subtypes = sf["param_values"]["subtype"]
+        assert "nuke" in subtypes
+        assert "emp-bomb" not in subtypes, "emp-bomb must be excluded from secondary_fired param_values"
+
+        kbw = by_slug["kills_by_weapon"]
+        assert "param_values" in kbw
+        assert "weapon" in kbw["param_values"]
+        weapons = kbw["param_values"]["weapon"]
+        assert "turret" in weapons
+        assert "emp-bomb" not in weapons
+        assert "shock-blast" not in weapons
+        assert "ionizing-missile" not in weapons
+
+        # types without parameterised params still have the field (empty dict)
+        dw = by_slug["duels_won"]
+        assert "param_values" in dw
+
 
 # ---------------------------------------------------------------------------
 # 2. POST /events — create event
@@ -914,6 +940,96 @@ class TestRequiredParams:
                   "params": {"subtype": "nuke"}},
         )
         assert resp.status_code != 400 or "subtype" not in resp.json().get("detail", "")
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    def test_secondary_fired_emp_bomb_400(self, mock_admin, client):
+        """emp-bomb is a resolver no-op — secondary_fired subtype=emp-bomb must be rejected."""
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "secondary_fired", "duration_days": 7,
+                  "params": {"subtype": "emp-bomb"}},
+        )
+        assert resp.status_code == 400
+        assert "emp-bomb" in resp.json()["detail"] or "subtype" in resp.json()["detail"]
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    def test_kills_by_weapon_shock_blast_400(self, mock_admin, client):
+        """shock-blast deals 0 HP — kills_by_weapon weapon=shock-blast must be rejected."""
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "kills_by_weapon", "duration_days": 7,
+                  "params": {"weapon": "shock-blast"}},
+        )
+        assert resp.status_code == 400
+        assert "shock-blast" in resp.json()["detail"] or "weapon" in resp.json()["detail"]
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    @patch("api.routers.events.AuditService.log_action", new_callable=AsyncMock)
+    def test_kills_by_weapon_turret_201(self, mock_audit, mock_db, mock_admin, client, db_ctx):
+        """kills_by_weapon weapon=turret is a valid killing weapon → 201."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        mock_session.flush = AsyncMock()
+        mock_session.refresh = AsyncMock()
+
+        def _add(obj):
+            obj.id = 2
+            obj.guild_id = 99
+            obj.type_slug = "kills_by_weapon"
+            obj.params = {"weapon": "turret"}
+            obj.duration_days = 7
+            obj.state = "draft"
+            from datetime import UTC, datetime
+            now = datetime.now(UTC)
+            obj.created_at = now
+            obj.updated_at = now
+            obj.scheduled_start_at = None
+            obj.started_at = None
+            obj.ends_at = None
+            obj.created_by_user_id = 42
+
+        mock_session.add = MagicMock(side_effect=_add)
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "kills_by_weapon", "duration_days": 7,
+                  "params": {"weapon": "turret"}},
+        )
+        assert resp.status_code == 201
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    @patch("api.routers.events.AuditService.log_action", new_callable=AsyncMock)
+    def test_secondary_fired_shock_blast_201(self, mock_audit, mock_db, mock_admin, client, db_ctx):
+        """shock-blast fires are counted even though it deals 0 HP — secondary_fired subtype=shock-blast → 201."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        mock_session.flush = AsyncMock()
+        mock_session.refresh = AsyncMock()
+
+        def _add(obj):
+            obj.id = 3
+            obj.guild_id = 99
+            obj.type_slug = "secondary_fired"
+            obj.params = {"subtype": "shock-blast"}
+            obj.duration_days = 7
+            obj.state = "draft"
+            from datetime import UTC, datetime
+            now = datetime.now(UTC)
+            obj.created_at = now
+            obj.updated_at = now
+            obj.scheduled_start_at = None
+            obj.started_at = None
+            obj.ends_at = None
+            obj.created_by_user_id = 42
+
+        mock_session.add = MagicMock(side_effect=_add)
+        resp = client.post(
+            "/api/v1/events?user_id=42",
+            json={"guild_id": 99, "type_slug": "secondary_fired", "duration_days": 7,
+                  "params": {"subtype": "shock-blast"}},
+        )
+        assert resp.status_code == 201
 
 
 # ---------------------------------------------------------------------------

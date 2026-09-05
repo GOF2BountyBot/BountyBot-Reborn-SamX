@@ -53,6 +53,12 @@ _VALID_DIVISIONS = {"Bronze", "Silver", "Gold", "Platinum"}
 _VALID_SUBTYPES: frozenset[str] = frozenset({
     "nuke", "rocket", "missile", "cluster-missile", "emp-bomb", "shock-blast", "ionizing-missile",
 })
+# resolver: emp-bomb is a no-op; shock-blast/ionizing-missile deal 0 HP → cannot score a fire event
+_SCORABLE_FIRE_SUBTYPES: frozenset[str] = _VALID_SUBTYPES - {"emp-bomb"}
+# resolver: emp-bomb is a no-op; shock-blast/ionizing-missile deal 0 HP → cannot be a killing blow
+_SCORABLE_KILL_WEAPONS: frozenset[str] = (_VALID_SUBTYPES - {"emp-bomb", "shock-blast", "ionizing-missile"}) | {
+    "primary", "turret"
+}
 _VALID_WEAPON_VALS: frozenset[str] = _VALID_SUBTYPES | {"primary", "turret"}
 _VALID_STATES: frozenset[str] = frozenset({"draft", "scheduled", "active", "ended", "cancelled"})
 
@@ -103,21 +109,25 @@ def _validate_params(type_slug: str, params: dict) -> None:
             status_code=400,
             detail=f"division must be one of {sorted(_VALID_DIVISIONS)}, got {params['division']!r}",
         )
-    if "subtype" in params and params["subtype"] not in _VALID_SUBTYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"subtype must be one of {sorted(_VALID_SUBTYPES)}, got {params['subtype']!r}",
-        )
+    if "subtype" in params:
+        valid_subtypes = _SCORABLE_FIRE_SUBTYPES if type_slug == "secondary_fired" else _VALID_SUBTYPES
+        if params["subtype"] not in valid_subtypes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"subtype must be one of {sorted(valid_subtypes)}, got {params['subtype']!r}",
+            )
     if "module" in params and params["module"] not in _ACTIVATION_MODULES:
         raise HTTPException(
             status_code=400,
             detail=f"module must be one of {sorted(_ACTIVATION_MODULES)}, got {params['module']!r}",
         )
-    if "weapon" in params and params["weapon"] not in _VALID_WEAPON_VALS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"weapon must be one of {sorted(_VALID_WEAPON_VALS)}, got {params['weapon']!r}",
-        )
+    if "weapon" in params:
+        valid_weapons = _SCORABLE_KILL_WEAPONS if type_slug == "kills_by_weapon" else _VALID_WEAPON_VALS
+        if params["weapon"] not in valid_weapons:
+            raise HTTPException(
+                status_code=400,
+                detail=f"weapon must be one of {sorted(valid_weapons)}, got {params['weapon']!r}",
+            )
     if "min_fights" in params:
         mf = params["min_fights"]
         if not isinstance(mf, int) or mf < 0:
@@ -138,6 +148,18 @@ def _type_param_keys(type_slug: str) -> list[str]:
     return keys
 
 
+def _type_param_values(type_slug: str) -> dict[str, list[str]]:
+    """Return allowed values per param key for the given type slug."""
+    out: dict[str, list[str]] = {}
+    if type_slug == "secondary_fired":
+        out["subtype"] = sorted(_SCORABLE_FIRE_SUBTYPES)
+    elif type_slug == "kills_by_weapon":
+        out["weapon"] = sorted(_SCORABLE_KILL_WEAPONS)
+    elif type_slug == "module_activations":
+        out["module"] = sorted(_ACTIVATION_MODULES)
+    return out
+
+
 
 # ---------------------------------------------------------------------------
 # GET /events/types — slice 5 gateway prereq
@@ -153,6 +175,7 @@ async def list_event_types():
             display_name=et.display_name,
             category=et.category,
             params=_type_param_keys(et.slug),
+            param_values=_type_param_values(et.slug),
             rules_template=et.rules_text,
         )
         for et in EVENT_TYPES.values()

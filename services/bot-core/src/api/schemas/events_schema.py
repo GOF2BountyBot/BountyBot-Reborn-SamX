@@ -118,4 +118,5 @@ class EventTypeInfo(BaseModel):
     display_name: str
     category: str
     params: list[str]  # which param keys this type uses, e.g. ["division"] or ["weapon"]
+    param_values: dict[str, list[str]] = Field(default_factory=dict)  # allowed values per key
     rules_template: str = ""  # raw template; call render_rules() for the player-facing string

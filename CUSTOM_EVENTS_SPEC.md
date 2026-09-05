@@ -47,7 +47,7 @@ Hook sites (all existing code, one call each):
 | `duels_won` / `duels_lost` / `duels_fought` | duel outcome | Σ | S | fought counts stalemates |
 | `duel_credits_won` / `duel_credits_lost` | stakes | Σ | S | |
 | `kills` | captures + duel wins | Σ | S | |
-| `kills_by_weapon` (`weapon`) | killing_blow_subtype == weapon | Σ | S | `weapon` ∈ `primary`, `turret` (turret sources `auto`/`manual` are normalised to `turret` at attribution), or a secondary subtype (`nuke`, `rocket`, `missile`, `cluster-missile`, `emp-bomb`, `shock-blast`, `ionizing-missile`) |
+| `kills_by_weapon` (`weapon`) | killing_blow_subtype == weapon | Σ | S | **Scorable today:** `primary`, `turret`, `nuke`, `rocket`, `missile`, `cluster-missile` — the resolver makes `emp-bomb` a no-op and `shock-blast`/`ionizing-missile` deal 0 HP, so they can't be killing blows and are not offered. `secondary_fired` likewise excludes `emp-bomb` (never emits a fire event). | `weapon` ∈ `primary`, `turret` (turret sources `auto`/`manual` are normalised to `turret` at attribution), or a secondary subtype (`nuke`, `rocket`, `missile`, `cluster-missile`, `emp-bomb`, `shock-blast`, `ionizing-missile`) |
 | `secondary_fired` (`subtype`) | `secondary_fired[...]` | Σ | S | subtypes: nuke, rocket, missile, cluster-missile, emp-bomb, shock-blast ("most nukes fired" is `subtype=nuke`) |
 | `module_activations` (`module`) | `module_activations[...]` | Σ | S | gated by `_ACTIVATION_MODULES` allowlist (`combat_resolver.py` ~L155) |
 | `fights_fought` | fights | Σ | S | |

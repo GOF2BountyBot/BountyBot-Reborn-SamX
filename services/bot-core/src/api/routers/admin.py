@@ -14,7 +14,6 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from persist.database.manager import get_db_session
-from persist.models.player_ship import PlayerShip
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.ship_repository import ShipRepository
@@ -139,6 +138,7 @@ async def initialize_guild(
                 "platinum_bounty_channel_id": request.platinum_bounty_channel_id,
                 "platinum_role_id": request.platinum_role_id,
                 "shop_announcements_role_id": request.shop_announcements_role_id,
+                "event_announcements_role_id": request.event_announcements_role_id,
             }
 
             await config_service.create_or_update_config(db, config_data)
@@ -188,6 +188,7 @@ async def initialize_guild(
                 gold_role_id=request.gold_role_id,
                 platinum_role_id=request.platinum_role_id,
                 shop_announcements_role_id=request.shop_announcements_role_id,
+                event_announcements_role_id=request.event_announcements_role_id,
                 message=f"Guild {request.guild_id} initialized successfully with {shops_created} shops",
             )
 
@@ -955,7 +956,7 @@ async def admin_give_item(
             # item to already be in the player's inventory).
             resolved_item_type = request.item_type
             if resolved_item_type is None:
-                item_details = await inventory_service._get_item_details(db, request.item_name)
+                item_details = await inventory_service.get_item_details(db, request.item_name)
                 if not item_details:
                     raise HTTPException(
                         status_code=404,
@@ -1113,6 +1114,7 @@ async def admin_remove_item(
 async def admin_give_ship(
     request: AdminGiveShipRequest,
     admin_user_id: int,
+    inventory_service: InventoryService = Depends(get_inventory_service),
 ):
     """Give a ship to a player (starts inactive with empty loadout). Requires admin permissions."""
     if not await verify_admin_permissions(request.guild_id, admin_user_id):
@@ -1121,7 +1123,7 @@ async def admin_give_ship(
     flogger.info(f"Admin giving ship {request.ship_name} to user {request.user_id} in guild {request.guild_id}")
 
     try:
-        async with get_db_session() as db:
+        async with get_db_session() as db, db.begin():
             # Validate the ship exists in game data
             ship_repo = ShipRepository()
             game_ship = await ship_repo.get_by_name(db, request.ship_name)
@@ -1143,17 +1145,8 @@ async def admin_give_ship(
                     status_code=404, detail=f"Player not found for user {request.user_id} in guild {request.guild_id}"
                 )
 
-            # Create the PlayerShip record (inactive, empty loadout)
-            player_ship_repo = PlayerShipRepository()
-            new_ship = PlayerShip(
-                player_id=player.id,
-                ship_name=request.ship_name,
-                is_active=False,
-                weapons=[],
-                modules=[],
-                turrets=[],
-            )
-            created_ship = await player_ship_repo.add(db, new_ship)
+            # Create the PlayerShip record via inventory_service (moved here from inline block).
+            created_ship = await inventory_service.grant_ship(db, player, game_ship)
 
             await AuditService.log_action(
                 db,

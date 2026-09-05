@@ -23,6 +23,7 @@ class InitializeGuildRequest(BaseModel):
     platinum_bounty_channel_id: int | None = None
     platinum_role_id: int | None = None
     shop_announcements_role_id: int | None = None
+    event_announcements_role_id: int | None = None
 
 
 class GuildInitializationResponse(BaseModel):
@@ -37,6 +38,7 @@ class GuildInitializationResponse(BaseModel):
     gold_role_id: int | None = None
     platinum_role_id: int | None = None
     shop_announcements_role_id: int | None = None
+    event_announcements_role_id: int | None = None
     message: str
 
 

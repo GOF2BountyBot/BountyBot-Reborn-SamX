@@ -1,0 +1,821 @@
+{
+  "_comment": "Out-of-the-box event templates. Seeded into every guild at /admin_setup and re-synced at bot startup while the guild's copy is unmodified (created_at == updated_at, created_by_user_id NULL). Edit here to change the defaults; admin-edited copies are never overwritten. Prizes: rank_from/rank_to omitted = participation; kind credits|item|ship (item/ship need item_ref).",
+  "templates": [
+    {
+      "name": "Bounty Hunter",
+      "type_slug": "bounty_caps",
+      "params": {
+        "min_fights": 1
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 1000
+        }
+      ]
+    },
+    {
+      "name": "Explorer",
+      "type_slug": "systems_checked",
+      "params": {
+        "min_fights": 1
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 1000
+        }
+      ]
+    },
+    {
+      "name": "Wild Goose Chase",
+      "type_slug": "systems_checked_no_capture",
+      "params": {
+        "min_fights": 1
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 1000
+        }
+      ]
+    },
+    {
+      "name": "Duel Champion",
+      "type_slug": "duels_won",
+      "params": {
+        "min_fights": 3
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 6000
+        }
+      ]
+    },
+    {
+      "name": "Glutton for Punishment",
+      "type_slug": "duels_lost",
+      "params": {
+        "min_fights": 3
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Iron Gauntlet",
+      "type_slug": "duels_fought",
+      "params": {
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "High Roller",
+      "type_slug": "duel_credits_won",
+      "params": {
+        "min_fights": 3
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Big Spender",
+      "type_slug": "duel_credits_lost",
+      "params": {
+        "min_fights": 3
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Executioner",
+      "type_slug": "kills",
+      "params": {
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Warmonger",
+      "type_slug": "fights_fought",
+      "params": {
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Trigger Happy",
+      "type_slug": "shots_fired",
+      "params": {
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Big Bang",
+      "type_slug": "max_single_nuke_damage",
+      "params": {
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Nuke Fest",
+      "type_slug": "secondary_fired",
+      "params": {
+        "subtype": "nuke",
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Rocket Rain",
+      "type_slug": "secondary_fired",
+      "params": {
+        "subtype": "rocket",
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Missile Mania",
+      "type_slug": "secondary_fired",
+      "params": {
+        "subtype": "missile",
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Gunslinger",
+      "type_slug": "kills_by_weapon",
+      "params": {
+        "weapon": "primary",
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Turret Master",
+      "type_slug": "kills_by_weapon",
+      "params": {
+        "weapon": "turret",
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Ghost",
+      "type_slug": "module_activations",
+      "params": {
+        "module": "cloak",
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Speed Demon",
+      "type_slug": "module_activations",
+      "params": {
+        "module": "booster",
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Close Call",
+      "type_slug": "module_activations",
+      "params": {
+        "module": "emergency_system",
+        "min_fights": 5
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        },
+        {
+          "kind": "credits",
+          "qty": 2000
+        }
+      ]
+    },
+    {
+      "name": "Sharpshooter",
+      "type_slug": "avg_accuracy",
+      "params": {
+        "min_fights": 10
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        }
+      ]
+    },
+    {
+      "name": "Marathon",
+      "type_slug": "longest_battle_won",
+      "params": {
+        "min_fights": 10
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        }
+      ]
+    },
+    {
+      "name": "Last Stand",
+      "type_slug": "longest_battle_lost",
+      "params": {
+        "min_fights": 10
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        }
+      ]
+    },
+    {
+      "name": "Alpha Strike",
+      "type_slug": "max_damage_dealt_fight",
+      "params": {
+        "min_fights": 10
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        }
+      ]
+    },
+    {
+      "name": "Iron Hull",
+      "type_slug": "max_damage_taken_fight",
+      "params": {
+        "min_fights": 10
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        }
+      ]
+    },
+    {
+      "name": "Heavy Hitter",
+      "type_slug": "total_damage_dealt",
+      "params": {
+        "min_fights": 10
+      },
+      "duration_days": 7,
+      "prizes": [
+        {
+          "rank_from": 1,
+          "rank_to": 1,
+          "kind": "credits",
+          "qty": 50000
+        },
+        {
+          "rank_from": 2,
+          "rank_to": 2,
+          "kind": "credits",
+          "qty": 20000
+        },
+        {
+          "rank_from": 3,
+          "rank_to": 3,
+          "kind": "credits",
+          "qty": 10000
+        }
+      ]
+    }
+  ]
+}

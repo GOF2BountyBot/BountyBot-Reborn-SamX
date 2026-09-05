@@ -2091,7 +2091,8 @@ class TestUpdateNotificationPreference:
     def test_update_notification_shop_type_returns_200(self, client, mock_player_service):
         """Happy path: shop notification type also returns 200 with updated flag."""
         mock_player_service.update_notification_preference.return_value = make_mock_player(
-            shop_notifications_enabled=False
+            shop_notifications_enabled=False,
+            event_notifications_enabled=False,
         )
 
         response = client.put(
@@ -2139,7 +2140,8 @@ class TestUpdateNotificationPreference:
         """Service is called with the correct player_id, notification_type, and enabled value."""
         mock_session, _ = mock_db_session
         mock_player_service.update_notification_preference.return_value = make_mock_player(
-            shop_notifications_enabled=True
+            shop_notifications_enabled=True,
+            event_notifications_enabled=True,
         )
 
         client.put(

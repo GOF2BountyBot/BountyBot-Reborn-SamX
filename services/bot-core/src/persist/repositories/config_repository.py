@@ -157,6 +157,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "tech_level_probabilities": {"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10},
                 "sale_price_factor": 1.0,
                 "starting_credits": 0,
+                "event_min_duel_stakes": 1000,
                 "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000, "Prestige": 50000},
             }
 
@@ -254,6 +255,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             "gold_role_id",
             "platinum_role_id",
             "shop_announcements_role_id",
+            "event_announcements_role_id",
         ]
 
         try:
@@ -418,6 +420,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "admin_role_configured": config.admin_role_id is not None,
                 "starting_credits": config.starting_credits,
                 "sale_price_factor": config.sale_price_factor,
+                "event_min_duel_stakes": config.event_min_duel_stakes,
                 "xp_thresholds": config.xp_thresholds,
                 "shop_config": {
                     "item_count_ranges": {
@@ -454,6 +457,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "gold_role_id": config.gold_role_id,
                 "platinum_role_id": config.platinum_role_id,
                 "shop_announcements_role_id": config.shop_announcements_role_id,
+                "event_announcements_role_id": config.event_announcements_role_id,
                 "bounty_max_per_tier": config.bounty_max_per_tier,
                 "bounty_expiry_minutes": config.bounty_expiry_minutes,
                 "bounty_spawn_interval_minutes": config.bounty_spawn_interval_minutes,

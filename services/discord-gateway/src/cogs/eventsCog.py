@@ -1,0 +1,1325 @@
+"""Events cog — /admin_event_* admin commands + /events + /event_leaderboard player commands.
+
+Custom stat-race challenges (issue #30, spec §6).
+Cache pipeline mirrors bountyCog exactly (per-guild, TTL=1200s, warm+refresh+push).
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from datetime import UTC, datetime, timedelta, timezone
+
+import discord
+import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
+from cogs._shared.confirm_view import ConfirmView
+from cogs.adminCog import _check_is_admin
+from discord import app_commands
+from discord.ext import commands
+from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
+from utils.timestamp_utils import event_label, iso_to_discord_ts
+
+flogger = bblogger.get_logger("discord-gateway-EventsCog")
+api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+flogger.debug(f"eventsCog loading with API_BASE_URL: {api_base}")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# Static place → (rank_from, rank_to).  Participation → (None, None).
+_PLACE_ORDINALS = {
+    "1st": (1, 1),
+    "2nd": (2, 2),
+    "3rd": (3, 3),
+    "4th": (4, 4),
+    "5th": (5, 5),
+    "6th": (6, 6),
+    "7th": (7, 7),
+    "8th": (8, 8),
+    "9th": (9, 9),
+    "10th": (10, 10),
+}
+
+# Static choices for /admin_event_add_prize `place` param.
+_PLACE_CHOICES = [app_commands.Choice(name=p, value=p) for p in [*list(_PLACE_ORDINALS), "Top N", "Participation"]]
+
+# Static choices for /admin_event_add_prize `type` param.
+_PRIZE_TYPE_CHOICES = [
+    app_commands.Choice(name="Credits", value="Credits"),
+    app_commands.Choice(name="Ship", value="Ship"),
+    app_commands.Choice(name="Primary Weapon", value="Primary"),
+    app_commands.Choice(name="Secondary Weapon", value="Secondary"),
+    app_commands.Choice(name="Turret", value="Turret"),
+    app_commands.Choice(name="Module", value="Module"),
+]
+
+# prize type → (kind, item_category)
+_PRIZE_TYPE_MAP: dict[str, tuple[str, str | None]] = {
+    "Credits": ("credits", None),
+    "Ship": ("ship", None),
+    "Primary": ("item", "primary_weapon"),
+    "Secondary": ("item", "secondary_weapon"),
+    "Turret": ("item", "turret_weapon"),
+    "Module": ("item", "module"),
+}
+
+# Static UTC offset choices for /admin_event_start `utc_offset`.
+_UTC_OFFSET_CHOICES = [
+    app_commands.Choice(name="UTC-12 (Baker Island)", value="-12"),
+    app_commands.Choice(name="UTC-11 (Samoa)", value="-11"),
+    app_commands.Choice(name="UTC-10 (Hawaii)", value="-10"),
+    app_commands.Choice(name="UTC-9 (Alaska)", value="-9"),
+    app_commands.Choice(name="UTC-8 (Pacific US)", value="-8"),
+    app_commands.Choice(name="UTC-7 (Mountain US)", value="-7"),
+    app_commands.Choice(name="UTC-6 (Central US)", value="-6"),
+    app_commands.Choice(name="UTC-5 (Eastern US)", value="-5"),
+    app_commands.Choice(name="UTC-4 (Atlantic)", value="-4"),
+    app_commands.Choice(name="UTC-3 (Brazil)", value="-3"),
+    app_commands.Choice(name="UTC-2", value="-2"),
+    app_commands.Choice(name="UTC-1 (Azores)", value="-1"),
+    app_commands.Choice(name="UTC (London)", value="0"),
+    app_commands.Choice(name="UTC+1 (Central Europe)", value="1"),
+    app_commands.Choice(name="UTC+2 (Eastern Europe)", value="2"),
+    app_commands.Choice(name="UTC+3 (Moscow)", value="3"),
+    app_commands.Choice(name="UTC+4 (Gulf)", value="4"),
+    app_commands.Choice(name="UTC+5 (Pakistan)", value="5"),
+    app_commands.Choice(name="UTC+6 (Bangladesh)", value="6"),
+    app_commands.Choice(name="UTC+7 (Thailand)", value="7"),
+    app_commands.Choice(name="UTC+8 (Singapore)", value="8"),
+    app_commands.Choice(name="UTC+9 (Japan/Korea)", value="9"),
+    app_commands.Choice(name="UTC+10 (Sydney)", value="10"),
+    app_commands.Choice(name="UTC+11 (Solomon Is)", value="11"),
+    app_commands.Choice(name="UTC+12 (New Zealand)", value="12"),
+]
+
+_DIVISION_CHOICES = [app_commands.Choice(name=d, value=d) for d in ("Bronze", "Silver", "Gold", "Platinum")]
+# Edit adds an explicit "All" so an existing division filter can be removed.
+_DIVISION_EDIT_CHOICES = [app_commands.Choice(name="All divisions", value="all"), *_DIVISION_CHOICES]
+
+# State filter choices for /admin_event_list. Default "open" hides ended/cancelled history.
+_OPEN_STATES = "draft,scheduled,active"
+_STATE_CHOICES = [
+    app_commands.Choice(name="Open — draft, scheduled, active (default)", value="open"),
+    app_commands.Choice(name="Draft", value="draft"),
+    app_commands.Choice(name="Scheduled", value="scheduled"),
+    app_commands.Choice(name="Active", value="active"),
+    app_commands.Choice(name="Ended", value="ended"),
+    app_commands.Choice(name="Cancelled", value="cancelled"),
+    app_commands.Choice(name="Templates", value="template"),
+    app_commands.Choice(name="Everything", value="all"),
+]
+
+# Pseudo event type on /admin_event_create: copy everything from the chosen template.
+_FROM_TEMPLATE = "from_template"
+_FROM_TEMPLATE_CHOICE = app_commands.Choice(name="From Template", value=_FROM_TEMPLATE)
+
+
+def _prize_label(p: dict) -> str:
+    """Human-readable prize label for autocomplete."""
+    rank_from = p.get("rank_from")
+    rank_to = p.get("rank_to")
+    kind = p.get("kind", "?")
+    item_ref = p.get("item_ref") or ""
+    qty = p.get("qty", 1)
+
+    if rank_from is None:
+        place = "Participation"
+    elif rank_from == rank_to:
+        suffixes = {1: "st", 2: "nd", 3: "rd"}
+        place = f"{rank_from}{suffixes.get(rank_from, 'th')}"
+    else:
+        place = f"Top {rank_to}"
+
+    if kind == "credits":
+        return f"#{p.get('id')} · {place} · {qty:,} credits"
+    return f"#{p.get('id')} · {place} · {item_ref or kind} x{qty}"
+
+
+def _event_detail_embed(e: dict) -> discord.Embed:
+    """Full view of one event (any state): rules, settings, timing, prizes. Shared by /events and /admin_event_list."""
+    et_display = e.get("type_display", e.get("type_slug", "?"))
+    title = f"Template #{e['id']} “{e['name']}” — {et_display}" if e.get("name") else f"Event #{e['id']} — {et_display}"
+    embed = discord.Embed(
+        title=title,
+        description=e.get("rules_text") or "No rules text.",
+        color=discord.Color.gold(),
+    )
+    embed.add_field(name="State", value=e.get("state", "?"), inline=True)
+    params = e.get("params") or {}
+    days = e.get("duration_days", "?")
+    settings = [f"{days} day{'' if days == 1 else 's'}"] + [f"{k}: {v}" for k, v in sorted(params.items())]
+    embed.add_field(name="Settings", value=" · ".join(settings), inline=True)
+    if e.get("started_at"):
+        embed.add_field(name="Started", value=iso_to_discord_ts(e["started_at"], "F"), inline=True)
+    if e.get("ends_at"):
+        ends_ts = f"{iso_to_discord_ts(e['ends_at'], 'F')} ({iso_to_discord_ts(e['ends_at'], 'R')})"
+        embed.add_field(name="Ends", value=ends_ts, inline=False)
+    if e.get("scheduled_start_at"):
+        embed.add_field(name="Scheduled Start", value=iso_to_discord_ts(e["scheduled_start_at"], "F"), inline=False)
+    prizes = e.get("prizes", [])
+    lines = [_prize_display(p) for p in prizes[:10]]
+    embed.add_field(
+        name="Prizes", value="\n".join(lines) or "None yet — add with `/admin_event_add_prize`", inline=False
+    )
+    return embed
+
+
+def _occupying_prizes(prizes: list[dict], rank_from: int | None, rank_to: int | None) -> list[dict]:
+    """Prizes already in the requested place: the participation slot, or any overlapping rank range.
+
+    Mirrors bot-core's _conflicting_prizes so the confirm dialog and the API agree.
+    """
+    if rank_from is None:
+        return [p for p in prizes if p.get("rank_from") is None]
+    new_to = rank_to or rank_from
+    hits = []
+    for p in prizes:
+        if p.get("rank_from") is None:
+            continue
+        ex_to = p["rank_to"] if p.get("rank_to") is not None else p["rank_from"]
+        if rank_from <= ex_to and p["rank_from"] <= new_to:
+            hits.append(p)
+    return hits
+
+
+def _prize_display(p: dict) -> str:
+    """Display-friendly prize label for embeds (no DB id prefix)."""
+    rank_from = p.get("rank_from")
+    rank_to = p.get("rank_to")
+    kind = p.get("kind", "?")
+    item_ref = p.get("item_ref") or ""
+    qty = p.get("qty", 1)
+
+    if rank_from is None:
+        place = "Participation"
+    elif rank_from == rank_to:
+        suffixes = {1: "st", 2: "nd", 3: "rd"}
+        place = f"{rank_from}{suffixes.get(rank_from, 'th')}"
+    else:
+        place = f"Top {rank_to}"
+
+    if kind == "credits":
+        return f"{place} — {qty:,} credits"
+    return f"{place} — {item_ref or kind} ×{qty}"
+
+
+class EventsCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+
+        # Per-guild events cache — key = int guild_id, TTL = 1200s (20 min dead-man switch).
+        # Refresh via bot-core push after every mutation; TTL is the fallback.
+        self._events_cache: AutocompleteCache[int, list[dict]] = AutocompleteCache(
+            ttl_seconds=1200.0,
+            refresh_fn=self._fetch_events,
+            name="events",
+        )
+
+        # Event-type registry: TTL=None (static), fetched from /events/types on first use.
+        # ponytail: module-level dict would share across tests; cog-instance keeps it isolated.
+        self._types_cache: AutocompleteCache[str, list[dict]] = AutocompleteCache(
+            ttl_seconds=None,
+            refresh_fn=self._fetch_event_types,
+            name="events-types",
+        )
+        flogger.debug("EventsCog initialized")
+
+    async def cog_unload(self):
+        await self.http_client.aclose()
+
+    # ------------------------------------------------------------------
+    # Data fetchers
+    # ------------------------------------------------------------------
+
+    async def _fetch_events(self, guild_id: int) -> list[dict]:
+        """Fetch all events for a guild. Precomputes _norm for hot-path autocomplete."""
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/events/guild/{guild_id}",
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return []
+            events = resp.json()
+            for e in events:
+                e["_norm"] = normalize_for_search(event_label(e))
+            return events
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def _fetch_event_types(self, _key: str) -> list[dict]:
+        """Fetch event type registry from bot-core /events/types. Raises on error."""
+        resp = await self.http_client.get(f"{api_base}/events/types", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+    # ------------------------------------------------------------------
+    # Autocomplete helpers
+    # ------------------------------------------------------------------
+
+    async def _events_autocomplete(
+        self, interaction: discord.Interaction, current: str, *, states: set[str], limit: int | None = 25
+    ) -> list[app_commands.Choice[str]]:
+        """Zero-HTTP hot-path event autocomplete, filtered by allowed states.
+
+        Peek → cold-fill within 1.0s budget (same contract as bounty_autocomplete).
+        Pass limit=None to skip the cap (caller is responsible for final [:25]).
+        """
+        try:
+            guild_id = interaction.guild_id
+            events = self._events_cache.peek(guild_id)
+            if events is None:
+                events = await self._events_cache.get_with_timeout(guild_id, timeout=1.0)
+            if events is None:
+                return []
+            norm_current = normalize_for_search(current)
+            choices = []
+            for e in events:
+                if states and e.get("state") not in states:
+                    continue
+                label = event_label(e)
+                norm_label = e.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
+                    choices.append(app_commands.Choice(name=label[:100], value=str(e["id"])))
+            return choices if limit is None else choices[:limit]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def _type_autocomplete(
+        self, _interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for event types — substring over registry fetched from /events/types."""
+        try:
+            types = self._types_cache.peek("all")
+            if types is None:
+                types = await self._types_cache.get_with_timeout("all", timeout=1.0)
+            if types is None:
+                return []
+            norm_current = normalize_for_search(current)
+            return [
+                app_commands.Choice(
+                    name=f"{t['category'].title()} · {t['display_name']}"[:100],
+                    value=t["slug"],
+                )
+                for t in types
+                if norm_current in normalize_for_search(t.get("display_name", ""))
+                or norm_current in normalize_for_search(t.get("category", ""))
+            ][:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def _create_type_autocomplete(self, interaction: discord.Interaction, current: str):
+        """/admin_event_create type: the registry plus the 'From Template' pseudo type."""
+        choices = await self._type_autocomplete(interaction, current)
+        if normalize_for_search(current) in normalize_for_search(_FROM_TEMPLATE_CHOICE.name):
+            choices = [_FROM_TEMPLATE_CHOICE, *choices]
+        return choices[:25]
+
+    async def _item_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Item autocomplete filtered by the already-chosen prize `type` in namespace.
+
+        Uses AdminCog's item/ship catalog caches — import the live cog instance.
+        """
+        try:
+            prize_type = getattr(interaction.namespace, "type", None)
+            norm_current = normalize_for_search(current)
+
+            admin_cog = self.bot.get_cog("AdminCog")
+            if admin_cog is None:
+                return []
+
+            if prize_type == "Ship":
+                names = admin_cog._ship_catalog.peek("all")
+                if names is None:
+                    names = await admin_cog._ship_catalog.get_with_timeout("all", timeout=1.0)
+                names = names or []
+                return [app_commands.Choice(name=n, value=n) for n in names if norm_current in normalize_for_search(n)][
+                    :25
+                ]
+
+            if prize_type == "Credits":
+                return []  # no item needed for credits
+
+            # Item types: map to catalog category (reuse module-level _PRIZE_TYPE_MAP)
+            _, _cat = _PRIZE_TYPE_MAP.get(prize_type or "", (None, None))
+            category = _cat
+            if not category:
+                return []  # No type selected — no suggestions (less confusing than dumping everything)
+            categories = (category,)
+
+            choices: list[app_commands.Choice[str]] = []
+            seen: set[str] = set()
+            cold_fills = 0
+            for cat in categories:
+                cat_names = admin_cog._item_catalog.peek(cat)
+                if cat_names is None and cold_fills < 2:
+                    cat_names = await admin_cog._item_catalog.get_with_timeout(cat, timeout=1.0)
+                    cold_fills += 1
+                cat_names = cat_names or []
+                for name in cat_names:
+                    if name and name not in seen and norm_current in normalize_for_search(name):
+                        seen.add(name)
+                        choices.append(app_commands.Choice(name=name, value=name))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def _prize_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for prizes on the selected event (cold HTTP call, admin-only path)."""
+        try:
+            event_id = getattr(interaction.namespace, "event", None)
+            if not event_id:
+                return []
+            resp = await self.http_client.get(f"{api_base}/events/{event_id}", timeout=5)
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            prizes = data.get("prizes", [])
+            norm_current = normalize_for_search(current)
+            choices = []
+            for p in prizes:
+                label = _prize_label(p)
+                if norm_current in normalize_for_search(label):
+                    choices.append(app_commands.Choice(name=label[:100], value=str(p["id"])))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def _param_autocomplete(
+        self, interaction: discord.Interaction, current: str, param_key: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for subtype/module/weapon params — reads live param_values from /events/types.
+
+        Reads interaction.namespace.type to find the selected event type, then returns
+        the allowed values for param_key from that type's param_values map. Before a
+        type is picked, offers the union of values across all types.
+        """
+        try:
+            type_slug = getattr(interaction.namespace, "type", None)
+            event_id = getattr(interaction.namespace, "event", None)
+            if not type_slug and isinstance(event_id, str):  # /admin_event_edit: type comes from the chosen event
+                cached = self._events_cache.peek(interaction.guild_id) or []
+                type_slug = next((e.get("type_slug") for e in cached if str(e.get("id")) == event_id), None)
+            types = self._types_cache.peek("all")
+            if types is None:
+                types = await self._types_cache.get_with_timeout("all", timeout=1.0)
+            if types is None:
+                return []
+            if type_slug:
+                entry = next((t for t in types if t["slug"] == type_slug), None)
+                values: list[str] = (entry.get("param_values") or {}).get(param_key, []) if entry else []
+            else:  # no type picked yet: offer every value any type accepts for this param
+                values = sorted({v for t in types for v in (t.get("param_values") or {}).get(param_key, [])})
+            norm = normalize_for_search(current)
+            return [app_commands.Choice(name=v, value=v) for v in values if norm in normalize_for_search(v)][:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def _subtype_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._param_autocomplete(interaction, current, "subtype")
+
+    async def _module_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._param_autocomplete(interaction, current, "module")
+
+    async def _weapon_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._param_autocomplete(interaction, current, "weapon")
+
+    # Per-command event selectors (per-state wrappers so @app_commands.autocomplete can bind them).
+    async def _ac_event_draft_active(self, interaction, current):
+        return await self._events_autocomplete(interaction, current, states={"draft", "active", "template"})
+
+    async def _ac_event_draft(self, interaction, current):
+        return await self._events_autocomplete(interaction, current, states={"draft", "template"})
+
+    async def _ac_event_editable(self, interaction, current):
+        """view/edit: anything not yet running — drafts, scheduled, templates (start excludes templates)."""
+        return await self._events_autocomplete(interaction, current, states={"draft", "scheduled", "template"})
+
+    async def _ac_event_template(self, interaction, current):
+        return await self._events_autocomplete(interaction, current, states={"template"})
+
+    async def _ac_event_draft_scheduled(self, interaction, current):
+        return await self._events_autocomplete(interaction, current, states={"draft", "scheduled"})
+
+    async def _ac_event_active(self, interaction, current):
+        return await self._events_autocomplete(interaction, current, states={"active"})
+
+    async def _ac_event_deletable(self, interaction, current):
+        return await self._events_autocomplete(
+            interaction, current, states={"draft", "scheduled", "cancelled", "template"}
+        )
+
+    async def _ac_event_player(self, interaction, current):
+        """/event_leaderboard selector: active events and ended events within the last 7 days.
+
+        Fetches all matching choices (no cap) then filters ended > 7 d, sorts active first,
+        and caps at 25.  This prevents old ended events from crowding out live ones when
+        the raw cache exceeds 25 entries.
+        """
+        # ponytail: limit=None — caller caps; avoids a second cache peek
+        all_choices = await self._events_autocomplete(interaction, current, states={"active", "ended"}, limit=None)
+        if not all_choices:
+            return []
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        guild_id = interaction.guild_id
+        events = self._events_cache.peek(guild_id) or []
+        by_id = {str(e["id"]): e for e in events}
+        active: list[app_commands.Choice[str]] = []
+        recent_ended: list[tuple[datetime, app_commands.Choice[str]]] = []
+        for ch in all_choices:
+            e = by_id.get(ch.value, {})
+            if e.get("state") == "ended":
+                ts_str = e.get("ends_at")
+                if not ts_str:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if ts < cutoff:
+                        continue
+                    recent_ended.append((ts, ch))
+                except (ValueError, TypeError):
+                    pass
+            else:
+                active.append(ch)
+        recent_ended.sort(key=lambda x: x[0], reverse=True)
+        return (active + [ch for _, ch in recent_ended])[:25]
+
+    async def _ac_event_selector_events(self, interaction, current):
+        """/events selector: only active and scheduled events."""
+        return await self._events_autocomplete(interaction, current, states={"active", "scheduled"})
+
+    # ------------------------------------------------------------------
+    # Shared helpers — reduce boilerplate in admin commands
+    # ------------------------------------------------------------------
+
+    async def _admin_gate(self, interaction: discord.Interaction) -> bool:
+        """Defer ephemeral + check admin; sends ❌ and returns False if not admin."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ Admin privileges required.", ephemeral=True)
+            return False
+        return True
+
+    async def _api(self, interaction: discord.Interaction, method: str, url: str, **kw) -> httpx.Response | None:
+        """Call the bot-core API; surface HTTPStatusError as ❌ followup, return None on error."""
+        try:
+            resp = await getattr(self.http_client, method)(url, **kw)
+            resp.raise_for_status()
+            return resp
+        except httpx.HTTPStatusError as exc:
+            await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+            return None
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            await interaction.followup.send(f"❌ Unexpected error: {exc}", ephemeral=True)
+            return None
+
+    async def _confirm(self, interaction: discord.Interaction, embed: discord.Embed, action: str) -> bool | None:
+        """Show a ConfirmView, wait, return True/False/None (timeout)."""
+        view = ConfirmView(action=action, timeout=60)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        await view.wait()
+        if view.result is None:
+            await interaction.followup.send("⏱️ Timed out — no changes made.", ephemeral=True)
+        elif not view.result:
+            await interaction.followup.send("❌ Cancelled — no changes made.", ephemeral=True)
+        return view.result
+
+    # ------------------------------------------------------------------
+    # Admin commands
+    # ------------------------------------------------------------------
+
+    @app_commands.command(
+        name="admin_event_create",
+        description="[ADMIN] Create a draft event, save it as a template, or start a draft from a template",
+    )
+    @app_commands.describe(
+        type="Event type (autocomplete from registry)",
+        duration_days="Duration in days (default 7)",
+        division="Only count players in this division (default: all)",
+        subtype="Weapon subtype (for weapon-type events)",
+        module="Module type (for module events)",
+        weapon="Weapon category (for weapon-kill events)",
+        min_fights="Minimum battles/checks to qualify (default per type; 0 = no gate)",
+        template="With type 'From Template': the template to copy (type, settings, prizes)",
+        save_as_template="True = store as a named template instead of a draft (edit it like a draft; never runs)",
+        template_name="Name for the template (with save_as_template: True)",
+    )
+    @app_commands.autocomplete(
+        type=_create_type_autocomplete,
+        subtype=_subtype_autocomplete,
+        module=_module_autocomplete,
+        weapon=_weapon_autocomplete,
+        template=_ac_event_template,
+    )
+    @app_commands.choices(division=_DIVISION_CHOICES)
+    async def admin_event_create(
+        self,
+        interaction: discord.Interaction,
+        type: str,
+        duration_days: app_commands.Range[int, 1, 60] | None = None,
+        division: str | None = None,
+        subtype: str | None = None,
+        module: str | None = None,
+        weapon: str | None = None,
+        min_fights: app_commands.Range[int, 0] | None = None,
+        template: str | None = None,
+        save_as_template: bool = False,
+        template_name: app_commands.Range[str, 1, 64] | None = None,
+    ):
+        if not await self._admin_gate(interaction):
+            return
+        if type == _FROM_TEMPLATE and not template:
+            await interaction.followup.send("❌ Pick a `template` when the type is **From Template**.", ephemeral=True)
+            return
+        template_name = (template_name or "").strip() or None
+        if save_as_template and not template_name:
+            await interaction.followup.send("❌ Give the template a `template_name`.", ephemeral=True)
+            return
+        if template_name and not save_as_template:
+            await interaction.followup.send(
+                "❌ Set `save_as_template` to **True** to store this as a template (or drop `template_name`).",
+                ephemeral=True,
+            )
+            return
+
+        params: dict = {}
+        if division:
+            params["division"] = division
+        if subtype:
+            params["subtype"] = subtype
+        if module:
+            params["module"] = module
+        if weapon:
+            params["weapon"] = weapon
+        if min_fights is not None:
+            params["min_fights"] = min_fights
+
+        body: dict = {"guild_id": interaction.guild_id, "type_slug": type, "params": params}
+        if duration_days is not None:
+            body["duration_days"] = duration_days
+        if template:
+            body["template_id"] = int(template)
+        if save_as_template:
+            body["template_name"] = template_name
+        resp = await self._api(
+            interaction, "post", f"{api_base}/events", json=body, params={"user_id": interaction.user.id}, timeout=10
+        )
+        if resp is None:
+            return
+
+        event = resp.json()
+        self._events_cache.invalidate(interaction.guild_id)
+        flogger.info(
+            f"/admin_event_create: guild={interaction.guild_id} event_id={event.get('id')} state={event.get('state')}"
+            f" template_id={template} by user={interaction.user.id}"
+        )
+        if event.get("state") == "template":
+            await interaction.followup.send(
+                f"✅ Template **#{event['id']}** “{event.get('name')}” saved (type `{event['type_slug']}`,"
+                f" {event['duration_days']}d).\nAdd prizes with `/admin_event_add_prize`; create runs with"
+                f" `/admin_event_create type:From Template template:{event.get('name')}`.",
+                ephemeral=True,
+            )
+            return
+        if template:  # show what was copied so the admin can tweak it
+            detail = await self._api(interaction, "get", f"{api_base}/events/{event['id']}", timeout=10)
+            await interaction.followup.send(
+                f"✅ Draft event **#{event['id']}** created from template #{template}. Tweak it with"
+                f" `/admin_event_edit` / the prize commands, then `/admin_event_start`.",
+                embed=_event_detail_embed(detail.json()) if detail is not None else None,
+                ephemeral=True,
+            )
+            return
+        await interaction.followup.send(
+            f"✅ Draft event **#{event['id']}** created (type `{type}`, {event['duration_days']}d).\n"
+            f"Use `/admin_event_add_prize` to add prizes, then `/admin_event_start` to launch.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="admin_event_edit",
+        description="[ADMIN] Edit a draft, scheduled event or template (only the fields you pass change)",
+    )
+    @app_commands.describe(
+        event="Draft, scheduled event or template to edit",
+        duration_days="New duration in days",
+        division="Only count players in this division (All divisions = remove the filter)",
+        subtype="Weapon subtype (for weapon-type events)",
+        module="Module type (for module events)",
+        weapon="Weapon category (for weapon-kill events)",
+        min_fights="Minimum battles/checks to qualify (0 = no gate)",
+    )
+    @app_commands.autocomplete(
+        event=_ac_event_editable,
+        subtype=_subtype_autocomplete,
+        module=_module_autocomplete,
+        weapon=_weapon_autocomplete,
+    )
+    @app_commands.choices(division=_DIVISION_EDIT_CHOICES)
+    async def admin_event_edit(
+        self,
+        interaction: discord.Interaction,
+        event: str,
+        duration_days: app_commands.Range[int, 1, 60] | None = None,
+        division: str | None = None,
+        subtype: str | None = None,
+        module: str | None = None,
+        weapon: str | None = None,
+        min_fights: app_commands.Range[int, 0] | None = None,
+    ):
+        if not await self._admin_gate(interaction):
+            return
+
+        current = await self._api(interaction, "get", f"{api_base}/events/{event}", timeout=10)
+        if current is None:
+            return
+        params = dict(current.json().get("params") or {})
+        for key, val in (
+            ("division", division),
+            ("subtype", subtype),
+            ("module", module),
+            ("weapon", weapon),
+            ("min_fights", min_fights),
+        ):
+            if val is None:
+                continue
+            if key == "division" and val == "all":
+                params.pop("division", None)
+            else:
+                params[key] = val
+        body: dict = {"params": params}
+        if duration_days is not None:
+            body["duration_days"] = duration_days
+        if duration_days is None and params == (current.json().get("params") or {}):
+            await interaction.followup.send("Nothing to change — pass at least one field.", ephemeral=True)
+            return
+
+        resp = await self._api(
+            interaction,
+            "patch",
+            f"{api_base}/events/{event}",
+            json=body,
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
+            return
+        self._events_cache.invalidate(interaction.guild_id)
+        flogger.info(f"/admin_event_edit: event={event} changes={body} by user={interaction.user.id}")
+        await interaction.followup.send(
+            content="✅ Event updated.", embed=_event_detail_embed(resp.json()), ephemeral=True
+        )
+
+    @app_commands.command(
+        name="admin_event_add_prize", description="[ADMIN] Add a prize to a draft, active event or template"
+    )
+    @app_commands.describe(
+        event="Event to add the prize to (draft or active)",
+        place="Prize place: 1st–10th, Top N, or Participation",
+        type="Prize type",
+        item="Item/ship name (leave blank for Credits)",
+        qty="Quantity / credit amount",
+        top_n="Upper rank for 'Top N' prizes (e.g. 5 for Top 5)",
+    )
+    @app_commands.autocomplete(event=_ac_event_draft_active, item=_item_autocomplete)
+    @app_commands.choices(place=_PLACE_CHOICES, type=_PRIZE_TYPE_CHOICES)
+    async def admin_event_add_prize(
+        self,
+        interaction: discord.Interaction,
+        event: str,
+        place: str,
+        type: str,
+        qty: app_commands.Range[int, 1] = 1,
+        item: str | None = None,
+        top_n: app_commands.Range[int, 1, 10] = 10,
+    ):
+        if not await self._admin_gate(interaction):
+            return
+
+        if place in _PLACE_ORDINALS:
+            rank_from, rank_to = _PLACE_ORDINALS[place]
+        elif place == "Top N":
+            rank_from, rank_to = 1, top_n
+        else:
+            rank_from, rank_to = None, None
+
+        kind, _ = _PRIZE_TYPE_MAP.get(type, ("credits", None))
+        body: dict = {"rank_from": rank_from, "rank_to": rank_to, "kind": kind, "qty": qty}
+        if kind in ("item", "ship"):
+            if not item:
+                await interaction.followup.send(f"❌ `item` is required for {type} prizes.", ephemeral=True)
+                return
+            body["item_ref"] = item
+
+        # Occupied place? Ask before replacing (same pattern as the weapon-swap confirmation).
+        detail = await self._api(interaction, "get", f"{api_base}/events/{event}", timeout=10)
+        if detail is None:
+            return
+        occupants = _occupying_prizes(detail.json().get("prizes", []), rank_from, rank_to)
+        if occupants:
+            embed = discord.Embed(
+                title="Replace prize?",
+                description=f"Event **#{event}** already has a prize in that place.",
+                color=discord.Color.orange(),
+            )
+            embed.add_field(name="Currently", value="\n".join(_prize_display(p) for p in occupants), inline=False)
+            embed.add_field(name="Replace with", value=_prize_display(body), inline=False)
+            if not await self._confirm(interaction, embed, action="replace this prize"):
+                return
+            body["replace"] = True
+
+        resp = await self._api(
+            interaction,
+            "post",
+            f"{api_base}/events/{event}/prizes",
+            json=body,
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
+            return
+
+        self._events_cache.invalidate(interaction.guild_id)
+        prize = resp.json()
+        verb = "replaced the old prize" if occupants else "added"
+        flogger.info(
+            f"/admin_event_add_prize: event={event} prize_id={prize.get('id')} replaced={bool(occupants)}"
+            f" by user={interaction.user.id}"
+        )
+        await interaction.followup.send(
+            f"✅ Prize **#{prize['id']}** {verb} on event #{event}: `{place}` — {type}"
+            + (f" · {item}" if item else ""),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="admin_event_remove_prize", description="[ADMIN] Remove a prize from a draft or template"
+    )
+    @app_commands.describe(
+        event="Event to remove the prize from (draft only)",
+        prize="Prize to remove (autocomplete from event's prizes)",
+    )
+    @app_commands.autocomplete(event=_ac_event_draft, prize=_prize_autocomplete)
+    async def admin_event_remove_prize(
+        self,
+        interaction: discord.Interaction,
+        event: str,
+        prize: str,
+    ):
+        if not await self._admin_gate(interaction):
+            return
+
+        resp = await self._api(
+            interaction,
+            "delete",
+            f"{api_base}/events/{event}/prizes/{prize}",
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
+            return
+
+        self._events_cache.invalidate(interaction.guild_id)
+        flogger.info(f"/admin_event_remove_prize: event={event} prize={prize} by user={interaction.user.id}")
+        await interaction.followup.send(f"✅ Prize #{prize} removed from event #{event}.", ephemeral=True)
+
+    @app_commands.command(name="admin_event_start", description="[ADMIN] Start an event now or schedule it")
+    @app_commands.describe(
+        event="Event to start (draft or scheduled)",
+        at="Scheduled start time: YYYY-MM-DD HH:MM (leave blank for now)",
+        utc_offset="Your timezone offset (default UTC)",
+    )
+    @app_commands.autocomplete(event=_ac_event_draft_scheduled)
+    @app_commands.choices(utc_offset=_UTC_OFFSET_CHOICES)
+    async def admin_event_start(
+        self,
+        interaction: discord.Interaction,
+        event: str,
+        at: str | None = None,
+        utc_offset: str = "0",
+    ):
+        if not await self._admin_gate(interaction):
+            return
+
+        body: dict = {}
+        scheduled_ts: datetime | None = None
+
+        if at:
+            try:
+                naive = datetime.strptime(at, "%Y-%m-%d %H:%M")
+            except ValueError:
+                await interaction.followup.send(
+                    "❌ Invalid time format. Use `YYYY-MM-DD HH:MM` (e.g. `2026-10-01 18:00`).",
+                    ephemeral=True,
+                )
+                return
+
+            offset_hours = float(utc_offset)
+            tz = timezone(timedelta(hours=offset_hours))
+            scheduled_ts = naive.replace(tzinfo=tz).astimezone(UTC)
+
+            now = datetime.now(UTC)
+            if scheduled_ts <= now:
+                await interaction.followup.send("❌ Scheduled time must be in the future.", ephemeral=True)
+                return
+            if scheduled_ts > now + timedelta(days=90):
+                await interaction.followup.send("❌ Scheduled time must be within 90 days.", ephemeral=True)
+                return
+
+            unix = int(scheduled_ts.timestamp())
+            body["scheduled_start_at"] = scheduled_ts.isoformat()
+            embed = discord.Embed(
+                title="Confirm Schedule",
+                description=(
+                    f"Schedule event **#{event}** to start:\n"
+                    f"**<t:{unix}:F>** (<t:{unix}:R>)\n\nClick **Confirm** to schedule."
+                ),
+                color=discord.Color.blue(),
+            )
+        else:
+            embed = discord.Embed(
+                title="Confirm Start",
+                description=f"Start event **#{event}** **now**?\n\nClick **Confirm** to proceed.",
+                color=discord.Color.green(),
+            )
+
+        if not await self._confirm(interaction, embed, f"start event #{event}"):
+            return
+
+        resp = await self._api(
+            interaction,
+            "post",
+            f"{api_base}/events/{event}/start",
+            json=body,
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
+            return
+
+        self._events_cache.invalidate(interaction.guild_id)
+        result = resp.json()
+        status = result.get("status", "")
+        flogger.info(f"/admin_event_start: event={event} status={status} by user={interaction.user.id}")
+        if status == "scheduled" and scheduled_ts:
+            unix = int(scheduled_ts.timestamp())
+            await interaction.followup.send(
+                f"✅ Event **#{event}** scheduled for <t:{unix}:F> (<t:{unix}:R>).", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(f"✅ Event **#{event}** is now **active**.", ephemeral=True)
+
+    @app_commands.command(name="admin_event_end", description="[ADMIN] End an active event (with or without payout)")
+    @app_commands.describe(
+        event="Active event to end",
+        payout="Pay out prizes to qualified players?",
+        reason="Optional reason for ending early",
+    )
+    @app_commands.autocomplete(event=_ac_event_active)
+    @app_commands.choices(
+        payout=[
+            app_commands.Choice(name="Yes — pay out prizes", value="yes"),
+            app_commands.Choice(name="No — end without payout", value="no"),
+        ]
+    )
+    async def admin_event_end(
+        self,
+        interaction: discord.Interaction,
+        event: str,
+        payout: str,
+        reason: str | None = None,
+    ):
+        if not await self._admin_gate(interaction):
+            return
+
+        do_payout = payout.lower() == "yes"
+        embed = discord.Embed(
+            title="Confirm End Event",
+            description=(
+                f"End event **#{event}**?\n"
+                f"Payout: **{'Yes' if do_payout else 'No'}**"
+                + (f"\nReason: {reason}" if reason else "")
+                + "\n\nThis cannot be undone."
+            ),
+            color=discord.Color.orange(),
+        )
+        if not await self._confirm(interaction, embed, f"end event #{event}"):
+            return
+
+        resp = await self._api(
+            interaction,
+            "post",
+            f"{api_base}/events/{event}/end",
+            json={"payout": do_payout, "reason": reason},
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=30,
+        )
+        if resp is None:
+            return
+
+        self._events_cache.invalidate(interaction.guild_id)
+        result = resp.json()
+        winners = result.get("winners_count", 0)
+        flogger.info(f"/admin_event_end: event={event} payout={do_payout} by user={interaction.user.id}")
+        await interaction.followup.send(
+            f"✅ Event **#{event}** ended."
+            + (f" {winners} player(s) received prizes." if do_payout and winners else ""),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="admin_event_delete", description="[ADMIN] Delete a draft, scheduled or cancelled event, or a template"
+    )
+    @app_commands.describe(event="Event to permanently delete")
+    @app_commands.autocomplete(event=_ac_event_deletable)
+    async def admin_event_delete(
+        self,
+        interaction: discord.Interaction,
+        event: str,
+    ):
+        if not await self._admin_gate(interaction):
+            return
+
+        embed = discord.Embed(
+            title="⚠️ Confirm Delete",
+            description=f"Permanently delete event **#{event}**?\n\nThis cannot be undone.",
+            color=discord.Color.red(),
+        )
+        if not await self._confirm(interaction, embed, f"delete event #{event}"):
+            return
+
+        resp = await self._api(
+            interaction,
+            "delete",
+            f"{api_base}/events/{event}",
+            params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
+            timeout=10,
+        )
+        if resp is None:
+            return
+
+        self._events_cache.invalidate(interaction.guild_id)
+        flogger.info(f"/admin_event_delete: event={event} by user={interaction.user.id}")
+        await interaction.followup.send(f"✅ Event **#{event}** deleted.", ephemeral=True)
+
+    @app_commands.command(
+        name="admin_event_view", description="[ADMIN] Review a draft, scheduled event or template in full"
+    )
+    @app_commands.describe(event="Draft, scheduled event or template to review (rules, settings, timing, prizes)")
+    @app_commands.autocomplete(event=_ac_event_editable)
+    async def admin_event_view(self, interaction: discord.Interaction, event: str):
+        if not await self._admin_gate(interaction):
+            return
+        resp = await self._api(interaction, "get", f"{api_base}/events/{event}", timeout=10)
+        if resp is not None:
+            await interaction.followup.send(embed=_event_detail_embed(resp.json()), ephemeral=True)
+
+    @app_commands.command(
+        name="admin_event_list", description="[ADMIN] List this guild's open events (or filter by state)"
+    )
+    @app_commands.describe(state="Which events to list (default: open = draft, scheduled, active)")
+    @app_commands.choices(state=_STATE_CHOICES)
+    async def admin_event_list(
+        self,
+        interaction: discord.Interaction,
+        state: str = "open",
+    ):
+        if not await self._admin_gate(interaction):
+            return
+
+        params: dict = {"guild_id": interaction.guild_id}
+        if state == "open":
+            params["state"] = _OPEN_STATES
+        elif state != "all":
+            params["state"] = state
+
+        resp = await self._api(
+            interaction,
+            "get",
+            f"{api_base}/events/guild/{interaction.guild_id}",
+            params=params,
+            timeout=10,
+        )
+        if resp is None:
+            return
+
+        events = resp.json()
+        if not events:
+            await interaction.followup.send("No events found.", ephemeral=True)
+            return
+
+        lines = []
+        for e in events:
+            ts = ""
+            if e.get("started_at"):
+                ts = f" · started {iso_to_discord_ts(e['started_at'], 'R')}"
+            elif e.get("scheduled_start_at"):
+                ts = f" · starts {iso_to_discord_ts(e['scheduled_start_at'], 'R')}"
+            name = f" “{e['name']}”" if e.get("name") else ""
+            lines.append(
+                f"**#{e['id']}** `{e['state']}`{name} {e.get('type_display', e.get('type_slug', '?'))}"
+                f" ({e.get('duration_days', '?')}d){ts}"
+            )
+
+        embed = discord.Embed(
+            title=f"Events — {interaction.guild.name}",
+            description="\n".join(lines[:20]),
+            color=discord.Color.blurple(),
+        )
+        if len(events) > 20:
+            embed.set_footer(text=f"Showing first 20 of {len(events)} events")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # Player commands
+    # ------------------------------------------------------------------
+
+    @app_commands.command(name="events", description="View live and upcoming events (or details for one event)")
+    @app_commands.describe(event="Event to view in detail")
+    @app_commands.autocomplete(event=_ac_event_selector_events)
+    async def events(
+        self,
+        interaction: discord.Interaction,
+        event: str | None = None,
+    ):
+        await interaction.response.defer(thinking=True)
+
+        if event:
+            # Detail view for a single event.
+            try:
+                resp = await self.http_client.get(f"{api_base}/events/{event}", timeout=10)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+                return
+
+            await interaction.followup.send(embed=_event_detail_embed(resp.json()))
+        else:
+            # Summary of active + scheduled events.
+            try:
+                resp = await self.http_client.get(
+                    f"{api_base}/events/guild/{interaction.guild_id}",
+                    params={"state": "active,scheduled"},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+                return
+
+            events = resp.json()
+            if not events:
+                await interaction.followup.send("No active or upcoming events right now.", ephemeral=True)
+            else:
+                embed = discord.Embed(
+                    title=f"Events — {interaction.guild.name}",
+                    color=discord.Color.gold(),
+                )
+                for e in events[:10]:
+                    et_display = e.get("type_display", e.get("type_slug", "?"))
+                    if e.get("state") == "active" and e.get("ends_at"):
+                        ts_str = f"Ends {iso_to_discord_ts(e['ends_at'], 'R')}"
+                    elif e.get("scheduled_start_at"):
+                        ts_str = f"Starts {iso_to_discord_ts(e['scheduled_start_at'], 'R')}"
+                    else:
+                        ts_str = e.get("state", "?")
+                    embed.add_field(
+                        name=f"#{e['id']} {et_display}",
+                        value=f"{ts_str} · {e.get('prize_count', 0)} prize(s)",
+                        inline=False,
+                    )
+                await interaction.followup.send(embed=embed)
+
+        # Sync player notification roles — non-fatal, best-effort (slice 6 expands this).
+        try:
+            player_cog = self.bot.get_cog("PlayerCog")
+            if player_cog is not None and isinstance(interaction.user, discord.Member):
+                # POST /players/ = get-or-create upsert; GET /players/ is not served (405).
+                player_resp = await self.http_client.post(
+                    f"{api_base}/players/",
+                    json={
+                        "discord_id": interaction.user.id,
+                        "guild_id": interaction.guild_id,
+                        "discord_username": str(interaction.user),
+                        "display_name": getattr(interaction.user, "display_name", None),
+                    },
+                    timeout=5,
+                )
+                player_resp.raise_for_status()
+                player_data = player_resp.json()
+                await player_cog._sync_player_notification_roles(
+                    interaction.guild,
+                    interaction.user,
+                    interaction.guild_id,
+                    player_data,
+                )
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass  # non-fatal — primary command already responded
+
+    @app_commands.command(
+        name="event_leaderboard",
+        description="View all-time medal tally, or standings for a specific event",
+    )
+    @app_commands.describe(
+        event="Event for standings (top 10 + your rank)",
+        type="Filter medals by event type",
+    )
+    @app_commands.autocomplete(event=_ac_event_player, type=_type_autocomplete)
+    async def event_leaderboard(
+        self,
+        interaction: discord.Interaction,
+        event: str | None = None,
+        type: str | None = None,
+    ):
+        await interaction.response.defer(thinking=True)
+
+        if event:
+            # Standings for a specific event (event wins over type).
+            try:
+                resp = await self.http_client.get(f"{api_base}/events/{event}/standings", timeout=10)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+                return
+
+            rows = resp.json()
+            if not rows:
+                await interaction.followup.send("No standings yet for this event.", ephemeral=True)
+                return
+
+            embed = discord.Embed(title=f"Standings — Event #{event}", color=discord.Color.gold())
+            caller_id = interaction.user.id
+            caller_row = None
+            lines = []
+            for r in rows[:10]:
+                medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(r["rank"], f"#{r['rank']}")
+                qual = "" if r.get("qualified", True) else " *(unqualified)*"
+                val_str = r.get("value_display") or f"{r['value']:.1f}"
+                lines.append(f"{medal} **{r['display_name']}** — {val_str}{qual}")
+                if r.get("user_id") == caller_id and r["rank"] > 10:
+                    caller_row = r
+            embed.description = "\n".join(lines) or "No entries."
+            caller_footer = (
+                (
+                    f"Your rank: #{caller_row['rank']} — "
+                    + (caller_row.get("value_display") or f"{caller_row['value']:.1f}")
+                    + ("" if caller_row.get("qualified", True) else " (unqualified)")
+                )
+                if caller_row
+                else ""
+            )
+            # Fetch event detail for prizes + qualify info (non-fatal if it fails)
+            try:
+                detail_resp = await self.http_client.get(f"{api_base}/events/{event}", timeout=10)
+                detail_resp.raise_for_status()
+                detail = detail_resp.json()
+                prizes = detail.get("prizes", [])
+                if prizes:
+                    prize_lines = [_prize_display(p) for p in prizes]
+                    embed.add_field(name="Prizes", value="\n".join(prize_lines[:10]) or "None", inline=False)
+                # Extract "Prizes require…" sentence from rendered rules_text for the footer
+                _m = re.search(r"Prizes require[^.]+\.", detail.get("rules_text", ""))
+                prizes_line = _m.group(0) if _m else None
+                embed.set_footer(text=" · ".join(filter(None, [caller_footer, prizes_line])))
+            except Exception:  # pylint: disable=broad-exception-caught
+                if caller_footer:
+                    embed.set_footer(text=caller_footer)
+                # non-fatal — standings already shown
+            await interaction.followup.send(embed=embed)
+
+        else:
+            # All-time medal tally.
+            params: dict = {}
+            if type:
+                params["type_slug"] = type
+            try:
+                resp = await self.http_client.get(
+                    f"{api_base}/events/guild/{interaction.guild_id}/medals",
+                    params=params,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                await interaction.followup.send(f"❌ {_extract_detail(exc)}", ephemeral=True)
+                return
+
+            rows = resp.json()
+            if not rows:
+                await interaction.followup.send("No medals recorded yet.", ephemeral=True)
+                return
+
+            embed = discord.Embed(
+                title=f"Medal Tally — {interaction.guild.name}" + (f" ({type})" if type else ""),
+                color=discord.Color.gold(),
+            )
+            lines = []
+            for r in rows[:15]:
+                lines.append(
+                    f"**{r['display_name']}** — 🥇{r['gold']} 🥈{r['silver']} 🥉{r['bronze']} · {r['events']} events"
+                )
+            embed.description = "\n".join(lines)
+            await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
+        name="admin_sync_roles",
+        description="[ADMIN] Force notification role sync for this guild",
+    )
+    @app_commands.describe(dry_run="If True, count what would change without adding roles")
+    async def admin_sync_roles(self, interaction: discord.Interaction, dry_run: bool = False) -> None:
+        """Force the notification role sync for the current guild and reply with counts."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
+
+        from utils.autocomplete_warm import sync_guild_notification_roles
+
+        guild = interaction.guild
+
+        try:
+            counts = await sync_guild_notification_roles(self.bot, guild, dry_run=dry_run)
+            prefix = "ℹ️ Dry run — " if dry_run else ""
+            lines = [
+                f"{prefix}Players scanned: **{counts.get('players_scanned', 0)}**",
+                f"Roles {'would be added' if dry_run else 'added'}: **{counts.get('roles_added', 0)}**",
+                f"Members not found: **{counts.get('not_found', 0)}**",
+                f"Failures: **{counts.get('failures', 0)}**",
+            ]
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.error(f"/admin_sync_roles error: guild={guild.id}: {exc}")
+            await interaction.followup.send(f"❌ Sync error: {exc}", ephemeral=True)
+
+    @admin_sync_roles.error
+    async def admin_sync_roles_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_sync_roles", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_detail(exc: httpx.HTTPStatusError) -> str:
+    """Extract the `detail` field from a FastAPI error response, or return status text."""
+    try:
+        return exc.response.json().get("detail", str(exc.response.status_code))
+    except Exception:  # pylint: disable=broad-exception-caught
+        return str(exc.response.status_code)
+
+
+async def setup(bot: commands.Bot):
+    flogger.debug("Setting up eventsCog...")
+    await bot.add_cog(EventsCog(bot))
+    flogger.info("eventsCog loaded")

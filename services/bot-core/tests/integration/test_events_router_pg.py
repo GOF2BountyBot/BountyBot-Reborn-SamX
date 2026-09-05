@@ -1,0 +1,339 @@
+"""Integration test: POST /events/{id}/prizes with item/ship kinds against real Postgres.
+
+Exercises the Bug 1 fix: catalog lookups run inside the transaction (no autobegin-before-begin
+conflict) so item and ship prizes no longer raise InvalidRequestError on Postgres.
+
+Connection: bountydev-db via pg_env.PG_ASYNC_URL (env vars or docker-bridge default).
+Skipped when the DB is not reachable or not migrated.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import types
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+elif sys.path[0] != _SRC_DIR:
+    sys.path.remove(_SRC_DIR)
+    sys.path.insert(0, _SRC_DIR)
+
+if "shared" not in sys.modules:
+    _mock_shared = types.ModuleType("shared")
+    _mock_bblogger = types.ModuleType("shared.bblogger")
+    _mock_bblogger.get_logger = MagicMock(return_value=MagicMock())
+    _mock_shared.bblogger = _mock_bblogger
+    sys.modules["shared"] = _mock_shared
+    sys.modules["shared.bblogger"] = _mock_bblogger
+
+if "sqlalchemy_utils" not in sys.modules:
+    _sau = types.ModuleType("sqlalchemy_utils")
+    _sau.UUIDType = MagicMock()
+    sys.modules["sqlalchemy_utils"] = _sau
+
+import pytest
+from persist.models.game_event import GameEvent, GameEventPrize
+from persist.repositories.config_repository import ConfigRepository
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from tests.pg_env import PG_ASYNC_URL, pg_skip_reason
+
+_PG_SKIP = pg_skip_reason()
+pytestmark = pytest.mark.skipif(bool(_PG_SKIP), reason=_PG_SKIP or "")
+
+_GUILD = 999_777_111_001
+_USER = 999_777_111_002
+
+# NullPool: each session gets a fresh connection — no pool sharing, no asyncpg errors
+_pg_factory = async_sessionmaker(
+    create_async_engine(PG_ASYNC_URL, poolclass=NullPool),
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+
+@pytest.fixture
+async def pg_event():
+    """Create a draft event and guild config in Postgres; delete on teardown."""
+    now = datetime.now(UTC)
+    # Pre-clean leftover rows from previous crashed runs
+    async with _pg_factory() as db, db.begin():
+        await db.execute(
+            text("DELETE FROM event_results WHERE event_id IN (SELECT id FROM game_events WHERE guild_id = :gid)"),
+            {"gid": _GUILD},
+        )
+        await db.execute(text("DELETE FROM game_events WHERE guild_id = :gid"), {"gid": _GUILD})
+        await db.execute(text("DELETE FROM guild_configs WHERE guild_id = :gid"), {"gid": _GUILD})
+
+    async with _pg_factory() as db, db.begin():
+        if await ConfigRepository().get_by_guild_id(db, _GUILD) is None:
+            await ConfigRepository().create_default_config(db, _GUILD, commit=False)
+        ev = GameEvent(
+            guild_id=_GUILD,
+            type_slug="bounty_caps",
+            params={},
+            duration_days=7,
+            state="draft",
+            created_by_user_id=_USER,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(ev)
+        await db.flush()
+        ev_id = ev.id
+
+    yield ev_id
+
+    async with _pg_factory() as db, db.begin():
+        ev = (await db.execute(select(GameEvent).where(GameEvent.id == ev_id))).scalar_one_or_none()
+        if ev:
+            # event_results has no DB CASCADE from game_events; delete explicitly
+            await db.execute(text("DELETE FROM event_results WHERE event_id = :eid"), {"eid": ev_id})
+            await db.execute(text("DELETE FROM game_event_prizes WHERE event_id = :eid"), {"eid": ev_id})
+            await db.execute(text("DELETE FROM game_events WHERE id = :eid"), {"eid": ev_id})
+        await db.execute(text("DELETE FROM guild_configs WHERE guild_id = :gid"), {"gid": _GUILD})
+
+
+async def _first_item_name() -> str | None:
+    async with _pg_factory() as db:
+        row = (await db.execute(text("SELECT name FROM item LIMIT 1"))).first()
+        return row[0] if row else None
+
+
+async def _first_ship_name() -> str | None:
+    async with _pg_factory() as db:
+        row = (await db.execute(text("SELECT name FROM ship LIMIT 1"))).first()
+        return row[0] if row else None
+
+
+async def test_add_item_prize_201(pg_event):
+    """add_prize with kind='item' against real Postgres returns a PrizeResponse (→201).
+
+    Before the Bug 1 fix, the catalog lookup (get_item_details) ran BEFORE begin(),
+    causing SQLAlchemy to autobegin; the subsequent begin() raised InvalidRequestError.
+    """
+    item_name = await _first_item_name()
+    if not item_name:
+        pytest.skip("No items seeded in DB")
+
+    from api.routers.events import add_prize
+    from api.schemas.events_schema import AddPrizeRequest, PrizeResponse
+
+    body = AddPrizeRequest(kind="item", item_ref=item_name, qty=1, rank_from=1, rank_to=1)
+
+    with (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock),
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    ):
+        result = await add_prize(event_id=pg_event, body=body, guild_id=_GUILD, user_id=_USER)
+
+    assert isinstance(result, PrizeResponse)
+    assert result.kind == "item"
+    assert result.item_ref == item_name
+
+    async with _pg_factory() as db, db.begin():
+        pr = (await db.execute(select(GameEventPrize).where(GameEventPrize.id == result.id))).scalar_one_or_none()
+        if pr:
+            await db.delete(pr)
+
+
+async def test_add_ship_prize_201(pg_event):
+    """add_prize with kind='ship' against real Postgres returns a PrizeResponse (→201).
+
+    Same bug: ship lookup (ship_repo.get_by_name) ran before begin() → autobegin conflict.
+    """
+    ship_name = await _first_ship_name()
+    if not ship_name:
+        pytest.skip("No ships seeded in DB")
+
+    from api.routers.events import add_prize
+    from api.schemas.events_schema import AddPrizeRequest, PrizeResponse
+
+    body = AddPrizeRequest(kind="ship", item_ref=ship_name, qty=1, rank_from=2, rank_to=2)
+
+    with (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock),
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    ):
+        result = await add_prize(event_id=pg_event, body=body, guild_id=_GUILD, user_id=_USER)
+
+    assert isinstance(result, PrizeResponse)
+    assert result.kind == "ship"
+    assert result.item_ref == ship_name
+
+    async with _pg_factory() as db, db.begin():
+        pr = (await db.execute(select(GameEventPrize).where(GameEventPrize.id == result.id))).scalar_one_or_none()
+        if pr:
+            await db.delete(pr)
+
+
+async def test_update_event_pg(pg_event):
+    """PATCH on a real Postgres draft: params replaced + duration changed inside one transaction, detail returned."""
+    from api.routers.events import update_event
+    from api.schemas.events_schema import EventDetailResponse, UpdateEventRequest
+
+    body = UpdateEventRequest(duration_days=14, params={"division": "Gold", "min_fights": 2})
+    with (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock) as push,
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    ):
+        result = await update_event(event_id=pg_event, body=body, guild_id=_GUILD, user_id=_USER)
+
+    assert isinstance(result, EventDetailResponse)
+    assert (result.duration_days, result.params, result.effective_min_fights) == (14, body.params, 2)
+    assert "Gold division only" in result.rules_text
+    push.assert_awaited_once_with(_GUILD)
+
+    async with _pg_factory() as db:
+        ev = (await db.execute(select(GameEvent).where(GameEvent.id == pg_event))).scalar_one()
+        assert (ev.duration_days, ev.params) == (14, {"division": "Gold", "min_fights": 2})
+        audit = (
+            await db.execute(
+                text("SELECT details FROM admin_audit_logs WHERE action='event_update' AND resource_id=:rid"),
+                {"rid": str(pg_event)},
+            )
+        ).first()
+        assert audit is not None
+
+
+async def test_template_roundtrip_pg(pg_event):
+    """Real Postgres: save a template with prizes, create a draft from it (prizes copied), duplicate name → 409."""
+    from api.routers.events import add_prize, create_event
+    from api.schemas.events_schema import AddPrizeRequest, CreateEventRequest
+    from fastapi import HTTPException
+
+    patches = (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock),
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    )
+    with patches[0], patches[1], patches[2]:
+        tpl = await create_event(
+            CreateEventRequest(
+                guild_id=_GUILD,
+                type_slug="duels_won",
+                params={"min_fights": 3},
+                duration_days=14,
+                template_name="PG Weekly",
+            ),
+            user_id=_USER,
+        )
+        assert (tpl.state, tpl.name) == ("template", "PG Weekly")
+        await add_prize(
+            tpl.id, AddPrizeRequest(kind="credits", qty=500, rank_from=1, rank_to=1), guild_id=_GUILD, user_id=_USER
+        )
+        await add_prize(tpl.id, AddPrizeRequest(kind="credits", qty=50), guild_id=_GUILD, user_id=_USER)
+
+        draft = await create_event(
+            CreateEventRequest(
+                guild_id=_GUILD, type_slug="from_template", template_id=tpl.id, params={"division": "Gold"}
+            ),
+            user_id=_USER,
+        )
+        assert (draft.state, draft.type_slug, draft.duration_days, draft.params) == (
+            "draft",
+            "duels_won",
+            14,
+            {"min_fights": 3, "division": "Gold"},
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await create_event(
+                CreateEventRequest(guild_id=_GUILD, type_slug="duels_won", template_name="PG Weekly"), user_id=_USER
+            )
+        assert exc.value.status_code == 409
+
+    async with _pg_factory() as db:
+        rows = (
+            (
+                await db.execute(
+                    select(GameEventPrize).where(GameEventPrize.event_id == draft.id).order_by(GameEventPrize.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [(p.rank_from, p.rank_to, p.qty) for p in rows] == [(1, 1, 500), (None, None, 50)]
+
+    async with _pg_factory() as db, db.begin():  # cleanup rows this test created
+        for eid in (draft.id, tpl.id):
+            await db.execute(text("DELETE FROM game_event_prizes WHERE event_id = :e"), {"e": eid})
+            await db.execute(text("DELETE FROM game_events WHERE id = :e"), {"e": eid})
+
+
+async def test_oob_template_sync_pg(pg_event):
+    """Real Postgres: seed → all OOB templates exist; admin edit → re-sync leaves it; untouched → re-sync refreshes."""
+    from api.routers.events import update_event
+    from api.schemas.events_schema import UpdateEventRequest
+    from services.event_templates import load_oob_templates, sync_guild_templates
+
+    defs = load_oob_templates()
+    async with _pg_factory() as db:
+        counts = await sync_guild_templates(db, _GUILD, defs)
+    assert counts["created"] == len(defs)
+
+    async with _pg_factory() as db:
+        rows = (
+            (await db.execute(select(GameEvent).where(GameEvent.guild_id == _GUILD, GameEvent.state == "template")))
+            .scalars()
+            .all()
+        )
+        by_name = {r.name: r for r in rows}
+        assert set(by_name) == {d["name"] for d in defs}
+        edited_id = by_name[defs[0]["name"]].id
+
+    with (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock),
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    ):
+        await update_event(
+            event_id=edited_id, body=UpdateEventRequest(duration_days=42), guild_id=_GUILD, user_id=_USER
+        )
+
+    async with _pg_factory() as db:
+        counts = await sync_guild_templates(db, _GUILD, defs)
+    assert counts == {"created": 0, "updated": len(defs) - 1, "skipped": 1}
+    async with _pg_factory() as db:
+        edited = (await db.execute(select(GameEvent).where(GameEvent.id == edited_id))).scalar_one()
+        assert edited.duration_days == 42
+
+    async with _pg_factory() as db, db.begin():  # cleanup
+        ids = [r.id for r in rows]
+        await db.execute(text("DELETE FROM game_event_prizes WHERE event_id = ANY(:ids)"), {"ids": ids})
+        await db.execute(text("DELETE FROM game_events WHERE id = ANY(:ids)"), {"ids": ids})
+
+
+async def test_replace_prize_pg(pg_event):
+    """Real Postgres: replace=True swaps the 1st-place prize in one call and leaves the others alone."""
+    from api.routers.events import add_prize
+    from api.schemas.events_schema import AddPrizeRequest
+
+    with (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock),
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    ):
+        first = AddPrizeRequest(kind="credits", qty=500, rank_from=1, rank_to=1)
+        await add_prize(pg_event, first, guild_id=_GUILD, user_id=_USER)
+        await add_prize(pg_event, AddPrizeRequest(kind="credits", qty=50), guild_id=_GUILD, user_id=_USER)
+        swap = AddPrizeRequest(kind="credits", qty=999, rank_from=1, rank_to=1, replace=True)
+        new = await add_prize(pg_event, swap, guild_id=_GUILD, user_id=_USER)
+    async with _pg_factory() as db:
+        rows = (await db.execute(select(GameEventPrize).where(GameEventPrize.event_id == pg_event))).scalars().all()
+        assert sorted(((p.rank_from, p.qty) for p in rows), key=lambda t: (t[0] is None, t[0] or 0)) == [
+            (1, 999),
+            (None, 50),
+        ]
+        assert new.id in {p.id for p in rows}
+    async with _pg_factory() as db, db.begin():
+        await db.execute(text("DELETE FROM game_event_prizes WHERE event_id = :e"), {"e": pg_event})

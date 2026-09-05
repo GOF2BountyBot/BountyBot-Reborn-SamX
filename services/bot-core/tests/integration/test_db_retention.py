@@ -19,7 +19,7 @@ executor uses deferred imports so the canonical patch target is
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from persist.models.admin_audit_log import AdminAuditLog
 from persist.models.bounty import Bounty
@@ -450,3 +450,105 @@ def test_game_constants_load_picks_up_retention_env_vars(monkeypatch):
         monkeypatch.delenv("BOUNTYBOT_DUEL_RETENTION_HOURS", raising=False)
         monkeypatch.delenv("BOUNTYBOT_AUDIT_RETENTION_DAYS", raising=False)
         GameConstants.load()
+
+
+# ---------------------------------------------------------------------------
+# Event-metrics retention (Pass 5)
+# ---------------------------------------------------------------------------
+
+
+async def test_event_metrics_retention_deletes_old_metrics_keeps_results(db_session, async_engine):
+    """Ended events older than EVENT_METRICS_RETENTION_DAYS lose metric rows; EventResult rows kept."""
+    from contextlib import asynccontextmanager
+
+    from persist.models.game_event import EventResult, GameEvent, GameEventMetric
+    from services.game_constants import GameConstants
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from utils.executors.db_retention_executor import execute_db_retention_job
+
+    now = datetime.now(UTC)
+    cutoff_days = GameConstants.EVENT_METRICS_RETENTION_DAYS
+    old_ts = now - timedelta(days=cutoff_days + 1)
+    recent_ts = now - timedelta(days=1)
+
+    # Old ended event (beyond cutoff) — metrics should be pruned
+    ev_old = GameEvent(
+        guild_id=1,
+        type_slug="bounty_caps",
+        params={},
+        state="ended",
+        duration_days=7,
+        created_by_user_id=0,
+        created_at=old_ts,
+        updated_at=old_ts,
+    )
+    db_session.add(ev_old)
+    # Recent ended event (within retention) — metrics must survive
+    ev_recent = GameEvent(
+        guild_id=1,
+        type_slug="bounty_caps",
+        params={},
+        state="ended",
+        duration_days=7,
+        created_by_user_id=0,
+        created_at=recent_ts,
+        updated_at=recent_ts,
+    )
+    db_session.add(ev_recent)
+    await db_session.flush()
+
+    db_session.add(GameEventMetric(event_id=ev_old.id, player_id=1, metric="captures", value=10))
+    db_session.add(GameEventMetric(event_id=ev_recent.id, player_id=2, metric="captures", value=5))
+    # EventResult for the old event — must NOT be deleted by the metrics pass
+    db_session.add(
+        EventResult(
+            event_id=ev_old.id,
+            guild_id=1,
+            type_slug="bounty_caps",
+            player_id=1,
+            rank=1,
+            value=10,
+            qualified=True,
+            prize="1st: 100 credits",
+            status="ok",
+            awarded_at=old_ts,
+        )
+    )
+    await db_session.commit()
+
+    session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def _fake_get_session():
+        # Mirrors db_manager.get_session() AC-7 auto-commit: commit on clean exit,
+        # rollback on exception.  Required because the event_metrics pass uses a raw
+        # core DELETE with no explicit commit (relies on AC-7 in production).
+        async with session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    fake_db_manager = MagicMock()
+    fake_db_manager.get_session = _fake_get_session
+
+    with patch("persist.database.manager.db_manager", fake_db_manager):
+        result = await execute_db_retention_job("ev-retention-test", {})
+
+    assert result["status"] == "success"
+    assert result["event_metrics_deleted"] == 1  # old event's metric row gone
+    assert not result["errors"]
+
+    async with session_factory() as db:
+        metrics = (await db.execute(select(GameEventMetric))).scalars().all()
+        event_ids = [m.event_id for m in metrics]
+        assert ev_old.id not in event_ids, "old event metric should be pruned"
+        assert ev_recent.id in event_ids, "recent event metric must survive"
+
+        # EventResult for old event must still exist
+        results = (await db.execute(select(EventResult))).scalars().all()
+        assert len(results) == 1
+        assert results[0].event_id == ev_old.id

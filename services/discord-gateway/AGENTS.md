@@ -493,6 +493,8 @@ See `src/api/routers/AGENTS.md` for the full router development guide.
 | `ACCESS_LOG` | `true` | Enable uvicorn access logging |
 | `DEVELOPERS` | `` | Comma-separated Discord user IDs with developer override |
 | `INTERNAL_AUTH_TOKEN` | `` | Shared secret for bot-core → gateway push endpoints; unset = dev mode (warns, allows) |
+
+> **Ops note:** `INTERNAL_AUTH_TOKEN` **must** be set in production — without it the `/internal/autocomplete/*` push endpoints are unauthenticated (the gateway logs a warning on every push). Set the same value in both bot-core and discord-gateway environment configs.
 | `AUTOCOMPLETE_WARM_ACTIVE_DAYS` | `7` | Players active within N days are warmed on startup; 0 = warm everyone |
 | `AUTOCOMPLETE_WARM_CONCURRENCY` | `16` | Max concurrent inventory/ships fetches during warm + refresh |
 | `AUTOCOMPLETE_WARM_GUILD_STAGGER_MS` | `200` | Spacing between per-guild warm jobs at startup (ms) |

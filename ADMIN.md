@@ -79,7 +79,7 @@ This creates all required Discord infrastructure (channels, roles, category) and
 |------|------|
 | Category | BountyBot |
 | Channels | `#bronze-bounty-board`, `#silver-bounty-board`, `#gold-bounty-board`, `#platinum-bounties`, `#shop`, `#bounty-hunting`, `#bounty-discussions`, `#bot-images` (private) |
-| Roles | `Bounty Hunter`, `Bounty Hunter Bronze`, `Bounty Hunter Silver`, `Bounty Hunter Gold`, `Bounty Hunter Platinum`, `Shop Announcements` |
+| Roles | `Bounty Hunter`, `Bounty Hunter Bronze`, `Bounty Hunter Silver`, `Bounty Hunter Gold`, `Bounty Hunter Platinum`, `Shop Announcements`, `Event Announcements` |
 
 After setup, run `/admin_config_validate` to confirm the config is clean.
 
@@ -572,6 +572,67 @@ These commands target the **blender-service** (not bot-core).
 ```
 
 **Note:** `set` and `reset` actions require the invoking user to be in the `DEVELOPERS` environment variable — regular bot-admin role is not sufficient.
+
+---
+
+## Events
+
+Custom stat-race challenges let admins run time-limited competitions (e.g. "most bounty caps in 7 days"). The lifecycle is: **create → add prizes → start (now or scheduled) → auto-end at deadline + payout**.
+
+### Running a Challenge
+
+1. Create a draft event: `/admin_event_create type:<type> duration_days:<N>`
+2. Add prizes: `/admin_event_add_prize event:<id> place:<1st|Top N|Participation> type:<Credits|Ship|…> qty:<N>`
+   - Review the whole draft any time with `/admin_event_view event:<id>` (rules, settings, timing, prizes); change it with `/admin_event_edit event:<id> [duration_days] [division] [min_fights] [subtype|module|weapon]` — only the fields you pass change, `division:All divisions` removes a division filter. Drafts and scheduled events only; once active, end it and create a new one.
+   - **Templates.** Set `save_as_template:True template_name:<name>` on `/admin_event_create` and the row is stored as a named template instead of a draft. Templates never run, but you edit them exactly like drafts (`/admin_event_edit`, `/admin_event_add_prize`, `/admin_event_remove_prize`, `/admin_event_view`, `/admin_event_delete`; list them with `/admin_event_list state:Templates`). To run one: `/admin_event_create type:"From Template" template:<name>` creates a fresh draft with the template's type, settings and every prize slot; any other option you pass at the same time (duration, division, min_fights, …) overrides the template's value. Then tweak the draft as needed and start it.
+   - **Starter templates.** 26 out-of-the-box templates covering every event type (Bounty Hunter, Duel Champion, Nuke Fest, Sharpshooter, …) are seeded into a guild by `/admin_setup` and re-synced at every bot startup. Their definitions live in `services/bot-core/src/services/event_templates.json`; the full catalog with rules and prizes is in [EVENT_TEMPLATES.md](EVENT_TEMPLATES.md). A guild's copy is refreshed from the file only while it is untouched; the moment an admin edits it (settings or prizes) it becomes that guild's own and is never overwritten. Delete one and the next startup brings the stock version back; rename your edited copy if you want to keep both.
+3. Start: `/admin_event_start event:<id>` (now) or `/admin_event_start event:<id> at:<YYYY-MM-DD HH:MM> utc_offset:<±N>`
+4. The event ends automatically at the deadline; winners receive prizes and an end announcement is posted.
+5. To end early with payout: `/admin_event_end event:<id> payout:Yes`
+6. To cancel (no payout): `/admin_event_end event:<id> payout:No`
+
+**Participation = did the activity.** Every event has a `min_fights` parameter (set at create via `/admin_event_create min_fights:<N>`; default is 10 for max/ratio types, 1 for everything else). A player qualifies — and receives the participation prize — if they reached that activity threshold, even with a primary score of 0. *Lossless-event example:* `duels_won`, `min_fights=3`, participation 3000 credits, stakes floor 1000 — a player who loses all three qualifying duels still breaks even.
+
+**What counts per event family:**
+
+| Family | What counts | Stakes filter |
+|--------|------------|---------------|
+| `duel` | Duels at or above `event_min_duel_stakes`. Stalemates count as fights but not wins/losses. | Yes — duels below the floor are ignored |
+| `combat` | Duels at or above `event_min_duel_stakes`, plus all bounty fights. | Duels only |
+| `bounty` | Bounty system checks and captures. | No |
+
+**Self-damage note:** For `max_single_nuke_damage`, damage a player takes from their own nuke does not count toward their score — only hits landing on the opponent are tracked.
+
+**Secondary scoring limits:** `secondary_fired` accepts `subtype` values `cluster-missile`, `ionizing-missile`, `missile`, `nuke`, `rocket`, `shock-blast` — `emp-bomb` is excluded because the resolver treats it as a deferred no-op and never emits a weapon-fire event. `kills_by_weapon` accepts `weapon` values `cluster-missile`, `missile`, `nuke`, `primary`, `rocket`, `turret` — `emp-bomb`, `shock-blast`, and `ionizing-missile` are excluded because `emp-bomb` fires no event and `shock-blast`/`ionizing-missile` deal 0 HP damage, making a killing blow impossible.
+
+**Concrete in-game display:** When a player runs `/events event:<id>` or `/event_leaderboard event:<id>`, the embed shows the exact rules for that event instance — the live guild stakes floor, the `min_fights` threshold, and any division scope. No need to look these up manually; the bot derives them from current configuration.
+
+A **notification role** (`Event Announcements`) is mentioned in start/end announcements when `event_announcements_role_id` is configured (set via `/admin_setup` — re-run after changing the role). Players opt in via `/notifications`.
+
+### Admin Event Commands
+
+| Command | Description |
+|---------|-------------|
+| `/admin_event_create` | Create a new draft event (type, duration, optional division/subtype/module/weapon params); `save_as_template:True template_name:<name>` stores it as a template instead; `type:"From Template" template:<name>` creates a draft from a template |
+| `/admin_event_view` | Show a draft/scheduled event in full: rules, settings, timing, prizes |
+| `/admin_event_edit` | Change a draft/scheduled event's duration or params (only the fields you pass) |
+| `/admin_event_add_prize` | Add a prize slot (1st–10th, Top N, or Participation; Credits/Ship/Primary/Secondary/Turret/Module). If the place is already taken (e.g. on a draft made from a template) it shows the current prize and asks to confirm, then replaces it |
+| `/admin_event_remove_prize` | Remove a prize from a draft event |
+| `/admin_event_start` | Start an event immediately or schedule it at a future time |
+| `/admin_event_end` | End an active event with or without payout |
+| `/admin_event_delete` | Permanently delete a draft/scheduled/cancelled event |
+| `/admin_event_list` | List this guild's open events (draft, scheduled, active); `state:` filters, incl. ended/cancelled history and `Templates` |
+| `/admin_sync_roles` | Force notification role sync for this guild (dry_run flag available) |
+
+### Event Environment Variables
+
+The following env vars control event-related behaviour (all optional — defaults shown):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AUTOCOMPLETE_EVENTS_REFRESH_MINUTES` | `20` | TTL (dead-man switch) for the per-guild events autocomplete cache; bot-core pushes invalidations after every mutation |
+| `NOTIFICATION_ROLE_SYNC_HOURS` | `24` | Interval for the background notification role sync job |
+| `BOUNTYBOT_EVENT_METRICS_RETENTION_DAYS` | *(unset)* | If set, event metric rows older than this many days are pruned by the db_retention job |
 
 ---
 

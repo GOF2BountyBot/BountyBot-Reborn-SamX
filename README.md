@@ -153,6 +153,30 @@ python run_migration.py upgrade head
 
 Migration scripts live in `services/bot-core/src/persist/database/revisions/versions/`.
 
+### Rolling Back a Release That Included a Migration
+
+The bot-core entrypoint runs `run_migration upgrade` *before* starting the app. An **older image will refuse to start against a newer schema**: Alembic aborts with `Can't locate revision identified by '<rev>'` because the image's migration folder does not contain that revision, and the app never launches. So a rollback needs one database step, taken **while the new image is still running** (only the new image knows how to walk the schema back).
+
+Find the revision the old image expects (the newest file under `revisions/versions/` in the old image's source, e.g. `0034`), then pick one of two paths:
+
+**1. Stamp back and keep the schema (recommended).** The old code ignores the extra tables/columns; keep every column a migration adds either nullable or with a `server_default`, so the old code's INSERTs keep working. All data written by the new version survives, and re-deploying the new image later simply re-applies the migrations, which are written to be idempotent.
+
+```bash
+# On the host, with the NEW bot-core container still running:
+docker exec bountybot-bot-core sh -c 'cd /app/src && python -m persist.database.run_migration stamp --target 0034'
+# then swap the images back (compose pull / up -d with the previous tags)
+```
+
+**2. Downgrade (destructive).** Drops the tables/columns those migrations created — use only if you want the schema gone too.
+
+```bash
+docker exec bountybot-bot-core sh -c 'cd /app/src && python -m persist.database.run_migration downgrade --target 0034'
+```
+
+Afterwards `python -m persist.database.run_migration current` inside the old container should print the target revision, and the old image's startup log shows `Database already at head revision`.
+
+Leftovers to know about: scheduler jobs the new version registered stay in `apscheduler_jobs` — the old executor logs them as a generic payload and does nothing, so they are harmless (delete the rows if the log noise bothers you); Discord roles or slash commands created by the new gateway are ignored by the old one. The gateway has no database of its own. Take a [backup](#database-backups) first if the release touched data, not just schema.
+
 ### Database Backups
 
 Automated backups run inside the **bot-core** container via APScheduler every 3 hours (at :15 past 00:00, 03:00, 06:00, …). Dumps are written to the bot-core data volume and organised by date:
@@ -307,8 +331,9 @@ Commands are grouped by category. All commands are Discord slash commands unless
 | **Economy** | `/shop`, `/shops`, `/buy`, `/sell`, `/give` |
 | **Inventory** | `/inventory`, `/search`, `/item`, `/equip`, `/unequip` |
 | **Player** | `/profile`, `/register`, `/leaderboard`, `/promote`, `/demote`, `/prestige`, `/notifications`, `/unregister` |
+| **Events** | `/events`, `/event_leaderboard` (stock templates: [EVENT_TEMPLATES.md](EVENT_TEMPLATES.md)) |
 | **Skins** | `/ship_skin`, `/render_skin`, `/make_skin_texture` |
-| **Admin** | `/admin_setup`, `/admin_player`, `/admin_config`, `/admin_config_shop`, `/admin_config_bounty`, `/admin_config_xp`, `/admin_config_validate`, `/admin_config_constants` (+ `_view`, `_reset`), `/admin_give_item`, `/admin_remove_item`, `/admin_give_ship`, `/admin_remove_ship`, `/admin_cooldown_reset`, `/admin_spawn_bounty`, `/admin_clear_bounties`, `/admin_duel`, `/admin_combat_log`, `/admin_refresh_shop`, `/admin_guild_stats`, `/admin_check`, `/admin_uninstall`, `/admin_help`, `/render_config`, `/render_cache_clear` |
+| **Admin** | `/admin_setup`, `/admin_player`, `/admin_config`, `/admin_config_shop`, `/admin_config_bounty`, `/admin_config_xp`, `/admin_config_validate`, `/admin_config_constants` (+ `_view`, `_reset`), `/admin_give_item`, `/admin_remove_item`, `/admin_give_ship`, `/admin_remove_ship`, `/admin_cooldown_reset`, `/admin_spawn_bounty`, `/admin_clear_bounties`, `/admin_duel`, `/admin_combat_log`, `/admin_refresh_shop`, `/admin_guild_stats`, `/admin_check`, `/admin_uninstall`, `/admin_help`, `/render_config`, `/render_cache_clear`, `/admin_event_create`, `/admin_event_view`, `/admin_event_edit`, `/admin_event_add_prize`, `/admin_event_remove_prize`, `/admin_event_start`, `/admin_event_end`, `/admin_event_delete`, `/admin_event_list`, `/admin_sync_roles` |
 | **Scheduler** (super-admin) | `/scheduler_list`, `/scheduler_view`, `/scheduler_update`, `/scheduler_delete`, `/admin_reset_scheduler`, `/admin_clear_scheduler` |
 | **Info** | `/about`, `/list_category`, `/make-route`, `/ping`, `/health`, `/help` |
 | **Dev** (super-admin) | `/load_data`, `/reload_autocomplete`, `/force_reload_caches` |

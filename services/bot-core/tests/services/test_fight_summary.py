@@ -1158,3 +1158,280 @@ class TestSecondaryRoundsByWeapon:
         assert field == timeline_count, (
             f"secondary_rounds_by_weapon {field!r} != hand-tally from combat_log {timeline_count!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestSlice2SummaryExtension — killing_blow_subtype and max_nuke_absorbed
+# (issue #30, slice 2 deliverable 1)
+# ---------------------------------------------------------------------------
+
+
+def _nuke_damage_event(target: str, attacker: str, absorbed: int, tick: int = 1) -> CombatEvent:
+    """Damage event with source.subtype == 'nuke' (absorbed == amount, no overkill)."""
+    return CombatEvent(
+        tick=tick,
+        type=CombatEventType.damage,
+        actor=None,
+        target=target,
+        data={
+            "amount": absorbed,
+            "absorbed": absorbed,
+            "breakdown": {"shield": 0, "armour": 0, "hull": absorbed},
+            "hp_after": _hp(0),
+            "source": {"subtype": "nuke", "weapon": "TestNuke", "attacker": attacker},
+        },
+    )
+
+
+def _nuke_event_with_side(
+    target_slot: str,
+    attacker: str,
+    absorbed: int,
+    tick: int = 1,
+    is_self: bool = False,
+) -> CombatEvent:
+    """Nuke damage event with data['side'] set — mirrors real TickResolver output.
+
+    When is_self=True, source carries 'is_self': True exactly as TickResolver emits it
+    (combat_resolver.py line ~2119).  The inversion att_slot = other(target_slot) yields
+    the opponent's slot for self-damage events, so is_self is the only reliable guard.
+    """
+    source: dict = {"subtype": "nuke", "weapon": "TestNuke", "attacker": attacker}
+    if is_self:
+        source["is_self"] = True
+    return CombatEvent(
+        tick=tick,
+        type=CombatEventType.damage,
+        actor=None,
+        target=None,
+        data={
+            "amount": absorbed,
+            "absorbed": absorbed,
+            "side": target_slot,
+            "breakdown": {"shield": 0, "armour": 0, "hull": absorbed},
+            "hp_after": _hp(0),
+            "source": source,
+        },
+    )
+
+
+class TestSlice2SummaryExtension:
+    """Verify killing_blow_subtype and max_nuke_absorbed per-combatant summary fields."""
+
+    def test_stalemate_killing_blow_is_none(self):
+        """Stalemate: killing_blow_subtype is None for both combatants."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _damage_event("C2", attacker="C1", amount=20, tick=1),
+            _fight_end_event(5, None, "time_cap", 5, _hp(80), _hp(80)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None, winner_side=None)
+        assert s["combatants"]["1"]["killing_blow_subtype"] is None
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None
+
+    def test_stalemate_max_nuke_absorbed_zero(self):
+        """Stalemate with no nuke damage: max_nuke_absorbed == 0 for both sides."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _fight_end_event(5, None, "time_cap", 5, _hp(100), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "stalemate", "time_cap", 5, None, winner_side=None)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 0
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_nuke_kill_killing_blow_subtype(self):
+        """C1 kills C2 with a nuke: C1.killing_blow_subtype == 'nuke', C2's is None."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_damage_event("C2", attacker="C1", absorbed=100, tick=2),
+            _fight_end_event(3, "C1", "hp_depleted", 3, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 3, "C1", winner_side=1)
+        assert s["combatants"]["1"]["killing_blow_subtype"] == "nuke"
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None
+
+    def test_nuke_kill_max_nuke_absorbed(self):
+        """C1 hits C2 twice with nukes (50 and 80); C1.max_nuke_absorbed == 80, C2 == 0."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_damage_event("C2", attacker="C1", absorbed=50, tick=1),
+            _nuke_damage_event("C2", attacker="C1", absorbed=80, tick=2),
+            _fight_end_event(3, "C1", "hp_depleted", 3, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 3, "C1", winner_side=1)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 80
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_self_nuke_contributes_zero_to_max_nuke_absorbed(self):
+        """A nuke event where attacker==target (self-damage) contributes 0 to max_nuke_absorbed."""
+        c1, c2 = _make_states()
+        # C1 hits itself with a nuke (attacker and target are both "C1")
+        self_nuke = _nuke_damage_event("C1", attacker="C1", absorbed=200, tick=1)
+        events = [
+            _fight_start_event("C1", "C2"),
+            self_nuke,
+            _fight_end_event(2, "C2", "hp_depleted", 2, _hp(0), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C2", winner_side=2)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 0, (
+            "Self-nuke damage must not count toward max_nuke_absorbed"
+        )
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_self_nuke_does_not_credit_killing_blow(self):
+        """A self-nuke kill must not set killing_blow_subtype on the surviving player."""
+        c1, c2 = _make_states()
+        # C1 kills itself with a nuke: C2 wins but did no damage
+        self_nuke = _nuke_damage_event("C1", attacker="C1", absorbed=100, tick=1)
+        primary_hit = CombatEvent(
+            tick=2,
+            type=CombatEventType.damage,
+            actor=None,
+            target="C1",
+            data={
+                "amount": 50,
+                "absorbed": 50,
+                "breakdown": {"shield": 0, "armour": 0, "hull": 50},
+                "hp_after": {"shield": 0, "armour": 0, "hull": 0},
+                "source": {"subtype": "primary", "weapon": "TestGun", "attacker": "C2"},
+            },
+        )
+        events = [
+            _fight_start_event("C1", "C2"),
+            self_nuke,
+            primary_hit,
+            _fight_end_event(3, "C2", "hp_depleted", 3, _hp(0), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 3, "C2", winner_side=2)
+        # The killing blow on C1 is attributed to C2's primary (last non-self damage)
+        assert s["combatants"]["2"]["killing_blow_subtype"] == "primary"
+
+    def test_primary_killing_blow(self):
+        """Primary attack kills: killing_blow_subtype == 'primary' on the winner."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _damage_event("C2", attacker="C1", amount=100, tick=1),
+            _fight_end_event(2, "C1", "hp_depleted", 2, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
+        assert s["combatants"]["1"]["killing_blow_subtype"] == "primary"
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None
+
+    def test_turret_auto_killing_blow_normalised(self):
+        """Turret auto-fire (subtype='auto') killing blow → killing_blow_subtype == 'turret'."""
+        c1, c2 = _make_states()
+        turret_dmg = CombatEvent(
+            tick=1,
+            type=CombatEventType.damage,
+            actor=None,
+            target="C2",
+            data={
+                "amount": 100,
+                "absorbed": 100,
+                "breakdown": {"shield": 0, "armour": 0, "hull": 100},
+                "hp_after": _hp(0),
+                "source": {"subtype": "auto", "weapon": "TestTurret", "attacker": "C1"},
+            },
+        )
+        events = [
+            _fight_start_event("C1", "C2"),
+            turret_dmg,
+            _fight_end_event(2, "C1", "hp_depleted", 2, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
+        assert s["combatants"]["1"]["killing_blow_subtype"] == "turret", (
+            f"Expected 'turret' for auto subtype, got {s['combatants']['1']['killing_blow_subtype']!r}"
+        )
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None
+
+    def test_turret_manual_killing_blow_normalised(self):
+        """Turret manual-fire (subtype='manual') killing blow → killing_blow_subtype == 'turret'."""
+        c1, c2 = _make_states()
+        turret_dmg = CombatEvent(
+            tick=1,
+            type=CombatEventType.damage,
+            actor=None,
+            target="C2",
+            data={
+                "amount": 100,
+                "absorbed": 100,
+                "breakdown": {"shield": 0, "armour": 0, "hull": 100},
+                "hp_after": _hp(0),
+                "source": {"subtype": "manual", "weapon": "TestTurret", "attacker": "C1"},
+            },
+        )
+        events = [
+            _fight_start_event("C1", "C2"),
+            turret_dmg,
+            _fight_end_event(2, "C1", "hp_depleted", 2, _hp(100), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
+        assert s["combatants"]["1"]["killing_blow_subtype"] == "turret"
+
+    # ------------------------------------------------------------------
+    # Regression tests for self-damage slot inversion bug (is_self guard)
+    # These use _nuke_event_with_side (data["side"] set) to exercise the
+    # inversion path that was broken before the is_self fix.
+    # ------------------------------------------------------------------
+
+    def test_nuke_self_damage_side_keyed_excluded_from_max_nuke(self):
+        """(a) Nuke hits opponent for 80 and self for 30 (side-keyed events):
+        max_nuke_absorbed is 80 for the firer (slot 1) and 0 for the target (slot 2).
+        Before the fix, the self-damage was credited to slot 2 via inversion."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_event_with_side("2", attacker="C1", absorbed=80, tick=1),  # opponent hit
+            _nuke_event_with_side("1", attacker="C1", absorbed=30, tick=1, is_self=True),  # self-damage
+            _fight_end_event(2, "C1", "hp_depleted", 2, _hp(70), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C1", winner_side=1)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 80, "Firer gets credit for opponent hit"
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0, "Opponent must not get self-damage credit"
+        # Regression: slot 2 never fired a secondary → secondary_fired is sparse {}
+        assert s["combatants"]["2"]["secondary_fired"] == {}
+
+    def test_nuke_self_damage_only_side_keyed_zero_for_both(self):
+        """(b) Nuke self-damage only (no opponent hit, side-keyed): max_nuke_absorbed == 0 for both."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_event_with_side("1", attacker="C1", absorbed=30, tick=1, is_self=True),
+            _fight_end_event(2, "C2", "hp_depleted", 2, _hp(0), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C2", winner_side=2)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 0
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_nuke_self_damage_names_collide_excluded_from_max_nuke(self):
+        """(c) Same-name combatants variant of (a): is_self still guards correctly."""
+        c1, c2 = _make_states(name1="X", name2="X")
+        events = [
+            _fight_start_event("X", "X"),
+            _nuke_event_with_side("2", attacker="X", absorbed=80, tick=1),
+            _nuke_event_with_side("1", attacker="X", absorbed=30, tick=1, is_self=True),
+            _fight_end_event(2, "X", "hp_depleted", 2, _hp(70), _hp(0)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "X", winner_side=1)
+        assert s["combatants"]["1"]["max_nuke_absorbed"] == 80
+        assert s["combatants"]["2"]["max_nuke_absorbed"] == 0
+
+    def test_self_inflicted_fatal_nuke_killing_blow_none_for_both(self):
+        """(d) Self-inflicted fatal nuke: killing_blow_subtype is None for both sides.
+        Before the fix, inversion put the self-kill subtype on the winner (slot 2)."""
+        c1, c2 = _make_states()
+        events = [
+            _fight_start_event("C1", "C2"),
+            _nuke_event_with_side("1", attacker="C1", absorbed=100, tick=1, is_self=True),
+            _fight_end_event(2, "C2", "hp_depleted", 2, _hp(0), _hp(100)),
+        ]
+        s = _build_fight_summary(events, c1, c2, "win", "hp_depleted", 2, "C2", winner_side=2)
+        assert s["combatants"]["1"]["killing_blow_subtype"] is None, "Loser never gets killing_blow_subtype"
+        assert s["combatants"]["2"]["killing_blow_subtype"] is None, (
+            "Winner must not inherit killing_blow_subtype from self-inflicted fatal nuke"
+        )

@@ -7,7 +7,7 @@ module is imported (see conftest.py at the tests/ root).
 
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -200,6 +200,29 @@ class TestCreateOrUpdateConfig:
 
         mock_config_repo.create_or_update.assert_awaited_once()
         assert result["guild_id"] == 999
+
+    @pytest.mark.asyncio
+    async def test_first_setup_seeds_oob_templates(self, service, mock_db, mock_config_repo):
+        """A guild with no config yet gets the out-of-the-box event templates in the same session."""
+        mock_config_repo.get_by_guild_id = AsyncMock(return_value=None)
+        with patch("services.event_templates.sync_guild_templates", new_callable=AsyncMock) as sync:
+            await service.create_or_update_config(mock_db, {"guild_id": 999, "starting_credits": 250})
+        sync.assert_awaited_once_with(mock_db, 999)
+
+    @pytest.mark.asyncio
+    async def test_existing_guild_is_not_reseeded(self, service, mock_db, mock_config_repo):
+        mock_config_repo.get_by_guild_id = AsyncMock(return_value=GuildConfig(guild_id=999))
+        with patch("services.event_templates.sync_guild_templates", new_callable=AsyncMock) as sync:
+            await service.create_or_update_config(mock_db, {"guild_id": 999, "starting_credits": 250})
+        sync.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_seeding_failure_does_not_break_setup(self, service, mock_db, mock_config_repo):
+        mock_config_repo.get_by_guild_id = AsyncMock(return_value=None)
+        with patch("services.event_templates.sync_guild_templates", AsyncMock(side_effect=RuntimeError("boom"))):
+            result = await service.create_or_update_config(mock_db, {"guild_id": 999, "starting_credits": 250})
+        assert result["guild_id"] == 999
+        mock_config_repo.create_or_update.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_raises_when_guild_id_missing(self, service, mock_db):

@@ -1,6 +1,6 @@
 """Discord timestamp formatting utilities."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 def iso_to_discord_ts(iso_str: str | None, style: str = "R") -> str:
@@ -24,3 +24,47 @@ def iso_to_discord_ts(iso_str: str | None, style: str = "R") -> str:
         return f"<t:{int(dt.timestamp())}:{style}>"
     except (ValueError, TypeError, OSError):
         return "N/A"
+
+
+def event_label(e: dict) -> str:
+    """Autocomplete label for an event: `#id · [name ·] Type · status` (templates carry a name)."""
+    td = e.get("type_display", e.get("type_slug", ""))
+    name = f"{e['name']} · " if e.get("name") else ""
+    return f"#{e.get('id')} · {name}{td} · {event_status_label(e)}"
+
+
+def event_status_label(e: dict) -> str:
+    """Compute the human-readable status portion of an event autocomplete label."""
+    state = e.get("state", "")
+    if state == "draft":
+        return "draft"
+    if state in ("ended", "cancelled"):
+        return state
+    if state == "active" and e.get("ends_at"):
+        return f"ends in {fmt_delta(e['ends_at'])}"
+    if state == "scheduled" and e.get("scheduled_start_at"):
+        return f"starts in {fmt_delta(e['scheduled_start_at'])}"
+    return state
+
+
+def fmt_delta(iso: str | None) -> str:
+    """Return 'Xd Yh' time-until string for an ISO 8601 timestamp.
+
+    Returns 'ended' when the timestamp is in the past, '?' when unparseable.
+
+    >>> from datetime import UTC, datetime, timedelta
+    >>> fmt_delta((datetime.now(UTC) + timedelta(days=3, hours=4)).isoformat())
+    '3d 4h'
+    """
+    if not iso:
+        return "?"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        total = int((dt - datetime.now(UTC)).total_seconds())
+        if total <= 0:
+            return "ended"
+        days, rem = divmod(total, 86400)
+        hours = rem // 3600
+        return f"{days}d {hours}h" if days else f"{hours}h"
+    except (ValueError, TypeError):
+        return "?"

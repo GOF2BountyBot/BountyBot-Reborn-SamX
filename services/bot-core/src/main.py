@@ -126,6 +126,11 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
         "cron": "45 3 * * *",  # daily at 03:45 UTC — well clear of all hourly/3-hourly jobs
         "payload": {"job_type": "db_retention"},
     },
+    {
+        "job_id": "event_tick_default",
+        "cron": "*/5 * * * *",  # every 5 minutes — start scheduled events and end expired ones
+        "payload": {"job_type": "event_tick"},
+    },
 ]
 
 
@@ -523,6 +528,14 @@ async def lifespan(fastapi_app: FastAPI):
     set_process_pool(process_pool)
     set_thread_pool(thread_pool)
     flogger.info("✅ Executor pools built and registered in executor_holder")
+
+    # Out-of-the-box event templates: startup is the fallback/upgrade sync (setup seeds new guilds).
+    try:
+        from services.event_templates import sync_all_guild_templates  # pylint: disable=import-outside-toplevel
+
+        flogger.info(f"📋 OOB event templates synced: {await sync_all_guild_templates()}")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"⚠️ OOB event template sync failed (non-fatal): {e}", exc_info=True)
 
     flogger.info("📚 API Documentation available at: /docs")
     flogger.info("📖 ReDoc Documentation available at: /redoc")

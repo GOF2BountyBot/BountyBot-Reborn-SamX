@@ -95,6 +95,9 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "ship_skin": "Skins & Rendering",
     "render_skin": "Skins & Rendering",
     "make_skin_texture": "Skins & Rendering",
+    # Events
+    "events": "Events",
+    "event_leaderboard": "Events",
 }
 
 # Category labels in the order they should appear for users
@@ -106,6 +109,7 @@ _USER_CATEGORY_ORDER: list[str] = [
     "Ships",
     "Dueling",
     "Combat",
+    "Events",
     "Game Data",
     "Skins & Rendering",
 ]
@@ -119,6 +123,7 @@ _USER_CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "Ships": "View and manage your owned ships",
     "Dueling": "Challenge other players to combat",
     "Combat": "Review the details of your past battles",
+    "Events": "Admin-run challenges: live and upcoming events, rules, standings, and the medal table",
     "Game Data": "Browse ships, weapons, criminals, and star systems",
     "Skins & Rendering": "Customize your ship appearance",
 }
@@ -128,6 +133,7 @@ _ADMIN_CATEGORY_MAPPING: dict[str, str] = {
     "admin_setup": "Admin — Setup",
     "admin_uninstall": "Admin — Setup",
     "admin_check": "Admin — Setup",
+    "admin_sync_roles": "Admin — Setup",
     "admin_player": "Admin — Players",
     "admin_give_item": "Admin — Players",
     "admin_give_ship": "Admin — Players",
@@ -143,6 +149,15 @@ _ADMIN_CATEGORY_MAPPING: dict[str, str] = {
     "admin_refresh_shop": "Admin — Bounties",
     "admin_combat_log": "Admin — Combat",
     "admin_duel": "Admin — Combat",
+    "admin_event_create": "Admin — Events",
+    "admin_event_edit": "Admin — Events",
+    "admin_event_view": "Admin — Events",
+    "admin_event_add_prize": "Admin — Events",
+    "admin_event_remove_prize": "Admin — Events",
+    "admin_event_start": "Admin — Events",
+    "admin_event_end": "Admin — Events",
+    "admin_event_delete": "Admin — Events",
+    "admin_event_list": "Admin — Events",
     "admin_guild_stats": "Admin — Stats",
     "render_config": "Admin — Render",
     "render_cache_clear": "Admin — Render",
@@ -165,6 +180,7 @@ _ADMIN_CATEGORY_ORDER: list[str] = [
     "Admin — Config",
     "Admin — Bounties",
     "Admin — Combat",
+    "Admin — Events",
     "Admin — Stats",
     "Admin — Render",
     "Admin — Health",
@@ -174,11 +190,12 @@ _ADMIN_CATEGORY_ORDER: list[str] = [
 
 # Short descriptions for each admin category
 _ADMIN_CATEGORY_DESCRIPTIONS: dict[str, str] = {
-    "Admin — Setup": "Initialize and uninstall the bot for this guild",
+    "Admin — Setup": "Initialize and uninstall the bot for this guild, sync notification roles",
     "Admin — Players": "Manage player stats, credits, items, and ships",
     "Admin — Config": "View and update guild configuration settings",
     "Admin — Bounties": "Spawn, clear, and configure bounty settings",
     "Admin — Combat": "Review player battles and manage pending duels",
+    "Admin — Events": "Create stat-race events (or from templates), review, edit, prize, start, end, delete",
     "Admin — Stats": "View guild-wide statistics and reports",
     "Admin — Render": "Configure Blender render settings and clear cache",
     "Admin — Health": "Health checks and latency probes",

@@ -217,6 +217,7 @@ def _build_config_response(config: dict[str, Any]) -> GuildConfigResponse:
         admin_role_configured=config["admin_role_configured"],
         starting_credits=config["starting_credits"],
         sale_price_factor=config["sale_price_factor"],
+        event_min_duel_stakes=config["event_min_duel_stakes"],
         xp_thresholds=config["xp_thresholds"],
         shop_config=config["shop_config"],
         created_at=config["created_at"],
@@ -237,6 +238,7 @@ def _build_config_response(config: dict[str, Any]) -> GuildConfigResponse:
         gold_role_id=config.get("gold_role_id"),
         platinum_role_id=config.get("platinum_role_id"),
         shop_announcements_role_id=config.get("shop_announcements_role_id"),
+        event_announcements_role_id=config.get("event_announcements_role_id"),
         **override_kwargs,
     )
 
@@ -535,6 +537,7 @@ async def get_default_config():
         "tech_level_probabilities": {"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10},
         "sale_price_factor": 1.0,
         "starting_credits": 0,
+        "event_min_duel_stakes": 1000,
         "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000, "Prestige": 50000},
     }
 
@@ -616,10 +619,16 @@ async def reset_game_constants(
 _CONFIG_COLUMN_DEFAULTS: dict[str, Any] = {
     "starting_credits": 0,
     "sale_price_factor": 1.0,
+    "event_min_duel_stakes": 1000,
 }
 
-# Complete settable surface: the 110 _OVERRIDE_FIELDS + 2 core config scalars (112).
-_METADATA_FIELDS: tuple[str, ...] = (*_OVERRIDE_FIELDS, "starting_credits", "sale_price_factor")
+# Complete settable surface: the 110 _OVERRIDE_FIELDS + 3 core config scalars (113).
+_METADATA_FIELDS: tuple[str, ...] = (
+    *_OVERRIDE_FIELDS,
+    "starting_credits",
+    "sale_price_factor",
+    "event_min_duel_stakes",
+)
 
 
 def _get_field_type(fi: Any) -> str:

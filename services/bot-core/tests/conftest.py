@@ -80,6 +80,8 @@ _PUSH_STUB_TARGETS = (
     "api.routers.duels._push_duel_cache",
     "api.routers.duels._push_duel_caches_for_players",
     "services.bounty_service.BountyService._push_bounty_cache_after_capture",
+    "api.routers.events._push_events_cache",
+    "utils.event_cache_push._push_events_cache",  # tick executor local-imports from here
 )
 
 
@@ -227,6 +229,7 @@ def make_mock_player(**overrides):
         bounty_cooldown_end=None,
         bounty_notifications_enabled=True,
         shop_notifications_enabled=True,
+        event_notifications_enabled=True,
         created_at=datetime(2026, 1, 1),
         updated_at=datetime(2026, 1, 1),
     )

@@ -43,6 +43,7 @@ class GuildConfig(Base):
     platinum_bounty_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     platinum_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     shop_announcements_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    event_announcements_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # Shop inventory size ranges (JSON objects with min/max values)
     ship_count_range: Mapped[dict[str, int]] = mapped_column(_JSONB, default={"min": 3, "max": 5})
@@ -71,6 +72,8 @@ class GuildConfig(Base):
     # (always 1:1). Admins may lower it to create a sell-side credit sink.
     sale_price_factor: Mapped[float] = mapped_column(Float, default=1.0)
     starting_credits: Mapped[int] = mapped_column(Integer, default=0)
+    # Minimum duel-stakes for contributions to count toward active events (§3).
+    event_min_duel_stakes: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
 
     # XP and tier thresholds
     xp_thresholds: Mapped[dict[str, int]] = mapped_column(

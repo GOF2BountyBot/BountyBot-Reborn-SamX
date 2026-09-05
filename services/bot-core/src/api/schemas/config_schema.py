@@ -276,6 +276,7 @@ class GuildConfigResponse(GameConstantsOverridesMixin):
     admin_role_configured: bool
     starting_credits: int
     sale_price_factor: float
+    event_min_duel_stakes: int
     xp_thresholds: dict[str, int]
     shop_config: dict[str, Any]
     created_at: str
@@ -296,6 +297,7 @@ class GuildConfigResponse(GameConstantsOverridesMixin):
     platinum_bounty_channel_id: int | None = None
     platinum_role_id: int | None = None
     shop_announcements_role_id: int | None = None
+    event_announcements_role_id: int | None = None
 
 
 class ConfigValidationResponse(BaseModel):
@@ -310,6 +312,7 @@ class UpdateConfigRequest(GameConstantsOverridesMixin):
     admin_role_id: int | None = None
     starting_credits: int | None = Field(None, ge=0)
     sale_price_factor: float | None = Field(None, gt=0, le=1)
+    event_min_duel_stakes: int | None = Field(None, ge=0)
     xp_thresholds: dict[str, int] | None = None
     category_id: int | None = None
     shop_channel_id: int | None = None
@@ -326,6 +329,7 @@ class UpdateConfigRequest(GameConstantsOverridesMixin):
     platinum_bounty_channel_id: int | None = None
     platinum_role_id: int | None = None
     shop_announcements_role_id: int | None = None
+    event_announcements_role_id: int | None = None
 
 
 class UpdateShopConfigRequest(BaseModel):

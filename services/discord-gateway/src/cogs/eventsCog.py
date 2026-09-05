@@ -330,6 +330,42 @@ class EventsCog(commands.Cog):
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
+    async def _param_autocomplete(
+        self, interaction: discord.Interaction, current: str, param_key: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for subtype/module/weapon params — reads live param_values from /events/types.
+
+        Reads interaction.namespace.type to find the selected event type, then returns
+        the allowed values for param_key from that type's param_values map.
+        Returns empty if no type is selected yet.
+        """
+        try:
+            type_slug = getattr(interaction.namespace, "type", None)
+            if not type_slug:
+                return []
+            types = self._types_cache.peek("all")
+            if types is None:
+                types = await self._types_cache.get_with_timeout("all", timeout=1.0)
+            if types is None:
+                return []
+            entry = next((t for t in types if t["slug"] == type_slug), None)
+            if entry is None:
+                return []
+            values: list[str] = (entry.get("param_values") or {}).get(param_key, [])
+            norm = normalize_for_search(current)
+            return [app_commands.Choice(name=v, value=v) for v in values if norm in normalize_for_search(v)][:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def _subtype_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._param_autocomplete(interaction, current, "subtype")
+
+    async def _module_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._param_autocomplete(interaction, current, "module")
+
+    async def _weapon_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self._param_autocomplete(interaction, current, "weapon")
+
     # Per-command event selectors (per-state wrappers so @app_commands.autocomplete can bind them).
     async def _ac_event_draft_active(self, interaction, current):
         return await self._events_autocomplete(interaction, current, states={"draft", "active"})
@@ -437,7 +473,12 @@ class EventsCog(commands.Cog):
         weapon="Weapon category (for weapon-kill events)",
         min_fights="Minimum battles/checks to qualify (default per type; 0 = no gate)",
     )
-    @app_commands.autocomplete(type=_type_autocomplete)
+    @app_commands.autocomplete(
+        type=_type_autocomplete,
+        subtype=_subtype_autocomplete,
+        module=_module_autocomplete,
+        weapon=_weapon_autocomplete,
+    )
     async def admin_event_create(
         self,
         interaction: discord.Interaction,

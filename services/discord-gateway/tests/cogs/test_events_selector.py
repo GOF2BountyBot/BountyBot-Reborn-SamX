@@ -377,6 +377,105 @@ class TestItemAutocomplete:
 
 
 # ---------------------------------------------------------------------------
+# _param_autocomplete — reads param_values from types cache keyed by event type
+# ---------------------------------------------------------------------------
+
+
+class TestParamAutocomplete:
+    """_param_autocomplete delegates to live param_values from /events/types."""
+
+    def _make_cog_with_types(self, mock_bot, types_payload):
+        from cogs.eventsCog import EventsCog
+        cog = EventsCog(mock_bot)
+        cog.http_client = MagicMock()
+        cog.http_client.aclose = AsyncMock()
+        cog._types_cache.set("all", types_payload)
+        return cog
+
+    def test_no_type_returns_empty(self, mock_bot):
+        """No event type selected → empty list."""
+        cog = self._make_cog_with_types(mock_bot, [])
+        interaction = _create_mock_interaction()
+        interaction.namespace.type = None
+        res = asyncio.run(cog._param_autocomplete(interaction, "", "subtype"))
+        assert res == []
+
+    def test_returns_param_values_for_selected_type(self, mock_bot):
+        """secondary_fired type → returns its subtype param_values filtered by current."""
+        types = [{
+            "slug": "secondary_fired",
+            "display_name": "Secondaries Fired",
+            "category": "combat",
+            "params": ["subtype", "division", "min_fights"],
+            "param_values": {"subtype": ["cluster-missile", "ionizing-missile", "missile", "nuke", "rocket",
+                                         "shock-blast"]},
+        }]
+        cog = self._make_cog_with_types(mock_bot, types)
+        interaction = _create_mock_interaction()
+        interaction.namespace.type = "secondary_fired"
+        res = asyncio.run(cog._param_autocomplete(interaction, "", "subtype"))
+        values = [c.value for c in res]
+        assert "nuke" in values
+        assert "emp-bomb" not in values, "emp-bomb must not appear in param_values"
+
+    def test_unknown_type_returns_empty(self, mock_bot):
+        """Type not in registry → empty list."""
+        types = [{"slug": "duels_won", "display_name": "Duels Won", "category": "duel",
+                  "params": ["division", "min_fights"], "param_values": {}}]
+        cog = self._make_cog_with_types(mock_bot, types)
+        interaction = _create_mock_interaction()
+        interaction.namespace.type = "nonexistent_type"
+        res = asyncio.run(cog._param_autocomplete(interaction, "", "subtype"))
+        assert res == []
+
+    def test_current_filters_results(self, mock_bot):
+        """Non-empty current filters choices by substring."""
+        types = [{
+            "slug": "secondary_fired",
+            "display_name": "Secondaries Fired",
+            "category": "combat",
+            "params": ["subtype", "division", "min_fights"],
+            "param_values": {"subtype": ["nuke", "rocket", "missile"]},
+        }]
+        cog = self._make_cog_with_types(mock_bot, types)
+        interaction = _create_mock_interaction()
+        interaction.namespace.type = "secondary_fired"
+        res = asyncio.run(cog._param_autocomplete(interaction, "nuke", "subtype"))
+        assert len(res) == 1
+        assert res[0].value == "nuke"
+
+    def test_weapon_wrapper_delegates(self, mock_bot):
+        """_weapon_autocomplete wraps _param_autocomplete with 'weapon' key."""
+        types = [{
+            "slug": "kills_by_weapon",
+            "display_name": "Kills by Weapon",
+            "category": "combat",
+            "params": ["weapon", "division", "min_fights"],
+            "param_values": {"weapon": ["nuke", "primary", "turret"]},
+        }]
+        cog = self._make_cog_with_types(mock_bot, types)
+        interaction = _create_mock_interaction()
+        interaction.namespace.type = "kills_by_weapon"
+        res = asyncio.run(cog._weapon_autocomplete(interaction, ""))
+        values = [c.value for c in res]
+        assert "turret" in values
+        assert "primary" in values
+
+    def test_no_types_cache_returns_empty(self, mock_bot):
+        """If types cache is cold and timeout returns None, result is empty list."""
+        from cogs.eventsCog import EventsCog
+        cog = EventsCog(mock_bot)
+        cog.http_client = MagicMock()
+        cog.http_client.aclose = AsyncMock()
+        # leave types cache empty; patch get_with_timeout to return None immediately
+        cog._types_cache.get_with_timeout = AsyncMock(return_value=None)
+        interaction = _create_mock_interaction()
+        interaction.namespace.type = "secondary_fired"
+        res = asyncio.run(cog._param_autocomplete(interaction, "", "subtype"))
+        assert res == []
+
+
+# ---------------------------------------------------------------------------
 # /events — _sync_player_notification_roles called; exception swallowed
 # ---------------------------------------------------------------------------
 

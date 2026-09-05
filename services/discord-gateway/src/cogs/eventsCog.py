@@ -144,7 +144,8 @@ def _event_detail_embed(e: dict) -> discord.Embed:
     )
     embed.add_field(name="State", value=e.get("state", "?"), inline=True)
     params = e.get("params") or {}
-    settings = [f"{e.get('duration_days', '?')} days"] + [f"{k}: {v}" for k, v in sorted(params.items())]
+    days = e.get("duration_days", "?")
+    settings = [f"{days} day{'' if days == 1 else 's'}"] + [f"{k}: {v}" for k, v in sorted(params.items())]
     embed.add_field(name="Settings", value=" · ".join(settings), inline=True)
     if e.get("started_at"):
         embed.add_field(name="Started", value=iso_to_discord_ts(e["started_at"], "F"), inline=True)

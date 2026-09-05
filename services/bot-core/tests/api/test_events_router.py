@@ -1189,3 +1189,34 @@ class TestUpdateEvent:
     def test_edit_duration_out_of_range_422(self, client):
         resp = client.patch("/api/v1/events/1?guild_id=99&user_id=42", json={"duration_days": 61})
         assert resp.status_code == 422
+
+
+class TestDetailPrizeOrder:
+    @patch("api.routers.events._config_repo.get_by_guild_id", new_callable=AsyncMock, return_value=None)
+    @patch("api.routers.events.get_db_session")
+    def test_prizes_listed_in_rank_order_not_insertion_order(self, mock_db, mock_cfg, client, db_ctx):
+        """Seeded 1st, 3rd, participation, Top 5, 2nd → shown 1st, Top 5, 2nd, 3rd, participation."""
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        inserted = [
+            make_prize(id=1, rank_from=1, rank_to=1),
+            make_prize(id=2, rank_from=3, rank_to=3),
+            make_prize(id=3, rank_from=None, rank_to=None),
+            make_prize(id=4, rank_from=1, rank_to=5),
+            make_prize(id=5, rank_from=2, rank_to=2),
+        ]
+        mock_session.execute = AsyncMock(
+            side_effect=[
+                MagicMock(scalar_one_or_none=lambda: make_event()),
+                MagicMock(scalars=lambda: MagicMock(all=lambda: inserted)),
+            ]
+        )
+        resp = client.get("/api/v1/events/1")
+        assert resp.status_code == 200
+        assert [(p["rank_from"], p["rank_to"]) for p in resp.json()["prizes"]] == [
+            (1, 1),
+            (1, 5),
+            (2, 2),
+            (3, 3),
+            (None, None),
+        ]

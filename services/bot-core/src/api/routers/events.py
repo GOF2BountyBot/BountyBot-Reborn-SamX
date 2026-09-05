@@ -35,6 +35,7 @@ from api.schemas.events_schema import (
     PrizeResponse,
     StandingEntry,
     StartEventRequest,
+    UpdateEventRequest,
 )
 from services import event_service
 
@@ -562,6 +563,11 @@ async def get_event(event_id: int):
         prizes = pr_result.scalars().all()
         config = await _config_repo.get_by_guild_id(db, event.guild_id)
 
+    return _detail_response(event, prizes, config)
+
+
+def _detail_response(event: GameEvent, prizes, config) -> EventDetailResponse:
+    """EventDetailResponse with the rules text rendered against the guild's live numbers."""
     et = EVENT_TYPES.get(event.type_slug)
     params = event.params or {}
     effective_min_fights = params.get("min_fights", et.default_min_fights if et else 1)
@@ -583,6 +589,44 @@ async def get_event(event_id: int):
         rules_text=rendered,
         effective_min_fights=effective_min_fights,
     )
+
+
+# ---------------------------------------------------------------------------
+# PATCH /events/{event_id}  (draft/scheduled only)
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/{event_id}", response_model=EventDetailResponse)
+async def update_event(event_id: int, body: UpdateEventRequest, guild_id: int = Query(...), user_id: int = Query(...)):
+    if not await verify_admin_permissions(guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+    async with get_db_session() as db, db.begin():
+        result = await db.execute(select(GameEvent).where(GameEvent.id == event_id))
+        event = _load_event_or_404(result.scalar_one_or_none(), event_id, guild_id)
+        _assert_state_or_409(event, "draft", "scheduled")
+        if body.params is not None:
+            _validate_params(event.type_slug, body.params)
+            event.params = body.params
+        if body.duration_days is not None:
+            event.duration_days = body.duration_days
+        event.updated_at = datetime.now(UTC)
+        await AuditService.log_action(
+            db,
+            user_id=user_id,
+            action="event_update",
+            guild_id=event.guild_id,
+            resource_type="event",
+            resource_id=str(event_id),
+            details=body.model_dump(exclude_none=True),
+            commit=False,
+        )
+        pr_result = await db.execute(select(GameEventPrize).where(GameEventPrize.event_id == event_id))
+        prizes = pr_result.scalars().all()
+        config = await _config_repo.get_by_guild_id(db, event.guild_id)
+    changes = body.model_dump(exclude_none=True)
+    flogger.info(f"update_event: event_id={event_id} guild={guild_id} changes={changes} by user={user_id}")
+    await _push_events_cache(guild_id)
+    return _detail_response(event, prizes, config)
 
 
 # ---------------------------------------------------------------------------

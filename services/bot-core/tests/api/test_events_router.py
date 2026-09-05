@@ -1126,3 +1126,66 @@ class TestRulesText:
         assert resp.status_code == 200
         rt = resp.json()["rules_text"]
         assert "Bronze division only." in rt, f"division line missing: {rt!r}"
+
+
+# ---------------------------------------------------------------------------
+# PATCH /events/{event_id} — edit a draft/scheduled event
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateEvent:
+    def _session_with(self, db_ctx, ev):
+        mock_session, mock_cm = db_ctx
+        # 1st execute → the event row; 2nd → its prizes (none)
+        prizes = MagicMock()
+        prizes.scalars.return_value.all.return_value = []
+        mock_session.execute = AsyncMock(side_effect=[MagicMock(scalar_one_or_none=lambda: ev), prizes])
+        return mock_session, mock_cm
+
+    @patch("api.routers.events._push_events_cache", new_callable=AsyncMock)
+    @patch("api.routers.events._config_repo")
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_edit_duration_and_params_on_draft(self, mock_db, mock_admin, mock_cfg, mock_push, client, db_ctx):
+        ev = make_event(state="draft", type_slug="duels_won", params={"min_fights": 5}, duration_days=7)
+        _, mock_cm = self._session_with(db_ctx, ev)
+        mock_db.return_value = mock_cm
+        mock_cfg.get_by_guild_id = AsyncMock(return_value=None)
+
+        resp = client.patch(
+            "/api/v1/events/1?guild_id=99&user_id=42",
+            json={"duration_days": 14, "params": {"division": "Gold", "min_fights": 3}},
+        )
+        assert resp.status_code == 200, resp.text
+        assert ev.duration_days == 14
+        assert ev.params == {"division": "Gold", "min_fights": 3}
+        body = resp.json()
+        assert body["duration_days"] == 14 and body["effective_min_fights"] == 3
+        assert "Gold division only" in body["rules_text"]
+        mock_push.assert_awaited_once_with(99)
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    @pytest.mark.parametrize("state", ["active", "ended", "cancelled"])
+    def test_edit_non_editable_state_409(self, mock_db, mock_admin, state, client, db_ctx):
+        ev = make_event(state=state)
+        _, mock_cm = self._session_with(db_ctx, ev)
+        mock_db.return_value = mock_cm
+        resp = client.patch("/api/v1/events/1?guild_id=99&user_id=42", json={"duration_days": 3})
+        assert resp.status_code == 409
+        assert ev.duration_days != 3
+
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_edit_bad_params_400(self, mock_db, mock_admin, client, db_ctx):
+        ev = make_event(state="draft", type_slug="duels_won", params={})
+        _, mock_cm = self._session_with(db_ctx, ev)
+        mock_db.return_value = mock_cm
+        resp = client.patch("/api/v1/events/1?guild_id=99&user_id=42", json={"params": {"division": "Copper"}})
+        assert resp.status_code == 400
+        assert "division must be one of" in resp.json()["detail"]
+        assert ev.params == {}
+
+    def test_edit_duration_out_of_range_422(self, client):
+        resp = client.patch("/api/v1/events/1?guild_id=99&user_id=42", json={"duration_days": 61})
+        assert resp.status_code == 422

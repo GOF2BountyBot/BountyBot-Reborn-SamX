@@ -61,8 +61,17 @@ class ConfigService:
             # Validate configuration data
             validated_config = await self._validate_config_data(config_data)
 
+            is_new = await self.config_repo.get_by_guild_id(db, guild_id) is None
             # Create or update configuration
             await self.config_repo.create_or_update(db, validated_config)
+            if is_new:  # first setup of this guild: seed the out-of-the-box event templates
+                try:
+                    from services.event_templates import sync_guild_templates  # pylint: disable=import-outside-toplevel
+
+                    await sync_guild_templates(db, guild_id)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    # Seeding is a convenience; a bad template file must never break /admin_setup.
+                    flogger.warning(f"OOB event template seeding failed for guild {guild_id} (setup continues): {exc}")
 
             # Return summary
             return await self.config_repo.get_config_summary(db, guild_id)

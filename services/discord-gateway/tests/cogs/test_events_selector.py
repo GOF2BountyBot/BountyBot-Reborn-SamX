@@ -1130,3 +1130,27 @@ class TestAdminEventView:
         asyncio.run(events_cog.admin_event_view.callback(events_cog, interaction, event="8"))
         fields = {f.name: f.value for f in interaction.followup.send.await_args.kwargs["embed"].fields}
         assert fields["Prizes"].startswith("None yet")
+
+
+class TestAdminEventList:
+    def _list(self, events_cog, **kwargs):
+        events_cog._admin_gate = AsyncMock(return_value=True)
+        resp = MagicMock()
+        resp.json = MagicMock(return_value=[])
+        events_cog._api = AsyncMock(return_value=resp)
+        interaction = _create_mock_interaction()
+        asyncio.run(events_cog.admin_event_list.callback(events_cog, interaction, **kwargs))
+        return events_cog._api.await_args.kwargs["params"]
+
+    def test_default_lists_open_events_only(self, events_cog):
+        assert self._list(events_cog)["state"] == "draft,scheduled,active"
+
+    def test_explicit_state_and_everything(self, events_cog):
+        assert self._list(events_cog, state="ended")["state"] == "ended"
+        assert "state" not in self._list(events_cog, state="all")
+
+    def test_state_choices(self, events_cog):
+        cmd = next(c for c in events_cog.get_app_commands() if c.name == "admin_event_list")
+        p = {x.name: x for x in cmd.parameters}["state"]
+        assert p.default == "open"
+        assert [c.value for c in p.choices] == ["open", "draft", "scheduled", "active", "ended", "cancelled", "all"]

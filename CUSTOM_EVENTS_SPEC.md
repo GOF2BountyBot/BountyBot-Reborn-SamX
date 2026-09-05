@@ -78,7 +78,7 @@ Selector = shared autocomplete over a per-guild events cache in `autocomplete_st
 | `/admin_event_start event [at] [utc_offset]` | now, or scheduled; re-running on a `scheduled` event replaces the schedule. `at` = `YYYY-MM-DD HH:MM` (`datetime.strptime`, one format); `utc_offset` = 25 static choices UTC−12…+12, UTC if omitted; reject past / > 90 d; ephemeral confirm shows `<t:…:F>` (viewer-local) behind the shared `ConfirmView`. |
 | `/admin_event_end event payout:Yes/No [reason]` | active; confirm button |
 | `/admin_event_delete event` | `draft`/`scheduled`/`cancelled` only — `ended` events are history (`event_results` feed medals); their metric rows age out via retention |
-| `/admin_event_list [state]` | |
+| `/admin_event_list [state]` | default = open (`draft,scheduled,active`); `state` = one state or `all` (user, 2026-09-05: ended/cancelled are clutter by default) |
 | `/admin_sync_roles [dry_run]` | force the role sync for this guild, counts back |
 | `/events [event]` | live ("ends <t:R>") + scheduled ("starts <t:R>"); with `event` → rules/prizes/timestamps. **Also runs `_sync_player_notification_roles` for the caller.** |
 | `/event_leaderboard [event] [type]` | no args = all-time medals; `event` = standings (top 10/page + caller's rank; **only qualified players are ranked**, same rule as payout; gated entries footnoted); `type` = medals for that type |

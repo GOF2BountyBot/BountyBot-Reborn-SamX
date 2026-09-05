@@ -100,14 +100,16 @@ _DIVISION_CHOICES = [app_commands.Choice(name=d, value=d) for d in ("Bronze", "S
 # Edit adds an explicit "All" so an existing division filter can be removed.
 _DIVISION_EDIT_CHOICES = [app_commands.Choice(name="All divisions", value="all"), *_DIVISION_CHOICES]
 
-# State filter choices for /admin_event_list.
+# State filter choices for /admin_event_list. Default "open" hides ended/cancelled history.
+_OPEN_STATES = "draft,scheduled,active"
 _STATE_CHOICES = [
-    app_commands.Choice(name="All", value="all"),
+    app_commands.Choice(name="Open — draft, scheduled, active (default)", value="open"),
     app_commands.Choice(name="Draft", value="draft"),
     app_commands.Choice(name="Scheduled", value="scheduled"),
     app_commands.Choice(name="Active", value="active"),
     app_commands.Choice(name="Ended", value="ended"),
     app_commands.Choice(name="Cancelled", value="cancelled"),
+    app_commands.Choice(name="Everything", value="all"),
 ]
 
 
@@ -913,19 +915,23 @@ class EventsCog(commands.Cog):
         if resp is not None:
             await interaction.followup.send(embed=_event_detail_embed(resp.json()), ephemeral=True)
 
-    @app_commands.command(name="admin_event_list", description="[ADMIN] List events for this guild")
-    @app_commands.describe(state="Filter by state (default: all)")
+    @app_commands.command(
+        name="admin_event_list", description="[ADMIN] List this guild's open events (or filter by state)"
+    )
+    @app_commands.describe(state="Which events to list (default: open = draft, scheduled, active)")
     @app_commands.choices(state=_STATE_CHOICES)
     async def admin_event_list(
         self,
         interaction: discord.Interaction,
-        state: str = "all",
+        state: str = "open",
     ):
         if not await self._admin_gate(interaction):
             return
 
         params: dict = {"guild_id": interaction.guild_id}
-        if state != "all":
+        if state == "open":
+            params["state"] = _OPEN_STATES
+        elif state != "all":
             params["state"] = state
 
         resp = await self._api(

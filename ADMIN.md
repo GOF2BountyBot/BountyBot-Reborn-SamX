@@ -619,7 +619,7 @@ A **notification role** (`Event Announcements`) is mentioned in start/end announ
 | `/admin_event_start` | Start an event immediately or schedule it at a future time |
 | `/admin_event_end` | End an active event with or without payout |
 | `/admin_event_delete` | Permanently delete a draft/scheduled/cancelled event |
-| `/admin_event_list` | List events for this guild, optionally filtered by state |
+| `/admin_event_list` | List this guild's open events (draft, scheduled, active); `state:` filters, incl. ended/cancelled history |
 | `/admin_sync_roles` | Force notification role sync for this guild (dry_run flag available) |
 
 ### Event Environment Variables

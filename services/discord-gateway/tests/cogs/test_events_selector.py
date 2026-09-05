@@ -401,13 +401,31 @@ class TestParamAutocomplete:
         cog._types_cache.set("all", types_payload)
         return cog
 
-    def test_no_type_returns_empty(self, mock_bot):
-        """No event type selected → empty list."""
+    def test_no_type_and_no_types_returns_empty(self, mock_bot):
+        """No event type selected and nothing in the registry → empty list."""
         cog = self._make_cog_with_types(mock_bot, [])
         interaction = _create_mock_interaction()
         interaction.namespace.type = None
         res = asyncio.run(cog._param_autocomplete(interaction, "", "subtype"))
         assert res == []
+
+    def test_no_type_offers_union_across_types(self, mock_bot):
+        """Before a type is picked, every value any type accepts for the key is offered (sorted, deduped)."""
+        types = [
+            {"slug": "secondary_fired", "param_values": {"subtype": ["rocket", "nuke"]}},
+            {"slug": "kills_by_weapon", "param_values": {"weapon": ["primary", "turret", "nuke"]}},
+            {"slug": "duels_won", "param_values": {}},
+        ]
+        cog = self._make_cog_with_types(mock_bot, types)
+        interaction = _create_mock_interaction()
+        interaction.namespace.type = None
+        assert [c.value for c in asyncio.run(cog._param_autocomplete(interaction, "", "subtype"))] == ["nuke", "rocket"]
+        assert [c.value for c in asyncio.run(cog._weapon_autocomplete(interaction, ""))] == [
+            "nuke",
+            "primary",
+            "turret",
+        ]
+        assert [c.value for c in asyncio.run(cog._module_autocomplete(interaction, ""))] == []
 
     def test_returns_param_values_for_selected_type(self, mock_bot):
         """secondary_fired type → returns its subtype param_values filtered by current."""
@@ -976,3 +994,31 @@ class TestStandingsValueDisplay:
         assert "12.3s" in desc, f"expected '12.3s' from value_display in embed; got: {desc!r}"
         # raw "1234" should not appear
         assert "1234" not in desc, f"raw tick count must not appear in embed; got: {desc!r}"
+
+
+# ---------------------------------------------------------------------------
+# Command option contract — what Discord registers for each param
+# ---------------------------------------------------------------------------
+
+
+class TestCommandOptions:
+    @staticmethod
+    def _params(cog, name):
+        cmd = next(c for c in cog.get_app_commands() if c.name == name)
+        return {p.name: p for p in cmd.parameters}
+
+    def test_create_options(self, events_cog):
+        p = self._params(events_cog, "admin_event_create")
+        assert {c.value for c in p["division"].choices} == {"Bronze", "Silver", "Gold", "Platinum"}
+        assert (p["duration_days"].min_value, p["duration_days"].max_value) == (1, 60)
+        assert p["min_fights"].min_value == 0
+        assert p["type"].autocomplete
+        for key in ("subtype", "module", "weapon"):
+            assert p[key].autocomplete, f"{key} must autocomplete"
+
+    def test_add_prize_options(self, events_cog):
+        p = self._params(events_cog, "admin_event_add_prize")
+        assert p["qty"].min_value == 1
+        assert (p["top_n"].min_value, p["top_n"].max_value) == (1, 10)
+        assert {c.value for c in p["place"].choices} >= {"1st", "Top N", "Participation"}
+        assert p["item"].autocomplete

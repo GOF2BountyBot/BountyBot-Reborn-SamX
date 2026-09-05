@@ -150,6 +150,8 @@ _ADMIN_CATEGORY_MAPPING: dict[str, str] = {
     "admin_combat_log": "Admin — Combat",
     "admin_duel": "Admin — Combat",
     "admin_event_create": "Admin — Events",
+    "admin_event_edit": "Admin — Events",
+    "admin_event_view": "Admin — Events",
     "admin_event_add_prize": "Admin — Events",
     "admin_event_remove_prize": "Admin — Events",
     "admin_event_start": "Admin — Events",

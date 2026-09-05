@@ -519,7 +519,10 @@ class EventsCog(commands.Cog):
     # Admin commands
     # ------------------------------------------------------------------
 
-    @app_commands.command(name="admin_event_create", description="[ADMIN] Create a new draft event")
+    @app_commands.command(
+        name="admin_event_create",
+        description="[ADMIN] Create a draft event, save it as a template, or start a draft from a template",
+    )
     @app_commands.describe(
         type="Event type (autocomplete from registry)",
         duration_days="Duration in days (default 7)",
@@ -625,7 +628,8 @@ class EventsCog(commands.Cog):
         )
 
     @app_commands.command(
-        name="admin_event_edit", description="[ADMIN] Edit a draft/scheduled event (only the fields you pass change)"
+        name="admin_event_edit",
+        description="[ADMIN] Edit a draft, scheduled event or template (only the fields you pass change)",
     )
     @app_commands.describe(
         event="Draft, scheduled event or template to edit",
@@ -697,7 +701,9 @@ class EventsCog(commands.Cog):
             content="✅ Event updated.", embed=_event_detail_embed(resp.json()), ephemeral=True
         )
 
-    @app_commands.command(name="admin_event_add_prize", description="[ADMIN] Add a prize to a draft/active event")
+    @app_commands.command(
+        name="admin_event_add_prize", description="[ADMIN] Add a prize to a draft, active event or template"
+    )
     @app_commands.describe(
         event="Event to add the prize to (draft or active)",
         place="Prize place: 1st–10th, Top N, or Participation",
@@ -755,7 +761,9 @@ class EventsCog(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="admin_event_remove_prize", description="[ADMIN] Remove a prize from a draft event")
+    @app_commands.command(
+        name="admin_event_remove_prize", description="[ADMIN] Remove a prize from a draft or template"
+    )
     @app_commands.describe(
         event="Event to remove the prize from (draft only)",
         prize="Prize to remove (autocomplete from event's prizes)",
@@ -928,7 +936,9 @@ class EventsCog(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="admin_event_delete", description="[ADMIN] Delete a draft/scheduled/cancelled event")
+    @app_commands.command(
+        name="admin_event_delete", description="[ADMIN] Delete a draft, scheduled or cancelled event, or a template"
+    )
     @app_commands.describe(event="Event to permanently delete")
     @app_commands.autocomplete(event=_ac_event_deletable)
     async def admin_event_delete(
@@ -961,7 +971,9 @@ class EventsCog(commands.Cog):
         flogger.info(f"/admin_event_delete: event={event} by user={interaction.user.id}")
         await interaction.followup.send(f"✅ Event **#{event}** deleted.", ephemeral=True)
 
-    @app_commands.command(name="admin_event_view", description="[ADMIN] Review a draft/scheduled event in full")
+    @app_commands.command(
+        name="admin_event_view", description="[ADMIN] Review a draft, scheduled event or template in full"
+    )
     @app_commands.describe(event="Draft, scheduled event or template to review (rules, settings, timing, prizes)")
     @app_commands.autocomplete(event=_ac_event_editable)
     async def admin_event_view(self, interaction: discord.Interaction, event: str):

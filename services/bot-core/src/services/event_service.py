@@ -578,7 +578,7 @@ async def end_event(
     result = await session.execute(
         update(GameEvent)
         .where(GameEvent.id == event.id, GameEvent.state == "active")
-        .values(state=new_state, updated_at=now)
+        .values(state=new_state, updated_at=now, ends_at=now)  # ends_at = when it actually ended
     )
     if result.rowcount == 0:
         flogger.info(f"end_event: event_id={event.id} not active (rowcount=0) — idempotent no-op")

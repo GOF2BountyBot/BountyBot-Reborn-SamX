@@ -50,14 +50,23 @@ _config_repo = ConfigRepository()
 
 _KNOWN_PARAM_KEYS = {"division", "weapon", "subtype", "module", "min_fights"}
 _VALID_DIVISIONS = {"Bronze", "Silver", "Gold", "Platinum"}
-_VALID_SUBTYPES: frozenset[str] = frozenset({
-    "nuke", "rocket", "missile", "cluster-missile", "emp-bomb", "shock-blast", "ionizing-missile",
-})
+_VALID_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "nuke",
+        "rocket",
+        "missile",
+        "cluster-missile",
+        "emp-bomb",
+        "shock-blast",
+        "ionizing-missile",
+    }
+)
 # resolver: emp-bomb is a no-op; shock-blast/ionizing-missile deal 0 HP → cannot score a fire event
 _SCORABLE_FIRE_SUBTYPES: frozenset[str] = _VALID_SUBTYPES - {"emp-bomb"}
 # resolver: emp-bomb is a no-op; shock-blast/ionizing-missile deal 0 HP → cannot be a killing blow
 _SCORABLE_KILL_WEAPONS: frozenset[str] = (_VALID_SUBTYPES - {"emp-bomb", "shock-blast", "ionizing-missile"}) | {
-    "primary", "turret"
+    "primary",
+    "turret",
 }
 _VALID_WEAPON_VALS: frozenset[str] = _VALID_SUBTYPES | {"primary", "turret"}
 _VALID_STATES: frozenset[str] = frozenset({"draft", "scheduled", "active", "ended", "cancelled"})
@@ -158,7 +167,6 @@ def _type_param_values(type_slug: str) -> dict[str, list[str]]:
     elif type_slug == "module_activations":
         out["module"] = sorted(_ACTIVATION_MODULES)
     return out
-
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +574,8 @@ async def get_event(event_id: int):
             division=params.get("division"),
             params=params,
         )
-        if et else ""
+        if et
+        else ""
     )
     return EventDetailResponse(
         **EventResponse.model_validate(event).model_dump(),

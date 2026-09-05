@@ -474,14 +474,26 @@ async def test_event_metrics_retention_deletes_old_metrics_keeps_results(db_sess
 
     # Old ended event (beyond cutoff) — metrics should be pruned
     ev_old = GameEvent(
-        guild_id=1, type_slug="bounty_caps", params={}, state="ended",
-        duration_days=7, created_by_user_id=0, created_at=old_ts, updated_at=old_ts,
+        guild_id=1,
+        type_slug="bounty_caps",
+        params={},
+        state="ended",
+        duration_days=7,
+        created_by_user_id=0,
+        created_at=old_ts,
+        updated_at=old_ts,
     )
     db_session.add(ev_old)
     # Recent ended event (within retention) — metrics must survive
     ev_recent = GameEvent(
-        guild_id=1, type_slug="bounty_caps", params={}, state="ended",
-        duration_days=7, created_by_user_id=0, created_at=recent_ts, updated_at=recent_ts,
+        guild_id=1,
+        type_slug="bounty_caps",
+        params={},
+        state="ended",
+        duration_days=7,
+        created_by_user_id=0,
+        created_at=recent_ts,
+        updated_at=recent_ts,
     )
     db_session.add(ev_recent)
     await db_session.flush()
@@ -491,9 +503,16 @@ async def test_event_metrics_retention_deletes_old_metrics_keeps_results(db_sess
     # EventResult for the old event — must NOT be deleted by the metrics pass
     db_session.add(
         EventResult(
-            event_id=ev_old.id, guild_id=1, type_slug="bounty_caps",
-            player_id=1, rank=1, value=10, qualified=True,
-            prize="1st: 100 credits", status="ok", awarded_at=old_ts,
+            event_id=ev_old.id,
+            guild_id=1,
+            type_slug="bounty_caps",
+            player_id=1,
+            rank=1,
+            value=10,
+            qualified=True,
+            prize="1st: 100 credits",
+            status="ok",
+            awarded_at=old_ts,
         )
     )
     await db_session.commit()

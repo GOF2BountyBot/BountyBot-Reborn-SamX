@@ -32,15 +32,20 @@ flogger.debug(f"eventsCog loading with API_BASE_URL: {api_base}")
 
 # Static place → (rank_from, rank_to).  Participation → (None, None).
 _PLACE_ORDINALS = {
-    "1st": (1, 1), "2nd": (2, 2), "3rd": (3, 3), "4th": (4, 4),
-    "5th": (5, 5), "6th": (6, 6), "7th": (7, 7), "8th": (8, 8),
-    "9th": (9, 9), "10th": (10, 10),
+    "1st": (1, 1),
+    "2nd": (2, 2),
+    "3rd": (3, 3),
+    "4th": (4, 4),
+    "5th": (5, 5),
+    "6th": (6, 6),
+    "7th": (7, 7),
+    "8th": (8, 8),
+    "9th": (9, 9),
+    "10th": (10, 10),
 }
 
 # Static choices for /admin_event_add_prize `place` param.
-_PLACE_CHOICES = [
-    app_commands.Choice(name=p, value=p) for p in [*list(_PLACE_ORDINALS), "Top N", "Participation"]
-]
+_PLACE_CHOICES = [app_commands.Choice(name=p, value=p) for p in [*list(_PLACE_ORDINALS), "Top N", "Participation"]]
 
 # Static choices for /admin_event_add_prize `type` param.
 _PRIZE_TYPE_CHOICES = [
@@ -100,7 +105,6 @@ _STATE_CHOICES = [
     app_commands.Choice(name="Ended", value="ended"),
     app_commands.Choice(name="Cancelled", value="cancelled"),
 ]
-
 
 
 def _prize_label(p: dict) -> str:
@@ -221,9 +225,7 @@ class EventsCog(commands.Cog):
             for e in events:
                 if states and e.get("state") not in states:
                     continue
-                label = (
-                    f"#{e.get('id')} · {e.get('type_display', e.get('type_slug', ''))} · {event_status_label(e)}"
-                )
+                label = f"#{e.get('id')} · {e.get('type_display', e.get('type_slug', ''))} · {event_status_label(e)}"
                 norm_label = e.get("_norm") or normalize_for_search(label)
                 if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=str(e["id"])))
@@ -274,11 +276,9 @@ class EventsCog(commands.Cog):
                 if names is None:
                     names = await admin_cog._ship_catalog.get_with_timeout("all", timeout=1.0)
                 names = names or []
-                return [
-                    app_commands.Choice(name=n, value=n)
-                    for n in names
-                    if norm_current in normalize_for_search(n)
-                ][:25]
+                return [app_commands.Choice(name=n, value=n) for n in names if norm_current in normalize_for_search(n)][
+                    :25
+                ]
 
             if prize_type == "Credits":
                 return []  # no item needed for credits
@@ -433,9 +433,7 @@ class EventsCog(commands.Cog):
             return False
         return True
 
-    async def _api(
-        self, interaction: discord.Interaction, method: str, url: str, **kw
-    ) -> httpx.Response | None:
+    async def _api(self, interaction: discord.Interaction, method: str, url: str, **kw) -> httpx.Response | None:
         """Call the bot-core API; surface HTTPStatusError as ❌ followup, return None on error."""
         try:
             resp = await getattr(self.http_client, method)(url, **kw)
@@ -506,9 +504,15 @@ class EventsCog(commands.Cog):
             params["min_fights"] = min_fights
 
         resp = await self._api(
-            interaction, "post", f"{api_base}/events",
-            json={"guild_id": interaction.guild_id, "type_slug": type,
-                  "duration_days": duration_days, "params": params},
+            interaction,
+            "post",
+            f"{api_base}/events",
+            json={
+                "guild_id": interaction.guild_id,
+                "type_slug": type,
+                "duration_days": duration_days,
+                "params": params,
+            },
             params={"user_id": interaction.user.id},
             timeout=10,
         )
@@ -567,7 +571,9 @@ class EventsCog(commands.Cog):
             body["item_ref"] = item
 
         resp = await self._api(
-            interaction, "post", f"{api_base}/events/{event}/prizes",
+            interaction,
+            "post",
+            f"{api_base}/events/{event}/prizes",
             json=body,
             params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
             timeout=10,
@@ -599,7 +605,9 @@ class EventsCog(commands.Cog):
             return
 
         resp = await self._api(
-            interaction, "delete", f"{api_base}/events/{event}/prizes/{prize}",
+            interaction,
+            "delete",
+            f"{api_base}/events/{event}/prizes/{prize}",
             params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
             timeout=10,
         )
@@ -674,7 +682,9 @@ class EventsCog(commands.Cog):
             return
 
         resp = await self._api(
-            interaction, "post", f"{api_base}/events/{event}/start",
+            interaction,
+            "post",
+            f"{api_base}/events/{event}/start",
             json=body,
             params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
             timeout=10,
@@ -732,7 +742,9 @@ class EventsCog(commands.Cog):
             return
 
         resp = await self._api(
-            interaction, "post", f"{api_base}/events/{event}/end",
+            interaction,
+            "post",
+            f"{api_base}/events/{event}/end",
             json={"payout": do_payout, "reason": reason},
             params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
             timeout=30,
@@ -770,7 +782,9 @@ class EventsCog(commands.Cog):
             return
 
         resp = await self._api(
-            interaction, "delete", f"{api_base}/events/{event}",
+            interaction,
+            "delete",
+            f"{api_base}/events/{event}",
             params={"guild_id": interaction.guild_id, "user_id": interaction.user.id},
             timeout=10,
         )
@@ -797,8 +811,11 @@ class EventsCog(commands.Cog):
             params["state"] = state
 
         resp = await self._api(
-            interaction, "get", f"{api_base}/events/guild/{interaction.guild_id}",
-            params=params, timeout=10,
+            interaction,
+            "get",
+            f"{api_base}/events/guild/{interaction.guild_id}",
+            params=params,
+            timeout=10,
         )
         if resp is None:
             return
@@ -982,10 +999,14 @@ class EventsCog(commands.Cog):
                     caller_row = r
             embed.description = "\n".join(lines) or "No entries."
             caller_footer = (
-                f"Your rank: #{caller_row['rank']} — "
-                + (caller_row.get("value_display") or f"{caller_row['value']:.1f}")
-                + ("" if caller_row.get("qualified", True) else " (unqualified)")
-            ) if caller_row else ""
+                (
+                    f"Your rank: #{caller_row['rank']} — "
+                    + (caller_row.get("value_display") or f"{caller_row['value']:.1f}")
+                    + ("" if caller_row.get("qualified", True) else " (unqualified)")
+                )
+                if caller_row
+                else ""
+            )
             # Fetch event detail for prizes + qualify info (non-fatal if it fails)
             try:
                 detail_resp = await self.http_client.get(f"{api_base}/events/{event}", timeout=10)
@@ -1037,7 +1058,6 @@ class EventsCog(commands.Cog):
                 )
             embed.description = "\n".join(lines)
             await interaction.followup.send(embed=embed)
-
 
     @app_commands.command(
         name="admin_sync_roles",

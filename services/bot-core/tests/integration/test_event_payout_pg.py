@@ -185,13 +185,17 @@ async def test_payout_credits_and_medals():
             assert pb.lifetime_credits == 5600, f"player B lifetime={pb.lifetime_credits}"
 
             audits = (
-                await db.execute(
-                    select(AdminAuditLog).where(
-                        AdminAuditLog.action == "event_payout",
-                        AdminAuditLog.resource_id == str(ev_id),
+                (
+                    await db.execute(
+                        select(AdminAuditLog).where(
+                            AdminAuditLog.action == "event_payout",
+                            AdminAuditLog.resource_id == str(ev_id),
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(audits) == 1, f"expected 1 audit row, got {len(audits)}"
 
         # --- Bug 3: medals() qualified==1 on Postgres Integer ---

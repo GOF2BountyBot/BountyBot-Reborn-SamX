@@ -51,11 +51,14 @@ class EventType:
 # Helpers for ratio/qualified
 # ---------------------------------------------------------------------------
 
+
 def _safe_ratio(num_key: str, den_key: str) -> Callable[[dict], float]:
     """Return a value function that computes num/den, 0 on missing/zero denominator."""
+
     def _fn(m: dict) -> float:
         den = m.get(den_key, 0)
         return m.get(num_key, 0) / den if den else 0.0
+
     return _fn
 
 

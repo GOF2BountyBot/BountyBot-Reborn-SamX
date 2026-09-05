@@ -390,9 +390,11 @@ async def test_partial_failure_item_ref_missing(engine_and_factory):
         await db.flush()
         # Participation credit prize (ok path) + item prize with null item_ref (fail path)
         db.add(_make_prize(ev.id, None, None, qty=50, kind="credits"))  # participation — ok
-        db.add(GameEventPrize(  # 1st place item — will fail (item_ref=None)
-            event_id=ev.id, rank_from=1, rank_to=1, kind="item", item_ref=None, qty=1
-        ))
+        db.add(
+            GameEventPrize(  # 1st place item — will fail (item_ref=None)
+                event_id=ev.id, rank_from=1, rank_to=1, kind="item", item_ref=None, qty=1
+            )
+        )
 
         db.add(_make_user(601, "P601"))
         await db.flush()
@@ -699,6 +701,7 @@ async def test_end_announcement_embed_structure_and_role_mention(engine_and_fact
     # channel POST was called — inspect body
     assert channel_route.called
     import json as _json
+
     body = _json.loads(channel_route.calls[0].request.content)
     assert body["message_type"] == "default"
     embed = body["content"]
@@ -759,6 +762,7 @@ async def test_end_announcement_no_role_mention_when_null(engine_and_factory):
             await announce(*result["announcement"])
 
     import json as _json
+
     body = _json.loads(channel_route.calls[0].request.content)
     tc = body.get("text_content")
     # text_content should be None or contain no <@&...> mention
@@ -797,6 +801,7 @@ async def test_cancel_announcement_embed_structure(engine_and_factory):
 async def test_start_announcement_embed_structure_and_role_mention(engine_and_factory):
     """start_event returns announcement tuple with correct embed shape and role mention."""
     from services.event_service import start_event
+
     _, factory = engine_and_factory
     role_id = 77_777
 
@@ -838,8 +843,8 @@ async def test_end_announcement_embed_shows_prize_and_participation(engine_and_f
         ev = _make_event(slug="bounty_caps")
         db.add(ev)
         await db.flush()
-        db.add(_make_prize(ev.id, 1, 1, qty=500))          # 1st place: 500 credits
-        db.add(_make_prize(ev.id, None, None, qty=50))      # participation: 50 credits
+        db.add(_make_prize(ev.id, 1, 1, qty=500))  # 1st place: 500 credits
+        db.add(_make_prize(ev.id, None, None, qty=50))  # participation: 50 credits
         db.add(_make_user(2001, "TopPlayer"))
         await db.flush()
         db.add(_make_player(2001, credits=0))

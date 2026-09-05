@@ -39,7 +39,12 @@ _P_COL = "event_notifications_enabled"
 _MIGRATION_PATH = os.path.abspath(
     os.path.join(
         os.path.dirname(__file__),
-        "..", "src", "persist", "database", "revisions", "versions",
+        "..",
+        "src",
+        "persist",
+        "database",
+        "revisions",
+        "versions",
         "0036_event_announcements_role.py",
     )
 )
@@ -54,12 +59,20 @@ def _load_migration_module():
 
 def _create_tables(engine: sa.engine.Engine) -> None:
     meta = sa.MetaData()
-    sa.Table(_GC_TABLE, meta, sa.Column("id", sa.Integer, primary_key=True),
-             sa.Column("guild_id", sa.BigInteger, nullable=False, unique=True))
-    sa.Table(_P_TABLE, meta, sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-             sa.Column("guild_id", sa.BigInteger, nullable=False),
-             sa.Column("user_id", sa.BigInteger, nullable=False),
-             sa.Column("credits", sa.Integer, nullable=False, server_default="10000"))
+    sa.Table(
+        _GC_TABLE,
+        meta,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("guild_id", sa.BigInteger, nullable=False, unique=True),
+    )
+    sa.Table(
+        _P_TABLE,
+        meta,
+        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+        sa.Column("guild_id", sa.BigInteger, nullable=False),
+        sa.Column("user_id", sa.BigInteger, nullable=False),
+        sa.Column("credits", sa.Integer, nullable=False, server_default="10000"),
+    )
     meta.create_all(engine)
 
 

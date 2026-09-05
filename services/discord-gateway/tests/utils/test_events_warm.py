@@ -9,11 +9,10 @@ Mirrors test_autocomplete_warm.py style. Covers:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -33,8 +32,10 @@ sys.modules.setdefault("shared.bblogger", _mock_bblogger)
 # Minimal http_retry stub: with_transient_retry just awaits the first arg.
 _mock_http_retry = types.ModuleType("shared.http_retry")
 
+
 async def _passthrough(fn, *args, **kwargs):
     return await fn(*args, **kwargs)
+
 
 _mock_http_retry.with_transient_retry = _passthrough
 sys.modules.setdefault("shared.http_retry", _mock_http_retry)
@@ -44,7 +45,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 import utils.autocomplete_state as state_mod
 import utils.autocomplete_warm as warm_mod
 from cogs._shared.autocomplete_cache import AutocompleteCache
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

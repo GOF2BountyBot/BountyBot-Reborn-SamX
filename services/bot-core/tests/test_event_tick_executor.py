@@ -102,6 +102,7 @@ async def sqlite_engine_and_factory():
 
 def _make_fake_db_manager(factory: Any):
     """1 mock — db_manager bridge (Tier B)."""
+
     @asynccontextmanager
     async def _fake_get_db():
         async with factory() as session:
@@ -264,7 +265,7 @@ async def test_failing_event_does_not_stop_others(sqlite_engine_and_factory):
         events = (await db.execute(select(GameEvent))).scalars().all()
         states = {ev.guild_id: ev.state for ev in events}
         assert states[GUILD_ID] == "scheduled"  # ev_a: unchanged (rolled back)
-        assert states[other_guild] == "active"   # ev_b: started OK
+        assert states[other_guild] == "active"  # ev_b: started OK
 
 
 async def test_announcement_posted_after_commit(sqlite_engine_and_factory):

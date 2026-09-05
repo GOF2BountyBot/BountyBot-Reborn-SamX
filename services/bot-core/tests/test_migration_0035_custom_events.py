@@ -34,7 +34,12 @@ if "sqlalchemy_utils" not in sys.modules:
 _MIGRATION_PATH = os.path.abspath(
     os.path.join(
         os.path.dirname(__file__),
-        "..", "src", "persist", "database", "revisions", "versions",
+        "..",
+        "src",
+        "persist",
+        "database",
+        "revisions",
+        "versions",
         "0035_custom_events.py",
     )
 )
@@ -55,12 +60,14 @@ def _create_base_tables(engine: sa.engine.Engine) -> None:
     """Create prerequisite tables that 0035 depends on."""
     meta = sa.MetaData()
     sa.Table(
-        _GC_TABLE, meta,
+        _GC_TABLE,
+        meta,
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("guild_id", sa.BigInteger, nullable=False, unique=True),
     )
     sa.Table(
-        "players", meta,
+        "players",
+        meta,
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
         sa.Column("guild_id", sa.BigInteger, nullable=False),
         sa.Column("user_id", sa.BigInteger, nullable=False),
@@ -185,9 +192,7 @@ def test_event_min_duel_stakes_default_1000_on_existing_rows():
         mod.upgrade()
 
     with engine.connect() as conn:
-        row = conn.execute(
-            text(f"SELECT {_GC_COL} FROM {_GC_TABLE} WHERE id = :id"), {"id": gc_id}
-        ).fetchone()
+        row = conn.execute(text(f"SELECT {_GC_COL} FROM {_GC_TABLE} WHERE id = :id"), {"id": gc_id}).fetchone()
     val = row[0]
     assert int(val) == 1000, f"Expected default 1000, got {val!r}"
 

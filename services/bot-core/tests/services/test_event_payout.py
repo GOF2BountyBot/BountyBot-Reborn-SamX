@@ -6,6 +6,7 @@ Max 2 mocks per test (respx not counted; only unittest.mock.patch counts).
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime, timedelta
 
@@ -721,6 +722,49 @@ async def test_end_announcement_embed_structure_and_role_mention(engine_and_fact
     winner_in_desc = "Winner" in embed["description"]
     winner_in_fields = any("Winner" in f.get("value", "") for f in fields)
     assert winner_in_desc or winner_in_fields
+
+
+async def test_end_announcement_mentions_only_opted_in_winners(engine_and_factory):
+    """Winner @mentions honour the opt-out: an opted-out placed player is named in the embed but never pinged."""
+    _, factory = engine_and_factory
+    role_id = 99_999
+
+    async with factory() as db:
+        db.add(GuildConfig(guild_id=GUILD_ID, discussion_channel_id=1001, event_announcements_role_id=role_id))
+        ev = _make_event(slug="bounty_caps")
+        db.add(ev)
+        await db.flush()
+        db.add(_make_prize(ev.id, 1, 1, qty=500))
+        db.add(_make_prize(ev.id, 2, 2, qty=100))
+        db.add(_make_user(1001, "Loud"))
+        db.add(_make_user(1002, "Quiet"))
+        await db.flush()
+        db.add(_make_player(1001, credits=0))
+        quiet = _make_player(1002, credits=0)
+        quiet.event_notifications_enabled = False
+        db.add(quiet)
+        await db.commit()
+
+    async with factory() as db:
+        players = {p.user_id: p for p in (await db.execute(select(Player))).scalars().all()}
+        ev = (await db.execute(select(GameEvent))).scalar_one()
+        for uid, caps in ((1001, 5), (1002, 3)):
+            db.add(GameEventMetric(event_id=ev.id, player_id=players[uid].id, metric="captures", value=caps))
+            db.add(GameEventMetric(event_id=ev.id, player_id=players[uid].id, metric="checks", value=caps))
+        ev.state = "active"
+        await db.commit()
+
+    with respx.mock:
+        respx.get(_MEMBERS_URL).mock(return_value=_member_resp([1001, 1002]))
+        respx.post(_CHANNEL_URL_TMPL.format(channel_id=1001)).mock(return_value=_ok_resp())
+        async with factory() as db, db.begin():
+            ev = (await db.execute(select(GameEvent))).scalar_one()
+            result = await end_event(db, ev, payout=True)
+
+    _guild_id, _channel_id, embed, text_content = result["announcement"]
+    assert f"<@&{role_id}>" in text_content and "<@1001>" in text_content
+    assert "<@1002>" not in text_content
+    assert "Quiet" in json.dumps(embed)  # still listed as 2nd place, just not pinged
 
 
 async def test_end_announcement_no_role_mention_when_null(engine_and_factory):

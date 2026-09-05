@@ -715,30 +715,14 @@ async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) ->
                         f"sync_notification_roles: guild={guild_id}: failed to persist event_role_id: {exc}"
                     )
 
-    # (b) Fetch players — prefer player_cache payload (already has flags), else API call
-    players: list[dict] = []
+    # (b) Fetch players fresh from bot-core. Never from the autocomplete cache: it refreshes every few
+    # minutes, and a stale copy would re-add a role someone just opted out of (add-only sync).
     try:
-        cached = autocomplete_state.player_cache
-        if cached is not None:
-            raw_players = cached.get(guild_id, [])
-            # Each entry is a NormalizedChoice with .raw = player dict if flags present
-            has_flags = (
-                raw_players
-                and isinstance(raw_players[0].raw, dict)
-                and "event_notifications_enabled" in raw_players[0].raw
-            )
-            if has_flags:
-                players = [p.raw for p in raw_players]
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
-
-    if not players:
-        try:
-            pr = await with_transient_retry(client.get, f"{api_base_url}/players/guild/{guild_id}", timeout=10)
-            players = pr.json()
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            flogger.warning(f"sync_notification_roles: guild={guild_id}: player fetch failed: {exc}")
-            return counts
+        pr = await with_transient_retry(client.get, f"{api_base_url}/players/guild/{guild_id}", timeout=10)
+        players: list[dict] = pr.json()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"sync_notification_roles: guild={guild_id}: player fetch failed: {exc}")
+        return counts
 
     # (c) Per-member role assignment
     shop_role_id = cfg.get("shop_announcements_role_id")

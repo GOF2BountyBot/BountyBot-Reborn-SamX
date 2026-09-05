@@ -256,6 +256,58 @@ class TestSyncNotificationRolesAllGuilds:
         member.add_roles.assert_not_awaited()
         assert counts["roles_added"] == 0
 
+    async def test_stale_player_cache_cannot_re_add_a_role(self, reset_state):
+        """Flags come from bot-core, never the autocomplete cache: a stale cached True must not re-add the role."""
+        event_role_id = 4001
+        event_role = MagicMock()
+        event_role.id = event_role_id
+        member = _make_mock_member(discord_id=222, roles=[])
+        guild = _make_mock_guild(guild_id=998, members={222: member})
+        guild.get_role = MagicMock(return_value=event_role)
+        cfg = {
+            k: None
+            for k in (
+                "shop_announcements_role_id",
+                "bounty_hunter_role_id",
+                "bronze_role_id",
+                "silver_role_id",
+                "gold_role_id",
+                "platinum_role_id",
+            )
+        }
+        cfg["event_announcements_role_id"] = event_role_id
+        fresh = [
+            {
+                "user_id": 222,
+                "tier": "Bronze",
+                "bounty_notifications_enabled": False,
+                "shop_notifications_enabled": False,
+                "event_notifications_enabled": False,
+            }
+        ]
+        stale = MagicMock()
+        stale.raw = {**fresh[0], "event_notifications_enabled": True}  # what the cache still believes
+        state_mod.player_cache = MagicMock()
+        state_mod.player_cache.get = MagicMock(return_value=[stale])
+
+        async def _mock_get(url, **kw):
+            r = MagicMock()
+            r.json.return_value = cfg if "/config/" in url else fresh
+            r.raise_for_status = MagicMock()
+            return r
+
+        state_mod._initialized = True
+        state_mod._http_client = MagicMock()
+        state_mod._http_client.get = _mock_get
+        state_mod._api_base = "http://bot-core:8000/api/v1"
+        bot = MagicMock()
+        bot.guilds = [guild]
+        with patch("utils.guild_setup._find_or_create_event_announcements_role", AsyncMock(return_value=None)):
+            counts = (await warm_mod.sync_notification_roles_all_guilds(bot))[998]
+        member.add_roles.assert_not_awaited()
+        assert counts["roles_added"] == 0
+        state_mod.player_cache.get.assert_not_called()
+
     async def test_counts_not_found_for_missing_member(self, reset_state):
         """A player whose discord_id is not in guild is counted as not_found."""
         event_role_id = 4001

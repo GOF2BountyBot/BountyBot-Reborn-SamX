@@ -564,7 +564,5 @@ FIELD_DESCRIPTIONS: dict[str, str] = {
     "sale_price_factor": (
         "The fraction of an item's face value that players receive when selling it at the Kaamo station."
     ),
-    "event_min_duel_stakes": (
-        "Minimum duel-stakes (credits) for a fight to count toward active event tallies."
-    ),
+    "event_min_duel_stakes": ("Minimum duel-stakes (credits) for a fight to count toward active event tallies."),
 }

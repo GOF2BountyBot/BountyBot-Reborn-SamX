@@ -155,9 +155,7 @@ class TestEnsureBountyBotInfrastructureEventRole:
                 ),
             ),
             patch("utils.guild_setup._find_or_create_shop_announcements_role", AsyncMock(return_value=None)),
-            patch(
-                "utils.guild_setup._find_or_create_event_announcements_role", AsyncMock(return_value=event_role)
-            ),
+            patch("utils.guild_setup._find_or_create_event_announcements_role", AsyncMock(return_value=event_role)),
             patch("utils.guild_setup._find_or_create_category", AsyncMock(return_value=None)),
         ):
             result = await ensure_bountybot_infrastructure(guild)

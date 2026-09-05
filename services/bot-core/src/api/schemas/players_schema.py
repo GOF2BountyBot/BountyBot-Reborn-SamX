@@ -81,9 +81,7 @@ class NotificationPreferenceUpdate(BaseModel):
     event_announcements_role_id for event) to match after persisting here.
     """
 
-    notification_type: str = Field(
-        pattern="^(bounty|shop|event)$", description="Must be 'bounty', 'shop', or 'event'"
-    )
+    notification_type: str = Field(pattern="^(bounty|shop|event)$", description="Must be 'bounty', 'shop', or 'event'")
     enabled: bool = Field(description="Whether the player wants these announcement @-mentions")
 
 

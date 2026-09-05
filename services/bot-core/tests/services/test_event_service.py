@@ -65,7 +65,7 @@ def _make_event(guild_id: int = GUILD_ID, slug: str = "secondary_fired", params:
 async def _seed(session: AsyncSession, stakes: int = 1000, events: list[GameEvent] | None = None) -> None:
     config = GuildConfig(guild_id=GUILD_ID, event_min_duel_stakes=stakes)
     session.add(config)
-    for ev in (events or []):
+    for ev in events or []:
         session.add(ev)
     await session.commit()
 
@@ -88,9 +88,10 @@ async def test_bounty_contrib_increments_nukes(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
-        row = (await session.execute(
-            select(GameEventMetric).where(GameEventMetric.player_id == player.id)
-        )).scalar_one()
+
+        row = (
+            await session.execute(select(GameEventMetric).where(GameEventMetric.player_id == player.id))
+        ).scalar_one()
         assert float(row.value) == 3.0
         assert row.metric == "secondary_fired:nuke"
 
@@ -107,6 +108,7 @@ async def test_duel_below_stakes_ignored(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         rows = (await session.execute(select(GameEventMetric))).scalars().all()
         assert len(rows) == 0, "No metric row should be written for a below-stakes duel"
 
@@ -123,6 +125,7 @@ async def test_duel_at_stakes_counts(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         row = (await session.execute(select(GameEventMetric))).scalar_one()
         assert float(row.value) == 2.0
 
@@ -143,6 +146,7 @@ async def test_max_folding_in_standings(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         # Reload the event
         ev2 = (await session.execute(select(GameEvent))).scalar_one()
         result = await standings(session, ev2)
@@ -171,6 +175,7 @@ async def test_standings_qualified_at_min_fights(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         ev2 = (await session.execute(select(GameEvent))).scalar_one()
         result = await standings(session, ev2)
         by_pid = {pid: (val, qual) for pid, val, qual in result}
@@ -186,6 +191,7 @@ async def test_record_swallows_exception(engine_and_factory):
 
     class _BadSession:
         """Minimal bad session stub — execute always raises."""
+
         bind = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
 
         async def execute(self, *a, **kw):
@@ -213,6 +219,7 @@ async def test_sum_upsert_accumulates(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         row = (await session.execute(select(GameEventMetric))).scalar_one()
         assert float(row.value) == 8.0
 
@@ -232,6 +239,7 @@ async def test_duel_no_stakes_ignored(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         rows = (await session.execute(select(GameEventMetric))).scalars().all()
         assert len(rows) == 0, "No metric row when stakes is None"
 
@@ -250,8 +258,17 @@ def _all_registry_keys() -> set[str]:
     """
     from services.event_types import EVENT_TYPES, resolve_metrics
 
-    _SUBTYPE_VARIANTS = ["nuke", "rocket", "missile", "cluster-missile", "emp-bomb", "shock-blast",
-                         "primary", "turret", "ionizing-missile"]
+    _SUBTYPE_VARIANTS = [
+        "nuke",
+        "rocket",
+        "missile",
+        "cluster-missile",
+        "emp-bomb",
+        "shock-blast",
+        "primary",
+        "turret",
+        "ionizing-missile",
+    ]
     _MODULE_VARIANTS = ["cloak", "booster", "emergency_system"]
     _WEAPON_VARIANTS = _SUBTYPE_VARIANTS  # weapon param uses same subtype strings
 
@@ -337,6 +354,7 @@ async def test_duel_stalemate_records_only_duel_fights(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         rows = (await session.execute(select(GameEventMetric))).scalars().all()
         assert sorted(r.player_id for r in rows) == [1, 2]
         assert all(r.metric == "duel_fights" and float(r.value) == 1.0 for r in rows)
@@ -367,6 +385,7 @@ async def test_on_tier_change_deletes_division_rows_only(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         rows = (await session.execute(select(GameEventMetric))).scalars().all()
         # Only the non-division row should survive
         assert len(rows) == 1
@@ -398,6 +417,7 @@ async def test_winless_dueller_appears_at_zero(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         ev2 = (await session.execute(select(GameEvent))).scalar_one()
         result = await standings(session, ev2)
         assert len(result) == 1
@@ -427,6 +447,7 @@ async def test_min_fights_per_event_gates_qualification(engine_and_factory):
 
     async with factory() as session:
         from sqlalchemy import select
+
         ev2 = (await session.execute(select(GameEvent))).scalar_one()
         result = await standings(session, ev2)
         by_pid = {pid: qual for pid, _val, qual in result}

@@ -2987,8 +2987,10 @@ class BountyService:
 
             # Slice 2: bounty event hook (issue #30 spec §3)
             from services import event_service as _event_svc  # deferred — avoids circular import
+
             await _event_svc.record(
-                db, player,
+                db,
+                player,
                 {"checks": float(reward.systems_checked_count), "captures": 1.0 if reward.is_winner else 0.0},
                 context="bounty",
             )

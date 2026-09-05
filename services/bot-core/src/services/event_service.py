@@ -119,10 +119,12 @@ async def _upsert_metric(
     """
     if dialect == "postgresql":
         from sqlalchemy.dialects.postgresql import insert as pg_insert
+
         _insert = pg_insert
         _max_fn = func.greatest
     else:
         from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
         _insert = sqlite_insert
         _max_fn = func.max
 
@@ -202,9 +204,7 @@ async def standings(
         flogger.warning(f"standings: unknown slug={event.type_slug!r} event_id={event.id}")
         return []
 
-    result = await session.execute(
-        select(GameEventMetric).where(GameEventMetric.event_id == event.id)
-    )
+    result = await session.execute(select(GameEventMetric).where(GameEventMetric.event_id == event.id))
     rows = result.scalars().all()
 
     # Fold rows by player
@@ -465,9 +465,7 @@ async def _fetch_member_discord_ids(guild_id: int) -> set[int] | None:
 # ---------------------------------------------------------------------------
 
 
-async def start_event(
-    session: AsyncSession, event: GameEvent
-) -> tuple[int, int | None, dict, str | None] | None:
+async def start_event(session: AsyncSession, event: GameEvent) -> tuple[int, int | None, dict, str | None] | None:
     """Activate a scheduled or draft event: validate, set state=active, flush.
 
     Caller posts the returned announcement AFTER commit; posting before commit is a double-payout path.
@@ -483,9 +481,7 @@ async def start_event(
     if event.state not in ("draft", "scheduled"):
         raise ValueError(f"Cannot start event in state={event.state!r} (event_id={event.id})")
 
-    prizes_result = await session.execute(
-        select(GameEventPrize).where(GameEventPrize.event_id == event.id)
-    )
+    prizes_result = await session.execute(select(GameEventPrize).where(GameEventPrize.event_id == event.id))
     prizes = prizes_result.scalars().all()
     _validate_prize_ranges(prizes)
 
@@ -523,7 +519,8 @@ async def start_event(
             division=params.get("division"),
             params=params,
         )
-        if et else ""
+        if et
+        else ""
     )
     embed = {
         "title": f"🏆 {et.display_name if et else event.type_slug} Event Started!",
@@ -570,9 +567,7 @@ async def end_event(
     # with_for_update() is a no-op on SQLite; on Postgres it serialises concurrent end_event
     # calls so only the first can pass the active-state check in the UPDATE below.
     # ponytail: per-row lock is sufficient; upgrade to advisory lock only if contention spikes.
-    await session.execute(
-        select(GameEvent).where(GameEvent.id == event.id).with_for_update()
-    )
+    await session.execute(select(GameEvent).where(GameEvent.id == event.id).with_for_update())
 
     # Idempotency: UPDATE only if currently active
     result = await session.execute(
@@ -764,9 +759,7 @@ async def end_event(
         standing_lines.append(f"{_ordinal(rk)}: **{name}** — {val_str}{suffix}")
     # Collect @mentions of placed winners (rank ≤ highest prize rank, capped at 10)
     top_mention_pids = {pid for pid, _, rk in ranked if rk <= 3}
-    mention_str = " ".join(
-        f"<@{players_by_id[pid].user_id}>" for pid in top_mention_pids if pid in players_by_id
-    )
+    mention_str = " ".join(f"<@{players_by_id[pid].user_id}>" for pid in top_mention_pids if pid in players_by_id)
     text_content = " ".join(filter(None, [role_mention, mention_str])) or None
 
     embed_fields: list[dict] = [{"name": "Participants", "value": str(len(ranked)), "inline": True}]

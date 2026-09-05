@@ -431,20 +431,26 @@ class DuelService:
 
             # Slice 2: duel event hook (issue #30 spec §3)
             from services import event_service as _event_svc  # deferred — avoids circular import
+
             await _event_svc.record(
-                db, winner,
+                db,
+                winner,
                 {"duel_wins": 1, "duel_fights": 1, "credits_won": float(stakes)},
-                context="duel", stakes=stakes,
+                context="duel",
+                stakes=stakes,
             )
             await _event_svc.record(
-                db, loser,
+                db,
+                loser,
                 {"duel_losses": 1, "duel_fights": 1, "credits_lost": float(stakes)},
-                context="duel", stakes=stakes,
+                context="duel",
+                stakes=stakes,
             )
         else:
             flogger.info(f"Duel {duel_id} ended in a stalemate — no credits transferred.")
             # Slice 2: stalemate — only duels_fought counts
             from services import event_service as _event_svc  # deferred — avoids circular import
+
             await _event_svc.record(db, challenger, {"duel_fights": 1}, context="duel", stakes=stakes)
             await _event_svc.record(db, target, {"duel_fights": 1}, context="duel", stakes=stakes)
 

@@ -531,6 +531,7 @@ class PlayerService:
             )
             # Slice 2: purge division-scoped event metrics (issue #30 spec §3)
             from services import event_service as _event_svc  # deferred — avoids circular import
+
             await _event_svc.on_tier_change(db, player)
             await db.commit()
             await db.refresh(player)
@@ -621,6 +622,7 @@ class PlayerService:
             )
             # Slice 2: purge division-scoped event metrics (issue #30 spec §3)
             from services import event_service as _event_svc  # deferred — avoids circular import
+
             await _event_svc.on_tier_change(db, player)
             await db.commit()
             await db.refresh(player)

@@ -39,12 +39,14 @@ async def execute_event_tick_job(job_id: str, payload: dict) -> dict:
     # ponytail: limit=500 cap prevents runaway on misconfigured data; raise if ever needed.
     async with db_manager.get_session() as read_db:
         result = await read_db.execute(
-            select(GameEvent.id, GameEvent.state).where(
+            select(GameEvent.id, GameEvent.state)
+            .where(
                 or_(
                     and_(GameEvent.state == "scheduled", GameEvent.scheduled_start_at <= now),
                     and_(GameEvent.state == "active", GameEvent.ends_at <= now),
                 )
-            ).limit(500)
+            )
+            .limit(500)
         )
         due_events = result.all()  # list of (id, state) Row objects
 
@@ -70,6 +72,7 @@ async def execute_event_tick_job(job_id: str, payload: dict) -> dict:
                             flogger.error(f"EventTick[{job_id}] announce failed event_id={event_id}: {_ann_exc}")
                     try:
                         from utils.event_cache_push import _push_events_cache
+
                         await _push_events_cache(ev.guild_id)
                     except Exception as _push_exc:  # pylint: disable=broad-exception-caught
                         flogger.warning(f"EventTick[{job_id}] cache push failed event_id={event_id}: {_push_exc}")
@@ -86,6 +89,7 @@ async def execute_event_tick_job(job_id: str, payload: dict) -> dict:
                             flogger.error(f"EventTick[{job_id}] announce failed event_id={event_id}: {_ann_exc}")
                     try:
                         from utils.event_cache_push import _push_events_cache
+
                         await _push_events_cache(ev.guild_id)
                     except Exception as _push_exc:  # pylint: disable=broad-exception-caught
                         flogger.warning(f"EventTick[{job_id}] cache push failed event_id={event_id}: {_push_exc}")
@@ -95,13 +99,9 @@ async def execute_event_tick_job(job_id: str, payload: dict) -> dict:
                     )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             errors += 1
-            flogger.error(
-                f"EventTick[{job_id}] event_id={event_id} state={event_state} failed: {exc}"
-            )
+            flogger.error(f"EventTick[{job_id}] event_id={event_id} state={event_state} failed: {exc}")
             flogger.trace(traceback.format_exc())
 
     duration = (datetime.now(UTC) - start_ts).total_seconds()
-    flogger.info(
-        f"EventTick[{job_id}] DONE in {duration:.2f}s — started={started} ended={ended} errors={errors}"
-    )
+    flogger.info(f"EventTick[{job_id}] DONE in {duration:.2f}s — started={started} ended={ended} errors={errors}")
     return {"status": "success", "started": started, "ended": ended, "errors": errors}

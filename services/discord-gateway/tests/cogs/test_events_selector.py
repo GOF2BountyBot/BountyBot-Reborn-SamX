@@ -115,6 +115,7 @@ def events_cog(mock_bot):
 class TestFmtDelta:
     def test_future_days_and_hours(self):
         from utils.timestamp_utils import fmt_delta
+
         future = (datetime.now(UTC) + timedelta(days=3, hours=4)).isoformat()
         result = fmt_delta(future)
         assert "3d" in result
@@ -122,6 +123,7 @@ class TestFmtDelta:
 
     def test_future_hours_only(self):
         from utils.timestamp_utils import fmt_delta
+
         future = (datetime.now(UTC) + timedelta(hours=5)).isoformat()
         result = fmt_delta(future)
         assert "d" not in result
@@ -129,15 +131,18 @@ class TestFmtDelta:
 
     def test_past_returns_ended(self):
         from utils.timestamp_utils import fmt_delta
+
         past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         assert fmt_delta(past) == "ended"
 
     def test_none_returns_question_mark(self):
         from utils.timestamp_utils import fmt_delta
+
         assert fmt_delta(None) == "?"
 
     def test_bad_string_returns_question_mark(self):
         from utils.timestamp_utils import fmt_delta
+
         assert fmt_delta("not-a-date") == "?"
 
 
@@ -217,10 +222,12 @@ class TestEventsSelectorColdFill:
 class TestUTCOffsetChoices:
     def test_exactly_25_choices(self):
         from cogs.eventsCog import _UTC_OFFSET_CHOICES
+
         assert len(_UTC_OFFSET_CHOICES) == 25
 
     def test_no_half_hour_offsets(self):
         from cogs.eventsCog import _UTC_OFFSET_CHOICES
+
         for c in _UTC_OFFSET_CHOICES:
             assert "." not in str(c.value), f"Non-whole-hour offset found: {c.name}"
 
@@ -324,6 +331,7 @@ class TestItemAutocomplete:
     def _make_cog_with_admin(self, mock_bot, ship_names, item_catalog):
         """Return an EventsCog with a mock AdminCog providing catalog caches."""
         from cogs.eventsCog import EventsCog
+
         cog = EventsCog(mock_bot)
         cog.http_client = MagicMock()
         cog.http_client.aclose = AsyncMock()
@@ -386,6 +394,7 @@ class TestParamAutocomplete:
 
     def _make_cog_with_types(self, mock_bot, types_payload):
         from cogs.eventsCog import EventsCog
+
         cog = EventsCog(mock_bot)
         cog.http_client = MagicMock()
         cog.http_client.aclose = AsyncMock()
@@ -402,14 +411,17 @@ class TestParamAutocomplete:
 
     def test_returns_param_values_for_selected_type(self, mock_bot):
         """secondary_fired type → returns its subtype param_values filtered by current."""
-        types = [{
-            "slug": "secondary_fired",
-            "display_name": "Secondaries Fired",
-            "category": "combat",
-            "params": ["subtype", "division", "min_fights"],
-            "param_values": {"subtype": ["cluster-missile", "ionizing-missile", "missile", "nuke", "rocket",
-                                         "shock-blast"]},
-        }]
+        types = [
+            {
+                "slug": "secondary_fired",
+                "display_name": "Secondaries Fired",
+                "category": "combat",
+                "params": ["subtype", "division", "min_fights"],
+                "param_values": {
+                    "subtype": ["cluster-missile", "ionizing-missile", "missile", "nuke", "rocket", "shock-blast"]
+                },
+            }
+        ]
         cog = self._make_cog_with_types(mock_bot, types)
         interaction = _create_mock_interaction()
         interaction.namespace.type = "secondary_fired"
@@ -420,8 +432,15 @@ class TestParamAutocomplete:
 
     def test_unknown_type_returns_empty(self, mock_bot):
         """Type not in registry → empty list."""
-        types = [{"slug": "duels_won", "display_name": "Duels Won", "category": "duel",
-                  "params": ["division", "min_fights"], "param_values": {}}]
+        types = [
+            {
+                "slug": "duels_won",
+                "display_name": "Duels Won",
+                "category": "duel",
+                "params": ["division", "min_fights"],
+                "param_values": {},
+            }
+        ]
         cog = self._make_cog_with_types(mock_bot, types)
         interaction = _create_mock_interaction()
         interaction.namespace.type = "nonexistent_type"
@@ -430,13 +449,15 @@ class TestParamAutocomplete:
 
     def test_current_filters_results(self, mock_bot):
         """Non-empty current filters choices by substring."""
-        types = [{
-            "slug": "secondary_fired",
-            "display_name": "Secondaries Fired",
-            "category": "combat",
-            "params": ["subtype", "division", "min_fights"],
-            "param_values": {"subtype": ["nuke", "rocket", "missile"]},
-        }]
+        types = [
+            {
+                "slug": "secondary_fired",
+                "display_name": "Secondaries Fired",
+                "category": "combat",
+                "params": ["subtype", "division", "min_fights"],
+                "param_values": {"subtype": ["nuke", "rocket", "missile"]},
+            }
+        ]
         cog = self._make_cog_with_types(mock_bot, types)
         interaction = _create_mock_interaction()
         interaction.namespace.type = "secondary_fired"
@@ -446,13 +467,15 @@ class TestParamAutocomplete:
 
     def test_weapon_wrapper_delegates(self, mock_bot):
         """_weapon_autocomplete wraps _param_autocomplete with 'weapon' key."""
-        types = [{
-            "slug": "kills_by_weapon",
-            "display_name": "Kills by Weapon",
-            "category": "combat",
-            "params": ["weapon", "division", "min_fights"],
-            "param_values": {"weapon": ["nuke", "primary", "turret"]},
-        }]
+        types = [
+            {
+                "slug": "kills_by_weapon",
+                "display_name": "Kills by Weapon",
+                "category": "combat",
+                "params": ["weapon", "division", "min_fights"],
+                "param_values": {"weapon": ["nuke", "primary", "turret"]},
+            }
+        ]
         cog = self._make_cog_with_types(mock_bot, types)
         interaction = _create_mock_interaction()
         interaction.namespace.type = "kills_by_weapon"
@@ -464,6 +487,7 @@ class TestParamAutocomplete:
     def test_no_types_cache_returns_empty(self, mock_bot):
         """If types cache is cold and timeout returns None, result is empty list."""
         from cogs.eventsCog import EventsCog
+
         cog = EventsCog(mock_bot)
         cog.http_client = MagicMock()
         cog.http_client.aclose = AsyncMock()
@@ -496,6 +520,7 @@ class TestEventsPlayerSync:
         interaction.guild_id = 987654321
 
         import discord
+
         interaction.user = MagicMock(spec=discord.Member)
         interaction.user.id = 111111111
         interaction.response = AsyncMock()
@@ -509,8 +534,12 @@ class TestEventsPlayerSync:
 
             class FakeResp:
                 status_code = 200
-                def raise_for_status(self): pass
-                def json(self): return []
+
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return []
 
             return FakeResp()
 
@@ -530,7 +559,7 @@ class TestEventLeaderboardPrizes:
         """event_leaderboard with event= fetches GET /events/{id} and adds a Prizes field."""
         standings_payload = [
             {"rank": 1, "display_name": "Alice", "value": 15.0, "qualified": True, "user_id": 111},
-            {"rank": 2, "display_name": "Bob",   "value": 10.0, "qualified": True, "user_id": 222},
+            {"rank": 2, "display_name": "Bob", "value": 10.0, "qualified": True, "user_id": 222},
         ]
         detail_payload = {
             "id": 42,
@@ -706,9 +735,7 @@ class TestEventsDetailRulesDetail:
 
         assert captured_embeds, "expected embed to be sent"
         embed = captured_embeds[0]
-        assert "1,000 credits" in embed.description, (
-            f"stake amount missing from description: {embed.description!r}"
-        )
+        assert "1,000 credits" in embed.description, f"stake amount missing from description: {embed.description!r}"
         assert "Prizes require at least 3 battles" in embed.description, (
             f"prizes line missing from description: {embed.description!r}"
         )
@@ -752,6 +779,7 @@ class TestEventsListTimestamp:
         interaction.guild_id = 987654321
 
         import discord
+
         interaction.user = MagicMock(spec=discord.Member)
         interaction.user.id = 111111111
         interaction.user.__str__ = MagicMock(return_value="TestUser#0001")
@@ -821,6 +849,7 @@ class TestEventsRoleSyncPost:
         interaction.guild_id = 987654321
 
         import discord
+
         interaction.user = MagicMock(spec=discord.Member)
         interaction.user.id = 111111111
         interaction.user.__str__ = MagicMock(return_value="TestUser#0001")
@@ -832,16 +861,13 @@ class TestEventsRoleSyncPost:
 
         # No GET call should target /players/
         players_gets = [u for u in get_calls if "players" in u]
-        assert not players_gets, (
-            f"GET /players/ must not be called (bot-core returns 405); got: {players_gets}"
-        )
+        assert not players_gets, f"GET /players/ must not be called (bot-core returns 405); got: {players_gets}"
         # POST /players/ must be called
         events_cog.http_client.post.assert_awaited_once()
         # sync must be awaited with the POST-returned player payload
         player_cog._sync_player_notification_roles.assert_awaited_once()
         assert player_cog._sync_player_notification_roles.call_args.args[3] == player_payload, (
-            f"sync must receive player_payload from POST; got: "
-            f"{player_cog._sync_player_notification_roles.call_args}"
+            f"sync must receive player_payload from POST; got: {player_cog._sync_player_notification_roles.call_args}"
         )
 
 

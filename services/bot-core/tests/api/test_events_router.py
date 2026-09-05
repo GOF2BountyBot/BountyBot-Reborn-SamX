@@ -454,13 +454,14 @@ class TestGuildCrossCheck:
         "method,path_tmpl,body",
         [
             ("DELETE", "/api/v1/events/{event_id}?guild_id=999&user_id=42", None),
-            ("POST", "/api/v1/events/{event_id}/prizes?guild_id=999&user_id=42",
-             {"rank_from": 1, "rank_to": 1, "kind": "credits", "qty": 100}),
+            (
+                "POST",
+                "/api/v1/events/{event_id}/prizes?guild_id=999&user_id=42",
+                {"rank_from": 1, "rank_to": 1, "kind": "credits", "qty": 100},
+            ),
             ("DELETE", "/api/v1/events/{event_id}/prizes/1?guild_id=999&user_id=42", None),
-            ("POST", "/api/v1/events/{event_id}/start?guild_id=999&user_id=42",
-             {"scheduled_start_at": None}),
-            ("POST", "/api/v1/events/{event_id}/end?guild_id=999&user_id=42",
-             {"payout": False}),
+            ("POST", "/api/v1/events/{event_id}/start?guild_id=999&user_id=42", {"scheduled_start_at": None}),
+            ("POST", "/api/v1/events/{event_id}/end?guild_id=999&user_id=42", {"payout": False}),
         ],
     )
     @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
@@ -789,6 +790,7 @@ class TestMinFightsParam:
     def test_min_fights_accepted_in_validate_params(self, client, db_ctx):
         """_validate_params accepts min_fights >= 0 for any event type."""
         from api.routers.events import _validate_params
+
         # Should not raise for valid min_fights values
         _validate_params("duels_won", {"min_fights": 0})
         _validate_params("duels_won", {"min_fights": 3})
@@ -857,7 +859,7 @@ class TestStandingsRankNone:
                 "user_id": 1002,
                 "display_name": "Bob",
                 "value": 0.0,
-                "rank": None,          # unqualified — the bug-fix path
+                "rank": None,  # unqualified — the bug-fix path
                 "qualified": False,
             },
         ]
@@ -925,6 +927,7 @@ class TestRequiredParams:
             obj.duration_days = 7
             obj.state = "draft"
             from datetime import UTC, datetime
+
             obj.created_at = datetime.now(UTC)
             obj.updated_at = datetime.now(UTC)
             obj.scheduled_start_at = None
@@ -936,8 +939,7 @@ class TestRequiredParams:
 
         resp = client.post(
             "/api/v1/events?user_id=42",
-            json={"guild_id": 99, "type_slug": "secondary_fired", "duration_days": 7,
-                  "params": {"subtype": "nuke"}},
+            json={"guild_id": 99, "type_slug": "secondary_fired", "duration_days": 7, "params": {"subtype": "nuke"}},
         )
         assert resp.status_code != 400 or "subtype" not in resp.json().get("detail", "")
 
@@ -946,8 +948,12 @@ class TestRequiredParams:
         """emp-bomb is a resolver no-op — secondary_fired subtype=emp-bomb must be rejected."""
         resp = client.post(
             "/api/v1/events?user_id=42",
-            json={"guild_id": 99, "type_slug": "secondary_fired", "duration_days": 7,
-                  "params": {"subtype": "emp-bomb"}},
+            json={
+                "guild_id": 99,
+                "type_slug": "secondary_fired",
+                "duration_days": 7,
+                "params": {"subtype": "emp-bomb"},
+            },
         )
         assert resp.status_code == 400
         assert "emp-bomb" in resp.json()["detail"] or "subtype" in resp.json()["detail"]
@@ -957,8 +963,12 @@ class TestRequiredParams:
         """shock-blast deals 0 HP — kills_by_weapon weapon=shock-blast must be rejected."""
         resp = client.post(
             "/api/v1/events?user_id=42",
-            json={"guild_id": 99, "type_slug": "kills_by_weapon", "duration_days": 7,
-                  "params": {"weapon": "shock-blast"}},
+            json={
+                "guild_id": 99,
+                "type_slug": "kills_by_weapon",
+                "duration_days": 7,
+                "params": {"weapon": "shock-blast"},
+            },
         )
         assert resp.status_code == 400
         assert "shock-blast" in resp.json()["detail"] or "weapon" in resp.json()["detail"]
@@ -981,6 +991,7 @@ class TestRequiredParams:
             obj.duration_days = 7
             obj.state = "draft"
             from datetime import UTC, datetime
+
             now = datetime.now(UTC)
             obj.created_at = now
             obj.updated_at = now
@@ -992,8 +1003,7 @@ class TestRequiredParams:
         mock_session.add = MagicMock(side_effect=_add)
         resp = client.post(
             "/api/v1/events?user_id=42",
-            json={"guild_id": 99, "type_slug": "kills_by_weapon", "duration_days": 7,
-                  "params": {"weapon": "turret"}},
+            json={"guild_id": 99, "type_slug": "kills_by_weapon", "duration_days": 7, "params": {"weapon": "turret"}},
         )
         assert resp.status_code == 201
 
@@ -1015,6 +1025,7 @@ class TestRequiredParams:
             obj.duration_days = 7
             obj.state = "draft"
             from datetime import UTC, datetime
+
             now = datetime.now(UTC)
             obj.created_at = now
             obj.updated_at = now
@@ -1026,8 +1037,12 @@ class TestRequiredParams:
         mock_session.add = MagicMock(side_effect=_add)
         resp = client.post(
             "/api/v1/events?user_id=42",
-            json={"guild_id": 99, "type_slug": "secondary_fired", "duration_days": 7,
-                  "params": {"subtype": "shock-blast"}},
+            json={
+                "guild_id": 99,
+                "type_slug": "secondary_fired",
+                "duration_days": 7,
+                "params": {"subtype": "shock-blast"},
+            },
         )
         assert resp.status_code == 201
 

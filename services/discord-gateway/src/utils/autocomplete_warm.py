@@ -722,7 +722,11 @@ async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) ->
         if cached is not None:
             raw_players = cached.get(guild_id, [])
             # Each entry is a NormalizedChoice with .raw = player dict if flags present
-            has_flags = raw_players and isinstance(raw_players[0].raw, dict) and "event_notifications_enabled" in raw_players[0].raw  # noqa: E501
+            has_flags = (
+                raw_players
+                and isinstance(raw_players[0].raw, dict)
+                and "event_notifications_enabled" in raw_players[0].raw
+            )
             if has_flags:
                 players = [p.raw for p in raw_players]
     except Exception:  # pylint: disable=broad-exception-caught
@@ -730,9 +734,7 @@ async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) ->
 
     if not players:
         try:
-            pr = await with_transient_retry(
-                client.get, f"{api_base_url}/players/guild/{guild_id}", timeout=10
-            )
+            pr = await with_transient_retry(client.get, f"{api_base_url}/players/guild/{guild_id}", timeout=10)
             players = pr.json()
         except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.warning(f"sync_notification_roles: guild={guild_id}: player fetch failed: {exc}")
@@ -798,9 +800,7 @@ async def sync_guild_notification_roles(bot, guild, *, dry_run: bool = False) ->
             if not dry_run:
                 await asyncio.sleep(0.3)  # ponytail: global rate-limit guard; per-account locks if throughput matters
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            flogger.warning(
-                f"sync_notification_roles: guild={guild_id} user={discord_id}: member failed: {exc}"
-            )
+            flogger.warning(f"sync_notification_roles: guild={guild_id} user={discord_id}: member failed: {exc}")
             counts["failures"] += 1
 
     flogger.info(
@@ -1021,4 +1021,6 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
         args=[bot],
         replace_existing=True,
     )
-    flogger.info(f"register_warm_jobs: registered {_n_recurring_refresh} recurring refresh jobs + notification-role-sync")  # noqa: E501
+    flogger.info(
+        f"register_warm_jobs: registered {_n_recurring_refresh} recurring refresh jobs + notification-role-sync"
+    )

@@ -504,13 +504,13 @@ class CombatService:
                 # record() is non-fatal itself; keep inside this try so stat failures never abort.
                 if context is not None:
                     from services import event_service as _event_svc  # deferred — avoids circular import
-                    is_winner = (fight_results.winner_side is not None and
-                                 fight_results.winner_side == int(slot_key))
+
+                    is_winner = fight_results.winner_side is not None and fight_results.winner_side == int(slot_key)
                     _contrib: dict[str, float] = {
                         "fights": 1,
                         "shots_fired": float(cb_block.get("shots_fired", 0)),
-                        "shots": float(cb_block.get("shots_fired", 0)),   # avg_accuracy metric
-                        "hits": float(cb_block.get("shots_hit", 0)),       # avg_accuracy metric
+                        "shots": float(cb_block.get("shots_fired", 0)),  # avg_accuracy metric
+                        "hits": float(cb_block.get("shots_hit", 0)),  # avg_accuracy metric
                         "total_damage_dealt": float(cb_block.get("damage_dealt", 0)),
                         "max_damage_dealt": float(cb_block.get("damage_dealt", 0)),
                         "max_damage_taken": float(cb_block.get("damage_taken", 0)),

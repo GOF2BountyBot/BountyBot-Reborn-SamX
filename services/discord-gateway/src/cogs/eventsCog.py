@@ -19,7 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
-from utils.timestamp_utils import event_status_label, iso_to_discord_ts
+from utils.timestamp_utils import event_label, iso_to_discord_ts
 
 flogger = bblogger.get_logger("discord-gateway-EventsCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
@@ -109,8 +109,13 @@ _STATE_CHOICES = [
     app_commands.Choice(name="Active", value="active"),
     app_commands.Choice(name="Ended", value="ended"),
     app_commands.Choice(name="Cancelled", value="cancelled"),
+    app_commands.Choice(name="Templates", value="template"),
     app_commands.Choice(name="Everything", value="all"),
 ]
+
+# Pseudo event type on /admin_event_create: copy everything from the chosen template.
+_FROM_TEMPLATE = "from_template"
+_FROM_TEMPLATE_CHOICE = app_commands.Choice(name="From Template", value=_FROM_TEMPLATE)
 
 
 def _prize_label(p: dict) -> str:
@@ -137,8 +142,9 @@ def _prize_label(p: dict) -> str:
 def _event_detail_embed(e: dict) -> discord.Embed:
     """Full view of one event (any state): rules, settings, timing, prizes. Shared by /events and /admin_event_list."""
     et_display = e.get("type_display", e.get("type_slug", "?"))
+    title = f"Template #{e['id']} “{e['name']}” — {et_display}" if e.get("name") else f"Event #{e['id']} — {et_display}"
     embed = discord.Embed(
-        title=f"Event #{e['id']} — {et_display}",
+        title=title,
         description=e.get("rules_text") or "No rules text.",
         color=discord.Color.gold(),
     )
@@ -223,8 +229,7 @@ class EventsCog(commands.Cog):
                 return []
             events = resp.json()
             for e in events:
-                label = f"#{e.get('id')} · {e.get('type_display', e.get('type_slug', ''))} · {event_status_label(e)}"
-                e["_norm"] = normalize_for_search(label)
+                e["_norm"] = normalize_for_search(event_label(e))
             return events
         except Exception:  # pylint: disable=broad-exception-caught
             return []
@@ -259,7 +264,7 @@ class EventsCog(commands.Cog):
             for e in events:
                 if states and e.get("state") not in states:
                     continue
-                label = f"#{e.get('id')} · {e.get('type_display', e.get('type_slug', ''))} · {event_status_label(e)}"
+                label = event_label(e)
                 norm_label = e.get("_norm") or normalize_for_search(label)
                 if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=str(e["id"])))
@@ -289,6 +294,13 @@ class EventsCog(commands.Cog):
             ][:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
+
+    async def _create_type_autocomplete(self, interaction: discord.Interaction, current: str):
+        """/admin_event_create type: the registry plus the 'From Template' pseudo type."""
+        choices = await self._type_autocomplete(interaction, current)
+        if normalize_for_search(current) in normalize_for_search(_FROM_TEMPLATE_CHOICE.name):
+            choices = [_FROM_TEMPLATE_CHOICE, *choices]
+        return choices[:25]
 
     async def _item_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -405,10 +417,17 @@ class EventsCog(commands.Cog):
 
     # Per-command event selectors (per-state wrappers so @app_commands.autocomplete can bind them).
     async def _ac_event_draft_active(self, interaction, current):
-        return await self._events_autocomplete(interaction, current, states={"draft", "active"})
+        return await self._events_autocomplete(interaction, current, states={"draft", "active", "template"})
 
     async def _ac_event_draft(self, interaction, current):
-        return await self._events_autocomplete(interaction, current, states={"draft"})
+        return await self._events_autocomplete(interaction, current, states={"draft", "template"})
+
+    async def _ac_event_editable(self, interaction, current):
+        """view/edit: anything not yet running — drafts, scheduled, templates (start excludes templates)."""
+        return await self._events_autocomplete(interaction, current, states={"draft", "scheduled", "template"})
+
+    async def _ac_event_template(self, interaction, current):
+        return await self._events_autocomplete(interaction, current, states={"template"})
 
     async def _ac_event_draft_scheduled(self, interaction, current):
         return await self._events_autocomplete(interaction, current, states={"draft", "scheduled"})
@@ -417,7 +436,9 @@ class EventsCog(commands.Cog):
         return await self._events_autocomplete(interaction, current, states={"active"})
 
     async def _ac_event_deletable(self, interaction, current):
-        return await self._events_autocomplete(interaction, current, states={"draft", "scheduled", "cancelled"})
+        return await self._events_autocomplete(
+            interaction, current, states={"draft", "scheduled", "cancelled", "template"}
+        )
 
     async def _ac_event_player(self, interaction, current):
         """/event_leaderboard selector: active events and ended events within the last 7 days.
@@ -507,26 +528,46 @@ class EventsCog(commands.Cog):
         module="Module type (for module events)",
         weapon="Weapon category (for weapon-kill events)",
         min_fights="Minimum battles/checks to qualify (default per type; 0 = no gate)",
+        template="With type 'From Template': the template to copy (type, settings, prizes)",
+        save_as_template="True = store as a named template instead of a draft (edit it like a draft; never runs)",
+        template_name="Name for the template (with save_as_template: True)",
     )
     @app_commands.autocomplete(
-        type=_type_autocomplete,
+        type=_create_type_autocomplete,
         subtype=_subtype_autocomplete,
         module=_module_autocomplete,
         weapon=_weapon_autocomplete,
+        template=_ac_event_template,
     )
     @app_commands.choices(division=_DIVISION_CHOICES)
     async def admin_event_create(
         self,
         interaction: discord.Interaction,
         type: str,
-        duration_days: app_commands.Range[int, 1, 60] = 7,
+        duration_days: app_commands.Range[int, 1, 60] | None = None,
         division: str | None = None,
         subtype: str | None = None,
         module: str | None = None,
         weapon: str | None = None,
         min_fights: app_commands.Range[int, 0] | None = None,
+        template: str | None = None,
+        save_as_template: bool = False,
+        template_name: app_commands.Range[str, 1, 64] | None = None,
     ):
         if not await self._admin_gate(interaction):
+            return
+        if type == _FROM_TEMPLATE and not template:
+            await interaction.followup.send("❌ Pick a `template` when the type is **From Template**.", ephemeral=True)
+            return
+        template_name = (template_name or "").strip() or None
+        if save_as_template and not template_name:
+            await interaction.followup.send("❌ Give the template a `template_name`.", ephemeral=True)
+            return
+        if template_name and not save_as_template:
+            await interaction.followup.send(
+                "❌ Set `save_as_template` to **True** to store this as a template (or drop `template_name`).",
+                ephemeral=True,
+            )
             return
 
         params: dict = {}
@@ -541,18 +582,15 @@ class EventsCog(commands.Cog):
         if min_fights is not None:
             params["min_fights"] = min_fights
 
+        body: dict = {"guild_id": interaction.guild_id, "type_slug": type, "params": params}
+        if duration_days is not None:
+            body["duration_days"] = duration_days
+        if template:
+            body["template_id"] = int(template)
+        if save_as_template:
+            body["template_name"] = template_name
         resp = await self._api(
-            interaction,
-            "post",
-            f"{api_base}/events",
-            json={
-                "guild_id": interaction.guild_id,
-                "type_slug": type,
-                "duration_days": duration_days,
-                "params": params,
-            },
-            params={"user_id": interaction.user.id},
-            timeout=10,
+            interaction, "post", f"{api_base}/events", json=body, params={"user_id": interaction.user.id}, timeout=10
         )
         if resp is None:
             return
@@ -560,11 +598,28 @@ class EventsCog(commands.Cog):
         event = resp.json()
         self._events_cache.invalidate(interaction.guild_id)
         flogger.info(
-            f"/admin_event_create: guild={interaction.guild_id} event_id={event.get('id')}"
-            f" by user={interaction.user.id}"
+            f"/admin_event_create: guild={interaction.guild_id} event_id={event.get('id')} state={event.get('state')}"
+            f" template_id={template} by user={interaction.user.id}"
         )
+        if event.get("state") == "template":
+            await interaction.followup.send(
+                f"✅ Template **#{event['id']}** “{event.get('name')}” saved (type `{event['type_slug']}`,"
+                f" {event['duration_days']}d).\nAdd prizes with `/admin_event_add_prize`; create runs with"
+                f" `/admin_event_create type:From Template template:{event.get('name')}`.",
+                ephemeral=True,
+            )
+            return
+        if template:  # show what was copied so the admin can tweak it
+            detail = await self._api(interaction, "get", f"{api_base}/events/{event['id']}", timeout=10)
+            await interaction.followup.send(
+                f"✅ Draft event **#{event['id']}** created from template #{template}. Tweak it with"
+                f" `/admin_event_edit` / the prize commands, then `/admin_event_start`.",
+                embed=_event_detail_embed(detail.json()) if detail is not None else None,
+                ephemeral=True,
+            )
+            return
         await interaction.followup.send(
-            f"✅ Draft event **#{event['id']}** created (type `{type}`, {duration_days}d).\n"
+            f"✅ Draft event **#{event['id']}** created (type `{type}`, {event['duration_days']}d).\n"
             f"Use `/admin_event_add_prize` to add prizes, then `/admin_event_start` to launch.",
             ephemeral=True,
         )
@@ -573,7 +628,7 @@ class EventsCog(commands.Cog):
         name="admin_event_edit", description="[ADMIN] Edit a draft/scheduled event (only the fields you pass change)"
     )
     @app_commands.describe(
-        event="Draft or scheduled event to edit",
+        event="Draft, scheduled event or template to edit",
         duration_days="New duration in days",
         division="Only count players in this division (All divisions = remove the filter)",
         subtype="Weapon subtype (for weapon-type events)",
@@ -582,7 +637,7 @@ class EventsCog(commands.Cog):
         min_fights="Minimum battles/checks to qualify (0 = no gate)",
     )
     @app_commands.autocomplete(
-        event=_ac_event_draft_scheduled,
+        event=_ac_event_editable,
         subtype=_subtype_autocomplete,
         module=_module_autocomplete,
         weapon=_weapon_autocomplete,
@@ -907,8 +962,8 @@ class EventsCog(commands.Cog):
         await interaction.followup.send(f"✅ Event **#{event}** deleted.", ephemeral=True)
 
     @app_commands.command(name="admin_event_view", description="[ADMIN] Review a draft/scheduled event in full")
-    @app_commands.describe(event="Draft or scheduled event to review (rules, settings, timing, prizes)")
-    @app_commands.autocomplete(event=_ac_event_draft_scheduled)
+    @app_commands.describe(event="Draft, scheduled event or template to review (rules, settings, timing, prizes)")
+    @app_commands.autocomplete(event=_ac_event_editable)
     async def admin_event_view(self, interaction: discord.Interaction, event: str):
         if not await self._admin_gate(interaction):
             return
@@ -957,8 +1012,9 @@ class EventsCog(commands.Cog):
                 ts = f" · started {iso_to_discord_ts(e['started_at'], 'R')}"
             elif e.get("scheduled_start_at"):
                 ts = f" · starts {iso_to_discord_ts(e['scheduled_start_at'], 'R')}"
+            name = f" “{e['name']}”" if e.get("name") else ""
             lines.append(
-                f"**#{e['id']}** `{e['state']}` {e.get('type_display', e.get('type_slug', '?'))}"
+                f"**#{e['id']}** `{e['state']}`{name} {e.get('type_display', e.get('type_slug', '?'))}"
                 f" ({e.get('duration_days', '?')}d){ts}"
             )
 

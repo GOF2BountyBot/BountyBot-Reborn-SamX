@@ -292,13 +292,11 @@ async def push_events_cache(
 
     # Pre-compute _norm so autocomplete hot path never calls normalize_for_search per event.
     from utils.autocomplete_utils import normalize_for_search
-    from utils.timestamp_utils import event_status_label
+    from utils.timestamp_utils import event_label
 
     events = payload.events
     for e in events:
-        td = e.get("type_display", e.get("type_slug", ""))
-        label = f"#{e.get('id')} · {td} · {event_status_label(e)}"
-        e["_norm"] = normalize_for_search(label)
+        e["_norm"] = normalize_for_search(event_label(e))
 
     cog._events_cache.set(guild_id, events)
     flogger.info(f"push_events_cache: updated cache for guild={guild_id} events={len(events)}")

@@ -21,6 +21,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -34,7 +35,18 @@ from persist.models.base import Base
 
 class GameEvent(Base):
     __tablename__ = TableNames.GameEvents.value
-    __table_args__ = (Index("ix_game_events_guild_state", "guild_id", "state"),)
+    __table_args__ = (
+        Index("ix_game_events_guild_state", "guild_id", "state"),
+        # Template names are unique per guild (only rows in state='template' carry a name).
+        Index(
+            "ux_game_events_template_name",
+            "guild_id",
+            "name",
+            unique=True,
+            postgresql_where=text("state = 'template'"),
+            sqlite_where=text("state = 'template'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     guild_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -43,7 +55,8 @@ class GameEvent(Base):
     params: Mapped[dict] = mapped_column(_JSONB, nullable=False, server_default="{}")
     state: Mapped[str] = mapped_column(
         String(16), nullable=False, default="draft"
-    )  # draft/scheduled/active/ended/cancelled
+    )  # draft/scheduled/active/ended/cancelled/template
+    name: Mapped[str | None] = mapped_column(String(64), nullable=True)  # templates only
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
     scheduled_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -168,6 +168,24 @@ def _event_detail_embed(e: dict) -> discord.Embed:
     return embed
 
 
+def _occupying_prizes(prizes: list[dict], rank_from: int | None, rank_to: int | None) -> list[dict]:
+    """Prizes already in the requested place: the participation slot, or any overlapping rank range.
+
+    Mirrors bot-core's _conflicting_prizes so the confirm dialog and the API agree.
+    """
+    if rank_from is None:
+        return [p for p in prizes if p.get("rank_from") is None]
+    new_to = rank_to or rank_from
+    hits = []
+    for p in prizes:
+        if p.get("rank_from") is None:
+            continue
+        ex_to = p["rank_to"] if p.get("rank_to") is not None else p["rank_from"]
+        if rank_from <= ex_to and p["rank_from"] <= new_to:
+            hits.append(p)
+    return hits
+
+
 def _prize_display(p: dict) -> str:
     """Display-friendly prize label for embeds (no DB id prefix)."""
     rank_from = p.get("rank_from")
@@ -742,6 +760,23 @@ class EventsCog(commands.Cog):
                 return
             body["item_ref"] = item
 
+        # Occupied place? Ask before replacing (same pattern as the weapon-swap confirmation).
+        detail = await self._api(interaction, "get", f"{api_base}/events/{event}", timeout=10)
+        if detail is None:
+            return
+        occupants = _occupying_prizes(detail.json().get("prizes", []), rank_from, rank_to)
+        if occupants:
+            embed = discord.Embed(
+                title="Replace prize?",
+                description=f"Event **#{event}** already has a prize in that place.",
+                color=discord.Color.orange(),
+            )
+            embed.add_field(name="Currently", value="\n".join(_prize_display(p) for p in occupants), inline=False)
+            embed.add_field(name="Replace with", value=_prize_display(body), inline=False)
+            if not await self._confirm(interaction, embed, action="replace this prize"):
+                return
+            body["replace"] = True
+
         resp = await self._api(
             interaction,
             "post",
@@ -755,9 +790,14 @@ class EventsCog(commands.Cog):
 
         self._events_cache.invalidate(interaction.guild_id)
         prize = resp.json()
-        flogger.info(f"/admin_event_add_prize: event={event} prize_id={prize.get('id')} by user={interaction.user.id}")
+        verb = "replaced the old prize" if occupants else "added"
+        flogger.info(
+            f"/admin_event_add_prize: event={event} prize_id={prize.get('id')} replaced={bool(occupants)}"
+            f" by user={interaction.user.id}"
+        )
         await interaction.followup.send(
-            f"✅ Prize **#{prize['id']}** added to event #{event}: `{place}` — {type}" + (f" · {item}" if item else ""),
+            f"✅ Prize **#{prize['id']}** {verb} on event #{event}: `{place}` — {type}"
+            + (f" · {item}" if item else ""),
             ephemeral=True,
         )
 

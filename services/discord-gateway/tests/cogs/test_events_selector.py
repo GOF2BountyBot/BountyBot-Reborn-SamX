@@ -1285,3 +1285,56 @@ class TestTemplates:
 
         e = {"id": 5, "name": "Weekly Nukes", "type_display": "Secondaries Fired", "state": "template", "params": {}}
         assert _event_detail_embed(e).title == "Template #5 “Weekly Nukes” — Secondaries Fired"
+
+
+# ---------------------------------------------------------------------------
+# /admin_event_add_prize — occupied place asks to confirm, then replaces
+# ---------------------------------------------------------------------------
+
+
+class TestAddPrizeReplace:
+    def _run(self, events_cog, existing, confirm, **kwargs):
+        events_cog._admin_gate = AsyncMock(return_value=True)
+        detail = MagicMock()
+        detail.json = MagicMock(return_value={"id": 7, "prizes": existing})
+        created = MagicMock()
+        created.json = MagicMock(return_value={"id": 42})
+        events_cog._api = AsyncMock(side_effect=[detail, created])
+        events_cog._confirm = AsyncMock(return_value=confirm)
+        interaction = _create_mock_interaction()
+        asyncio.run(
+            events_cog.admin_event_add_prize.callback(
+                events_cog, interaction, event="7", place="1st", type="Credits", qty=999, **kwargs
+            )
+        )
+        return events_cog, interaction
+
+    def test_free_place_adds_without_asking(self, events_cog):
+        cog, interaction = self._run(
+            events_cog, [{"id": 1, "rank_from": 2, "rank_to": 2, "kind": "credits", "qty": 5}], None
+        )
+        cog._confirm.assert_not_awaited()
+        assert cog._api.await_count == 2 and "replace" not in cog._api.await_args_list[1].kwargs["json"]
+        assert "added" in interaction.followup.send.await_args.args[0]
+
+    def test_occupied_place_confirmed_replaces(self, events_cog):
+        old = {"id": 1, "rank_from": 1, "rank_to": 1, "kind": "credits", "qty": 500}
+        cog, interaction = self._run(events_cog, [old], True)
+        embed = cog._confirm.await_args.args[1]
+        fields = {f.name: f.value for f in embed.fields}
+        assert fields["Currently"] == "1st — 500 credits" and fields["Replace with"] == "1st — 999 credits"
+        assert cog._api.await_args_list[1].kwargs["json"]["replace"] is True
+        assert "replaced" in interaction.followup.send.await_args.args[0]
+
+    def test_occupied_place_cancelled_does_nothing(self, events_cog):
+        cog, _ = self._run(events_cog, [{"id": 1, "rank_from": 1, "rank_to": 5, "kind": "credits", "qty": 5}], False)
+        assert cog._api.await_count == 1  # only the detail read
+
+    def test_occupying_prizes_helper(self):
+        from cogs.eventsCog import _occupying_prizes
+
+        prizes = [{"rank_from": 1, "rank_to": 3}, {"rank_from": 5, "rank_to": 5}, {"rank_from": None, "rank_to": None}]
+        assert [p["rank_from"] for p in _occupying_prizes(prizes, 2, 2)] == [1]
+        assert [p["rank_from"] for p in _occupying_prizes(prizes, 1, 5)] == [1, 5]
+        assert _occupying_prizes(prizes, 4, 4) == []
+        assert _occupying_prizes(prizes, None, None) == [{"rank_from": None, "rank_to": None}]

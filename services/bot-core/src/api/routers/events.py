@@ -145,6 +145,21 @@ def _validate_params(type_slug: str, params: dict) -> None:
             raise HTTPException(status_code=400, detail=f"min_fights must be a non-negative integer, got {mf!r}")
 
 
+def _conflicting_prizes(existing: list, rank_from: int | None, rank_to: int | None) -> list:
+    """Existing prizes that occupy the requested place: the participation slot, or any overlapping rank range."""
+    if rank_from is None:
+        return [p for p in existing if p.rank_from is None]
+    new_to = rank_to or rank_from
+    hits = []
+    for p in existing:
+        if p.rank_from is None:
+            continue
+        ex_to = p.rank_to if p.rank_to is not None else p.rank_from
+        if rank_from <= ex_to and p.rank_from <= new_to:
+            hits.append(p)
+    return hits
+
+
 def _type_param_keys(type_slug: str) -> list[str]:
     et = EVENT_TYPES[type_slug]
     keys: list[str] = []
@@ -357,23 +372,23 @@ async def add_prize(event_id: int, body: AddPrizeRequest, guild_id: int = Query(
             event = _load_event_or_404(ev_result.scalar_one_or_none(), event_id, guild_id)
             _assert_state_or_409(event, "draft", "active", "template")
 
-            # Overlap / participation-duplicate check
+            # Overlap / participation-duplicate check; with replace=True the occupants are removed instead
             prize_q = await db.execute(select(GameEventPrize).where(GameEventPrize.event_id == event_id))
             existing = prize_q.scalars().all()
-            if body.rank_from is None:
-                if any(p.rank_from is None for p in existing):
+            conflicts = _conflicting_prizes(existing, body.rank_from, body.rank_to)
+            if conflicts and not body.replace:
+                if body.rank_from is None:
                     raise HTTPException(status_code=400, detail="Participation prize already exists")
-            else:
-                new_from, new_to = body.rank_from, body.rank_to or body.rank_from
-                for p in existing:
-                    if p.rank_from is None:
-                        continue
-                    ex_from, ex_to = p.rank_from, p.rank_to if p.rank_to is not None else p.rank_from
-                    if new_from <= ex_to and ex_from <= new_to:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Prize rank range {new_from}–{new_to} overlaps existing slot {ex_from}–{ex_to}",
-                        )
+                ex = conflicts[0]
+                ex_to = ex.rank_to if ex.rank_to is not None else ex.rank_from
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Prize rank range {body.rank_from}–{body.rank_to or body.rank_from} overlaps existing slot"
+                    f" {ex.rank_from}–{ex_to}",
+                )
+            replaced_ids = [p.id for p in conflicts]
+            for p in conflicts:
+                await db.delete(p)
 
             event.updated_at = datetime.now(UTC)  # prize changes count as edits (OOB template re-sync guard)
             prize = GameEventPrize(
@@ -393,11 +408,19 @@ async def add_prize(event_id: int, body: AddPrizeRequest, guild_id: int = Query(
                 guild_id=event.guild_id,
                 resource_type="event",
                 resource_id=str(event_id),
-                details={"prize_id": prize.id, "kind": body.kind, "rank_from": body.rank_from, "rank_to": body.rank_to},
+                details={
+                    "prize_id": prize.id,
+                    "kind": body.kind,
+                    "rank_from": body.rank_from,
+                    "rank_to": body.rank_to,
+                    "replaced_prize_ids": replaced_ids,
+                },
                 commit=False,
             )
         await db.refresh(prize)
-    flogger.info(f"add_prize: event_id={event_id} prize_id={prize.id} kind={body.kind} by user={user_id}")
+    flogger.info(
+        f"add_prize: event_id={event_id} prize_id={prize.id} kind={body.kind} replaced={replaced_ids} by user={user_id}"
+    )
     await _push_events_cache(guild_id)
     return PrizeResponse.model_validate(prize)
 

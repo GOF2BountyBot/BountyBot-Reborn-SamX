@@ -311,3 +311,29 @@ async def test_oob_template_sync_pg(pg_event):
         ids = [r.id for r in rows]
         await db.execute(text("DELETE FROM game_event_prizes WHERE event_id = ANY(:ids)"), {"ids": ids})
         await db.execute(text("DELETE FROM game_events WHERE id = ANY(:ids)"), {"ids": ids})
+
+
+async def test_replace_prize_pg(pg_event):
+    """Real Postgres: replace=True swaps the 1st-place prize in one call and leaves the others alone."""
+    from api.routers.events import add_prize
+    from api.schemas.events_schema import AddPrizeRequest
+
+    with (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock),
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    ):
+        first = AddPrizeRequest(kind="credits", qty=500, rank_from=1, rank_to=1)
+        await add_prize(pg_event, first, guild_id=_GUILD, user_id=_USER)
+        await add_prize(pg_event, AddPrizeRequest(kind="credits", qty=50), guild_id=_GUILD, user_id=_USER)
+        swap = AddPrizeRequest(kind="credits", qty=999, rank_from=1, rank_to=1, replace=True)
+        new = await add_prize(pg_event, swap, guild_id=_GUILD, user_id=_USER)
+    async with _pg_factory() as db:
+        rows = (await db.execute(select(GameEventPrize).where(GameEventPrize.event_id == pg_event))).scalars().all()
+        assert sorted(((p.rank_from, p.qty) for p in rows), key=lambda t: (t[0] is None, t[0] or 0)) == [
+            (1, 999),
+            (None, 50),
+        ]
+        assert new.id in {p.id for p in rows}
+    async with _pg_factory() as db, db.begin():
+        await db.execute(text("DELETE FROM game_event_prizes WHERE event_id = :e"), {"e": pg_event})

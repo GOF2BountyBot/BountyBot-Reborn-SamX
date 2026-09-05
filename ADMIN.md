@@ -616,7 +616,7 @@ A **notification role** (`Event Announcements`) is mentioned in start/end announ
 | `/admin_event_create` | Create a new draft event (type, duration, optional division/subtype/module/weapon params); `save_as_template:True template_name:<name>` stores it as a template instead; `type:"From Template" template:<name>` creates a draft from a template |
 | `/admin_event_view` | Show a draft/scheduled event in full: rules, settings, timing, prizes |
 | `/admin_event_edit` | Change a draft/scheduled event's duration or params (only the fields you pass) |
-| `/admin_event_add_prize` | Add a prize slot (1st–10th, Top N, or Participation; Credits/Ship/Primary/Secondary/Turret/Module) |
+| `/admin_event_add_prize` | Add a prize slot (1st–10th, Top N, or Participation; Credits/Ship/Primary/Secondary/Turret/Module). If the place is already taken (e.g. on a draft made from a template) it shows the current prize and asks to confirm, then replaces it |
 | `/admin_event_remove_prize` | Remove a prize from a draft event |
 | `/admin_event_start` | Start an event immediately or schedule it at a future time |
 | `/admin_event_end` | End an active event with or without payout |

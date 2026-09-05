@@ -195,7 +195,7 @@ _ADMIN_CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "Admin — Config": "View and update guild configuration settings",
     "Admin — Bounties": "Spawn, clear, and configure bounty settings",
     "Admin — Combat": "Review player battles and manage pending duels",
-    "Admin — Events": "Create, prize, start, end, and delete stat-race events",
+    "Admin — Events": "Create stat-race events (or from templates), review, edit, prize, start, end, delete",
     "Admin — Stats": "View guild-wide statistics and reports",
     "Admin — Render": "Configure Blender render settings and clear cache",
     "Admin — Health": "Health checks and latency probes",

@@ -8,6 +8,7 @@ Usage (from inside the container, with venv active)::
     cd /app/src
     python -m persist.database.run_migration upgrade
     python -m persist.database.run_migration downgrade --target -1
+    python -m persist.database.run_migration stamp --target 0034   # mark revision without touching the schema
     python -m persist.database.run_migration revision -m "add new column"
     python -m persist.database.run_migration current
     python -m persist.database.run_migration history
@@ -61,7 +62,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "action",
-        choices=["upgrade", "downgrade", "revision", "current", "history"],
+        choices=["upgrade", "downgrade", "stamp", "revision", "current", "history"],
         help="Alembic command to run",
     )
     parser.add_argument(
@@ -82,6 +83,8 @@ if __name__ == "__main__":
         mgr.ensure_current() if args.target == "head" else command.upgrade(mgr._get_alembic_config(), args.target)
     elif args.action == "downgrade":
         mgr.downgrade(args.target)
+    elif args.action == "stamp":  # rollback helper: older images refuse to start on an unknown revision
+        command.stamp(mgr._get_alembic_config(), args.target)
     elif args.action == "revision":
         mgr.auto_generate(args.message or "")
     elif args.action == "current":

@@ -268,3 +268,46 @@ async def test_template_roundtrip_pg(pg_event):
         for eid in (draft.id, tpl.id):
             await db.execute(text("DELETE FROM game_event_prizes WHERE event_id = :e"), {"e": eid})
             await db.execute(text("DELETE FROM game_events WHERE id = :e"), {"e": eid})
+
+
+async def test_oob_template_sync_pg(pg_event):
+    """Real Postgres: seed → all OOB templates exist; admin edit → re-sync leaves it; untouched → re-sync refreshes."""
+    from api.routers.events import update_event
+    from api.schemas.events_schema import UpdateEventRequest
+    from services.event_templates import load_oob_templates, sync_guild_templates
+
+    defs = load_oob_templates()
+    async with _pg_factory() as db:
+        counts = await sync_guild_templates(db, _GUILD, defs)
+    assert counts["created"] == len(defs)
+
+    async with _pg_factory() as db:
+        rows = (
+            (await db.execute(select(GameEvent).where(GameEvent.guild_id == _GUILD, GameEvent.state == "template")))
+            .scalars()
+            .all()
+        )
+        by_name = {r.name: r for r in rows}
+        assert set(by_name) == {d["name"] for d in defs}
+        edited_id = by_name[defs[0]["name"]].id
+
+    with (
+        patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True),
+        patch("api.routers.events._push_events_cache", new_callable=AsyncMock),
+        patch("api.routers.events.get_db_session", new=_pg_factory),
+    ):
+        await update_event(
+            event_id=edited_id, body=UpdateEventRequest(duration_days=42), guild_id=_GUILD, user_id=_USER
+        )
+
+    async with _pg_factory() as db:
+        counts = await sync_guild_templates(db, _GUILD, defs)
+    assert counts == {"created": 0, "updated": len(defs) - 1, "skipped": 1}
+    async with _pg_factory() as db:
+        edited = (await db.execute(select(GameEvent).where(GameEvent.id == edited_id))).scalar_one()
+        assert edited.duration_days == 42
+
+    async with _pg_factory() as db, db.begin():  # cleanup
+        ids = [r.id for r in rows]
+        await db.execute(text("DELETE FROM game_event_prizes WHERE event_id = ANY(:ids)"), {"ids": ids})
+        await db.execute(text("DELETE FROM game_events WHERE id = ANY(:ids)"), {"ids": ids})

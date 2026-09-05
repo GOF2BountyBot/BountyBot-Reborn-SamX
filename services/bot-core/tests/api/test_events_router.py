@@ -1375,3 +1375,32 @@ class TestTemplates:
             mock_db.return_value.__aexit__ = AsyncMock(return_value=False)
             assert client.get("/api/v1/events/guild/99?state=template").status_code == 200
         assert client.get("/api/v1/events/guild/99?state=bogus").status_code == 400
+
+
+class TestPrizeChangesMarkEventModified:
+    """OOB template re-sync treats created_at == updated_at as 'untouched', so prize changes must bump updated_at."""
+
+    @patch("api.routers.events._push_events_cache", new_callable=AsyncMock)
+    @patch("api.routers.events.verify_admin_permissions", new_callable=AsyncMock, return_value=True)
+    @patch("api.routers.events.get_db_session")
+    def test_add_and_delete_prize_bump_updated_at(self, mock_db, mock_admin, mock_push, client, db_ctx):
+        mock_session, mock_cm = db_ctx
+        mock_db.return_value = mock_cm
+        stamp = datetime(2026, 1, 1, tzinfo=UTC)
+        ev = make_event(state="template", created_at=stamp, updated_at=stamp)
+        prizes_q = MagicMock()
+        prizes_q.scalars.return_value.all.return_value = []
+        mock_session.execute = AsyncMock(side_effect=[MagicMock(scalar_one_or_none=lambda: ev), prizes_q])
+        mock_session.refresh = AsyncMock(side_effect=lambda p: setattr(p, "id", 1))
+        resp = client.post("/api/v1/events/1/prizes?guild_id=99&user_id=42", json={"kind": "credits", "qty": 5})
+        assert resp.status_code == 201, resp.text
+        assert ev.updated_at > stamp
+
+        ev2 = make_event(state="template", created_at=stamp, updated_at=stamp)
+        prize = make_prize(id=7)
+        mock_session.execute = AsyncMock(
+            side_effect=[MagicMock(scalar_one_or_none=lambda: ev2), MagicMock(scalar_one_or_none=lambda: prize)]
+        )
+        resp = client.delete("/api/v1/events/1/prizes/7?guild_id=99&user_id=42")
+        assert resp.status_code == 204, resp.text
+        assert ev2.updated_at > stamp

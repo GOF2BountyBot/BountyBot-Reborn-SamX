@@ -375,6 +375,7 @@ async def add_prize(event_id: int, body: AddPrizeRequest, guild_id: int = Query(
                             detail=f"Prize rank range {new_from}–{new_to} overlaps existing slot {ex_from}–{ex_to}",
                         )
 
+            event.updated_at = datetime.now(UTC)  # prize changes count as edits (OOB template re-sync guard)
             prize = GameEventPrize(
                 event_id=event_id,
                 rank_from=body.rank_from,
@@ -421,6 +422,7 @@ async def delete_prize(event_id: int, prize_id: int, guild_id: int = Query(...),
         prize = pr_result.scalar_one_or_none()
         if prize is None:
             raise HTTPException(status_code=404, detail=f"Prize {prize_id} not found on event {event_id}")
+        event.updated_at = datetime.now(UTC)  # prize changes count as edits (OOB template re-sync guard)
         await db.delete(prize)
         await AuditService.log_action(
             db,
